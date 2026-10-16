@@ -17,8 +17,8 @@
 - `UnitSource(table, key, entered_at=None, exited_at=None, observed_from=None, observed_until=None)` supplies a real roster for `FixedDate`/`Schedule`. Entry/exit determine candidate membership at `t0` only; observation bounds independently delimit measured history and are carried as `_observed_from`/`_observed_until`. A null bound is unbounded only within explicitly declared source completeness. Without bounds, document the continuous-observation assumption; never substitute membership exit for observation end.
 - `Design(unit, anchor, *, features: Mapping[str, Expr] | None = None, outcomes: Mapping[str, Expr] | None = None, eligibility: Mapping[str, Predicate] | None = None, treatment: Treatment | None = None, gap='0d', shape='cross_section', anchor_range: AnchorRange | None = None)`; normalize absent mappings to fresh immutable empty mappings. `AnchorRange(start: date | datetime | None = None, end: date | datetime | None = None)` is pure serializable and half-open; require at least one bound and `start < end` when both are present. Date bounds are converted with the bound Catalog's `day_boundary`; datetime bounds must be timezone-aware and preserve their exact instants after UTC normalization. Range filtering never changes first/nth selection over complete declared source history.
 - Expressions/predicates are typed, serializable AST nodes, never arbitrary Python callables, SQL text, or pickle payloads.
-- Time zero is UTC-aware and never floored; preserve the Catalog's declared fixed day-boundary offset. Durations in days/weeks are elapsed 24h/168h in that fixed offset. Windows are half-open `[start,end)` and additive prefixes use `P(x)=sum(ts<x)`.
-- No unit-by-day densification or anchor-by-event/window multiplication. Arbitrary intraday boundaries use event-resolution state/lookup and report its higher cost; daily prefixes are only for day-aligned boundaries.
+- Time zero is UTC-aware and never floored; preserve the Catalog's declared fixed day-boundary offset. Elapsed duration units are integral `s`/`m`/`h`/`d`/`w` using Task 0.1's exact grammar; days/weeks are 24h/168h in that fixed offset. Windows are half-open `[start,end)` and additive prefixes use `P(x)=sum(ts<x)`.
+- No hidden unit-by-day densification or anchor-by-event/window multiplication. Explicit bounded panel output is allowed when requested and costed. Arbitrary intraday boundaries use event-resolution state/lookup and report its higher cost; daily prefixes are only for day-aligned boundaries.
 - No silent `metric.window_days` override. Reject incompatible windows unless the design explicitly uses a supported rewrite; do not imply this task implements one.
 - No customer rows, connection secrets, or payload samples in hosted metadata or preview metadata.
 - For gap `g >= 0`, feature and eligibility window ends MUST be `<= -g`; as-of cutoff MUST be `<= -g` and strict at equality. Outcomes start at or after `0d`; never shift explicit windows or outcomes to satisfy gap. Task 4.1 emits candidate anchors only. Task 4.2 applies the named eligibility conjunction: retain all true, exclude any known false, refuse if no known false and any result is unknown/null/incomplete; unavailable values remain unknown even for `IsNull`.
@@ -110,6 +110,8 @@ The event at exactly `t0` is excluded from features and included in `[0d,28d)` o
 
 Add `test_duration_ast_normalizes_to_seconds`, `test_anchor_yaml_round_trip_preserves_anchor_parameters`, `test_design_yaml_round_trip_preserves_named_feature_and_outcome_maps`, `test_spec_hash_ignores_mapping_order`, `test_canonical_serialization_sorts_mapping_keys`, `test_callable_and_unknown_node_are_rejected`, `test_yaml_refuses_duplicate_keys_and_unknown_schema_version`, `test_anchor_range_yaml_round_trip_preserves_date_and_instant_bounds`, `test_anchor_range_requires_ordered_finite_bounds`, and `test_anchor_range_rejects_naive_datetime`. Assert `tr.asof('plan_tier', before='0d')` serializes with zero-second strict cutoff; FixedDate, EventAnchor, Schedule, and AnchorRange round-trip as tagged values. Canonical serialization distinguishes Catalog-day date bounds from exact aware timestamp bounds, and the spec hash includes the range. The hash is over canonical spec bytes only, not a claim that model/source inputs are unchanged.
 
+Include `test_subday_durations_have_equivalent_canonical_specs`: 60s/1m, 60m/1h and 24h/1d produce identical AST seconds/hashes. Apply the single Task 0.1 parser; reject fractional/compound/month units and overflow rather than introducing a second grammar.
+
 - [ ] **Step 2: Run focused tests to verify they fail**
 
 Run: `pytest tests/spec/test_expressions.py tests/spec/test_design_io.py -q`
@@ -117,7 +119,7 @@ Expected: FAIL because the spec AST/serialization API is not implemented.
 
 - [ ] **Step 3: Implement the pure AST and schema**
 
-Implement immutable validated nodes, anchor constructors, and discriminated data-only serialization. Normalize durations using `Window` rules (`d`/`w`, signed, `start < end`); `asof` uses a signed strict cutoff before `t0`. Reject unsupported Python values/callables, unknown node tags, duplicate YAML keys, and extra fields. Use safe YAML loading; canonical JSON sorts every mapping key recursively and emits compact UTF-8 bytes before SHA-256 hashing. `Design.spec_hash` describes the design alone; materialized provenance separately carries design, model-definition, and immutable source-generation identity. Do not infer treatment from the anchor event. Grace initiation remains descriptive (e.g. event-defined cohort/predicate); it is not baseline treatment. Include schema version and pure import/export surface. Serialize `Design.anchor_range` with distinct canonical date/datetime bound tags; do not encode callables, query text, or a precomputed selection result.
+Implement immutable validated nodes, anchor constructors, and discriminated data-only serialization. Normalize durations using Task 0.1 `Window` rules (`s`/`m`/`h`/`d`/`w`, signed integral seconds, `start < end`); `asof` uses a signed strict cutoff before `t0`. Reject unsupported Python values/callables, unknown node tags, duplicate YAML keys, and extra fields. Use safe YAML loading; canonical JSON sorts every mapping key recursively and emits compact UTF-8 bytes before SHA-256 hashing. `Design.spec_hash` describes the design alone; materialized provenance separately carries design, model-definition, and immutable source-generation identity. Do not infer treatment from the anchor event. Grace initiation remains descriptive (e.g. event-defined cohort/predicate); it is not baseline treatment. Include schema version and pure import/export surface. Serialize `Design.anchor_range` with distinct canonical date/datetime bound tags; do not encode callables, query text, or a precomputed selection result.
 
 - [ ] **Step 4: Run focused tests**
 
@@ -143,6 +145,8 @@ git commit -m "feat: add serializable study expression specs"
 - Produces: `Design.validate(model) -> None` (or typed `TerrineError` refusal with stable namespaced code); internal `validate_design(design: Design, model: Model) -> ValidationReport` for static readiness/required-source summaries, with no customer values. Validation does not inspect row counts, observed maxima, or execute SQL. Static validation checks range shape only (at least one bound, ordered bounds, valid date/aware-datetime types); it neither queries data nor estimates event-history completeness. Date-to-instant resolution uses the model's bound Catalog day boundary during anchor compilation.
 
 - [ ] **Step 1: Write failing static validation tests**
+
+Task 3.2 consumes Task 1.1's pure `semantic/rules.py` metric-domain/refusal contract; it never imports `temporal/aggregate.py`. Keep the existing 1.1 prerequisite, not a new 1.3 dependency. Add a subprocess validation smoke with Ibis, temporal and compiler imports blocked, including statically unaligned calendar averages; lazy package exports must not defeat the boundary.
 
 Add tests `test_missing_coverage_declaration_refuses_referenced_source`, `test_window_extending_beyond_declared_coverage_builds_with_runtime_incompleteness`, `test_invalid_or_empty_window_refuses`, `test_feature_and_eligibility_must_end_by_minus_gap`, `test_asof_cutoff_must_be_at_or_before_minus_gap_and_strict_at_boundary`, `test_outcome_window_must_start_at_or_after_zero`, `test_metric_window_days_conflict_is_not_overridden`, `test_named_dimension_ambiguity_refuses`, `test_intraday_anchor_requires_event_resolution_capability`, and `test_validation_does_not_execute_query`. Consume already-bound UTC BoundCoverage; do not normalize the date-only Coverage again in validation. Missing readiness refuses; insufficient declared coverage preserves runtime null/reason. Gap `2d` requires feature/eligibility right edges and strict as-of cutoffs `<= -2d`; outcomes still start `>= 0d`.
 
@@ -211,6 +215,9 @@ git commit -m "feat: compile study anchors and populations"
 - Create: `terrine/compile/cost.py`
 - Create: `terrine/frame.py`
 - Create: `terrine/execution/inputs.py` (runtime immutable-input discovery/verification; Catalog uses a lazy facade)
+- Create: `terrine/execution/__init__.py`
+- Modify: `terrine/model.py`, `terrine/semantic/models.py`, `terrine/spec/design.py`, `terrine/__init__.py` (native Model/Catalog/build facades and public exports)
+- Conditional integration: `terrine/adapters/increment.py` only if Task 0.2 already exists; otherwise its owner must consume the completed native input-binding facade before claiming adapter support. Core 4.2 never waits for this optional file.
 - Modify: `terrine/data.py`
 - Test: `tests/compile/test_columns.py`
 - Test: `tests/test_frame.py`
@@ -273,9 +280,11 @@ Update `README.md` with the native public example and conversion/preview/budget 
 - [ ] **Step 7: Commit the task**
 
 ```bash
-git add terrine/compile/columns.py terrine/compile/cost.py terrine/frame.py terrine/data.py tests/compile/test_columns.py tests/test_frame.py tests/integration/study_api_smoke.py README.md CHANGELOG.md
+git add terrine/compile/columns.py terrine/compile/cost.py terrine/frame.py terrine/data.py terrine/execution/__init__.py terrine/execution/inputs.py terrine/model.py terrine/semantic/models.py terrine/spec/design.py terrine/__init__.py tests/compile/test_columns.py tests/test_frame.py tests/integration/study_api_smoke.py README.md CHANGELOG.md
 git commit -m "feat: compile lazy study frames and previews"
 ```
+
+Include any actual optional-adapter changes in the same commit when that adapter exists; do not require a nonexistent optional file. Verify this commit from a clean checkout with `uv run python -m tests.integration.study_api_smoke`, exercising both transaction and backend-verified immutable-binding routes. The installed-wheel smoke must also resolve the native Model/Catalog/input-verification facades; an uncommitted execution module cannot satisfy this gate.
 
 ## Signature Gaps and Explicit Resolutions
 
@@ -289,3 +298,7 @@ Shared additions for the companion contracts: `AnchorRange(start: date | datetim
 `PhysicalRelationId` is the backend-canonical qualified relation identity, or a tagged logical SQL-result identity including its definition hash. `RelationHandle` is a backend-issued pinned version/time-travel/snapshot reference or runtime-issued immutable-generation handle whose publication can be verified; a mutable table merely named “snapshot” is not one. The provider verifies backend identity, existence, immutable/version semantics, schema, source-definition hash and complete binding membership. Source SQL either resolves every dependency at the pinned versions without changing query meaning, or is replaced by its verified immutable materialized result. Unresolvable closure without such a result refuses; no arbitrary SQL rewriting or sequential mutable copies.
 
 The opaque runtime binding stores catalog/roster hashes and backend identity, remains model-side and cannot be rebuilt from YAML/JSON. Execution revalidates it, pins its references through all checks/export, and verifies it belongs to the model/connection. Frame provenance serializes only its safe receipt ID and source generations; loading that provenance cannot mint a verified binding. Agent tools accept owner-configured binding references, never arbitrary handles. `terrine.execution.snapshot_unavailable` covers absent snapshot capability; `terrine.execution.invalid_input_binding` covers unverifiable/stale/mismatched supplied bindings. Test both routes with transaction snapshots disabled and with changes between verification and execution.
+
+## Later dataset-shape and view amendments
+
+[Dataset workflows](2026-10-16-terrine-dataset-workflows.md) owns Task 6.2's StatePanel shape/source union and structural prior-state/ordinal/baseline-reference metadata, plus Task 7.2's immutable training/scoring view metadata and facade signatures. These are additions at those milestones, not claims that this near-term Expr union already supports them. Integrate their pure shared metadata through the Task 0.1 owner; migrate serialization, validation, preview, exports and consumers together. Generic Expr/Predicate variants remain unchanged. No MOST estimator or new Property.as_of mode is introduced.
