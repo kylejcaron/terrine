@@ -75,9 +75,9 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   tolerances, invariants, and cross-path parity. They MUST NOT pin permitted
   message wording, private structure, internal wiring, or exact bits where a
   tolerance defines the contract.
-- Start with focused validation:
-  `make test TESTS=tests/file.py::test_name`.
-- Run `make check` before pushing. Use `make fmt` for formatting.
+- Start with focused validation of the changed behavior, using the repository's
+  documented commands when available. Do not copy validation commands from
+  sibling projects before their tooling exists here.
 
 ## Limitations
 
