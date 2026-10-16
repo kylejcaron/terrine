@@ -25,6 +25,7 @@
 - Customer rows, derived data and warehouse state stay in the customer's execution environment. Explicit local exports or partitioned ML exports to customer-owned object storage are allowed; no data routed through hosted terrine services and no payload/secret logging. Warehouse-only derived tables remain the default; exported training artifacts are an explicit owner-requested extension.
 - A descriptive frame need not have a treatment or controls. Causal estimation requires its own identification/eligibility contract; moving outcomes past grace end does not establish it.
 - Focused checks only at coherent milestones. No network/warehouse in unit tests; live checks under `integration/warehouse_execution/`. Calibration campaigns are not part of ordinary pytest collection.
+- Apply [contributor API/test restraint](../../../AGENTS.md#tests-and-validation) across this master and every companion. Named test lists specify required behavior, not test-function quotas: consolidate where coverage stays traceable and update command selectors. Do not weaken numerical, temporal, serialization or cross-path contracts to shrink the suite.
 
 ## Review focus
 
@@ -153,6 +154,8 @@ First useful milestones: (a) native pre/post dataset and bounded local export at
 
 Source paths use a top-level `terrine/` layout matching increment. Tests follow owning modules. Schema/version/provenance formats are versioned on first serialization; no compatibility aliases or duplicated public entry points introduced pre-release.
 
+Public surface is a deliberate subset of these module-owned symbols. Follow the [API guidance](../../../AGENTS.md#public-api-and-refusals): the everyday concepts are Model, Design, Frame and Dataset, with supporting constructors only where the documented workflow needs them. Estimation, orchestration and telemetry retain focused module APIs; do not promote internal metadata/compiler/runtime types wholesale. Convenience APIs reuse existing AST/compiler paths rather than introducing aliases or parallel implementations.
+
 ## Static checking plan
 
 | Gate | Adoption |
@@ -205,7 +208,7 @@ Every dispatch records absolute worktree, repository, branch, immutable base and
 
 ### Task 0.1: Package contracts and enforceable development gates
 
-**Files:** Modify existing `pyproject.toml` and `README.md`; create `terrine/__init__.py`, `terrine/errors.py`, `terrine/windows.py`, `terrine/data.py`, `terrine/results.py`, `Makefile`, `tach.toml`, `.pre-commit-config.yaml`, `.github/workflows/ci.yml`, `tests/test_windows.py`, `tests/test_errors.py`, `tests/test_metadata.py`, `tests/conftest.py`, `CHANGELOG.md`. Extend `.gitignore`/AGENTS only once commands exist; reconcile any further preexisting work before edits. Public licensing is a release decision, not inferred from increment's license.
+**Files:** Modify existing `pyproject.toml` and `README.md`; create `terrine/__init__.py`, `terrine/errors.py`, `terrine/windows.py`, `terrine/data.py`, `terrine/results.py`, `Makefile`, `tach.toml`, `.pre-commit-config.yaml`, `.github/workflows/ci.yml`, `tests/test_windows.py`, `tests/test_errors.py`, `tests/test_metadata.py`, `tests/conftest.py`, `CHANGELOG.md`. Extend `.gitignore` as needed; document executable commands in AGENTS only after verifying they exist. Reconcile any further preexisting work before edits. Public licensing is a release decision, not inferred from increment's license.
 
 **Interfaces:** Own shared Coverage, BoundCoverage, UnitSource, Window, Roles, ColumnMeta, MaterializedFrame, FeatureCutoff, EligibilitySummary, ExecutionSnapshot, Provenance, Estimate and Diagnostic. Read exact companion signatures first. Native `TerrineError(message: str, *, code: str, context: Mapping[str, JsonValue])` exposes immutable code/context and survives pickle/deepcopy. Frozen `RefusalSpec(code: str, template: str).error(**context) -> TerrineError` gives module-owned namespaced refusals; no mutable registry or upstream import. Metadata owns `terrine.metadata.invalid_eligibility_summary` for negative/inconsistent accounting; consumer-level unsupported designs remain distinct.
 
@@ -217,7 +220,9 @@ Task 0.1 owns the elapsed-duration grammar: ASCII `[+-]?[0-9]+[smhdw]`, integral
 - [ ] Add duration equivalence/boundary cases: `60s == 1m`, `60m == 1h`, `24h == 1d`, negative/subday offsets, leading sign/zero normalization, overflow and invalid compound/month inputs. Hour/minute windows preserve exact intraday anchors; calendar-day averages retain their narrower domain.
 - [ ] Run `uv run pytest tests/test_windows.py tests/test_errors.py tests/test_metadata.py -q` and confirm failures concern missing behavior, not an unrelated environment error.
 - [ ] Implement pure contracts/exports and packaging, using only public required dependencies—no increment install or git pin. Direct dependencies include Ibis/Pydantic/PyYAML/SQLGlot/Arrow/NumPy/SciPy; DuckDB, pandas/Polars and adapters use extras. Implement the small coded-error contract natively instead of copying increment's infrastructure. Confirm the SciPy `special.ndtri_exp` API needed by estimation at the declared floor.
+- [ ] Maintain explicit `__all__` in the root and public module facades, limited to implemented, documented user entry points. Shared internal contracts are not automatically root exports. As later tasks add APIs, extend these lists deliberately and exercise the real documented workflow in the existing clean-wheel smoke; do not add source-text/export-list equality tests.
 - [ ] Add executable `make test TESTS=...`, `make lint`, `make typecheck`, `make fmt`, `make check`. `check` performs static checks plus focused tests specified by `TESTS`; CI selects affected module/contracts, and release tier owns broader compatibility. Make complexity reporting non-gating initially. Add an import/code lint boundary check only if existing configuration cannot express it; use throwaway fixtures to prove accepted/rejected imports.
+- [ ] Make the ordinary test selection exclude `slow` and `parameter_recovery`; provide explicit commands for those tiers. Use pytest duration reporting at coherent milestones to record a representative fast-suite baseline and set a documented feedback-time budget from measurements, not guessed per-test deadlines. Investigate regressions rather than automatically relaxing the budget. Keep fixtures/property cases small; add no test-count or blanket coverage target and no tests of this policy's wording.
 - [ ] Verify focused tests/static gates, `uv build`, and clean wheel install/import/Window construction with increment absent. Record versions/import closure. Dataset import smoke is extended after Task 4.2, not satisfied by an empty package import. Nothing is published.
 - [ ] Document setup and first pure-contract usage, update changelog, then commit the coherent foundation. Do not promise dataset behavior until Task 4.2 exists.
 

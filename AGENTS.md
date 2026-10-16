@@ -63,6 +63,24 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
 
 ## Tests and validation
 
+- Keep the smallest permanent suite that protects meaningful consumer-visible
+  behavior. Every added test must catch a plausible regression; extend or
+  consolidate existing coverage before adding redundant tests. No test-count
+  or blanket coverage-percentage targets.
+- Test each behavior at the lowest useful boundary; retain targeted cross-path
+  and end-to-end checks where composition matters. Do not repeat every edge
+  case at every layer. Prefer targeted parameterization over Cartesian matrices.
+- Use tiny deterministic fixtures and bounded property-based cases. Avoid sleeps
+  and dependence on the real clock; use controlled clocks or synchronization.
+  Source-text assertions, forwarding-only checks and mock echoes are not useful
+  regression tests. Use throwaway checks for one-off verification instead.
+- Unit tests must stay fast. Measure suite/test durations at coherent milestones
+  and investigate regressions; keep genuinely expensive integration, benchmark
+  and calibration work in explicit tiers. Do not use brittle wall-clock
+  assertions as unit-test performance gates.
+- Plan acceptance lists and suggested test names specify required behaviors,
+  not a quota of test functions. Consolidate without losing acceptance coverage,
+  and update any affected command selectors.
 - Unit tests MUST NOT use the network or a real warehouse. Live warehouse
   checks belong under `integration/warehouse_execution/`.
 - Tests MUST be independent under `pytest-xdist`. A test MUST NOT rely on
@@ -75,9 +93,9 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   tolerances, invariants, and cross-path parity. They MUST NOT pin permitted
   message wording, private structure, internal wiring, or exact bits where a
   tolerance defines the contract.
-- Start with focused validation of the changed behavior, using the repository's
-  documented commands when available. Do not copy validation commands from
-  sibling projects before their tooling exists here.
+- Run focused validation of changed behavior and affected contracts at coherent
+  milestones, not after every edit. Use documented commands when available;
+  do not copy validation commands from sibling projects before they exist here.
 
 ## Limitations
 
@@ -89,6 +107,18 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
 
 ## Public API and refusals
 
+- Keep an explicit, reviewed `__all__` for public package facades. A symbol is
+  not public merely because another internal module imports it or a plan names
+  it. New exports need a concrete user workflow; avoid aliases and duplicate
+  entry points.
+- Keep the everyday workflow centered on Model, Design, Frame and Dataset.
+  Supporting constructors should earn top-level exposure through that workflow.
+  Advanced estimation, orchestration and telemetry stay in focused modules;
+  specialized shapes must not expose their implementation machinery through
+  the ordinary dataset API.
+- Derived metadata and execution internals may be inspectable without becoming
+  required user-authored inputs. Ordinary dataset creation must not require
+  constructing compiler state, numeric certificates or runtime records.
 - Public inputs describe studies, metrics, and decisions in terms users can
   act on. Do not expose internal proof obligations or mathematical tuning
   controls merely because an implementation needs them.
