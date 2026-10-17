@@ -19,3 +19,4 @@
 - Normalize diagnostic log weights after shifting their maximum so large common offsets cannot change balance scores or decisions.
 - Add lazy strict SCD2/static attribute lookup and cross-entity event enrichment, with explicit snapshot-bound integrity checks and matched-null metadata.
 - Refuse overlapping open-ended histories and validate physical keys or validity columns without internal aggregate-alias collisions.
+- Report missing history validity columns through the same coded schema refusal in event enrichment and attribute lookup.

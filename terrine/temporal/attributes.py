@@ -245,6 +245,7 @@ def enrich_events(
                 dimension.validity.changed_at,
             ):
                 if time_column:
+                    _check_columns(history, (time_column,), field="dimension validity")
                     _check_matching_types(
                         result, "_timestamp", history, time_column, field="dimension validity"
                     )

@@ -44,3 +44,8 @@ successive change timestamps infer each version's end from the next timestamp
 and are not rejected merely for having multiple rows per entity. A failed
 validation prevents verified materialization; a bare expression execution is
 not a verification receipt.
+
+Both lookup entry points reject missing declared validity columns with
+`terrine.semantic.schema_mismatch` before constructing a join. Correct the
+history relation or its declared column mapping; neither entry point substitutes
+an untyped backend exception for this refusal.

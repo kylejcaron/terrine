@@ -295,3 +295,22 @@ def test_asof_refuses_fixed_output_alias_collision():
             points, history, _dimension(), "tier", unit_column="account", cutoff_column="cutoff"
         )
     assert error.value.code == "terrine.temporal.alias_collision"
+
+
+def test_missing_validity_column_has_shared_schema_refusal():
+    instant = datetime(2025, 3, 1, tzinfo=UTC)
+    events = ibis.memtable({"_timestamp": [instant], "_unit": ["u"], "account_id_event": ["a"]})
+    points = ibis.memtable({"account": ["a"], "cutoff": [instant]})
+    history = ibis.memtable({"account_id": ["a"], "starts": [instant], "tier_value": ["gold"]})
+    dimension = _dimension(validity=BoundValidity("starts", "ends", None))
+    lookups = (
+        lambda: enrich_events(events, _source(dimension), {dimension.name: history}),
+        lambda: attribute_asof(
+            points, history, dimension, "tier", unit_column="account", cutoff_column="cutoff"
+        ),
+    )
+    for lookup in lookups:
+        with pytest.raises(TerrineError) as error:
+            lookup()
+        assert error.value.code == "terrine.semantic.schema_mismatch"
+        assert error.value.context["column"] == "ends"
