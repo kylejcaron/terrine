@@ -350,8 +350,9 @@ def test_static_dimension_and_static_inline_properties_do_not_need_event_resolut
     ).validate(model(properties={"enabled": inline_static}, dialect="postgres"))
 
 
-def test_versioned_cutoff_capability_uses_exact_anchor_clock_not_offset_sign():
-    prop = SimpleNamespace(dimension_name="history_dim", as_of="event_time")
+@pytest.mark.parametrize("as_of", ("event_time", "static"))
+def test_versioned_cutoff_capability_uses_exact_anchor_clock_not_offset_sign(as_of):
+    prop = SimpleNamespace(dimension_name="history_dim", as_of=as_of)
     dimension = SimpleNamespace(
         name="history_dim",
         source_entity="workspace",

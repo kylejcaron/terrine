@@ -137,8 +137,8 @@ def _resolve_property(
         dimension_key = source.entities.get(dimension.source_entity)
         if unit_key is None or dimension_key is None or unit_key != dimension_key:
             raise _UNIT.error(unit=design.unit, name=expr.attribute)
-    temporal_property = prop.as_of != "static" and (
-        dimension is None or dimension.validity is not None
+    temporal_property = (
+        dimension.validity is not None if dimension is not None else prop.as_of != "static"
     )
     if temporal_property:
         anchors = _fixed_anchors(design, model)

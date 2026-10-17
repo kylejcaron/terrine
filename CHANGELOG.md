@@ -22,3 +22,4 @@
 - Report missing history validity columns through the same coded schema refusal in event enrichment and attribute lookup.
 - Validate study references, selected-unit keys, temporal gaps, calendar alignment and semantic capabilities using bound metadata only; retain runtime completeness obligations without reading source data.
 - Classify property cutoffs by temporal meaning and exact local clock, deferring unknown anchor alignment; reject event facts absent from their bound source.
+- Require versioned dimension cutoff checks even when a property's value is annotated static.
