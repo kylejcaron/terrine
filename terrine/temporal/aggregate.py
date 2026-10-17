@@ -426,6 +426,7 @@ def _component(
     else:
         value = builder.put("sum", exact_subtract(builder.col(sums[1]), builder.col(sums[0])))
         known_zero = builder.put("sum_zero", builder.col(value) == zero)
+        assert measure.value_type is not None  # callers pass resolved measures
         dtype = dt.dtype(measure.value_type)
         scale = 0
         if isinstance(dtype, dt.Decimal):

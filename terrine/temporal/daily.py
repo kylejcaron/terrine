@@ -340,6 +340,7 @@ def _sparse_group(
         raise _MISSING.error(reference=f"selected unit column {unit_column}")
     if unit_column not in events.columns:
         raise _SCHEMA.error(field="selected unit", column=unit_column)
+    assert measure.value_type is not None  # resolve_measure always binds it
     dtype = dt.dtype(measure.value_type)
     floating = dtype.is_floating() and measure.aggregation != "count"
     _require_backend(events, floating=floating)
