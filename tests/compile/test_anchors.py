@@ -107,15 +107,29 @@ def test_fixed_date_keeps_exact_aware_time_zero(native_model):
     assert {row["t0"] for row in result} == {instant}
 
 
-def test_fixed_date_requires_declared_roster(native_model):
+@pytest.mark.parametrize(
+    ("unit", "anchor", "reference"),
+    [
+        ("user", FixedDate(date(2025, 1, 3)), "roster"),
+        ("user", Schedule("1d", "2025-01-02", "2025-01-04"), "roster"),
+        ("account", EventAnchor("occurred"), "occurred"),
+    ],
+)
+def test_candidate_unit_refusal_matches_static_validation(native_model, unit, anchor, reference):
     model = Model.from_catalog(
         native_model.catalog,
         con=native_model.con,
         readiness=native_model.readiness,
     )
-    with pytest.raises(TerrineError) as error:
-        compile_anchors(Design(unit="user", anchor=FixedDate(date(2025, 1, 3))), model)
-    assert error.value.code == "terrine.compile.invalid_anchor"
+    design = Design(unit=unit, anchor=anchor)
+    with pytest.raises(TerrineError) as static_error:
+        design.validate(model)
+    with pytest.raises(TerrineError) as compile_error:
+        compile_anchors(design, model)
+    for error in (static_error.value, compile_error.value):
+        assert error.code == "terrine.design.incompatible_unit"
+        assert error.context["unit"] == unit
+        assert error.context["name"] == reference
 
 
 def test_event_anchor_requires_fact_declared_by_bound_source(native_model):
@@ -233,6 +247,29 @@ def test_duplicate_event_id_is_deferred_integrity_error(native_model):
     with pytest.raises(TerrineError) as error:
         anchors.validate(execute=lambda query: query.to_pyarrow())
     assert error.value.code == "terrine.compile.anchor_integrity"
+
+
+def test_event_ids_may_be_reused_across_units(native_model):
+    native_model.con.raw_sql("DELETE FROM events")
+    instant = datetime(2025, 1, 2, tzinfo=UTC)
+    native_model.con.insert(
+        "events",
+        pa.table(
+            {
+                "ts": [instant, instant],
+                "user_id": ["a", "b"],
+                "occurred": [1, 1],
+                "event_id": ["shared", "shared"],
+            }
+        ),
+    )
+    result = candidate_rows(
+        Design(unit="user", anchor=EventAnchor("occurred", "each")), native_model
+    )
+    assert sorted((row["unit"], row["t0"]) for row in result) == [
+        ("a", instant),
+        ("b", instant),
+    ]
 
 
 def test_duplicate_candidate_identity_refuses_without_configured_event_ids(native_model):

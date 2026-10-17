@@ -16,7 +16,7 @@ from terrine.errors import RefusalSpec
 from terrine.model import Model
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
-from terrine.spec.validate import _MISSING
+from terrine.spec.validate import _MISSING, _UNIT
 
 __all__ = ["AnchorTable", "compile_anchors"]
 
@@ -80,14 +80,21 @@ def _null_check(table: ibis.Table, column: str, key: str) -> _AnchorCheck:
     return _integrity_check(key, query)
 
 
-def _unique_checks(table: ibis.Table, column: str, entity: str) -> list[_AnchorCheck]:
+def _unique_checks(
+    table: ibis.Table,
+    column: str,
+    entity: str,
+    *,
+    scope: tuple[str, ...] = (),
+) -> list[_AnchorCheck]:
     null_key = "null_roster_key" if entity == "roster" else "null_event_id"
     nulls = _null_check(table, column, null_key)
-    # Project only the physical key under a private alias before grouping; source
-    # columns may legally use names such as n or invalid_count.
-    projected = table.select(_anchor_check_key=table[column])
+    # Isolate physical names before grouping; event IDs may be local to a unit.
+    keys = {"_anchor_check_key": table[column]}
+    keys.update({f"_anchor_check_scope_{index}": table[name] for index, name in enumerate(scope)})
+    projected = table.select(**keys)
     duplicates = (
-        projected.group_by("_anchor_check_key")
+        projected.group_by(*keys)
         .aggregate(_anchor_check_count=ibis._.count())
         .filter(ibis._._anchor_check_count > 1)
         .aggregate(invalid_count=ibis._.count())
@@ -278,7 +285,7 @@ def _roster_candidates(
 def _roster_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_AnchorCheck]]:
     unit_source = model.units.get(design.unit)
     if unit_source is None:
-        raise _INVALID.error(reason=f"unit {design.unit!r} requires a declared UnitSource roster")
+        raise _UNIT.error(unit=design.unit, name="roster")
     if isinstance(design.anchor, FixedDate):
         instant = _bound(model, design.anchor.date)
         assert instant is not None
@@ -325,7 +332,7 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
         raise _MISSING.error(kind="bound fact", name=anchor.fact)
     physical_unit = source.entities.get(design.unit)
     if physical_unit is None:
-        raise _INVALID.error(reason=f"source {source.name!r} has no entity {design.unit!r}")
+        raise _UNIT.error(unit=design.unit, name=anchor.fact)
     events = _relation(model, source)
     event_id_column = model.event_ids.get(source.name)
 
@@ -353,7 +360,7 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
 
     if event_id_column is not None:
         event_id = events[event_id_column]
-        checks.extend(_unique_checks(events, event_id_column, "event_id"))
+        checks.extend(_unique_checks(events, event_id_column, "event_id", scope=(physical_unit,)))
         dtype = events.schema()[event_id_column]
         text = identity_text if identity_text is not None else event_id.cast("string")
         type_tag = str(dtype)

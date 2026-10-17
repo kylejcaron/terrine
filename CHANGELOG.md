@@ -34,3 +34,4 @@
 - Compile lazy fixed, scheduled and event anchor candidates with explicit roster membership, independent observation bounds, exact UTC identities and snapshot-bound integrity checks.
 - Refuse actual submicrosecond anchor/roster timestamps before publishing narrowed UTC values; preserve microsecond-aligned source timestamps.
 - Preserve legal event key names and identities despite helper-column case collisions, handle wide calendar ranges on nanosecond sources, and reject event facts absent from their bound source with the shared validation refusal.
+- Scope configured event IDs to their analysis unit and align missing-unit refusals between validation and anchor compilation.
