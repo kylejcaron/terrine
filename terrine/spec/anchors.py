@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 
+from terrine._time import utc_instant
 from terrine.windows import seconds
 
 __all__ = ["FixedDate", "EventAnchor", "Schedule", "AnchorRange"]
@@ -24,18 +25,14 @@ def _range_bound(value: date | datetime | str | None) -> date | datetime | None:
     if value is None:
         return None
     if isinstance(value, str):
+        if "T" in value or " " in value:
+            return utc_instant(value)
         try:
-            value = (
-                datetime.fromisoformat(value)
-                if "T" in value or " " in value
-                else date.fromisoformat(value)
-            )
+            return date.fromisoformat(value)
         except ValueError as error:
             raise ValueError("range bounds must be ISO dates or timestamps") from error
     if isinstance(value, datetime):
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("datetime range bounds must be timezone-aware")
-        return value.astimezone(UTC)
+        return utc_instant(value)
     if isinstance(value, date):
         return value
     raise TypeError("range bounds must be date, datetime, ISO string, or None")
@@ -43,10 +40,13 @@ def _range_bound(value: date | datetime | str | None) -> date | datetime | None:
 
 @dataclass(frozen=True, slots=True, init=False)
 class FixedDate:
-    date: date
+    date: date | datetime
 
-    def __init__(self, date: date | str) -> None:
-        object.__setattr__(self, "date", _date(date))
+    def __init__(self, date: date | datetime | str) -> None:
+        bound = _range_bound(date)
+        if bound is None:
+            raise TypeError("fixed date cannot be None")
+        object.__setattr__(self, "date", bound)
 
 
 @dataclass(frozen=True, slots=True)

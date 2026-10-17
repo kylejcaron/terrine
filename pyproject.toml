@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-duckdb = ["duckdb>=1,<2"]
+duckdb = ["ibis-framework[duckdb]>=10,<13", "duckdb>=1,<2"]
 pandas = ["pandas>=2.2,<4"]
 polars = ["polars>=1,<2"]
 
@@ -68,6 +68,10 @@ min_confidence = 80
 
 [tool.pydoclint]
 style = "google"
+# Signatures own types; coded refusals are constructed through typed factories.
+arg-type-hints-in-docstring = false
+check-return-types = false
+skip-checking-raises = true
 
 [tool.complexipy]
 max-complexity = 15

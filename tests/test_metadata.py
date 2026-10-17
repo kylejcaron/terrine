@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pyarrow as pa
@@ -59,6 +59,15 @@ def test_coverage_requires_ordered_dates_and_binds_to_utc_instants():
     with pytest.raises((TypeError, ValueError)):
         Coverage(start=date(2025, 1, 3), through=date(2025, 1, 1))
     assert Coverage("2025-01-01", "2025-01-03") == coverage
+    with pytest.raises(TerrineError) as error:
+        Coverage(date.max, date.max)
+    assert error.value.code == "terrine.metadata.unrepresentable_coverage"
+    with pytest.raises(TerrineError) as error:
+        BoundCoverage(
+            datetime.min.replace(tzinfo=timezone(timedelta(hours=14))),
+            datetime(2025, 1, 1, tzinfo=UTC),
+        )
+    assert error.value.code == "terrine.metadata.unrepresentable_coverage"
 
 
 def test_eligibility_summary_rejects_inconsistent_counts_with_stable_code():

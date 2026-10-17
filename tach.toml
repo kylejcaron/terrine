@@ -2,7 +2,7 @@ source_roots = ["."]
 
 [[modules]]
 path = "terrine"
-depends_on = ["terrine.errors", "terrine.windows", "terrine.spec"]
+depends_on = ["terrine.errors", "terrine.windows", "terrine.spec", "terrine.data", "terrine.model"]
 
 [[modules]]
 path = "terrine.errors"
@@ -11,6 +11,10 @@ depends_on = []
 [[modules]]
 path = "terrine.windows"
 depends_on = ["terrine.errors"]
+
+[[modules]]
+path = "terrine._time"
+depends_on = []
 
 [[modules]]
 path = "terrine.data"
@@ -22,4 +26,20 @@ depends_on = ["terrine.errors"]
 
 [[modules]]
 path = "terrine.spec"
-depends_on = ["terrine.windows"]
+depends_on = ["terrine._time", "terrine.windows"]
+
+[[modules]]
+path = "terrine.semantic"
+depends_on = ["terrine._time", "terrine.errors", "terrine.windows"]
+
+[[modules]]
+path = "terrine.temporal"
+depends_on = ["terrine.data", "terrine.errors", "terrine.semantic"]
+
+[[modules]]
+path = "terrine.model"
+depends_on = ["terrine.data", "terrine.errors", "terrine.semantic", "terrine.temporal"]
+
+[[modules]]
+path = "terrine.simulate"
+depends_on = ["terrine._time", "terrine.data", "terrine.errors"]

@@ -32,6 +32,7 @@ __all__ = [
 ]
 
 _INVALID_ELIGIBILITY = "terrine.metadata.invalid_eligibility_summary"
+_UNREPRESENTABLE_COVERAGE = "terrine.metadata.unrepresentable_coverage"
 _ARROW_METADATA_KEY = b"terrine.materialized_frame.v1"
 
 
@@ -87,12 +88,25 @@ class Coverage:
             raise TypeError("coverage endpoints must be date values")
         if self.start > self.through:
             raise ValueError("coverage start must not follow through")
+        if self.through == date.max:
+            raise TerrineError(
+                "Coverage requires a following calendar day; use through before date.max",
+                code=_UNREPRESENTABLE_COVERAGE,
+                context={"through": self.through.isoformat()},
+            )
 
     def bind(self, day_boundary: Callable[[date], datetime]) -> BoundCoverage:
         if not callable(day_boundary):
             raise TypeError("day_boundary must be callable")
-        start = day_boundary(self.start)
-        end = day_boundary(self.through + timedelta(days=1))
+        try:
+            start = day_boundary(self.start)
+            end = day_boundary(self.through + timedelta(days=1))
+        except OverflowError as exc:
+            raise TerrineError(
+                "Coverage boundary exceeds datetime's range; use interior calendar dates",
+                code=_UNREPRESENTABLE_COVERAGE,
+                context={"start": self.start.isoformat(), "through": self.through.isoformat()},
+            ) from exc
         return BoundCoverage(start, end)
 
 
@@ -106,8 +120,18 @@ class BoundCoverage:
     def __post_init__(self) -> None:
         _aware(self.start, "start")
         _aware(self.end_exclusive, "end_exclusive")
-        start = self.start.astimezone(UTC)
-        end = self.end_exclusive.astimezone(UTC)
+        try:
+            start = self.start.astimezone(UTC)
+            end = self.end_exclusive.astimezone(UTC)
+        except OverflowError as exc:
+            raise TerrineError(
+                "Coverage exceeds UTC datetime's range; use interior instants",
+                code=_UNREPRESENTABLE_COVERAGE,
+                context={
+                    "start": self.start.isoformat(),
+                    "end_exclusive": self.end_exclusive.isoformat(),
+                },
+            ) from exc
         if start >= end:
             raise ValueError("bound coverage start must precede end_exclusive")
         object.__setattr__(self, "start", start)

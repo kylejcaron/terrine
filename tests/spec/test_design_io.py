@@ -111,6 +111,39 @@ def test_anchor_range_preserves_date_and_aware_instant_tags():
     )
 
 
+def test_fixed_date_preserves_intraday_aware_instants_in_safe_round_trips():
+    instant = datetime(2025, 3, 1, 12, 34, 56, 123456, tzinfo=UTC)
+    design = Design(unit="user", anchor=FixedDate(instant))
+
+    for loaded in (from_json(to_json(design)), from_yaml(to_yaml(design))):
+        assert loaded == design
+        assert isinstance(loaded.anchor, FixedDate)
+        assert loaded.anchor.date == instant
+
+    with pytest.raises(ValueError):
+        from_json(to_json(design).replace("123456+00:00", "123456789+00:00"))
+
+
+def test_fixed_date_normalizes_offset_equivalent_instants_for_canonical_hashes():
+    utc = FixedDate(datetime(2025, 3, 1, 12, 34, 56, 123456, tzinfo=UTC))
+    offset = FixedDate("2025-03-01T14:34:56.123456000+02:00")
+    first = Design(unit="user", anchor=utc)
+    second = Design(unit="user", anchor=offset)
+
+    assert utc.date == offset.date
+    assert to_json(first) == to_json(second)
+    assert first.spec_hash == second.spec_hash
+
+
+def test_fixed_date_rejects_none_and_naive_instants():
+    with pytest.raises((TypeError, ValueError)):
+        FixedDate(None)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError):
+        FixedDate(datetime(2025, 3, 1, 12, 34))
+    with pytest.raises(ValueError):
+        FixedDate("2025-03-01T12:34:56.123456789Z")
+
+
 def test_anchor_range_requires_ordered_bounds_and_aware_instants():
     with pytest.raises(ValueError):
         AnchorRange()

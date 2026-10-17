@@ -26,6 +26,8 @@ print(spec.spec_hash)
 
 `FixedDate`, `EventAnchor`, and `Schedule` are the supported anchor variants. Schedules use a positive elapsed `every` duration and an exclusive end date. `AnchorRange` is half-open, needs at least one bound, and accepts calendar dates or aware timestamps; timestamps are normalized to UTC, while dates remain tagged dates. A naive timestamp is refused. A date is a calendar-day bound, not a midnight instant: its eventual interpretation uses the model Catalog's declared day boundary.
 
+`FixedDate("2025-03-01T12:34:56.123456Z")` preserves an intraday instant rather than reducing it to a calendar day. Portable instant definitions use exact microsecond precision: equivalent offsets and trailing-zero fractional precision canonicalize identically; nonzero submicroseconds are refused rather than truncated, including timestamp subclasses supplied by dataframe libraries. `Schedule` remains calendar-date-only.
+
 Mixed date/timestamp bounds are ordered only after catalog binding resolves the calendar-day boundary.
 
 `agg(metric, window=(start, end))` stores a half-open interval as signed integral seconds using the shared `s`/`m`/`h`/`d`/`w` duration parser. Thus equivalent elapsed forms have identical specs and hashes, e.g. `60m` and `1h`. `asof(attribute, before=...)` stores an exact signed-second strict cutoff, including zero. Predicate constructors `gt`, `eq`, `is_null`, and `all_of` form a separate typed predicate tree. Comparands are finite JSON scalars only; Python functions and other runtime objects are never serialized.

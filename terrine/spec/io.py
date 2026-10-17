@@ -10,6 +10,7 @@ from typing import Any
 import yaml
 from yaml.resolver import BaseResolver
 
+from terrine._time import utc_instant
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import And, AttributeAsOf, Eq, Gt, IsNull, MetricAgg
@@ -164,10 +165,7 @@ def _read_date(value: Any) -> date | datetime:
             raise ValueError("date tag requires a calendar date")
         return parsed
     if item["type"] == "datetime":
-        parsed = datetime.fromisoformat(item["value"])
-        if parsed.tzinfo is None or parsed.utcoffset() is None:
-            raise ValueError("datetime tag requires an aware instant")
-        return parsed.astimezone(UTC)
+        return utc_instant(item["value"])
     raise ValueError("unknown temporal value type")
 
 
@@ -178,8 +176,6 @@ def _node(value: Any) -> Any:
     if tag == "FixedDate":
         item = _object(value, {"type", "date"})
         bound = _read_date(item["date"])
-        if isinstance(bound, datetime):
-            raise ValueError("FixedDate requires a date")
         return FixedDate(bound)
     if tag == "EventAnchor":
         item = _object(value, {"type", "fact", "which", "n"}, {"type", "fact", "which"})
