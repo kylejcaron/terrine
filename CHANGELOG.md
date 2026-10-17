@@ -17,3 +17,5 @@
 - Add standalone cross-fitted IPW, regression-adjustment and AIPW estimators with explicit baseline/weight/precision gates, joint parametric uncertainty, and independent overlap/balance diagnostics.
 - Preserve nanosecond baseline identity without optional dataframe dependencies, reject lossy diagnostic integer casts, verify separation certificates, and project joint inference without dense full-system allocation.
 - Normalize diagnostic log weights after shifting their maximum so large common offsets cannot change balance scores or decisions.
+- Add lazy strict SCD2/static attribute lookup and cross-entity event enrichment, with explicit snapshot-bound integrity checks and matched-null metadata.
+- Refuse overlapping open-ended histories and validate physical keys or validity columns without internal aggregate-alias collisions.
