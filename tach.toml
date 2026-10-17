@@ -55,3 +55,7 @@ depends_on = ["terrine.data", "terrine.results"]
 [[modules]]
 path = "terrine.adapters"
 depends_on = ["terrine.errors", "terrine.semantic"]
+
+[[modules]]
+path = "terrine.compile"
+depends_on = ["terrine.errors", "terrine.model", "terrine.spec"]

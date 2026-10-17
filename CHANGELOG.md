@@ -31,3 +31,6 @@
 - Preserve outward overflow failures and exact pre-epoch nanosecond day membership; retain separate nonfinite-filter provenance rather than admitting NaN through native ordering.
 - Project certificate intermediates once so conservative overflow checks do not cause exponential SQL expansion.
 - Use the same stable unsupported-aggregation refusal during study validation and sparse-state resolution.
+- Compile lazy fixed, scheduled and event anchor candidates with explicit roster membership, independent observation bounds, exact UTC identities and snapshot-bound integrity checks.
+- Refuse actual submicrosecond anchor/roster timestamps before publishing narrowed UTC values; preserve microsecond-aligned source timestamps.
+- Preserve legal event key names and identities despite helper-column case collisions, handle wide calendar ranges on nanosecond sources, and reject event facts absent from their bound source with the shared validation refusal.
