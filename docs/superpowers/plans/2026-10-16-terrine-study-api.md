@@ -175,8 +175,13 @@ git commit -m "feat: validate study specs against model metadata"
 
 **Files:**
 - Create: `terrine/compile/anchors.py`
-- Create: `terrine/compile/shapes.py`
+- Create: `terrine/compile/__init__.py`
 - Test: `tests/compile/test_anchors.py`
+
+Keep the first compiler concrete: do not create a placeholder `shapes.py` that
+would later be shadowed by Task 5.1's real `shapes/` package. Candidate construction
+is lazy; defer data-dependent integrity checks through an explicit
+`AnchorTable.validate(*, execute)` callable under Task 4.2's pinned executor.
 
 **Interfaces:**
 - Consumes: `FixedDate(date)`, `EventAnchor(fact, which='first'|'each'|'nth', n=None)`, `Schedule(every, start, end)` (end exclusive), optional `Design.anchor_range`, `UnitSource(table, key, entered_at=None, exited_at=None, observed_from=None, observed_until=None)`, `event_ids: Mapping[str,str]`, and temporal fact/roster binding from `Model` and Task 1 outputs.
