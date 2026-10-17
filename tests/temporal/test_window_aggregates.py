@@ -360,6 +360,34 @@ def test_float_average_and_ratio_return_final_not_input_errors(con):
 
 
 @pytest.mark.slow
+@pytest.mark.parametrize("kind", ["average", "ratio"])
+def test_fractional_outputs_apply_tolerance_in_final_result_units(con, kind):
+    numerator = _state(
+        con,
+        [1.0, -1.0] * 100,
+        aggregation="avg_event" if kind == "average" else "sum",
+        name="numerator",
+    )
+    pairs = [numerator]
+    if kind == "ratio":
+        pairs.append(_state(con, [200], dtype="int64", name="denominator"))
+    result = _result(_anchors(con), pairs, kind="ratio" if kind == "ratio" else "mean")
+    _certificate(result, _rows(con, result)[0], Fraction(0))
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("sign", [1, -1])
+def test_quotient_refuses_overflowing_input_interval_even_when_output_is_finite(con, sign):
+    numerator = _state(con, [1.0], name="numerator")
+    denominator = _state(con, [sign * float.fromhex("0x1.fffffffffffffp+1023")], name="denominator")
+    result = _result(_anchors(con), [numerator, denominator], kind="ratio")
+    with pytest.raises(TerrineError) as error:
+        _rows(con, result)
+    assert error.value.code == "terrine.temporal.float64_precision"
+    assert error.value.context["failure"] == "bound_overflow"
+
+
+@pytest.mark.slow
 def test_known_zero_and_uncertain_zero_denominators_are_distinct(con):
     numerator = _state(con, [2.0], name="numerator")
     zero = _state(con, [0], dtype="int64", name="zero")
@@ -421,17 +449,26 @@ def test_count_and_conversion_ignore_unused_float_certificates(con):
     "bad",
     [
         None,
-        pa.table({"bad": ["0"]}),
-        pa.table({"failed_count": [None]}),
-        pa.table({"failed_count": ["-1"]}),
-        pa.table({"failed_count": ["0", "0"]}),
+        pa.array([None], type=pa.string()),
+        pa.array(["-1"]),
+        pa.array(["00"]),
+        pa.array([0], type=pa.int64()),
+        pa.array(["0", "0"]),
     ],
 )
 def test_deferred_scalar_checks_fail_closed(con, bad):
     pair = _state(con, [1.0])
     result = _result(_anchors(con), [pair])
+
+    def malformed(query):
+        if bad is None:
+            return None
+        columns = {name: pa.array(["0"] * len(bad)) for name in query.columns}
+        columns[query.columns[0]] = bad
+        return pa.table(columns)
+
     with pytest.raises((TypeError, ValueError)):
-        result.validate(lambda query: bad)
+        result.validate(malformed)
 
 
 def test_integer_sum_widens_without_losing_units_above_binary64_precision(con):

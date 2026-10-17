@@ -11,6 +11,8 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+__all__ = ["PrefixLookup", "lookup_prefix"]
+
 
 @dataclass(frozen=True, slots=True)
 class PrefixLookup:

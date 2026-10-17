@@ -340,8 +340,11 @@ no numeric precision policy or error column.
 Float window subtraction retains both endpoint errors and adds its own outward
 rounding radius. Averages and ratios enclose inputs and all four endpoint
 quotients, then certify the returned quotient against the same fixed final
-tolerance. Exact fractional inputs use the pinned backend's correctly rounded
-canonical decimal-text parser, not an uncertified direct numeric cast.
+tolerance. Intermediate certificates must remain finite and conservative;
+the output tolerance applies in the final result's units, not to unpublished
+sums. Every required outward input or quotient endpoint must remain finite.
+Exact fractional inputs use the pinned backend's correctly rounded canonical
+decimal-text parser, not an uncertified direct numeric cast.
 A known exact zero denominator is NULL with `zero_denominator`; an uncertain
 interval spanning zero raises `terrine.temporal.float64_precision`. A large
 old sum followed by a tiny window may refuse conservatively. Use genuinely

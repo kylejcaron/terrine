@@ -37,3 +37,4 @@
 - Scope configured event IDs to their analysis unit and align missing-unit refusals between validation and anchor compilation.
 - Add strict native and coherent union/window prefix lookups, including independent repeated cutoffs and null-preserving state.
 - Compute named half-open windows with per-source/unit completeness, exact scale-preserving output and certified Float64 sums, averages and ratios; refuse unknown filters or unrepresentable required results before export.
+- Apply numerical tolerance in the final average/ratio units while retaining constituent validity checks; refuse overflowing outward input intervals even when division would hide them.

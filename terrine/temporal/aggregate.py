@@ -219,13 +219,12 @@ def _float_quantity(builder: _Builder, quantity: _Quantity, context) -> _Quantit
     return _Quantity(value, quantity.reason, quantity.known_zero, error)
 
 
-def _tolerance(builder: _Builder, quantity: _Quantity, context) -> None:
+def _check_quantity(builder: _Builder, quantity: _Quantity, context) -> None:
     assert quantity.error is not None
     value, error = builder.col(quantity.value), builder.col(quantity.error)
     failures = (
         ("nonfinite_state", ~_isfinite(value) | value.isnull()),
         ("bound_overflow", ~_isfinite(error) | error.isnull() | (error < 0.0)),
-        ("tolerance", error > float64_tolerance(value)),
     )
     columns = builder.put_many(*failures)
     for column, (failure, _) in zip(columns, failures, strict=True):
@@ -255,6 +254,10 @@ def _quotient(
         ),
         ("upper", outward_add(builder.col(denominator.value), builder.col(denominator.error))),
     )
+    invalid_endpoint = ~_isfinite(builder.col(ln))
+    for endpoint in (un, ld, ud):
+        invalid_endpoint = invalid_endpoint | ~_isfinite(builder.col(endpoint))
+    builder.flag(invalid_endpoint, "bound_overflow", context)
     excludes_zero = builder.put("excludes_zero", (builder.col(ld) > 0.0) | (builder.col(ud) < 0.0))
     builder.flag(~builder.col(excludes_zero), "denominator_interval_zero", context)
     endpoints = builder.put_many(
@@ -289,7 +292,7 @@ def _quotient(
         ~_isfinite(builder.col(lower)) | ~_isfinite(builder.col(upper)), "bound_overflow", context
     )
     result = _Quantity(value, reason, known_zero, error)
-    _tolerance(builder, result, context)
+    _check_quantity(builder, result, context)
     return result
 
 
@@ -419,7 +422,7 @@ def _component(
             ),
         )
         quantity = _Quantity(value, reason, known_zero, error)
-        _tolerance(builder, quantity, context)
+        _check_quantity(builder, quantity, context)
     else:
         value = builder.put("sum", exact_subtract(builder.col(sums[1]), builder.col(sums[0])))
         known_zero = builder.put("sum_zero", builder.col(value) == zero)
@@ -634,6 +637,16 @@ def aggregate_window(
     evaluated = builder.put("evaluated", builder.col(final_reason).isnull())
     if unknown_flags:
         checks.append(builder.check(unknown_flags, active=builder.col(available)))
+    if quantity.error is not None:
+        builder.flag(
+            builder.col(quantity.error) > float64_tolerance(builder.col(quantity.value)),
+            "tolerance",
+            {
+                "source": ",".join(m.source_name for m in metric.measures),
+                "measure": ",".join(m.fact for m in metric.measures),
+                "output": output,
+            },
+        )
     exact_output = metric.kind != "conversion" and quantity.error is None
     if exact_output:
         target = "int64" if quantity.count else dt.Decimal(38, quantity.scale)
