@@ -162,3 +162,24 @@ class Model:
             sources=sources,
             metrics=metrics,
         )
+
+    @classmethod
+    def from_increment(
+        cls,
+        path_or_definitions: Any,
+        *,
+        con: Any,
+        readiness: Readiness | Mapping[str, Coverage | BoundCoverage],
+        units: Mapping[str, UnitSource] | None = None,
+        event_ids: Mapping[str, str] | None = None,
+    ) -> Model:
+        """Adapt optional published semantics through the native Catalog workflow."""
+        from terrine.adapters.increment import to_catalog
+
+        return cls.from_catalog(
+            to_catalog(path_or_definitions, dialect=str(getattr(con, "name", ""))),
+            con=con,
+            readiness=readiness,
+            units=units,
+            event_ids=event_ids,
+        )

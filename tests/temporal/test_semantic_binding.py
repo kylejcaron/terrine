@@ -214,6 +214,91 @@ def test_dimension_filter_requires_dimension_property_membership(event_catalog):
         assert error.value.code == "terrine.semantic.missing_reference"
 
 
+def test_shared_dimension_filter_binds_from_non_owner_source():
+    catalog = Catalog.model_validate(
+        {
+            "schema_version": 1,
+            "day_boundary": "UTC",
+            "dialect": "duckdb",
+            "sources": {
+                "sourcea": {
+                    "relation": {
+                        "kind": "sql",
+                        "sql": "SELECT 1 AS user_id, TIMESTAMP '2025-03-01' AS ts",
+                    },
+                    "timestamp": "ts",
+                    "entities": {"user": "user_id"},
+                    "facts": ["event_a"],
+                    "properties": [],
+                    "dimensions": ["shared"],
+                },
+                "sourceb": {
+                    "relation": {
+                        "kind": "sql",
+                        "sql": "SELECT 1 AS user_id, TIMESTAMP '2025-03-01' AS ts",
+                    },
+                    "timestamp": "ts",
+                    "entities": {"user": "user_id"},
+                    "facts": ["event_b"],
+                    "properties": [],
+                    "dimensions": ["shared"],
+                },
+            },
+            "facts": {
+                "event_a": {"source": "sourcea", "column": None},
+                "event_b": {"source": "sourceb", "column": None},
+            },
+            "properties": {
+                "region": {
+                    "source": "sourcea",
+                    "column": "region",
+                    "dtype": "string",
+                    "as_of": "event_time",
+                    "dimension": "shared",
+                }
+            },
+            "dimensions": {
+                "shared": {
+                    "relation": {
+                        "kind": "sql",
+                        "sql": "SELECT 1 AS user_id, 'west' AS region",
+                    },
+                    "source_entity": "user",
+                    "entity_column": "user_id",
+                    "properties": ["region"],
+                }
+            },
+            "measures": {
+                "events_b": {
+                    "fact": "event_b",
+                    "aggregation": "count",
+                    "filters": [{"property": "region", "op": "equals", "value": "west"}],
+                }
+            },
+            "metrics": {
+                "metric_b": {
+                    "kind": "conversion",
+                    "entity": "user",
+                    "measure": "events_b",
+                }
+            },
+        }
+    )
+    con = ibis.duckdb.connect()
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={
+            "sourcea": Coverage("2025-03-01", "2025-03-31"),
+            "sourceb": Coverage("2025-03-01", "2025-03-31"),
+        },
+    )
+
+    assert model.metrics["metric_b"].measures[0].filters[0].property_name == "region"
+    assert catalog.properties["region"].source == "sourcea"
+    con.disconnect()
+
+
 @pytest.mark.parametrize(
     ("column", "dtype"),
     [

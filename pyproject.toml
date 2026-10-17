@@ -18,6 +18,7 @@ dependencies = [
 duckdb = ["ibis-framework[duckdb]>=10,<13", "duckdb>=1,<2"]
 pandas = ["pandas>=2.2,<4"]
 polars = ["polars>=1,<2"]
+increment = ["increment==0.1.0a2"]
 
 [dependency-groups]
 dev = [

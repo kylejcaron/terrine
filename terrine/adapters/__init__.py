@@ -1,0 +1,1 @@
+"""Optional input-format adapters."""

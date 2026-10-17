@@ -262,6 +262,26 @@ duckdb = [
 ]
 
 [[package]]
+name = "increment"
+version = "0.1.0a2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "ibis-framework" },
+    { name = "narwhals" },
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "pyarrow" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "scipy" },
+    { name = "sqlglot" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/66/17/5168e5c29e1971a6e0af710e051d4378978b207eda4f6c2e3c5f2cb4696b/increment-0.1.0a2.tar.gz", hash = "sha256:af909df3235db01a3f02a8e4c060b89e9e1fdf8a4d232fb66634b3bf30e1c004", size = 1220687, upload-time = "2026-10-03T01:00:35.929Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/42/5a/c562cd8025843d229d373a86bf43340f4fc6d4b35b641dfc506b93d215ef/increment-0.1.0a2-py3-none-any.whl", hash = "sha256:15804cd12624155800fde40737996a2c2018f9741ca1e208c2aba085cc173fb6", size = 1321449, upload-time = "2026-10-03T01:00:34.037Z" },
+]
+
+[[package]]
 name = "iniconfig"
 version = "2.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -289,6 +309,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
+]
+
+[[package]]
+name = "narwhals"
+version = "2.27.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bf/21/f64d6b2dbea7bf3f8c38cdc786dcc6ef012ca3d173ad208c782c9a7bedf6/narwhals-2.27.1.tar.gz", hash = "sha256:aed93076a3ea42d9c32c88e4eb5ea422a21937011cbe1f480f9572a523c82094", size = 735013, upload-time = "2026-10-10T06:52:18.113Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d1/89/5d4c86da1130d9059681e5b6cd7645df5c10279a6a079c5c37dcb2cc6f3f/narwhals-2.27.1-py3-none-any.whl", hash = "sha256:d057df13f5852b8e157596e82eb5e955fad267425df5e420e0ee9863da483b31", size = 483211, upload-time = "2026-10-10T06:52:16.32Z" },
 ]
 
 [[package]]
@@ -874,6 +903,9 @@ duckdb = [
     { name = "duckdb" },
     { name = "ibis-framework", extra = ["duckdb"] },
 ]
+increment = [
+    { name = "increment" },
+]
 pandas = [
     { name = "pandas" },
 ]
@@ -900,6 +932,7 @@ requires-dist = [
     { name = "duckdb", marker = "extra == 'duckdb'", specifier = ">=1,<2" },
     { name = "ibis-framework", specifier = ">=10,<13" },
     { name = "ibis-framework", extras = ["duckdb"], marker = "extra == 'duckdb'", specifier = ">=10,<13" },
+    { name = "increment", marker = "extra == 'increment'", specifier = "==0.1.0a2" },
     { name = "numpy", specifier = ">=2,<3" },
     { name = "pandas", marker = "extra == 'pandas'", specifier = ">=2.2,<4" },
     { name = "polars", marker = "extra == 'polars'", specifier = ">=1,<2" },
@@ -909,7 +942,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.14,<2" },
     { name = "sqlglot", specifier = ">=25,<30" },
 ]
-provides-extras = ["duckdb", "pandas", "polars"]
+provides-extras = ["duckdb", "pandas", "polars", "increment"]
 
 [package.metadata.requires-dev]
 dev = [

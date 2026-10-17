@@ -180,13 +180,19 @@ def bind_metric(catalog: Catalog, metric_name: str) -> BoundMetric:
         filters = []
         for filt in measure.filters:
             prop = _reference(catalog.properties, filt.property, "property")
-            declared = filt.property in source.properties
-            if prop.dimension is not None:
+            if prop.dimension is None:
+                declared = filt.property in source.properties and prop.source == fact.source
+            else:
+                # The property keeps one canonical owner; any source declaring the
+                # shared dimension may filter through that same dimension property.
                 dimension = _reference(catalog.dimensions, prop.dimension, "dimension")
+                owner = _reference(catalog.sources, prop.source, "property owner")
                 declared = (
-                    prop.dimension in source.dimensions and filt.property in dimension.properties
+                    prop.dimension in source.dimensions
+                    and filt.property in dimension.properties
+                    and prop.dimension in owner.dimensions
                 )
-            if prop.source != fact.source or not declared:
+            if not declared:
                 raise _MISSING.error(
                     reference=f"filter property {filt.property} on source {fact.source}"
                 )
