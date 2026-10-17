@@ -89,8 +89,10 @@ A read-only runtime probe constructed source/metric/SCD2 definitions in the exis
 Proposed, not implemented. `semantic.yaml` is terrine's small native Catalog declaring named sources, metrics and SCD2 dimensions; Task 1.1 specifies it. Existing increment users instead call `Model.from_increment("definitions/", ...)` with the optional adapter—the Design below is unchanged. Ambiguous property names require qualification.
 
 ```python
+from pathlib import Path
 import ibis
 import terrine as tr
+from terrine.spec import to_yaml
 
 model = tr.Model.from_catalog(
     "semantic.yaml",
@@ -117,7 +119,7 @@ design = tr.Design(
 frame = design.build(model)          # validates and compiles; no data execution
 print(frame.expr)                   # lazy Ibis relation
 rows = frame.to_polars(budget=tr.Budget(max_rows=100_000, max_output_bytes=134_217_728))
-design.to_yaml("feature_adoption.yaml")
+Path("feature_adoption.yaml").write_text(to_yaml(design))
 ```
 
 This is an adopter dataset, not an effect estimate. Event at exactly t0 is excluded from features and included in `[0d,28d)` outcomes. If the anchoring event itself contributes to a metric, that inclusion is intentional and documented. FixedDate/Schedule additionally bind `units={"user": tr.UnitSource(table="users", key="user_id", entered_at="created_at")}` once on Model. Source coverage for every referenced fact source must be provided. Baseline binary treatment at a common t0 can feed native ATE methods; lack of a valid comparison affects estimation, not frame construction.
