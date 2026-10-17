@@ -1,0 +1,142 @@
+from datetime import UTC, date, datetime
+
+import pytest
+
+from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
+from terrine.spec.design import Design, Treatment
+from terrine.spec.expressions import agg
+from terrine.spec.io import from_json, from_yaml, to_json, to_yaml
+
+
+def test_subday_duration_forms_share_canonical_spec_hashes():
+    anchor = FixedDate("2025-03-01")
+    for left, right in (("60s", "1m"), ("60m", "1h"), ("24h", "1d")):
+        one = Design(
+            unit="user",
+            anchor=anchor,
+            features={"visits": agg("sessions", window=(f"-{left}", "0s"))},
+        )
+        two = Design(
+            unit="user",
+            anchor=anchor,
+            features={"visits": agg("sessions", window=(f"-{right}", "0d"))},
+        )
+        assert one.spec_hash == two.spec_hash
+
+
+def test_anchor_variants_and_design_maps_round_trip_as_safe_yaml_and_json():
+    anchors = (
+        FixedDate("2025-03-01"),
+        EventAnchor("feature_enabled", which="nth", n=2),
+        Schedule(every="1w", start="2025-01-06", end="2025-02-03"),
+    )
+    for anchor in anchors:
+        design = Design(
+            unit="user",
+            anchor=anchor,
+            features={"visits": agg("sessions", window=("-28d", "0d"))},
+            outcomes={"future": agg("sessions", window=("0d", "7d"))},
+            treatment=Treatment(attribute="assigned", known_at_t0=True),
+        )
+        assert from_yaml(to_yaml(design)) == design
+        assert from_json(to_json(design)) == design
+        assert from_yaml(to_yaml(design)).spec_hash == design.spec_hash
+
+
+def test_schedule_uses_positive_elapsed_cadence_and_exclusive_end():
+    schedule = Schedule(every="1w", start="2025-01-06", end="2025-02-03")
+    assert schedule.every == 7 * 86400
+    assert schedule.end == date(2025, 2, 3)
+    with pytest.raises(ValueError):
+        Schedule(every="0d", start="2025-01-06", end="2025-02-03")
+    with pytest.raises(ValueError):
+        Schedule(every="1d", start="2025-01-06", end="2025-01-06")
+
+
+def test_design_named_maps_are_detached_and_read_only():
+    features = {"visits": agg("sessions", window=("-1d", "0d"))}
+    design = Design(unit="user", anchor=FixedDate("2025-03-01"), features=features)
+    features.clear()
+    assert "visits" in design.features
+    with pytest.raises(TypeError):
+        design.features["other"] = agg("other", window=("-1d", "0d"))  # ty: ignore[invalid-assignment]
+
+
+def test_mapping_order_does_not_change_hash_and_is_canonical():
+    first = Design(
+        unit="user",
+        anchor=FixedDate("2025-03-01"),
+        features={
+            "z": agg("z_metric", window=("-1d", "0d")),
+            "a": agg("a_metric", window=("-1d", "0d")),
+        },
+    )
+    second = Design(
+        unit="user",
+        anchor=FixedDate("2025-03-01"),
+        features={
+            "a": agg("a_metric", window=("-1d", "0d")),
+            "z": agg("z_metric", window=("-1d", "0d")),
+        },
+    )
+    assert first.spec_hash == second.spec_hash
+    assert to_yaml(first) == to_yaml(second)
+    assert to_json(first) == to_json(second)
+
+
+def test_anchor_range_preserves_date_and_aware_instant_tags():
+    spec = Design(
+        unit="user",
+        anchor=FixedDate("2025-03-01"),
+        anchor_range=AnchorRange(
+            start=date(2025, 3, 1), end=datetime(2025, 4, 1, 0, 30, tzinfo=UTC)
+        ),
+    )
+    loaded = from_yaml(to_yaml(spec))
+    assert loaded == spec
+    assert loaded.anchor_range is not None
+    assert isinstance(loaded.anchor_range.start, date) and not isinstance(
+        loaded.anchor_range.start, datetime
+    )
+    assert loaded.anchor_range.end == datetime(2025, 4, 1, 0, 30, tzinfo=UTC)
+
+
+def test_anchor_range_requires_ordered_bounds_and_aware_instants():
+    with pytest.raises(ValueError):
+        AnchorRange()
+    with pytest.raises(ValueError):
+        AnchorRange(start="2025-04-01", end="2025-03-01")
+    with pytest.raises(ValueError):
+        AnchorRange(start=datetime(2025, 3, 1))
+
+
+def test_treatment_known_at_t0_metadata_is_explicit():
+    design = Design(
+        unit="user",
+        anchor=FixedDate("2025-03-01"),
+        treatment=Treatment(attribute="assigned", known_at_t0=True),
+    )
+    loaded = from_yaml(to_yaml(design))
+    assert loaded.treatment is not None
+    assert loaded.treatment.known_at_t0 is True
+
+
+def test_yaml_and_json_reject_duplicates_unknown_schema_nodes_and_extra_fields():
+    with pytest.raises(ValueError):
+        from_yaml("schema_version: 1\nschema_version: 1\ndesign: {}\n")
+    with pytest.raises(ValueError):
+        from_json('{"schema_version":1,"schema_version":1,"design":{}}')
+    with pytest.raises(ValueError):
+        from_yaml("schema_version: 99\ndesign: {}\n")
+    with pytest.raises(ValueError):
+        from_yaml("schema_version: 1\ndesign: {type: FutureNode}\n")
+    with pytest.raises(ValueError):
+        from_json('{"schema_version":1,"design":{"unit":"u","anchor":{"type":"FutureNode"}}}')
+    with pytest.raises(ValueError):
+        from_json(
+            to_json(Design(unit="user", anchor=FixedDate("2025-03-01"))).replace(
+                '"unit":"user"', '"unit":"user","unexpected":1'
+            )
+        )
+    with pytest.raises((TypeError, ValueError)):
+        Design(unit="user", anchor=FixedDate("2025-03-01"), features={"bad": lambda: 1})  # ty: ignore[invalid-argument-type]

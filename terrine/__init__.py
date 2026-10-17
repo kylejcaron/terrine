@@ -1,9 +1,39 @@
-"""Terrine dataset tooling.
-
-The package currently exposes only its implemented window and error contracts.
-"""
+"""Typed, semantic-layer dataset construction."""
 
 from terrine.errors import TerrineError
+from terrine.spec import (
+    AnchorRange,
+    Design,
+    EventAnchor,
+    FixedDate,
+    Schedule,
+    Treatment,
+    agg,
+    all_of,
+    asof,
+    eq,
+    from_yaml,
+    gt,
+    is_null,
+    to_yaml,
+)
 from terrine.windows import Window
 
-__all__ = ["Window", "TerrineError"]
+__all__ = [
+    "AnchorRange",
+    "Design",
+    "EventAnchor",
+    "FixedDate",
+    "Schedule",
+    "Treatment",
+    "Window",
+    "TerrineError",
+    "agg",
+    "all_of",
+    "asof",
+    "eq",
+    "from_yaml",
+    "gt",
+    "is_null",
+    "to_yaml",
+]
