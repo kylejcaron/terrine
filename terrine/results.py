@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Literal
 
-from terrine.errors import freeze
+from terrine.errors import freeze, thaw
 
 __all__ = ["Diagnostic", "Estimate", "DiagnosticPolicy"]
 
@@ -65,6 +66,14 @@ class Diagnostic:
         object.__setattr__(self, "thresholds", _immutable_map(self.thresholds, "thresholds"))
         object.__setattr__(self, "context", context)
 
+    def to_dict(self) -> dict:
+        """Return detached JSON-compatible diagnostic evidence."""
+        return {item.name: thaw(getattr(self, item.name)) for item in fields(self)}
+
+    @classmethod
+    def from_dict(cls, payload: Mapping) -> Diagnostic:
+        return cls(**dict(payload))
+
 
 @dataclass(frozen=True, slots=True)
 class Estimate:
@@ -110,6 +119,32 @@ class Estimate:
         ):
             raise TypeError("diagnostics must be a tuple of Diagnostic")
         object.__setattr__(self, "provenance", _immutable_map(self.provenance, "provenance"))
+
+    def to_dict(self) -> dict:
+        """Return a portable result without observations or fitted row predictions."""
+        payload = {
+            item.name: thaw(getattr(self, item.name))
+            for item in fields(self)
+            if item.name != "diagnostics"
+        }
+        payload["diagnostics"] = [item.to_dict() for item in self.diagnostics]
+        return {"version": 1, **payload}
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+    @classmethod
+    def from_dict(cls, payload: Mapping) -> Estimate:
+        values = dict(payload)
+        if values.pop("version") != 1:
+            raise ValueError("unsupported estimate version")
+        values["ci"] = tuple(values["ci"])
+        values["diagnostics"] = tuple(Diagnostic.from_dict(item) for item in values["diagnostics"])
+        return cls(**values)
+
+    @classmethod
+    def from_json(cls, serialized: str) -> Estimate:
+        return cls.from_dict(json.loads(serialized))
 
 
 @dataclass(frozen=True, slots=True)

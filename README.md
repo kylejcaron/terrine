@@ -1,8 +1,8 @@
 # terrine
 
-Terrine is a Python package for typed analytical dataset workflows. The initial
-package foundation implements elapsed-time windows and coded errors; dataset
-construction and execution are not yet exposed as supported workflows.
+Terrine is a Python package for typed analytical dataset workflows. Its native
+contracts include exact elapsed windows, coded errors, independent synthetic
+worlds, and baseline-treatment ATE estimation.
 
 ## Install and develop
 
@@ -43,5 +43,9 @@ except TerrineError as error:
     print(error.code)
 ```
 
-Window endpoints represent elapsed durations, not calendar dates. No dataset,
-warehouse, or estimator support is claimed by this initial release foundation.
+Window endpoints represent elapsed durations, not calendar dates.
+
+## Guides
+
+- [Synthetic worlds and independent truth](docs/guides/synthetic-worlds.md)
+- [Native baseline ATE estimation](docs/guides/baseline-estimation.md)

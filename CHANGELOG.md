@@ -14,3 +14,6 @@
 - Bind standard signed ISO fixed-offset catalogs through the public Model, Coverage, and UnitSource workflow without importing unrelated study code eagerly.
 - Preserve aware intraday fixed anchors and their canonical JSON/YAML hashes; refuse nonrepresentable timestamp precision instead of silently narrowing it.
 - Require scalar dimension and roster temporal schemas and unambiguous range/change-point history declarations before data execution.
+- Add standalone cross-fitted IPW, regression-adjustment and AIPW estimators with explicit baseline/weight/precision gates, joint parametric uncertainty, and independent overlap/balance diagnostics.
+- Preserve nanosecond baseline identity without optional dataframe dependencies, reject lossy diagnostic integer casts, verify separation certificates, and project joint inference without dense full-system allocation.
+- Normalize diagnostic log weights after shifting their maximum so large common offsets cannot change balance scores or decisions.
