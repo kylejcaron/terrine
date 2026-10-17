@@ -34,7 +34,7 @@ depends_on = ["terrine._time", "terrine.errors", "terrine.windows"]
 
 [[modules]]
 path = "terrine.temporal"
-depends_on = ["terrine.data", "terrine.errors", "terrine.semantic"]
+depends_on = ["terrine.data", "terrine.errors", "terrine.semantic", "terrine.windows"]
 
 [[modules]]
 path = "terrine.model"

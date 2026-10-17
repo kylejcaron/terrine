@@ -34,6 +34,12 @@ UNSUPPORTED_TRANSFORM = RefusalSpec(
     "Metric transform {transform!r} is declared but cannot be compiled by the temporal engine.",
 )
 
+UNKNOWN_FILTER = RefusalSpec(
+    "terrine.filter.unknown",
+    "Required metric filters are unknown for {failed_count} requested rows. "
+    "Resolve source/dimension history and filter-null semantics before exporting.",
+)
+
 SUPPORTED_TEMPORAL_AGGREGATIONS = frozenset({"sum", "count", "avg_event", "avg_calendar_day"})
 UNSUPPORTED_TEMPORAL_AGGREGATION = RefusalSpec(
     "terrine.metric.unsupported_aggregation",

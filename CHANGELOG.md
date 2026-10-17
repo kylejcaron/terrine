@@ -35,3 +35,5 @@
 - Refuse actual submicrosecond anchor/roster timestamps before publishing narrowed UTC values; preserve microsecond-aligned source timestamps.
 - Preserve legal event key names and identities despite helper-column case collisions, handle wide calendar ranges on nanosecond sources, and reject event facts absent from their bound source with the shared validation refusal.
 - Scope configured event IDs to their analysis unit and align missing-unit refusals between validation and anchor compilation.
+- Add strict native and coherent union/window prefix lookups, including independent repeated cutoffs and null-preserving state.
+- Compute named half-open windows with per-source/unit completeness, exact scale-preserving output and certified Float64 sums, averages and ratios; refuse unknown filters or unrepresentable required results before export.

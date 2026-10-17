@@ -155,8 +155,8 @@ with no value column both counts are event counts. `count` sums events rather
 than nonnull values. `observed_null_count` is a projection of
 `event_count - nonnull_count`, not another independently accumulated count.
 Daily all-null groups have null `sum_value`; prefix arithmetic normalizes this
-to the zero identity without losing the two counts. The eventual window
-consumer distinguishes complete empty intervals, nonempty all-null intervals,
+to the zero identity without losing the two counts. Window aggregation
+distinguishes complete empty intervals, nonempty all-null intervals,
 and incomplete coverage using counts and explicit readiness.
 
 Predicates use SQL three-valued conjunction: known false overrides unknown.
@@ -285,10 +285,11 @@ The internal Float64 fields are `sum_abs_value`, `sum_abs_upper`,
 `numeric_policy="checked_float64_v1"` describes these sufficient states, not
 a completed final-window precision claim.
 
-The consumer selects required endpoint states and calls
+A prefix consumer can validate selected states with
 `validate_float64(..., execute=pinned_executor, source=..., measure=...,
-output=...)` under the **same snapshot** as enrichment, lookup, and export.
-The builder neither opens a transaction nor executes a hidden probe.
+output=...)`. Window aggregation exposes its endpoint and final-result checks
+through `TemporalResult.validate(pinned_executor)`. Checks and export must use
+the **same snapshot**. Neither builder opens a transaction nor executes a hidden probe.
 Refusals contain aggregate failed counts and identifiers only, never customer
 rows, keys, or values. `terrine.temporal.float64_unsupported` identifies a
 missing capability; `terrine.temporal.float64_precision` identifies one of
@@ -303,3 +304,52 @@ finite, nonnegative absolute-error column using
 `numeric_policy="checked_float64_v1"` and `absolute_error_column`; an exact
 output has policy `exact` and no error column. These final-result obligations
 are not replaced by accepting a prefix certificate.
+
+## Exact timestamp windows
+
+The internal `lookup_prefix` compiler supports strict native ASOF and
+`union_window` strategies. Both preserve duplicate requests, return the complete
+state strictly before the cutoff, and distinguish an unmatched state from a
+matched state containing SQL NULL. Repeated lookups of one prefix use distinct
+relation identities, so a second cutoff cannot reuse the first cutoff's state.
+The fallback carries a timestamp marker, then rejoins the original state once;
+it does not independently skip null fields or expand anchors across events.
+
+`aggregate_window` consumes resolved measure-to-prefix mappings and returns a
+lazy `TemporalResult` for a named feature or outcome. It retains original
+anchors and records each output's window, role, observation interval,
+completeness and nullable reason. Event prefixes preserve exact intraday t0;
+day prefixes require both endpoints at the catalog's local midnight.
+For `[t0-1h,t0)`, t0 is excluded; for `[t0,t0+1h)`, t0 is included and the
+right endpoint is excluded.
+
+Readiness intersects every metric source and the unit's optional observation
+interval. Incomplete coverage takes precedence over incomplete observation,
+then cell-level empty/all-null/zero-denominator meanings. Unavailable cells
+retain numeric NULL and their exact reason; checked errors are NULL too.
+Complete empty sums/counts are zero and conversion is false. Nonempty all-null
+facts still count as events and conversion is true, but sums/averages are NULL.
+Unknown required filters in an available window refuse before output.
+
+Exact sums export as lossless decimal values with precision up to 38 and the
+original scale; counts use a checked exact integer representation.
+`terrine.temporal.exact_overflow` refuses a required unrepresentable result,
+not a wide internal prefix whose later window fits. Conversion booleans have
+no numeric precision policy or error column.
+
+Float window subtraction retains both endpoint errors and adds its own outward
+rounding radius. Averages and ratios enclose inputs and all four endpoint
+quotients, then certify the returned quotient against the same fixed final
+tolerance. Exact fractional inputs use the pinned backend's correctly rounded
+canonical decimal-text parser, not an uncertified direct numeric cast.
+A known exact zero denominator is NULL with `zero_denominator`; an uncertain
+interval spanning zero raises `terrine.temporal.float64_precision`. A large
+old sum followed by a tiny window may refuse conservatively. Use genuinely
+exact integer/decimal facts, a supported checked backend, or a smaller
+semantically sufficient history; do not redefine first-event anchors or omit
+required measurement history to evade a refusal.
+
+Run the focused fast boundary/certificate checks with
+`uv run pytest tests/temporal/test_prefix_lookup.py tests/temporal/test_window_aggregates.py`.
+The explicit native quotient/calendar integration tier runs with
+`uv run pytest tests/temporal/test_window_aggregates.py -m slow`.

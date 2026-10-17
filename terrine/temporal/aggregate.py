@@ -1,0 +1,707 @@
+"""Strict half-open windows with deferred observation and arithmetic checks."""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Any, Literal, cast
+
+import ibis
+import ibis.expr.datatypes as dt
+import ibis.expr.types as ir
+import pyarrow as pa
+
+from terrine.data import ColumnMeta
+from terrine.errors import RefusalSpec
+from terrine.semantic.bind import _SCHEMA
+from terrine.semantic.models import BoundMeasure, BoundMetric
+from terrine.semantic.rules import (
+    UNALIGNED_CALENDAR_AVERAGE,
+    UNKNOWN_FILTER,
+    UNSUPPORTED_TEMPORAL_AGGREGATION,
+    UNSUPPORTED_TEMPORAL_KIND,
+    UNSUPPORTED_TRANSFORM,
+    calendar_average_alignment,
+    supports_temporal_aggregation,
+)
+from terrine.semantic.time import boundary_timezone
+from terrine.temporal.daily import _UNKNOWN_FIELDS, _utc_aware, _utc_naive
+from terrine.temporal.lookup import lookup_prefix
+from terrine.temporal.prefix import (
+    FLOAT64_PRECISION,
+    FLOAT64_UNSUPPORTED,
+    _divide,
+    _isfinite,
+    _outward,
+    _require_backend,
+    _subtract,
+    exact_literal,
+    exact_subtract,
+    exact_sum,
+    float64_rounding_radius,
+    float64_tolerance,
+    outward_add,
+    outward_divide,
+    outward_subtract,
+)
+from terrine.temporal.readiness import Readiness
+from terrine.windows import Window
+
+__all__ = ["TemporalResult", "aggregate_window"]
+
+_EXACT_OVERFLOW = RefusalSpec(
+    "terrine.temporal.exact_overflow",
+    "The requested exact result cannot be represented by the native output type. "
+    "Use a supported exact representation or a semantically sufficient window.",
+)
+_DAY_ALIGNMENT = RefusalSpec(
+    "terrine.temporal.unaligned_day_resolution",
+    "Day prefixes require both endpoints at local midnight; use event prefixes "
+    "for arbitrary instants.",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _Failure:
+    column: str
+    refusal: RefusalSpec
+    context: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "context", MappingProxyType(dict(self.context)))
+
+
+@dataclass(frozen=True, slots=True)
+class _Check:
+    table: ibis.Table
+    failures: tuple[_Failure, ...]
+
+    def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None:
+        result = execute(self.table)
+        expected = [failure.column for failure in self.failures]
+        if not isinstance(result, pa.Table):
+            raise TypeError("The supplied temporal executor must return a PyArrow table.")
+        if result.num_rows != 1 or result.column_names != expected:
+            raise ValueError("Temporal validation requires one row of named failed counts.")
+        result.validate(full=True)
+        counts = []
+        for name in expected:
+            column = result[name]
+            if not pa.types.is_string(column.type) and not pa.types.is_large_string(column.type):
+                raise TypeError("Temporal validation counts must be exact integer strings.")
+            value = column[0].as_py()
+            if not isinstance(value, str) or re.fullmatch(r"0|[1-9][0-9]*", value) is None:
+                raise ValueError("Temporal validation received a malformed failed count.")
+            counts.append(int(value))
+        for failure, count in zip(self.failures, counts, strict=True):
+            if count:
+                raise failure.refusal.error(**failure.context, failed_count=count)
+
+
+@dataclass(frozen=True, slots=True)
+class TemporalResult:
+    """A lazy result whose checks must precede export under the caller's snapshot."""
+
+    table: ibis.Table
+    columns: Mapping[str, ColumnMeta]
+    _checks: tuple[_Check, ...] = field(default=(), repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "columns", MappingProxyType(dict(self.columns)))
+        object.__setattr__(self, "_checks", tuple(self._checks))
+
+    def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None:
+        """Run bounded scalar checks using the same pinned executor as final export."""
+        for check in self._checks:
+            check.validate(execute)
+
+
+class _Builder:
+    """Project shared arithmetic intermediates before reusing them."""
+
+    def __init__(self, table: ibis.Table, output: str) -> None:
+        self.table = table
+        self.used = {name.casefold() for name in (*table.columns, output)}
+        self.counter = 0
+        self.numeric: list[tuple[str, RefusalSpec, Mapping[str, Any]]] = []
+
+    def name(self, label: str) -> str:
+        while True:
+            name = f"__terrine_window_{self.counter}_{label}"
+            self.counter += 1
+            if name.casefold() not in self.used:
+                self.used.add(name.casefold())
+                return name
+
+    def put(self, label: str, expression) -> str:
+        name = self.name(label)
+        self.table = self.table.mutate(**{name: expression})
+        return name
+
+    def put_many(self, *expressions: tuple[str, ir.Value]) -> tuple[str, ...]:
+        columns = {self.name(label): expression for label, expression in expressions}
+        self.table = self.table.mutate(**columns)
+        return tuple(columns)
+
+    def col(self, name: str):
+        return self.table[name]
+
+    def flag(self, expression, failure: str, context: Mapping[str, Any]) -> None:
+        name = self.put(failure, expression)
+        self.numeric.append((name, FLOAT64_PRECISION, {**context, "failure": failure}))
+
+    def check(self, flags, *, active=None) -> _Check:
+        values, failures = [], []
+        for index, (name, refusal, context) in enumerate(flags):
+            predicate = self.col(name).fill_null(True)
+            if active is not None:
+                predicate = active & predicate
+            column = f"failed_{index}"
+            count = exact_sum(predicate.ifelse(exact_literal(1), exact_literal(0)))
+            values.append(count.fill_null(exact_literal(0)).cast("string").name(column))
+            failures.append(_Failure(column, refusal, context))
+        return _Check(self.table.aggregate(values), tuple(failures))
+
+
+@dataclass(frozen=True, slots=True)
+class _Quantity:
+    value: str
+    reason: str
+    known_zero: str
+    error: str | None = None
+    scale: int = 0
+    count: bool = False
+
+
+def _scaled_text(coefficient, scale: int):
+    text = coefficient.cast("string")
+    if scale == 0:
+        return text
+    sign = text.startswith("-").ifelse("-", "")
+    digits = text.replace("-", "")
+    digits = digits.lpad(ibis.greatest(digits.length(), scale + 1), "0")
+    return (
+        sign
+        + digits.substr(0, digits.length() - scale)
+        + "."
+        + digits.substr(digits.length() - scale)
+    )
+
+
+def _aligned(timestamp, minutes: int):
+    utc = cast(ir.TimestampValue, _utc_naive("UTC", timestamp))
+    local = utc + ibis.interval(minutes=minutes)
+    midnight = cast(ir.TimestampValue, local.date().cast("timestamp")) - ibis.interval(
+        minutes=minutes
+    )
+    return timestamp == _utc_aware("UTC", midnight)
+
+
+def _float_quantity(builder: _Builder, quantity: _Quantity, context) -> _Quantity:
+    if quantity.error is not None:
+        return quantity
+    _require_backend(builder.table, floating=True)
+    value = builder.put(
+        "parsed", _scaled_text(builder.col(quantity.value), quantity.scale).try_cast("float64")
+    )
+    builder.flag(
+        builder.col(value).isnull() | ~_isfinite(builder.col(value)), "uncertifiable_cast", context
+    )
+    lossless = builder.col(quantity.known_zero)
+    if quantity.scale == 0:
+        coefficient = builder.col(quantity.value)
+        lossless = (coefficient >= exact_literal(-(2**53))) & (coefficient <= exact_literal(2**53))
+    error = builder.put(
+        "cast_error", lossless.ifelse(0.0, float64_rounding_radius(builder.col(value)))
+    )
+    return _Quantity(value, quantity.reason, quantity.known_zero, error)
+
+
+def _tolerance(builder: _Builder, quantity: _Quantity, context) -> None:
+    assert quantity.error is not None
+    value, error = builder.col(quantity.value), builder.col(quantity.error)
+    failures = (
+        ("nonfinite_state", ~_isfinite(value) | value.isnull()),
+        ("bound_overflow", ~_isfinite(error) | error.isnull() | (error < 0.0)),
+        ("tolerance", error > float64_tolerance(value)),
+    )
+    columns = builder.put_many(*failures)
+    for column, (failure, _) in zip(columns, failures, strict=True):
+        builder.numeric.append((column, FLOAT64_PRECISION, {**context, "failure": failure}))
+
+
+def _quotient(
+    builder: _Builder, numerator: _Quantity, denominator: _Quantity, reason: str, context
+) -> _Quantity:
+    """Enclose all four endpoint quotients, then measure error from the returned RN value."""
+    numerator = _float_quantity(builder, numerator, context)
+    denominator = _float_quantity(builder, denominator, context)
+    assert numerator.error is not None and denominator.error is not None
+    ln, un, ld, ud = builder.put_many(
+        (
+            "lower",
+            outward_subtract(
+                builder.col(numerator.value), builder.col(numerator.error), upper=False
+            ),
+        ),
+        ("upper", outward_add(builder.col(numerator.value), builder.col(numerator.error))),
+        (
+            "lower",
+            outward_subtract(
+                builder.col(denominator.value), builder.col(denominator.error), upper=False
+            ),
+        ),
+        ("upper", outward_add(builder.col(denominator.value), builder.col(denominator.error))),
+    )
+    excludes_zero = builder.put("excludes_zero", (builder.col(ld) > 0.0) | (builder.col(ud) < 0.0))
+    builder.flag(~builder.col(excludes_zero), "denominator_interval_zero", context)
+    endpoints = builder.put_many(
+        *(
+            (label, outward_divide(builder.col(n), builder.col(d), upper=upper))
+            for n in (ln, un)
+            for d in (ld, ud)
+            for label, upper in (("quotient_lower", False), ("quotient_upper", True))
+        )
+    )
+    lower, upper, value = builder.put_many(
+        ("quotient_min", ibis.least(*(builder.col(n) for n in endpoints[::2]))),
+        ("quotient_max", ibis.greatest(*(builder.col(n) for n in endpoints[1::2]))),
+        ("quotient", _divide(builder.col(numerator.value), builder.col(denominator.value))),
+    )
+    left_error, right_error = builder.put_many(
+        ("left_error", outward_subtract(builder.col(value), builder.col(lower))),
+        ("right_error", outward_subtract(builder.col(upper), builder.col(value))),
+    )
+    error, known_zero = builder.put_many(
+        (
+            "quotient_error",
+            _outward(
+                ibis.greatest(builder.col(left_error).abs(), builder.col(right_error).abs()), True
+            ),
+        ),
+        ("quotient_zero", builder.col(numerator.known_zero) & builder.col(excludes_zero)),
+    )
+    # Zero divided by a finite nonzero value is exact; no arithmetic interval is needed.
+    error = builder.put("quotient_error", builder.col(known_zero).ifelse(0.0, builder.col(error)))
+    builder.flag(
+        ~_isfinite(builder.col(lower)) | ~_isfinite(builder.col(upper)), "bound_overflow", context
+    )
+    result = _Quantity(value, reason, known_zero, error)
+    _tolerance(builder, result, context)
+    return result
+
+
+def _component(
+    builder: _Builder,
+    measure: BoundMeasure,
+    start: Mapping[str, str],
+    end: Mapping[str, str],
+    *,
+    days: int,
+    conversion: bool,
+    context,
+) -> _Quantity:
+    zero = exact_literal(0)
+    event_count = builder.put(
+        "events", exact_subtract(builder.col(end["event_count"]), builder.col(start["event_count"]))
+    )
+    nonnull_count = builder.put(
+        "nonnull",
+        exact_subtract(builder.col(end["nonnull_count"]), builder.col(start["nonnull_count"])),
+    )
+    empty = builder.put("empty", builder.col(event_count) == zero)
+    all_null = builder.put(
+        "all_null", (builder.col(event_count) > zero) & (builder.col(nonnull_count) == zero)
+    )
+    no_reason = ibis.null().cast("string")
+    reason = builder.put(
+        "reason",
+        no_reason
+        if conversion or measure.aggregation == "count"
+        else builder.col(all_null).ifelse(
+            "all_values_null",
+            (
+                builder.col(empty).ifelse("no_observations", no_reason)
+                if measure.aggregation == "avg_event"
+                else no_reason
+            ),
+        ),
+    )
+    if conversion:
+        value = builder.put("converted", builder.col(event_count) > zero)
+        return _Quantity(value, reason, empty)
+    if measure.aggregation == "count":
+        return _Quantity(event_count, reason, empty, count=True)
+    floating = builder.col(end["sum_value"]).type().is_floating()
+    sums = []
+    for endpoint in (start, end):
+        # A matched all-null prefix has the mathematical sum zero, not a missing state.
+        count = builder.col(endpoint["nonnull_count"])
+        sums.append(
+            builder.put(
+                "endpoint_sum",
+                (count == zero).ifelse(
+                    0.0 if floating else zero, builder.col(endpoint["sum_value"])
+                ),
+            )
+        )
+    if floating:
+        history_flags = []
+        for name, failure in (
+            ("float64_conformance_failure", None),
+            ("float64_nonfinite_input", "nonfinite_input"),
+            ("float64_nonfinite_state", "nonfinite_state"),
+            ("float64_count_limit", "count_limit"),
+            ("float64_bound_overflow", "bound_overflow"),
+        ):
+            flag = builder.put(
+                "endpoint_flag",
+                ~builder.col(empty)
+                & (
+                    builder.col(start[name]).fill_null(True)
+                    | builder.col(end[name]).fill_null(True)
+                ),
+            )
+            history_flags.append(flag)
+            if failure is None:
+                builder.numeric.append(
+                    (
+                        flag,
+                        FLOAT64_UNSUPPORTED,
+                        {
+                            "backend": "duckdb",
+                            "capability": "execution-thread RN binary64 and gradual underflow",
+                            **context,
+                        },
+                    )
+                )
+            else:
+                builder.numeric.append((flag, FLOAT64_PRECISION, {"failure": failure, **context}))
+        value = builder.put(
+            "sum",
+            builder.col(empty).ifelse(0.0, _subtract(builder.col(sums[1]), builder.col(sums[0]))),
+        )
+        errors = []
+        for endpoint in (start, end):
+            errors.append(
+                builder.put(
+                    "endpoint_error",
+                    (builder.col(endpoint["nonnull_count"]) == zero).ifelse(
+                        0.0, builder.col(endpoint["prefix_error"])
+                    ),
+                )
+            )
+        valid_history = ibis.literal(True)
+        for flag in history_flags:
+            valid_history = valid_history & ~builder.col(flag)
+        known_zero = builder.put(
+            "sum_zero",
+            builder.col(empty)
+            | (
+                (builder.col(sums[0]) == builder.col(sums[1]))
+                & _isfinite(builder.col(sums[0]))
+                & _isfinite(builder.col(sums[1]))
+                & (builder.col(errors[0]) == 0.0)
+                & (builder.col(errors[1]) == 0.0)
+                & valid_history
+            ),
+        )
+        endpoint_error = builder.put(
+            "endpoint_errors", outward_add(builder.col(errors[0]), builder.col(errors[1]))
+        )
+        radius = builder.put("subtraction_radius", float64_rounding_radius(builder.col(value)))
+        error = builder.put(
+            "sum_error",
+            builder.col(known_zero).ifelse(
+                0.0, outward_add(builder.col(endpoint_error), builder.col(radius))
+            ),
+        )
+        quantity = _Quantity(value, reason, known_zero, error)
+        _tolerance(builder, quantity, context)
+    else:
+        value = builder.put("sum", exact_subtract(builder.col(sums[1]), builder.col(sums[0])))
+        known_zero = builder.put("sum_zero", builder.col(value) == zero)
+        dtype = dt.dtype(measure.value_type)
+        scale = 0
+        if isinstance(dtype, dt.Decimal):
+            assert dtype.scale is not None
+            scale = dtype.scale
+        quantity = _Quantity(value, reason, known_zero, scale=scale)
+    if measure.aggregation in {"avg_event", "avg_calendar_day"}:
+        divisor = (
+            nonnull_count
+            if measure.aggregation == "avg_event"
+            else builder.put("days", exact_literal(days))
+        )
+        divisor_zero = builder.put("divisor_zero", builder.col(divisor) == zero)
+        denominator = _Quantity(divisor, reason, divisor_zero, count=True)
+        quantity = _quotient(builder, quantity, denominator, reason, context)
+    return quantity
+
+
+def aggregate_window(
+    anchors: ibis.Table,
+    metric: BoundMetric,
+    measure_states: Mapping[BoundMeasure, ibis.Table],
+    window: Window,
+    readiness: Readiness,
+    *,
+    boundary: str,
+    output: str,
+    role: str,
+    unit_column: str = "unit",
+    resolution: Literal["day", "event"] = "event",
+    strategy: Literal["native", "union_window"] = "native",
+) -> TemporalResult:
+    """Build exact endpoint differences and defer every data-dependent refusal.
+
+    At s=t0+start and e=t0+end, P(e)-P(s) measures exactly [s,e).
+    Float sums use E=RU(E_s+E_e+R(fl(S_e-S_s))). Fractional results
+    enclose both inputs and all four endpoint quotients before reapplying the
+    fixed final-result tolerance. Exact coefficients never multiply or divide.
+    """
+    if not isinstance(window, Window):
+        raise TypeError("window must be a Window")
+    if resolution not in {"day", "event"}:
+        raise ValueError("resolution must be day or event")
+    if strategy not in {"native", "union_window"}:
+        raise ValueError("strategy must be native or union_window")
+    if not isinstance(output, str) or not output or not isinstance(role, str) or not role:
+        raise ValueError("output and role must be nonempty names")
+    if output.casefold() in {name.casefold() for name in anchors.columns}:
+        raise ValueError("output must not replace an existing anchor field")
+    if metric.kind not in {"mean", "conversion", "ratio"}:
+        raise UNSUPPORTED_TEMPORAL_KIND.error(kind=metric.kind)
+    if metric.transforms:
+        raise UNSUPPORTED_TRANSFORM.error(transform=type(metric.transforms[0]).__name__)
+    expected = 2 if metric.kind == "ratio" else 1
+    if len(metric.measures) != expected:
+        raise ValueError("metric kind has an invalid number of measures")
+    for measure in metric.measures:
+        if not supports_temporal_aggregation(measure.aggregation):
+            raise UNSUPPORTED_TEMPORAL_AGGREGATION.error(aggregation=measure.aggregation)
+        if measure.value_type is None:
+            raise ValueError("measure_states requires resolved measure descriptors")
+        if measure not in measure_states:
+            raise ValueError("a resolved metric measure has no supplied prefix state")
+    for name in (unit_column, "anchor_id", "t0"):
+        if name not in anchors.columns:
+            raise _SCHEMA.error(field="anchor", column=name)
+    if not anchors.t0.type().is_timestamp() or anchors.t0.type().timezone != "UTC":
+        raise _SCHEMA.error(field="UTC-aware anchor", column="t0")
+    for name in ("_observed_from", "_observed_until"):
+        if name in anchors.columns:
+            dtype = anchors[name].type()
+            if not dtype.is_timestamp() or dtype.timezone != "UTC":
+                raise _SCHEMA.error(field="UTC-aware observation", column=name)
+    offset = boundary_timezone(boundary).utcoffset(None)
+    minutes = (offset.days * 86400 + offset.seconds) // 60
+    calendars = [m for m in metric.measures if m.aggregation == "avg_calendar_day"]
+    domain_context = {
+        "metric": metric.name,
+        "output": output,
+        "window_start": window.start,
+        "window_end": window.end,
+        "boundary": boundary,
+        "phase": "pre_output",
+    }
+    for measure in calendars:
+        if calendar_average_alignment(window, anchor=None, day_boundary=boundary) == "unaligned":
+            raise UNALIGNED_CALENDAR_AVERAGE.error(measure=measure.fact, **domain_context)
+    builder = _Builder(anchors, output)
+    start = builder.put("start", anchors.t0 + ibis.interval(seconds=window.start))
+    end = builder.put("end", builder.table.t0 + ibis.interval(seconds=window.end))
+    checks: list[_Check] = []
+    if calendars or resolution == "day":
+        invalid = builder.put(
+            "unaligned",
+            ~(_aligned(builder.col(start), minutes) & _aligned(builder.col(end), minutes)),
+        )
+        refusal = UNALIGNED_CALENDAR_AVERAGE if calendars else _DAY_ALIGNMENT
+        context = {**domain_context, "measure": calendars[0].fact} if calendars else domain_context
+        checks.append(builder.check([(invalid, refusal, context)]))
+    coverages = [readiness.for_fact(measure.source_name) for measure in metric.measures]
+    source_start = max(coverage.start for coverage in coverages)
+    source_end = min(coverage.end_exclusive for coverage in coverages)
+    source_complete = builder.put(
+        "source_complete",
+        (builder.col(start) >= ibis.literal(source_start))
+        & (builder.col(end) <= ibis.literal(source_end)),
+    )
+    observed_from = ibis.literal(source_start)
+    observed_until = ibis.literal(source_end)
+    observation_complete = cast(ir.BooleanValue, ibis.literal(True))
+    if "_observed_from" in anchors.columns:
+        bound = builder.table._observed_from
+        observed_from = ibis.greatest(observed_from, bound.fill_null(observed_from))
+        observation_complete = observation_complete & (
+            bound.isnull() | (builder.col(start) >= bound)
+        )
+    if "_observed_until" in anchors.columns:
+        bound = builder.table._observed_until
+        observed_until = ibis.least(observed_until, bound.fill_null(observed_until))
+        observation_complete = observation_complete & (bound.isnull() | (builder.col(end) <= bound))
+    observed_from = builder.put("observed_from", observed_from)
+    observed_until = builder.put("observed_until", observed_until)
+    available = builder.put("complete", builder.col(source_complete) & observation_complete)
+    unavailable = builder.put(
+        "unavailable_reason",
+        (~builder.col(source_complete)).ifelse(
+            "incomplete_coverage",
+            (~observation_complete).ifelse(
+                ibis.literal("incomplete_observation"), ibis.null().cast("string")
+            ),
+        ),
+    )
+    quantities = []
+    unknown_flags = []
+    for measure in metric.measures:
+        context = {"source": measure.source_name, "measure": measure.fact, "output": output}
+        first = lookup_prefix(
+            builder.table,
+            measure_states[measure],
+            unit_column=unit_column,
+            timestamp_column=start,
+            strategy=strategy,
+        )
+        second = lookup_prefix(
+            first.table,
+            measure_states[measure],
+            unit_column=unit_column,
+            timestamp_column=end,
+            strategy=strategy,
+        )
+        builder.table = second.table
+        builder.used.update(name.casefold() for name in builder.table.columns)
+        for field_name in _UNKNOWN_FIELDS:
+            difference = builder.put(
+                field_name,
+                exact_subtract(
+                    builder.col(second.columns[field_name]), builder.col(first.columns[field_name])
+                ),
+            )
+            if field_name == "unknown_filter_count":
+                flag = builder.put("unknown_filter", builder.col(difference) > exact_literal(0))
+                unknown_flags.append((flag, UNKNOWN_FILTER, context))
+        quantities.append(
+            _component(
+                builder,
+                measure,
+                first.columns,
+                second.columns,
+                days=(window.end - window.start) // 86400,
+                conversion=metric.kind == "conversion",
+                context=context,
+            )
+        )
+    if metric.kind == "ratio":
+        numerator, denominator = quantities
+        reason = builder.put(
+            "ratio_reason",
+            builder.col(numerator.reason)
+            .notnull()
+            .ifelse(
+                builder.col(numerator.reason),
+                builder.col(denominator.reason)
+                .notnull()
+                .ifelse(
+                    builder.col(denominator.reason),
+                    builder.col(denominator.known_zero).ifelse(
+                        "zero_denominator", ibis.null().cast("string")
+                    ),
+                ),
+            ),
+        )
+        quantity = _quotient(
+            builder,
+            numerator,
+            denominator,
+            reason,
+            {
+                "source": ",".join(m.source_name for m in metric.measures),
+                "measure": ",".join(m.fact for m in metric.measures),
+                "output": output,
+            },
+        )
+    else:
+        quantity = quantities[0]
+    final_reason = builder.put(
+        "reason",
+        builder.col(available).ifelse(builder.col(quantity.reason), builder.col(unavailable)),
+    )
+    evaluated = builder.put("evaluated", builder.col(final_reason).isnull())
+    if unknown_flags:
+        checks.append(builder.check(unknown_flags, active=builder.col(available)))
+    exact_output = metric.kind != "conversion" and quantity.error is None
+    if exact_output:
+        target = "int64" if quantity.count else dt.Decimal(38, quantity.scale)
+        value = builder.put(
+            "exact_output",
+            _scaled_text(builder.col(quantity.value), quantity.scale).try_cast(target),
+        )
+        overflow = builder.put(
+            "exact_overflow",
+            builder.col(value).isnull()
+            | (
+                (builder.col(quantity.value) < exact_literal(0))
+                if quantity.count
+                else ibis.literal(False)
+            ),
+        )
+        checks.append(
+            builder.check(
+                [
+                    (
+                        overflow,
+                        _EXACT_OVERFLOW,
+                        {
+                            "source": metric.measures[0].source_name,
+                            "measure": metric.measures[0].fact,
+                            "output": output,
+                        },
+                    )
+                ],
+                active=builder.col(evaluated),
+            )
+        )
+    else:
+        value = quantity.value
+    if builder.numeric:
+        checks.append(builder.check(builder.numeric, active=builder.col(evaluated)))
+    public_value = builder.col(evaluated).ifelse(
+        builder.col(value), ibis.null().cast(builder.col(value).type())
+    )
+    error_column = None
+    if quantity.error is not None:
+        error_column = builder.put(
+            "absolute_error",
+            builder.col(evaluated).ifelse(builder.col(quantity.error), ibis.null().cast("float64")),
+        )
+    result = builder.table.select(
+        *anchors.columns,
+        public_value.name(output),
+        observed_from,
+        observed_until,
+        available,
+        final_reason,
+        *([error_column] if error_column else []),
+    )
+    meta = ColumnMeta(
+        window=window,
+        role=role,
+        observed_from_column=observed_from,
+        observed_until_column=observed_until,
+        complete_column=available,
+        reason_column=final_reason,
+        numeric_policy=(
+            None
+            if metric.kind == "conversion"
+            else "checked_float64_v1"
+            if quantity.error is not None
+            else "exact"
+        ),
+        absolute_error_column=error_column,
+    )
+    return TemporalResult(result, {output: meta}, tuple(checks))
