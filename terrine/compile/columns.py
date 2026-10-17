@@ -42,6 +42,14 @@ _RESERVED_NAME = RefusalSpec(
     "Study output name {name!r} is reserved.",
 )
 _RESERVED = {"unit", "anchor_id", "t0", "treatment", "_observed_from", "_observed_until"}
+_ANCHOR_KEY = ("unit", "anchor_id")
+_META_COLUMNS = (
+    "observed_from_column",
+    "observed_until_column",
+    "complete_column",
+    "reason_column",
+    "absolute_error_column",
+)
 
 
 def _validate_names(design: Design) -> None:
@@ -123,7 +131,7 @@ def compile_columns(design: Design, model: Model) -> CompiledStudy:
         output = f"__terrine_value_{len(values)}"
         if isinstance(node, AttributeAsOf):
             result = compile_asof(
-                table,
+                anchors.table,
                 model,
                 unit=design.unit,
                 attribute=node.attribute,
@@ -174,7 +182,7 @@ def compile_columns(design: Design, model: Model) -> CompiledStudy:
                 resolved.append(measure)
                 supplied[measure] = states[key]
             result = aggregate_window(
-                table,
+                anchors.table,
                 replace(metric, measures=tuple(resolved)),
                 supplied,
                 node.window,
@@ -187,7 +195,24 @@ def compile_columns(design: Design, model: Model) -> CompiledStudy:
             meta = result.columns[output]
             cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
             strategy = f"sparse_{resolution}_prefix/native"
-        table = result.table
+        # Each value derives from the candidates independently, then joins back by
+        # null-safe anchor identity, so query nesting does not grow with column count.
+        # Internal support names are only unique within one result; rename them here.
+        renamed = {
+            field: f"{output}_{field.removesuffix('_column')}"
+            for field in _META_COLUMNS
+            if getattr(meta, field) is not None
+        }
+        right = result.table.select(
+            **{f"{output}_key_{key}": result.table[key] for key in _ANCHOR_KEY},
+            **{output: result.table[output]},
+            **{name: result.table[getattr(meta, field)] for field, name in renamed.items()},
+        )
+        meta = replace(meta, **renamed)
+        table = table.left_join(
+            right,
+            [table[key].identical_to(right[f"{output}_key_{key}"]) for key in _ANCHOR_KEY],
+        )
         checks.append(result)
         compiled = CompiledValue(output, meta, cutoff)
         values[node] = compiled

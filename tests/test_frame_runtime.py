@@ -34,6 +34,18 @@ def _model(native_inputs, *, invalid_timestamp=False):
     )
 
 
+@pytest.mark.slow
+def test_many_window_columns_compile_and_export_together(native_inputs):
+    outcomes = {
+        f"sessions_{days}d": agg("sessions", window=("0d", f"{days}d")) for days in range(1, 7)
+    }
+    result = _design(outcomes=outcomes).build(_model(native_inputs)).materialize()
+    rows = result.table.sort_by("unit").to_pylist()
+    assert [row["unit"] for row in rows] == ["a", "b"]
+    assert all(row[name] == 1 for row in rows for name in outcomes)
+    assert all(row[result.columns[name].complete_column] for row in rows for name in outcomes)
+
+
 def test_non_utc_execution_preserves_instants_and_exports_utc_batches(native_inputs):
     _, con = native_inputs
     con.raw_sql("SET TimeZone = 'America/New_York'")
