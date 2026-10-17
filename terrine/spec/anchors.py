@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime
 
 from terrine.windows import seconds
 
@@ -39,12 +39,6 @@ def _range_bound(value: date | datetime | str | None) -> date | datetime | None:
     if isinstance(value, date):
         return value
     raise TypeError("range bounds must be date, datetime, ISO string, or None")
-
-
-def _ordinal(value: date | datetime) -> datetime:
-    if isinstance(value, datetime):
-        return value.astimezone(UTC)
-    return datetime.combine(value, time.min, UTC)
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -105,7 +99,8 @@ class AnchorRange:
         if (
             start_bound is not None
             and end_bound is not None
-            and _ordinal(start_bound) >= _ordinal(end_bound)
+            and isinstance(start_bound, datetime) == isinstance(end_bound, datetime)
+            and start_bound >= end_bound
         ):
             raise ValueError("range start must precede its exclusive end")
         object.__setattr__(self, "start", start_bound)

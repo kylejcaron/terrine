@@ -89,16 +89,16 @@ def test_anchor_range_preserves_date_and_aware_instant_tags():
         unit="user",
         anchor=FixedDate("2025-03-01"),
         anchor_range=AnchorRange(
-            start=date(2025, 3, 1), end=datetime(2025, 4, 1, 0, 30, tzinfo=UTC)
+            start=datetime(2025, 3, 1, 1, tzinfo=UTC), end=date(2025, 3, 1)
         ),
     )
     loaded = from_yaml(to_yaml(spec))
     assert loaded == spec
     assert loaded.anchor_range is not None
-    assert isinstance(loaded.anchor_range.start, date) and not isinstance(
-        loaded.anchor_range.start, datetime
+    assert loaded.anchor_range.start == datetime(2025, 3, 1, 1, tzinfo=UTC)
+    assert isinstance(loaded.anchor_range.end, date) and not isinstance(
+        loaded.anchor_range.end, datetime
     )
-    assert loaded.anchor_range.end == datetime(2025, 4, 1, 0, 30, tzinfo=UTC)
 
 
 def test_anchor_range_requires_ordered_bounds_and_aware_instants():

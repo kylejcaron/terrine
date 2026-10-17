@@ -26,6 +26,8 @@ print(spec.spec_hash)
 
 `FixedDate`, `EventAnchor`, and `Schedule` are the supported anchor variants. Schedules use a positive elapsed `every` duration and an exclusive end date. `AnchorRange` is half-open, needs at least one bound, and accepts calendar dates or aware timestamps; timestamps are normalized to UTC, while dates remain tagged dates. A naive timestamp is refused. A date is a calendar-day bound, not a midnight instant: its eventual interpretation uses the model Catalog's declared day boundary.
 
+Mixed date/timestamp bounds are ordered only after catalog binding resolves the calendar-day boundary.
+
 `agg(metric, window=(start, end))` stores a half-open interval as signed integral seconds using the shared `s`/`m`/`h`/`d`/`w` duration parser. Thus equivalent elapsed forms have identical specs and hashes, e.g. `60m` and `1h`. `asof(attribute, before=...)` stores an exact signed-second strict cutoff, including zero. Predicate constructors `gt`, `eq`, `is_null`, and `all_of` form a separate typed predicate tree. Comparands are finite JSON scalars only; Python functions and other runtime objects are never serialized.
 
 `to_yaml` and `to_json` return portable text. `from_yaml` and `from_json` accept text or bytes and only construct the known data types. They reject duplicate keys, unknown schema versions, unknown node tags, extra fields, unsafe YAML tags, and invalid node data. Canonical JSON recursively sorts mapping keys, uses compact UTF-8 JSON, and is the basis of `Design.spec_hash`; map insertion order does not affect a design hash.
