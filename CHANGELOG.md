@@ -25,3 +25,8 @@
 - Require versioned dimension cutoff checks even when a property's value is annotated static.
 - Add optional published semantic-definition import through Model.from_increment without making increment a native dataset dependency or inferring experiment assignment.
 - Preserve scoped properties and shared dimensions across imported sources, re-admit source SQL, and reject unsupported definitions with coded errors.
+- Build sparse daily and equal-time cumulative states without dense unit calendars, preserving exact integer/decimal coefficients and three-valued filter provenance.
+- Certify Float64 cumulative sums with outward error bounds and explicit snapshot-backed checks; retain original leaf counts and refuse nonfinite or uncertifiable arithmetic.
+- Keep selected unit identity separate from state metadata and compare exact numeric filters without narrowing source values, including native signed 128-bit inputs.
+- Preserve outward overflow failures and exact pre-epoch nanosecond day membership; retain separate nonfinite-filter provenance rather than admitting NaN through native ordering.
+- Project certificate intermediates once so conservative overflow checks do not cause exponential SQL expansion.

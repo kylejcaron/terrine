@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: uv sync --group dev --extra duckdb --extra pandas
-      - run: make check TESTS="tests/test_windows.py tests/test_errors.py tests/test_metadata.py tests/spec tests/semantic tests/temporal/test_semantic_binding.py tests/temporal/test_readiness.py tests/temporal/test_scd2_attributes.py tests/simulate tests/reference/test_baseline.py tests/fixtures/test_baseline.py tests/estimate tests/diagnostics"
+      - run: make check TESTS="tests/test_windows.py tests/test_errors.py tests/test_metadata.py tests/spec tests/semantic tests/temporal/test_semantic_binding.py tests/temporal/test_readiness.py tests/temporal/test_scd2_attributes.py tests/temporal/test_sparse_state.py tests/simulate tests/reference/test_baseline.py tests/fixtures/test_baseline.py tests/estimate tests/diagnostics"
       - run: uv build
 
   increment-compatibility:
