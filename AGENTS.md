@@ -61,6 +61,17 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
 
 # Contributor guidelines
 
+## Development commands
+
+- `uv sync --extra duckdb --extra pandas --extra polars` installs the local
+  reference backend and dataframe extras with development dependencies.
+- `make check TESTS="<affected paths>"` runs static gates and focused tests.
+  `make fmt` formats source/tests; `uv build` builds local distributions.
+- `make test-slow TESTS=...` and `make test-calibration TESTS=...` select
+  expensive tiers explicitly. `make complexity` reports without gating.
+- Initial warm fast-test feedback budget: 10 seconds; investigate sustained
+  regressions rather than adding wall-clock assertions. Measure at milestones.
+
 ## Tests and validation
 
 - Keep the smallest permanent suite that protects meaningful consumer-visible

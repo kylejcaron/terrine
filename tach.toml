@@ -1,0 +1,21 @@
+source_roots = ["."]
+
+[[modules]]
+path = "terrine"
+depends_on = ["terrine.errors", "terrine.windows"]
+
+[[modules]]
+path = "terrine.errors"
+depends_on = []
+
+[[modules]]
+path = "terrine.windows"
+depends_on = ["terrine.errors"]
+
+[[modules]]
+path = "terrine.data"
+depends_on = ["terrine.errors", "terrine.windows"]
+
+[[modules]]
+path = "terrine.results"
+depends_on = ["terrine.errors"]

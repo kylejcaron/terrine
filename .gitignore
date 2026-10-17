@@ -1,3 +1,15 @@
 .kata.local.toml
 # roborev snapshots
 /.roborev/
+
+# Python environments and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.hypothesis/
+.ruff_cache/
+.ty/
+dist/
+build/
+*.egg-info/

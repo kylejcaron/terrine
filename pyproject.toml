@@ -1,0 +1,73 @@
+[project]
+name = "terrine"
+version = "0.1.0"
+description = "Typed dataset construction and analytical workflows"
+readme = "README.md"
+requires-python = ">=3.13,<3.15"
+dependencies = [
+    "ibis-framework>=10,<13",
+    "pydantic>=2,<3",
+    "PyYAML>=6,<7",
+    "sqlglot>=25,<30",
+    "pyarrow>=18,<24",
+    "numpy>=2,<3",
+    "scipy>=1.14,<2",
+]
+
+[project.optional-dependencies]
+duckdb = ["duckdb>=1,<2"]
+pandas = ["pandas>=2.2,<4"]
+polars = ["polars>=1,<2"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<9",
+    "hypothesis>=6,<7",
+    "pytest-xdist>=3,<4",
+    "ruff>=0.11,<1",
+    "ty>=0.0.1a0",
+    "tach>=0.20,<1",
+    "vulture>=2.14,<3",
+    "pydoclint>=0.6,<1",
+    "complexipy>=4,<6",
+    "prek>=0.2,<1",
+]
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["terrine"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --durations=10 -m 'not slow and not parameter_recovery'"
+markers = [
+    "slow: tests excluded from the ordinary suite",
+    "parameter_recovery: simulation-based parameter-recovery checks",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ty.environment]
+python-version = "3.13"
+
+
+[tool.vulture]
+paths = ["terrine"]
+min_confidence = 80
+
+[tool.pydoclint]
+style = "google"
+
+[tool.complexipy]
+max-complexity = 15
