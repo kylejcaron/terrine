@@ -6,7 +6,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Annotated, Any, Literal, Self
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -18,6 +18,10 @@ from pydantic import (
     field_serializer,
     model_validator,
 )
+
+if TYPE_CHECKING:
+    from terrine.data import UnitSource
+    from terrine.execution.inputs import PhysicalRelationId, RelationHandle, VerifiedInputBinding
 
 
 def _json_value(value: object) -> bool:
@@ -225,6 +229,26 @@ class Catalog(_Record):
 
         boundary_timezone(self.day_boundary)
         return self
+
+    def required_relations(
+        self, con: Any, *, units: Mapping[str, UnitSource] | None = None
+    ) -> tuple[PhysicalRelationId, ...]:
+        """Discover the exact supported input frontier without reading source rows."""
+        from terrine.execution.inputs import required_relations
+
+        return required_relations(self, con, units=units)
+
+    def verify_immutable_inputs(
+        self,
+        con: Any,
+        *,
+        units: Mapping[str, UnitSource] | None = None,
+        relations: Mapping[PhysicalRelationId, RelationHandle],
+    ) -> VerifiedInputBinding:
+        """Verify live issued inputs; strings and provenance receipts are not authority."""
+        from terrine.execution.inputs import verify_immutable_inputs
+
+        return verify_immutable_inputs(self, con, units=units, relations=relations)
 
 
 @dataclass(frozen=True, slots=True)

@@ -314,3 +314,50 @@ def test_missing_validity_column_has_shared_schema_refusal():
             lookup()
         assert error.value.code == "terrine.semantic.schema_mismatch"
         assert error.value.context["column"] == "ends"
+
+
+@pytest.mark.parametrize("count", [[], [None], [-1], [0.5], [0, 0], [True]])
+def test_history_validation_refuses_malformed_aggregate_counts(connection, count):
+    import pyarrow as pa
+
+    history = connection.sql("SELECT NULL::VARCHAR AS account_id, 'gold' AS tier_value")
+    with pytest.raises(TerrineError) as error:
+        validate_history(
+            history, _dimension(), execute=lambda _: pa.table({"__terrine_count": count})
+        )
+    assert error.value.code == "terrine.temporal.malformed_history"
+
+
+def test_strict_history_preserves_nanosecond_changes_and_wide_utc_cutoffs(connection):
+    history = connection.sql("""
+        SELECT 'a' AS account_id, ts::TIMESTAMP_NS AS changed, tier AS tier_value
+        FROM (VALUES
+            ('1969-12-31 23:59:59.999999999', 'negative'),
+            ('2025-01-02 11:59:59.999999999', 'before'),
+            ('2025-01-02 12:00:00.000000000', 'at'),
+            ('2025-01-02 12:00:00.000000001', 'after')
+        ) AS h(ts, tier)
+    """)
+    points = connection.sql("""
+        SELECT request, 'a' AS account, ts::TIMESTAMPTZ AS cutoff
+        FROM (VALUES
+            (1, '1600-01-01'), (2, '1970-01-01'),
+            (3, '2025-01-02 12:00:00+00'), (4, '2500-01-01'), (5, NULL)
+        ) AS p(request, ts)
+    """)
+    result = attribute_asof(
+        points,
+        history,
+        _dimension(validity=BoundValidity(None, None, "changed")),
+        "tier",
+        unit_column="account",
+        cutoff_column="cutoff",
+    )
+    rows = connection.to_pyarrow(result.order_by("request")).to_pylist()
+    assert [(r["__terrine_attribute_value"], r["__terrine_attribute_found"]) for r in rows] == [
+        (None, False),
+        ("negative", True),
+        ("before", True),
+        ("after", True),
+        (None, False),
+    ]

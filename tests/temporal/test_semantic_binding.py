@@ -340,14 +340,20 @@ def test_dimension_and_roster_temporal_columns_require_scalar_timestamps(
         }
     else:
         units["user"] = UnitSource(table="roster", key="user_id", **{column: column})
-    with pytest.raises(TerrineError) as error:
-        Model.from_catalog(
-            Catalog.model_validate(definition),
-            con=_SchemaConnection(ibis.table(schema, name="events")),
-            readiness={"events": Coverage("2025-03-01", "2025-03-31")},
-            units=units,
-        )
-    assert error.value.code == "terrine.semantic.schema_mismatch"
+    con = ibis.duckdb.connect()
+    try:
+        for name in ("events", "accounts", "roster"):
+            con.create_table(name, schema=schema)
+        with pytest.raises(TerrineError) as error:
+            Model.from_catalog(
+                Catalog.model_validate(definition),
+                con=con,
+                readiness={"events": Coverage("2025-03-01", "2025-03-31")},
+                units=units,
+            )
+        assert error.value.code == "terrine.semantic.schema_mismatch"
+    finally:
+        con.disconnect()
 
 
 class _SchemaConnection:
@@ -401,14 +407,19 @@ def test_coverage_uses_catalog_fixed_boundary_and_readiness_is_per_source(
         }
     )
     table = ibis.memtable({"ts": [datetime(2025, 3, 1, tzinfo=UTC)], "user_id": ["u"]})
-    model = Model.from_catalog(
-        catalog,
-        con=_SchemaConnection(table),
-        readiness={"events": Coverage("2025-03-01", "2025-03-31")},
-    )
-    coverage = model.readiness.for_fact("events")
-    assert coverage.start == expected_start
-    assert coverage.end_exclusive == expected_end
-    assert model.day_boundary(Coverage("2025-03-01", "2025-03-31").start) == coverage.start
-    with pytest.raises(AttributeError):
-        model.model_hash = "drift"  # ty: ignore[invalid-assignment]
+    con = ibis.duckdb.connect()
+    try:
+        con.create_table("events", table)
+        model = Model.from_catalog(
+            catalog,
+            con=con,
+            readiness={"events": Coverage("2025-03-01", "2025-03-31")},
+        )
+        coverage = model.readiness.for_fact("events")
+        assert coverage.start == expected_start
+        assert coverage.end_exclusive == expected_end
+        assert model.day_boundary(Coverage("2025-03-01", "2025-03-31").start) == coverage.start
+        with pytest.raises(AttributeError):
+            model.model_hash = "drift"  # ty: ignore[invalid-assignment]
+    finally:
+        con.disconnect()

@@ -466,4 +466,14 @@ def test_aware_timestamp_identity_is_timezone_and_unrelated_column_independent(n
         assert identities[0] == identities[1]
     native_model.con.raw_sql("ALTER TABLE events ADD COLUMN _ANCHOR_IDENTITY_TEXT VARCHAR")
     native_model.con.raw_sql("UPDATE events SET _ANCHOR_IDENTITY_TEXT = 'unrelated'")
-    assert candidate_rows(design, model)[0]["anchor_id"] == identities[-1]
+    with pytest.raises(TerrineError) as error:
+        candidate_rows(design, model)
+    assert error.value.code == "terrine.execution.invalid_input_binding"
+    rebound = Model.from_catalog(
+        model.catalog,
+        con=model.con,
+        readiness=model.readiness,
+        units=model.units,
+        event_ids=model.event_ids,
+    )
+    assert candidate_rows(design, rebound)[0]["anchor_id"] == identities[-1]

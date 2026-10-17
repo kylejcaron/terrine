@@ -49,3 +49,15 @@ Both lookup entry points reject missing declared validity columns with
 `terrine.semantic.schema_mismatch` before constructing a join. Correct the
 history relation or its declared column mapping; neither entry point substitutes
 an untyped backend exception for this refusal.
+
+Study composition also checks observation completeness, not just whether a row
+matched. Carried inline/derived change-point state requires continuous declared
+source and unit observation from its matched timestamp through the cutoff. A
+record before coverage starts is unavailable even if its derived interval spans
+the cutoff. Re-observation within coverage or an explicitly authoritative
+`valid_from`/`valid_to` record supplies a usable state; a derived next-change end
+alone does not. Source-history gaps take precedence over unit-observation gaps.
+
+Strict and non-strict joins compare mixed microsecond/nanosecond instants without
+discarding submicrosecond changes. History checks reject malformed aggregate
+count results rather than treating an empty, null or fractional result as success.

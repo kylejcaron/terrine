@@ -6,7 +6,9 @@ from typing import TYPE_CHECKING
 from terrine.errors import TerrineError
 
 if TYPE_CHECKING:
-    from terrine.data import Coverage, UnitSource
+    from terrine.compile.cost import preview
+    from terrine.data import Budget, Coverage, UnitSource
+    from terrine.frame import Frame
     from terrine.model import Model
     from terrine.spec import (
         AnchorRange,
@@ -28,10 +30,12 @@ from terrine.windows import Window
 
 __all__ = [
     "AnchorRange",
+    "Budget",
     "Coverage",
     "Design",
     "EventAnchor",
     "FixedDate",
+    "Frame",
     "Model",
     "Schedule",
     "Treatment",
@@ -45,10 +49,14 @@ __all__ = [
     "from_yaml",
     "gt",
     "is_null",
+    "preview",
     "to_yaml",
 ]
 
 _LAZY_MODULES = {
+    "Budget": "terrine.data",
+    "Frame": "terrine.frame",
+    "preview": "terrine.compile.cost",
     "Coverage": "terrine.data",
     "Model": "terrine.model",
     "UnitSource": "terrine.data",

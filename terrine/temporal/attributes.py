@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable, Iterable, Mapping
-from typing import Any
+from typing import Any, cast
 
 import ibis
+import ibis.expr.types as ir
+import pyarrow as pa
 
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _MISSING, _SCHEMA
 from terrine.semantic.models import BoundDimension
+from terrine.temporal._timestamps import compare_timestamps, timestamp_order_key
 
 __all__ = ["attribute_asof", "enrich_events", "validate_history"]
 
@@ -90,7 +93,7 @@ def _check_matching_types(
     right_type = right[right_column].type().copy(nullable=True)
     compatible = left_type == right_type
     if left_type.is_timestamp() and right_type.is_timestamp():
-        compatible = left_type.to_pyarrow() == right_type.to_pyarrow()
+        compatible = True
     if not compatible:
         raise _SCHEMA.error(field=field, column=right_column)
 
@@ -122,7 +125,10 @@ def _as_ranges(
             normalized_start: history[changed],
             normalized_end: history[changed]
             .lead()
-            .over(group_by=[history[dimension.entity_column]], order_by=[history[changed]]),
+            .over(
+                group_by=[history[dimension.entity_column]],
+                order_by=[timestamp_order_key(history[changed])],
+            ),
         }
     )
     return normalized, normalized_start, normalized_end
@@ -143,6 +149,7 @@ def attribute_asof(
     unit_column: str,
     cutoff_column: str,
     strict: bool = True,
+    matched_at_column: str | None = None,
 ) -> ibis.Table:
     """Lazily attach one property's as-of value and a match flag to point rows."""
     _point_output_aliases(points)
@@ -189,24 +196,23 @@ def attribute_asof(
     predicates = [points[unit_column] == right[right_key]]
     if right_start:
         predicates.append(
-            points[cutoff_column] > right[right_start]
-            if strict
-            else points[cutoff_column] >= right[right_start]
+            compare_timestamps(points[cutoff_column], right[right_start], "gt" if strict else "ge")
         )
     if right_end:
         predicates.append(
             right[right_end].isnull()
-            | (
-                points[cutoff_column] <= right[right_end]
-                if strict
-                else points[cutoff_column] < right[right_end]
-            )
+            | compare_timestamps(points[cutoff_column], right[right_end], "le" if strict else "lt")
         )
     joined = points.left_join(right, predicates)
     return joined.select(
         *(joined[column] for column in points.columns),
         joined[right_value].name("__terrine_attribute_value"),
         joined[right_found].fill_null(False).name("__terrine_attribute_found"),
+        *(
+            [joined[right_start].name(matched_at_column)]
+            if matched_at_column and right_start
+            else []
+        ),
     )
 
 
@@ -270,9 +276,12 @@ def enrich_events(
         right = normalized.select(*right_fields)
         predicates = [result[event_key] == right[key_alias]]
         if start:
-            predicates.append(result["_timestamp"] >= right[start_alias])
+            predicates.append(compare_timestamps(result["_timestamp"], right[start_alias], "ge"))
         if end:
-            predicates.append(right[end_alias].isnull() | (result["_timestamp"] < right[end_alias]))
+            predicates.append(
+                right[end_alias].isnull()
+                | compare_timestamps(result["_timestamp"], right[end_alias], "lt")
+            )
         joined = result.left_join(right, predicates)
         result = joined.select(
             *(joined[column] for column in result.columns),
@@ -315,7 +324,7 @@ def validate_history(
     malformed = key.isnull() | began.isnull()
     if end:
         finished = history[end]
-        malformed = malformed | (finished.notnull() & (finished <= began))
+        malformed = malformed | (finished.notnull() & compare_timestamps(finished, began, "le"))
     malformed_rows = history.filter(malformed)
     malformed_count = execute(malformed_rows.aggregate(__terrine_count=malformed_rows.count()))
     if _scalar(malformed_count) > 0:
@@ -333,15 +342,20 @@ def validate_history(
         reserved = {column.casefold() for column in history.columns}
         prior_end_alias = _fresh_alias("__terrine_prior_max_end", reserved)
         prior_open_alias = _fresh_alias("__terrine_prior_open", reserved)
-        prior_window = ibis.window(group_by=[key], order_by=[began], rows=(None, -1))
+        prior_window = ibis.window(
+            group_by=[key], order_by=[timestamp_order_key(began)], rows=(None, -1)
+        )
         annotated = history.mutate(
             **{
-                prior_end_alias: history[end].max().over(prior_window),
+                prior_end_alias: cast(ir.StructColumn, timestamp_order_key(history[end]))
+                .max()
+                .over(prior_window),
                 prior_open_alias: history[end].isnull().any().over(prior_window),
             }
         )
         overlaps = annotated.filter(
-            annotated[prior_open_alias] | (annotated[prior_end_alias] > annotated[start])
+            annotated[prior_open_alias]
+            | (annotated[prior_end_alias] > timestamp_order_key(annotated[start]))
         )
         overlap_count = execute(overlaps.aggregate(__terrine_count=overlaps.count()))
         if _scalar(overlap_count) > 0:
@@ -360,11 +374,16 @@ def validate_history(
 
 
 def _scalar(result: Any) -> int:
-    """Read a single bounded aggregate result from a PyArrow-compatible table."""
-    if hasattr(result, "column"):
-        column = result.column(0)
-        if len(column) == 0:
-            return 0
-        value = column[0].as_py() if hasattr(column[0], "as_py") else column[0]
-        return int(value or 0)
-    raise TypeError("The supplied history executor must return a PyArrow table.")
+    """Require one exact nonnegative integer count from the pinned Arrow executor."""
+    if (
+        not isinstance(result, pa.Table)
+        or result.num_rows != 1
+        or result.column_names != ["__terrine_count"]
+        or not pa.types.is_integer(result.column(0).type)
+    ):
+        raise _INVALID_HISTORY.error()
+    result.validate(full=True)
+    value = result.column(0)[0].as_py()
+    if type(value) is not int or value < 0:
+        raise _INVALID_HISTORY.error()
+    return value

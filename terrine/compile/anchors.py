@@ -14,6 +14,7 @@ import pyarrow as pa
 
 from terrine.errors import RefusalSpec
 from terrine.model import Model
+from terrine.semantic.models import TableRef
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.validate import _MISSING, _UNIT
@@ -104,9 +105,7 @@ def _unique_checks(
 
 
 def _relation(model: Model, source: Any) -> Any:
-    if source.relation.kind == "table":
-        return model.con.table(source.relation.name)
-    return model.con.sql(source.relation.sql)
+    return model._relation(source.relation)
 
 
 def _bound(model: Model, value: date | datetime | None) -> datetime | None:
@@ -132,7 +131,7 @@ def _precision_check(
         raise _UTC_CONVERSION_UNSUPPORTED.error(backend=model.catalog.dialect)
     relation_sql = ibis.to_sql(table, dialect="duckdb")
     col = f"source.{_quote(column)}"
-    query = model.con.sql(
+    query = model._sql(
         f"SELECT count(*) AS invalid_count FROM ({relation_sql}) AS source "
         f"WHERE {col} IS NOT NULL AND epoch_ns({col}) % 1000 <> 0"
     )
@@ -149,7 +148,7 @@ def _utc_column(model: Model, table: Any, column: str, output: str) -> Any:
         raise _UTC_CONVERSION_UNSUPPORTED.error(backend=model.catalog.dialect)
     relation_sql = ibis.to_sql(table, dialect="duckdb")
     expression = f"timezone('UTC', source.{_quote(column)})"
-    return model.con.sql(
+    return model._sql(
         f"SELECT source.*, {expression} AS {_quote(output)} FROM ({relation_sql}) AS source"
     )
 
@@ -215,7 +214,7 @@ def _roster_candidates(
     filter_range: AnchorRange | None,
     match_unit: bool = True,
 ) -> tuple[ibis.Table, list[_AnchorCheck]]:
-    raw = model.con.table(unit_source.table)
+    raw = model._relation(TableRef(kind="table", name=unit_source.table))
     checks = _unique_checks(raw, unit_source.key, "roster")
     for column in dict.fromkeys(
         (
@@ -303,7 +302,7 @@ def _roster_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anc
             raise _INVALID.error(
                 reason="lazy Schedule expansion currently requires DuckDB range support"
             )
-        sequence = model.con.sql(f"SELECT unnest(range(0, {stop})) AS ordinal")
+        sequence = model._sql(f"SELECT unnest(range(0, {stop})) AS ordinal")
         ordinal = sequence.ordinal
         t0 = ibis.literal(start) + ibis.interval(seconds=schedule.every) * ordinal
         base = sequence.select(
@@ -347,7 +346,7 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
         while alias.casefold() in names:
             alias = f"_{alias}"
         relation_sql = ibis.to_sql(events, dialect="duckdb")
-        events = model.con.sql(
+        events = model._sql(
             f"SELECT source.*, CAST(timezone('UTC', source.{_quote(identity_column)}) "
             f"AS VARCHAR) AS {_quote(alias)} FROM ({relation_sql}) AS source"
         )

@@ -1,6 +1,7 @@
 """Dialect-aware read-only SQL admission; the original query is never rewritten."""
 
 from sqlglot import exp, parse
+from sqlglot.optimizer.scope import traverse_scope
 
 from terrine.errors import RefusalSpec
 
@@ -15,6 +16,7 @@ _INVALID = RefusalSpec(
 )
 
 # Canonical SQLGlot names for scalar/window/aggregate built-ins with read-only semantics.
+_CAPTURE_READERS = frozenset({"READ_CSV", "READ_CSV_AUTO", "READ_PARQUET"})
 _READ_FUNCTIONS = frozenset(
     {
         "ABS",
@@ -109,3 +111,79 @@ def admit_read_query(sql: str, declared_dialect: str, execution_dialect: str) ->
                 route="Use a supported built-in or bind an owner-reviewed named source relation.",
             )
     return sql
+
+
+def _admit_read_query_ast(sql: str, declared_dialect: str, execution_dialect: str) -> exp.Query:
+    """Return the policy-checked AST and use SQLGlot's lexical scope graph."""
+    admit_read_query(sql, declared_dialect, execution_dialect)
+    try:
+        statement = parse(sql, read=declared_dialect)[0]
+        if not isinstance(statement, exp.Query):
+            raise _INVALID.error(reason="expected a SELECT or other read query")
+        # Materialize the scopes here so all callers use SQLGlot's lexical CTE
+        # resolution instead of treating every Table node as a physical read.
+        tuple(traverse_scope(statement))
+    except Exception as exc:
+        raise _INVALID.error(reason="scope analysis failed") from exc
+    return statement
+
+
+def _admit_stored_view_query_ast(definition: str, dialect: str) -> exp.Query:
+    """Extract and admit the SELECT AST stored for a native view."""
+    try:
+        statements = parse(definition, read=dialect)
+    except Exception as exc:
+        raise _INVALID.error(reason="stored view definition could not be parsed") from exc
+    if len(statements) != 1 or statements[0] is None:
+        raise _INVALID.error(reason="stored view definition is not one query")
+    statement = statements[0]
+    if isinstance(statement, exp.Create):
+        statement = statement.expression
+    if not isinstance(statement, exp.Query):
+        raise _INVALID.error(reason="stored view definition does not contain a query")
+    return _admit_read_query_ast(statement.sql(dialect=dialect), dialect, dialect)
+
+
+def _admit_capture_result_query_ast(sql: str, dialect: str) -> exp.Query:
+    """Admit one explicit read-result boundary without trusting its functions."""
+    try:
+        statements = parse(sql, read=dialect)
+    except Exception as exc:
+        raise _INVALID.error(reason="capture result query could not be parsed") from exc
+    if len(statements) != 1 or statements[0] is None:
+        raise _INVALID.error(reason="capture requires exactly one query")
+    statement = statements[0]
+    if not isinstance(statement, exp.Query):
+        raise _INVALID.error(reason="capture requires a read query")
+    if any(
+        isinstance(node, (exp.DML, exp.DDL, exp.Command, exp.Into, exp.Lock))
+        for node in statement.walk()
+    ):
+        raise _INVALID.error(reason="capture result contains write or row-lock constructs")
+    for node in statement.walk():
+        if not isinstance(node, exp.Func):
+            continue
+        name = node.sql_name().upper()
+        if (
+            (name not in _READ_FUNCTIONS and name not in _CAPTURE_READERS)
+            or isinstance(node.parent, exp.Dot)
+            or (isinstance(node.parent, exp.Table) and (node.parent.db or node.parent.catalog))
+        ):
+            raise _INVALID.error(reason="capture function has no admitted read-only contract")
+    tuple(traverse_scope(statement))
+    return statement
+
+
+def _admit_capture_stored_view_query_ast(definition: str, dialect: str) -> exp.Query:
+    try:
+        statements = parse(definition, read=dialect)
+    except Exception as exc:
+        raise _INVALID.error(reason="stored capture view could not be parsed") from exc
+    if len(statements) != 1 or statements[0] is None:
+        raise _INVALID.error(reason="stored capture view is not one query")
+    statement = statements[0]
+    if isinstance(statement, exp.Create):
+        statement = statement.expression
+    if not isinstance(statement, exp.Query):
+        raise _INVALID.error(reason="stored capture view does not contain a query")
+    return _admit_capture_result_query_ast(statement.sql(dialect=dialect), dialect)

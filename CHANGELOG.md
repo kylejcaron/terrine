@@ -38,3 +38,9 @@
 - Add strict native and coherent union/window prefix lookups, including independent repeated cutoffs and null-preserving state.
 - Compute named half-open windows with per-source/unit completeness, exact scale-preserving output and certified Float64 sums, averages and ratios; refuse unknown filters or unrepresentable required results before export.
 - Apply numerical tolerance in the final average/ratio units while retaining constituent validity checks; refuse overflowing outward input intervals even when division would hide them.
+- Build lazy study Frames with named features, outcomes, descriptive treatment and three-valued eligibility; retain exact observation/null reasons and candidate audit totals.
+- Execute native builds in private snapshot transactions, or against runtime-owned read-only input publications with exact source substitution and leased cleanup.
+- Enforce output row/Arrow-byte limits without returning partial results, refuse unbounded strict scan budgets before reads, and keep default previews row-free.
+- Export Arrow metadata and optional nullable dataframe conversions; include readiness, roster and event-ID declarations in model identity without requiring unused label-source readiness.
+- Preserve lossless mixed microsecond/nanosecond as-of and prefix ordering, NULL lookup requests and matched-state history continuity; refuse unsupported native timestamp ordering with a normalization route.
+- Apply interval-certain checked numeric eligibility and deferred endpoint-overflow checks even when another conjunct excludes the candidate.

@@ -542,3 +542,45 @@ def test_fractional_results_do_not_narrow_internal_exact_states(con):
     count_pair = (count_measure, count_state)
     count_ratio = _result(_anchors(con), [count_pair, count_pair], kind="ratio")
     _certificate(count_ratio, _rows(con, count_ratio)[0], Fraction(1))
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("strategy", ["native", "union_window"])
+def test_public_window_preserves_ns_events_around_utc_microsecond_anchor(con, strategy):
+    events = con.sql("""
+        SELECT 'a' AS user_id, ts::TIMESTAMP_NS AS occurred_at, amount::BIGINT AS amount
+        FROM (VALUES
+            ('2025-01-02 11:59:59.999999999', 1),
+            ('2025-01-02 12:00:00.000000000', 2),
+            ('2025-01-02 12:00:00.000000001', 4)
+        ) AS e(ts, amount)
+    """)
+    source = BoundSource(
+        "ns_events",
+        TableRef(kind="table", name="ns_events"),
+        "occurred_at",
+        {"user": "user_id"},
+        {"revenue": "amount"},
+        {},
+        (),
+        "duckdb",
+        "UTC",
+    )
+    events = normalize_events(events, source, "user_id")
+    measure = resolve_measure(
+        events, BoundMeasure("revenue", "ns_events", "sum", (), None, None), source=source
+    )
+    state = sparse_prefix(
+        _sparse_group(events, measure, {"_timestamp": events._timestamp}, "user_id", source=source),
+        measure,
+        resolution="event",
+    )
+    anchors = _anchors(con, time="2025-01-02 12:00:00+00")
+    before = _result(
+        anchors, [(measure, state)], kind="mean", window=Window(-1, 0), strategy=strategy
+    )
+    after = _result(
+        anchors, [(measure, state)], kind="mean", window=Window(0, 1), strategy=strategy
+    )
+    assert _rows(con, before)[0]["requested"] == 1
+    assert _rows(con, after)[0]["requested"] == 6

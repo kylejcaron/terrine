@@ -11,6 +11,8 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+from terrine.temporal._timestamps import timestamp_order_key
+
 __all__ = ["PrefixLookup", "lookup_prefix"]
 
 
@@ -71,6 +73,8 @@ def lookup_prefix(
     point_time = _allocate(used, "__terrine_point_time")
     state_unit = _allocate(used, "__terrine_state_unit")
     state_time = _allocate(used, "__terrine_state_time")
+    point_present = _allocate(used, "__terrine_point_timestamp_present")
+    state_present = _allocate(used, "__terrine_state_timestamp_present")
     kind_name = _allocate(used, "__terrine_kind")
     marker_name = _allocate(used, "__terrine_marker")
     matched_name = _allocate(used, "__terrine_matched")
@@ -89,10 +93,15 @@ def lookup_prefix(
 
     left = points.select(
         **{name: points[name] for name in points.columns},
-        **{point_unit: points[unit_column], point_time: points[timestamp_column]},
+        **{
+            point_unit: points[unit_column],
+            point_time: timestamp_order_key(points[timestamp_column]),
+        },
+        **{point_present: points[timestamp_column].notnull()},
     )
     right = prefix.select(
-        **{state_unit: prefix._unit, state_time: prefix._timestamp},
+        **{state_unit: prefix._unit, state_time: timestamp_order_key(prefix._timestamp)},
+        **{state_present: ibis.literal(True)},
         **{state_aliases[name]: prefix[name] for name in state_fields},
     )
 
@@ -100,7 +109,10 @@ def lookup_prefix(
         joined = left.asof_join(
             right,
             on=left[point_time] > right[state_time],
-            predicates=left[point_unit] == right[state_unit],
+            predicates=[
+                left[point_unit] == right[state_unit],
+                left[point_present] == right[state_present],
+            ],
         )
     else:
         states = right.select(
@@ -131,7 +143,7 @@ def lookup_prefix(
         timeline = timeline.mutate(
             **{
                 marker_name: cast(
-                    ir.TimestampColumn,
+                    ir.StructColumn,
                     ibis.ifelse(timeline[kind_name] == 1, timeline[point_time], None),
                 )
                 .max()
@@ -141,7 +153,7 @@ def lookup_prefix(
         markers = timeline.filter(timeline[kind_name] == 0).select(
             **{
                 point_unit: timeline[point_unit],
-                marker_name: timeline[marker_name],
+                marker_name: timeline[point_time].notnull().ifelse(timeline[marker_name], None),
                 **{
                     timeline_points[name]: timeline[timeline_points[name]]
                     for name in points.columns

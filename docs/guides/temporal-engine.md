@@ -312,8 +312,16 @@ The internal `lookup_prefix` compiler supports strict native ASOF and
 state strictly before the cutoff, and distinguish an unmatched state from a
 matched state containing SQL NULL. Repeated lookups of one prefix use distinct
 relation identities, so a second cutoff cannot reuse the first cutoff's state.
-The fallback carries a timestamp marker, then rejoins the original state once;
-it does not independently skip null fields or expand anchors across events.
+The fallback carries the complete timestamp-order marker, then rejoins the
+original state once; it does not independently skip null fields or expand
+anchors across events. NULL requests match no state, including nonnumeric payloads.
+
+Native and fallback lookups share lossless structured ordering for mixed native
+microsecond/nanosecond axes, signed pre-epoch fractions and supported infinities.
+They do not narrow a nanosecond event or scale a wide microsecond cutoff into
+overflow. Unsupported native coarse timestamp representations raise
+`terrine.temporal.timestamp_order_unsupported`: normalize to a losslessly
+representable native microsecond/nanosecond timestamp before binding.
 
 `aggregate_window` consumes resolved measure-to-prefix mappings and returns a
 lazy `TemporalResult` for a named feature or outcome. It retains original

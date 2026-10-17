@@ -5,19 +5,22 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from terrine.data import BoundCoverage, Coverage, UnitSource
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _SCHEMA, bind_metric, normalize_source
 from terrine.semantic.io import load_catalog
-from terrine.semantic.models import BoundMetric, BoundSource, Catalog
+from terrine.semantic.models import BoundMetric, BoundSource, Catalog, RelationSpec, TableRef
 from terrine.semantic.time import boundary_timezone
 from terrine.temporal.readiness import Readiness
+
+if TYPE_CHECKING:
+    from terrine.execution.inputs import ExecutionContext, VerifiedInputBinding
 
 __all__ = ["Model"]
 
@@ -48,6 +51,8 @@ class Model:
     metrics: Mapping[str, BoundMetric]
     model_hash: str
     day_boundary: Callable[[date], datetime]
+    input_binding: VerifiedInputBinding | None
+    _resolver: Callable[[RelationSpec], Any]
 
     def __init__(
         self,
@@ -59,6 +64,8 @@ class Model:
         event_ids: Mapping[str, str] | None,
         sources: Mapping[str, BoundSource],
         metrics: Mapping[str, BoundMetric],
+        resolver: Callable[[RelationSpec], Any],
+        input_binding: VerifiedInputBinding | None,
     ) -> None:
         object.__setattr__(self, "catalog", catalog)
         object.__setattr__(self, "con", con)
@@ -67,7 +74,18 @@ class Model:
         object.__setattr__(self, "event_ids", MappingProxyType(dict(event_ids or {})))
         object.__setattr__(self, "sources", MappingProxyType(dict(sources)))
         object.__setattr__(self, "metrics", MappingProxyType(dict(metrics)))
-        payload = json.dumps(catalog.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+        object.__setattr__(self, "input_binding", input_binding)
+        object.__setattr__(self, "_resolver", resolver)
+        declarations = {
+            "catalog": catalog.model_dump(mode="json"),
+            "units": {name: asdict(unit) for name, unit in self.units.items()},
+            "event_ids": dict(self.event_ids),
+            "readiness": {
+                name: [coverage.start.isoformat(), coverage.end_exclusive.isoformat()]
+                for name, coverage in readiness.sources.items()
+            },
+        }
+        payload = json.dumps(declarations, sort_keys=True, separators=(",", ":"))
         object.__setattr__(self, "model_hash", hashlib.sha256(payload.encode()).hexdigest())
         object.__setattr__(self, "day_boundary", _boundary_function(catalog.day_boundary))
 
@@ -80,6 +98,7 @@ class Model:
         readiness: Readiness | Mapping[str, Coverage | BoundCoverage],
         units: Mapping[str, UnitSource] | None = None,
         event_ids: Mapping[str, str] | None = None,
+        input_binding: VerifiedInputBinding | None = None,
     ) -> Model:
         """Bind native definitions to declared schema metadata only."""
         catalog = (
@@ -116,14 +135,38 @@ class Model:
             for key, value in event_map.items()
         ):
             raise _INVALID.error(reason="event_ids must map source names to column names")
-        sources = {name: normalize_source(con, catalog, name) for name in catalog.sources}
+        from terrine.execution.inputs import bind_resolver
+
+        resolver = bind_resolver(catalog, con, units=unit_map, input_binding=input_binding)
+        return cls._bind(
+            catalog,
+            con=con,
+            readiness=bound_readiness,
+            units=unit_map,
+            event_ids=event_map,
+            resolver=resolver,
+            input_binding=input_binding,
+        )
+
+    @classmethod
+    def _bind(
+        cls,
+        catalog: Catalog,
+        *,
+        con: Any,
+        readiness: Readiness,
+        units: Mapping[str, UnitSource],
+        event_ids: Mapping[str, str],
+        resolver: Callable[[RelationSpec], Any],
+        input_binding: VerifiedInputBinding | None,
+    ) -> Model:
+        sources = {
+            name: normalize_source(con, catalog, name, resolver=resolver)
+            for name in catalog.sources
+        }
         metrics = {name: bind_metric(catalog, name) for name in catalog.metrics}
-        for metric in metrics.values():
-            for source_name in metric.source_names:
-                bound_readiness.for_fact(source_name)
-        # Roster and event-id schema checks use relation metadata, never data scans.
-        for unit in unit_map.values():
-            schema = con.table(unit.table).schema()
+        for unit in units.values():
+            schema = resolver(TableRef(kind="table", name=unit.table)).schema()
             names = set(schema.names)
             for column in (
                 unit.key,
@@ -142,25 +185,51 @@ class Model:
             ):
                 if column is not None and not schema[column].is_timestamp():
                     raise _SCHEMA.error(field="roster timestamp", column=column)
-        for source_name, column in event_map.items():
+        for source_name, column in event_ids.items():
             source = sources.get(source_name)
             if source is None:
                 raise _INVALID.error(reason=f"event ID source {source_name!r} is not declared")
-            relation = (
-                con.table(source.relation.name)
-                if source.relation.kind == "table"
-                else con.sql(source.relation.sql)
-            )
-            if column not in relation.schema().names:
+            if column not in resolver(source.relation).schema().names:
                 raise _INVALID.error(reason=f"event ID column {column!r} is not declared")
         return cls(
             catalog=catalog,
             con=con,
-            readiness=bound_readiness,
-            units=unit_map,
-            event_ids=event_map,
+            readiness=readiness,
+            units=units,
+            event_ids=event_ids,
             sources=sources,
             metrics=metrics,
+            resolver=resolver,
+            input_binding=input_binding,
+        )
+
+    def _relation(self, relation: RelationSpec) -> Any:
+        return self._resolver(relation)
+
+    def _sql(self, sql: str) -> Any:
+        """Admit compiler functions before schema inference can invoke callbacks."""
+        from terrine.execution._native import check_native_functions, raw_connection
+
+        check_native_functions(raw_connection(self.con), sql, None)
+        return self.con.sql(sql)
+
+    def _for_execution(self, context: ExecutionContext) -> Model:
+        relations = (
+            *(source.relation for source in self.catalog.sources.values()),
+            *(dimension.relation for dimension in self.catalog.dimensions.values()),
+            *(TableRef(kind="table", name=unit.table) for unit in self.units.values()),
+        )
+        for relation in relations:
+            if self._relation(relation).schema() != context.resolve(relation).schema():
+                raise _SCHEMA.error(field="execution schema", column="<relation>")
+        return self._bind(
+            self.catalog,
+            con=context.con,
+            readiness=self.readiness,
+            units=self.units,
+            event_ids=self.event_ids,
+            resolver=context.resolve,
+            input_binding=self.input_binding,
         )
 
     @classmethod
@@ -172,6 +241,7 @@ class Model:
         readiness: Readiness | Mapping[str, Coverage | BoundCoverage],
         units: Mapping[str, UnitSource] | None = None,
         event_ids: Mapping[str, str] | None = None,
+        input_binding: VerifiedInputBinding | None = None,
     ) -> Model:
         """Adapt optional published semantics through the native Catalog workflow."""
         from terrine.adapters.increment import to_catalog
@@ -182,4 +252,5 @@ class Model:
             readiness=readiness,
             units=units,
             event_ids=event_ids,
+            input_binding=input_binding,
         )

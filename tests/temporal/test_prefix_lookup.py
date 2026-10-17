@@ -157,3 +157,93 @@ def test_lookup_aliases_are_collision_safe_and_keep_certificate_row_coherent(str
         ]
     finally:
         con.disconnect()
+
+
+@pytest.mark.parametrize("strategy", ["native", "union_window"])
+def test_mixed_nanosecond_state_and_wide_utc_requests_keep_strict_order(strategy):
+    from terrine.temporal.lookup import lookup_prefix
+
+    con = ibis.duckdb.connect()
+    try:
+        prefix = con.sql("""
+            SELECT 'a' AS _unit, ts::TIMESTAMP_NS AS _timestamp, n::BIGINT AS event_count,
+                   'state-' || n::VARCHAR AS certificate
+            FROM (VALUES
+                ('1969-12-31 23:59:59.999999999', 1),
+                ('2025-01-02 11:59:59.999999999', 2),
+                ('2025-01-02 12:00:00.000000000', 3),
+                ('2025-01-02 12:00:00.000000001', 4)
+            ) AS s(ts, n)
+        """)
+        points = con.sql("""
+            SELECT request, 'a' AS unit, ts::TIMESTAMPTZ AS cutoff
+            FROM (VALUES
+                (1, '1600-01-01'), (2, '1970-01-01'),
+                (3, '2025-01-02 12:00:00+00'), (4, '2500-01-01'), (5, NULL)
+            ) AS p(request, ts)
+        """)
+        result = lookup_prefix(
+            points, prefix, unit_column="unit", timestamp_column="cutoff", strategy=strategy
+        )
+        table = result.table
+        rows = con.to_pyarrow(
+            table.select(
+                "request",
+                n=table[result.columns["event_count"]],
+                certificate=table[result.columns["certificate"]],
+                found=table[result.matched_column],
+            ).order_by("request")
+        ).to_pylist()
+        assert rows == [
+            {"request": 1, "n": 0, "certificate": None, "found": False},
+            {"request": 2, "n": 1, "certificate": "state-1", "found": True},
+            {"request": 3, "n": 2, "certificate": "state-2", "found": True},
+            {"request": 4, "n": 4, "certificate": "state-4", "found": True},
+            {"request": 5, "n": 0, "certificate": None, "found": False},
+        ]
+    finally:
+        con.disconnect()
+
+
+@pytest.mark.parametrize("dtype", ["TIMESTAMP_S", "TIMESTAMP_MS"])
+def test_coarse_timestamp_ordering_refuses_without_lossless_native_extraction(dtype):
+    from terrine.errors import TerrineError
+    from terrine.temporal.lookup import lookup_prefix
+
+    con = ibis.duckdb.connect()
+    try:
+        prefix = con.sql("SELECT 'a' AS _unit, TIMESTAMP '2025-01-01' AS _timestamp, 1 AS n")
+        points = con.sql(f"SELECT 'a' AS unit, '2500-01-01'::{dtype} AS cutoff")
+        with pytest.raises(TerrineError) as error:
+            lookup_prefix(points, prefix, unit_column="unit", timestamp_column="cutoff")
+        assert error.value.code == "terrine.temporal.timestamp_order_unsupported"
+    finally:
+        con.disconnect()
+
+
+@pytest.mark.parametrize("strategy", ["native", "union_window"])
+def test_infinite_timestamp_keys_keep_strict_order_and_null_requests(strategy):
+    from terrine.temporal.lookup import lookup_prefix
+
+    con = ibis.duckdb.connect()
+    try:
+        prefix = con.sql("""
+            SELECT 'a' AS _unit, ts::TIMESTAMP_NS AS _timestamp, n
+            FROM (VALUES ('-infinity', 1), ('1969-12-31 23:59:59.999999999', 2),
+                         ('infinity', 3)) AS s(ts, n)
+        """)
+        points = con.sql("""
+            SELECT request, 'a' AS unit, ts::TIMESTAMPTZ AS cutoff
+            FROM (VALUES (1, '-infinity'), (2, '1970-01-01'), (3, 'infinity'), (4, NULL))
+            AS p(request, ts)
+        """)
+        result = lookup_prefix(
+            points, prefix, unit_column="unit", timestamp_column="cutoff", strategy=strategy
+        )
+        table = result.table
+        rows = con.to_pyarrow(
+            table.select("request", n=table[result.columns["n"]]).order_by("request")
+        ).to_pylist()
+        assert [row["n"] for row in rows] == [0, 2, 2, 0]
+    finally:
+        con.disconnect()

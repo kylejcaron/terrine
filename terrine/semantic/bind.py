@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any
 
@@ -16,6 +16,7 @@ from terrine.semantic.models import (
     BoundValidity,
     Catalog,
     PropertyBinding,
+    RelationSpec,
 )
 from terrine.semantic.rules import UNSUPPORTED_TEMPORAL_KIND
 from terrine.semantic.sql import DIALECT_MISMATCH, admit_read_query
@@ -65,14 +66,24 @@ def _dtype_ok(dtype: Any, expected: str) -> bool:
     return False
 
 
-def normalize_source(con: Any, catalog: Catalog, source_name: str) -> BoundSource:
+def normalize_source(
+    con: Any,
+    catalog: Catalog,
+    source_name: str,
+    *,
+    resolver: Callable[[RelationSpec], Any] | None = None,
+) -> BoundSource:
     """Bind one source against declared schema metadata without reading rows."""
     boundary_timezone(catalog.day_boundary)
     execution_dialect = str(getattr(con, "name", "")).casefold()
     if catalog.dialect.casefold() != execution_dialect:
         raise DIALECT_MISMATCH.error(declared=catalog.dialect, execution=execution_dialect)
     source = _reference(catalog.sources, source_name, "source")
-    relation = _relation(con, source.relation, catalog.dialect)
+    relation = (
+        resolver(source.relation)
+        if resolver is not None
+        else _relation(con, source.relation, catalog.dialect)
+    )
     schema = relation.schema()
     columns = dict(schema.items())
     if source.timestamp not in columns or not columns[source.timestamp].is_timestamp():
@@ -109,7 +120,11 @@ def normalize_source(con: Any, catalog: Catalog, source_name: str) -> BoundSourc
         dim = _reference(catalog.dimensions, name, "dimension")
         if dim.source_entity not in source.entities:
             raise _MISSING.error(reference=f"dimension {name} source entity {dim.source_entity}")
-        dimension_relation = _relation(con, dim.relation, catalog.dialect)
+        dimension_relation = (
+            resolver(dim.relation)
+            if resolver is not None
+            else _relation(con, dim.relation, catalog.dialect)
+        )
         dimension_columns = dict(dimension_relation.schema().items())
         if dim.entity_column not in dimension_columns:
             raise _SCHEMA.error(field=f"dimension {name} entity", column=dim.entity_column)

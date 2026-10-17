@@ -13,3 +13,23 @@ Dimension validity controls this requirement even when an individual property's
 value is annotated `static`: a constant value does not remove version boundaries.
 
 The internal `validate_design` helper returns a row-free `ValidationReport` containing sorted required source names and runtime obligations. It is an internal summary, not user-authored compiler input.
+
+## Building and exporting
+
+`Design.build(model)` adds output-namespace and compilation checks without reading
+rows. Feature, outcome and eligibility labels share one NFC/casefolded namespace;
+labels retain their spelling, but collisions and reserved support names refuse.
+Only sources selected by the design need readiness declarations; unused label
+definitions do not prevent building a feature-only design.
+
+Safe Frame execution runs all deferred producer checks before export, including
+checks for candidates later excluded by eligibility. Known false excludes a
+candidate even when another conjunct is unknown. Otherwise unresolved eligibility
+refuses with aggregate counts, not customer rows. Checked numeric comparisons use
+certified intervals; an overlapping threshold is unknown, and an overflowing
+required interval is a numerical refusal.
+
+A fixed-date cross-sectional Boolean treatment at zero is classified as baseline
+binary only when `known_at_t0=True` was explicitly declared. Other treatments stay
+descriptive/unclassified. This does not infer assignment, independence or causal
+validity; estimator admission still checks its stronger data contracts.

@@ -9,6 +9,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from terrine.frame import Frame
     from terrine.model import Model
 
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
@@ -110,6 +111,12 @@ class Design:
         from terrine.spec.validate import validate_design
 
         validate_design(self, model)
+
+    def build(self, model: Model) -> Frame:
+        """Compile a lazy study frame without reading source rows."""
+        from terrine.frame import Frame
+
+        return Frame(self, model)
 
     @property
     def spec_hash(self) -> str:
