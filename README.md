@@ -146,3 +146,4 @@ Window endpoints represent elapsed durations, not calendar dates.
 
 - [Synthetic worlds and independent truth](docs/guides/synthetic-worlds.md)
 - [Native baseline ATE estimation](docs/guides/baseline-estimation.md)
+- [Shared dataset contract with increment](docs/guides/shared-dataset-contract.md)
