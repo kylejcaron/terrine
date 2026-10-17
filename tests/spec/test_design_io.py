@@ -4,7 +4,7 @@ import pytest
 
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
-from terrine.spec.expressions import agg
+from terrine.spec.expressions import agg, all_of, asof, eq, gt, is_null
 from terrine.spec.io import from_json, from_yaml, to_json, to_yaml
 
 
@@ -34,8 +34,18 @@ def test_anchor_variants_and_design_maps_round_trip_as_safe_yaml_and_json():
         design = Design(
             unit="user",
             anchor=anchor,
-            features={"visits": agg("sessions", window=("-28d", "0d"))},
+            features={
+                "visits": agg("sessions", window=("-28d", "0d")),
+                "plan_before": asof("plan_tier", before="0s"),
+            },
             outcomes={"future": agg("sessions", window=("0d", "7d"))},
+            eligibility={
+                "active_paid": all_of(
+                    gt(agg("sessions", window=("-28d", "0d")), 0),
+                    eq(asof("plan_tier", before="0d"), "plus"),
+                    is_null(asof("plan_tier", before="0d"), negate=True),
+                )
+            },
             treatment=Treatment(attribute="assigned", known_at_t0=True),
         )
         assert from_yaml(to_yaml(design)) == design
