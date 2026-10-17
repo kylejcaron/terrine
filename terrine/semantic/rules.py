@@ -1,6 +1,6 @@
 """Pure semantic capability rules shared across binding and execution."""
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Literal
 
 from terrine.errors import RefusalSpec
@@ -11,7 +11,12 @@ __all__ = [
     "UNALIGNED_CALENDAR_AVERAGE",
     "UNSUPPORTED_TEMPORAL_KIND",
     "UNSUPPORTED_TRANSFORM",
+    "UNSUPPORTED_TEMPORAL_AGGREGATION",
+    "UNSUPPORTED_EVENT_RESOLUTION",
     "calendar_average_alignment",
+    "cutoff_alignment",
+    "supports_event_resolution",
+    "supports_temporal_aggregation",
 ]
 
 UNALIGNED_CALENDAR_AVERAGE = RefusalSpec(
@@ -29,9 +34,46 @@ UNSUPPORTED_TRANSFORM = RefusalSpec(
     "Metric transform {transform!r} is declared but cannot be compiled by the temporal engine.",
 )
 
+SUPPORTED_TEMPORAL_AGGREGATIONS = frozenset({"sum", "count", "avg_event", "avg_calendar_day"})
+UNSUPPORTED_TEMPORAL_AGGREGATION = RefusalSpec(
+    "terrine.metric.unsupported_aggregation",
+    "Aggregation {aggregation!r} is unsupported by the temporal engine.",
+)
 
-def _midnight(value: datetime) -> bool:
-    return value.hour == value.minute == value.second == value.microsecond == 0
+
+def supports_temporal_aggregation(aggregation: str) -> bool:
+    """Whether the shared additive temporal engine implements this aggregation."""
+    return aggregation in SUPPORTED_TEMPORAL_AGGREGATIONS
+
+
+UNSUPPORTED_EVENT_RESOLUTION = RefusalSpec(
+    "terrine.temporal.unsupported_event_resolution",
+    "Event-time resolution is unsupported for dialect {dialect!r}; use aligned "
+    "anchors or a supported DuckDB source.",
+)
+
+
+def supports_event_resolution(dialect: str) -> bool:
+    """Whether a bound backend profile supports exact event-time resolution."""
+    return dialect.casefold() == "duckdb"
+
+
+def _wall_clock_aligned(anchor: datetime, offset_seconds: int, day_boundary: str) -> bool:
+    zone = boundary_timezone(day_boundary)
+    source_offset = anchor.utcoffset()
+    target_offset = zone.utcoffset(None)
+    if anchor.tzinfo is None or source_offset is None:
+        raise ValueError("anchor must be timezone-aware")
+    assert target_offset is not None
+    shift = target_offset - source_offset
+    ticks = (
+        (anchor.hour * 3600 + anchor.minute * 60 + anchor.second) * 1_000_000
+        + anchor.microsecond
+        + (shift.days * 86400 + shift.seconds) * 1_000_000
+        + shift.microseconds
+        + offset_seconds * 1_000_000
+    )
+    return ticks % (86400 * 1_000_000) == 0
 
 
 def calendar_average_alignment(
@@ -40,15 +82,22 @@ def calendar_average_alignment(
     """Classify whether a calendar-day average has positive aligned local-day endpoints."""
     if not isinstance(window, Window):
         raise TypeError("window must be a Window")
-    zone = boundary_timezone(day_boundary)
     duration = window.end - window.start
     if duration <= 0 or duration % 86400:
         return "unaligned"
     if anchor is None:
         return "runtime_check"
-    if anchor.tzinfo is None or anchor.utcoffset() is None:
-        raise ValueError("anchor must be timezone-aware")
-    local = anchor.astimezone(zone)
-    start = local + timedelta(seconds=window.start)
-    end = local + timedelta(seconds=window.end)
-    return "aligned" if _midnight(start) and _midnight(end) else "unaligned"
+    result = _wall_clock_aligned(anchor, window.start, day_boundary)
+    return "aligned" if result else "unaligned"
+
+
+def cutoff_alignment(
+    cutoff: int, *, anchor: datetime | None, day_boundary: str
+) -> Literal["aligned", "unaligned", "runtime_check"]:
+    """Classify whether an elapsed cutoff lands on a local day boundary."""
+    if isinstance(cutoff, bool) or not isinstance(cutoff, int):
+        raise TypeError("cutoff must be integer seconds")
+    if anchor is None:
+        return "runtime_check"
+    result = _wall_clock_aligned(anchor, cutoff, day_boundary)
+    return "aligned" if result else "unaligned"

@@ -26,7 +26,7 @@ depends_on = ["terrine.errors"]
 
 [[modules]]
 path = "terrine.spec"
-depends_on = ["terrine._time", "terrine.windows"]
+depends_on = ["terrine._time", "terrine.errors", "terrine.semantic", "terrine.windows"]
 
 [[modules]]
 path = "terrine.semantic"

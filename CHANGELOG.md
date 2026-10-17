@@ -20,3 +20,5 @@
 - Add lazy strict SCD2/static attribute lookup and cross-entity event enrichment, with explicit snapshot-bound integrity checks and matched-null metadata.
 - Refuse overlapping open-ended histories and validate physical keys or validity columns without internal aggregate-alias collisions.
 - Report missing history validity columns through the same coded schema refusal in event enrichment and attribute lookup.
+- Validate study references, selected-unit keys, temporal gaps, calendar alignment and semantic capabilities using bound metadata only; retain runtime completeness obligations without reading source data.
+- Classify property cutoffs by temporal meaning and exact local clock, deferring unknown anchor alignment; reject event facts absent from their bound source.

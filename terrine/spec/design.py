@@ -6,6 +6,10 @@ import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from terrine.model import Model
 
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.expressions import And, AttributeAsOf, Eq, Expr, Gt, IsNull, MetricAgg, Predicate
@@ -100,6 +104,12 @@ class Design:
         object.__setattr__(self, "gap", gap_seconds)
         object.__setattr__(self, "shape", shape)
         object.__setattr__(self, "anchor_range", anchor_range)
+
+    def validate(self, model: Model) -> None:
+        """Validate this design against bound model metadata without executing queries."""
+        from terrine.spec.validate import validate_design
+
+        validate_design(self, model)
 
     @property
     def spec_hash(self) -> str:
