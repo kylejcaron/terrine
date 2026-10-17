@@ -13,7 +13,7 @@ DuckDB example is `examples/increment_parity.py`. Run:
 
 ```sh
 uv sync --extra increment --extra duckdb
-uv run pytest tests/parity/test_increment_frames.py -q
+uv run pytest tests/parity/test_increment_frames.py -q -m ""
 uv run python examples/increment_parity.py
 ```
 
@@ -92,7 +92,7 @@ averages, DST, clustering, or causal estimands.
 ### Executed results
 
 Python 3.13.5, increment 0.1.0a2, ibis-framework 12.0.0, DuckDB 1.5.6 and
-PyArrow 23.0.1. `uv run pytest tests/parity/test_increment_frames.py -q`: 3 passed.
+PyArrow 23.0.1. `uv run pytest tests/parity/test_increment_frames.py -q -m ""`: 3 passed.
 `uv run python examples/increment_parity.py` printed:
 
 ```text
