@@ -107,6 +107,15 @@ def _daily(connection, amounts, *, dtype="float64", times=None, units=None):
     return sparse_daily(events, measure, "UTC", "user_id", source=source), measure
 
 
+@pytest.mark.parametrize("aggregation", ["min", "max", "count_distinct"])
+def test_resolver_uses_shared_unsupported_aggregation_refusal(aggregation):
+    events = ibis.table({"amount": "int64"}, name="postings")
+    with pytest.raises(TerrineError) as error:
+        resolve_measure(events, _measure(aggregation=aggregation), source=_source())
+    assert error.value.code == "terrine.metric.unsupported_aggregation"
+    assert error.value.context["aggregation"] == aggregation
+
+
 def test_sparse_days_keep_multiplicity_nulls_and_selected_unit(connection):
     times = [datetime(2025, 3, day, 12, tzinfo=UTC) for day in (1, 1, 3)]
     daily, measure = _daily(connection, [2**53 + 1, None, 7], dtype="int64", times=times)

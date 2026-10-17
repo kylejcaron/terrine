@@ -30,3 +30,4 @@
 - Keep selected unit identity separate from state metadata and compare exact numeric filters without narrowing source values, including native signed 128-bit inputs.
 - Preserve outward overflow failures and exact pre-epoch nanosecond day membership; retain separate nonfinite-filter provenance rather than admitting NaN through native ordering.
 - Project certificate intermediates once so conservative overflow checks do not cause exponential SQL expansion.
+- Use the same stable unsupported-aggregation refusal during study validation and sparse-state resolution.

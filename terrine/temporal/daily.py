@@ -17,7 +17,10 @@ import ibis.expr.types as ir
 
 from terrine.semantic.bind import _MISSING, _SCHEMA
 from terrine.semantic.models import BoundMeasure, BoundSource
-from terrine.semantic.rules import UNSUPPORTED_TEMPORAL_KIND
+from terrine.semantic.rules import (
+    UNSUPPORTED_TEMPORAL_AGGREGATION,
+    supports_temporal_aggregation,
+)
 from terrine.semantic.time import boundary_timezone
 from terrine.temporal.attributes import _enriched_property_columns
 from terrine.temporal.prefix import (
@@ -66,8 +69,8 @@ def resolve_measure(
     """
     if measure.source_name != source.name or measure.fact not in source.facts:
         raise _MISSING.error(reference=f"fact {measure.fact} on source {source.name}")
-    if measure.aggregation not in {"sum", "count", "avg_event", "avg_calendar_day"}:
-        raise UNSUPPORTED_TEMPORAL_KIND.error(kind=measure.aggregation)
+    if not supports_temporal_aggregation(measure.aggregation):
+        raise UNSUPPORTED_TEMPORAL_AGGREGATION.error(aggregation=measure.aggregation)
     column = source.facts[measure.fact]
     if column is None:
         if measure.aggregation != "count":
