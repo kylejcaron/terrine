@@ -119,7 +119,9 @@ def normalize_source(con: Any, catalog: Catalog, source_name: str) -> BoundSourc
                 dim.validity.valid_from, dim.validity.valid_to, dim.validity.changed_at
             )
             for col in (validity.valid_from, validity.valid_to, validity.changed_at):
-                if col is not None and col not in dimension_columns:
+                if col is not None and (
+                    col not in dimension_columns or not dimension_columns[col].is_timestamp()
+                ):
                     raise _SCHEMA.error(field=f"dimension {name} validity", column=col)
         dimension_properties = {}
         for property_name in dim.properties:

@@ -13,7 +13,7 @@ from typing import Any
 
 from terrine.data import BoundCoverage, Coverage, UnitSource
 from terrine.errors import RefusalSpec
-from terrine.semantic.bind import bind_metric, normalize_source
+from terrine.semantic.bind import _SCHEMA, bind_metric, normalize_source
 from terrine.semantic.io import load_catalog
 from terrine.semantic.models import BoundMetric, BoundSource, Catalog
 from terrine.semantic.time import boundary_timezone
@@ -133,7 +133,15 @@ class Model:
                 unit.observed_until,
             ):
                 if column is not None and column not in names:
-                    raise _INVALID.error(reason=f"roster column {column!r} is not declared")
+                    raise _SCHEMA.error(field="roster", column=column)
+            for column in (
+                unit.entered_at,
+                unit.exited_at,
+                unit.observed_from,
+                unit.observed_until,
+            ):
+                if column is not None and not schema[column].is_timestamp():
+                    raise _SCHEMA.error(field="roster timestamp", column=column)
         for source_name, column in event_map.items():
             source = sources.get(source_name)
             if source is None:

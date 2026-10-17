@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime
 import ibis
 import pytest
 
-from terrine.data import Coverage
+from terrine.data import Coverage, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.bind import bind_metric, normalize_events, normalize_source
@@ -212,6 +212,57 @@ def test_dimension_filter_requires_dimension_property_membership(event_catalog):
         with pytest.raises(TerrineError) as error:
             bind()
         assert error.value.code == "terrine.semantic.missing_reference"
+
+
+@pytest.mark.parametrize(
+    ("column", "dtype"),
+    [
+        ("valid_from", "string"),
+        ("valid_to", "array<timestamp>"),
+        ("changed_at", "string"),
+        ("entered_at", "string"),
+        ("observed_until", "array<timestamp>"),
+    ],
+)
+def test_dimension_and_roster_temporal_columns_require_scalar_timestamps(
+    event_catalog, column, dtype
+):
+    definition = event_catalog.model_dump(mode="python")
+    schema = {
+        "ts": "timestamp('UTC')",
+        "user_id": "string",
+        "workspace_id": "string",
+        "valid_from": "!timestamp('UTC')",
+        "valid_to": "timestamp('UTC')",
+        "changed_at": "!timestamp('UTC')",
+        "entered_at": "!timestamp('UTC')",
+        "observed_until": "timestamp('UTC')",
+    }
+    schema[column] = dtype
+    units = {}
+    if column in {"valid_from", "valid_to", "changed_at"}:
+        definition["sources"]["events"]["dimensions"] = ["accounts"]
+        definition["dimensions"]["accounts"] = {
+            "relation": {"kind": "table", "name": "accounts"},
+            "source_entity": "user",
+            "entity_column": "user_id",
+            "properties": [],
+            "validity": (
+                {"changed_at": "changed_at"}
+                if column == "changed_at"
+                else {"valid_from": "valid_from", "valid_to": "valid_to"}
+            ),
+        }
+    else:
+        units["user"] = UnitSource(table="roster", key="user_id", **{column: column})
+    with pytest.raises(TerrineError) as error:
+        Model.from_catalog(
+            Catalog.model_validate(definition),
+            con=_SchemaConnection(ibis.table(schema, name="events")),
+            readiness={"events": Coverage("2025-03-01", "2025-03-31")},
+            units=units,
+        )
+    assert error.value.code == "terrine.semantic.schema_mismatch"
 
 
 class _SchemaConnection:

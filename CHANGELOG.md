@@ -13,3 +13,4 @@
 - Refuse coverage and synthetic configurations whose exclusive calendar or UTC endpoints exceed datetime's representable range.
 - Bind standard signed ISO fixed-offset catalogs through the public Model, Coverage, and UnitSource workflow without importing unrelated study code eagerly.
 - Preserve aware intraday fixed anchors and their canonical JSON/YAML hashes; refuse nonrepresentable timestamp precision instead of silently narrowing it.
+- Require scalar dimension and roster temporal schemas and unambiguous range/change-point history declarations before data execution.

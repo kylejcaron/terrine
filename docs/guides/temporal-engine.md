@@ -38,6 +38,11 @@ change a requested feature window.
 that boundary and bind once to half-open UTC instants. Offsets are fixed, not
 daylight-saving timezones.
 
+Declared event, dimension-validity, and roster time columns must be scalar
+timestamps; timestamp nullability does not change admission. A versioned
+dimension declares either `valid_from` with an optional `valid_to`, or
+`changed_at` alone. Empty or mixed time-axis declarations are rejected.
+
 Bind a catalog and explicit source completeness without scanning event rows:
 
 ```python

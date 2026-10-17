@@ -127,9 +127,17 @@ class Property(_Record):
 
 
 class Validity(_Record):
-    valid_from: StrictStr
+    valid_from: StrictStr | None = None
     valid_to: StrictStr | None = None
     changed_at: StrictStr | None = None
+
+    @model_validator(mode="after")
+    def validate_axis(self):
+        if (self.valid_from is None) == (self.changed_at is None) or (
+            self.changed_at is not None and self.valid_to is not None
+        ):
+            raise ValueError("validity requires a range start or a change point, not both")
+        return self
 
 
 class Dimension(_Record):

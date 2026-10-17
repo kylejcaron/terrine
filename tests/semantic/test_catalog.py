@@ -16,12 +16,20 @@ CATALOG = {
             "entities": {"user": "user_id", "workspace": "workspace_id"},
             "facts": ["session"],
             "properties": [],
-            "dimensions": [],
+            "dimensions": ["accounts"],
         }
     },
     "facts": {"session": {"source": "events", "column": None}},
     "properties": {},
-    "dimensions": {},
+    "dimensions": {
+        "accounts": {
+            "relation": {"kind": "table", "name": "accounts"},
+            "source_entity": "workspace",
+            "entity_column": "workspace_id",
+            "validity": {"changed_at": "changed_at"},
+            "properties": [],
+        }
+    },
     "measures": {"count": {"fact": "session", "aggregation": "count"}},
     "metrics": {"sessions": {"kind": "mean", "entity": "user", "measure": "count"}},
 }
@@ -59,6 +67,14 @@ def test_catalog_rejects_unknown_fields_and_unsupported_versions():
         Catalog.model_validate({**CATALOG, "surprise": True})
     with pytest.raises(ValueError):
         Catalog.model_validate({**CATALOG, "schema_version": 2})
+
+
+@pytest.mark.parametrize("validity", [{}, {"valid_from": "start", "changed_at": "change"}])
+def test_history_validity_requires_one_unambiguous_time_axis(validity):
+    definition = Catalog.model_validate(CATALOG).model_dump(mode="python")
+    definition["dimensions"]["accounts"]["validity"] = validity
+    with pytest.raises(ValueError):
+        Catalog.model_validate(definition)
 
 
 def test_safe_yaml_rejects_duplicate_keys_and_python_tags(tmp_path: Path):

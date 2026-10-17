@@ -9,7 +9,7 @@ construction and execution are not yet exposed as supported workflows.
 Requires Python 3.13 or 3.14 and [uv](https://docs.astral.sh/uv/).
 
 ```sh
-uv sync --group dev
+uv sync --group dev --extra duckdb --extra pandas
 make check
 ```
 
