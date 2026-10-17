@@ -104,8 +104,9 @@ can finish after owner closure; later builds refuse. The managed artifact is
 read-only and cleaned up after the last lease. A stored SQL root substitutes its
 whole result, not a fresh query against mutable upstream tables.
 
-Use a dedicated native connection with no active caller transaction, TEMP sources
-or unsupported resolution state. Ambiguous partial names have an exact route:
+Ordinary builds require a dedicated native connection with no active caller
+transaction or unresolved TEMP inputs. Explicit publication can capture admitted
+owner-local TEMP roots. Ambiguous partial names have an exact route:
 declare fully qualified source SQL such as `SELECT * FROM "analytics"."main"."events"`.
 Owner-staged named tables are the route for unproven functions or data-dependent
 schema inference. Explicit single-root file-reader capture is available through
@@ -113,6 +114,11 @@ publication; arbitrary side-effecting queries are not admitted.
 
 A Model pins its admitted relation definitions and schemas. Rebind after a schema
 or view-definition change; ordinary row updates are captured at safe execution.
+
+Concurrent exports from one Model coordinate shared-origin metadata and setup;
+their private snapshot queries remain independent. Do not use the origin
+connection externally during setup or capture. SQL retains the caller's timezone,
+while exported anchor timestamps preserve their instants in UTC Arrow columns.
 
 These are local execution identities, not portable snapshot/replay certificates.
 Ordinary source generations and snapshot IDs remain unknown; managed copies have

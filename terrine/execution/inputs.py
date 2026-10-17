@@ -260,8 +260,9 @@ def _check_fact_schema(raw: Any, fact: _BackingFact) -> None:
         _native._quote_ident(value) for value in (fact.catalog, fact.schema, fact.table)
     )
     try:
-        raw.execute(f"SELECT * FROM {qualified} LIMIT 0")
-        columns = tuple(column[0] for column in raw.description)
+        with _native.connection_lock(raw):
+            raw.execute(f"SELECT * FROM {qualified} LIMIT 0")
+            columns = tuple(column[0] for column in raw.description)
     except Exception as exc:
         raise _INVALID.error(reason="published backing relation no longer exists") from exc
     if columns != fact.columns:
@@ -304,27 +305,36 @@ def verify_immutable_inputs(
             raise _INVALID.error(reason="handles come from different publication owners")
         if issuer.handles.get(identity) is not handle:
             raise _INVALID.error(reason="handle is not registered by its issuing owner")
-    if issuer is None or issuer.closed or issuer.con is not con:
+    if issuer is None:
         raise _INVALID.error(
             reason="publication is closed, empty, or belongs to another connection"
         )
-    if set(relations) != set(issuer.facts):
-        raise _INVALID.error(reason="relation membership is missing or contains extra handles")
-    if issuer.catalog_hash != _catalog_hash(catalog) or issuer.units_hash != _units_hash(units):
-        raise _INVALID.error(reason="Catalog or roster declaration changed")
-    _check_published_namespace(issuer)
-    objects = _native.native_objects(issuer.raw)
-    for fact in issuer.facts.values():
-        if not any(
-            obj.identity
-            == tuple(_native._ascii_key(value) for value in (fact.catalog, fact.schema, fact.table))
-            and obj.kind == "table"
-            and obj.oid == fact.oid
-            for obj in objects
-        ):
-            raise _INVALID.error(reason="published backing identity or generation changed")
-        _check_fact_schema(issuer.raw, fact)
-    return VerifiedInputBinding(issuer, _catalog_hash(catalog), _units_hash(units), relations, con)
+    with issuer.lock:
+        if issuer.closed or issuer.con is not con:
+            raise _INVALID.error(
+                reason="publication is closed, empty, or belongs to another connection"
+            )
+        if set(relations) != set(issuer.facts):
+            raise _INVALID.error(reason="relation membership is missing or contains extra handles")
+        if issuer.catalog_hash != _catalog_hash(catalog) or issuer.units_hash != _units_hash(units):
+            raise _INVALID.error(reason="Catalog or roster declaration changed")
+        _check_published_namespace(issuer)
+        objects = _native.native_objects(issuer.raw)
+        for fact in issuer.facts.values():
+            if not any(
+                obj.identity
+                == tuple(
+                    _native._ascii_key(value) for value in (fact.catalog, fact.schema, fact.table)
+                )
+                and obj.kind == "table"
+                and obj.oid == fact.oid
+                for obj in objects
+            ):
+                raise _INVALID.error(reason="published backing identity or generation changed")
+            _check_fact_schema(issuer.raw, fact)
+        return VerifiedInputBinding(
+            issuer, _catalog_hash(catalog), _units_hash(units), relations, con
+        )
 
 
 def _resolve_relation(
@@ -336,21 +346,22 @@ def _resolve_relation(
 ) -> Any:
     key = (relation.kind, relation.name if isinstance(relation, TableRef) else relation.sql)
     raw = _native.raw_connection(con)
-    fingerprint = _native.admission_fingerprint(catalog, relation, raw)
-    if key in admitted:
-        if fingerprints[key] != fingerprint:
-            raise _INVALID.error(
-                reason="native relation definition or identity changed after Model binding"
-            )
-        return admitted[key]
-    if isinstance(relation, TableRef):
-        table = con.table(relation.name)
-    else:
-        admit_read_query(relation.sql, catalog.dialect, str(getattr(con, "name", "duckdb")))
-        table = con.sql(relation.sql)
-    admitted[key] = table
-    fingerprints[key] = fingerprint
-    return table
+    with _native.connection_lock(raw):
+        fingerprint = _native.admission_fingerprint(catalog, relation, raw)
+        if key in admitted:
+            if fingerprints[key] != fingerprint:
+                raise _INVALID.error(
+                    reason="native relation definition or identity changed after Model binding"
+                )
+            return admitted[key]
+        if isinstance(relation, TableRef):
+            table = con.table(relation.name)
+        else:
+            admit_read_query(relation.sql, catalog.dialect, str(getattr(con, "name", "duckdb")))
+            table = con.sql(relation.sql)
+        admitted[key] = table
+        fingerprints[key] = fingerprint
+        return table
 
 
 def bind_resolver(
@@ -367,14 +378,20 @@ def bind_resolver(
         _validate_binding(input_binding, catalog, con, units)
 
         def resolve_published(relation: RelationSpec) -> Any:
-            key = (relation.kind, relation.name if isinstance(relation, TableRef) else relation.sql)
-            storage_name = issuer.root_names.get(key)
-            if storage_name is None:
-                raise _INVALID.error(reason="root has no issued stored-result substitution")
-            return con.table(
-                storage_name,
-                database=issuer.namespace,
-            )
+            with issuer.lock, _native.connection_lock(issuer.raw):
+                if issuer.closed and issuer.leases == 0:
+                    raise _INVALID.error(reason="publication owner is closed")
+                key = (
+                    relation.kind,
+                    relation.name if isinstance(relation, TableRef) else relation.sql,
+                )
+                storage_name = issuer.root_names.get(key)
+                if storage_name is None:
+                    raise _INVALID.error(reason="root has no issued stored-result substitution")
+                return con.table(
+                    storage_name,
+                    database=issuer.namespace,
+                )
 
         return resolve_published
     if _published_issuer(con) is not None:
@@ -531,10 +548,11 @@ def open_execution(
         raw = None
         context = None
         try:
-            raw = issuer.raw.cursor()
-            private = ibis.duckdb.from_connection(raw)
-            _native.restore_semantic_settings(issuer.raw, raw)
-            _native.begin_owned_transaction(raw)
+            with issuer.lock, _native.connection_lock(issuer.raw):
+                raw = issuer.raw.cursor()
+                private = ibis.duckdb.from_connection(raw)
+                _native.restore_semantic_settings(issuer.raw, raw)
+                _native.begin_owned_transaction(raw)
 
             def validate() -> None:
                 _validate_leased_binding(input_binding, catalog, con, private, units)
@@ -570,13 +588,16 @@ def open_execution(
                 raw.close()
             issuer.release()
         return
-    origin, _ = _native.verify_native_backend(con)
-    raw = origin.cursor()
+    origin = _native.raw_connection(con)
+    raw = None
     context = None
     try:
-        private = ibis.duckdb.from_connection(raw)
-        _native.restore_semantic_settings(origin, raw)
-        _native.begin_owned_transaction(raw)
+        with _native.connection_lock(origin):
+            _native.verify_native_backend(con)
+            raw = origin.cursor()
+            private = ibis.duckdb.from_connection(raw)
+            _native.restore_semantic_settings(origin, raw)
+            _native.begin_owned_transaction(raw)
         resolver = bind_resolver(catalog, private, units=units)
         context = ExecutionContext(
             private,
@@ -588,7 +609,7 @@ def open_execution(
     finally:
         if context is not None:
             context.close()
-        else:
+        elif raw is not None:
             raw.close()
 
 

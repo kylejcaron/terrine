@@ -104,6 +104,13 @@ def _admit_roots(
 def publish(
     catalog: Catalog, *, con: Any, units: Mapping[str, Any] | None = None
 ) -> PublishedInputs:
+    with _native.connection_lock(_native.raw_connection(con)):
+        return _publish_locked(catalog, con=con, units=units)
+
+
+def _publish_locked(
+    catalog: Catalog, *, con: Any, units: Mapping[str, Any] | None
+) -> PublishedInputs:
     origin = _native.raw_connection(con)
     _native.verify_native_backend(origin)
     roots = _root_spec(catalog, units)
@@ -203,6 +210,7 @@ def publish(
 
 def _remove_artifact(raw: Any, artifact_dir: tempfile.TemporaryDirectory[str]) -> None:
     try:
-        raw.close()
+        with _native.connection_lock(raw):
+            raw.close()
     finally:
         artifact_dir.cleanup()

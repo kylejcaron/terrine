@@ -115,6 +115,8 @@ class Frame:
             try:
                 schema = reader.schema
                 for batch in reader:
+                    if batch.schema != schema:
+                        batch = batch.cast(schema)
                     row_count += batch.num_rows
                     byte_count += batch.nbytes
                     if budget is not None:

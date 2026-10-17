@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
+import weakref
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,6 +20,19 @@ from terrine.semantic.sql import (
     _admit_read_query_ast,
     _admit_stored_view_query_ast,
 )
+
+_CONNECTION_LOCKS: weakref.WeakKeyDictionary[Any, threading.RLock] = weakref.WeakKeyDictionary()
+_CONNECTION_LOCKS_GUARD = threading.Lock()
+
+
+def connection_lock(raw: Any) -> threading.RLock:
+    """Coordinate Terrine operations without extending connection lifetime."""
+    with _CONNECTION_LOCKS_GUARD:
+        lock = _CONNECTION_LOCKS.get(raw)
+        if lock is None:
+            lock = threading.RLock()
+            _CONNECTION_LOCKS[raw] = lock
+        return lock
 
 
 def _snapshot_error(reason: str):
@@ -70,7 +85,8 @@ def raw_connection(con: Any) -> Any:
 
 def _rows(raw: Any, sql: str) -> list[tuple[Any, ...]]:
     try:
-        return raw.execute(sql).fetchall()
+        with connection_lock(raw):
+            return raw.execute(sql).fetchall()
     except Exception as exc:
         raise _snapshot_error("verified system metadata access failed") from exc
 
@@ -261,7 +277,8 @@ def _sql_tables(
     for obj in physical.values():
         sqlglot_leaves.update(expand(obj, set()))
     try:
-        native_result = raw.get_table_names(sql, qualified=True)
+        with connection_lock(raw):
+            native_result = raw.get_table_names(sql, qualified=True)
     except Exception as exc:
         raise _binding_error("native table-name crosscheck failed") from exc
     if not isinstance(native_result, (list, tuple, set, frozenset)):
@@ -427,11 +444,12 @@ def admission_fingerprint(catalog: Catalog, relation: Any, raw: Any) -> str:
 
 def verify_native_backend(con: Any) -> tuple[Any, None]:
     raw = raw_connection(con)
-    check_native_functions(raw, "SELECT system.main.current_transaction_id()", None)
-    first = _rows(raw, "SELECT system.main.current_transaction_id()")[0][0]
-    second = _rows(raw, "SELECT system.main.current_transaction_id()")[0][0]
-    if first == second:
-        raise _snapshot_error("caller already owns an active transaction")
+    with connection_lock(raw):
+        check_native_functions(raw, "SELECT system.main.current_transaction_id()", None)
+        first = _rows(raw, "SELECT system.main.current_transaction_id()")[0][0]
+        second = _rows(raw, "SELECT system.main.current_transaction_id()")[0][0]
+        if first == second:
+            raise _snapshot_error("caller already owns an active transaction")
     return raw, None
 
 

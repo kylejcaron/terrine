@@ -208,10 +208,16 @@ class Model:
 
     def _sql(self, sql: str) -> Any:
         """Admit compiler functions before schema inference can invoke callbacks."""
-        from terrine.execution._native import check_native_functions, raw_connection
+        from terrine.execution._native import (
+            check_native_functions,
+            connection_lock,
+            raw_connection,
+        )
 
-        check_native_functions(raw_connection(self.con), sql, None)
-        return self.con.sql(sql)
+        raw = raw_connection(self.con)
+        with connection_lock(raw):
+            check_native_functions(raw, sql, None)
+            return self.con.sql(sql)
 
     def _for_execution(self, context: ExecutionContext) -> Model:
         relations = (

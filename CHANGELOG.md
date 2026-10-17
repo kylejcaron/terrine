@@ -44,3 +44,4 @@
 - Export Arrow metadata and optional nullable dataframe conversions; include readiness, roster and event-ID declarations in model identity without requiring unused label-source readiness.
 - Preserve lossless mixed microsecond/nanosecond as-of and prefix ordering, NULL lookup requests and matched-state history continuity; refuse unsupported native timestamp ordering with a normalization route.
 - Apply interval-certain checked numeric eligibility and deferred endpoint-overflow checks even when another conjunct excludes the candidate.
+- Preserve UTC Arrow output under non-UTC SQL sessions and coordinate shared-origin metadata and capture across concurrent exports.

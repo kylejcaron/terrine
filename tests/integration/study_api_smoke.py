@@ -101,6 +101,7 @@ def _assert_result(result):
 
 def main():
     con = ibis.duckdb.connect()
+    con.raw_sql("SET TimeZone = 'America/New_York'")
     writer = con.con.cursor()
     t0 = datetime(2025, 1, 3, 12, tzinfo=UTC)
     con.create_table(
@@ -178,6 +179,8 @@ def main():
             assert changed
             assert writer.execute("SELECT DISTINCT value FROM events").fetchall() == [(-1,)]
             _assert_result(ordinary)
+            assert ordinary.table.schema.field("t0").type == pa.timestamp("us", tz="UTC")
+            assert ordinary.table.column("t0").to_pylist() == [t0]
             assert all(value is None for value in ordinary.provenance.source_generations.values())
             assert ordinary.provenance.execution_snapshot.snapshot_id is None
             writer.execute("UPDATE events SET value = 1")
@@ -214,6 +217,7 @@ def main():
                         "post": 2,
                         "concurrent_write_excluded": True,
                         "replay_equivalence": "unverified",
+                        "execution_timezone": "America/New_York",
                         "package": str(Path(tr.__file__).resolve()),
                     },
                     sort_keys=True,
