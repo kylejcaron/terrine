@@ -314,7 +314,7 @@ def test_state_panel_incremental_change_routes_to_clean_rebuild():
     )
     graph = dependency_graph(
         design=design,
-        sources=("events",),
+        sources=("events", "roster"),
         definition_hash="d",
         partitions=("p1", "p2"),
     )
