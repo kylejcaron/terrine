@@ -172,7 +172,7 @@ def test_tiny_nonzero_standardized_effect_keeps_two_sided_pvalue():
     for row in rows:
         row["event_period"] = -2
         row["anchor_id"] = (row["unit"], -2)
-        row["y"] = 1.0 if row["unit"] == 1 else 0.1 if row["unit"] == 20 else 0.0
+        row["y"] = 0.1 if row["unit"] == 0 else 1.1 if row["unit"] == 1 else 0.0
     result = placebo_test(
         replace(frame, table=pa.Table.from_pylist(rows)), outcome="y", placebo_periods=(-2,)
     )
