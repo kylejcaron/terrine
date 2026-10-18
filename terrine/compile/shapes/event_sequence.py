@@ -74,8 +74,6 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
     if not isinstance(sequence, EventSequence):
         raise TypeError("design shape must be EventSequence")
     design.validate(model)
-    if sequence.funnel is not None:
-        raise _UNSUPPORTED_SHAPE.error()
     if design.features or design.outcomes:
         raise _UNSUPPORTED_SHAPE.error()
     # Existing cross-section machinery retains candidate identity, eligibility, and audit roles.
@@ -111,9 +109,12 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
     normalized = normalized.mutate(**{timestamp_alias: normalized["_timestamp"]}).drop("_timestamp")
     normalized = _utc_column(model, normalized, timestamp_alias, "_timestamp")
 
+    internal_names = (sequence.label_property,) + (
+        (sequence.funnel.event_property,) if sequence.funnel is not None else ()
+    )
     internal_properties = tuple(
         name
-        for name in (sequence.label_property,)
+        for name in dict.fromkeys(internal_names)
         if name is not None and name not in sequence.properties
     )
     direct = {}
@@ -164,6 +165,13 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         complete_until=readiness.end_exclusive,
         session_gap_seconds=(
             sequence.sessions.gap_seconds if sequence.sessions is not None else None
+        ),
+        funnel_event_property=(
+            sequence.funnel.event_property if sequence.funnel is not None else None
+        ),
+        funnel_steps=sequence.funnel.steps if sequence.funnel is not None else None,
+        funnel_within_seconds=(
+            sequence.funnel.within_seconds if sequence.funnel is not None else None
         ),
     )
     integrity_checks = list(base._anchors._checks)

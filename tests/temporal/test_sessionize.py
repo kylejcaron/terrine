@@ -104,6 +104,7 @@ def test_session_start_temporary_name_preserves_same_named_input_property():
     )
     assert result[0]["_new_session"] == "user-value"
 
+
 def test_sessions_expose_summary_and_transition_schemas():
     con = ibis.duckdb.connect()
     events = con.create_table(
@@ -121,15 +122,19 @@ def test_sessions_expose_summary_and_transition_schemas():
             }
         ).to_pyarrow(),
     )
-    result = sessionize(
-        events,
-        unit_column="unit",
-        anchor_id_column="anchor",
-        timestamp_column="time",
-        event_id_column="id",
-        gap_seconds=1,
-        max_events=3,
-    ).to_pyarrow().to_pylist()
+    result = (
+        sessionize(
+            events,
+            unit_column="unit",
+            anchor_id_column="anchor",
+            timestamp_column="time",
+            event_id_column="id",
+            gap_seconds=1,
+            max_events=3,
+        )
+        .to_pyarrow()
+        .to_pylist()
+    )
     assert [(row["id"], row["session_event_count"]) for row in result] == [
         ("a", 2),
         ("b", 2),
@@ -152,14 +157,18 @@ def test_session_summaries_override_colliding_physical_columns():
             "session_end_time": [datetime(2020, 1, 2, tzinfo=UTC)] * 2,
         }
     )
-    result = sessionize(
-        events,
-        unit_column="unit",
-        anchor_id_column="anchor",
-        timestamp_column="time",
-        event_id_column="id",
-        gap_seconds=1,
-        max_events=2,
-    ).to_pyarrow().to_pylist()
+    result = (
+        sessionize(
+            events,
+            unit_column="unit",
+            anchor_id_column="anchor",
+            timestamp_column="time",
+            event_id_column="id",
+            gap_seconds=1,
+            max_events=2,
+        )
+        .to_pyarrow()
+        .to_pylist()
+    )
     assert [row["session_event_count"] for row in result] == [2, 2]
     assert [row["session_start_time"] for row in result] == [datetime(2025, 1, 1, tzinfo=UTC)] * 2

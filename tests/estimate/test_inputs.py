@@ -26,8 +26,6 @@ def refusal(frame, code, **kwargs):
     assert "value" not in exc.value.context
 
 
-
-
 def test_variable_origin_outcome_is_refused_before_baseline_estimation(frame):
     timing = ExpressionTiming(
         "event_time",
@@ -47,6 +45,8 @@ def test_variable_origin_outcome_is_refused_before_baseline_estimation(frame):
     with pytest.raises(TerrineError) as error:
         prepare(variable_origin, outcome="y")
     assert error.value.code == "terrine.estimate.variable_origin_outcome"
+
+
 def test_outcome_selection_is_explicit(frame, permissive):
     assert aipw(frame, folds=2, diagnostics=permissive).outcome == "y"
     for outcomes, selected in [((), None), (("y", "other"), None), (("y",), "other")]:

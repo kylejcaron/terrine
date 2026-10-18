@@ -118,6 +118,7 @@ class EventSequence:
             "sequence_complete",
             "sequence_reason",
             "event_values",
+            "funnel_attempts",
         }
         if sessions is not None:
             generated.update(

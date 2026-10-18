@@ -87,6 +87,35 @@ def test_sequence_compiler_uses_configured_event_id_and_preserves_tied_order(seq
     assert [row["event_id"] for row in children] == ["a", "z", "end"]
 
 
+def test_sequence_compiler_publishes_funnel_attempt_schema(sequence_model):
+    from terrine.spec import FunnelSpec
+
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence(
+            "signup",
+            Window("0s", "2h"),
+            max_events=5,
+            properties=("kind",),
+            funnel=FunnelSpec("kind", ("view", "purchase")),
+        ),
+    )
+    compiled = design.build(sequence_model)._compiled
+    compiled.validate(execute=sequence_model.con.to_pyarrow)
+    rows = sequence_model.con.to_pyarrow(compiled.table).to_pylist()
+    header = next(row for row in rows if not row["is_event"])
+    assert header["funnel_attempts"] == [
+        {
+            "step0_event_id": "a",
+            "deadline": datetime(2025, 1, 1, 14, tzinfo=UTC),
+            "progress": 2,
+            "status": "complete",
+            "reason": None,
+        }
+    ]
+
+
 def test_timestamp_identity_refuses_ties_without_configured_id(sequence_model):
     from terrine.errors import TerrineError
     from terrine.spec import Design, EventAnchor, EventSequence

@@ -204,6 +204,8 @@ def test_known_null_event_property_has_stable_reason():
         "value": None,
         "value_reason": "known_null",
     }
+
+
 def test_funnel_deadline_is_half_open_and_retries_at_each_step_zero():
     from datetime import timedelta
 
@@ -226,18 +228,22 @@ def test_funnel_deadline_is_half_open_and_retries_at_each_step_zero():
             "sequence_end": [start + timedelta(seconds=20)] * 4,
         }
     )
-    result = funnel_progress(
-        events,
-        event_property="kind",
-        steps=("start", "finish"),
-        within_seconds=5,
-        sequence_end_column="sequence_end",
-        unit_column="unit",
-        anchor_id_column="anchor",
-        timestamp_column="time",
-        event_id_column="id",
-        position_column="position",
-    ).to_pyarrow().to_pylist()
+    result = (
+        funnel_progress(
+            events,
+            event_property="kind",
+            steps=("start", "finish"),
+            within_seconds=5,
+            sequence_end_column="sequence_end",
+            unit_column="unit",
+            anchor_id_column="anchor",
+            timestamp_column="time",
+            event_id_column="id",
+            position_column="position",
+        )
+        .to_pyarrow()
+        .to_pylist()
+    )
     assert [(row["step0_event_id"], row["progress"], row["status"]) for row in result] == [
         ("a0", 1, "failed"),
         ("a1", 1, "failed"),
@@ -245,3 +251,43 @@ def test_funnel_deadline_is_half_open_and_retries_at_each_step_zero():
     ]
     assert result[0]["reason"] == "deadline_elapsed"
     assert result[2]["reason"] == "sequence_window_end_before_deadline"
+
+
+def test_funnel_does_not_skip_missing_intermediate_step():
+    from datetime import timedelta
+
+    from terrine.temporal.sequence import funnel_progress
+
+    start = datetime(2025, 1, 1, tzinfo=UTC)
+    events = ibis.memtable(
+        {
+            "unit": ["u", "u", "u"],
+            "anchor": [1, 1, 1],
+            "time": [start, start + timedelta(seconds=2), start + timedelta(seconds=3)],
+            "id": ["start", "finish", "start-later"],
+            "position": [0, 1, 2],
+            "kind": ["start", "finish", "start"],
+            "sequence_end": [start + timedelta(seconds=10)] * 3,
+        }
+    )
+    result = (
+        funnel_progress(
+            events,
+            event_property="kind",
+            steps=("start", "middle", "finish"),
+            within_seconds=10,
+            sequence_end_column="sequence_end",
+            unit_column="unit",
+            anchor_id_column="anchor",
+            timestamp_column="time",
+            event_id_column="id",
+            position_column="position",
+        )
+        .to_pyarrow()
+        .to_pylist()
+    )
+    assert [(row["step0_event_id"], row["progress"], row["status"]) for row in result] == [
+        ("start", 1, "failed"),
+        ("start-later", 1, "unavailable"),
+    ]
+    assert result[0]["reason"] == "deadline_elapsed"

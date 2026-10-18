@@ -76,10 +76,7 @@ def funnel_progress(
         or any(not isinstance(step, str) or not step for step in steps)
         or len(set(steps)) != len(steps)
         or any(name not in events.columns for name in required)
-        or (
-            within_seconds is not None
-            and (isinstance(within_seconds, bool) or within_seconds < 0)
-        )
+        or (within_seconds is not None and (isinstance(within_seconds, bool) or within_seconds < 0))
     ):
         raise ValueError("invalid funnel parameters or event relation")
     deadline = (
@@ -106,6 +103,7 @@ def funnel_progress(
         matches = attempt.join(
             candidate,
             [
+                attempt._f_progress == progress - 1,
                 attempt._f_unit == candidate[unit_column],
                 attempt._f_anchor == candidate[anchor_id_column],
                 candidate[event_property] == step,
@@ -143,9 +141,7 @@ def funnel_progress(
             _f_start_id=left._f_start_id,
             _f_last_id=ibis.coalesce(right._next_id, left._f_last_id),
             _f_last_time=ibis.coalesce(right._next_time, left._f_last_time),
-            _f_last_position=ibis.coalesce(
-                right._next_position, left._f_last_position
-            ),
+            _f_last_position=ibis.coalesce(right._next_position, left._f_last_position),
             _f_progress=ibis.ifelse(
                 right._next_position.isnull(),
                 left._f_progress,
@@ -199,6 +195,9 @@ def event_sequence(
     complete_from: datetime,
     complete_until: datetime,
     session_gap_seconds: int | None = None,
+    funnel_event_property: str | None = None,
+    funnel_steps: tuple[str, ...] | None = None,
+    funnel_within_seconds: int | None = None,
 ) -> SequenceResult:
     """Select complete, ordered source events in each anchor's exact half-open window."""
     if window_start >= window_end or max_events <= 0:
@@ -417,10 +416,14 @@ def event_sequence(
                 {
                     "session_index": ibis.literal(None, type="int64"),
                     "session_event_count": ibis.literal(None, type="int64"),
-                    "session_start_time": ibis.literal(None, type=events.schema()[timestamp_column]),
+                    "session_start_time": ibis.literal(
+                        None, type=events.schema()[timestamp_column]
+                    ),
                     "session_end_time": ibis.literal(None, type=events.schema()[timestamp_column]),
                     "previous_event_id": ibis.literal(None, type=events.schema()[event_id_column]),
-                    "previous_event_time": ibis.literal(None, type=events.schema()[timestamp_column]),
+                    "previous_event_time": ibis.literal(
+                        None, type=events.schema()[timestamp_column]
+                    ),
                     "transition_reason": ibis.literal(None, type="string"),
                     "transition": ibis.literal(
                         None,
@@ -494,6 +497,64 @@ def event_sequence(
             if session_gap_seconds is not None
             else ()
         )
+    if funnel_event_property is not None:
+        if (
+            not funnel_steps
+            or funnel_event_property not in complete_children.columns
+            or (funnel_within_seconds is not None and funnel_within_seconds <= 0)
+        ):
+            raise ValueError("invalid funnel parameters or missing funnel property")
+        funnel_events = complete_children.mutate(
+            _funnel_sequence_end=complete_children._sequence_t0 + ibis.interval(seconds=window_end)
+        )
+        attempts = funnel_progress(
+            funnel_events,
+            event_property=funnel_event_property,
+            steps=funnel_steps,
+            within_seconds=funnel_within_seconds,
+            sequence_end_column="_funnel_sequence_end",
+            unit_column="_sequence_unit",
+            anchor_id_column="_sequence_anchor",
+            timestamp_column=timestamp_column,
+            event_id_column=event_id_column,
+            position_column="sequence_position",
+        )
+        attempt_values = ibis.struct(
+            {
+                "step0_event_id": attempts.step0_event_id,
+                "deadline": attempts.deadline,
+                "progress": attempts.progress,
+                "status": attempts.status,
+                "reason": attempts.reason,
+            }
+        )
+        attempts_by_anchor = attempts.group_by(["unit", "anchor_id"]).aggregate(
+            funnel_attempts=attempt_values.collect(order_by=[attempts.step0_event_id])
+        )
+        joined_table = table.left_join(
+            attempts_by_anchor,
+            [
+                table.unit == attempts_by_anchor.unit,
+                table.anchor_id == attempts_by_anchor.anchor_id,
+            ],
+        )
+        funnel_type = attempts_by_anchor.schema()["funnel_attempts"]
+        table = joined_table.select(
+            **{
+                name: joined_table[name]
+                for name in joined_table.columns
+                if name not in {"unit_right", "anchor_id_right", "funnel_attempts"}
+            },
+            funnel_attempts=ibis.ifelse(
+                joined_table.sequence_complete,
+                ibis.coalesce(
+                    joined_table.funnel_attempts,
+                    ibis.literal([], type=funnel_type),
+                ),
+                ibis.literal(None, type=funnel_type),
+            ),
+        )
+        feature_names = (*feature_names, "funnel_attempts")
     roles = Roles("unit", "anchor_id", "t0", None, feature_names, ())
     columns = {
         name: ColumnMeta(Window(window_start, window_end), "event_property", None, None, None, None)
