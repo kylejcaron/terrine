@@ -11,6 +11,7 @@ from terrine.compile.columns import CompiledStudy
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
 from terrine.spec.trajectory import CohortGrouping
+from terrine.temporal._timestamps import timestamp_order_key
 from terrine.temporal.aggregate import _Check, _Failure
 from terrine.temporal.prefix import (
     FLOAT64_PRECISION,
@@ -19,7 +20,6 @@ from terrine.temporal.prefix import (
     outward_add,
     outward_multiply,
 )
-from terrine.temporal._timestamps import timestamp_order_key
 
 __all__ = ["compile_cohorts"]
 
@@ -72,7 +72,9 @@ def compile_cohorts(
     )
     per_unit = table.group_by("bucket_index", "age", "unit").aggregate(
         _value=table[value_column].first(),
-        _absolute_error=table[error_column].first() if checked_float else ibis.null().cast("float64"),
+        _absolute_error=table[error_column].first()
+        if checked_float
+        else ibis.null().cast("float64"),
         _complete=table[complete_column].first().fill_null(ibis.literal(False)),
         _mature=table.period_value_mature.first(),
         _reason=table[f"{value_column}_reason"].first()
@@ -111,9 +113,8 @@ def compile_cohorts(
     elif checked_float:
         input_error = per_unit._absolute_error.mean()
         mean_magnitude = (
-            (reduction_table._value.abs() / reduction_table._scale).mean()
-            * reduction_table._scale.first()
-        )
+            reduction_table._value.abs() / reduction_table._scale
+        ).mean() * reduction_table._scale.first()
         reduction_error = outward_multiply(float64_rounding_radius(mean_magnitude), 2.0)
         absolute_error = outward_add(input_error, reduction_error)
     else:
@@ -182,9 +183,7 @@ def compile_cohorts(
         failure_column = "failed_cohort_tolerance"
         checks.append(
             _Check(
-                result.filter(failed).aggregate(
-                    ibis._.count().cast("string").name(failure_column)
-                ),
+                result.filter(failed).aggregate(ibis._.count().cast("string").name(failure_column)),
                 (
                     _Failure(
                         failure_column,

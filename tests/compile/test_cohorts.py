@@ -277,12 +277,13 @@ def test_exact_integer_values_are_summed_before_cohort_mean_conversion():
         assert group["value"] == 0.5
     finally:
         con.disconnect()
+
+
 def test_cohort_mean_preserves_fractional_decimal_and_float_values():
     con, model = _trajectory_model()
     try:
         con.raw_sql(
-            "UPDATE events SET decimal_amount = 0.25, float_amount = 0.25 "
-            "WHERE kind = 'revenue'"
+            "UPDATE events SET decimal_amount = 0.25, float_amount = 0.25 WHERE kind = 'revenue'"
         )
         con.raw_sql(
             "INSERT INTO events (user_id, ts, kind, amount, decimal_amount, float_amount) VALUES "
@@ -319,8 +320,7 @@ def test_cohort_float_total_enforces_final_tolerance():
     con, model = _trajectory_model()
     try:
         con.raw_sql(
-            "UPDATE events SET float_amount = 1e12 "
-            "WHERE user_id = 'u1' AND kind = 'revenue'"
+            "UPDATE events SET float_amount = 1e12 WHERE user_id = 'u1' AND kind = 'revenue'"
         )
         con.raw_sql(
             "INSERT INTO events (user_id, ts, kind, amount, decimal_amount, float_amount) VALUES "
@@ -352,18 +352,22 @@ def test_cohort_summary_surrogate_export_retains_age_and_denominators():
 
     con, model = _trajectory_model()
     try:
-        cohort = Design(
-            "user",
-            EventAnchor("purchase", which="first"),
-            shape=CohortSpec(
-                origin="purchase",
-                trajectory=Trajectory("net_revenue", "7d", periods=2, cumulative=False),
-            ),
-        ).build(model).cohorts(
-            grouping=CohortGrouping(
-                bucket="7d", bucket_origin=datetime(2025, 1, 1, tzinfo=UTC), statistic="mean"
-            ),
-            value_column="period_value",
+        cohort = (
+            Design(
+                "user",
+                EventAnchor("purchase", which="first"),
+                shape=CohortSpec(
+                    origin="purchase",
+                    trajectory=Trajectory("net_revenue", "7d", periods=2, cumulative=False),
+                ),
+            )
+            .build(model)
+            .cohorts(
+                grouping=CohortGrouping(
+                    bucket="7d", bucket_origin=datetime(2025, 1, 1, tzinfo=UTC), statistic="mean"
+                ),
+                value_column="period_value",
+            )
         )
         materialized = cohort.materialize()
         exported = to_surrogate_arrow(materialized, features=(), outcomes=("value",))
@@ -377,8 +381,7 @@ def test_float_cohort_mean_avoids_overflow_and_retains_certificate():
     con, model = _trajectory_model()
     try:
         con.raw_sql(
-            "UPDATE events SET float_amount = 1e308 "
-            "WHERE user_id = 'u1' AND kind = 'revenue'"
+            "UPDATE events SET float_amount = 1e308 WHERE user_id = 'u1' AND kind = 'revenue'"
         )
         con.raw_sql(
             "UPDATE events SET float_amount = 0 WHERE user_id = 'u1' AND ts = "

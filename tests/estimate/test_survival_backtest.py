@@ -131,6 +131,8 @@ def test_backtest_preserves_fractional_cutoff_for_seconds_censor_input(cutoff):
     )
     assert captured[0]["censor_time"][0].as_py() == cutoff
     assert captured[0].schema.field("censor_time").type == pa.timestamp("us", tz="UTC")
+
+
 def test_backtest_preserves_subsecond_cutoff_with_seconds_origin():
     source = _frame()
     source_table = source.table.set_column(
