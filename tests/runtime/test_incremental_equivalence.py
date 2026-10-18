@@ -1,4 +1,5 @@
 from dataclasses import replace
+from datetime import UTC, datetime
 
 import pytest
 
@@ -134,6 +135,12 @@ def test_historical_1e16_insert_has_identical_float64_refusal(column_model):
 def test_same_snapshot_incremental_matches_clean_after_correction(column_model, scenario):
     model = _float_model(column_model)
     con = model.con
+    model = Model.from_catalog(
+        model.catalog,
+        con=con,
+        readiness={"events": Coverage("2024-12-31", "2025-01-03")},
+        units=model.units,
+    )
     if scenario == "insert":
         con.raw_sql(
             "INSERT INTO events VALUES ('a', TIMESTAMPTZ '2025-01-02 10:00:00+00', 11.0, 'new')"
@@ -186,7 +193,7 @@ def test_same_snapshot_incremental_matches_clean_after_correction(column_model, 
         model = Model.from_catalog(
             model.catalog,
             con=con,
-            readiness={"events": Coverage("2025-01-01", "2025-01-03")},
+            readiness={"events": Coverage("2024-12-31", "2025-01-03")},
             units=model.units,
         )
     elif scenario == "readiness_retraction":
@@ -221,6 +228,25 @@ def test_same_snapshot_incremental_matches_clean_after_correction(column_model, 
         model.con.to_pyarrow(incremental.table.order_by("unit"))
     )
     assert clean.columns == incremental.columns
+    audit_rows = model.con.to_pyarrow(clean.audit_table).to_pylist()
+    audit_by_unit = {row["unit"]: row for row in audit_rows}
+    if scenario == "readiness_retraction":
+        assert audit_by_unit["a"]["total"] is None
+    elif scenario != "roster_exit":
+        expected_totals = {
+            "insert": 14.0,
+            "update": 13.0,
+            "delete": 0.0,
+            "late_arrival": 20.0,
+            "dimension_correction": 3.0,
+            "readiness_advance": 3.0,
+            "definition_change": 3.0,
+        }
+        assert audit_by_unit["a"]["total"] == expected_totals[scenario]
+    if scenario == "dimension_correction":
+        assert audit_by_unit["a"]["tier"] == "silver"
+    if scenario == "definition_change":
+        assert audit_by_unit["a"]["recent"] == 3.0
     if scenario == "roster_exit":
         assert "a" not in model.con.to_pyarrow(incremental.audit_table)["unit"].to_pylist()
 
@@ -287,8 +313,8 @@ def test_ratio_sources_change_independently_match_clean_compilation(column_model
         catalog,
         con=con,
         readiness={
-            "numerator": Coverage("2025-01-02", "2025-01-02"),
-            "denominator": Coverage("2025-01-02", "2025-01-02"),
+            "numerator": Coverage("2025-01-01", "2025-01-02"),
+            "denominator": Coverage("2025-01-01", "2025-01-02"),
         },
         units=column_model.units,
     )
@@ -315,6 +341,9 @@ def test_ratio_sources_change_independently_match_clean_compilation(column_model
         con.to_pyarrow(incremental.table.order_by("unit"))
     )
     assert clean.columns == incremental.columns
+    expected_rate = 4.5 if changed_source == "numerator" else 5 / 3
+    rates = {row["unit"]: row["rate"] for row in con.to_pyarrow(clean.table).to_pylist()}
+    assert rates["a"] == pytest.approx(expected_rate)
 
 
 @pytest.mark.parametrize(("policy", "correction"), [("first", "insert"), ("nth", "delete")])
@@ -349,7 +378,7 @@ def test_event_anchor_identity_corrections_match_clean_compilation(
             "'earlier', 'event-0')"
         )
     else:
-        con.raw_sql("DELETE FROM events WHERE event_id='event-2'")
+        con.raw_sql("DELETE FROM events WHERE event_id='event-1'")
     design = Design("user", anchor, features={"total": agg("total", window=("-1d", "0s"))})
     clean = compile_columns(design, model)
     incremental = compose_materialized_frame(
@@ -363,3 +392,13 @@ def test_event_anchor_identity_corrections_match_clean_compilation(
     assert model.con.to_pyarrow(clean.table.order_by("unit")).equals(
         model.con.to_pyarrow(incremental.table.order_by("unit"))
     )
+    anchor_rows = [
+        row for row in model.con.to_pyarrow(clean.audit_table).to_pylist() if row["unit"] == "a"
+    ]
+    assert len(anchor_rows) == 1
+    expected_t0 = (
+        datetime(2025, 1, 2, 10, tzinfo=UTC)
+        if policy == "first"
+        else datetime(2025, 1, 2, 12, tzinfo=UTC)
+    )
+    assert anchor_rows[0]["t0"] == expected_t0

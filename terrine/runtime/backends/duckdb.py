@@ -305,7 +305,12 @@ class DuckDBBackend:
         if model_connection is self.con:
             return ibis_backend.table(row[0], database=self.namespace)
         if self._ibis_backend is None:
-            self._ibis_backend = IbisDuckDBBackend.from_connection(self.con)
+            timezone = self.con.execute("SELECT current_setting('TimeZone')").fetchone()[0]
+            try:
+                self._ibis_backend = IbisDuckDBBackend.from_connection(self.con)
+            finally:
+                escaped_timezone = timezone.replace("'", "''")
+                self.con.execute(f"SET TimeZone = '{escaped_timezone}'")
         return self._ibis_backend.table(row[0], database=self.namespace)
 
     def reconcile(self, run_id: str) -> Reconciliation:

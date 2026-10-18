@@ -115,6 +115,15 @@ def cancel_run(run_id: str, *, con: Any, namespace: str) -> CancelReceipt:
     ).fetchone()
     if row is None:
         raise _UNAVAILABLE.error()
+    columns = {
+        column[0].casefold()
+        for column in con.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE lower(table_schema)=lower(?) AND lower(table_name)='runtime_runs'",
+            [namespace],
+        ).fetchall()
+    }
+    updated_at = ", updated_at=CURRENT_TIMESTAMP" if "updated_at" in columns else ""
     with run_publication_lock(namespace, row[0]):
         with event_transaction(con, namespace=namespace):
             current = con.execute(
@@ -131,7 +140,7 @@ def cancel_run(run_id: str, *, con: Any, namespace: str) -> CancelReceipt:
             elif current_state in {"queued", "running"}:
                 next_state = "cancelled" if current_state == "queued" else "cancel_requested"
                 transitioned = con.execute(
-                    f"UPDATE {store._schema}.runtime_runs SET state=? "
+                    f"UPDATE {store._schema}.runtime_runs SET state=?{updated_at} "
                     "WHERE run_id=? AND state=? RETURNING run_id",
                     [next_state, run_id, current_state],
                 ).fetchone()

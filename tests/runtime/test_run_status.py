@@ -48,6 +48,28 @@ def test_cancel_request_persists_lifecycle_event():
     ]
 
 
+def test_cancel_updates_timestamp_when_column_is_available():
+    from datetime import UTC, datetime
+
+    from terrine.runtime.status import cancel_run
+
+    con = duckdb.connect(":memory:")
+    con.execute("CREATE SCHEMA owner")
+    con.execute(
+        "CREATE TABLE owner.runtime_runs (run_id VARCHAR, dataset VARCHAR, fingerprint VARCHAR, "
+        "state VARCHAR, published_generation VARCHAR, attempt_fence BIGINT, updated_at TIMESTAMP)"
+    )
+    con.execute(
+        "INSERT INTO owner.runtime_runs VALUES "
+        "('r1','d','f','running',NULL,1,TIMESTAMP '2000-01-01')"
+    )
+
+    receipt = cancel_run("r1", con=con, namespace="owner")
+
+    assert receipt.status.updated_at is not None
+    assert receipt.status.updated_at > datetime(2000, 1, 1, tzinfo=UTC)
+
+
 def test_repeated_cancel_returns_already_requested():
     from terrine.runtime.status import cancel_run
 

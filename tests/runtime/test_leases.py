@@ -3,12 +3,12 @@ from datetime import UTC, datetime, timedelta
 import duckdb
 import pytest
 
-from terrine.runtime.leases import LeaseStore
+import terrine.runtime.leases as leases_module
 
 
 def test_runtime_timestamps_are_naive_utc_timestamps_with_microsecond_precision():
     con = duckdb.connect(":memory:")
-    store = LeaseStore(con, namespace="owner")
+    store = leases_module.LeaseStore(con, namespace="owner")
     store.initialize()
     instant = datetime(2025, 1, 1, 0, 0, 0, 123456, tzinfo=UTC)
     lease = store.acquire("dataset:orders", "run-a", ttl=timedelta(microseconds=1), now=instant)
@@ -40,7 +40,7 @@ def test_initialize_migrates_existing_lease_timestamp_values_to_naive_utc():
         "INSERT INTO owner.runtime_leases VALUES (?, ?, ?, ?)",
         ["dataset:orders", "run-a", 1, "2025-01-01T02:00:00.123456+02:00"],
     )
-    store = LeaseStore(con, namespace="owner")
+    store = leases_module.LeaseStore(con, namespace="owner")
     store.initialize()
     row = con.execute("SELECT expires_at, typeof(expires_at) FROM owner.runtime_leases").fetchone()
     assert row == (datetime(2025, 1, 1, 0, 0, 0, 123456), "TIMESTAMP")
@@ -64,14 +64,14 @@ def test_lease_initialization_migrates_timestamp_with_case_variant_namespace():
         "INSERT INTO owner.runtime_leases VALUES (?, ?, ?, ?)",
         ["dataset:orders", "run", 1, "2025-01-01T00:00:01+00:00"],
     )
-    LeaseStore(con, namespace="OWNER").initialize()
+    leases_module.LeaseStore(con, namespace="OWNER").initialize()
     assert con.execute("SELECT typeof(expires_at) FROM owner.runtime_leases").fetchone() == (
         "TIMESTAMP",
     )
 
 
 def test_lease_heartbeat_renewal_and_fencing():
-    store = LeaseStore(duckdb.connect(":memory:"), namespace="owner")
+    store = leases_module.LeaseStore(duckdb.connect(":memory:"), namespace="owner")
     store.initialize()
     now = datetime(2025, 1, 1, tzinfo=UTC)
     first = store.acquire("dataset:orders", "run-a", ttl=timedelta(seconds=5), now=now)
@@ -90,11 +90,11 @@ def test_lease_heartbeat_renewal_and_fencing():
         store.assert_current(first)
 
 
-def test_disjoint_dataset_scopes_can_be_leased_concurrently():
+def test_disjoint_dataset_scopes_can_be_leased_concurrently(monkeypatch):
     con = duckdb.connect(":memory:")
-    store = LeaseStore(con, namespace="owner")
+    store = leases_module.LeaseStore(con, namespace="owner")
     store.initialize()
-    now = datetime.now(UTC)
+    now = datetime(2025, 1, 1, tzinfo=UTC)
 
     orders = store.acquire(
         "dataset:orders:[2025-01-01,2025-02-01)", "run-a", ttl=timedelta(minutes=1), now=now
@@ -102,6 +102,13 @@ def test_disjoint_dataset_scopes_can_be_leased_concurrently():
     users = store.acquire(
         "dataset:users:[2025-01-01,2025-02-01)", "run-b", ttl=timedelta(minutes=1), now=now
     )
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now if tz is None else now.astimezone(tz)
+
+    monkeypatch.setattr(leases_module, "datetime", FixedDateTime)
 
     assert orders.resource != users.resource
     store.assert_current(orders)

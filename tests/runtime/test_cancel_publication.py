@@ -41,7 +41,6 @@ def test_durable_cancellation_before_publication_prevents_generation():
 
 def test_cancel_waits_on_publication_boundary(monkeypatch):
     import threading
-    from contextlib import contextmanager
 
     import terrine.runtime.status as status_module
 
@@ -65,11 +64,21 @@ def test_cancel_waits_on_publication_boundary(monkeypatch):
 
     real_lock = status_module.run_publication_lock
 
-    @contextmanager
+    class ObservedLock:
+        def __init__(self, lock):
+            self.lock = lock
+
+        def __enter__(self):
+            if not self.lock.acquire(blocking=False):
+                cancel_at_boundary.set()
+                self.lock.acquire()
+            return self.lock
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            self.lock.release()
+
     def observed_lock(namespace, dataset):
-        cancel_at_boundary.set()
-        with real_lock(namespace, dataset):
-            yield
+        return ObservedLock(real_lock(namespace, dataset))
 
     monkeypatch.setattr(status_module, "run_publication_lock", observed_lock)
 

@@ -21,8 +21,8 @@ def _lease(con):
     return store.acquire("dataset:orders", "run", ttl=timedelta(minutes=1), now=datetime.now(UTC))
 
 
-def _published_generation(model, design):
-    con = duckdb.connect(":memory:")
+def _published_generation(model, design, *, con=None, prefix_value=7, prefix_table=None):
+    con = duckdb.connect(":memory:") if con is None else con
     backend = DuckDBBackend(con, namespace="owner")
     store = RuntimeStore(con, namespace="owner")
     store.initialize()
@@ -47,7 +47,11 @@ def _published_generation(model, design):
             "orders",
             "g1",
             {
-                "prefix-partition": pa.table({"unit": ["a"], "sum": [7]}),
+                "prefix-partition": (
+                    pa.table({"unit": ["a"], "sum": [prefix_value]})
+                    if prefix_table is None
+                    else prefix_table
+                ),
                 "anchor-partition": anchor_partition,
             },
         ),
@@ -81,6 +85,41 @@ def test_runtime_translates_verified_physical_partition_to_compiler_layer_key(co
         receipt=receipt,
         partitions={key: "prefix-partition"},
     )
+    assert actual[key].execute().to_dict("records") == [{"unit": "a", "sum": 7}]
+
+
+def test_runtime_layer_resolution_preserves_owner_timezone(column_model):
+    design = _design()
+    con, store, backend, ref, receipt, key = _published_generation(column_model, design)
+    con.execute("SET TimeZone = 'America/New_York'")
+    actual = translate_persisted_layers(
+        store,
+        backend,
+        design=design,
+        model=column_model,
+        ref=ref,
+        receipt=receipt,
+        partitions={key: "prefix-partition"},
+    )
+    assert actual[key].execute().to_dict("records") == [{"unit": "a", "sum": 7}]
+    assert con.execute("SELECT current_setting('TimeZone')").fetchone()[0] == "America/New_York"
+
+
+def test_runtime_layer_resolution_reuses_model_backend_for_shared_connection(column_model):
+    design = _design()
+    con, store, backend, ref, receipt, key = _published_generation(
+        column_model, design, con=column_model.con.con
+    )
+    actual = translate_persisted_layers(
+        store,
+        backend,
+        design=design,
+        model=column_model,
+        ref=ref,
+        receipt=receipt,
+        partitions={key: "prefix-partition"},
+    )
+    assert actual[key]._find_backend(use_default=False) is column_model.con
     assert actual[key].execute().to_dict("records") == [{"unit": "a", "sum": 7}]
 
 
