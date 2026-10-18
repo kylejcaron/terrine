@@ -495,20 +495,17 @@ def test_wide_roster_observation_end_is_intersected_before_narrowing():
         con.disconnect()
 
 
-def test_nanosecond_source_accepts_administrative_cutoff_beyond_ns_range():
+def test_nanosecond_source_refuses_administrative_cutoff_beyond_ns_range():
     con, model = _model(nanosecond_outcomes=True)
     try:
-        result = (
+        with pytest.raises(TerrineError) as error:
             Design(
                 "user",
                 EventAnchor("signup", which="first"),
                 shape=TimeToEvent("churn"),
                 administrative_cutoff=datetime(2500, 1, 1, tzinfo=UTC),
-            )
-            .build(model)
-            .materialize()
-        )
-        assert result.table.num_rows > 0
+            ).build(model)
+        assert error.value.code == "terrine.temporal.timestamp_order_unsupported"
     finally:
         con.disconnect()
 
