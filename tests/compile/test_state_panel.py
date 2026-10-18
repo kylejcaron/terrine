@@ -200,7 +200,10 @@ def test_panel_baseline_and_per_origin_feature_cutoffs_are_distinct(panel_model)
     design = Design(
         "user",
         Schedule("1d", "2025-01-03", "2025-01-05"),
-        features={"per_origin": agg("sessions", window=("-1d", "0d"))},
+        features={
+            "per_origin": agg("sessions", window=("-1d", "0d")),
+            "panel_start": agg("sessions", window=("-1d", "0d")),
+        },
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
             max_periods=2,
@@ -213,7 +216,8 @@ def test_panel_baseline_and_per_origin_feature_cutoffs_are_distinct(panel_model)
     assert compiled.feature_cutoffs["per_origin"].reference == "row_t0"
     assert compiled.feature_cutoffs["baseline"].reference == "panel_start"
     assert compiled.expression_timings["per_origin"].point_time_column == "t0"
-    assert compiled.expression_timings["baseline"].point_time_column == "panel_start"
+    assert compiled.expression_timings["panel_start"].point_time_column == "t0"
+    assert compiled.expression_timings["baseline"].point_time_column == "__terrine_panel_start"
 
 
 @pytest.mark.slow
