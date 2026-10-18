@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
+from fractions import Fraction
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -72,8 +73,17 @@ def _checked_mean(
 ) -> tuple[float, list[tuple[object, float, float]]]:
     weight_scale = max(weight for _, _, weight in values)
     normalized = [(unit, delta, weight / weight_scale) for unit, delta, weight in values]
-    denominator = math.fsum(weight for _, _, weight in normalized)
-    mean = math.fsum((weight * delta) / denominator for _, delta, weight in normalized)
+    numerator = sum(
+        (
+            Fraction.from_float(weight) * Fraction.from_float(delta)
+            for _, delta, weight in values
+        ),
+        Fraction(),
+    )
+    denominator_exact = sum(
+        (Fraction.from_float(weight) for _, _, weight in values), Fraction()
+    )
+    mean = float(numerator / denominator_exact)
     if not math.isfinite(mean):
         raise NONFINITE_RESULT.error(stage=reason)
     return mean, normalized
@@ -110,8 +120,12 @@ def stacked_event_study(
         raise _INPUT.error(reason="unknown_outcome")
     window = frame.columns[outcome].window
     risk_window_end = max(
-        (column.window.end for column in frame.columns.values() if column.window is not None),
-        default=window.end if window is not None else 0,
+        (
+            column.window.end
+            for column in frame.columns.values()
+            if column.role == "outcome" and column.window is not None
+        ),
+        default=0,
     )
     initiation_column = "__terrine_treatment_initiation_time"
     if window is not None and window.end > 0 and initiation_column not in frame.table.column_names:

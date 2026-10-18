@@ -373,6 +373,84 @@ def test_stacked_estimator_preserves_representable_mixed_magnitude_weights():
     assert result.effects == pytest.approx((expected, expected), rel=1e-12, abs=0)
 
 
+def test_stacked_weighted_mean_preserves_subnormal_equal_contributions():
+    from dataclasses import replace
+
+    frame = _frame()
+    rows = frame.table.to_pylist()
+    for row in rows:
+        row["y"] = 5e-324 if row["treatment"] and row["event_period"] == 0 else 0.0
+    frame = replace(frame, table=pa.Table.from_pylist(rows))
+
+    result = stacked_event_study(
+        frame, outcome="y", treatment="treatment", cohort="cohort", period="period"
+    )
+
+    assert result.effects == (5e-324, 5e-324)
+
+
+def test_stacked_weighted_mean_avoids_intermediate_overflow():
+    from dataclasses import replace
+
+    frame = _frame()
+    rows = frame.table.to_pylist()
+    rows.extend(
+        dict(row, unit="t0c", anchor_id=row["anchor_id"].replace("t0a", "t0c"))
+        for row in tuple(rows)
+        if row["unit"] == "t0a"
+    )
+    frame = replace(frame, table=pa.Table.from_pylist(rows))
+    largest = np.finfo(np.float64).max
+    rows = frame.table.to_pylist()
+    for row in rows:
+        row["y"] = largest if row["treatment"] and row["event_period"] == 0 else 0.0
+    frame = replace(frame, table=pa.Table.from_pylist(rows))
+
+    result = stacked_event_study(
+        frame, outcome="y", treatment="treatment", cohort="cohort", period="period"
+    )
+
+    assert result.effects == (largest, largest)
+
+
+def test_control_risk_horizon_ignores_feature_windows():
+    from dataclasses import replace
+
+    frame = _frame()
+    later = datetime(2025, 1, 5, 12, tzinfo=UTC)
+    calendar = replace(frame.provenance.calendar_comparison, comparison_periods=(2,))
+    rows = frame.table.to_pylist()
+    transformed = []
+    for row in rows:
+        if row["event_period"] == 0:
+            row["event_period"] = 2
+            row["period"] = row["cohort"] + timedelta(days=2)
+            row["t0"] = row["period"]
+            row["anchor_id"] = f"{row['cohort'].isoformat()}:2:{row['unit']}"
+        if row["unit"] == "c1":
+            row["__terrine_treatment_initiation_time"] = later
+        if row["unit"] == "c1" and row["event_period"] == 2:
+            continue
+        transformed.append(row)
+    rows = transformed
+    columns = dict(frame.columns)
+    columns["feature"] = ColumnMeta(Window("-2d", "-1d"), "feature", None, None, None, None)
+    frame = replace(
+        frame,
+        columns=columns,
+        table=pa.Table.from_pylist(rows),
+        provenance=replace(frame.provenance, calendar_comparison=calendar),
+    )
+
+    result = stacked_event_study(
+        frame,
+        outcome="y",
+        treatment="treatment",
+        cohort="cohort",
+        period="period",
+    )
+
+    assert result.n > 0
 def test_stacked_estimator_accepts_control_removed_by_longer_declared_window():
     from dataclasses import replace
 
