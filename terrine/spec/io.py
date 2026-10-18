@@ -139,7 +139,11 @@ def _encode(value: Any) -> Any:
             "knowledge": value.knowledge,
         }
     if isinstance(value, TrialWeight):
-        return {"type": "TrialWeight", "kind": value.kind, "values": value.values}
+        return {
+            "type": "TrialWeight",
+            "kind": value.kind,
+            "values": None if value.values is None else dict(value.values),
+        }
     if isinstance(value, SequentialSpec):
         return {
             "type": "SequentialSpec",

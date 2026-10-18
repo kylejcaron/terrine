@@ -261,7 +261,9 @@ def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
         source = model.sources.get(design.shape.treatment.source)
         if source is None:
             raise _MISSING.error(kind="treatment source", name=design.shape.treatment.source)
-        declared = set(source.dimensions) | set(source.properties) | set(source.facts)
+        declared = set(source.properties) | set(source.facts)
+        for dimension in source.dimensions:
+            declared.update(dimension.properties)
         if design.shape.treatment.property not in declared:
             raise _MISSING.error(kind="treatment property", name=design.shape.treatment.property)
         _required(model, source.name, required)

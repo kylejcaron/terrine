@@ -93,6 +93,10 @@ class Design:
             isinstance(shape, str) and not shape.strip()
         ):
             raise ValueError("shape must be a supported design shape")
+        if isinstance(shape, SequentialSpec) and treatment is not None:
+            from terrine.spec.panels import _CONFLICT
+
+            raise _CONFLICT.error()
         gap_seconds = seconds(gap)
         if gap_seconds < 0:
             raise ValueError("gap must be non-negative")

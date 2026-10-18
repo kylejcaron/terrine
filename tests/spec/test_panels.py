@@ -1,7 +1,8 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
+from terrine.errors import TerrineError
 from terrine.spec import (
     Design,
     EventAnchor,
@@ -11,6 +12,9 @@ from terrine.spec import (
     PersistentAdoption,
     Schedule,
     Sequential,
+    SequentialSpec,
+    Treatment,
+    TrialWeight,
     from_json,
     to_json,
 )
@@ -73,3 +77,51 @@ def test_conflicting_design_inputs_refuse_before_hash():
         )
 
     assert error.value.code == "terrine.design.conflicting_treatment"
+
+
+def test_explicit_trial_weights_normalize_without_overflow():
+    weights = TrialWeight("explicit", {"a": 1e308, "b": 1e308})
+
+    assert weights.values == {"a": 0.5, "b": 0.5}
+
+
+def test_explicit_trial_weight_round_trips_in_design_hash():
+    base = Design("user", Schedule("1d", "2025-01-01", "2025-01-03"))
+    treatment = Initiation("events", "started", datetime(2024, 1, 1, tzinfo=UTC))
+    design = Sequential(
+        base,
+        treatment=treatment,
+        trial_weight=TrialWeight("explicit", {"later": 2.0, "earlier": 1.0}),
+    )
+
+    assert from_json(to_json(design)) == design
+    assert from_json(to_json(design)).spec_hash == design.spec_hash
+
+
+def test_explicit_trial_weights_refuse_nonfinite_values():
+    with pytest.raises(ValueError):
+        TrialWeight("explicit", {"a": float("nan")})
+
+
+def test_treatment_history_instants_canonicalize_to_utc():
+    first = Initiation(
+        "events", "started", datetime(2025, 1, 1, tzinfo=timezone(timedelta(hours=2)))
+    )
+    second = Initiation("events", "started", datetime(2024, 12, 31, 22, tzinfo=UTC))
+
+    assert first == second
+    assert first.history_start.tzinfo is UTC
+
+
+def test_direct_design_construction_cannot_conflict_with_sequential_treatment():
+    history = Initiation("events", "started", datetime(2024, 1, 1, tzinfo=UTC))
+
+    with pytest.raises(TerrineError) as error:
+        Design(
+            "user",
+            Schedule("1d", "2025-01-01", "2025-01-02"),
+            treatment=Treatment("started"),
+            shape=SequentialSpec(history),
+        )
+
+    assert getattr(error.value, "code", None) == "terrine.design.conflicting_treatment"

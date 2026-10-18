@@ -623,6 +623,8 @@ def _decode(value: Any, cls: type) -> Any:
             kwargs[field.name] = _decode(item, EligibilitySummary)
         elif field.name == "weight_cutoff" and item is not None:
             kwargs[field.name] = _decode(item, FeatureCutoff)
+        elif field.name == "state_panel" and item is not None:
+            kwargs[field.name] = _decode(item, StatePanelMeta)
         elif field.name == "panel" and item is not None:
             treatment = item.get("treatment")
             if treatment is not None:

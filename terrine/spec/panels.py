@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
 from typing import Literal
 
+from terrine._time import utc_instant
 from terrine.errors import RefusalSpec
 from terrine.spec.anchors import EventAnchor
 from terrine.spec.design import Design
@@ -31,6 +33,9 @@ _INVALID_HISTORY = RefusalSpec(
 _CONFLICT = RefusalSpec(
     "terrine.design.conflicting_treatment", "Sequential treatment conflicts with Design.treatment."
 )
+_INVALID_SAMPLE = RefusalSpec(
+    "terrine.design.invalid_matched_t0_sample", "Matched-t0 sample policy is invalid: {reason}."
+)
 
 
 def _selector(source: str, property: str) -> None:
@@ -43,9 +48,13 @@ def _selector(source: str, property: str) -> None:
         raise ValueError("source and property must be non-empty strings")
 
 
-def _history(value: datetime) -> None:
-    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+def _history(value: datetime) -> datetime:
+    if not isinstance(value, datetime):
         raise _INVALID_HISTORY.error(reason="history_start must be timezone-aware")
+    try:
+        return utc_instant(value)
+    except ValueError as error:
+        raise _INVALID_HISTORY.error(reason="history_start must be timezone-aware") from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +66,7 @@ class Initiation:
 
     def __post_init__(self) -> None:
         _selector(self.source, self.property)
-        _history(self.history_start)
+        object.__setattr__(self, "history_start", _history(self.history_start))
         if self.knowledge not in ("recorded_at", "retrospective_effective_time"):
             raise ValueError("unsupported treatment knowledge policy")
 
@@ -75,7 +84,7 @@ class PersistentAdoption:
         _selector(self.source, self.property)
         if not isinstance(self.adopted_value, str) or not self.adopted_value:
             raise ValueError("adopted_value must be a non-empty string")
-        _history(self.history_start)
+        object.__setattr__(self, "history_start", _history(self.history_start))
         if self.persistence != "absorbing":
             raise ValueError("persistence must be 'absorbing'")
         if self.knowledge not in ("recorded_at", "retrospective_effective_time"):
@@ -99,14 +108,20 @@ class TrialWeight:
             if any(not isinstance(key, str) or not key for key in copied):
                 raise ValueError("trial weight keys must be non-empty strings")
             if any(
-                isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
                 for value in copied.values()
             ):
-                raise ValueError("trial weights must be positive numbers")
-            total = sum(copied.values())
-            if total <= 0:
-                raise ValueError("trial weights must have positive total")
-            values = MappingProxyType({key: value / total for key, value in copied.items()})
+                raise ValueError("trial weights must be finite positive numbers")
+            maximum = max(copied.values())
+            scaled = {key: value / maximum for key, value in copied.items()}
+            total = sum(scaled.values())
+            normalized = {key: value / total for key, value in scaled.items()}
+            if any(not math.isfinite(value) or value <= 0 for value in normalized.values()):
+                raise ValueError("normalized trial weights must remain finite and positive")
+            values = MappingProxyType(normalized)
         elif values is not None:
             raise ValueError("equal_trial does not accept values")
         object.__setattr__(self, "kind", kind)
