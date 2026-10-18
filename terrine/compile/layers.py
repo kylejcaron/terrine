@@ -35,6 +35,18 @@ class LayerPlan:
     keys: tuple[LayerKey, ...]
 
 
+def measure_identity(measure) -> str:
+    """Stable identity for one bound measure, excluding schema-derived value type."""
+    fields = (
+        measure.source_name,
+        measure.fact,
+        measure.aggregation,
+        tuple((item.property_name, item.op, item.values) for item in measure.filters),
+        measure.window_days,
+    )
+    return hashlib.sha256(repr(fields).encode()).hexdigest()
+
+
 def plan_layers(design: Design, model) -> LayerPlan:
     """Describe compiler input layers for a design, without consulting runtime state."""
     from terrine.semantic.rules import calendar_average_alignment
@@ -42,7 +54,7 @@ def plan_layers(design: Design, model) -> LayerPlan:
     from terrine.spec.expressions import And, AttributeAsOf, Eq, Gt, IsNull, MetricAgg
     from terrine.spec.validate import _fixed_anchors
 
-    measures: dict[tuple[str, str, str], LayerResolution] = {}
+    measures: dict[tuple[str, str, str, LayerResolution], None] = {}
 
     def expression(node) -> None:
         if isinstance(node, And):
@@ -74,7 +86,8 @@ def plan_layers(design: Design, model) -> LayerPlan:
                 else "event"
             )
             for measure in metric.measures:
-                measures[(measure.source_name, measure.fact, design.unit)] = resolution
+                identity = measure_identity(measure)
+                measures[(measure.source_name, identity, design.unit, resolution)] = None
         else:
             raise TypeError(f"unsupported design expression: {type(node).__name__}")
 
@@ -90,6 +103,6 @@ def plan_layers(design: Design, model) -> LayerPlan:
             LayerKey(
                 "prefix", source, measure, unit, "unit", resolution, definition_hash, "unbound"
             )
-            for (source, measure, unit), resolution in sorted(measures.items())
+            for source, measure, unit, resolution in sorted(measures)
         )
     )

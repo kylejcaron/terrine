@@ -14,6 +14,7 @@ import pyarrow as pa
 from terrine.compile._asof import AsOfResult, compile_asof
 from terrine.compile._predicates import CompiledValue, compile_predicate
 from terrine.compile.anchors import AnchorTable, compile_anchors
+from terrine.compile.layers import measure_identity
 from terrine.data import ColumnMeta, FeatureCutoff, Roles
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
@@ -127,7 +128,7 @@ def compile_columns(
     model: Model,
     *,
     include_membership: bool = True,
-    persisted_prefixes: Mapping[tuple[str, str, str], ibis.Table] | None = None,
+    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None = None,
 ) -> CompiledStudy:
     """Compile candidates and distinct expressions once without reading source rows."""
     _validate_names(design)
@@ -137,10 +138,14 @@ def compile_columns(
     values: dict[Expr, CompiledValue] = {}
     checks: list[TemporalResult | AsOfResult | _HistoryValidation | _Check] = []
     sources, states = {}, {}
-    for (source_name, fact, resolution), relation in (persisted_prefixes or {}).items():
+    for (source_name, measure_key, unit, resolution), relation in (
+        persisted_prefixes or {}
+    ).items():
+        if unit != design.unit:
+            raise ValueError("persisted prefix unit does not match design")
         if not isinstance(relation, ibis.Table):
             raise TypeError("persisted prefix relations must be Ibis tables")
-        states[(source_name, fact, resolution)] = relation
+        states[(source_name, measure_key, unit, resolution)] = relation
     columns, feature_cutoffs, eligibility_cutoffs, strategies = {}, {}, {}, {}
     public: dict[str, str] = {}
     fixed = (
@@ -199,7 +204,7 @@ def compile_columns(
                 source = model.sources[measure.source_name]
                 events = events_for(source.name)
                 measure = resolve_measure(events, measure, source=source)
-                key = (measure.source_name, measure.fact, resolution)
+                key = (measure.source_name, measure_identity(measure), design.unit, resolution)
                 if key not in states:
                     grouped = (
                         sparse_daily(

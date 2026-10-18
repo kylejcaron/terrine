@@ -11,6 +11,7 @@ from terrine.data import Budget
 from terrine.errors import RefusalSpec
 from terrine.model import Model
 from terrine.spec.design import Design
+from terrine.spec.state_panel import StatePanel
 
 _STRICT_SCAN_UNKNOWN = RefusalSpec(
     "terrine.budget.scan_unknown",
@@ -36,15 +37,18 @@ def compose_materialized_frame(
         raise TypeError("budget must be Budget or None")
     if budget is not None and budget.max_scan_bytes is not None and budget.strict_scan:
         raise _STRICT_SCAN_UNKNOWN.error()
+    if isinstance(design.shape, StatePanel):
+        raise ValueError("persisted-layer composition does not support StatePanel designs")
     definition_hash = hashlib.sha256(f"{design.spec_hash}:{model.model_hash}".encode()).hexdigest()
     snapshot_ids = {key.snapshot_id for key in persisted}
     if len(snapshot_ids) > 1 or (snapshot_ids and not next(iter(snapshot_ids))):
         raise ValueError("persisted layers must belong to one non-empty snapshot")
-    substitutions: dict[tuple[str, str, str], ibis.Table] = {}
+    substitutions: dict[tuple[str, str, str, str], ibis.Table] = {}
     for key, relation in persisted.items():
         if (
             key.layer != "prefix"
             or key.grain != "unit"
+            or key.unit != design.unit
             or key.definition_hash != definition_hash
             or key.measure is None
             or key.resolution not in {"day", "event"}
@@ -52,7 +56,7 @@ def compose_materialized_frame(
             raise ValueError("persisted layer identity does not match compiler requirements")
         if not isinstance(relation, ibis.Table):
             raise TypeError("persisted prefix relations must be Ibis tables")
-        identity = (key.source, key.measure, key.resolution)
+        identity = (key.source, key.measure, key.unit, key.resolution)
         if identity in substitutions:
             raise ValueError("duplicate persisted logical layer key")
         substitutions[identity] = relation
