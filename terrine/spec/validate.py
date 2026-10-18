@@ -40,6 +40,10 @@ _UNIT = RefusalSpec(
 )
 _WINDOW = RefusalSpec("terrine.design.invalid_window", "Window for {name!r} must have start < end.")
 _GAP = RefusalSpec("terrine.design.gap_violation", "{role} window or cutoff violates gap {gap}.")
+_INCOMPLETE_TREATMENT_HISTORY = RefusalSpec(
+    "terrine.design.incomplete_treatment_history",
+    "Treatment history for source {source!r} does not cover {boundary!r}.",
+)
 _METRIC_WINDOW = RefusalSpec(
     "terrine.design.metric_window_conflict",
     "Metric {metric!r} declares a conflicting window_days value.",
@@ -253,6 +257,9 @@ def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
     from terrine.spec.panels import EventPanelSpec, SequentialSpec
     from terrine.spec.state_panel import StatePanel, validate_state_panel
 
+    if design.sample is not None and not isinstance(design.shape, SequentialSpec):
+        raise _INVALID.error(reason="matched-t0 sampling requires a Sequential shape")
+
     if isinstance(design.shape, StatePanel):
         validate_state_panel(design, model, required)
     elif isinstance(design.shape, SequentialSpec):
@@ -262,11 +269,21 @@ def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
         if source is None:
             raise _MISSING.error(kind="treatment source", name=design.shape.treatment.source)
         declared = set(source.properties) | set(source.facts)
-        for dimension in source.dimensions:
-            declared.update(dimension.properties)
         if design.shape.treatment.property not in declared:
             raise _MISSING.error(kind="treatment property", name=design.shape.treatment.property)
+        coverage = model.readiness.for_fact(source.name)
+        if coverage.start > design.shape.treatment.history_start or (
+            coverage.end_exclusive < model.day_boundary(design.anchor.end).astimezone(UTC)
+        ):
+            raise _INCOMPLETE_TREATMENT_HISTORY.error(
+                source=source.name,
+                boundary=design.shape.treatment.history_start.isoformat(),
+            )
         _required(model, source.name, required)
+        if design.sample is not None:
+            missing = sorted(set(design.sample.strata) - set(design.features))
+            if missing:
+                raise _MISSING.error(kind="matched-t0 stratum", name=missing[0])
     elif isinstance(design.shape, EventPanelSpec):
         if not isinstance(design.anchor, EventAnchor):
             raise _INVALID.error(reason="EventPanel requires an EventAnchor")

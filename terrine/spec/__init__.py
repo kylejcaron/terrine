@@ -29,6 +29,7 @@ from terrine.spec.panels import (
     Sequential,
     SequentialSpec,
     TrialWeight,
+    matched_t0,
 )
 from terrine.spec.state_panel import BinnedMetricState, StateObservations, StatePanel
 
@@ -69,4 +70,5 @@ __all__ = [
     "Sequential",
     "CalendarPanel",
     "EventPanel",
+    "matched_t0",
 ]

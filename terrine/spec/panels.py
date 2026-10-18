@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from terrine._time import utc_instant
 from terrine.errors import RefusalSpec
@@ -15,6 +15,10 @@ from terrine.spec.anchors import EventAnchor
 from terrine.spec.design import Design
 from terrine.spec.state_panel import StatePanel
 from terrine.windows import seconds
+
+if TYPE_CHECKING:
+    from terrine.frame import Frame
+    from terrine.model import Model
 
 __all__ = [
     "Initiation",
@@ -26,6 +30,7 @@ __all__ = [
     "Sequential",
     "CalendarPanel",
     "EventPanel",
+    "matched_t0",
 ]
 
 _INVALID_HISTORY = RefusalSpec(
@@ -210,6 +215,7 @@ def _copy_design(base: Design, shape: str | StatePanel | SequentialSpec | EventP
         gap=base.gap,
         shape=shape,
         anchor_range=base.anchor_range,
+        sample=base.sample,
     )
 
 
@@ -252,3 +258,25 @@ def EventPanel(
         raise _CONFLICT.error()
     spec = EventPanelSpec(periods, period_seconds, reference_period)
     return _copy_design(base, spec)
+
+
+def matched_t0(base: Design, model: Model, *, sample: MatchedT0Sample) -> Frame:
+    """Build a sampled sequential Frame with its policy serialized on the Design."""
+    if not isinstance(base, Design) or not isinstance(base.shape, SequentialSpec):
+        raise TypeError("matched_t0 requires a Sequential Design")
+    if not isinstance(sample, MatchedT0Sample):
+        raise TypeError("sample must be MatchedT0Sample")
+    if base.sample is not None:
+        raise _INVALID_SAMPLE.error(reason="the base design already declares a sample policy")
+    sampled = Design(
+        base.unit,
+        base.anchor,
+        features=base.features,
+        outcomes=base.outcomes,
+        eligibility=base.eligibility,
+        gap=base.gap,
+        shape=base.shape,
+        anchor_range=base.anchor_range,
+        sample=sample,
+    )
+    return sampled.build(model)

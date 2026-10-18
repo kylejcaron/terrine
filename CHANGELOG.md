@@ -49,3 +49,4 @@
 - Add native end-to-end baseline recovery, population-target calibration, failure accounting, and uncertainty-validation guidance.
 - Add bounded state panels with canonical binned metrics, exact point-observation transitions, absorbing terminal suffix handling, baseline/per-origin timing, ordered metadata, and positive output-budget enforcement.
 - Add canonical schedule-based sequential designs, distinct initiation/adoption history declarations, and event-relative panels with typed parent-period identity and Arrow provenance.
+- Add exact-t0 sequential treatment classification with complete declared history checks and refusal of later initiation under sustained no-initiation strategies; add hashed matched-t0 policies, deterministic contemporaneous risk-set sampling, exact inclusion-probability roles, and sampling provenance round trips.

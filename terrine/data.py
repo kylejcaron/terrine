@@ -24,7 +24,7 @@ __all__ = [
     "FeatureCutoff",
     "StatePanelMeta",
     "TreatmentHistoryMeta",
-    "TrialWeightMeta",
+    "SamplingMeta",
     "PanelMeta",
     "EligibilitySummary",
     "ExecutionSnapshot",
@@ -171,11 +171,24 @@ class Roles:
     weight: str | None = None
     cluster_unit: str | None = None
     prior_state: str | None = None
+    trial: str | None = None
+    assignment_probability: str | None = None
+    target_weight: str | None = None
+    trial_weight: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("unit", "anchor", "t0"):
             _nonempty(getattr(self, name), name)
-        for name in ("treatment", "weight", "cluster_unit", "prior_state"):
+        for name in (
+            "treatment",
+            "weight",
+            "cluster_unit",
+            "prior_state",
+            "trial",
+            "assignment_probability",
+            "target_weight",
+            "trial_weight",
+        ):
             value = getattr(self, name)
             if value is not None:
                 _nonempty(value, name)
@@ -357,6 +370,29 @@ class TrialWeightMeta:
 
 
 @dataclass(frozen=True, slots=True)
+class SamplingMeta:
+    strata: tuple[str, ...]
+    controls_per_treated: int
+    seed: int
+
+    def __post_init__(self) -> None:
+        strata = tuple(self.strata)
+        if any(not isinstance(value, str) or not value.strip() for value in strata):
+            raise ValueError("sampling strata must be non-empty names")
+        if len(set(strata)) != len(strata):
+            raise ValueError("sampling strata must be unique")
+        if (
+            isinstance(self.controls_per_treated, bool)
+            or not isinstance(self.controls_per_treated, int)
+            or self.controls_per_treated <= 0
+        ):
+            raise ValueError("controls_per_treated must be a positive integer")
+        if isinstance(self.seed, bool) or not isinstance(self.seed, int) or self.seed < 0:
+            raise ValueError("sampling seed must be nonnegative")
+        object.__setattr__(self, "strata", strata)
+
+
+@dataclass(frozen=True, slots=True)
 class PanelMeta:
     """Portable shape-specific identity and treatment-history metadata."""
 
@@ -459,6 +495,7 @@ class Provenance:
 
     state_panel: StatePanelMeta | None = None
     panel: PanelMeta | None = None
+    sampling: SamplingMeta | None = None
 
     def __post_init__(self) -> None:
         for name in ("design_hash", "model_hash", "shape"):
@@ -505,6 +542,8 @@ class Provenance:
             raise TypeError("state_panel must be StatePanelMeta or None")
         if self.panel is not None and not isinstance(self.panel, PanelMeta):
             raise TypeError("panel must be PanelMeta or None")
+        if self.sampling is not None and not isinstance(self.sampling, SamplingMeta):
+            raise TypeError("sampling must be SamplingMeta or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -647,6 +686,10 @@ def _decode(value: Any, cls: type) -> Any:
                 tuple(item.get("periods", ())),
                 item.get("period_seconds"),
                 item.get("reference_period"),
+            )
+        elif field.name == "sampling" and item is not None:
+            kwargs[field.name] = SamplingMeta(
+                tuple(item["strata"]), item["controls_per_treated"], item["seed"]
             )
         elif field.name in ("panel_start", "administrative_end") and isinstance(item, dict):
             kwargs[field.name] = datetime.fromisoformat(item["$datetime"])

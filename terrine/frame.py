@@ -21,6 +21,7 @@ from terrine.data import (
     MaterializedFrame,
     PanelMeta,
     Provenance,
+    SamplingMeta,
     StatePanelMeta,
     TreatmentHistoryMeta,
     TrialWeightMeta,
@@ -263,6 +264,15 @@ class Frame:
                 treatment_known_at_t0=treatment.known_at_t0 if treatment is not None else False,
                 state_panel=_state_panel_metadata(self._design, model),
                 panel=panel,
+                sampling=(
+                    SamplingMeta(
+                        self._design.sample.strata,
+                        self._design.sample.controls_per_treated,
+                        self._design.sample.seed,
+                    )
+                    if self._design.sample is not None
+                    else None
+                ),
             )
             return MaterializedFrame(table, compiled.roles, compiled.columns, provenance)
 
