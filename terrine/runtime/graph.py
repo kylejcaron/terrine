@@ -52,14 +52,33 @@ def dependency_graph(
     partition_names = tuple(partitions)
     nodes: list[LayerNode] = []
     edges: list[tuple[LayerNode, LayerNode]] = []
+    from terrine.spec.state_panel import StatePanel
+
+    state_panel = isinstance(getattr(design, "shape", None), StatePanel)
     for source in sorted(set(source_names)):
         for partition in partition_names:
-            daily, prefix, anchor, frame = (
-                LayerNode(layer, source, partition, fingerprint, "pending")
-                for layer in ("daily", "prefix", "anchor", "frame")
-            )
-            nodes.extend((daily, prefix, anchor, frame))
-            edges.extend(((daily, prefix), (prefix, anchor), (anchor, frame)))
+            daily = LayerNode("daily", source, partition, fingerprint, "pending")
+            prefix = LayerNode("prefix", source, partition, fingerprint, "pending")
+            anchor = LayerNode("anchor", source, partition, fingerprint, "pending")
+            frame = LayerNode("frame", source, partition, fingerprint, "pending")
+            nodes.extend((daily, prefix, anchor))
+            edges.extend(((daily, prefix), (prefix, anchor)))
+            if state_panel:
+                state_point = LayerNode("state_point", source, partition, fingerprint, "pending")
+                state_period = LayerNode("state_period", source, partition, fingerprint, "pending")
+                nodes.extend((state_point, state_period))
+                edges.extend(((anchor, state_point), (state_point, state_period)))
+                dependencies = [state_period]
+                if getattr(getattr(design, "shape", None), "baseline_features", None):
+                    baseline = LayerNode("baseline", source, partition, fingerprint, "pending")
+                    nodes.append(baseline)
+                    edges.append((anchor, baseline))
+                    dependencies.append(baseline)
+                nodes.append(frame)
+                edges.extend((dependency, frame) for dependency in dependencies)
+            else:
+                nodes.append(frame)
+                edges.append((anchor, frame))
             if include_exports:
                 export = LayerNode("export", source, partition, fingerprint, "pending")
                 nodes.append(export)

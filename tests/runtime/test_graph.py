@@ -14,6 +14,30 @@ def test_dependency_graph_orders_daily_prefix_anchor_frame():
     )
 
 
+def test_state_panel_graph_tracks_point_period_and_frame_dependencies():
+    from types import SimpleNamespace
+
+    from terrine.spec.state_panel import StateObservations, StatePanel
+
+    design = SimpleNamespace(
+        spec_hash="definition",
+        shape=StatePanel(StateObservations("status", ("new", "old")), max_periods=3),
+    )
+    graph = dependency_graph(design=design, sources=("events",), partitions=("p1", "p2"))
+    layers = {node.layer for node in graph.nodes}
+    assert {"state_point", "state_period", "frame"} <= layers
+    for partition in ("p1", "p2"):
+        period = next(
+            node
+            for node in graph.nodes
+            if node.layer == "state_period" and node.partition == partition
+        )
+        frame = next(
+            node for node in graph.nodes if node.layer == "frame" and node.partition == partition
+        )
+        assert period in graph.dependencies(frame)
+
+
 def test_partition_iterator_is_reused_for_every_source():
     graph = dependency_graph(
         sources=("events", "payments"),

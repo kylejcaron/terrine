@@ -256,3 +256,45 @@ def test_plan_serialization_preserves_execution_budgets():
             graph=graph,
         ).recipe.fingerprint
     )
+
+
+def test_state_panel_correction_rebuilds_adjacent_terminal_and_baseline_layers():
+    from types import SimpleNamespace
+
+    from terrine.spec.expressions import AttributeAsOf
+    from terrine.spec.state_panel import StateObservations, StatePanel
+
+    design = SimpleNamespace(
+        spec_hash="d",
+        shape=StatePanel(
+            StateObservations("status", ("new", "old")),
+            max_periods=3,
+            baseline_features={"base": AttributeAsOf("tier", 0)},
+        ),
+    )
+    graph = dependency_graph(
+        design=design,
+        sources=("events",),
+        definition_hash="d",
+        partitions=("p1", "p2", "p3"),
+    )
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="panel",
+        definition_hash="d",
+        snapshot_id="s2",
+        graph=graph,
+        changes=ChangeSet(
+            (Change("update", "events", before_key_range=("u", "u"), revision="r3"),),
+            "change_feed",
+        ),
+    )
+    assert {
+        (task.layer, task.partition)
+        for task in plan.tasks
+        if task.layer in {"state_point", "state_period", "baseline", "frame"}
+    } == {
+        (layer, partition)
+        for layer in {"state_point", "state_period", "baseline", "frame"}
+        for partition in ("p1", "p2", "p3")
+    }
