@@ -5,9 +5,11 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from threading import Event
 
 import duckdb
 import pyarrow as pa
+import pytest
 
 from terrine.runtime.control import ControlEndpoint, ControlServer
 from terrine.runtime.events import record_run_event
@@ -63,6 +65,28 @@ def test_cli_status_events_and_cancel_use_owner_ipc():
             env=env,
         )
         assert planned.stdout.strip() == plan.serialize().decode()
+        large_plan = plan_refresh(
+            namespace="owner",
+            dataset="orders",
+            definition_hash="definition",
+            snapshot_id="snapshot-large",
+            graph=dependency_graph(
+                sources=("orders",),
+                definition_hash="definition",
+                partitions=tuple(f"partition-{index:03}" for index in range(100)),
+            ),
+        )
+        assert len(large_plan.serialize()) > 65536
+        plan_file.write_bytes(large_plan.serialize())
+        large_planned = subprocess.run(
+            [script, "plan", str(plan_file)],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert large_planned.stdout.strip() == large_plan.serialize().decode()
+        plan_file.write_bytes(plan.serialize())
         command = [
             script,
             "run",
@@ -117,3 +141,57 @@ def test_cli_status_events_and_cancel_use_owner_ipc():
         )
     finally:
         server.close()
+
+
+def test_cli_run_waits_for_long_owner_execution_receipt():
+    con = duckdb.connect(":memory:")
+    store = RuntimeStore(con, namespace="owner")
+    started = Event()
+    release = Event()
+
+    class SlowExecutor:
+        def run_task(self, task, dependencies):
+            started.set()
+            release.wait(timeout=10)
+            return pa.table({"id": [task.task_id]})
+
+        def publish(self, plan, outputs, lease, run_id):
+            return f"g-{run_id}"
+
+    endpoint = ControlEndpoint(Path(f"/tmp/tclilong-{os.getpid()}.sock"))
+    server = ControlServer(store, namespace="owner", endpoint=endpoint, executor=SlowExecutor())
+    server.start()
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="definition",
+        snapshot_id="snapshot",
+        graph=dependency_graph(
+            sources=("orders",), definition_hash="definition", partitions=("all",)
+        ),
+    )
+    plan_file = Path(f"/tmp/tclilong-{os.getpid()}.json")
+    plan_file.write_bytes(plan.serialize())
+    env = {
+        **os.environ,
+        "TERRINE_RUNTIME_SOCKET": str(endpoint.path),
+        "TERRINE_RUNTIME_NAMESPACE": "owner",
+    }
+    process = subprocess.Popen(
+        [str(Path(sys.executable).with_name("terrine")), "run", str(plan_file)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    try:
+        assert started.wait(timeout=3)
+        with pytest.raises(subprocess.TimeoutExpired):
+            process.communicate(timeout=2.2)
+    finally:
+        release.set()
+    stdout, _stderr = process.communicate(timeout=5)
+    plan_file.unlink()
+    server.close()
+    assert process.returncode == 0
+    assert json.loads(stdout)["state"] == "succeeded"

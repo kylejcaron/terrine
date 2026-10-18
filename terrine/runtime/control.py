@@ -26,6 +26,9 @@ from terrine.runtime.status import CancelReceipt, RunStatus, cancel_run, get_run
 
 __all__ = ["ControlEndpoint", "ControlServer", "ControlClient"]
 
+_MAX_CONTROL_MESSAGE_BYTES = 16_777_216
+_MESSAGE_TOO_LARGE = "terrine.runtime.control_message_too_large"
+
 
 @dataclass(frozen=True, slots=True)
 class ControlEndpoint:
@@ -157,17 +160,28 @@ class ControlServer:
         class Handler(socketserver.StreamRequestHandler):
             def handle(self) -> None:
                 self.connection.settimeout(2)
-                line = self.rfile.readline(65537)
-                if not line or len(line) > 65536:
+                line = self.rfile.readline(_MAX_CONTROL_MESSAGE_BYTES + 2)
+                if not line:
+                    return
+                if len(line) > _MAX_CONTROL_MESSAGE_BYTES + 1:
+                    response = json.dumps({"ok": False, "code": _MESSAGE_TOO_LARGE}).encode()
+                    self.wfile.write(response + b"\n")
                     return
                 con = server.store.con.cursor()
                 try:
                     request = json.loads(line)
-                    self.connection.settimeout(None if request.get("operation") == "cancel" else 2)
-                    response = server._dispatch(request, con=con)
-                    self.wfile.write(
-                        json.dumps({"ok": True, "value": response}, default=str).encode() + b"\n"
+                    self.connection.settimeout(
+                        None if request.get("operation") in {"cancel", "run"} else 2
                     )
+                    response = server._dispatch(request, con=con)
+                    response_bytes = json.dumps(
+                        {"ok": True, "value": response}, default=str
+                    ).encode()
+                    if len(response_bytes) > _MAX_CONTROL_MESSAGE_BYTES:
+                        response_bytes = json.dumps(
+                            {"ok": False, "code": _MESSAGE_TOO_LARGE}
+                        ).encode()
+                    self.wfile.write(response_bytes + b"\n")
                 except Exception as error:
                     code = getattr(error, "code", "terrine.runtime.control_unavailable")
                     self.wfile.write(json.dumps({"ok": False, "code": code}).encode() + b"\n")
@@ -319,13 +333,20 @@ class ControlClient:
 
     def _request(self, operation: str, **payload: Any) -> Any:
         request = json.dumps({"namespace": self.namespace, "operation": operation, **payload})
+        encoded = request.encode()
+        if len(encoded) > _MAX_CONTROL_MESSAGE_BYTES:
+            raise TerrineError(
+                "Owner control message exceeds the configured limit.",
+                code=_MESSAGE_TOO_LARGE,
+                context={},
+            )
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.settimeout(None if operation == "cancel" else 2)
+            client.settimeout(None if operation in {"cancel", "run"} else 2)
             client.connect(str(self.endpoint.path))
-            client.sendall(request.encode() + b"\n")
+            client.sendall(encoded + b"\n")
             with client.makefile("rb") as response_stream:
-                line = response_stream.readline(16_777_217)
-            if not line.endswith(b"\n") or len(line) > 16_777_216:
+                line = response_stream.readline(_MAX_CONTROL_MESSAGE_BYTES + 2)
+            if not line.endswith(b"\n") or len(line) > _MAX_CONTROL_MESSAGE_BYTES + 1:
                 raise ConnectionError("owner control response exceeded its limit")
             response = json.loads(line)
         if not response.get("ok"):
