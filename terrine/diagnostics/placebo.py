@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from fractions import Fraction
 
 from scipy.stats import norm
 
@@ -24,9 +25,15 @@ def _mean(values: list[float]) -> float | None:
     if not values:
         return 0.0
     try:
-        value = math.fsum(item / len(values) for item in values)
+        value = math.fsum(values) / len(values)
     except OverflowError:
-        return None
+        try:
+            exact_mean = sum((Fraction.from_float(item) for item in values), Fraction()) / len(
+                values
+            )
+            value = float(exact_mean)
+        except OverflowError:
+            return None
     return value if math.isfinite(value) else None
 
 
@@ -79,9 +86,13 @@ def _cluster_contrast(frame: MaterializedFrame, outcome: str, selected: list[boo
     for arm, sign in ((True, 1.0), (False, -1.0)):
         count = len(unit_means[arm])
         for unit, value in unit_means[arm].items():
+            residual = value - means[arm]
+            if math.isfinite(residual):
+                difference = residual / count
+            else:
+                difference = value / count - means[arm] / count
+            contribution = sign * difference
             try:
-                residual = math.fsum((value, -means[arm]))
-                contribution = sign * (residual / count)
                 total = math.fsum((influence.get(unit, 0.0), contribution))
             except OverflowError:
                 return None
@@ -103,7 +114,7 @@ def _cluster_contrast(frame: MaterializedFrame, outcome: str, selected: list[boo
 def _pvalue(effect: float, standard_error: float) -> float:
     if standard_error == 0:
         return 1.0 if effect == 0 else 0.0
-    return float(norm.sf(abs(effect) / standard_error))
+    return min(1.0, 2 * float(norm.sf(abs(effect) / standard_error)))
 
 
 def placebo_test(

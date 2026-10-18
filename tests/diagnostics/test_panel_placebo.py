@@ -1,3 +1,4 @@
+import math
 from dataclasses import replace
 from datetime import UTC, datetime
 
@@ -163,3 +164,55 @@ def test_placebo_pvalue_does_not_square_extreme_finite_statistic():
         replace(frame, table=pa.Table.from_pylist(rows)), outcome="y", placebo_periods=(-2,)
     )
     assert result.metrics["any_reject"] is True
+
+
+def test_tiny_nonzero_standardized_effect_keeps_two_sided_pvalue():
+    frame = _frame()
+    rows = [row for row in frame.table.to_pylist() if row["unit"] in (0, 1, 20, 21)]
+    for row in rows:
+        row["event_period"] = -2
+        row["anchor_id"] = (row["unit"], -2)
+        row["y"] = 1.0 if row["unit"] == 1 else 0.1 if row["unit"] == 20 else 0.0
+    result = placebo_test(
+        replace(frame, table=pa.Table.from_pylist(rows)), outcome="y", placebo_periods=(-2,)
+    )
+    assert result.metrics["any_reject"] is False
+
+
+def test_repeated_subnormal_outcomes_remain_nonzero():
+    frame = _frame()
+    rows = frame.table.to_pylist()
+    for row in rows:
+        row["negative"] = 5e-324 if row["treatment"] else 0.0
+    result = negative_control_test(
+        replace(frame, table=pa.Table.from_pylist(rows)), outcome="y", negative_control="negative"
+    )
+    assert result.metrics["effect"] == 5e-324
+
+
+def test_repeated_maximum_finite_outcomes_have_finite_mean():
+    frame = _frame()
+    rows = frame.table.to_pylist()
+    for row in rows:
+        row["negative"] = 1.7976931348623157e308 if row["treatment"] else 0.0
+    result = negative_control_test(
+        replace(frame, table=pa.Table.from_pylist(rows)), outcome="y", negative_control="negative"
+    )
+    assert result.status == "warn"
+    assert result.metrics["effect"] == 1.7976931348623157e308
+
+
+def test_overflowing_residual_can_have_finite_contrast_and_se():
+    frame = _frame()
+    rows = [row for row in frame.table.to_pylist() if row["unit"] in (0, 1, 2, 3, 20, 21, 22, 23)]
+    treated_means = (-1e308, 1.6e308, 1.6e308, 1.6e308)
+    for row in rows:
+        row["event_period"] = -2
+        row["anchor_id"] = (row["unit"], -2)
+        row["y"] = treated_means[row["unit"]] if row["treatment"] else 0.0
+    result = placebo_test(
+        replace(frame, table=pa.Table.from_pylist(rows)), outcome="y", placebo_periods=(-2,)
+    )
+    assert result.status == "warn"
+    effect = result.metrics["max_abs_effect"]
+    assert isinstance(effect, float) and math.isfinite(effect)
