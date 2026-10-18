@@ -1,4 +1,5 @@
 from terrine.runtime.graph import DependencyGraph, dependency_graph
+from terrine.runtime.layers import translate_persisted_layers
 from terrine.runtime.owner import RuntimeOwner, SnapshotRetention
 from terrine.runtime.recipe import (
     DestinationRef,
@@ -33,6 +34,7 @@ __all__ = [
     "SnapshotAuthority",
     "SnapshotRetention",
     "SourceSnapshot",
-    "dependency_graph",
     "resolve_plan",
+    "dependency_graph",
+    "translate_persisted_layers",
 ]
