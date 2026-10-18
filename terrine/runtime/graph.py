@@ -55,6 +55,7 @@ def dependency_graph(
     from terrine.spec.state_panel import StatePanel
 
     state_panel = isinstance(getattr(design, "shape", None), StatePanel)
+    tracks_certificates = design is not None
     for source in sorted(set(source_names)):
         for partition in partition_names:
             daily = LayerNode("daily", source, partition, fingerprint, "pending")
@@ -62,7 +63,15 @@ def dependency_graph(
             anchor = LayerNode("anchor", source, partition, fingerprint, "pending")
             frame = LayerNode("frame", source, partition, fingerprint, "pending")
             nodes.extend((daily, prefix, anchor))
-            edges.extend(((daily, prefix), (prefix, anchor)))
+            if tracks_certificates:
+                prefix_certificate = LayerNode(
+                    "prefix_certificate", source, partition, fingerprint, "pending"
+                )
+                nodes.append(prefix_certificate)
+                edges.append((prefix, prefix_certificate))
+                edges.append((prefix_certificate, anchor))
+            else:
+                edges.append((prefix, anchor))
             if state_panel:
                 state_point = LayerNode("state_point", source, partition, fingerprint, "pending")
                 state_period = LayerNode("state_period", source, partition, fingerprint, "pending")

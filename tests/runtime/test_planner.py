@@ -298,3 +298,41 @@ def test_state_panel_correction_rebuilds_adjacent_terminal_and_baseline_layers()
         for layer in {"state_point", "state_period", "baseline", "frame"}
         for partition in ("p1", "p2", "p3")
     }
+
+
+def test_historical_float64_prefix_change_revalidates_certificates_and_results():
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    design = SimpleNamespace(spec_hash="d", shape="cross_section")
+    graph = dependency_graph(
+        design=design,
+        sources=("events",),
+        definition_hash="d",
+        partitions=("p1", "p2"),
+    )
+    earlier = datetime(2024, 12, 1, tzinfo=UTC)
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="precision",
+        definition_hash="d",
+        snapshot_id="s2",
+        graph=graph,
+        changes=ChangeSet(
+            (
+                Change(
+                    "insert",
+                    "events",
+                    after_time_range=(earlier, datetime(2024, 12, 2, tzinfo=UTC)),
+                    revision="r2",
+                ),
+            ),
+            "change_feed",
+        ),
+    )
+    for partition in ("p1", "p2"):
+        assert any(
+            task.layer == "prefix_certificate" and task.partition == partition
+            for task in plan.tasks
+        )
+        assert any(task.layer == "frame" and task.partition == partition for task in plan.tasks)
