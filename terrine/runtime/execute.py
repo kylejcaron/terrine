@@ -80,6 +80,7 @@ def execute_plan(
         if run[0] != plan.dataset or run[1] != plan.recipe.fingerprint:
             raise ValueError("run_id is already bound to a different plan")
         if run[2] in {"succeeded", "cancelled"}:
+            _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
             return RunReceipt(run_id, run[2], run[3])
     else:
         con.execute(
@@ -102,6 +103,7 @@ def execute_plan(
                 [lease.fence, run_id],
             )
             leases.release(lease)
+            _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
             return RunReceipt(run_id, "cancelled", current[1])
         leases.release(lease)
         if current is None:
@@ -171,6 +173,8 @@ def execute_plan(
         with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
             while (pending and task_failure is None) or inflight:
                 made_progress = False
+                if task_failure is not None:
+                    break
                 for task_id in task_order:
                     task = pending.get(task_id)
                     if task is None or len(inflight) >= max_concurrency:

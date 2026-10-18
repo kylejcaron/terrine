@@ -158,17 +158,22 @@ def test_successful_partition_output_is_persisted_when_sibling_fails():
         dataset="orders",
         definition_hash="def",
         snapshot_id="s",
-        graph=dependency_graph(sources=("events",), definition_hash="def", partitions=("p1", "p2")),
+        graph=dependency_graph(
+            sources=("events",),
+            definition_hash="def",
+            partitions=("p1", "p2", "p3"),
+        ),
     )
     sibling_finished = threading.Event()
     calls = []
 
     def fail_once(task, dependencies):
-        calls.append(task.task_id)
+        calls.append(task.partition)
         if task.partition == "p1":
             assert sibling_finished.wait(timeout=5)
             raise RuntimeError("partition failed")
-        sibling_finished.set()
+        if task.partition == "p2":
+            sibling_finished.set()
         return pa.table({"task": [task.task_id]})
 
     with pytest.raises(RuntimeError, match="partition failed"):
@@ -189,6 +194,7 @@ def test_successful_partition_output_is_persisted_when_sibling_fails():
         ).fetchall()
     }
     assert completed_before_retry
+    assert "p3" not in calls
     calls_after_failure = len(calls)
     receipt = execute_plan(
         plan,
