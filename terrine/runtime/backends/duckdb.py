@@ -80,6 +80,13 @@ class DuckDBBackend:
             locked_current = self._current_generation(stage.dataset)
             if locked_current != expected_manifest:
                 raise ValueError("expected manifest does not match current publication")
+            published_before = self.con.execute(
+                f"SELECT 1 FROM {self._schema}.runtime_publications "
+                "WHERE dataset=? AND generation=?",
+                [stage.dataset, stage.generation],
+            ).fetchone()
+            if published_before is not None:
+                raise ValueError("generation was already published and cannot be reactivated")
             previous = self.con.execute(
                 f"SELECT version FROM {self._schema}.runtime_manifests WHERE dataset=?",
                 [stage.dataset],

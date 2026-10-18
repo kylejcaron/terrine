@@ -90,6 +90,29 @@ def test_expired_writer_cannot_publish_after_new_fence():
     assert backend.current_generation("orders") is None
 
 
+def test_previously_published_generation_cannot_be_reactivated():
+    con = duckdb.connect(":memory:")
+    backend = DuckDBBackend(con, namespace="owner")
+    lease = _lease(con, "owner")
+    first = StagedGeneration("orders", "g1", {"p1": pa.table({"id": [1]})})
+    second = StagedGeneration("orders", "g2", {"p1": pa.table({"id": [2]})})
+    backend.publish_generation(first, expected_manifest=None, lease=lease)
+    backend.publish_generation(second, expected_manifest="g1", lease=lease)
+
+    with pytest.raises(ValueError, match="already published"):
+        backend.publish_generation(
+            StagedGeneration(
+                "orders",
+                "g1",
+                {"p1": pa.table({"id": [1]}), "p2": pa.table({"id": [3]})},
+            ),
+            expected_manifest="g2",
+            lease=lease,
+        )
+
+    assert backend.current_generation("orders") == "g2"
+
+
 def test_publish_requires_lease_for_staged_dataset():
     con = duckdb.connect(":memory:")
     backend = DuckDBBackend(con, namespace="owner")
