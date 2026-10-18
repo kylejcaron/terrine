@@ -15,6 +15,7 @@ from terrine.semantic.bind import normalize_events
 from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
 from terrine.spec.panels import CalendarComparisonSpec
+from terrine.temporal.aggregate import _Check, _Failure
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -25,6 +26,66 @@ _UNSUPPORTED = RefusalSpec(
     "terrine.compile.unsupported_calendar_comparison",
     "Calendar comparison compilation is unsupported: {reason}.",
 )
+
+
+_INCOMPLETE_HISTORY = RefusalSpec(
+    "terrine.design.incomplete_unit_treatment_history",
+    "Roster observation bounds do not cover the required calendar treatment history.",
+)
+
+
+def _deferred_refusal(query):
+    return _Check(
+        query.aggregate(failed_0=query.count().cast("string")),
+        (
+            _Failure(
+                "failed_0",
+                _UNSUPPORTED,
+                {"reason": "requested comparison period is outside the schedule"},
+            ),
+        ),
+    )
+
+
+def _history_check(design: Design, model: Model, anchors: AnchorTable):
+    spec = design.shape
+    assert isinstance(spec, CalendarComparisonSpec)
+    anchor = design.anchor
+    assert isinstance(anchor, Schedule)
+    selector = spec.cohort
+    units = anchors.table.select("unit", "_observed_from", "_observed_until").distinct()
+    missing = cast(ir.BooleanValue, ibis.literal(False))
+    if "_observed_from" in units.columns:
+        missing = missing | (
+            units._observed_from.notnull()
+            & (units._observed_from > ibis.literal(selector.history_start))
+        )
+    if "_observed_until" in units.columns:
+        missing = missing | (
+            units._observed_until.notnull()
+            & (units._observed_until < ibis.literal(model.day_boundary(anchor.end)))
+        )
+    query = units.filter(missing).select("unit")
+    return _Check(
+        query.aggregate(failed_0=query.count().cast("string")),
+        (_Failure("failed_0", _INCOMPLETE_HISTORY, {}),),
+    )
+
+
+def _period_check(cohorts, anchors, periods, every):
+    cohort_values = cohorts.select(focal_cohort=cohorts.cohort_time).distinct()
+    shifted = [
+        cohort_values.select(t0=cohort_values.focal_cohort + ibis.interval(seconds=period * every))
+        for period in periods
+    ]
+    required = shifted[0]
+    for period_table in shifted[1:]:
+        required = required.union(period_table, distinct=False)
+    scheduled = anchors.table.select(t0=anchors.table.t0).distinct()
+    missing = required.join(scheduled, required.t0 == scheduled.t0, how="left").filter(
+        scheduled.t0.isnull()
+    )
+    return _deferred_refusal(missing)
 
 
 def _cohort_units(design: Design, model: Model, anchors: AnchorTable):
@@ -45,19 +106,20 @@ def _cohort_units(design: Design, model: Model, anchors: AnchorTable):
     initiation = (
         events.filter(observed & (events._timestamp >= ibis.literal(selector.history_start)))
         .group_by("_unit")
-        .aggregate(_initiated_at=events._timestamp.min())
+        .aggregate(initiation_time=events._timestamp.min())
     )
     candidates = anchors.table.join(
         initiation,
         [
             anchors.table.unit == initiation._unit,
-            anchors.table.t0 >= initiation._initiated_at,
+            anchors.table.t0 >= initiation.initiation_time,
         ],
     )
-    return candidates.group_by("unit").aggregate(cohort_time=candidates.t0.min())
+    cohorts = candidates.group_by("unit").aggregate(cohort_time=candidates.t0.min())
+    return cohorts, initiation
 
 
-def _stack(table, *, anchors, cohorts, spec: CalendarComparisonSpec, every: int):
+def _stack(table, *, anchors, cohorts, initiations, spec: CalendarComparisonSpec, every: int):
     period_values = tuple(
         dict.fromkeys((spec.reference_period, *spec.comparison_periods, *spec.anticipation_periods))
     )
@@ -82,13 +144,21 @@ def _stack(table, *, anchors, cohorts, spec: CalendarComparisonSpec, every: int)
         period=times.period,
     )
     cohort_map = cohorts.select(unit_key=cohorts.unit, unit_cohort=cohorts.cohort_time)
+    initiation_map = initiations.select(
+        initiation_unit=initiations._unit,
+        initiation_time=initiations.initiation_time,
+    )
     joined_cohorts = scaffold.join(cohort_map, scaffold.unit == cohort_map.unit_key, how="left")
-    expanded = joined_cohorts.select(
+    joined_initiations = joined_cohorts.join(
+        initiation_map, joined_cohorts.unit == initiation_map.initiation_unit, how="left"
+    )
+    expanded = joined_initiations.select(
         unit=scaffold.unit,
         focal_cohort=scaffold.focal_cohort,
         t0=scaffold.t0,
         period=scaffold.period,
         unit_cohort=cohort_map.unit_cohort,
+        initiation_time=initiation_map.initiation_time,
     )
     source_values = table.select(
         value_unit=table.unit,
@@ -108,9 +178,9 @@ def _stack(table, *, anchors, cohorts, spec: CalendarComparisonSpec, every: int)
     )
     treated = (with_values.unit_cohort == with_values.focal_cohort).fill_null(False)
     if spec.control == "never_treated":
-        control = with_values.unit_cohort.isnull()
+        control = with_values.initiation_time.isnull()
     else:
-        control = with_values.unit_cohort.isnull() | (with_values.unit_cohort > latest)
+        control = with_values.initiation_time.isnull() | (with_values.initiation_time > latest)
     eligible = treated | control
     filtered = with_values.filter(eligible)
     columns = {
@@ -157,13 +227,14 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
     )
     compiled = compile_columns(base, model)
     anchors = compiled._anchors
-    cohort_units = _cohort_units(design, model, anchors)
+    cohort_units, initiation_times = _cohort_units(design, model, anchors)
 
     def stack(source):
         return _stack(
             source,
             anchors=anchors,
             cohorts=cohort_units,
+            initiations=initiation_times,
             spec=spec,
             every=schedule.every,
         )
@@ -198,5 +269,14 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
         compiled.eligibility_cutoffs,
         {**compiled.strategy, "cohort": "calendar_initiation", "control_eligible": "risk_set"},
         anchors,
-        compiled._checks,
+        (
+            *compiled._checks,
+            _history_check(design, model, anchors),
+            _period_check(
+                cohort_units,
+                anchors,
+                (spec.reference_period, *spec.comparison_periods, *spec.anticipation_periods),
+                schedule.every,
+            ),
+        ),
     )

@@ -83,24 +83,27 @@ def test_calendar_comparison_excludes_ineligible_units(native_inputs):
         "events",
         pa.table(
             {
-                "user_id": ["a"],
-                "ts": [datetime(2025, 1, 1, tzinfo=UTC)],
-                "event_id": ["a0"],
-                "alternate_event_id": ["a0-alt"],
+                "user_id": ["a", "a"],
+                "ts": [
+                    datetime(2024, 12, 31, tzinfo=UTC),
+                    datetime(2025, 1, 2, tzinfo=UTC),
+                ],
+                "event_id": ["a0", "a1"],
+                "alternate_event_id": ["a0-alt", "a1-alt"],
             }
         ),
     )
     model = Model.from_catalog(
         catalog,
         con=con,
-        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
+        readiness={"events": Coverage("2024-12-29", "2025-01-31")},
         units={"user": UnitSource("users", "user_id")},
         event_ids={"events": "event_id"},
     )
     result = CalendarComparisonPanel(
         Design(
             "user",
-            Schedule("1d", "2025-01-03", "2025-01-04"),
+            Schedule("1d", "2024-12-31", "2025-01-04"),
             gap="1d",
             eligibility={"eligible": gt(agg("sessions", window=("-2d", "-1d")), 0)},
         ),
@@ -147,3 +150,96 @@ def test_calendar_comparison_controls_have_explicit_boolean_labels(native_inputs
         .table.to_pylist()
     )
     assert all(row["treatment"] is False for row in rows if row["unit"] == "c")
+
+
+def test_late_initiations_are_not_classified_as_never_treated(native_inputs):
+    catalog, con = native_inputs
+    con.insert("users", pa.table({"user_id": ["c", "d"], "alt_id": ["cc", "dd"]}))
+    con.insert(
+        "events",
+        pa.table(
+            {
+                "user_id": ["d"],
+                "ts": [datetime(2025, 1, 8, tzinfo=UTC)],
+                "event_id": ["d1"],
+                "alternate_event_id": ["d2"],
+            }
+        ),
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
+        units={"user": UnitSource("users", "user_id")},
+        event_ids={"events": "event_id"},
+    )
+    rows = (
+        CalendarComparisonPanel(
+            Design("user", Schedule("1d", "2025-01-01", "2025-01-06")),
+            model,
+            cohort=Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            control="never_treated",
+            reference_period=-1,
+            comparison_periods=(0,),
+        )
+        .materialize(Budget(max_rows=100, max_output_bytes=1_000_000))
+        .table.to_pylist()
+    )
+    controls = {row["unit"] for row in rows if not row["treatment"]}
+    assert controls == {"c"}
+
+
+def test_calendar_comparison_refuses_requested_period_outside_schedule(native_inputs):
+    import pytest
+
+    from terrine.errors import TerrineError
+
+    catalog, con = native_inputs
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
+        units={"user": UnitSource("users", "user_id")},
+        event_ids={"events": "event_id"},
+    )
+    frame = CalendarComparisonPanel(
+        Design("user", Schedule("1d", "2025-01-01", "2025-01-04")),
+        model,
+        cohort=Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+        control="never_treated",
+        reference_period=-1,
+        comparison_periods=(0, 2),
+    )
+    with pytest.raises(TerrineError) as error:
+        frame.materialize(Budget(max_rows=100, max_output_bytes=1_000_000))
+    assert error.value.code == "terrine.compile.unsupported_calendar_comparison"
+
+
+def test_calendar_comparison_requires_complete_per_unit_history(native_inputs):
+    import pytest
+
+    from terrine.errors import TerrineError
+
+    catalog, con = native_inputs
+    con.raw_sql("ALTER TABLE users ADD COLUMN observed_from TIMESTAMPTZ")
+    con.raw_sql(
+        "UPDATE users SET observed_from = TIMESTAMPTZ '2025-01-02 00:00:00+00' WHERE user_id = 'a'"
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
+        units={"user": UnitSource("users", "user_id", observed_from="observed_from")},
+        event_ids={"events": "event_id"},
+    )
+    frame = CalendarComparisonPanel(
+        Design("user", Schedule("1d", "2025-01-03", "2025-01-04")),
+        model,
+        cohort=Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+        control="never_treated",
+        reference_period=-1,
+        comparison_periods=(0,),
+    )
+    with pytest.raises(TerrineError) as error:
+        frame.materialize(Budget(max_rows=100, max_output_bytes=1_000_000))
+    assert error.value.code == "terrine.design.incomplete_unit_treatment_history"

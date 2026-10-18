@@ -55,3 +55,4 @@
 - Add canonical serialized calendar-comparison specifications with hashed control modes and reference/anticipation conflict refusals.
 - Compile roster-backed calendar comparisons with never-treated and admissible not-yet-treated controls, reference/anticipation eligibility, and portable Frame provenance.
 - Keep stacked comparison output restricted to compiled eligibility and label never-adopter controls explicitly as untreated.
+- Distinguish late-known treatment initiation from never-treated controls, require per-unit treatment-history bounds, and refuse requested comparison periods absent from the schedule.
