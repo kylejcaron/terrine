@@ -6,6 +6,7 @@ import pytest
 
 from terrine.runtime.backends.duckdb import DuckDBBackend, StagedGeneration
 from terrine.runtime.leases import LeaseStore
+from terrine.runtime.state import RuntimeStore
 
 
 def test_duckdb_manifest_switch_is_atomic_with_generation():
@@ -16,6 +17,31 @@ def test_duckdb_manifest_switch_is_atomic_with_generation():
     receipt = backend.publish_generation(stage, expected_manifest=None, lease=lease)
     assert backend.current_generation("orders") == "g1"
     assert backend.read_partition(receipt, "p1").to_pylist() == [{"id": 1}, {"id": 2}]
+
+
+def test_manifest_publication_atomically_moves_snapshot_reference():
+    con = duckdb.connect(":memory:")
+    backend = DuckDBBackend(con, namespace="owner")
+    lease = _lease(con, "owner")
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
+    backend.publish_generation(
+        StagedGeneration("orders", "g1", {"p1": pa.table({"id": [1]})}, snapshot_id="snap-1"),
+        expected_manifest=None,
+        lease=lease,
+    )
+    assert store.snapshot_references("snap-1") == (("published_manifest", "orders:g1"),)
+    backend.publish_generation(
+        StagedGeneration("orders", "g2", {"p1": pa.table({"id": [2]})}, snapshot_id="snap-2"),
+        expected_manifest="g1",
+        lease=lease,
+    )
+    assert store.snapshot_references("snap-1") == ()
+    assert store.snapshot_references("snap-2") == (("published_manifest", "orders:g2"),)
+    manifest = con.execute(
+        'SELECT snapshot_id FROM "owner".runtime_manifests WHERE dataset=?', ["orders"]
+    ).fetchone()
+    assert manifest is not None and manifest[0] == "snap-2"
 
 
 def test_empty_generation_is_rejected_without_changing_manifest():

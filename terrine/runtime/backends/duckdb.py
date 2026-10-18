@@ -45,7 +45,12 @@ class DuckDBBackend:
         self.con.execute(f"CREATE SCHEMA IF NOT EXISTS {self._schema}")
         self.con.execute(
             f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_manifests ("
-            "dataset VARCHAR PRIMARY KEY, generation VARCHAR NOT NULL, version BIGINT NOT NULL)"
+            "dataset VARCHAR PRIMARY KEY, generation VARCHAR NOT NULL, version BIGINT NOT NULL, "
+            "snapshot_id VARCHAR)"
+        )
+        self.con.execute(
+            f"ALTER TABLE {self._schema}.runtime_manifests "
+            "ADD COLUMN IF NOT EXISTS snapshot_id VARCHAR"
         )
         self.con.execute(
             f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_publications ("
@@ -62,6 +67,15 @@ class DuckDBBackend:
             "dataset VARCHAR NOT NULL, generation VARCHAR NOT NULL, "
             "partition VARCHAR NOT NULL, table_name VARCHAR NOT NULL, "
             "digest VARCHAR NOT NULL, PRIMARY KEY(dataset, generation, partition))"
+        )
+        self.con.execute(
+            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_references ("
+            "snapshot_id VARCHAR NOT NULL, kind VARCHAR NOT NULL, reference VARCHAR NOT NULL, "
+            "PRIMARY KEY(snapshot_id, kind, reference))"
+        )
+        self.con.execute(
+            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_gc ("
+            "snapshot_id VARCHAR PRIMARY KEY)"
         )
         LeaseStore(self.con, namespace=self.namespace).initialize()
 
@@ -106,7 +120,8 @@ class DuckDBBackend:
             if published_before is not None:
                 raise ValueError("generation was already published and cannot be reactivated")
             previous = self.con.execute(
-                f"SELECT version FROM {self._schema}.runtime_manifests WHERE dataset=?",
+                f"SELECT version, snapshot_id FROM {self._schema}.runtime_manifests "
+                "WHERE dataset=?",
                 [stage.dataset],
             ).fetchone()
             version = (previous[0] if previous else 0) + 1
@@ -147,11 +162,30 @@ class DuckDBBackend:
             lease_store.assert_current(lease)
             lease_store.guard_publication(lease)
             self.con.execute(
-                f"INSERT INTO {self._schema}.runtime_manifests VALUES (?, ?, ?) "
+                f"INSERT INTO {self._schema}.runtime_manifests "
+                "(dataset, generation, version, snapshot_id) VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(dataset) DO UPDATE SET generation=excluded.generation, "
-                "version=excluded.version",
-                [stage.dataset, stage.generation, version],
+                "version=excluded.version, snapshot_id=excluded.snapshot_id",
+                [stage.dataset, stage.generation, version, stage.snapshot_id],
             )
+            if previous is not None and previous[1] is not None:
+                self.con.execute(
+                    f"DELETE FROM {self._schema}.runtime_snapshot_references "
+                    "WHERE snapshot_id=? AND kind='published_manifest' AND reference=?",
+                    [previous[1], f"{stage.dataset}:{expected_manifest}"],
+                )
+            if stage.snapshot_id is not None:
+                collected = self.con.execute(
+                    f"SELECT 1 FROM {self._schema}.runtime_snapshot_gc WHERE snapshot_id=?",
+                    [stage.snapshot_id],
+                ).fetchone()
+                if collected is not None:
+                    raise ValueError("collected snapshots cannot be published")
+                self.con.execute(
+                    f"INSERT INTO {self._schema}.runtime_snapshot_references VALUES "
+                    "(?, 'published_manifest', ?) ON CONFLICT DO NOTHING",
+                    [stage.snapshot_id, f"{stage.dataset}:{stage.generation}"],
+                )
             if self.fault_injector is not None:
                 self.fault_injector("before_commit")
             self.con.execute("COMMIT")

@@ -4,8 +4,10 @@ import hashlib
 import hmac
 import json
 import re
+import shutil
 import uuid
 from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,7 @@ from terrine.execution.inputs import (
 )
 from terrine.model import Model
 from terrine.runtime.owner import RuntimeOwner
+from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog
 
 __all__ = ["ReopenableSnapshot", "SnapshotAuthority"]
@@ -132,6 +135,49 @@ class SnapshotAuthority:
         if not isinstance(owner, RuntimeOwner):
             raise TypeError("owner must be RuntimeOwner")
         self.owner = owner
+
+    def collect_unreferenced(
+        self,
+        store: RuntimeStore,
+        *,
+        namespace: str,
+        retain: timedelta,
+        now: datetime | None = None,
+    ) -> tuple[str, ...]:
+        """Delete only verified owner snapshots beyond retention with no live references."""
+        if store.namespace != namespace:
+            raise ValueError("snapshot namespace does not match runtime store")
+        if retain < timedelta(0):
+            raise ValueError("snapshot retention must not be negative")
+        root = self.owner.snapshot_root / namespace
+        if not root.exists():
+            return ()
+        current = now or datetime.now(UTC)
+        if current.tzinfo is None:
+            raise ValueError("collection time must be timezone-aware")
+        removed = []
+        for directory in root.iterdir():
+            if not directory.is_dir():
+                continue
+            receipt_path = directory / "receipt.json"
+            if not receipt_path.is_file():
+                continue
+            receipt = ReopenableSnapshot.from_json(receipt_path.read_bytes())
+            if receipt.namespace != namespace or receipt.owner_reference != self.owner.reference:
+                continue
+            if Path(receipt.artifact_path).resolve().parent != directory.resolve():
+                continue
+            if Path(receipt.receipt_path).resolve() != receipt_path.resolve():
+                continue
+            marked = store.snapshot_marked_for_gc(receipt.snapshot_id)
+            modified = datetime.fromtimestamp(directory.stat().st_mtime, UTC)
+            if not marked and current - modified < retain:
+                continue
+            if not marked and not store.mark_snapshot_for_gc(receipt.snapshot_id):
+                continue
+            shutil.rmtree(directory)
+            removed.append(receipt.snapshot_id)
+        return tuple(sorted(removed))
 
     def capture(
         self,

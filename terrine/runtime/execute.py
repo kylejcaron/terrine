@@ -12,6 +12,7 @@ import pyarrow as pa
 from terrine.compile.cost import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED
 from terrine.runtime.leases import Lease, LeaseStore
 from terrine.runtime.planner import RefreshPlan, TaskSpec
+from terrine.runtime.state import RuntimeStore
 
 __all__ = ["RunReceipt", "execute_plan"]
 
@@ -44,9 +45,10 @@ def execute_plan(
         raise ValueError("plan task count exceeds configured max_tasks")
     if lease_ttl <= timedelta(0):
         raise ValueError("lease_ttl must be positive")
+    runtime_store = RuntimeStore(con, namespace=namespace)
+    runtime_store.initialize()
     leases = LeaseStore(con, namespace=namespace)
     schema = leases._schema
-    con.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
     con.execute(
         f"CREATE TABLE IF NOT EXISTS {schema}.runtime_runs ("
         "run_id VARCHAR PRIMARY KEY, dataset VARCHAR NOT NULL, fingerprint VARCHAR NOT NULL, "
@@ -68,6 +70,7 @@ def execute_plan(
         if run[0] != plan.dataset or run[1] != plan.recipe.fingerprint:
             raise ValueError("run_id is already bound to a different plan")
         if run[2] in {"succeeded", "cancelled"}:
+            runtime_store.unpin_snapshot(plan.snapshot_id, kind="active_run", reference=run_id)
             return RunReceipt(run_id, run[2], run[3])
     else:
         con.execute(
@@ -103,6 +106,7 @@ def execute_plan(
         if current is None:
             raise RuntimeError("run disappeared while claiming its lease")
         return RunReceipt(run_id, current[0], current[1])
+    runtime_store.pin_snapshot(plan.snapshot_id, kind="active_run", reference=run_id)
     heartbeat_con = con.cursor()
     heartbeat_store = LeaseStore(heartbeat_con, namespace=namespace)
     outputs: dict[str, pa.Table] = {}
@@ -196,6 +200,14 @@ def execute_plan(
         published = publish(plan, MappingProxyType(outputs), lease)
         generation = getattr(published, "generation", published)
         generation_text = str(generation) if generation is not None else None
+        if generation_text is not None:
+            manifest_reference = f"{plan.dataset}:{generation_text}"
+            for kind, reference in runtime_store.snapshot_references(plan.snapshot_id):
+                if kind == "published_manifest" and reference.startswith(f"{plan.dataset}:"):
+                    runtime_store.unpin_snapshot(plan.snapshot_id, kind=kind, reference=reference)
+            runtime_store.pin_snapshot(
+                plan.snapshot_id, kind="published_manifest", reference=manifest_reference
+            )
         terminal = con.execute(
             f"UPDATE {schema}.runtime_runs SET state='succeeded', published_generation=? "
             "WHERE run_id=? AND state='running' AND attempt_fence=? RETURNING run_id",
@@ -216,6 +228,7 @@ def execute_plan(
         stop_heartbeat.set()
         heartbeat_thread.join()
         heartbeat_con.close()
+        runtime_store.unpin_snapshot(plan.snapshot_id, kind="active_run", reference=run_id)
         leases.release(lease)
 
 

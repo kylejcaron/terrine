@@ -10,6 +10,7 @@ from typing import Any, Protocol
 from terrine.errors import RefusalSpec
 from terrine.model import Model
 from terrine.runtime.planner import RefreshPlan
+from terrine.runtime.state import RuntimeStore
 from terrine.spec.design import Design
 from terrine.spec.io import canonical_json, from_json, to_json
 
@@ -182,6 +183,30 @@ class SavedPlanRecipe:
 
     def to_json(self) -> str:
         return json.dumps(self._data(include_hash=True), sort_keys=True, separators=(",", ":"))
+
+    def pin_snapshot(self, store: RuntimeStore, *, reference: str | None = None) -> str:
+        """Retain this verified recipe's exact input snapshot."""
+        verified = SavedPlanRecipe.from_json(self.to_json())
+        plan = RefreshPlan.deserialize(verified.plan_json)
+        if plan.namespace != verified.namespace or plan.dataset != verified.destination.dataset:
+            raise _INVALID.error(reason="plan identity differs from saved recipe")
+        store.pin_snapshot(
+            plan.snapshot_id,
+            kind="saved_plan",
+            reference=reference or verified.recipe_hash,
+        )
+        return plan.snapshot_id
+
+    def release_snapshot(self, store: RuntimeStore, *, reference: str | None = None) -> str:
+        """Release this recipe's input snapshot reference."""
+        verified = SavedPlanRecipe.from_json(self.to_json())
+        plan = RefreshPlan.deserialize(verified.plan_json)
+        store.unpin_snapshot(
+            plan.snapshot_id,
+            kind="saved_plan",
+            reference=reference or verified.recipe_hash,
+        )
+        return plan.snapshot_id
 
     @classmethod
     def from_json(cls, value: str | bytes) -> SavedPlanRecipe:

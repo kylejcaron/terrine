@@ -18,6 +18,7 @@ from terrine.runtime.recipe import (
     SavedPlanRecipe,
     resolve_plan,
 )
+from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog
 from terrine.spec import Design, FixedDate
 
@@ -84,6 +85,9 @@ def test_saved_plan_recipe_reconstructs_design_and_verifies_owner_model_in_fresh
             namespace="runtime",
             expected_base_manifest="manifest-1",
         )
+        store = RuntimeStore(con.con, namespace="runtime")
+        store.initialize()
+        assert recipe.pin_snapshot(store) == "snapshot-1"
         restored = SavedPlanRecipe.from_json(recipe.to_json())
         resolved_plan, resolved_model, resolved_design, resolved_destination = resolve_plan(
             restored, resolver=_Resolver(model), namespace="runtime"
@@ -100,6 +104,11 @@ def test_saved_plan_recipe_reconstructs_design_and_verifies_owner_model_in_fresh
             run_task=lambda task, dependencies: pa.table({"layer": [task.layer]}),
             publish=lambda plan, outputs, lease: "generation-1",
         )
+        assert store.snapshot_references("snapshot-1") == (
+            ("published_manifest", "study:generation-1"),
+            ("saved_plan", recipe.recipe_hash),
+        )
+        assert recipe.release_snapshot(store) == "snapshot-1"
         assert run.state == "succeeded"
     finally:
         con.disconnect()

@@ -75,7 +75,7 @@ def test_gc_never_removes_manifest_referenced_generation():
         staged_next, definition=definition, snapshot=snapshot, supersedes=current
     )
     con.execute(
-        'INSERT INTO "owner".runtime_manifests VALUES (?, ?, ?)',
+        'INSERT INTO "owner".runtime_manifests (dataset, generation, version) VALUES (?, ?, ?)',
         ["orders", "g1", 1],
     )
 

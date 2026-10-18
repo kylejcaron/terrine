@@ -33,6 +33,7 @@ class StagedGeneration:
     generation: str
     partitions: Mapping[str, pa.Table]
     run_id: str | None = None
+    snapshot_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "partitions", MappingProxyType(dict(self.partitions)))

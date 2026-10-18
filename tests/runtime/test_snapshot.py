@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
+import duckdb
 import ibis
 import pytest
 
@@ -10,6 +13,7 @@ from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.snapshot import ReopenableSnapshot, SnapshotAuthority
+from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog
 
 
@@ -145,3 +149,34 @@ def test_snapshot_reopen_refuses_modified_retained_inputs(tmp_path):
         assert error.value.code == "terrine.runtime.snapshot_invalid"
     finally:
         reopened_con.disconnect()
+
+
+def test_snapshot_gc_respects_pins_and_tombstones_collected_inputs(tmp_path):
+    state_path = tmp_path / "owner.duckdb"
+    owner = RuntimeOwner(state_path=state_path, snapshot_root=tmp_path / "snapshots")
+    con = ibis.duckdb.connect(str(state_path))
+    con.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+    con.raw_sql("INSERT INTO events VALUES ('2025-01-01', 1, 3)")
+    model = Model.from_catalog(
+        _catalog(), con=con, readiness={"events": Coverage("2025-01-01", "2025-02-01")}
+    )
+    authority = SnapshotAuthority(owner)
+    receipt = authority.capture(
+        model, con=con, namespace="runtime", run_id="collect", budget=Budget()
+    )
+    store = RuntimeStore(duckdb.connect(":memory:"), namespace="runtime")
+    store.initialize()
+    store.pin_snapshot(receipt.snapshot_id, kind="saved_plan", reference="recipe")
+    past = datetime.now(UTC) + timedelta(seconds=1)
+    assert (
+        authority.collect_unreferenced(store, namespace="runtime", retain=timedelta(0), now=past)
+        == ()
+    )
+    store.unpin_snapshot(receipt.snapshot_id, kind="saved_plan", reference="recipe")
+    assert authority.collect_unreferenced(
+        store, namespace="runtime", retain=timedelta(0), now=past
+    ) == (receipt.snapshot_id,)
+    assert not Path(receipt.artifact_path).exists()
+    with pytest.raises(ValueError, match="collected"):
+        store.pin_snapshot(receipt.snapshot_id, kind="saved_plan", reference="recipe")
+    con.disconnect()

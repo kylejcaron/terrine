@@ -108,6 +108,15 @@ class RuntimeStore:
             "dataset VARCHAR NOT NULL, generation VARCHAR NOT NULL, reader VARCHAR NOT NULL, "
             "PRIMARY KEY(dataset, generation, reader))"
         )
+        self.con.execute(
+            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_references ("
+            "snapshot_id VARCHAR NOT NULL, kind VARCHAR NOT NULL, reference VARCHAR NOT NULL, "
+            "PRIMARY KEY(snapshot_id, kind, reference))"
+        )
+        self.con.execute(
+            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_gc ("
+            "snapshot_id VARCHAR PRIMARY KEY)"
+        )
 
     def write_generation(
         self,
@@ -310,9 +319,89 @@ class RuntimeStore:
                 raise ValueError("generation changed concurrently during collection") from exc
             raise
 
+    def pin_snapshot(self, snapshot_id: str, *, kind: str, reference: str) -> None:
+        _check_snapshot_reference(snapshot_id, kind, reference)
+        self.con.execute("BEGIN TRANSACTION")
+        try:
+            collected = self.con.execute(
+                f"SELECT 1 FROM {self._schema}.runtime_snapshot_gc WHERE snapshot_id=?",
+                [snapshot_id],
+            ).fetchone()
+            if collected is not None:
+                raise ValueError("collected snapshots cannot be pinned")
+            self.con.execute(
+                f"INSERT INTO {self._schema}.runtime_snapshot_references VALUES (?, ?, ?) "
+                "ON CONFLICT DO NOTHING",
+                [snapshot_id, kind, reference],
+            )
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
+
+    def unpin_snapshot(self, snapshot_id: str, *, kind: str, reference: str) -> None:
+        _check_snapshot_reference(snapshot_id, kind, reference)
+        self.con.execute(
+            f"DELETE FROM {self._schema}.runtime_snapshot_references "
+            "WHERE snapshot_id=? AND kind=? AND reference=?",
+            [snapshot_id, kind, reference],
+        )
+
+    def snapshot_references(self, snapshot_id: str) -> tuple[tuple[str, str], ...]:
+        if not isinstance(snapshot_id, str) or not snapshot_id:
+            raise ValueError("snapshot_id must not be empty")
+        rows = self.con.execute(
+            f"SELECT kind, reference FROM {self._schema}.runtime_snapshot_references "
+            "WHERE snapshot_id=? ORDER BY kind, reference",
+            [snapshot_id],
+        ).fetchall()
+        return tuple((kind, reference) for kind, reference in rows)
+
+    def mark_snapshot_for_gc(self, snapshot_id: str) -> bool:
+        if not isinstance(snapshot_id, str) or not snapshot_id:
+            raise ValueError("snapshot_id must not be empty")
+        self.con.execute("BEGIN TRANSACTION")
+        try:
+            refs = self.con.execute(
+                f"SELECT 1 FROM {self._schema}.runtime_snapshot_references "
+                "WHERE snapshot_id=? LIMIT 1",
+                [snapshot_id],
+            ).fetchone()
+            if refs is not None:
+                self.con.execute("ROLLBACK")
+                return False
+            self.con.execute(
+                f"INSERT INTO {self._schema}.runtime_snapshot_gc VALUES (?) ON CONFLICT DO NOTHING",
+                [snapshot_id],
+            )
+            self.con.execute("COMMIT")
+            return True
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
+
+    def snapshot_marked_for_gc(self, snapshot_id: str) -> bool:
+        return (
+            self.con.execute(
+                f"SELECT 1 FROM {self._schema}.runtime_snapshot_gc WHERE snapshot_id=?",
+                [snapshot_id],
+            ).fetchone()
+            is not None
+        )
+
     def _check_ref(self, ref: GenerationRef) -> None:
         if ref.namespace != self.namespace:
             raise ValueError("generation reference namespace does not match store")
+
+
+def _check_snapshot_reference(snapshot_id: str, kind: str, reference: str) -> None:
+    for name, value in (
+        ("snapshot_id", snapshot_id),
+        ("kind", kind),
+        ("reference", reference),
+    ):
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"{name} must not be empty")
 
 
 def _snapshot_json(snapshot: SourceSnapshot) -> dict[str, Any]:
