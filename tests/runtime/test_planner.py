@@ -141,6 +141,38 @@ def test_planner_limits_work_to_changed_sources_and_skips_readiness_only_advance
     assert any(task.layer == "frame" for task in readiness.tasks)
 
 
+def test_roster_and_dimension_corrections_select_dependent_outputs():
+    graph = dependency_graph(
+        sources=("events", "tier_history"),
+        definition_hash="definition",
+        partitions=("window-1", "window-2"),
+    )
+    roster = plan_refresh(
+        namespace="owner",
+        dataset="study",
+        definition_hash="definition",
+        snapshot_id="snap",
+        graph=graph,
+        changes=ChangeSet((Change("roster", "roster", revision="r2"),), "change_feed"),
+    )
+    dimension = plan_refresh(
+        namespace="owner",
+        dataset="study",
+        definition_hash="definition",
+        snapshot_id="snap",
+        graph=graph,
+        changes=ChangeSet((Change("update", "tier_history", revision="d2"),), "change_feed"),
+    )
+    assert {task.partition for task in roster.tasks if task.layer == "frame"} == {
+        "window-1",
+        "window-2",
+    }
+    assert {task.partition for task in dimension.tasks if task.layer == "frame"} == {
+        "window-1",
+        "window-2",
+    }
+
+
 def test_source_invalidation_includes_cross_source_dependents():
     from terrine.runtime.graph import DependencyGraph
     from terrine.runtime.state import LayerNode
