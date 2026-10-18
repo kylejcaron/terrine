@@ -539,20 +539,35 @@ def event_sequence(
             ],
         )
         funnel_type = attempts_by_anchor.schema()["funnel_attempts"]
-        table = joined_table.select(
-            **{
-                name: joined_table[name]
-                for name in joined_table.columns
-                if name not in {"unit_right", "anchor_id_right", "funnel_attempts"}
-            },
-            funnel_attempts=ibis.ifelse(
+        if "is_event" in joined_table.columns:
+            payload = ibis.ifelse(
+                joined_table.is_event,
+                ibis.literal(None, type=funnel_type),
+                ibis.ifelse(
+                    joined_table.sequence_complete,
+                    ibis.coalesce(
+                        joined_table.funnel_attempts,
+                        ibis.literal([], type=funnel_type),
+                    ),
+                    ibis.literal(None, type=funnel_type),
+                ),
+            )
+        else:
+            payload = ibis.ifelse(
                 joined_table.sequence_complete,
                 ibis.coalesce(
                     joined_table.funnel_attempts,
                     ibis.literal([], type=funnel_type),
                 ),
                 ibis.literal(None, type=funnel_type),
-            ),
+            )
+        table = joined_table.select(
+            **{
+                name: joined_table[name]
+                for name in joined_table.columns
+                if name not in {"unit_right", "anchor_id_right", "funnel_attempts"}
+            },
+            funnel_attempts=payload,
         )
         feature_names = (*feature_names, "funnel_attempts")
     roles = Roles("unit", "anchor_id", "t0", None, feature_names, ())

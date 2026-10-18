@@ -115,6 +115,39 @@ def test_sequence_compiler_publishes_funnel_attempt_schema(sequence_model):
         }
     ]
 
+    children = [row for row in rows if row["is_event"]]
+    assert all(row["funnel_attempts"] is None for row in children)
+def test_funnel_dependency_named_unit_does_not_overwrite_its_event_values(sequence_model):
+    from terrine.spec import FunnelSpec
+
+    definition = sequence_model.catalog.model_dump(mode="python")
+    definition["sources"]["events"]["properties"] = ("kind", "unit")
+    definition["properties"]["unit"] = {
+        "source": "events",
+        "column": "kind",
+        "dtype": "string",
+        "as_of": "event_time",
+    }
+    model = Model.from_catalog(
+        Catalog.model_validate(definition),
+        con=sequence_model.con,
+        readiness=sequence_model.readiness,
+        event_ids=sequence_model.event_ids,
+    )
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence(
+            "signup",
+            Window("0s", "2h"),
+            max_events=5,
+            funnel=FunnelSpec("unit", ("view", "purchase")),
+        ),
+    )
+    rows = model.con.to_pyarrow(design.build(model)._compiled.table).to_pylist()
+    header = next(row for row in rows if not row["is_event"])
+    assert header["funnel_attempts"][0]["status"] == "complete"
+
 
 def test_timestamp_identity_refuses_ties_without_configured_id(sequence_model):
     from terrine.errors import TerrineError

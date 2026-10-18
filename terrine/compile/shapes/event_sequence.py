@@ -117,11 +117,41 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         for name in dict.fromkeys(internal_names)
         if name is not None and name not in sequence.properties
     )
+    funnel_event_property = (
+        sequence.funnel.event_property if sequence.funnel is not None else None
+    )
+    funnel_event_property_column = funnel_event_property
+    if funnel_event_property in {
+        "unit",
+        "anchor_id",
+        "t0",
+        "event_id",
+        "event_time",
+        "sequence_position",
+        "is_event",
+        "event_count",
+        "sequence_complete",
+        "sequence_reason",
+    }:
+        funnel_event_property_column = "__terrine_funnel_event_property"
+        suffix = 0
+        while funnel_event_property_column in normalized.columns:
+            suffix += 1
+            funnel_event_property_column = f"__terrine_funnel_event_property_{suffix}"
+    internal_property_columns = tuple(
+        funnel_event_property_column if name == funnel_event_property else name
+        for name in internal_properties
+    )
     direct = {}
     for property_name in (*sequence.properties, *internal_properties):
         prop = _property_binding(source, property_name)
         if prop.dimension_name is None:
-            direct[property_name] = normalized[prop.column]
+            target = (
+                funnel_event_property_column
+                if property_name == funnel_event_property
+                else property_name
+            )
+            direct[target] = normalized[prop.column]
     if direct:
         normalized = normalized.mutate(**direct)
     aliases = _enriched_property_columns(source.dimensions, normalized.columns)
@@ -135,7 +165,12 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
             prop = _property_binding(source, property_name)
             if prop.dimension_name is not None:
                 value_alias, _ = aliases[(prop.dimension_name, property_name)]
-                derived[property_name] = normalized[value_alias]
+                target = (
+                    funnel_event_property_column
+                    if property_name == funnel_event_property
+                    else property_name
+                )
+                derived[target] = normalized[value_alias]
         if derived:
             normalized = normalized.mutate(**derived)
     normalized = normalized.mutate(unit=normalized["_unit"])
@@ -153,7 +188,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         max_events=sequence.max_events,
         representation=sequence.representation,
         properties=sequence.properties,
-        internal_properties=internal_properties,
+        internal_properties=internal_property_columns,
         label_property=sequence.label_property,
         unit_column="unit",
         anchor_id_column="anchor_id",
@@ -166,9 +201,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         session_gap_seconds=(
             sequence.sessions.gap_seconds if sequence.sessions is not None else None
         ),
-        funnel_event_property=(
-            sequence.funnel.event_property if sequence.funnel is not None else None
-        ),
+        funnel_event_property=funnel_event_property_column,
         funnel_steps=sequence.funnel.steps if sequence.funnel is not None else None,
         funnel_within_seconds=(
             sequence.funnel.within_seconds if sequence.funnel is not None else None
