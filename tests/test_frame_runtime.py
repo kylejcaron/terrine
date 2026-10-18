@@ -13,7 +13,8 @@ from terrine.data import Budget, Coverage
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.models import Catalog
-from terrine.spec import Design, EventAnchor, agg, gt
+from terrine.spec import Design, EventAnchor, EventSequence, agg, gt
+from terrine.windows import Window
 
 
 def _design(**kwargs):
@@ -149,6 +150,19 @@ def test_materialization_aborts_instead_of_returning_partial_data(native_inputs,
     complete = frame.materialize(Budget(max_rows=2))
     assert sorted(complete.table.column("unit").to_pylist()) == ["a", "b"]
     assert complete.provenance.eligibility_summary.retained == 2
+
+
+def test_sequence_provenance_round_trips_on_bounded_materialization(native_inputs):
+    frame = _design(shape=EventSequence("session", Window("0s", "1d"), max_events=10)).build(
+        _model(native_inputs)
+    )
+    materialized = frame.materialize(Budget(max_rows=100, max_output_bytes=1_000_000))
+    metadata = materialized.provenance.sequence_meta
+    assert metadata.fact == "session"
+    assert metadata.representation == "positions"
+    assert metadata.event_fields == ()
+    restored = type(materialized).from_arrow(materialized.to_arrow())
+    assert restored.provenance.sequence_meta == metadata
 
 
 def test_unresolved_eligibility_refuses_export_with_only_aggregate_counts(native_inputs):

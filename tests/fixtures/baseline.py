@@ -11,6 +11,7 @@ from terrine.data import (
     Coverage,
     EligibilitySummary,
     ExecutionSnapshot,
+    ExpressionTiming,
     FeatureCutoff,
     MaterializedFrame,
     Provenance,
@@ -50,6 +51,19 @@ def materialized_baseline(world: World, *, weighted: bool = False) -> Materializ
             replay_equivalence="unverified",
         ),
         shape="cross_section",
+        expression_timings={
+            "net_revenue": ExpressionTiming(
+                kind="fixed_t0",
+                selector_ref=None,
+                relative_offsets=None,
+                support_seconds=(0, world.config.horizon_seconds),
+                selector_dependencies=(),
+                selector_support_seconds={},
+                point_time_column=None,
+                start_bound_column=None,
+                end_bound_column=None,
+            )
+        },
         treatment_design="baseline_binary",
         treatment_known_at_t0=True,
         treatment_knowledge="retrospective_effective_time",

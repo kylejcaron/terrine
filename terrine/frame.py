@@ -19,12 +19,18 @@ from terrine.compile.cost import (
 from terrine.data import Budget, MaterializedFrame, Provenance, StatePanelMeta
 from terrine.errors import RefusalSpec
 from terrine.spec.anchors import FixedDate
+from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import BinnedMetricState, StatePanel, encode_cutpoint
 
 _STATE_PANEL_BUDGET = RefusalSpec(
     "terrine.state_panel.budget_required",
     "State-panel materialization requires positive max_rows and max_output_bytes budgets.",
 )
+_SEQUENCE_BUDGET = RefusalSpec(
+    "terrine.sequence.budget_required",
+    "Event-sequence materialization requires positive max_rows and max_output_bytes budgets.",
+)
+
 
 if TYPE_CHECKING:
     from terrine.compile.columns import CompiledStudy
@@ -142,6 +148,14 @@ class Frame:
             or budget.max_output_bytes <= 0
         ):
             raise _STATE_PANEL_BUDGET.error()
+        if isinstance(self._design.shape, EventSequence) and (
+            budget is None
+            or budget.max_rows is None
+            or budget.max_output_bytes is None
+            or budget.max_rows <= 0
+            or budget.max_output_bytes <= 0
+        ):
+            raise _SEQUENCE_BUDGET.error()
         for warning in _scan_policy(budget):
             warnings.warn(warning, RuntimeWarning, stacklevel=2)
         from terrine.compile.dispatch import compile_design
@@ -214,6 +228,8 @@ class Frame:
                 execution_snapshot=context.snapshot,
                 shape="state_panel"
                 if isinstance(self._design.shape, StatePanel)
+                else "event_sequence"
+                if isinstance(self._design.shape, EventSequence)
                 else self._design.shape,
                 treatment_design="baseline_binary" if baseline_binary else None,
                 eligibility_summary=summary,
@@ -222,6 +238,8 @@ class Frame:
                 else None,
                 treatment_known_at_t0=treatment.known_at_t0 if treatment is not None else False,
                 state_panel=_state_panel_metadata(self._design, model),
+                expression_timings=compiled.expression_timings,
+                sequence_meta=compiled.sequence_meta,
             )
             return MaterializedFrame(table, compiled.roles, compiled.columns, provenance)
 

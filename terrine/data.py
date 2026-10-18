@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from base64 import b64decode, b64encode
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import UTC, date, datetime, timedelta
 from types import MappingProxyType
 from typing import Any, Literal
@@ -22,8 +22,10 @@ __all__ = [
     "Roles",
     "ColumnMeta",
     "FeatureCutoff",
-    "StatePanelMeta",
+    "ExpressionTiming",
+    "SequenceMeta",
     "EligibilitySummary",
+    "StatePanelMeta",
     "ExecutionSnapshot",
     "Provenance",
     "MaterializedFrame",
@@ -240,6 +242,69 @@ class FeatureCutoff:
 
 
 @dataclass(frozen=True, slots=True)
+class ExpressionTiming:
+    """Conservative support and exact resolved time-column references for one expression."""
+
+    kind: Literal["fixed_t0", "event_time"]
+    selector_ref: str | None
+    relative_offsets: tuple[int, int] | None
+    support_seconds: tuple[int, int]
+    selector_dependencies: tuple[str, ...]
+    selector_support_seconds: Mapping[str, tuple[int, int]]
+    point_time_column: str | None
+    start_bound_column: str | None
+    end_bound_column: str | None
+
+    def __post_init__(self) -> None:
+        if self.kind not in ("fixed_t0", "event_time"):
+            raise ValueError("unsupported expression timing kind")
+        for name in ("selector_ref", "point_time_column", "start_bound_column", "end_bound_column"):
+            value = getattr(self, name)
+            if value is not None:
+                _nonempty(value, name)
+        if self.relative_offsets is not None and (
+            not isinstance(self.relative_offsets, tuple)
+            or len(self.relative_offsets) != 2
+            or any(
+                isinstance(item, bool) or not isinstance(item, int)
+                for item in self.relative_offsets
+            )
+            or self.relative_offsets[0] > self.relative_offsets[1]
+        ):
+            raise ValueError("relative_offsets must be an ordered pair of integer seconds or None")
+        if (
+            not isinstance(self.support_seconds, tuple)
+            or len(self.support_seconds) != 2
+            or any(
+                isinstance(item, bool) or not isinstance(item, int) for item in self.support_seconds
+            )
+            or self.support_seconds[0] > self.support_seconds[1]
+        ):
+            raise ValueError("support_seconds must be an ordered pair of integer seconds")
+        dependencies = tuple(self.selector_dependencies)
+        if any(not isinstance(item, str) or not item for item in dependencies):
+            raise TypeError("selector_dependencies must contain non-empty strings")
+        if len(set(dependencies)) != len(dependencies):
+            raise ValueError("selector_dependencies must be distinct")
+        supports = {}
+        for key, value in self.selector_support_seconds.items():
+            if (
+                not isinstance(key, str)
+                or not key
+                or not isinstance(value, tuple)
+                or len(value) != 2
+                or any(isinstance(item, bool) or not isinstance(item, int) for item in value)
+                or value[0] > value[1]
+            ):
+                raise ValueError("selector_support_seconds must map names to ordered integer pairs")
+            supports[key] = value
+        if set(dependencies) != set(supports):
+            raise ValueError("selector dependency names must match support entries")
+        object.__setattr__(self, "selector_dependencies", dependencies)
+        object.__setattr__(self, "selector_support_seconds", MappingProxyType(supports))
+
+
+@dataclass(frozen=True, slots=True)
 class StatePanelMeta:
     """Portable state-panel definition and structural timing references."""
 
@@ -305,6 +370,109 @@ class StatePanelMeta:
             "terminal_column",
         ):
             _nonempty(getattr(self, name), name)
+
+
+@dataclass(frozen=True, slots=True)
+class SequenceMeta:
+    """Portable event-sequence schema and stable references to status fields."""
+
+    fact: str
+    window: Window
+    max_events: int
+    representation: Literal["positions", "arrays"]
+    event_fields: tuple[str, ...]
+    event_id_column: str | None
+    event_time_column: str | None
+    position_column: str | None
+    event_count_column: str
+    complete_column: str
+    reason_column: str
+    property_reason_columns: Mapping[str, str]
+    label_property: str | None = None
+    session_gap_seconds: int | None = None
+    session_fields: tuple[str, ...] = ()
+    sessions_column: str | None = None
+    sessions_complete_column: str | None = None
+    sessions_reason_column: str | None = None
+    transition_from_column: str | None = None
+    transition_to_column: str | None = None
+    funnel_event_property: str | None = None
+    funnel_steps: tuple[str, ...] = ()
+    funnel_within_seconds: int | None = None
+    funnel_attempts_column: str | None = None
+    funnel_attempts_complete_column: str | None = None
+    funnel_attempts_reason_column: str | None = None
+    funnel_fields: tuple[str, ...] = ()
+    identity_kind: Literal["configured", "timestamp"] = "timestamp"
+
+    def __post_init__(self) -> None:
+        _nonempty(self.fact, "fact")
+        if not isinstance(self.window, Window):
+            raise TypeError("window must be a Window")
+        if (
+            isinstance(self.max_events, bool)
+            or not isinstance(self.max_events, int)
+            or self.max_events <= 0
+        ):
+            raise ValueError("max_events must be positive")
+        if self.representation not in ("positions", "arrays"):
+            raise ValueError("unsupported sequence representation")
+        fields = tuple(self.event_fields)
+        if any(not isinstance(name, str) or not name for name in fields) or len(set(fields)) != len(
+            fields
+        ):
+            raise ValueError("event_fields must contain distinct non-empty names")
+        object.__setattr__(self, "event_fields", fields)
+        for name in (
+            "event_id_column",
+            "event_time_column",
+            "position_column",
+            "event_count_column",
+            "complete_column",
+            "reason_column",
+            "label_property",
+            "sessions_column",
+            "sessions_complete_column",
+            "sessions_reason_column",
+            "transition_from_column",
+            "transition_to_column",
+            "funnel_event_property",
+            "funnel_attempts_column",
+            "funnel_attempts_complete_column",
+            "funnel_attempts_reason_column",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                _nonempty(value, name)
+        if self.session_gap_seconds is not None and (
+            isinstance(self.session_gap_seconds, bool)
+            or not isinstance(self.session_gap_seconds, int)
+            or self.session_gap_seconds < 0
+        ):
+            raise ValueError("session_gap_seconds must be non-negative or None")
+        if self.funnel_within_seconds is not None and (
+            isinstance(self.funnel_within_seconds, bool)
+            or not isinstance(self.funnel_within_seconds, int)
+            or self.funnel_within_seconds <= 0
+        ):
+            raise ValueError("funnel_within_seconds must be positive or None")
+        if self.identity_kind not in ("configured", "timestamp"):
+            raise ValueError("unsupported identity kind")
+        for field_name in ("session_fields", "funnel_steps", "funnel_fields"):
+            values = tuple(getattr(self, field_name))
+            if any(not isinstance(value, str) or not value for value in values):
+                raise ValueError(f"{field_name} must contain non-empty strings")
+            object.__setattr__(self, field_name, values)
+        if any(
+            not isinstance(value, str) or not value
+            for value in self.property_reason_columns.values()
+        ):
+            raise TypeError("property_reason_columns must map names to non-empty names")
+        object.__setattr__(
+            self,
+            "property_reason_columns",
+            _mapping(self.property_reason_columns, "property_reason_columns"),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,6 +547,8 @@ class Provenance:
     treatment_known_at_t0: bool = False
 
     state_panel: StatePanelMeta | None = None
+    expression_timings: Mapping[str, ExpressionTiming] = field(default_factory=dict)
+    sequence_meta: SequenceMeta | None = None
 
     def __post_init__(self) -> None:
         for name in ("design_hash", "model_hash", "shape"):
@@ -392,6 +562,11 @@ class Provenance:
             self,
             "eligibility_cutoffs",
             _typed_mapping(self.eligibility_cutoffs, "eligibility_cutoffs", FeatureCutoff),
+        )
+        object.__setattr__(
+            self,
+            "expression_timings",
+            _typed_mapping(self.expression_timings, "expression_timings", ExpressionTiming),
         )
         if any(
             value is not None and not isinstance(value, str)
@@ -423,6 +598,8 @@ class Provenance:
             raise TypeError("execution_snapshot must be ExecutionSnapshot")
         if self.state_panel is not None and not isinstance(self.state_panel, StatePanelMeta):
             raise TypeError("state_panel must be StatePanelMeta or None")
+        if self.sequence_meta is not None and not isinstance(self.sequence_meta, SequenceMeta):
+            raise TypeError("sequence_meta must be SequenceMeta or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -525,38 +702,63 @@ def _decode(value: Any, cls: type) -> Any:
     unknown = set(value) - {field.name for field in fields(cls)}
     if unknown:
         raise ValueError(f"unknown {cls.__name__} fields: {sorted(unknown)}")
-    for field in fields(cls):
-        if field.name not in value:
+    for metadata_field in fields(cls):
+        if metadata_field.name not in value:
             continue
-        item = value[field.name]
-        if field.name in ("feature_cutoffs", "eligibility_cutoffs"):
-            kwargs[field.name] = {k: _decode(v, FeatureCutoff) for k, v in item.items()}
-        elif field.name in ("source_generations", "strategy"):
-            kwargs[field.name] = item
-        elif field.name == "coverage":
-            kwargs[field.name] = {k: _decode(v, CoverageSummary) for k, v in item.items()}
-        elif field.name == "execution_snapshot" and item is not None:
-            kwargs[field.name] = _decode(item, ExecutionSnapshot)
-        elif field.name == "eligibility_summary" and item is not None:
-            kwargs[field.name] = _decode(item, EligibilitySummary)
-        elif field.name == "weight_cutoff" and item is not None:
-            kwargs[field.name] = _decode(item, FeatureCutoff)
-        elif field.name == "state_panel" and item is not None:
-            kwargs[field.name] = _decode(item, StatePanelMeta)
-        elif field.name in ("panel_start", "administrative_end") and isinstance(item, dict):
-            kwargs[field.name] = datetime.fromisoformat(item["$datetime"])
-        elif field.name == "window" and item is not None:
-            kwargs[field.name] = Window(*item["$window"])
+        item = value[metadata_field.name]
+        if metadata_field.name in ("feature_cutoffs", "eligibility_cutoffs"):
+            kwargs[metadata_field.name] = {k: _decode(v, FeatureCutoff) for k, v in item.items()}
+        elif metadata_field.name == "expression_timings":
+            timings = {}
+            for key, raw_timing in item.items():
+                timing: dict[str, Any] = dict(raw_timing)
+                timing["relative_offsets"] = (
+                    None
+                    if timing["relative_offsets"] is None
+                    else tuple(timing["relative_offsets"])
+                )
+                timing["support_seconds"] = tuple(timing["support_seconds"])
+                timing["selector_dependencies"] = tuple(timing["selector_dependencies"])
+                timing["selector_support_seconds"] = {
+                    name: tuple(bounds)
+                    for name, bounds in timing["selector_support_seconds"].items()
+                }
+                timings[key] = ExpressionTiming(**timing)
+            kwargs[metadata_field.name] = timings
+        elif metadata_field.name in ("source_generations", "strategy"):
+            kwargs[metadata_field.name] = item
+        elif metadata_field.name == "coverage":
+            kwargs[metadata_field.name] = {k: _decode(v, CoverageSummary) for k, v in item.items()}
+        elif metadata_field.name == "execution_snapshot" and item is not None:
+            kwargs[metadata_field.name] = _decode(item, ExecutionSnapshot)
+        elif metadata_field.name == "eligibility_summary" and item is not None:
+            kwargs[metadata_field.name] = _decode(item, EligibilitySummary)
+        elif metadata_field.name == "weight_cutoff" and item is not None:
+            kwargs[metadata_field.name] = _decode(item, FeatureCutoff)
+        elif metadata_field.name == "state_panel" and item is not None:
+            kwargs[metadata_field.name] = _decode(item, StatePanelMeta)
+        elif metadata_field.name == "sequence_meta" and item is not None:
+            kwargs[metadata_field.name] = _decode(item, SequenceMeta)
+        elif metadata_field.name in ("panel_start", "administrative_end") and isinstance(
+            item, dict
+        ):
+            kwargs[metadata_field.name] = datetime.fromisoformat(item["$datetime"])
+        elif metadata_field.name == "window" and item is not None:
+            kwargs[metadata_field.name] = Window(*item["$window"])
         elif (
-            field.name in ("start", "end_exclusive")
+            metadata_field.name in ("start", "end_exclusive")
             and isinstance(item, dict)
             and "$datetime" in item
         ):
-            kwargs[field.name] = datetime.fromisoformat(item["$datetime"])
-        elif field.name in ("start", "through") and isinstance(item, dict) and "$date" in item:
-            kwargs[field.name] = date.fromisoformat(item["$date"])
+            kwargs[metadata_field.name] = datetime.fromisoformat(item["$datetime"])
+        elif (
+            metadata_field.name in ("start", "through")
+            and isinstance(item, dict)
+            and "$date" in item
+        ):
+            kwargs[metadata_field.name] = date.fromisoformat(item["$date"])
         else:
-            kwargs[field.name] = item
+            kwargs[metadata_field.name] = item
     return cls(**kwargs)
 
 

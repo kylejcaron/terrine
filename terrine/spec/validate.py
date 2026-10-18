@@ -20,12 +20,22 @@ from terrine.semantic.rules import (
 )
 from terrine.spec.anchors import EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
-from terrine.spec.expressions import And, AttributeAsOf, Eq, Expr, Gt, IsNull, MetricAgg, Predicate
+from terrine.spec.expressions import (
+    And,
+    AttributeAsOf,
+    Eq,
+    EventTime,
+    Expr,
+    Gt,
+    IsNull,
+    MetricAgg,
+    Predicate,
+)
+from terrine.spec.sequence import EventSequence
 from terrine.windows import Window
 
 if TYPE_CHECKING:
     from terrine.model import Model
-
 __all__ = ["ValidationReport", "validate_design"]
 
 _INVALID = RefusalSpec("terrine.design.invalid", "Design validation failed: {reason}.")
@@ -46,6 +56,15 @@ _METRIC_WINDOW = RefusalSpec(
 )
 
 
+_SEQUENCE_INVALID = RefusalSpec(
+    "terrine.sequence.invalid_spec", "Invalid event sequence design: {reason}."
+)
+_REANCHOR_LEAK = RefusalSpec(
+    "terrine.sequence.reanchor_leak",
+    "{role} expression support may cross the required gap {gap}.",
+)
+
+
 @dataclass(frozen=True, slots=True)
 class ValidationReport:
     """Row-free summary of required sources and conditions deferred to execution."""
@@ -59,6 +78,36 @@ def _metric(model: Model, name: str):
         return model.metrics[name]
     except KeyError as exc:
         raise _MISSING.error(kind="metric", name=name) from exc
+
+
+def _event_property(model: Model, source_name: str, name: str) -> str:
+    prop = model.catalog.properties.get(name)
+    source = model.sources.get(source_name)
+    if prop is None or source is None:
+        raise _MISSING.error(kind="event property", name=name)
+    if prop.dimension is not None:
+        for dimension in source.dimensions:
+            binding = dimension.properties.get(name)
+            if dimension.name == prop.dimension and binding is not None:
+                return binding.dtype
+        raise _MISSING.error(kind="bound event property", name=name)
+    if prop.source != source_name or name not in source.properties:
+        raise _MISSING.error(kind="bound event property", name=name)
+    return source.properties[name].dtype
+
+
+def _check_event_scalar(model: Model, source_name: str, name: str, value: object) -> None:
+    dtype = _event_property(model, source_name, name)
+    matches = {
+        "string": isinstance(value, str),
+        "int": isinstance(value, int) and not isinstance(value, bool),
+        "float": isinstance(value, (int, float)) and not isinstance(value, bool),
+        "bool": isinstance(value, bool),
+    }
+    if value is not None and not matches.get(dtype, False):
+        raise _SEQUENCE_INVALID.error(
+            reason=f"filter value is incompatible with event property {name!r}"
+        )
 
 
 def _fixed_anchors(design: Design, model: Model) -> tuple[datetime, ...] | None:
@@ -95,7 +144,7 @@ def _resolve_property(
     required: set[str],
     obligations: list[str],
 ) -> None:
-    if role != "treatment" and expr.before > -design.gap:
+    if expr.relative_to is None and role != "treatment" and expr.before > -design.gap:
         raise _GAP.error(role=role, gap=design.gap)
     declaration = model.catalog.properties.get(expr.attribute)
     owner = declaration.source if declaration is not None else None
@@ -169,15 +218,83 @@ def _requires_event_resolution(win: Window, design: Design, model: Model) -> boo
     return False
 
 
+def _selector_timing(selector: EventTime) -> tuple[tuple[int, int], tuple[tuple[int, int], ...]]:
+    if selector.relative_to is None:
+        origin = (0, 0)
+        dependencies: tuple[tuple[int, int], ...] = ()
+    else:
+        origin, dependencies = _selector_timing(selector.relative_to)
+    support = (
+        origin[0] + selector.window.start,
+        origin[1] + selector.window.end,
+    )
+    return support, (*dependencies, support)
+
+
+def _expression_timing(expr: Expr) -> tuple[tuple[int, int], tuple[tuple[int, int], ...]]:
+    if isinstance(expr, EventTime):
+        return _selector_timing(expr)
+    if expr.relative_to is None:
+        if isinstance(expr, AttributeAsOf):
+            return (expr.before, expr.before), ()
+        return (expr.window.start, expr.window.end), ()
+    origin, dependencies = _selector_timing(expr.relative_to)
+    if isinstance(expr, AttributeAsOf):
+        support = (origin[0] + expr.before, origin[1] + expr.before)
+    else:
+        support = (origin[0] + expr.window.start, origin[1] + expr.window.end)
+    return support, dependencies
+
+
+def _check_expression_timing(expr: Expr, role: str, design: Design) -> None:
+    support, dependencies = _expression_timing(expr)
+    if role in {"feature", "eligibility"} and (
+        support[1] > -design.gap or any(dependency[1] > -design.gap for dependency in dependencies)
+    ):
+        if getattr(expr, "relative_to", None) is not None or isinstance(expr, EventTime):
+            raise _REANCHOR_LEAK.error(role=role, gap=design.gap)
+        if isinstance(expr, AttributeAsOf):
+            raise _GAP.error(role=role, gap=design.gap)
+    if role == "outcome" and support[0] < 0:
+        raise _GAP.error(role=role, gap=design.gap)
+
+
 def _expression(
     expr: Expr, role: str, design: Design, model: Model, required: set[str], obligations: list[str]
 ) -> None:
+    relative_to = getattr(expr, "relative_to", None)
+    if relative_to is not None:
+        # Selector support is validated as a dependency, not as the outcome's
+        # measured support. Outcome clocks may be established before t0.
+        _expression(
+            relative_to,
+            "feature" if role in {"feature", "eligibility"} else "selector_dependency",
+            design,
+            model,
+            required,
+            obligations,
+        )
     if isinstance(expr, AttributeAsOf):
+        _check_expression_timing(expr, role, design)
         _resolve_property(expr, role, design, model, required, obligations)
         return
-    if not isinstance(expr, MetricAgg):
-        raise _INVALID.error(reason="unsupported expression")
-
+    if isinstance(expr, EventTime):
+        fact = model.catalog.facts.get(expr.fact)
+        if fact is None:
+            raise _MISSING.error(kind="fact", name=expr.fact)
+        source = model.sources.get(fact.source)
+        if source is None or expr.fact not in source.facts:
+            raise _MISSING.error(kind="bound fact", name=expr.fact)
+        if design.unit not in source.entities:
+            raise _UNIT.error(unit=design.unit, name=expr.fact)
+        if expr.label_property is not None:
+            _check_event_scalar(model, source.name, expr.label_property, expr.equals)
+        _required(model, source.name, required)
+        obligations.append("coverage_completeness")
+        _check_expression_timing(expr, role, design)
+        return
+    if isinstance(expr, MetricAgg):
+        _check_expression_timing(expr, role, design)
     metric = _metric(model, expr.metric)
     if metric.entity != design.unit:
         raise _UNIT.error(unit=design.unit, name=expr.metric)
@@ -192,9 +309,9 @@ def _expression(
             source = model.sources[source_name]
             if not supports_event_resolution(source.dialect):
                 raise UNSUPPORTED_EVENT_RESOLUTION.error(dialect=source.dialect)
-    if role in {"feature", "eligibility"} and win.end > -design.gap:
+    if expr.relative_to is None and role in {"feature", "eligibility"} and win.end > -design.gap:
         raise _GAP.error(role=role, gap=design.gap)
-    if role == "outcome" and win.start < 0:
+    if expr.relative_to is None and role == "outcome" and win.start < 0:
         raise _GAP.error(role=role, gap=design.gap)
     if metric.kind not in {"mean", "conversion", "ratio"}:
         raise UNSUPPORTED_TEMPORAL_KIND.error(kind=metric.kind)
@@ -206,7 +323,7 @@ def _expression(
         if measure.window_days is not None and win.end - win.start != measure.window_days * 86400:
             raise _METRIC_WINDOW.error(metric=expr.metric)
         if measure.aggregation == "avg_calendar_day":
-            anchors = _fixed_anchors(design, model)
+            anchors = None if expr.relative_to is not None else _fixed_anchors(design, model)
             if anchors is None:
                 alignment = calendar_average_alignment(
                     win, anchor=None, day_boundary=model.catalog.day_boundary
@@ -249,11 +366,44 @@ def _range_bound(value: date | datetime | None, model: Model) -> datetime | None
     return model.day_boundary(value)
 
 
+def _validate_sequence_shape(design: Design, model: Model, required: set[str]) -> None:
+    sequence = design.shape
+    if not isinstance(sequence, EventSequence):
+        return
+    if not isinstance(design.anchor, EventAnchor):
+        raise _SEQUENCE_INVALID.error(reason="event sequences require an EventAnchor")
+    if design.treatment is not None:
+        raise _SEQUENCE_INVALID.error(reason="event sequences do not support treatment")
+    if any(not isinstance(expr, EventTime) for expr in design.outcomes.values()):
+        raise _SEQUENCE_INVALID.error(reason="event sequences only support EventTime outcomes")
+    fact = model.catalog.facts.get(sequence.fact)
+    if fact is None:
+        raise _MISSING.error(kind="fact", name=sequence.fact)
+    source = model.sources.get(fact.source)
+    if source is None or sequence.fact not in source.facts:
+        raise _MISSING.error(kind="bound fact", name=sequence.fact)
+    if design.unit not in source.entities:
+        raise _UNIT.error(unit=design.unit, name=sequence.fact)
+    _required(model, source.name, required)
+    requested_properties = [*sequence.properties]
+    if sequence.label_property is not None:
+        requested_properties.append(sequence.label_property)
+    if sequence.funnel is not None:
+        funnel_dtype = _event_property(model, source.name, sequence.funnel.event_property)
+        if funnel_dtype != "string":
+            raise _SEQUENCE_INVALID.error(reason="funnel event properties must have string dtype")
+        requested_properties.append(sequence.funnel.event_property)
+    for property_name in requested_properties:
+        _event_property(model, source.name, property_name)
+
+
 def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
     from terrine.spec.state_panel import StatePanel, validate_state_panel
 
     if isinstance(design.shape, StatePanel):
         validate_state_panel(design, model, required)
+    elif isinstance(design.shape, EventSequence):
+        _validate_sequence_shape(design, model, required)
     elif design.shape != "cross_section":
         raise _INVALID.error(reason="unsupported design shape")
 

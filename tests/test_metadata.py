@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -13,6 +14,7 @@ from terrine.data import (
     CoverageSummary,
     EligibilitySummary,
     ExecutionSnapshot,
+    ExpressionTiming,
     FeatureCutoff,
     MaterializedFrame,
     Preview,
@@ -47,7 +49,124 @@ def _provenance():
         shape="cross_section",
         treatment_design="baseline_binary",
         treatment_known_at_t0=True,
+        expression_timings={
+            "first_purchase": ExpressionTiming(
+                "event_time",
+                "signup",
+                (-86400, 0),
+                (-86400, 0),
+                ("signup",),
+                {"signup": (-86400, 0)},
+                "selected_time",
+                "start_bound",
+                "end_bound",
+            )
+        },
     )
+
+
+def test_sequence_metadata_round_trips_arrow_as_typed_provenance():
+    from terrine.data import SequenceMeta
+    from terrine.windows import Window
+
+    provenance = replace(
+        _provenance(),
+        shape="event_sequence",
+        sequence_meta=SequenceMeta(
+            fact="signup",
+            window=Window(0, 3600),
+            max_events=10,
+            representation="positions",
+            event_fields=("kind", "amount"),
+            event_id_column="event_id",
+            event_time_column="event_time",
+            position_column="sequence_position",
+            event_count_column="event_count",
+            complete_column="sequence_complete",
+            reason_column="sequence_reason",
+            property_reason_columns={"kind": "kind_reason", "amount": "amount_reason"},
+            label_property="kind",
+            session_gap_seconds=1800,
+            session_fields=("session_index", "sessions"),
+            sessions_column="sessions",
+            sessions_complete_column="sessions_complete",
+            sessions_reason_column="sessions_reason",
+            transition_from_column="transition_from",
+            transition_to_column="transition_to",
+            funnel_event_property="kind",
+            funnel_steps=("view", "purchase"),
+            funnel_within_seconds=7200,
+            funnel_attempts_column="funnel_attempts",
+            funnel_attempts_complete_column="funnel_attempts_complete",
+            funnel_attempts_reason_column="funnel_attempts_reason",
+            funnel_fields=("start_time", "matched_event_ids", "status"),
+            identity_kind="configured",
+        ),
+    )
+    frame = MaterializedFrame(
+        pa.table({"unit": ["a"], "nested": [[{"event_id": "e1", "amount": 3}]]}),
+        Roles("unit", "anchor_id", "t0", None, (), ()),
+        {},
+        provenance,
+    )
+    restored = MaterializedFrame.from_arrow(frame.to_arrow())
+    assert restored.table.to_pylist() == frame.table.to_pylist()
+    assert restored.provenance.sequence_meta == provenance.sequence_meta
+
+
+def test_array_sequence_transition_references_survive_arrow_roundtrip():
+    from terrine.data import SequenceMeta
+    from terrine.windows import Window
+
+    sequence_meta = SequenceMeta(
+        fact="signup",
+        window=Window(0, 3600),
+        max_events=10,
+        representation="arrays",
+        event_fields=("event_values",),
+        event_id_column=None,
+        event_time_column=None,
+        position_column=None,
+        event_count_column="event_count",
+        complete_column="sequence_complete",
+        reason_column="sequence_reason",
+        property_reason_columns={},
+        label_property="kind",
+        session_gap_seconds=1800,
+        session_fields=("sessions",),
+        sessions_column="sessions",
+        sessions_complete_column="sessions_complete",
+        sessions_reason_column="sessions_reason",
+        transition_from_column="event_values.transition_from",
+        transition_to_column="event_values.transition_to",
+    )
+    provenance = replace(
+        _provenance(),
+        shape="event_sequence",
+        sequence_meta=sequence_meta,
+    )
+    frame = MaterializedFrame(
+        pa.table(
+            {
+                "unit": ["a"],
+                "event_values": [[{"transition_from": None, "transition_to": "signup"}]],
+            }
+        ),
+        Roles("unit", "anchor_id", "t0", None, (), ()),
+        {},
+        provenance,
+    )
+    restored = MaterializedFrame.from_arrow(frame.to_arrow())
+    restored_meta = restored.provenance.sequence_meta
+    assert restored_meta is not None
+    assert restored_meta.transition_from_column == "event_values.transition_from"
+    assert restored_meta.transition_to_column == "event_values.transition_to"
+
+
+def test_data_exports_feature_cutoff():
+    import terrine.data as data
+
+    assert {"FeatureCutoff", "EligibilitySummary"} <= set(data.__all__)
 
 
 def test_coverage_requires_ordered_dates_and_binds_to_utc_instants():

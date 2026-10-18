@@ -9,6 +9,7 @@ import pytest
 from terrine.data import (
     ColumnMeta,
     ExecutionSnapshot,
+    ExpressionTiming,
     FeatureCutoff,
     MaterializedFrame,
     Provenance,
@@ -56,6 +57,19 @@ def frame():
             ExecutionSnapshot(None, "arrow", {}, None, "unverified"),
             "cross_section",
             "baseline_binary",
+            expression_timings={
+                "y": ExpressionTiming(
+                    "fixed_t0",
+                    None,
+                    None,
+                    (0, 28 * 86400),
+                    (),
+                    {},
+                    "t0",
+                    None,
+                    None,
+                )
+            },
             treatment_knowledge="recorded_at",
             treatment_known_at_t0=True,
         ),

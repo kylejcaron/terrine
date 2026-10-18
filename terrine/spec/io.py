@@ -13,7 +13,8 @@ from yaml.resolver import BaseResolver
 from terrine._time import utc_instant
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
-from terrine.spec.expressions import And, AttributeAsOf, Eq, Gt, IsNull, MetricAgg
+from terrine.spec.expressions import And, AttributeAsOf, Eq, EventTime, Gt, IsNull, MetricAgg
+from terrine.spec.sequence import EventSequence, FunnelSpec, SessionSpec
 from terrine.spec.state_panel import (
     BinnedMetricState,
     StateObservations,
@@ -69,6 +70,8 @@ def _encode(value: Any) -> Any:
             "shape": _encode(value.shape),
             "anchor_range": None if value.anchor_range is None else _encode(value.anchor_range),
         }
+    if isinstance(value, Window):
+        return {"type": "Window", "start": value.start, "end": value.end}
     if isinstance(value, FixedDate):
         return {"type": "FixedDate", "date": _date_value(value.date)}
     if isinstance(value, EventAnchor):
@@ -104,6 +107,27 @@ def _encode(value: Any) -> Any:
             "cutpoints": [encode_cutpoint(v) for v in value.cutpoints],
             "levels": list(value.levels),
         }
+    if isinstance(value, EventSequence):
+        return {
+            "type": "EventSequence",
+            "fact": value.fact,
+            "window": _encode(value.window),
+            "max_events": value.max_events,
+            "representation": value.representation,
+            "properties": list(value.properties),
+            "label_property": value.label_property,
+            "sessions": None if value.sessions is None else _encode(value.sessions),
+            "funnel": None if value.funnel is None else _encode(value.funnel),
+        }
+    if isinstance(value, SessionSpec):
+        return {"type": "SessionSpec", "gap_seconds": value.gap_seconds}
+    if isinstance(value, FunnelSpec):
+        return {
+            "type": "FunnelSpec",
+            "event_property": value.event_property,
+            "steps": list(value.steps),
+            "within_seconds": value.within_seconds,
+        }
     if isinstance(value, StatePanel):
         return {
             "type": "StatePanel",
@@ -113,12 +137,29 @@ def _encode(value: Any) -> Any:
                 key: _encode(item) for key, item in value.baseline_features.items()
             },
         }
-    if isinstance(value, Window):
-        return {"type": "Window", "start": value.start, "end": value.end}
     if isinstance(value, MetricAgg):
-        return {"type": "MetricAgg", "metric": value.metric, "window": _encode(value.window)}
+        node = {"type": "MetricAgg", "metric": value.metric, "window": _encode(value.window)}
+        if value.relative_to is not None:
+            node["relative_to"] = _encode(value.relative_to)
+        return node
     if isinstance(value, AttributeAsOf):
-        return {"type": "AttributeAsOf", "attribute": value.attribute, "before": value.before}
+        node = {"type": "AttributeAsOf", "attribute": value.attribute, "before": value.before}
+        if value.relative_to is not None:
+            node["relative_to"] = _encode(value.relative_to)
+        return node
+    if isinstance(value, EventTime):
+        node = {
+            "type": "EventTime",
+            "fact": value.fact,
+            "window": _encode(value.window),
+            "label_property": value.label_property,
+            "equals": value.equals,
+            "occurrence": value.occurrence,
+            "n": value.n,
+        }
+        if value.relative_to is not None:
+            node["relative_to"] = _encode(value.relative_to)
+        return node
     if isinstance(value, Gt):
         return {"type": "Gt", "expr": _encode(value.expr), "value": value.value}
     if isinstance(value, Eq):
@@ -208,6 +249,37 @@ def _node(value: Any) -> Any:
         item = _object(value, {"type", "date"})
         bound = _read_date(item["date"])
         return FixedDate(bound)
+    if tag == "EventSequence":
+        item = _object(
+            value,
+            {
+                "type",
+                "fact",
+                "window",
+                "max_events",
+                "representation",
+                "properties",
+                "label_property",
+                "sessions",
+                "funnel",
+            },
+        )
+        return EventSequence(
+            item["fact"],
+            _node(item["window"]),
+            max_events=item["max_events"],
+            representation=item["representation"],
+            properties=tuple(item["properties"]),
+            label_property=item["label_property"],
+            sessions=None if item["sessions"] is None else _node(item["sessions"]),
+            funnel=None if item["funnel"] is None else _node(item["funnel"]),
+        )
+    if tag == "SessionSpec":
+        item = _object(value, {"type", "gap_seconds"})
+        return SessionSpec(item["gap_seconds"])
+    if tag == "FunnelSpec":
+        item = _object(value, {"type", "event_property", "steps", "within_seconds"})
+        return FunnelSpec(item["event_property"], tuple(item["steps"]), item["within_seconds"])
     if tag == "EventAnchor":
         item = _object(value, {"type", "fact", "which", "n"}, {"type", "fact", "which"})
         return EventAnchor(item["fact"], item["which"], item.get("n"))
@@ -254,11 +326,51 @@ def _node(value: Any) -> Any:
         item = _object(value, {"type", "start", "end"})
         return Window(item["start"], item["end"])
     if tag == "MetricAgg":
-        item = _object(value, {"type", "metric", "window"})
-        return MetricAgg(item["metric"], _node(item["window"]))
+        item = _object(
+            value,
+            {"type", "metric", "window", "relative_to"},
+            {"type", "metric", "window"},
+        )
+        return MetricAgg(
+            item["metric"],
+            _node(item["window"]),
+            None if item.get("relative_to") is None else _node(item["relative_to"]),
+        )
     if tag == "AttributeAsOf":
-        item = _object(value, {"type", "attribute", "before"})
-        return AttributeAsOf(item["attribute"], item["before"])
+        item = _object(
+            value,
+            {"type", "attribute", "before", "relative_to"},
+            {"type", "attribute", "before"},
+        )
+        return AttributeAsOf(
+            item["attribute"],
+            item["before"],
+            None if item.get("relative_to") is None else _node(item["relative_to"]),
+        )
+    if tag == "EventTime":
+        item = _object(
+            value,
+            {
+                "type",
+                "fact",
+                "window",
+                "label_property",
+                "equals",
+                "occurrence",
+                "n",
+                "relative_to",
+            },
+            {"type", "fact", "window", "label_property", "equals", "occurrence", "n"},
+        )
+        return EventTime(
+            item["fact"],
+            _node(item["window"]),
+            item["label_property"],
+            item["equals"],
+            item["occurrence"],
+            item["n"],
+            None if item.get("relative_to") is None else _node(item["relative_to"]),
+        )
     if tag == "Gt":
         item = _object(value, {"type", "expr", "value"})
         return Gt(_node(item["expr"]), item["value"])
@@ -331,8 +443,8 @@ def _design(value: Any) -> Design:
     return Design(
         unit,
         anchor,
-        features=named(item["features"], (MetricAgg, AttributeAsOf)),
-        outcomes=named(item["outcomes"], (MetricAgg, AttributeAsOf)),
+        features=named(item["features"], (MetricAgg, AttributeAsOf, EventTime)),
+        outcomes=named(item["outcomes"], (MetricAgg, AttributeAsOf, EventTime)),
         eligibility=named(item["eligibility"], (Gt, Eq, IsNull, And)),
         treatment=treatment,
         gap=item["gap"],

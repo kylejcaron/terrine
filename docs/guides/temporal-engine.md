@@ -364,3 +364,44 @@ Run the focused fast boundary/certificate checks with
 `uv run pytest tests/temporal/test_prefix_lookup.py tests/temporal/test_window_aggregates.py`.
 The explicit native quotient/calendar integration tier runs with
 `uv run pytest tests/temporal/test_window_aggregates.py -m slow`.
+## Bounded event sequences and event-time origins
+
+`EventSequence` returns one header for each candidate anchor. The default
+`positions` representation adds one child row per observed event; `arrays`
+keeps one row per anchor and stores ordered event structs in an Arrow list.
+Both preserve event identity, exact UTC timestamps, known-null property reasons,
+and the distinction between complete-empty and unavailable intervals. Set a
+positive `max_events` per anchor, then materialize with positive `Budget`
+`max_rows` and `max_output_bytes` limits. The per-anchor cap is checked before
+array aggregation; output limits are enforced before a materialized frame is
+returned. They are not scan limits.
+
+Events are ordered by `(timestamp, configured event ID)`. If the source has no
+configured event ID, equal timestamps within a unit refuse rather than receive
+an arbitrary order. `SessionSpec` partitions independently by anchor and starts
+a new session only when the adjacent elapsed gap is strictly greater than its
+configured gap. Funnels retain bounded attempts from each first-step event and
+carry progress/status when a selected observation window ends before a
+deadline.
+
+`EventTime(fact, window)` selects the first matching fact occurrence in its
+strict half-open window; `occurrence="nth"` selects the corresponding
+one-based occurrence. Its optional paired `label_property` and `equals`
+arguments refine selection. An expression can use that timestamp as its origin:
+`agg("metric", window=("0s", "1h"), relative_to=selector)` or
+`asof("property", before="0s", relative_to=selector)`. Runtime time bounds are
+retained separately from the measured window. Static validation propagates
+every selector's possible support and refuses feature or eligibility chains
+that may cross the configured gap, without executing source queries or clipping
+the window. Baseline estimators refuse outcomes with event-time origins until
+they support that timing model.
+
+Materialized provenance records the sequence schema and each expression's
+selector references, conservative support intervals, and resolved time-column
+references. `MaterializedFrame.to_arrow()` writes these typed values into
+Arrow schema metadata, and `MaterializedFrame.from_arrow()` restores them with
+the original nested event values.
+
+Run `uv run python examples/event_sequences.py` for a local DuckDB example of
+stable timestamp ties, an empty anchor interval, a known-null event property,
+sessions, funnels, and both output representations.

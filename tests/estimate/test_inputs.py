@@ -7,7 +7,7 @@ import numpy as np
 import pyarrow as pa
 import pytest
 
-from terrine.data import EligibilitySummary, FeatureCutoff, MaterializedFrame
+from terrine.data import EligibilitySummary, ExpressionTiming, FeatureCutoff, MaterializedFrame
 from terrine.errors import TerrineError
 from terrine.estimate import LinearTerms, NuisanceSpec, aipw, regression_adjustment
 from terrine.estimate._data import prepare
@@ -24,6 +24,27 @@ def refusal(frame, code, **kwargs):
         aipw(frame, **kwargs)
     assert exc.value.code == "terrine.estimate." + code
     assert "value" not in exc.value.context
+
+
+def test_variable_origin_outcome_is_refused_before_baseline_estimation(frame):
+    timing = ExpressionTiming(
+        "event_time",
+        "purchase",
+        (0, 86400),
+        (0, 86400),
+        ("purchase",),
+        {"purchase": (0, 86400)},
+        "selected_time",
+        None,
+        None,
+    )
+    variable_origin = replace(
+        frame,
+        provenance=replace(frame.provenance, expression_timings={"y": timing}),
+    )
+    with pytest.raises(TerrineError) as error:
+        prepare(variable_origin, outcome="y")
+    assert error.value.code == "terrine.estimate.variable_origin_outcome"
 
 
 def test_outcome_selection_is_explicit(frame, permissive):
