@@ -28,17 +28,6 @@ class Change:
     def __post_init__(self) -> None:
         if not self.source:
             raise ValueError("change source must not be empty")
-        if self.kind == "update" and (
-            (self.before_key_range is None and self.before_time_range is None)
-            or (self.after_key_range is None and self.after_time_range is None)
-        ):
-            raise ValueError("update requires both old and new support")
-        if (
-            self.kind == "delete"
-            and self.before_key_range is None
-            and self.before_time_range is None
-        ):
-            raise ValueError("delete requires previous support")
 
 
 @dataclass(frozen=True, slots=True)

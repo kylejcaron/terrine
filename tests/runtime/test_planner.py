@@ -67,6 +67,62 @@ def test_plan_fingerprint_includes_change_evidence():
     assert initial.recipe.fingerprint != changed.recipe.fingerprint
 
 
+def test_plan_fingerprint_includes_change_support_not_only_revision():
+    graph = dependency_graph(sources=("events",), definition_hash="definition")
+    earlier = plan_refresh(
+        namespace="owner",
+        dataset="study",
+        definition_hash="definition",
+        snapshot_id="snap",
+        graph=graph,
+        changes=ChangeSet(
+            (Change("insert", "events", after_key_range=("a", "a"), revision="r1"),),
+            "change_feed",
+        ),
+    )
+    later = plan_refresh(
+        namespace="owner",
+        dataset="study",
+        definition_hash="definition",
+        snapshot_id="snap",
+        graph=graph,
+        changes=ChangeSet(
+            (Change("insert", "events", after_key_range=("z", "z"), revision="r1"),),
+            "change_feed",
+        ),
+    )
+    assert earlier.recipe.fingerprint != later.recipe.fingerprint
+
+
+def test_planner_limits_work_to_changed_sources_and_skips_readiness_only_advance():
+    graph = dependency_graph(
+        sources=("numerator", "denominator"),
+        definition_hash="definition",
+        partitions=("2025-01", "2025-02"),
+    )
+    changed = plan_refresh(
+        namespace="owner",
+        dataset="ratio",
+        definition_hash="definition",
+        snapshot_id="snap",
+        graph=graph,
+        changes=ChangeSet(
+            (Change("insert", "numerator", revision="r2"),),
+            "change_feed",
+        ),
+    )
+    assert {task.source for task in changed.tasks} == {"numerator"}
+    no_change = plan_refresh(
+        namespace="owner",
+        dataset="ratio",
+        definition_hash="definition",
+        snapshot_id="snap",
+        graph=graph,
+        changes=ChangeSet((), "revision"),
+    )
+    assert no_change.tasks == ()
+
+
 def test_delimiter_fields_do_not_collide_in_task_identities():
     graph_a = dependency_graph(sources=("a:b",), definition_hash="def", partitions=("c",))
     graph_b = dependency_graph(sources=("a",), definition_hash="def", partitions=("b:c",))

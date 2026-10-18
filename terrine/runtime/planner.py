@@ -117,11 +117,37 @@ def plan_refresh(
     ordered = graph.topological_order()
     if len(ordered) > max_tasks:
         raise ValueError("planned task count exceeds max_tasks")
+    if changes is not None and changes.evidence != "conservative_rebuild":
+        if any(change.kind == "definition" for change in changes.changes):
+            pass
+        elif not changes.changes:
+            ordered = ()
+        else:
+            changed_sources = {change.source for change in changes.changes}
+            selected = {node for node in ordered if node.source in changed_sources}
+            pending = list(selected)
+            while pending:
+                node = pending.pop()
+                for parent in graph.dependencies(node):
+                    if parent not in selected:
+                        selected.add(parent)
+                        pending.append(parent)
+            ordered = tuple(node for node in ordered if node in selected)
     if budget is not None:
         if not isinstance(budget, Budget):
             raise TypeError("budget must be Budget or None")
         _scan_policy(budget, scan_bytes=None)
-    source_revisions = {} if changes is None else {c.source: c.revision for c in changes.changes}
+    change_evidence = (
+        None
+        if changes is None
+        else {
+            "evidence": changes.evidence,
+            "changes": sorted(
+                (_change_dict(change) for change in changes.changes),
+                key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")),
+            ),
+        }
+    )
     tasks: list[TaskSpec] = []
     ids: dict[LayerNode, str] = {}
     for node in ordered:
@@ -150,7 +176,7 @@ def plan_refresh(
         "definition_hash": definition_hash,
         "snapshot_id": snapshot_id,
         "tasks": bodies,
-        "revisions": source_revisions,
+        "change_evidence": change_evidence,
         "budget": budget_record,
     }
     fingerprint = hashlib.sha256(
@@ -162,3 +188,19 @@ def plan_refresh(
     return RefreshPlan(
         namespace, dataset, definition_hash, snapshot_id, tuple(tasks), recipe, budget
     )
+
+
+def _change_dict(change: Any) -> dict[str, Any]:
+    def time_range(value: tuple[datetime, datetime] | None) -> list[str] | None:
+        return [item.isoformat() for item in value] if value is not None else None
+
+    return {
+        "kind": change.kind,
+        "source": change.source,
+        "before_key_range": list(change.before_key_range) if change.before_key_range else None,
+        "after_key_range": list(change.after_key_range) if change.after_key_range else None,
+        "before_time_range": time_range(change.before_time_range),
+        "after_time_range": time_range(change.after_time_range),
+        "revision": change.revision,
+        "tombstone": change.tombstone,
+    }
