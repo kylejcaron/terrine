@@ -96,6 +96,16 @@ def test_zero_effect_calibration_truth_is_zero():
     assert _truth(("zero", "equal", "disjoint", "profile_a")) == 0.0
 
 
+def test_smoke_evidence_uses_a_separate_default_directory(monkeypatch, tmp_path):
+    monkeypatch.setattr(sys.modules[__name__], "SMOKE_ONLY", True)
+    monkeypatch.delenv("TERRINE_CALIBRATION_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    path = _evidence_path(("zero", "equal", "disjoint", "profile_a"))
+
+    assert path.parent == Path("docs/validation/generated/panel_calibration_smoke")
+
+
 def _manifest(cell: tuple[str, str, str, str]) -> dict:
     return {
         "cell": {
@@ -123,9 +133,12 @@ def _manifest(cell: tuple[str, str, str, str]) -> dict:
 
 
 def _evidence_path(cell: tuple[str, str, str, str]) -> Path:
-    directory = Path(
-        os.environ.get("TERRINE_CALIBRATION_DIR", "docs/validation/generated/panel_calibration")
+    default_directory = (
+        "docs/validation/generated/panel_calibration_smoke"
+        if SMOKE_ONLY
+        else "docs/validation/generated/panel_calibration"
     )
+    directory = Path(os.environ.get("TERRINE_CALIBRATION_DIR", default_directory))
     directory.mkdir(parents=True, exist_ok=True)
     return directory / ("-".join(cell) + ".json")
 

@@ -24,7 +24,7 @@ uv run pytest tests/parameter_recovery/test_panel_calibration.py \
   -k 'heterogeneous-unequal-overlap-profile_a' -q
 ```
 
-Smoke mode uses fixed seeds `(1, 2, 7)`, `n_units=120`, skips only the statistical calibration gates, still requires every requested estimate and paired refusal to complete, and writes `run_mode: smoke_only`. Do not treat its JSON as a full-cell calibration record. An implementation-owner timing probe ran the same three seeds at `n_units=2000` in 0.38 seconds of test-call time; scaling to 16 cells × 400 replications gives an estimated full-grid runtime of about 14 minutes on that environment. This is an estimate, not a full-grid run.
+Smoke mode uses fixed seeds `(1, 2, 7)`, `n_units=120`, skips only the statistical calibration gates, still requires every requested estimate and paired refusal to complete, and writes `run_mode: smoke_only`. If no output directory is supplied, its default `docs/validation/generated/panel_calibration_smoke/` is separate from the full-calibration evidence directory. Do not treat smoke JSON as a full-cell calibration record. An implementation-owner timing probe ran the same three seeds at `n_units=2000` in 0.38 seconds of test-call time; scaling to 16 cells × 400 replications gives an estimated full-grid runtime of about 14 minutes on that environment. This is an estimate, not a full-grid run.
 
 The full grid is intentionally not run as part of ordinary pytest. Per-cell JSON from full calibration runs is written beneath `docs/validation/generated/panel_calibration/`; a missing JSON record means that full cell has not been run. The committed records and outcomes are added after the full command executes; no calibration results are claimed in this document before then.
 
