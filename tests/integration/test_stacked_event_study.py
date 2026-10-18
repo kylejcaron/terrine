@@ -72,3 +72,39 @@ def test_calendar_comparison_materializes_roster_controls_for_both_modes(native_
     restored = MaterializedFrame.from_arrow(not_yet.to_arrow())
     assert restored.provenance.calendar_comparison == not_yet.provenance.calendar_comparison
     assert restored.table.equals(not_yet.table)
+
+
+def test_calendar_comparison_controls_have_explicit_boolean_labels(native_inputs):
+    catalog, con = native_inputs
+    con.insert("users", pa.table({"user_id": ["c", "d"], "alt_id": ["cc", "dd"]}))
+    con.insert(
+        "events",
+        pa.table(
+            {
+                "user_id": ["d"],
+                "ts": [datetime(2025, 1, 8, tzinfo=UTC)],
+                "event_id": ["d1"],
+                "alternate_event_id": ["d2"],
+            }
+        ),
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
+        units={"user": UnitSource("users", "user_id")},
+        event_ids={"events": "event_id"},
+    )
+    rows = (
+        CalendarComparisonPanel(
+            Design("user", Schedule("1d", "2025-01-01", "2025-01-12")),
+            model,
+            cohort=Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            control="never_treated",
+            reference_period=-1,
+            comparison_periods=(0,),
+        )
+        .materialize(Budget(max_rows=200, max_output_bytes=1_000_000))
+        .table.to_pylist()
+    )
+    assert all(row["treatment"] is False for row in rows if row["unit"] == "c")

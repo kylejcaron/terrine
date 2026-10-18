@@ -54,3 +54,4 @@
 - Add trial-weighted panel AIPW with trial-specific nuisance fits, unit-grouped cross-fitting, sampled-population refusal, and unit-cluster cross-fit inference.
 - Add canonical serialized calendar-comparison specifications with hashed control modes and reference/anticipation conflict refusals.
 - Compile roster-backed calendar comparisons with never-treated and admissible not-yet-treated controls, reference/anticipation eligibility, and portable Frame provenance.
+- Keep stacked comparison output restricted to compiled eligibility and label never-adopter controls explicitly as untreated.

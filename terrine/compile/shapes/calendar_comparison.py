@@ -98,7 +98,7 @@ def _stack(table, *, anchors, cohorts, spec: CalendarComparisonSpec, every: int)
     with_values = expanded.join(
         source_values,
         [expanded.unit == source_values.value_unit, expanded.t0 == source_values.value_t0],
-        how="left",
+        how="inner",
     )
     reference_t0 = with_values.focal_cohort + ibis.interval(seconds=spec.reference_period * every)
     anticipation = max((abs(value) for value in spec.anticipation_periods), default=0)
@@ -106,7 +106,7 @@ def _stack(table, *, anchors, cohorts, spec: CalendarComparisonSpec, every: int)
     latest = cast(ir.TimestampValue, ibis.greatest(comparison_t0, reference_t0)) + ibis.interval(
         seconds=anticipation * every
     )
-    treated = with_values.unit_cohort == with_values.focal_cohort
+    treated = (with_values.unit_cohort == with_values.focal_cohort).fill_null(False)
     if spec.control == "never_treated":
         control = with_values.unit_cohort.isnull()
     else:
