@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import ibis
+import pytest
 
 from terrine.data import Coverage, UnitSource
+from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.models import Catalog
-from terrine.spec import CohortSpec, Design, EventAnchor
+from terrine.spec import CohortSpec, Design, EventAnchor, agg
 from terrine.spec.trajectory import Trajectory
 
 
@@ -20,6 +22,8 @@ def _trajectory_model():
             ('u3', TIMESTAMPTZ '2025-01-15 00:00:00+00', 'purchase', 0::BIGINT)
         ) AS e(user_id, ts, kind, amount)
     """)
+    con.raw_sql("ALTER TABLE events ADD COLUMN float_amount DOUBLE")
+    con.raw_sql("UPDATE events SET float_amount = amount::DOUBLE")
     con.raw_sql("CREATE TABLE users AS SELECT * FROM (VALUES ('u1'), ('u2'), ('u3')) AS u(id)")
     catalog = Catalog.model_validate(
         {
@@ -31,7 +35,7 @@ def _trajectory_model():
                     "relation": {"kind": "table", "name": "events"},
                     "timestamp": "ts",
                     "entities": {"user": "user_id"},
-                    "facts": ["purchase", "revenue"],
+                    "facts": ["purchase", "revenue", "float_revenue"],
                     "properties": ["kind"],
                     "dimensions": [],
                 }
@@ -39,6 +43,7 @@ def _trajectory_model():
             "facts": {
                 "purchase": {"source": "events", "column": None},
                 "revenue": {"source": "events", "column": "amount"},
+                "float_revenue": {"source": "events", "column": "float_amount"},
             },
             "properties": {
                 "kind": {
@@ -49,9 +54,17 @@ def _trajectory_model():
                 }
             },
             "dimensions": {},
-            "measures": {"net_revenue_sum": {"fact": "revenue", "aggregation": "sum"}},
+            "measures": {
+                "net_revenue_sum": {"fact": "revenue", "aggregation": "sum"},
+                "float_revenue_sum": {"fact": "float_revenue", "aggregation": "sum"},
+            },
             "metrics": {
-                "net_revenue": {"kind": "mean", "entity": "user", "measure": "net_revenue_sum"}
+                "net_revenue": {"kind": "mean", "entity": "user", "measure": "net_revenue_sum"},
+                "float_revenue": {
+                    "kind": "mean",
+                    "entity": "user",
+                    "measure": "float_revenue_sum",
+                },
             },
         }
     )
@@ -93,7 +106,7 @@ def test_cumulative_partitions_repeated_anchors_and_propagates_missing_period():
     con, model = _trajectory_model()
     try:
         con.raw_sql(
-            "INSERT INTO events VALUES "
+            "INSERT INTO events (user_id, ts, kind, amount) VALUES "
             "('u2', TIMESTAMPTZ '2025-01-10 00:00:00+00', 'revenue', NULL)"
         )
         design = Design(
@@ -122,5 +135,77 @@ def test_cumulative_partitions_repeated_anchors_and_propagates_missing_period():
         assert u2[2]["period_value"] == 0
         assert u2[2]["cumulative_value"] is None
         assert u2[2]["cumulative_value_reason"] == u2[1]["period_value_reason"]
+    finally:
+        con.disconnect()
+
+
+def test_float_feature_certificates_survive_exact_trajectory_compilation():
+    con, model = _trajectory_model()
+    try:
+        design = Design(
+            "user",
+            EventAnchor("purchase", which="first"),
+            features={"float_feature": agg("float_revenue", window=("-7d", "0s"))},
+            shape=CohortSpec(
+                origin="purchase",
+                trajectory=Trajectory("net_revenue", "7d", periods=1, cumulative=False),
+            ),
+        )
+        frame = design.build(model)
+        table = frame.to_pyarrow()
+        feature = frame.columns["float_feature"]
+        assert feature.numeric_policy == "checked_float64_v1"
+        for column in (
+            feature.observed_from_column,
+            feature.observed_until_column,
+            feature.complete_column,
+            feature.reason_column,
+            feature.absolute_error_column,
+        ):
+            assert column is not None and column in table.column_names
+        assert frame.columns["period_value"].numeric_policy in (None, "exact")
+    finally:
+        con.disconnect()
+
+
+def test_cutoff_nulls_period_error_certificate_with_its_value():
+    from datetime import UTC, datetime
+
+    con, model = _trajectory_model()
+    try:
+        frame = Design(
+            "user",
+            EventAnchor("purchase", which="first"),
+            shape=CohortSpec(
+                origin="purchase",
+                trajectory=Trajectory("float_revenue", "7d", periods=3, cumulative=False),
+            ),
+            administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
+        ).build(model)
+        table = frame.to_pyarrow().to_pylist()
+        young = next(row for row in table if row["unit"] == "u3" and row["age"] == 1)
+        error_column = frame.columns["period_value"].absolute_error_column
+        assert error_column is not None
+        assert young["period_value"] is None
+        assert young[error_column] is None
+    finally:
+        con.disconnect()
+
+
+def test_trajectory_generated_names_are_reserved_from_features():
+    con, model = _trajectory_model()
+    try:
+        design = Design(
+            "user",
+            EventAnchor("purchase", which="first"),
+            features={"period_value": agg("net_revenue", window=("-7d", "0s"))},
+            shape=CohortSpec(
+                origin="purchase",
+                trajectory=Trajectory("net_revenue", "7d", periods=1, cumulative=False),
+            ),
+        )
+        with pytest.raises(TerrineError) as error:
+            design.build(model)
+        assert error.value.code == "terrine.spec.reserved_output_name"
     finally:
         con.disconnect()

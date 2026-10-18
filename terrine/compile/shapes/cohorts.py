@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import operator
 from typing import cast
 
 import ibis
@@ -43,8 +42,8 @@ def compile_cohorts(
     elapsed_nanos = cast(ir.IntegerValue, time_key["nanos"]) - cast(
         ir.IntegerValue, origin_key["nanos"]
     )
-    borrowed_second = operator.lt(elapsed_nanos, 0).cast("int64")
-    quotient = (elapsed_seconds - borrowed_second) // grouping.bucket
+    carry = elapsed_nanos // 1_000_000_000
+    quotient = (elapsed_seconds + carry) // grouping.bucket
     table = table.mutate(bucket_index=quotient.cast("int64"))
     entrants = (
         table.filter(table.age == 0)
@@ -69,7 +68,8 @@ def compile_cohorts(
         _observed_value=(
             per_unit._value.sum()
             if grouping.statistic == "total"
-            else per_unit._value.cast("float64").mean()
+            else per_unit._value.cast("decimal(38, 0)").sum()
+            / per_unit._value.notnull().cast("int64").sum()
         ),
         _mature=per_unit._mature.max(),
         _reason=per_unit._reason.first(),

@@ -67,7 +67,8 @@ def test_cohort_collection_observes_fresh_snapshot_and_budget():
             value_column="cumulative_value",
         )
         con.raw_sql(
-            "INSERT INTO events VALUES ('u2', TIMESTAMPTZ '2025-01-03 00:00:00+00', 'revenue', 14)"
+            "INSERT INTO events (user_id, ts, kind, amount) VALUES "
+            "('u2', TIMESTAMPTZ '2025-01-03 00:00:00+00', 'revenue', 14)"
         )
         result = cohorts.materialize(budget=Budget(max_rows=20, max_output_bytes=100_000))
         row = next(
@@ -144,7 +145,8 @@ def test_repeated_first_entry_events_count_one_cohort_member():
     con, model = _trajectory_model()
     try:
         con.raw_sql(
-            "INSERT INTO events VALUES ('u1', TIMESTAMPTZ '2025-01-02 00:00:00+00', 'purchase', 0)"
+            "INSERT INTO events (user_id, ts, kind, amount) VALUES "
+            "('u1', TIMESTAMPTZ '2025-01-02 00:00:00+00', 'purchase', 0)"
         )
         frame = Design(
             "user",
@@ -206,5 +208,41 @@ def test_zero_partial_and_unavailable_cohort_denominators():
             0,
         )
         assert (young_age_2["at_risk"], young_age_2["observable"]) == (None, None)
+    finally:
+        con.disconnect()
+
+
+def test_exact_integer_values_are_summed_before_cohort_mean_conversion():
+    con, model = _trajectory_model()
+    try:
+        con.raw_sql(
+            "UPDATE events SET amount = 9007199254740993 "
+            "WHERE user_id = 'u1' AND kind = 'revenue' AND ts = "
+            "TIMESTAMPTZ '2025-01-03 00:00:00+00'"
+        )
+        con.raw_sql(
+            "INSERT INTO events (user_id, ts, kind, amount) VALUES "
+            "('u2', TIMESTAMPTZ '2025-01-03 00:00:00+00', 'revenue', -9007199254740992)"
+        )
+        frame = Design(
+            "user",
+            EventAnchor("purchase", which="first"),
+            shape=CohortSpec(
+                origin="purchase",
+                trajectory=Trajectory("net_revenue", "7d", periods=1, cumulative=False),
+            ),
+        ).build(model)
+        rows = (
+            frame.cohorts(
+                grouping=CohortGrouping(
+                    bucket="7d", bucket_origin=datetime(2025, 1, 1, tzinfo=UTC), statistic="mean"
+                ),
+                value_column="period_value",
+            )
+            .to_pyarrow()
+            .to_pylist()
+        )
+        group = next(row for row in rows if row["bucket_index"] == 0 and row["age"] == 0)
+        assert group["value"] == 0.5
     finally:
         con.disconnect()

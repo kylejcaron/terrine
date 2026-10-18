@@ -32,6 +32,28 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         raise TypeError("compile_ltv requires a CohortSpec design")
     design.validate(model)
     trajectory = design.shape.trajectory
+    reserved = {
+        "unit",
+        "anchor_id",
+        "cohort_time",
+        "age",
+        "period_value",
+        "period_value_complete",
+        "period_value_reason",
+        "period_value_observed_from",
+        "period_value_observed_until",
+        "period_value_mature",
+        "period_value_absolute_error",
+        "cumulative_value",
+        "cumulative_value_complete",
+        "cumulative_value_reason",
+        "cumulative_value_absolute_error",
+    }
+    for feature in (*design.features, *design.eligibility):
+        if feature.casefold() in reserved:
+            from terrine.compile.columns import _RESERVED_NAME
+
+            raise _RESERVED_NAME.error(name=feature)
     names = tuple(f"__trajectory_age_{age}" for age in range(trajectory.periods))
     outcomes = {
         name: MetricAgg(
@@ -67,11 +89,14 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         complete = source[meta.complete_column].fill_null(ibis.literal(False))
         reason = source[meta.reason_column]
         end_time = source.t0 + ibis.interval(seconds=(age + 1) * trajectory.period)
+        error = source[meta.absolute_error_column] if meta.absolute_error_column else None
         if design.administrative_cutoff is not None:
             immature = end_time > ibis.literal(design.administrative_cutoff)
             value = immature.ifelse(ibis.null().cast(value.type()), value)
             complete = complete & ~immature
             reason = immature.ifelse("administrative_cutoff", reason)
+            if error is not None:
+                error = immature.ifelse(ibis.null().cast(error.type()), error)
         mature = (
             ibis.literal(True)
             if design.administrative_cutoff is None
@@ -91,12 +116,33 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
             "period_value_mature": mature,
         }
         if meta.numeric_policy == "checked_float64_v1":
-            if meta.absolute_error_column is None:
+            if error is None:
                 raise _INVALID.error(reason="missing_numeric_certificate")
-            projection["period_value_absolute_error"] = source[meta.absolute_error_column]
+            projection["period_value_absolute_error"] = error
         for feature in compiled.roles.features:
+            feature_meta = compiled.columns[feature]
+            for column in (
+                feature_meta.observed_from_column,
+                feature_meta.observed_until_column,
+                feature_meta.complete_column,
+                feature_meta.reason_column,
+                feature_meta.absolute_error_column,
+            ):
+                if column is not None:
+                    projection[column] = source[column]
             projection[feature] = source[feature]
         if compiled.roles.treatment is not None:
+            treatment_meta = compiled.columns.get(compiled.roles.treatment)
+            if treatment_meta is not None:
+                for column in (
+                    treatment_meta.observed_from_column,
+                    treatment_meta.observed_until_column,
+                    treatment_meta.complete_column,
+                    treatment_meta.reason_column,
+                    treatment_meta.absolute_error_column,
+                ):
+                    if column is not None:
+                        projection[column] = source[column]
             projection[compiled.roles.treatment] = source[compiled.roles.treatment]
         age_tables.append(source.select(**projection))
     table = age_tables[0]
@@ -104,7 +150,9 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         table = table.union(age_table, distinct=False)
 
     output_columns = {
-        name: meta for name, meta in compiled.columns.items() if name in compiled.roles.features
+        name: meta
+        for name, meta in compiled.columns.items()
+        if name in compiled.roles.features or name == compiled.roles.treatment
     }
     output_columns["period_value"] = ColumnMeta(
         Window(0, trajectory.period),
@@ -113,13 +161,7 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         "period_value_observed_until",
         "period_value_complete",
         "period_value_reason",
-        numeric_policy=(
-            "checked_float64_v1"
-            if any(
-                meta.numeric_policy == "checked_float64_v1" for meta in compiled.columns.values()
-            )
-            else None
-        ),
+        numeric_policy=compiled.columns[names[0]].numeric_policy,
         absolute_error_column=(
             "period_value_absolute_error"
             if "period_value_absolute_error" in table.columns

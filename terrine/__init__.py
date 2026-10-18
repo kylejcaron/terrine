@@ -7,6 +7,7 @@ from terrine.errors import TerrineError
 
 if TYPE_CHECKING:
     from terrine.compile.cost import preview
+    from terrine.data import Budget, Coverage, UnitSource
     from terrine.frame import CohortTable, Frame
     from terrine.model import Model
     from terrine.spec import (
