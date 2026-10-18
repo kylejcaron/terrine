@@ -759,22 +759,42 @@ def event_sequence(
                 "reason": attempts.reason,
             }
         )
+        table_columns = tuple(table.columns)
+        used_columns = set(table_columns)
+
+        def fresh_summary_column(base: str) -> str:
+            name = base
+            suffix = 0
+            while name in used_columns:
+                suffix += 1
+                name = f"{base}_{suffix}"
+            used_columns.add(name)
+            return name
+
+        attempts_unit_column = fresh_summary_column("_terrine_funnel_unit")
+        attempts_anchor_column = fresh_summary_column("_terrine_funnel_anchor")
+        attempts_values_column = fresh_summary_column("_terrine_funnel_values")
         attempts_by_anchor = attempts.group_by(["unit", "anchor_id"]).aggregate(
-            funnel_attempts=attempt_values.collect(order_by=[attempts.step0_event_id])
+            **{attempts_values_column: attempt_values.collect(order_by=[attempts.step0_event_id])}
+        )
+        attempts_by_anchor = attempts_by_anchor.select(
+            **{
+                attempts_unit_column: attempts_by_anchor.unit,
+                attempts_anchor_column: attempts_by_anchor.anchor_id,
+                attempts_values_column: attempts_by_anchor[attempts_values_column],
+            }
         )
         joined_table = table.left_join(
             attempts_by_anchor,
             [
-                table.unit == attempts_by_anchor.unit,
-                table.anchor_id == attempts_by_anchor.anchor_id,
+                table.unit == attempts_by_anchor[attempts_unit_column],
+                table.anchor_id == attempts_by_anchor[attempts_anchor_column],
             ],
         )
-        funnel_missing_history_column = "_terrine_funnel_missing_history"
-        suffix = 0
-        while funnel_missing_history_column in joined_table.columns:
-            suffix += 1
-            funnel_missing_history_column = f"_terrine_funnel_missing_history_{suffix}"
+        funnel_missing_history_column = fresh_summary_column("_terrine_funnel_missing_history")
         if funnel_event_property_found_column is not None:
+            unknown_unit_column = fresh_summary_column("_terrine_funnel_unknown_unit")
+            unknown_anchor_column = fresh_summary_column("_terrine_funnel_unknown_anchor")
             unknown_by_anchor = complete_children.group_by(
                 [complete_children._sequence_unit, complete_children._sequence_anchor]
             ).aggregate(
@@ -784,14 +804,21 @@ def event_sequence(
                     ).any()
                 }
             )
+            unknown_by_anchor = unknown_by_anchor.select(
+                **{
+                    unknown_unit_column: unknown_by_anchor._sequence_unit,
+                    unknown_anchor_column: unknown_by_anchor._sequence_anchor,
+                    funnel_missing_history_column: unknown_by_anchor[funnel_missing_history_column],
+                }
+            )
             joined_table = joined_table.left_join(
                 unknown_by_anchor,
                 [
-                    joined_table.unit == unknown_by_anchor._sequence_unit,
-                    joined_table.anchor_id == unknown_by_anchor._sequence_anchor,
+                    joined_table.unit == unknown_by_anchor[unknown_unit_column],
+                    joined_table.anchor_id == unknown_by_anchor[unknown_anchor_column],
                 ],
             )
-        funnel_type = attempts_by_anchor.schema()["funnel_attempts"]
+        funnel_type = attempts_by_anchor.schema()[attempts_values_column]
         funnel_missing_history = cast(
             ir.BooleanValue,
             joined_table[funnel_missing_history_column].fill_null(False)
@@ -806,7 +833,7 @@ def event_sequence(
                 ibis.ifelse(
                     funnel_complete,
                     ibis.coalesce(
-                        joined_table.funnel_attempts,
+                        joined_table[attempts_values_column],
                         ibis.literal([], type=funnel_type),
                     ),
                     ibis.literal(None, type=funnel_type),
@@ -816,23 +843,13 @@ def event_sequence(
             payload = ibis.ifelse(
                 funnel_complete,
                 ibis.coalesce(
-                    joined_table.funnel_attempts,
+                    joined_table[attempts_values_column],
                     ibis.literal([], type=funnel_type),
                 ),
                 ibis.literal(None, type=funnel_type),
             )
         table = joined_table.select(
-            **{
-                name: joined_table[name]
-                for name in joined_table.columns
-                if name
-                not in {
-                    "unit_right",
-                    "anchor_id_right",
-                    "funnel_attempts",
-                    funnel_missing_history_column,
-                }
-            },
+            **{name: joined_table[name] for name in table_columns},
             funnel_attempts=payload,
             funnel_attempts_complete=ibis.ifelse(
                 joined_table.is_event,

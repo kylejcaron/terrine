@@ -325,6 +325,7 @@ def test_sequence_compiler_publishes_funnel_attempt_schema(sequence_model):
         ("unit", False, "__terrine_funnel_event_property"),
         ("previous_event_id", False, "previous_event_id"),
         ("kind", False, "_sequence_unit"),
+        ("kind", False, "unit_right"),
         ("kind", False, "_funnel_has_missing_history"),
     ],
 )
@@ -840,13 +841,27 @@ def test_selected_property_named_normalized_unit_preserves_event_identity(sequen
 
 def test_funnel_dependency_preserves_entity_key_for_dimension_enrichment(sequence_model):
     from terrine.semantic.models import Dimension, Property, TableRef
-    from terrine.spec import FunnelSpec
+    from terrine.spec import EventTime, FunnelSpec
 
     sequence_model.con.create_table(
-        "regions", ibis.memtable({"user_id": ["u"], "region": ["west"]})
+        "regions",
+        ibis.memtable(
+            {
+                "user_id": ["u", "u"],
+                "region": ["west", "east"],
+                "starts": [
+                    datetime(2025, 1, 1, 12, tzinfo=UTC),
+                    datetime(2025, 1, 1, 12, 30, tzinfo=UTC),
+                ],
+                "ends": [
+                    datetime(2025, 1, 1, 12, 30, tzinfo=UTC),
+                    datetime(2025, 1, 2, tzinfo=UTC),
+                ],
+            }
+        ),
     )
     source = sequence_model.catalog.sources["events"].model_copy(
-        update={"properties": ("user_id",), "dimensions": ("regions",)}
+        update={"properties": ("user_id", "kind"), "dimensions": ("regions",)}
     )
     dimension = Dimension.model_validate(
         {
@@ -854,6 +869,7 @@ def test_funnel_dependency_preserves_entity_key_for_dimension_enrichment(sequenc
             "source_entity": "user",
             "entity_column": "user_id",
             "properties": ("region",),
+            "validity": {"valid_from": "starts", "valid_to": "ends"},
         }
     )
     catalog = sequence_model.catalog.model_copy(
@@ -884,19 +900,21 @@ def test_funnel_dependency_preserves_entity_key_for_dimension_enrichment(sequenc
     design = Design(
         "user",
         EventAnchor("signup"),
+        outcomes={"_sequence_unit": EventTime("signup", Window("0s", "2h"), "kind", "purchase")},
         shape=EventSequence(
             "signup",
             Window("0s", "2h"),
             max_events=5,
             properties=("region",),
-            funnel=FunnelSpec("user_id", ("view", "purchase")),
+            funnel=FunnelSpec("region", ("west", "east")),
         ),
     )
     rows = model.con.to_pyarrow(design.build(model)._compiled.table).to_pylist()
     header = next(row for row in rows if not row["is_event"])
     children = [row for row in rows if row["is_event"]]
     assert header["funnel_attempts"][0]["status"] == "complete"
-    assert [row["region"] for row in children] == ["west", "west", "west"]
+    assert header["_sequence_unit"] == datetime(2025, 1, 1, 13, tzinfo=UTC)
+    assert [row["region"] for row in children] == ["west", "west", "east"]
 
 
 def test_sequence_compiler_publishes_naive_source_times_as_utc(sequence_model):
