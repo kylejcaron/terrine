@@ -17,6 +17,24 @@ def test_quantile_declares_type7_rank_and_exact_interpolation():
     assert exact_quantile([0, 1], probability) == Decimal(probability)
 
 
+@pytest.mark.parametrize(
+    ("value_type", "probability"),
+    [
+        ("decimal(30, 0)", Decimal("0.125")),
+        ("decimal(29, 25)", Decimal("0.12345678")),
+    ],
+)
+def test_quantile_refuses_when_interpolation_intermediate_exceeds_decimal_budget(
+    value_type, probability
+):
+    from terrine.temporal.nonadditive import _exact_numeric_dtype
+
+    with pytest.raises(TerrineError) as error:
+        _exact_numeric_dtype(value_type, "quantile", probability)
+
+    assert error.value.code == "terrine.metric.exact_precision_unavailable"
+
+
 def test_quantile_probability_is_canonical_decimal_and_in_range():
     node = quantile("revenue", Decimal("0.2500"), window=("-7d", "0d"))
     assert isinstance(node, MetricQuantile)

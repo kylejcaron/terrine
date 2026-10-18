@@ -102,10 +102,13 @@ def _exact_numeric_dtype(value_type: str, operation: str, probability: Decimal |
         integer_digits = source_precision
     output_scale = source_scale + probability_scale
     output_precision = integer_digits + output_scale
+    interpolation_scale = source_scale + 2 * probability_scale
+    interpolation_precision = source_precision + 2 * probability_scale + 4
     if (
         output_scale > 38
         or output_precision > 38
-        or source_precision + probability_scale + 1 > 38
+        or interpolation_scale > 38
+        or interpolation_precision > 38
         or 21 + 2 * probability_scale > 38
     ):
         raise _EXACT_PRECISION.error(operation=operation, value_type=value_type)
