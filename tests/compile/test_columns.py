@@ -8,7 +8,18 @@ from terrine.data import Coverage, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.models import Catalog
-from terrine.spec import Design, FixedDate, Treatment, agg, all_of, asof, eq, gt, is_null
+from terrine.spec import (
+    Design,
+    FixedDate,
+    Treatment,
+    agg,
+    all_of,
+    asof,
+    eq,
+    event_time,
+    gt,
+    is_null,
+)
 
 
 @pytest.fixture
@@ -362,3 +373,52 @@ def test_required_predicate_endpoint_overflow_refuses_even_with_false_conjunct(c
         compiled.validate(execute=con.to_pyarrow)
     assert error.value.code == "terrine.temporal.float64_precision"
     assert error.value.context["failure"] == "bound_overflow"
+
+
+def test_event_time_selector_and_relative_metric_execute(column_model):
+    selector = event_time("amount", window=("0s", "1s"))
+    compiled = _compile(
+        column_model,
+        outcomes={
+            "selected_at": selector,
+            "selected_amount": agg("total", window=("0s", "1s"), relative_to=selector),
+        },
+    )
+    rows = column_model.con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
+    assert rows[0]["selected_at"] == datetime(2025, 1, 2, 12, tzinfo=UTC)
+    assert rows[0]["selected_amount"] == Decimal(7)
+    timing = compiled.expression_timings["selected_amount"]
+    assert timing.kind == "event_time"
+    assert timing.selector_ref is not None
+    assert timing.relative_offsets == (0, 1)
+    assert timing.support_seconds == (0, 2)
+    assert timing.selector_support_seconds[timing.selector_ref] == (0, 1)
+
+
+def test_relative_attribute_asof_uses_selected_event_time(column_model):
+    selector = event_time("amount", window=("0s", "1s"))
+    compiled = _compile(
+        column_model,
+        outcomes={"tier_before_selected": asof("tier", before="0s", relative_to=selector)},
+    )
+    rows = column_model.con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
+    assert rows[0]["tier_before_selected"] == "old"
+    timing = compiled.expression_timings["tier_before_selected"]
+    assert timing.kind == "event_time"
+    assert timing.relative_offsets == (0, 0)
+    assert timing.support_seconds == (0, 1)
+
+
+def test_event_time_selector_refuses_ambiguous_timestamp_ties(column_model):
+    column_model.con.raw_sql("""
+        INSERT INTO events VALUES
+            ('a', TIMESTAMPTZ '2025-01-02 12:00:00+00', 8, 'duplicate')
+    """)
+    compiled = _compile(
+        column_model,
+        outcomes={"selected_at": event_time("amount", window=("0s", "1s"))},
+    )
+    with pytest.raises(TerrineError) as error:
+        compiled.validate(execute=column_model.con.to_pyarrow)
+    assert error.value.code == "terrine.compile.anchor_integrity"
+    assert error.value.context["check_key"] == "tied_event_timestamps"

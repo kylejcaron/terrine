@@ -13,15 +13,15 @@ import pyarrow as pa
 
 from terrine.compile._asof import compile_asof
 from terrine.compile._predicates import CompiledValue, compile_predicate
-from terrine.compile.anchors import AnchorTable, compile_anchors
-from terrine.data import ColumnMeta, ExpressionTiming, FeatureCutoff, Roles
+from terrine.compile.anchors import AnchorTable, _integrity_check, _unique_checks, compile_anchors
+from terrine.data import ColumnMeta, ExpressionTiming, FeatureCutoff, Roles, SequenceMeta
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import BoundDimension
 from terrine.semantic.rules import calendar_average_alignment
 from terrine.spec.anchors import FixedDate, Schedule
 from terrine.spec.design import Design
-from terrine.spec.expressions import And, AttributeAsOf, Eq, EventTime, Expr, MetricAgg
+from terrine.spec.expressions import And, AttributeAsOf, Eq, EventTime, Expr
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE
 from terrine.spec.validate import _fixed_anchors
 from terrine.temporal.aggregate import aggregate_window
@@ -117,6 +117,7 @@ class CompiledStudy:
     _anchors: AnchorTable
     _checks: tuple[_DeferredCheck, ...]
     expression_timings: Mapping[str, ExpressionTiming] = field(default_factory=dict)
+    sequence_meta: SequenceMeta | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -147,8 +148,11 @@ def compile_columns(
     values: dict[Expr, CompiledValue] = {}
     checks: list[_DeferredCheck] = []
     sources, states = {}, {}
+    selector_identity_checks = []
+    checked_selector_sources = set()
     columns, feature_cutoffs, eligibility_cutoffs, strategies = {}, {}, {}, {}
     public: dict[str, str] = {}
+    selector_identity_columns: dict[str, str] = {}
     fixed = (
         _fixed_anchors(design, model) if isinstance(design.anchor, (FixedDate, Schedule)) else None
     )
@@ -157,7 +161,19 @@ def compile_columns(
         if source_name not in sources:
             source = model.sources[source_name]
             raw = model._relation(source.relation)
-            events = normalize_events(raw, source, source.entities[design.unit])
+            configured_id = model.event_ids.get(source_name)
+            extra_columns = None
+            if configured_id is not None:
+                identity_alias = "__terrine_selector_event_id"
+                suffix = 0
+                while identity_alias in raw.columns:
+                    suffix += 1
+                    identity_alias = f"__terrine_selector_event_id_{suffix}"
+                selector_identity_columns[source_name] = identity_alias
+                extra_columns = {identity_alias: configured_id}
+            events = normalize_events(
+                raw, source, source.entities[design.unit], extra_columns=extra_columns
+            )
             histories = {}
             for dimension in source.dimensions:
                 history = model._relation(dimension.relation)
@@ -166,18 +182,110 @@ def compile_columns(
             sources[source_name] = enrich_events(events, source, histories)
         return sources[source_name]
 
+    selector_columns: dict[EventTime, str] = {}
+
+    def resolve_selector(selector: EventTime, source_anchors: ibis.Table) -> tuple[ibis.Table, str]:
+        origin = source_anchors
+        if selector.relative_to is not None:
+            origin, _ = resolve_selector(selector.relative_to, source_anchors)
+        fact = model.catalog.facts[selector.fact]
+        source = model.sources[fact.source]
+        events = events_for(source.name)
+        fact_column = source.facts[selector.fact]
+        if fact_column is None:
+            raise _UNSUPPORTED_SHAPE.error()
+        predicates = [
+            origin.unit == events["_unit"],
+            events["_timestamp"] >= origin.t0 + ibis.interval(seconds=selector.window.start),
+            events["_timestamp"] < origin.t0 + ibis.interval(seconds=selector.window.end),
+            events[fact_column].notnull(),
+        ]
+        identity = selector_identity_columns.get(source.name)
+        if source.name not in checked_selector_sources:
+            checked_selector_sources.add(source.name)
+            if identity is not None:
+                selector_identity_checks.extend(
+                    _unique_checks(events, identity, "event", scope=("_unit",))
+                )
+            else:
+                keys = events.select(
+                    _selector_check_unit=events["_unit"],
+                    _selector_check_time=events["_timestamp"],
+                )
+                ties = (
+                    keys.group_by("_selector_check_unit", "_selector_check_time")
+                    .aggregate(_selector_check_count=ibis._.count())
+                    .filter(ibis._._selector_check_count > 1)
+                    .aggregate(invalid_count=ibis._.count())
+                )
+                selector_identity_checks.append(_integrity_check("tied_event_timestamps", ties))
+        if selector.label_property is not None:
+            binding = source.properties.get(selector.label_property)
+            if binding is None or binding.dimension_name is not None or binding.column is None:
+                raise _UNSUPPORTED_SHAPE.error()
+            predicates.append(events[binding.column] == selector.equals)
+        joined = origin.join(events, predicates=predicates)
+        order = [joined["_timestamp"]]
+        if identity is not None:
+            order.append(joined[identity])
+        ranked = joined.mutate(
+            __terrine_selector_rank=ibis.row_number().over(
+                group_by=[joined.unit, joined.anchor_id], order_by=order
+            )
+        )
+        occurrence = selector.n if selector.occurrence == "nth" else 1
+        if occurrence is None:
+            raise _UNSUPPORTED_SHAPE.error()
+        occurrence -= 1
+        selected = ranked.filter(ranked.__terrine_selector_rank == occurrence).select(
+            __selector_unit=ranked.unit,
+            __selector_anchor=ranked.anchor_id,
+            __selector_time=ranked["_timestamp"],
+        )
+        column = f"__terrine_selector_time_{len(selector_columns)}"
+        left = source_anchors
+        right = selected
+        joined_anchors = left.left_join(
+            right,
+            [left.unit == right.__selector_unit, left.anchor_id == right.__selector_anchor],
+        ).select(
+            **{name: left[name] for name in left.columns if name != "t0"},
+            t0=right.__selector_time,
+            **{column: right.__selector_time},
+        )
+        selector_columns[selector] = column
+        return joined_anchors, column
+
     def expression(node: Expr) -> CompiledValue:
         nonlocal table
         if node in values:
             return values[node]
         output = f"__terrine_value_{len(values)}"
-        if isinstance(node, EventTime) or (
-            isinstance(node, (MetricAgg, AttributeAsOf)) and node.relative_to is not None
-        ):
-            raise _UNSUPPORTED_SHAPE.error()
-        if isinstance(node, AttributeAsOf):
+        expression_anchors = anchors.table
+        relative = getattr(node, "relative_to", None)
+        selector_point_column: str | None = None
+        if isinstance(node, EventTime):
+            expression_anchors, selector_point_column = resolve_selector(node, expression_anchors)
+            result_table = expression_anchors.select(
+                **{key: expression_anchors[key] for key in _ANCHOR_KEY},
+                **{output: expression_anchors[selector_point_column]},
+            )
+            meta = ColumnMeta(None, "event_time", None, None, None, None)
+            cutoff = FeatureCutoff(0, True, "retrospective_effective_time")
+            strategy = "event_time_selector"
+            result = None
+        else:
+            if relative is not None:
+                expression_anchors, selector_point_column = resolve_selector(
+                    relative, expression_anchors
+                )
+                expression_anchors = expression_anchors.mutate(
+                    t0=expression_anchors[selector_point_column]
+                )
+            result = None
+        if not isinstance(node, EventTime) and isinstance(node, AttributeAsOf):
             result = compile_asof(
-                anchors.table,
+                expression_anchors,
                 model,
                 unit=design.unit,
                 attribute=node.attribute,
@@ -189,11 +297,13 @@ def compile_columns(
             meta = result.meta
             cutoff = FeatureCutoff(node.before, True, "retrospective_effective_time")
             strategy = "strict_history"
-        else:
+            result_table = result.table
+        elif not isinstance(node, EventTime):
             metric = model.metrics[node.metric]
             resolution: Literal["day", "event"] = (
                 "day"
                 if fixed
+                and relative is None
                 and all(
                     calendar_average_alignment(
                         node.window, anchor=instant, day_boundary=model.catalog.day_boundary
@@ -228,7 +338,7 @@ def compile_columns(
                 resolved.append(measure)
                 supplied[measure] = states[key]
             result = aggregate_window(
-                anchors.table,
+                expression_anchors,
                 replace(metric, measures=tuple(resolved)),
                 supplied,
                 node.window,
@@ -241,6 +351,7 @@ def compile_columns(
             meta = result.columns[output]
             cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
             strategy = f"sparse_{resolution}_prefix/native"
+            result_table = result.table
         # Each value derives from the candidates independently, then joins back by
         # null-safe anchor identity, so query nesting does not grow with column count.
         # Internal support names are only unique within one result; rename them here.
@@ -249,17 +360,19 @@ def compile_columns(
             for field in _META_COLUMNS
             if getattr(meta, field) is not None
         }
-        right = result.table.select(
-            **{f"{output}_key_{key}": result.table[key] for key in _ANCHOR_KEY},
-            **{output: result.table[output]},
-            **{name: result.table[getattr(meta, field)] for field, name in renamed.items()},
+        right = result_table.select(
+            **{f"{output}_key_{key}": result_table[key] for key in _ANCHOR_KEY},
+            **{output: result_table[output]},
+            **{name: result_table[getattr(meta, field)] for field, name in renamed.items()},
         )
+        assert cutoff is not None
         meta = replace(meta, **renamed)
         table = table.left_join(
             right,
             [table[key].identical_to(right[f"{output}_key_{key}"]) for key in _ANCHOR_KEY],
         )
-        checks.append(result)
+        if result is not None:
+            checks.append(result)
         compiled = CompiledValue(output, meta, cutoff)
         values[node] = compiled
         strategies[output] = strategy
@@ -272,30 +385,67 @@ def compile_columns(
         else:
             expression(node.left if isinstance(node, Eq) else node.expr)
 
+    def selector_timing(selector: EventTime):
+        if selector.relative_to is None:
+            origin_support = (0, 0)
+            dependencies = {}
+        else:
+            origin_support, dependencies = selector_timing(selector.relative_to)
+        support = (
+            origin_support[0] + selector.window.start,
+            origin_support[1] + selector.window.end,
+        )
+        reference = f"{selector.fact}:{selector.occurrence}:{selector.n or 1}"
+        return support, {**dependencies, reference: support}
+
     expression_timings = {}
     for role, named in (("feature", design.features), ("outcome", design.outcomes)):
         for name, node in named.items():
             value = expression(node)
             public[name] = value.name
             columns[name] = replace(value.meta, role=role)
-            support = (
-                (node.before, node.before)
-                if isinstance(node, AttributeAsOf)
-                else (node.window.start, node.window.end)
-            )
+            relative = getattr(node, "relative_to", None)
+            if isinstance(node, EventTime):
+                support, dependency_supports = selector_timing(node)
+                selector_ref = f"{node.fact}:{node.occurrence}:{node.n or 1}"
+                offsets = None
+                point_column = value.name
+                kind = "event_time"
+            elif relative is not None:
+                origin, dependency_supports = selector_timing(relative)
+                selector_ref = f"{relative.fact}:{relative.occurrence}:{relative.n or 1}"
+                offsets = (
+                    (node.before, node.before)
+                    if isinstance(node, AttributeAsOf)
+                    else (node.window.start, node.window.end)
+                )
+                support = (origin[0] + offsets[0], origin[1] + offsets[1])
+                point_column = selector_columns.get(relative)
+                kind = "event_time"
+            else:
+                support = (
+                    (node.before, node.before)
+                    if isinstance(node, AttributeAsOf)
+                    else (node.window.start, node.window.end)
+                )
+                dependency_supports = {}
+                selector_ref = None
+                offsets = None
+                point_column = "t0"
+                kind = "fixed_t0"
             expression_timings[name] = ExpressionTiming(
-                kind="fixed_t0",
-                selector_ref=None,
-                relative_offsets=None,
+                kind=kind,
+                selector_ref=selector_ref,
+                relative_offsets=offsets,
                 support_seconds=support,
-                selector_dependencies=(),
-                selector_support_seconds={},
-                point_time_column="t0",
+                selector_dependencies=tuple(dependency_supports),
+                selector_support_seconds=dependency_supports,
+                point_time_column=point_column,
                 start_bound_column=None,
                 end_bound_column=None,
             )
             strategies[name] = strategies[value.name]
-            if role == "feature":
+            if role == "feature" and value.cutoff is not None:
                 feature_cutoffs[name] = value.cutoff
     for node in design.eligibility.values():
         predicate_expressions(node)
@@ -343,6 +493,8 @@ def compile_columns(
     projection.update({name: table[value] for name, value in public.items()})
     audit = table.select(**projection, __terrine_eligible=table.__terrine_eligible)
     retained = table.filter(table.__terrine_eligible.fill_null(False)).select(**projection)
+    if selector_identity_checks:
+        anchors = AnchorTable(anchors.table, (*anchors._checks, *selector_identity_checks))
     return CompiledStudy(
         retained,
         audit,
