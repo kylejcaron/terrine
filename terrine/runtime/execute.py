@@ -42,7 +42,8 @@ def execute_plan(
         raise ValueError("plan task count exceeds configured max_tasks")
     if lease_ttl <= timedelta(0):
         raise ValueError("lease_ttl must be positive")
-    schema = f'"{namespace}"'
+    leases = LeaseStore(con, namespace=namespace)
+    schema = leases._schema
     con.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
     con.execute(
         f"CREATE TABLE IF NOT EXISTS {schema}.runtime_runs ("
@@ -69,7 +70,6 @@ def execute_plan(
             f"INSERT INTO {schema}.runtime_runs VALUES (?, ?, ?, 'running', NULL)",
             [run_id, plan.dataset, plan.recipe.fingerprint],
         )
-    leases = LeaseStore(con, namespace=namespace)
     leases.initialize()
     now = datetime.now(UTC)
     lease = leases.acquire(f"dataset:{plan.dataset}", run_id, ttl=lease_ttl, now=now)

@@ -68,3 +68,31 @@ def test_plan_task_bound_is_checked_before_running_work():
             publish=lambda plan, outputs, lease: None,
         )
     assert calls == []
+
+
+def test_invalid_namespace_is_rejected_before_sql_execution():
+    con = duckdb.connect(":memory:")
+    statements = []
+
+    class TrackingConnection:
+        def execute(self, query, *args, **kwargs):
+            statements.append(query)
+            return con.execute(query, *args, **kwargs)
+
+    with pytest.raises(ValueError):
+        plan = plan_refresh(
+            namespace='owner"; DROP TABLE important; --',
+            dataset="orders",
+            definition_hash="def",
+            snapshot_id="s",
+            graph=dependency_graph(sources=("events",), definition_hash="def", partitions=("p1",)),
+        )
+        execute_plan(
+            plan,
+            con=TrackingConnection(),
+            namespace='owner"; DROP TABLE important; --',
+            run_id="invalid-namespace",
+            run_task=lambda task, dependencies: pa.table({"id": [1]}),
+            publish=lambda plan, outputs, lease: None,
+        )
+    assert statements == []
