@@ -212,22 +212,35 @@ class RuntimeStore:
 
     def delete_generation(self, ref: GenerationRef) -> None:
         self._check_ref(ref)
-        row = self.con.execute(
-            f"SELECT superseded_by FROM {self._schema}.runtime_generations "
-            "WHERE dataset=? AND generation=?",
-            [ref.dataset, ref.generation],
-        ).fetchone()
-        if row is None or row[0] is None:
-            raise ValueError("only explicitly superseded generations can be collected")
-        pin = self.con.execute(
-            f"SELECT 1 FROM {self._schema}.runtime_generation_pins "
-            "WHERE dataset=? AND generation=? LIMIT 1",
-            [ref.dataset, ref.generation],
-        ).fetchone()
-        if pin is not None:
-            raise ValueError("pinned generations cannot be collected")
         self.con.execute("BEGIN TRANSACTION")
         try:
+            row = self.con.execute(
+                f"SELECT superseded_by FROM {self._schema}.runtime_generations "
+                "WHERE dataset=? AND generation=?",
+                [ref.dataset, ref.generation],
+            ).fetchone()
+            if row is None or row[0] is None:
+                raise ValueError("only explicitly superseded generations can be collected")
+            manifest_catalog = self.con.execute(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema=? AND table_name='runtime_manifests'",
+                [self.namespace],
+            ).fetchone()
+            if manifest_catalog is not None:
+                current = self.con.execute(
+                    f"SELECT 1 FROM {self._schema}.runtime_manifests "
+                    "WHERE dataset=? AND generation=?",
+                    [ref.dataset, ref.generation],
+                ).fetchone()
+                if current is not None:
+                    raise ValueError("currently published generations cannot be collected")
+            pin = self.con.execute(
+                f"SELECT 1 FROM {self._schema}.runtime_generation_pins "
+                "WHERE dataset=? AND generation=? LIMIT 1",
+                [ref.dataset, ref.generation],
+            ).fetchone()
+            if pin is not None:
+                raise ValueError("pinned generations cannot be collected")
             partition_catalog = self.con.execute(
                 "SELECT 1 FROM information_schema.tables "
                 "WHERE table_schema=? AND table_name='runtime_partitions'",

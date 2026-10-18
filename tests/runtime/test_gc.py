@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import duckdb
 
+from terrine.runtime.backends.duckdb import DuckDBBackend
 from terrine.runtime.gc import collect_superseded
 from terrine.runtime.state import DefinitionVersion, GenerationRef, RuntimeStore, SourceSnapshot
 
@@ -27,6 +28,30 @@ def test_gc_only_removes_explicit_unpinned_superseded_generations():
     removed = collect_superseded(store, retain=timedelta(0), now=now, dry_run=False)
     assert removed.removed == (old,)
     assert store.read_generation(old) is None
+    assert store.read_generation(current) is not None
+
+
+def test_gc_never_removes_manifest_referenced_generation():
+    con = duckdb.connect(":memory:")
+    DuckDBBackend(con, namespace="owner")
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
+    definition = DefinitionVersion("d", "s", "1")
+    snapshot = SourceSnapshot("snap", {}, {}, datetime(2025, 1, 1, tzinfo=UTC), "owner")
+    current = GenerationRef("owner", "orders", "g1")
+    staged_next = GenerationRef("owner", "orders", "g2")
+    store.write_generation(current, definition=definition, snapshot=snapshot)
+    store.write_generation(
+        staged_next, definition=definition, snapshot=snapshot, supersedes=current
+    )
+    con.execute(
+        'INSERT INTO "owner".runtime_manifests VALUES (?, ?, ?)',
+        ["orders", "g1", 1],
+    )
+
+    report = collect_superseded(store, retain=timedelta(0), now=datetime.now(UTC), dry_run=False)
+
+    assert current not in report.removed
     assert store.read_generation(current) is not None
 
 
