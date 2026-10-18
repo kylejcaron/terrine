@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -8,6 +9,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from terrine.compile.cost import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED
 from terrine.runtime.leases import Lease, LeaseStore
 from terrine.runtime.planner import RefreshPlan, TaskSpec
 
@@ -74,6 +76,22 @@ def execute_plan(
     now = datetime.now(UTC)
     lease = leases.acquire(f"dataset:{plan.dataset}", run_id, ttl=lease_ttl, now=now)
     outputs: dict[str, pa.Table] = {}
+    stop_heartbeat = threading.Event()
+    heartbeat_error: list[Exception] = []
+
+    def heartbeat() -> None:
+        interval = min(lease_ttl.total_seconds() / 3, 1.0)
+        current = lease
+        while not stop_heartbeat.wait(interval):
+            try:
+                current = leases.renew(current, ttl=lease_ttl, now=datetime.now(UTC))
+            except Exception as error:
+                heartbeat_error.append(error)
+                stop_heartbeat.set()
+                return
+
+    heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
+    heartbeat_thread.start()
     try:
         for task in plan.tasks:
             saved = con.execute(
@@ -93,17 +111,22 @@ def execute_plan(
                 output = run_task(task, dependencies)
                 if not isinstance(output, pa.Table):
                     raise TypeError("task runner must return a PyArrow Table")
-                _check_budget(output, plan)
+                if task.layer == "frame":
+                    _check_budget(task, output, plan, outputs)
+                leases.assert_current(lease)
                 con.execute(
                     f"UPDATE {schema}.runtime_tasks SET status='complete', output_blob=? "
-                    "WHERE run_id=? AND task_id=?",
+                    "WHERE run_id=? AND task_id=? AND status='running'",
                     [_encode(output), run_id, task.task_id],
                 )
             outputs[task.task_id] = output
-            leases.renew(lease, ttl=lease_ttl, now=datetime.now(UTC))
+        if heartbeat_error:
+            raise heartbeat_error[0]
         if cancelled is not None and cancelled():
             con.execute(
-                f"UPDATE {schema}.runtime_runs SET state='cancelled' WHERE run_id=?", [run_id]
+                f"UPDATE {schema}.runtime_runs SET state='cancelled' "
+                "WHERE run_id=? AND state='running'",
+                [run_id],
             )
             return RunReceipt(run_id, "cancelled", None)
         leases.assert_current(lease)
@@ -112,14 +135,20 @@ def execute_plan(
         generation_text = str(generation) if generation is not None else None
         con.execute(
             f"UPDATE {schema}.runtime_runs SET state='succeeded', published_generation=? "
-            "WHERE run_id=?",
+            "WHERE run_id=? AND state='running'",
             [generation_text, run_id],
         )
         return RunReceipt(run_id, "succeeded", generation_text)
     except Exception:
-        con.execute(f"UPDATE {schema}.runtime_runs SET state='failed' WHERE run_id=?", [run_id])
+        con.execute(
+            f"UPDATE {schema}.runtime_runs SET state='failed' "
+            "WHERE run_id=? AND state='running' AND published_generation IS NULL",
+            [run_id],
+        )
         raise
     finally:
+        stop_heartbeat.set()
+        heartbeat_thread.join()
         leases.release(lease)
 
 
@@ -134,11 +163,23 @@ def _decode(payload: bytes) -> pa.Table:
     return pa.ipc.open_stream(payload).read_all()
 
 
-def _check_budget(table: pa.Table, plan: RefreshPlan) -> None:
+def _check_budget(
+    task: TaskSpec,
+    table: pa.Table,
+    plan: RefreshPlan,
+    outputs: Mapping[str, pa.Table],
+) -> None:
     budget = plan.budget
     if budget is None:
         return
-    if budget.max_rows is not None and table.num_rows > budget.max_rows:
-        raise ValueError("materialized partition exceeds max_rows")
-    if budget.max_output_bytes is not None and table.nbytes > budget.max_output_bytes:
-        raise ValueError("materialized partition exceeds max_output_bytes")
+    rows = table.num_rows
+    output_bytes = table.nbytes
+    final_tasks = {item.task_id for item in plan.tasks if item.layer == "frame"}
+    for task_id, output in outputs.items():
+        if task_id in final_tasks:
+            rows += output.num_rows
+            output_bytes += output.nbytes
+    if budget.max_rows is not None and rows > budget.max_rows:
+        raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
+    if budget.max_output_bytes is not None and output_bytes > budget.max_output_bytes:
+        raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
