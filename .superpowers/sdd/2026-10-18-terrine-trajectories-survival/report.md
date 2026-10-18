@@ -11,10 +11,10 @@
 
 - Added and retained regressions for all eight findings: generated-name collision, exact cohort mean, outcome numeric policy, feature/treatment support metadata, cutoff error certificates, cumulative float tolerance, signed bucket arithmetic across the Unix epoch, and `TYPE_CHECKING` public exports.
 - Cumulative floating-point error now includes input certificates plus a conservative reduction-rounding bound, is checked against the final-result tolerance, and the deferred check is registered on the compiled study.
-- Commits: `a85d8d3` (seven finding fixes and related tests/report) and `adbff22` (explicit epoch-crossing regression; review `8507` passed). Cumulative-certification changes are tested but not yet committed.
+- Commits: `a85d8d3`, `adbff22`, and `87fc7d0` (cumulative certification). Reviews `8507` and `8509` passed; job `8493` was commented with final dispositions and closed.
 - Focused `uv run pytest tests/compile/test_ltv.py tests/compile/test_cohorts.py -q`: 14 passed. `uv run ruff format terrine tests examples`, `uv run ruff check terrine tests examples`, `uv run ty check terrine tests`, and `uv run tach check` passed.
-- Job `8493` has a comment with dispositions/SHAs for findings 1–5, 7–8 and the interim state of finding 6. It remains open pending review of the cumulative certification change. Task 3 has not started.
+- Task 3 (time-to-event and Kaplan–Meier) remains unstarted. The referenced plan `docs/superpowers/plans/2026-10-18-terrine-trajectories-survival.md` is not present in this checkout; the directory lists only plans dated 2026-10-16.
 
 ## Disposition
 
-- Task 2 review remediation is awaiting commit/review of its final change and closure of `8493`; Task 3 remains unstarted.
+- Task 2 review remediation is complete; Task 3 remains unstarted because its referenced implementation plan is unavailable in this checkout.
