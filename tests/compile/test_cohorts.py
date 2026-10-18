@@ -383,6 +383,43 @@ def test_high_scale_decimal_cohort_total_accumulates_cancellation_exactly():
         con.disconnect()
 
 
+def test_high_scale_decimal_cohort_total_refuses_unrepresentable_result():
+    import pytest
+
+    from terrine.errors import TerrineError
+
+    con, model = _trajectory_model(decimal_type="DECIMAL(38, 30)")
+    try:
+        con.raw_sql(
+            "UPDATE events SET decimal_amount = 90000000.000000000000000000000000000000 "
+            "WHERE kind = 'revenue'"
+        )
+        con.raw_sql(
+            "INSERT INTO events (user_id, ts, kind, amount, decimal_amount, float_amount) "
+            "VALUES ('u2', TIMESTAMPTZ '2025-01-03 00:00:00+00', 'revenue', 0, "
+            "90000000.000000000000000000000000000000, 0)"
+        )
+        frame = Design(
+            "user",
+            EventAnchor("purchase", which="first"),
+            shape=CohortSpec(
+                origin="purchase",
+                trajectory=Trajectory("decimal_revenue", "7d", periods=1, cumulative=False),
+            ),
+        ).build(model)
+        summary = frame.cohorts(
+            grouping=CohortGrouping(
+                bucket="7d", bucket_origin=datetime(2025, 1, 1, tzinfo=UTC), statistic="total"
+            ),
+            value_column="period_value",
+        )
+        with pytest.raises(TerrineError) as error:
+            summary.to_pyarrow()
+        assert error.value.code == "terrine.temporal.exact_overflow"
+    finally:
+        con.disconnect()
+
+
 def test_cohort_float_total_enforces_final_tolerance():
     import pytest
 
