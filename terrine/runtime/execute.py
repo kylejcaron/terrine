@@ -80,12 +80,29 @@ def execute_plan(
     lease = leases.acquire(f"dataset:{plan.dataset}", run_id, ttl=lease_ttl, now=datetime.now(UTC))
     transition = con.execute(
         f"UPDATE {schema}.runtime_runs SET state='running', attempt_fence=? "
-        "WHERE run_id=? AND state IN ('running', 'failed') RETURNING run_id",
-        [lease.fence, run_id],
+        "WHERE run_id=? AND state IN ('running', 'failed') "
+        "AND (attempt_fence IS NULL OR attempt_fence<?) AND EXISTS ("
+        f"SELECT 1 FROM {schema}.runtime_leases WHERE resource=? AND owner=? "
+        "AND fence=? AND expires_at>?) RETURNING run_id",
+        [
+            lease.fence,
+            run_id,
+            lease.fence,
+            lease.resource,
+            lease.owner,
+            lease.fence,
+            datetime.now(UTC).isoformat(),
+        ],
     ).fetchone()
     if transition is None:
         leases.release(lease)
-        return RunReceipt(run_id, run[2], run[3])
+        current = con.execute(
+            f"SELECT state, published_generation FROM {schema}.runtime_runs WHERE run_id=?",
+            [run_id],
+        ).fetchone()
+        if current is None:
+            raise RuntimeError("run disappeared while claiming its lease")
+        return RunReceipt(run_id, current[0], current[1])
     heartbeat_con = con.cursor()
     heartbeat_store = LeaseStore(heartbeat_con, namespace=namespace)
     outputs: dict[str, pa.Table] = {}
@@ -115,14 +132,28 @@ def execute_plan(
             if saved is not None and saved[0] == "complete":
                 output = _decode(saved[1])
             else:
-                con.execute(
+                claimed_task = con.execute(
                     f"INSERT INTO {schema}.runtime_tasks "
                     "(run_id, task_id, status, output_blob, task_fence) "
-                    "VALUES (?, ?, 'running', NULL, ?) "
+                    f"SELECT ?, ?, 'running', NULL, ? WHERE EXISTS ("
+                    f"SELECT 1 FROM {schema}.runtime_leases WHERE resource=? AND owner=? "
+                    "AND fence=? AND expires_at>?) "
                     "ON CONFLICT(run_id, task_id) DO UPDATE SET status='running', "
-                    "output_blob=NULL, task_fence=excluded.task_fence",
-                    [run_id, task.task_id, lease.fence],
-                )
+                    "output_blob=NULL, task_fence=excluded.task_fence "
+                    "WHERE runtime_tasks.task_fence IS NULL "
+                    "OR runtime_tasks.task_fence<excluded.task_fence RETURNING task_id",
+                    [
+                        run_id,
+                        task.task_id,
+                        lease.fence,
+                        lease.resource,
+                        lease.owner,
+                        lease.fence,
+                        datetime.now(UTC).isoformat(),
+                    ],
+                ).fetchone()
+                if claimed_task is None:
+                    raise ValueError("lease attempt was fenced before task start")
                 dependencies = MappingProxyType({key: outputs[key] for key in task.dependencies})
                 output = run_task(task, dependencies)
                 if not isinstance(output, pa.Table):

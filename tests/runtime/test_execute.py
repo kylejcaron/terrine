@@ -168,6 +168,25 @@ def test_existing_runtime_budget_refusal_codes_are_used():
         )
     assert error.value.code == "terrine.budget.rows_exceeded"
 
+    byte_limited_plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="def",
+        snapshot_id="s",
+        graph=dependency_graph(sources=("events",), definition_hash="def", partitions=("p1",)),
+        budget=Budget(max_output_bytes=0),
+    )
+    with pytest.raises(TerrineError) as byte_error:
+        execute_plan(
+            byte_limited_plan,
+            con=duckdb.connect(":memory:"),
+            namespace="owner",
+            run_id="coded-byte-budget",
+            run_task=lambda task, dependencies: pa.table({"id": [1]}),
+            publish=lambda plan, outputs, lease: "g1",
+        )
+    assert byte_error.value.code == "terrine.budget.output_bytes_exceeded"
+
 
 def test_invalid_namespace_is_rejected_before_sql_execution():
     con = duckdb.connect(":memory:")
@@ -270,5 +289,78 @@ def test_lease_heartbeat_keeps_long_task_alive(monkeypatch):
         run_task=run_task,
         publish=lambda plan, outputs, lease: "g1",
         lease_ttl=timedelta(seconds=30),
+    )
+    assert result.state == "succeeded"
+
+
+def test_delayed_lease_claim_cannot_overwrite_successful_retry(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from terrine.runtime.leases import LeaseStore
+
+    con = duckdb.connect(":memory:")
+    plan = _plan()
+    original_acquire = LeaseStore.acquire
+    acquisitions = 0
+
+    def delayed_acquire(store, resource, owner, *, ttl, now):
+        nonlocal acquisitions
+        lease = original_acquire(store, resource, owner, ttl=ttl, now=now)
+        acquisitions += 1
+        if acquisitions == 1:
+            con.execute(
+                'UPDATE "owner".runtime_leases SET expires_at=? WHERE resource=?',
+                [(datetime.now(UTC) - timedelta(seconds=1)).isoformat(), resource],
+            )
+            execute_plan(
+                plan,
+                con=con,
+                namespace="owner",
+                run_id="delayed-claim",
+                run_task=lambda task, dependencies: pa.table({"id": [2]}),
+                publish=lambda plan, outputs, lease: "g2",
+            )
+        return lease
+
+    monkeypatch.setattr(LeaseStore, "acquire", delayed_acquire)
+
+    def unexpected_task(task, dependencies) -> pa.Table:
+        raise AssertionError("stale attempt must not execute")
+
+    def unexpected_publish(plan, outputs, lease) -> str:
+        raise AssertionError("stale attempt must not publish")
+
+    result = execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="delayed-claim",
+        run_task=unexpected_task,
+        publish=unexpected_publish,
+    )
+    assert (result.state, result.published_generation) == ("succeeded", "g2")
+
+
+def test_intermediate_partition_sizes_do_not_consume_final_output_budget():
+    from terrine.data import Budget
+
+    graph = dependency_graph(sources=("events",), definition_hash="def", partitions=("p1", "p2"))
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="def",
+        snapshot_id="s",
+        graph=graph,
+        budget=Budget(max_rows=2),
+    )
+    result = execute_plan(
+        plan,
+        con=duckdb.connect(":memory:"),
+        namespace="owner",
+        run_id="intermediate-budget",
+        run_task=lambda task, dependencies: pa.table(
+            {"id": [1]} if task.layer == "frame" else {"id": list(range(100))}
+        ),
+        publish=lambda plan, outputs, lease: "g1",
     )
     assert result.state == "succeeded"
