@@ -7,7 +7,9 @@ from terrine.compile.layers import plan_layers
 from terrine.compile.materialize import compose_materialized_frame
 from terrine.data import Budget
 from terrine.errors import TerrineError
+from terrine.model import Model
 from terrine.semantic.bind import normalize_events
+from terrine.semantic.models import Catalog
 from terrine.spec import Design, FixedDate, agg
 from terrine.temporal.daily import _sparse_group, resolve_measure
 from terrine.temporal.prefix import sparse_prefix
@@ -101,3 +103,34 @@ def test_layer_composition_preserves_strict_scan_budget_refusal(column_model):
             budget=Budget(max_scan_bytes=1, strict_scan=True),
         )
     assert error.value.code == "terrine.budget.scan_unknown"
+
+
+def test_layer_definition_identity_binds_catalog_and_design(column_model):
+    design = Design(
+        "user",
+        FixedDate("2025-01-02T12:00:00+00:00"),
+        features={"total": agg("total", window=("-1d", "0s"))},
+    )
+    changed = column_model.catalog.model_dump(mode="json")
+    changed["measures"]["total"]["aggregation"] = "count"
+    other_model = Model.from_catalog(
+        Catalog.model_validate(changed),
+        con=column_model.con,
+        readiness=column_model.readiness,
+        units=column_model.units,
+    )
+    original_key, _ = _persisted_event_prefix(design, column_model)
+    other_key, other_prefix = _persisted_event_prefix(design, other_model)
+    assert original_key.definition_hash != other_key.definition_hash
+    with pytest.raises(ValueError, match="identity"):
+        compose_materialized_frame(
+            design,
+            other_model,
+            persisted={replace(original_key, snapshot_id="same"): other_prefix},
+        )
+    other_key = replace(other_key, snapshot_id="same")
+    actual = compose_materialized_frame(design, other_model, persisted={other_key: other_prefix})
+    expected = _compile(other_model, features={"total": agg("total", window=("-1d", "0s"))})
+    assert column_model.con.to_pyarrow(expected.audit_table.order_by("unit")).equals(
+        column_model.con.to_pyarrow(actual.audit_table.order_by("unit"))
+    )
