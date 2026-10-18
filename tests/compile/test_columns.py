@@ -99,6 +99,8 @@ def test_named_windows_asof_treatment_and_independent_completeness(column_model)
     assert compiled.roles.outcomes == ("after", "unavailable")
     assert compiled.roles.treatment == "treatment"
     assert compiled.columns["after"].window.end == 1
+    assert compiled.expression_timings["after"].kind == "fixed_t0"
+    assert compiled.expression_timings["after"].support_seconds == (0, 1)
     assert compiled.feature_cutoffs["tier"].strict is True
     assert compiled.feature_cutoffs["tier"].knowledge == "retrospective_effective_time"
     null_meta = compiled.columns['sum "before"']

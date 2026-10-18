@@ -225,6 +225,7 @@ class Frame:
                 else None,
                 treatment_known_at_t0=treatment.known_at_t0 if treatment is not None else False,
                 state_panel=_state_panel_metadata(self._design, model),
+                expression_timings=compiled.expression_timings,
             )
             return MaterializedFrame(table, compiled.roles, compiled.columns, provenance)
 

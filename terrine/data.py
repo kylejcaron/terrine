@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from base64 import b64decode, b64encode
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass
 from datetime import UTC, date, datetime, timedelta
 from types import MappingProxyType
 from typing import Any, Literal
@@ -21,7 +21,7 @@ __all__ = [
     "UnitSource",
     "Roles",
     "ColumnMeta",
-    "FeatureCutoff",
+    "ExpressionTiming",
     "StatePanelMeta",
     "EligibilitySummary",
     "ExecutionSnapshot",
@@ -240,6 +240,72 @@ class FeatureCutoff:
 
 
 @dataclass(frozen=True, slots=True)
+class ExpressionTiming:
+    """Conservative support and exact resolved time-column references for one expression."""
+
+    kind: Literal["fixed_t0", "event_time"]
+    selector_ref: str | None
+    relative_offsets: tuple[int, int] | None
+    support_seconds: tuple[int, int]
+    selector_dependencies: tuple[str, ...]
+    selector_support_seconds: Mapping[str, tuple[int, int]]
+    point_time_column: str | None
+    start_bound_column: str | None
+    end_bound_column: str | None
+
+    def __post_init__(self) -> None:
+        if self.kind not in ("fixed_t0", "event_time"):
+            raise ValueError("unsupported expression timing kind")
+        for name in ("selector_ref", "point_time_column", "start_bound_column", "end_bound_column"):
+            value = getattr(self, name)
+            if value is not None:
+                _nonempty(value, name)
+        if self.relative_offsets is not None and (
+            not isinstance(self.relative_offsets, tuple)
+            or len(self.relative_offsets) != 2
+            or any(
+                isinstance(item, bool) or not isinstance(item, int)
+                for item in self.relative_offsets
+            )
+            or self.relative_offsets[0] > self.relative_offsets[1]
+        ):
+            raise ValueError("relative_offsets must be an ordered pair of integer seconds or None")
+        if (
+            not isinstance(self.support_seconds, tuple)
+            or len(self.support_seconds) != 2
+            or any(
+                isinstance(item, bool) or not isinstance(item, int)
+                for item in self.support_seconds
+            )
+            or self.support_seconds[0] > self.support_seconds[1]
+        ):
+            raise ValueError("support_seconds must be an ordered pair of integer seconds")
+        dependencies = tuple(self.selector_dependencies)
+        if any(not isinstance(item, str) or not item for item in dependencies):
+            raise TypeError("selector_dependencies must contain non-empty strings")
+        if len(set(dependencies)) != len(dependencies):
+            raise ValueError("selector_dependencies must be distinct")
+        supports = {}
+        for key, value in self.selector_support_seconds.items():
+            if (
+                not isinstance(key, str)
+                or not key
+                or not isinstance(value, tuple)
+                or len(value) != 2
+                or any(isinstance(item, bool) or not isinstance(item, int) for item in value)
+                or value[0] > value[1]
+            ):
+                raise ValueError("selector_support_seconds must map names to ordered integer pairs")
+            supports[key] = value
+        if set(dependencies) != set(supports):
+            raise ValueError("selector dependency names must match support entries")
+        object.__setattr__(self, "selector_dependencies", dependencies)
+        object.__setattr__(
+            self, "selector_support_seconds", MappingProxyType(supports)
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class StatePanelMeta:
     """Portable state-panel definition and structural timing references."""
 
@@ -379,6 +445,7 @@ class Provenance:
     treatment_known_at_t0: bool = False
 
     state_panel: StatePanelMeta | None = None
+    expression_timings: Mapping[str, ExpressionTiming] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for name in ("design_hash", "model_hash", "shape"):
@@ -392,6 +459,11 @@ class Provenance:
             self,
             "eligibility_cutoffs",
             _typed_mapping(self.eligibility_cutoffs, "eligibility_cutoffs", FeatureCutoff),
+        )
+        object.__setattr__(
+            self,
+            "expression_timings",
+            _typed_mapping(self.expression_timings, "expression_timings", ExpressionTiming),
         )
         if any(
             value is not None and not isinstance(value, str)
@@ -531,6 +603,26 @@ def _decode(value: Any, cls: type) -> Any:
         item = value[field.name]
         if field.name in ("feature_cutoffs", "eligibility_cutoffs"):
             kwargs[field.name] = {k: _decode(v, FeatureCutoff) for k, v in item.items()}
+        elif field.name == "expression_timings":
+            kwargs[field.name] = {
+                key: ExpressionTiming(
+                    **{
+                        **timing,
+                        "relative_offsets": (
+                            None
+                            if timing["relative_offsets"] is None
+                            else tuple(timing["relative_offsets"])
+                        ),
+                        "support_seconds": tuple(timing["support_seconds"]),
+                        "selector_dependencies": tuple(timing["selector_dependencies"]),
+                        "selector_support_seconds": {
+                            name: tuple(bounds)
+                            for name, bounds in timing["selector_support_seconds"].items()
+                        },
+                    }
+                )
+                for key, timing in item.items()
+            }
         elif field.name in ("source_generations", "strategy"):
             kwargs[field.name] = item
         elif field.name == "coverage":

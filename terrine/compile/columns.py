@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unicodedata
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, Protocol
 
@@ -14,7 +14,7 @@ import pyarrow as pa
 from terrine.compile._asof import compile_asof
 from terrine.compile._predicates import CompiledValue, compile_predicate
 from terrine.compile.anchors import AnchorTable, compile_anchors
-from terrine.data import ColumnMeta, FeatureCutoff, Roles
+from terrine.data import ColumnMeta, ExpressionTiming, FeatureCutoff, Roles
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import BoundDimension
@@ -116,9 +116,16 @@ class CompiledStudy:
     strategy: Mapping[str, str]
     _anchors: AnchorTable
     _checks: tuple[_DeferredCheck, ...]
+    expression_timings: Mapping[str, ExpressionTiming] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        for name in ("columns", "feature_cutoffs", "eligibility_cutoffs", "strategy"):
+        for name in (
+            "columns",
+            "feature_cutoffs",
+            "eligibility_cutoffs",
+            "strategy",
+            "expression_timings",
+        ):
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
         object.__setattr__(self, "_checks", tuple(self._checks))
 
@@ -265,11 +272,28 @@ def compile_columns(
         else:
             expression(node.left if isinstance(node, Eq) else node.expr)
 
+    expression_timings = {}
     for role, named in (("feature", design.features), ("outcome", design.outcomes)):
         for name, node in named.items():
             value = expression(node)
             public[name] = value.name
             columns[name] = replace(value.meta, role=role)
+            support = (
+                (node.before, node.before)
+                if isinstance(node, AttributeAsOf)
+                else (node.window.start, node.window.end)
+            )
+            expression_timings[name] = ExpressionTiming(
+                kind="fixed_t0",
+                selector_ref=None,
+                relative_offsets=None,
+                support_seconds=support,
+                selector_dependencies=(),
+                selector_support_seconds={},
+                point_time_column="t0",
+                start_bound_column=None,
+                end_bound_column=None,
+            )
             strategies[name] = strategies[value.name]
             if role == "feature":
                 feature_cutoffs[name] = value.cutoff
@@ -336,4 +360,5 @@ def compile_columns(
         {name: strategies[name] for name in public},
         anchors,
         tuple(checks),
+        expression_timings,
     )

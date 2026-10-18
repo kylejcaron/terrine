@@ -29,6 +29,10 @@ POSTBASELINE_COVARIATE = RefusalSpec(
 INVALID_OUTCOME = RefusalSpec(
     "terrine.estimate.invalid_outcome", "Select one declared complete fixed-horizon outcome."
 )
+VARIABLE_ORIGIN_OUTCOME = RefusalSpec(
+    "terrine.estimate.variable_origin_outcome",
+    "Baseline estimators require an outcome measured from fixed time zero.",
+)
 MISSING_DATA = RefusalSpec(
     "terrine.estimate.missing_data",
     "Column {column} contains missing values; no imputation or row removal is performed.",
@@ -181,6 +185,9 @@ def prepare(
         outcome = roles.outcomes[0]
     if outcome not in roles.outcomes or outcome not in frame.columns:
         raise INVALID_OUTCOME.error(reason="unknown_outcome")
+    timing = provenance.expression_timings.get(outcome)
+    if timing is None or timing.kind != "fixed_t0":
+        raise VARIABLE_ORIGIN_OUTCOME.error()
     if (
         provenance.shape != "cross_section"
         or provenance.treatment_design != "baseline_binary"

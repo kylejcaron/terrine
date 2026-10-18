@@ -14,6 +14,7 @@ from terrine.data import (
     EligibilitySummary,
     ExecutionSnapshot,
     FeatureCutoff,
+    ExpressionTiming,
     MaterializedFrame,
     Preview,
     Provenance,
@@ -47,6 +48,19 @@ def _provenance():
         shape="cross_section",
         treatment_design="baseline_binary",
         treatment_known_at_t0=True,
+        expression_timings={
+            "first_purchase": ExpressionTiming(
+                "event_time",
+                "signup",
+                (-86400, 0),
+                (-86400, 0),
+                ("signup",),
+                {"signup": (-86400, 0)},
+                "selected_time",
+                "start_bound",
+                "end_bound",
+            )
+        },
     )
 
 
