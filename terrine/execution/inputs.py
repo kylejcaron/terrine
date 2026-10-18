@@ -10,9 +10,11 @@ import uuid
 import weakref
 from collections.abc import Callable, Generator, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
+import duckdb
 import ibis
 import pyarrow as pa
 
@@ -120,6 +122,7 @@ class _Issuer:
         "cleanup",
         "facts",
         "root_names",
+        "root_identities",
         "handles",
         "catalog_hash",
         "units_hash",
@@ -138,6 +141,7 @@ class _Issuer:
         self.cleanup = cleanup
         self.facts: dict[PhysicalRelationId, _BackingFact] = {}
         self.root_names: dict[tuple[str, str], str] = {}
+        self.root_identities: dict[tuple[str, str], PhysicalRelationId] = {}
         self.handles: dict[PhysicalRelationId, RelationHandle] = {}
         self.catalog_hash: str | None = None
         self.units_hash: str | None = None
@@ -624,3 +628,65 @@ def publish_native_inputs(
     from terrine.execution._publish import publish
 
     return publish(catalog, con=con, units=units, budget=budget)
+
+
+def _capture_native_inputs(
+    catalog: Catalog,
+    *,
+    con: Any,
+    units: Mapping[str, Any] | None,
+    budget: Budget,
+    retained_path: Path,
+) -> PublishedInputs:
+    from terrine.execution._publish import publish
+
+    return publish(catalog, con=con, units=units, budget=budget, retained_path=retained_path)
+
+
+def _reopen_native_inputs(
+    catalog: Catalog,
+    *,
+    units: Mapping[str, Any] | None,
+    path: Path,
+    roots: tuple[dict[str, Any], ...],
+) -> PublishedInputs:
+    raw = duckdb.connect(str(path), read_only=True)
+    managed = ibis.duckdb.from_connection(raw)
+    issuer = _Issuer(managed, raw)
+    issuer.catalog_hash = _catalog_hash(catalog)
+    issuer.units_hash = _units_hash(units)
+    issuer.namespace = _native._current_namespace(raw)
+    issuer.function_fingerprint = _native.function_fingerprint(raw)
+    objects = _native.native_objects(raw)
+    try:
+        for entry in roots:
+            identity = PhysicalRelationId(**entry["identity"])
+            storage = entry["storage_name"]
+            key = (entry["kind"], entry["relation_key"])
+            matches = [
+                obj
+                for obj in objects
+                if obj.kind == "table" and obj.name.casefold() == storage.casefold()
+            ]
+            if len(matches) != 1:
+                raise _SNAPSHOT_UNAVAILABLE.error(
+                    reason="retained snapshot table identity is not unique"
+                )
+            obj = matches[0]
+            qualified = ".".join(
+                _native._quote_ident(value) for value in (obj.catalog, obj.schema, obj.name)
+            )
+            raw.execute(f"SELECT * FROM {qualified} LIMIT 0")
+            columns = tuple(column[0] for column in raw.description)
+            issuer.facts[identity] = _BackingFact(
+                obj.catalog, obj.schema, obj.name, columns, obj.oid
+            )
+            issuer.handles[identity] = RelationHandle(issuer, identity)
+            issuer.root_names[key] = storage
+            issuer.root_identities[key] = identity
+        issuer.cleanup = raw.close
+        _register_published_backend(managed, issuer)
+        return PublishedInputs(managed, issuer.handles, issuer)
+    except Exception:
+        raw.close()
+        raise

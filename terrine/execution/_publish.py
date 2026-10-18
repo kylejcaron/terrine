@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import tempfile
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import duckdb
@@ -120,9 +122,16 @@ def publish(
     con: Any,
     units: Mapping[str, Any] | None = None,
     budget: Budget | None = None,
+    retained_path: Path | None = None,
 ) -> PublishedInputs:
     with _native.connection_lock(_native.raw_connection(con)):
-        return _publish_locked(catalog, con=con, units=units, budget=budget)
+        return _publish_locked(
+            catalog,
+            con=con,
+            units=units,
+            budget=budget,
+            retained_path=retained_path,
+        )
 
 
 def _publish_locked(
@@ -131,6 +140,7 @@ def _publish_locked(
     con: Any,
     units: Mapping[str, Any] | None,
     budget: Budget | None,
+    retained_path: Path | None,
 ) -> PublishedInputs:
     origin = _native.raw_connection(con)
     _native.verify_native_backend(origin)
@@ -143,8 +153,15 @@ def _publish_locked(
     if not roots:
         raise _SNAPSHOT_UNAVAILABLE.error(reason="empty Catalog has no publishable roots")
     _admit_roots(catalog, origin, units, roots)
-    artifact_dir = tempfile.TemporaryDirectory(prefix="terrine-inputs-")
-    path = os.path.join(artifact_dir.name, "inputs.duckdb")
+    if retained_path is None:
+        artifact_dir = tempfile.TemporaryDirectory(prefix="terrine-inputs-")
+        path = os.path.join(artifact_dir.name, "inputs.duckdb")
+    else:
+        artifact_dir = None
+        if retained_path.exists():
+            raise _SNAPSHOT_UNAVAILABLE.error(reason="retained snapshot path already exists")
+        retained_path.mkdir(parents=True)
+        path = str(retained_path / "inputs.duckdb")
     writer = None
     raw = None
     try:
@@ -170,9 +187,12 @@ def _publish_locked(
                 continue
             sql = _root_sql(relation, origin, catalog)
             storage_name = f"input_{len(staged_identities)}"
-            capture_path = os.path.join(
-                artifact_dir.name, f"capture_{len(staged_identities)}.parquet"
-            )
+            if retained_path is not None:
+                capture_dir = retained_path
+            else:
+                assert artifact_dir is not None
+                capture_dir = Path(artifact_dir.name)
+            capture_path = str(capture_dir / f"capture_{len(staged_identities)}.parquet")
             escaped_path = capture_path.replace("'", "''")
             origin.execute(f"COPY ({sql}\n) TO '{escaped_path}' (FORMAT PARQUET)")
             writer.execute(
@@ -192,6 +212,8 @@ def _publish_locked(
         origin.execute("COMMIT")
         writer.close()
         writer = None
+        for capture_file in Path(path).parent.glob("capture_*.parquet"):
+            capture_file.unlink()
         raw = duckdb.connect(path, read_only=True)
         managed = ibis.duckdb.from_connection(raw)
         issuer.con = managed
@@ -219,6 +241,7 @@ def _publish_locked(
             key = (relation.kind, relation.name if isinstance(relation, TableRef) else relation.sql)
             storage_name = staged[key]
             issuer.root_names[key] = storage_name
+            issuer.root_identities[key] = _identity(relation, catalog, origin)
         issuer.cleanup = lambda: _remove_artifact(raw, artifact_dir)
         return PublishedInputs(managed, handles, issuer)
     except Exception:
@@ -236,13 +259,17 @@ def _publish_locked(
             origin.execute("ROLLBACK")
         except Exception:
             pass
-        artifact_dir.cleanup()
+        if artifact_dir is not None:
+            artifact_dir.cleanup()
+        elif retained_path is not None:
+            shutil.rmtree(retained_path, ignore_errors=True)
         raise
 
 
-def _remove_artifact(raw: Any, artifact_dir: tempfile.TemporaryDirectory[str]) -> None:
+def _remove_artifact(raw: Any, artifact_dir: tempfile.TemporaryDirectory[str] | None) -> None:
     try:
         with _native.connection_lock(raw):
             raw.close()
     finally:
-        artifact_dir.cleanup()
+        if artifact_dir is not None:
+            artifact_dir.cleanup()
