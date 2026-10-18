@@ -123,6 +123,34 @@ def test_trial_weights_change_target_only_as_declared():
     assert result.inference == "unit_cluster_crossfit_sandwich"
 
 
+def test_panel_aipw_refuses_variable_origin_outcomes():
+    from terrine.data import ExpressionTiming
+
+    frame = panel_frame()
+    provenance = replace(
+        frame.provenance,
+        expression_timings={
+            "y": ExpressionTiming(
+                "event_time",
+                "purchase",
+                (86_400, 172_800),
+                (86_400, 172_800),
+                ("purchase",),
+                {"purchase": (86_400, 172_800)},
+                "y",
+                None,
+                None,
+            )
+        },
+    )
+    frame = MaterializedFrame(frame.table, frame.roles, frame.columns, provenance)
+
+    with pytest.raises(TerrineError) as error:
+        panel_aipw(frame, outcome="y", treatment="a", trial="trial", folds=3)
+
+    assert error.value.code == "terrine.estimate.variable_origin_outcome"
+
+
 def test_trial_weight_common_scale_is_invariant():
     first = panel_aipw(
         panel_frame(explicit_weights={"early": 1.0, "late": 3.0}),

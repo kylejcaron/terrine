@@ -12,7 +12,7 @@ import numpy as np
 
 from terrine.data import MaterializedFrame
 from terrine.errors import RefusalSpec
-from terrine.estimate._data import INVALID_WEIGHT, _numeric
+from terrine.estimate._data import INVALID_WEIGHT, VARIABLE_ORIGIN_OUTCOME, _numeric
 from terrine.estimate.inference import NONFINITE_RESULT, critical_value
 from terrine.results import Diagnostic
 
@@ -113,11 +113,16 @@ def stacked_event_study(
         raise _INPUT.error(reason="missing_role_column")
     if outcome not in frame.columns:
         raise _INPUT.error(reason="unknown_outcome")
+    timing = frame.provenance.expression_timings.get(outcome)
+    if timing is not None and timing.kind != "fixed_t0":
+        raise VARIABLE_ORIGIN_OUTCOME.error()
     window = frame.columns[outcome].window
     risk_window_end = max(
         (
-            column.window.end
-            for column in frame.columns.values()
+            frame.provenance.expression_timings[name].support_seconds[1]
+            if name in frame.provenance.expression_timings
+            else column.window.end
+            for name, column in frame.columns.items()
             if column.role == "outcome" and column.window is not None
         ),
         default=0,

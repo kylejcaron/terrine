@@ -276,7 +276,11 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
     if cohort_precision is not None:
         anchors = replace(anchors, _checks=(*anchors._checks, cohort_precision))
     outcome_window_end = max(
-        (node.window.end for node in design.outcomes.values() if isinstance(node, MetricAgg)),
+        (
+            compiled.expression_timings[name].support_seconds[1]
+            for name, expression in design.outcomes.items()
+            if isinstance(expression, MetricAgg)
+        ),
         default=0,
     )
 
@@ -334,4 +338,5 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
                 schedule.every,
             ),
         ),
+        expression_timings=compiled.expression_timings,
     )

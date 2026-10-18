@@ -147,6 +147,31 @@ type Expr = MetricAgg | AttributeAsOf | EventTime
 type Predicate = Gt | Eq | IsNull | And
 
 
+def _expression_support_seconds(expression: Expr) -> tuple[int, int]:
+    if isinstance(expression, EventTime):
+        origin = (
+            (0, 0)
+            if expression.relative_to is None
+            else _expression_support_seconds(expression.relative_to)
+        )
+        return (origin[0] + expression.window.start, origin[1] + expression.window.end)
+    if isinstance(expression, MetricAgg):
+        origin = (
+            (0, 0)
+            if expression.relative_to is None
+            else _expression_support_seconds(expression.relative_to)
+        )
+        return (origin[0] + expression.window.start, origin[1] + expression.window.end)
+    if isinstance(expression, AttributeAsOf):
+        origin = (
+            (0, 0)
+            if expression.relative_to is None
+            else _expression_support_seconds(expression.relative_to)
+        )
+        return (origin[0] + expression.before, origin[1] + expression.before)
+    raise TypeError("expected a supported expression node")
+
+
 def _require_expr(value: object) -> None:
     if not isinstance(value, (MetricAgg, AttributeAsOf, EventTime)):
         raise TypeError("expected a supported expression node")

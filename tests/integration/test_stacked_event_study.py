@@ -110,9 +110,13 @@ def test_calendar_comparison_materializes_roster_controls_for_both_modes(native_
         units={"user": UnitSource("users", "user_id")},
         event_ids={"events": "event_id"},
     )
+    from terrine.spec import event_time
+
+    selector = event_time("session", window=("-2d", "-1d"))
     base = Design(
         "user",
         Schedule("1d", "2025-01-01", "2025-01-12"),
+        features={"relative_sessions": agg("sessions", window=("0d", "1d"), relative_to=selector)},
         outcomes={"y": agg("sessions", window=("0d", "1d"))},
     )
     cohort = Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC))
@@ -150,6 +154,55 @@ def test_calendar_comparison_materializes_roster_controls_for_both_modes(native_
     restored = MaterializedFrame.from_arrow(not_yet.to_arrow())
     assert restored.provenance.calendar_comparison == not_yet.provenance.calendar_comparison
     assert restored.table.equals(not_yet.table)
+    timing = restored.provenance.expression_timings["relative_sessions"]
+    assert timing.support_seconds == (-172_800, 0)
+    assert timing.selector_dependencies
+
+
+def test_calendar_comparison_controls_use_reanchored_outcome_support(native_inputs):
+    catalog, con = native_inputs
+    con.insert("users", pa.table({"user_id": ["c", "d"], "alt_id": ["cc", "dd"]}))
+    con.insert(
+        "events",
+        pa.table(
+            {
+                "user_id": ["c", "d"],
+                "ts": [
+                    datetime(2025, 1, 3, tzinfo=UTC),
+                    datetime(2025, 1, 5, tzinfo=UTC),
+                ],
+                "event_id": ["c1", "d1"],
+                "alternate_event_id": ["c2", "d2"],
+            }
+        ),
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
+        units={"user": UnitSource("users", "user_id")},
+        event_ids={"events": "event_id"},
+    )
+    from terrine.spec import event_time
+
+    selector = event_time("session", window=("2d", "3d"))
+    frame = CalendarComparisonPanel(
+        Design(
+            "user",
+            Schedule("1d", "2025-01-01", "2025-01-12"),
+            outcomes={"y": agg("sessions", window=("0d", "1d"), relative_to=selector)},
+        ),
+        model,
+        cohort=Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+        control="not_yet_treated",
+        reference_period=-1,
+        comparison_periods=(0,),
+    ).materialize(Budget(max_rows=200, max_output_bytes=1_000_000))
+
+    early_cohort = datetime(2025, 1, 3, tzinfo=UTC)
+    rows = [row for row in frame.table.to_pylist() if row["cohort"] == early_cohort]
+    assert "d" not in {row["unit"] for row in rows}
+    assert any(row["unit"] == "c" and row["treatment"] for row in rows)
 
 
 def test_never_treated_history_accepts_observation_through_schedule_end(native_inputs):

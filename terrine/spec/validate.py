@@ -30,6 +30,7 @@ from terrine.spec.expressions import (
     IsNull,
     MetricAgg,
     Predicate,
+    _expression_support_seconds,
 )
 from terrine.spec.sequence import EventSequence
 from terrine.windows import Window
@@ -441,7 +442,7 @@ def _validate_shape(
         span_seconds = (design.anchor.end - design.anchor.start).days * 86_400
         last_offset = ((span_seconds - 1) // design.anchor.every) * design.anchor.every
         outcome_horizons = [
-            expression.window.end
+            _expression_support_seconds(expression)[1]
             for expression in design.outcomes.values()
             if isinstance(expression, MetricAgg)
         ]
@@ -492,7 +493,7 @@ def _validate_shape(
         last_offset = ((span_seconds - 1) // schedule.every) * schedule.every
         anticipation = max((abs(period) for period in design.shape.anticipation_periods), default=0)
         outcome_horizons = [
-            expression.window.end
+            _expression_support_seconds(expression)[1]
             for expression in design.outcomes.values()
             if isinstance(expression, MetricAgg)
         ]

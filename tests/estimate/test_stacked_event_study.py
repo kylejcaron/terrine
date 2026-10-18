@@ -76,6 +76,38 @@ def _frame(*, sampled=False):
     )
 
 
+def test_stacked_event_study_refuses_variable_origin_outcomes():
+    from dataclasses import replace
+
+    from terrine.data import ExpressionTiming
+
+    frame = _frame()
+    provenance = replace(
+        frame.provenance,
+        expression_timings={
+            "y": ExpressionTiming(
+                "event_time",
+                "purchase",
+                (86_400, 172_800),
+                (86_400, 172_800),
+                ("purchase",),
+                {"purchase": (86_400, 172_800)},
+                "y",
+                None,
+                None,
+            )
+        },
+    )
+    frame = MaterializedFrame(frame.table, frame.roles, frame.columns, provenance)
+
+    with pytest.raises(TerrineError) as error:
+        stacked_event_study(
+            frame, outcome="y", treatment="treatment", cohort="cohort", period="period"
+        )
+
+    assert error.value.code == "terrine.estimate.variable_origin_outcome"
+
+
 def test_stacked_catt_and_joint_cluster_covariance_match_independent_reference():
     frame = _frame()
     result = stacked_event_study(

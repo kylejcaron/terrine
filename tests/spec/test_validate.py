@@ -833,3 +833,28 @@ def test_outcome_selector_support_is_not_checked_as_outcome_measurement():
         outcomes={"later": agg("sessions", window=("3d", "4d"), relative_to=selector)},
     )
     assert design.validate(model()) is None
+
+
+@pytest.mark.parametrize("shape_name", ["sequential", "calendar"])
+def test_panel_history_validation_covers_reanchored_outcome_support(shape_name):
+    from terrine.spec.expressions import event_time
+    from terrine.spec.panels import CalendarComparisonSpec, Initiation, SequentialSpec
+
+    selector = event_time("session", window=("2d", "3d"))
+    treatment = Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC))
+    shape = (
+        SequentialSpec(treatment)
+        if shape_name == "sequential"
+        else CalendarComparisonSpec(treatment, "not_yet_treated", -1, (0,))
+    )
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-01", "2025-01-02"),
+        outcomes={"y": agg("sessions", window=("0d", "1d"), relative_to=selector)},
+        shape=shape,
+    )
+
+    with pytest.raises(TerrineError) as error:
+        design.validate(model())
+
+    assert error.value.code == "terrine.design.incomplete_treatment_history"

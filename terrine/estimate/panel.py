@@ -16,6 +16,7 @@ from terrine.estimate._data import (
     MISSING_DATA,
     POSTBASELINE_COVARIATE,
     UNSUPPORTED_DESIGN,
+    VARIABLE_ORIGIN_OUTCOME,
     PreparedData,
     _numeric,
     normalize_weights,
@@ -124,6 +125,9 @@ def panel_aipw(
         raise _PANEL_INPUT.error(reason="sampled_analysis_population_unsupported")
     if outcome not in roles.outcomes or outcome not in frame.columns:
         raise INVALID_OUTCOME.error(reason="unknown_outcome")
+    timing = provenance.expression_timings.get(outcome)
+    if timing is not None and timing.kind != "fixed_t0":
+        raise VARIABLE_ORIGIN_OUTCOME.error()
     if target_weight is None:
         target_weight = roles.target_weight
     if target_weight != roles.target_weight:

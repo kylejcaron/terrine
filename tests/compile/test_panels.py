@@ -85,7 +85,36 @@ def test_initiation_is_classified_from_information_available_at_exact_t0(native_
     }
 
 
+def test_sequential_later_initiation_uses_reanchored_outcome_support(native_inputs):
+    from terrine.errors import TerrineError
+    from terrine.spec import event_time
+
+    model = _event_model(native_inputs)
+    model.con.raw_sql(
+        "UPDATE events SET ts = TIMESTAMPTZ '2025-01-05 12:00:00+00' WHERE user_id = 'b'"
+    )
+    selector = event_time("session", window=("2d", "3d"))
+    design = Sequential(
+        Design(
+            "user",
+            Schedule("1d", "2025-01-03", "2025-01-04"),
+            outcomes={
+                "sessions_after_selector": agg(
+                    "sessions", window=("0d", "1d"), relative_to=selector
+                )
+            },
+        ),
+        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+    )
+
+    with pytest.raises(TerrineError) as error:
+        design.build(model).materialize()
+
+    assert error.value.code == "terrine.compile.later_control_initiation"
+
+
 def test_later_control_initiation_refuses_sustained_no_initiation_strategy(native_inputs):
+
     from terrine.errors import TerrineError
 
     model = _event_model(native_inputs)

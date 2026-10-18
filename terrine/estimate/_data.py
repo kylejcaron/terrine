@@ -31,7 +31,7 @@ INVALID_OUTCOME = RefusalSpec(
 )
 VARIABLE_ORIGIN_OUTCOME = RefusalSpec(
     "terrine.estimate.variable_origin_outcome",
-    "Baseline estimators require an outcome measured from fixed time zero.",
+    "Estimators require an outcome measured from fixed time zero.",
 )
 MISSING_DATA = RefusalSpec(
     "terrine.estimate.missing_data",
