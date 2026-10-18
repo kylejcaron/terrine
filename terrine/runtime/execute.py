@@ -387,6 +387,38 @@ def execute_plan(
                 leases=leases,
             )
     except Exception:
+        publication_table = con.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE lower(table_schema)=lower(?) AND table_name='runtime_run_publications'",
+            [namespace],
+        ).fetchone()
+        publication = (
+            con.execute(
+                f"SELECT generation FROM {schema}.runtime_run_publications WHERE run_id=?",
+                [run_id],
+            ).fetchone()
+            if publication_table is not None
+            else None
+        )
+        if publication is not None:
+            with event_transaction(con, namespace=namespace):
+                reconciled = con.execute(
+                    f"UPDATE {schema}.runtime_runs SET state='succeeded', "
+                    "published_generation=? WHERE run_id=? "
+                    "AND state IN ('running','cancel_requested') AND attempt_fence=? "
+                    "RETURNING run_id",
+                    [publication[0], run_id, lease.fence],
+                ).fetchone()
+                if reconciled is not None:
+                    record_run_event(
+                        run_id,
+                        "lifecycle",
+                        {"state": "succeeded"},
+                        con=con,
+                        namespace=namespace,
+                        _in_transaction=True,
+                    )
+                    return RunReceipt(run_id, "succeeded", publication[0])
         with event_transaction(con, namespace=namespace):
             terminal = con.execute(
                 f"UPDATE {schema}.runtime_runs SET state=CASE "

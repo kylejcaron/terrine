@@ -109,6 +109,42 @@ def test_cancel_before_publish_never_exposes_generation():
     assert published == []
 
 
+def test_post_commit_publish_error_reconciles_run_as_succeeded():
+    from terrine.runtime.backends.base import StagedGeneration
+    from terrine.runtime.backends.duckdb import DuckDBBackend
+
+    con = duckdb.connect(":memory:")
+    backend = DuckDBBackend(con, namespace="owner")
+
+    def publish(plan, outputs, lease):
+        backend.fault_injector = lambda boundary: (
+            (_ for _ in ()).throw(RuntimeError("lost response"))
+            if boundary == "after_commit"
+            else None
+        )
+        return backend.publish_generation(
+            StagedGeneration(
+                plan.dataset,
+                "generation-1",
+                {"all": next(iter(outputs.values()))},
+                run_id="ambiguous-run",
+            ),
+            expected_manifest=None,
+            lease=lease,
+        )
+
+    result = execute_plan(
+        _plan(),
+        con=con,
+        namespace="owner",
+        run_id="ambiguous-run",
+        run_task=lambda task, dependencies: pa.table({"id": [1]}),
+        publish=publish,
+    )
+    assert result.state == "succeeded"
+    assert result.published_generation == "generation-1"
+
+
 def test_plan_task_bound_is_checked_before_running_work():
     con = duckdb.connect(":memory:")
     calls = []
