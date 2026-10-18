@@ -250,18 +250,10 @@ class SavedPlanRecipe:
         return recipe
 
 
-def resolve_plan(
-    recipe: SavedPlanRecipe, *, resolver: ModelResolver, namespace: str
-) -> tuple[RefreshPlan, Model, Design, DestinationRef]:
+def _bind_recipe_plan(recipe: SavedPlanRecipe, *, namespace: str) -> RefreshPlan:
     restored = SavedPlanRecipe.from_json(recipe.to_json())
     if namespace != restored.namespace:
         raise _INVALID.error(reason="owner namespace mismatch")
-    model = resolver.resolve(restored.model)
-    if (
-        not isinstance(model, Model)
-        or ModelReference.from_model(model, owner_key=restored.model.owner_key) != restored.model
-    ):
-        raise _INVALID.error(reason="owner Model declaration does not match reference")
     plan = RefreshPlan.deserialize(restored.plan_json)
     if (
         plan.namespace != restored.namespace
@@ -270,7 +262,6 @@ def resolve_plan(
         or not plan.snapshot_id
     ):
         raise _INVALID.error(reason="plan identity differs from owner-bound references")
-    design = from_json(restored.design_json)
     bound_payload = {
         "namespace": plan.namespace,
         "dataset": plan.dataset,
@@ -291,10 +282,26 @@ def resolve_plan(
         expected_base_manifest=restored.expected_base_manifest,
         expected_base_manifest_bound=True,
     )
-    plan = replace(
+    return replace(
         plan,
         recipe=plan_recipe,
         expected_base_manifest=restored.expected_base_manifest,
         expected_base_manifest_bound=True,
     )
+
+
+def resolve_plan(
+    recipe: SavedPlanRecipe, *, resolver: ModelResolver, namespace: str
+) -> tuple[RefreshPlan, Model, Design, DestinationRef]:
+    restored = SavedPlanRecipe.from_json(recipe.to_json())
+    if namespace != restored.namespace:
+        raise _INVALID.error(reason="owner namespace mismatch")
+    model = resolver.resolve(restored.model)
+    if (
+        not isinstance(model, Model)
+        or ModelReference.from_model(model, owner_key=restored.model.owner_key) != restored.model
+    ):
+        raise _INVALID.error(reason="owner Model declaration does not match reference")
+    plan = _bind_recipe_plan(restored, namespace=namespace)
+    design = from_json(restored.design_json)
     return plan, model, design, restored.destination

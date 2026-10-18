@@ -15,6 +15,7 @@ from terrine.runtime.recipe import (
     DestinationRef,
     ModelResolver,
     SavedPlanRecipe,
+    _bind_recipe_plan,
     resolve_plan,
 )
 from terrine.runtime.snapshot import SnapshotAuthority
@@ -125,7 +126,7 @@ def run_serialized_plan(
     document = json.loads(serialized)
     if isinstance(document, dict) and "plan_json" in document:
         recipe = SavedPlanRecipe.from_json(serialized)
-        embedded_plan = RefreshPlan.deserialize(recipe.plan_json)
+        embedded_plan = _bind_recipe_plan(recipe, namespace=namespace)
         recipe_destination = recipe.destination
         if destination is not None and destination != recipe_destination:
             raise ValueError("destination differs from saved recipe")
@@ -134,7 +135,12 @@ def run_serialized_plan(
             existing = find_run_by_request_key(
                 request_key, destination=destination, con=con, namespace=namespace
             )
-            if existing is not None:
+            if existing is not None and existing.state in {
+                "running",
+                "cancel_requested",
+                "succeeded",
+                "cancelled",
+            }:
                 return run_plan(
                     embedded_plan,
                     con=con,

@@ -143,8 +143,12 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
     class SnapshotExecutor:
         def __init__(self):
             self.observed = []
+            self.fail_first = True
 
         def run_snapshot_task(self, context, task, dependencies):
+            if self.fail_first:
+                self.fail_first = False
+                raise RuntimeError("retry saved recipe")
             relation = context.resolve(catalog.sources["events"].relation)
             self.observed.append(context.execute(relation).to_pylist()[0]["value"])
             if len(self.observed) == 1:
@@ -155,17 +159,34 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
             return "generation-1"
 
     executor = SnapshotExecutor()
+    with pytest.raises(RuntimeError, match="retry saved recipe"):
+        runtime.run_serialized_plan(
+            recipe.to_json(),
+            con=con.con,
+            namespace="runtime",
+            request_key="saved-run",
+            executor=cast(Any, executor),
+            resolver=Resolver(),
+            snapshot_authority=authority,
+        )
     result = runtime.run_serialized_plan(
         recipe.to_json(),
         con=con.con,
         namespace="runtime",
+        request_key="saved-run",
         executor=cast(Any, executor),
         resolver=Resolver(),
         snapshot_authority=authority,
     )
+    replay = runtime.run_serialized_plan(
+        recipe.to_json(),
+        con=con.con,
+        namespace="runtime",
+        request_key="saved-run",
+    )
+    assert replay == result
     assert result.state == "succeeded"
     assert executor.observed == [3] * len(plan.tasks)
-    con.disconnect()
 
 
 def test_published_generation_uses_receipt_generation_not_current_manifest():
