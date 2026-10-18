@@ -197,12 +197,18 @@ def execute_plan(
                 if completed is None:
                     raise ValueError("lease attempt was fenced before task completion")
             outputs[task.task_id] = output
-        if heartbeat_error:
-            raise heartbeat_error[0]
-        if cancelled is not None and cancelled():
+        cancel_requested = (
+            con.execute(
+                f"SELECT state FROM {schema}.runtime_runs WHERE run_id=?",
+                [run_id],
+            ).fetchone()[0]
+            == "cancel_requested"
+        )
+        if cancel_requested or (cancelled is not None and cancelled()):
             terminal = con.execute(
                 f"UPDATE {schema}.runtime_runs SET state='cancelled' "
-                "WHERE run_id=? AND state='running' AND attempt_fence=? RETURNING run_id",
+                "WHERE run_id=? AND state IN ('running','cancel_requested') "
+                "AND attempt_fence=? RETURNING run_id",
                 [run_id, lease.fence],
             ).fetchone()
             if terminal is None:

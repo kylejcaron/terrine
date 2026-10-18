@@ -1,0 +1,27 @@
+import duckdb
+import pytest
+
+from terrine.errors import TerrineError
+from terrine.runtime.status import get_run
+
+
+def test_missing_run_has_typed_unavailable_status():
+    con = duckdb.connect(":memory:")
+    with pytest.raises(TerrineError) as error:
+        get_run("missing", con=con, namespace="owner")
+    assert error.value.code == "terrine.runtime.run_unavailable"
+
+
+def test_status_reads_durable_run_and_preserves_unknown_metrics():
+    con = duckdb.connect(":memory:")
+    con.execute("CREATE SCHEMA owner")
+    con.execute(
+        "CREATE TABLE owner.runtime_runs (run_id VARCHAR, dataset VARCHAR, fingerprint VARCHAR, "
+        "state VARCHAR, published_generation VARCHAR, attempt_fence BIGINT)"
+    )
+    con.execute("INSERT INTO owner.runtime_runs VALUES ('r1','d','f','running',NULL,2)")
+    status = get_run("r1", con=con, namespace="owner")
+    assert status.run_id == "r1"
+    assert status.durable_state == "running"
+    assert status.cost is None
+    assert status.freshness is None
