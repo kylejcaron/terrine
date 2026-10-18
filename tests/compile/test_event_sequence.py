@@ -313,6 +313,65 @@ def test_sequence_compiler_projects_dimension_backed_property(sequence_model):
     rows = model.con.to_pyarrow(compiled.table).to_pylist()
     assert [row["region"] for row in rows if row["is_event"]] == ["west", "west", "west"]
 
+def test_funnel_dependency_preserves_entity_key_for_dimension_enrichment(sequence_model):
+    from terrine.semantic.models import Dimension, Property, TableRef
+    from terrine.spec import FunnelSpec
+
+    sequence_model.con.create_table(
+        "regions", ibis.memtable({"user_id": ["u"], "region": ["west"]})
+    )
+    source = sequence_model.catalog.sources["events"].model_copy(
+        update={"properties": ("user_id",), "dimensions": ("regions",)}
+    )
+    dimension = Dimension.model_validate(
+        {
+            "relation": TableRef(kind="table", name="regions"),
+            "source_entity": "user",
+            "entity_column": "user_id",
+            "properties": ("region",),
+        }
+    )
+    catalog = sequence_model.catalog.model_copy(
+        update={
+            "sources": {"events": source},
+            "dimensions": {"regions": dimension},
+            "properties": {
+                **sequence_model.catalog.properties,
+                "user_id": Property(
+                    source="events", column="kind", dtype="string", as_of="event_time"
+                ),
+                "region": Property(
+                    source="events",
+                    column="region",
+                    dtype="string",
+                    as_of="event_time",
+                    dimension="regions",
+                ),
+            },
+        }
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=sequence_model.con,
+        readiness=sequence_model.readiness,
+        event_ids=sequence_model.event_ids,
+    )
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence(
+            "signup",
+            Window("0s", "2h"),
+            max_events=5,
+            properties=("region",),
+            funnel=FunnelSpec("user_id", ("view", "purchase")),
+        ),
+    )
+    rows = model.con.to_pyarrow(design.build(model)._compiled.table).to_pylist()
+    header = next(row for row in rows if not row["is_event"])
+    children = [row for row in rows if row["is_event"]]
+    assert header["funnel_attempts"][0]["status"] == "complete"
+    assert [row["region"] for row in children] == ["west", "west", "west"]
 
 def test_sequence_compiler_publishes_naive_source_times_as_utc(sequence_model):
     from terrine.semantic.models import TableRef
