@@ -172,6 +172,37 @@ def test_repeated_first_entry_events_count_one_cohort_member():
         con.disconnect()
 
 
+def test_bucket_index_normalizes_timestamp_remainders_across_unix_epoch():
+    con, model = _trajectory_model()
+    try:
+        con.raw_sql(
+            "UPDATE events SET ts = TIMESTAMPTZ '1970-01-01 00:00:00.9+00' "
+            "WHERE user_id = 'u1' AND kind = 'purchase'"
+        )
+        frame = Design(
+            "user",
+            EventAnchor("purchase", which="first"),
+            shape=CohortSpec(
+                origin="purchase",
+                trajectory=Trajectory("net_revenue", "1s", periods=1, cumulative=False),
+            ),
+        ).build(model)
+        rows = (
+            frame.cohorts(
+                grouping=CohortGrouping(
+                    bucket="1s",
+                    bucket_origin=datetime(1969, 12, 31, 23, 59, 59, 100_000, tzinfo=UTC),
+                ),
+                value_column="period_value",
+            )
+            .to_pyarrow()
+            .to_pylist()
+        )
+        assert any(row["bucket_index"] == 1 for row in rows)
+    finally:
+        con.disconnect()
+
+
 def test_zero_partial_and_unavailable_cohort_denominators():
     con, model = _trajectory_model()
     try:
