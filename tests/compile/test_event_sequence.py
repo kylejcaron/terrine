@@ -118,22 +118,31 @@ def test_sequence_compiler_publishes_funnel_attempt_schema(sequence_model):
     children = [row for row in rows if row["is_event"]]
     assert all(row["funnel_attempts"] is None for row in children)
 @pytest.mark.parametrize(
-    ("property_name", "with_sessions"),
-    [("unit", False), ("previous_event_id", True)],
+    ("property_name", "with_sessions", "selected_property"),
+    [
+        ("unit", False, None),
+        ("previous_event_id", True, None),
+        ("unit", False, "__terrine_funnel_event_property"),
+    ],
 )
 def test_funnel_dependency_generated_name_does_not_overwrite_event_values(
-    sequence_model, property_name, with_sessions
+    sequence_model, property_name, with_sessions, selected_property
 ):
     from terrine.spec import FunnelSpec, SessionSpec
 
     definition = sequence_model.catalog.model_dump(mode="python")
-    definition["sources"]["events"]["properties"] = ("kind", property_name)
-    definition["properties"][property_name] = {
-        "source": "events",
-        "column": "kind",
-        "dtype": "string",
-        "as_of": "event_time",
-    }
+    properties = ["kind", property_name]
+    if selected_property is not None:
+        properties.append(selected_property)
+    definition["sources"]["events"]["properties"] = tuple(dict.fromkeys(properties))
+    for name in dict.fromkeys((property_name, selected_property)):
+        if name is not None:
+            definition["properties"][name] = {
+                "source": "events",
+                "column": "kind",
+                "dtype": "string",
+                "as_of": "event_time",
+            }
     model = Model.from_catalog(
         Catalog.model_validate(definition),
         con=sequence_model.con,
@@ -147,6 +156,7 @@ def test_funnel_dependency_generated_name_does_not_overwrite_event_values(
             "signup",
             Window("0s", "2h"),
             max_events=5,
+            properties=(selected_property,) if selected_property is not None else (),
             sessions=SessionSpec(3600) if with_sessions else None,
             funnel=FunnelSpec(property_name, ("view", "purchase")),
         ),
@@ -154,6 +164,9 @@ def test_funnel_dependency_generated_name_does_not_overwrite_event_values(
     rows = model.con.to_pyarrow(design.build(model)._compiled.table).to_pylist()
     header = next(row for row in rows if not row["is_event"])
     assert header["funnel_attempts"][0]["status"] == "complete"
+    if selected_property is not None:
+        child = next(row for row in rows if row["is_event"])
+        assert child[selected_property] == "view"
 
 
 def test_timestamp_identity_refuses_ties_without_configured_id(sequence_model):
