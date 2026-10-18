@@ -203,9 +203,13 @@ def event_sequence(
                 **(
                     {
                         "session_index": complete_children.session_index,
+                        "session_event_count": complete_children.session_event_count,
+                        "session_start_time": complete_children.session_start_time,
+                        "session_end_time": complete_children.session_end_time,
                         "previous_event_id": complete_children.previous_event_id,
                         "previous_event_time": complete_children.previous_event_time,
                         "transition_reason": complete_children.transition_reason,
+                        "transition": complete_children.transition,
                     }
                     if session_gap_seconds is not None
                     else {}
@@ -281,11 +285,21 @@ def event_sequence(
             **(
                 {
                     "session_index": ibis.literal(None, type="int64"),
+                    "session_event_count": ibis.literal(None, type="int64"),
+                    "session_start_time": ibis.literal(None, type=events.schema()[timestamp_column]),
+                    "session_end_time": ibis.literal(None, type=events.schema()[timestamp_column]),
                     "previous_event_id": ibis.literal(None, type=events.schema()[event_id_column]),
-                    "previous_event_time": ibis.literal(
-                        None, type=events.schema()[timestamp_column]
-                    ),
+                    "previous_event_time": ibis.literal(None, type=events.schema()[timestamp_column]),
                     "transition_reason": ibis.literal(None, type="string"),
+                    "transition": ibis.literal(
+                        None,
+                        type=ibis.struct(
+                            {
+                                "from_event_id": events[event_id_column],
+                                "to_event_id": events[event_id_column],
+                            }
+                        ).type(),
+                    ),
                 }
                 if session_gap_seconds is not None
                 else {}
@@ -320,9 +334,13 @@ def event_sequence(
             **(
                 {
                     "session_index": complete_children.session_index,
+                    "session_event_count": complete_children.session_event_count,
+                    "session_start_time": complete_children.session_start_time,
+                    "session_end_time": complete_children.session_end_time,
                     "previous_event_id": complete_children.previous_event_id,
                     "previous_event_time": complete_children.previous_event_time,
                     "transition_reason": complete_children.transition_reason,
+                    "transition": complete_children.transition,
                 }
                 if session_gap_seconds is not None
                 else {}
@@ -331,9 +349,17 @@ def event_sequence(
         table = header.union(children, distinct=False).order_by(
             ["unit", "anchor_id", "is_event", "sequence_position"]
         )
-        feature_names = tuple(properties)
         feature_names = tuple(properties) + (
-            ("session_index", "previous_event_id", "previous_event_time", "transition_reason")
+            (
+                "session_index",
+                "session_event_count",
+                "session_start_time",
+                "session_end_time",
+                "previous_event_id",
+                "previous_event_time",
+                "transition_reason",
+                "transition",
+            )
             if session_gap_seconds is not None
             else ()
         )

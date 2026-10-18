@@ -103,3 +103,38 @@ def test_session_start_temporary_name_preserves_same_named_input_property():
         .to_pylist()
     )
     assert result[0]["_new_session"] == "user-value"
+
+def test_sessions_expose_summary_and_transition_schemas():
+    con = ibis.duckdb.connect()
+    events = con.create_table(
+        "events",
+        ibis.memtable(
+            {
+                "unit": ["u", "u", "u"],
+                "anchor": [1, 1, 1],
+                "time": [
+                    datetime(2025, 1, 1, tzinfo=UTC),
+                    datetime(2025, 1, 1, 0, 0, 1, tzinfo=UTC),
+                    datetime(2025, 1, 1, 1, tzinfo=UTC),
+                ],
+                "id": ["a", "b", "c"],
+            }
+        ).to_pyarrow(),
+    )
+    result = sessionize(
+        events,
+        unit_column="unit",
+        anchor_id_column="anchor",
+        timestamp_column="time",
+        event_id_column="id",
+        gap_seconds=1,
+        max_events=3,
+    ).to_pyarrow().to_pylist()
+    assert [(row["id"], row["session_event_count"]) for row in result] == [
+        ("a", 2),
+        ("b", 2),
+        ("c", 1),
+    ]
+    assert result[0]["transition"] is None
+    assert result[1]["transition"] == {"from_event_id": "a", "to_event_id": "b"}
+    assert result[2]["transition"] == {"from_event_id": "b", "to_event_id": "c"}

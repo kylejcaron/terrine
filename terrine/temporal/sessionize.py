@@ -60,5 +60,45 @@ def sessionize(
         transition_reason=ibis.ifelse(
             starts.previous_event_id.isnull(), "missing_predecessor", None
         ),
+    ).view()
+    session_keys = [
+        annotated[unit_column],
+        annotated[anchor_id_column],
+        annotated.session_index,
+    ]
+    summaries = annotated.group_by(session_keys).aggregate(
+        session_event_count=annotated[event_id_column].count(),
+        session_start_time=annotated[timestamp_column].min(),
+        session_end_time=annotated[timestamp_column].max(),
     )
-    return annotated.drop(session_start_column)
+    left = annotated.view()
+    right = summaries.view()
+    enriched = left.left_join(
+        right,
+        [
+            left[unit_column] == right[unit_column],
+            left[anchor_id_column] == right[anchor_id_column],
+            left.session_index == right.session_index,
+        ],
+    )
+    transition = ibis.struct(
+        {
+            "from_event_id": left.previous_event_id,
+            "to_event_id": left[event_id_column],
+        }
+    )
+    enriched = enriched.mutate(
+        transition=ibis.ifelse(
+            left.previous_event_id.isnull(),
+            ibis.literal(None, type=transition.type()),
+            transition,
+        )
+    )
+    return enriched.drop(session_start_column).order_by(
+        [
+            enriched[unit_column],
+            enriched[anchor_id_column],
+            enriched[timestamp_column],
+            enriched[event_id_column],
+        ]
+    )
