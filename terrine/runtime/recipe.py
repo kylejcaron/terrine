@@ -234,6 +234,7 @@ def resolve_plan(
     plan = RefreshPlan.deserialize(restored.plan_json)
     if (
         plan.namespace != restored.namespace
+        or plan.definition_hash != restored.design_hash
         or plan.dataset != restored.destination.dataset
         or not plan.snapshot_id
     ):

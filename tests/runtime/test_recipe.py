@@ -147,6 +147,39 @@ def test_saved_plan_rejects_owner_model_declaration_mismatch():
         con.disconnect()
 
 
+def test_saved_plan_rejects_plan_and_design_hash_mismatch():
+    con = ibis.duckdb.connect()
+    try:
+        con.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        model = _model(con)
+        plan_design = Design("user", FixedDate("2025-01-15"))
+        saved_design = Design("user", FixedDate("2025-01-16"))
+        plan = plan_refresh(
+            namespace="runtime",
+            dataset="study",
+            definition_hash=plan_design.spec_hash,
+            snapshot_id="snapshot-1",
+            graph=dependency_graph(
+                design=plan_design,
+                sources=("events",),
+                definition_hash=plan_design.spec_hash,
+            ),
+        )
+        recipe = SavedPlanRecipe.create(
+            plan_json=plan.serialize(),
+            design=saved_design,
+            model=ModelReference.from_model(model, owner_key="owner-model"),
+            destination=DestinationRef("output.duckdb", "analytics", "study"),
+            namespace="runtime",
+            expected_base_manifest=None,
+        )
+        with pytest.raises(TerrineError) as error:
+            resolve_plan(recipe, resolver=_Resolver(model), namespace="runtime")
+        assert error.value.code == "terrine.runtime.plan_recipe_mismatch"
+    finally:
+        con.disconnect()
+
+
 def test_saved_recipe_rejects_null_checksum_with_coded_refusal():
     con = ibis.duckdb.connect()
     try:
