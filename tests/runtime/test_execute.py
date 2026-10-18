@@ -341,6 +341,218 @@ def test_delayed_lease_claim_cannot_overwrite_successful_retry(monkeypatch):
     assert (result.state, result.published_generation) == ("succeeded", "g2")
 
 
+def test_stale_claim_during_running_takeover_preserves_newer_run_fence(monkeypatch):
+    import threading
+    from datetime import UTC, datetime, timedelta
+
+    from terrine.runtime.leases import LeaseStore
+
+    con = duckdb.connect(":memory:")
+    plan = _plan()
+    old_lease_acquired = threading.Event()
+    resume_old_claim = threading.Event()
+    new_attempt_running = threading.Event()
+    finish_new_attempt = threading.Event()
+    original_acquire = LeaseStore.acquire
+    acquisition_count = 0
+    old_result = []
+    old_errors = []
+    new_result = []
+    new_errors = []
+
+    def delayed_acquire(store, resource, owner, *, ttl, now):
+        nonlocal acquisition_count
+        lease = original_acquire(store, resource, owner, ttl=ttl, now=now)
+        acquisition_count += 1
+        if acquisition_count == 1:
+            con.execute(
+                'UPDATE "owner".runtime_leases SET expires_at=? WHERE resource=?',
+                [(datetime.now(UTC) - timedelta(seconds=1)).isoformat(), resource],
+            )
+            old_lease_acquired.set()
+            assert resume_old_claim.wait(timeout=5)
+        return lease
+
+    monkeypatch.setattr(LeaseStore, "acquire", delayed_acquire)
+
+    def old_attempt():
+        def unexpected_task(task, dependencies) -> pa.Table:
+            raise AssertionError("stale claim must not execute")
+
+        try:
+            old_result.append(
+                execute_plan(
+                    plan,
+                    con=con,
+                    namespace="owner",
+                    run_id="running-takeover",
+                    run_task=unexpected_task,
+                    publish=lambda plan, outputs, lease: "old",
+                )
+            )
+        except Exception as error:
+            old_errors.append(error)
+
+    def new_attempt():
+        try:
+            new_result.append(
+                execute_plan(
+                    plan,
+                    con=con,
+                    namespace="owner",
+                    run_id="running-takeover",
+                    run_task=lambda task, dependencies: (
+                        new_attempt_running.set(),
+                        finish_new_attempt.wait(timeout=5),
+                        pa.table({"id": [2]}),
+                    )[-1],
+                    publish=lambda plan, outputs, lease: "new",
+                )
+            )
+        except Exception as error:
+            new_errors.append(error)
+
+    old_thread = threading.Thread(target=old_attempt)
+    old_thread.start()
+    assert old_lease_acquired.wait(timeout=5)
+    new_thread = threading.Thread(target=new_attempt)
+    new_thread.start()
+    assert new_attempt_running.wait(timeout=5)
+    resume_old_claim.set()
+    old_thread.join(timeout=5)
+    assert not old_thread.is_alive()
+    row = con.execute(
+        'SELECT state, attempt_fence FROM "owner".runtime_runs WHERE run_id=?',
+        ["running-takeover"],
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "running"
+    new_fence = row[1]
+    finish_new_attempt.set()
+    new_thread.join(timeout=5)
+    assert not new_thread.is_alive()
+    assert old_errors == []
+    assert old_result[0].state == "running"
+    assert new_errors == []
+    assert new_result[0].published_generation == "new"
+    final_row = con.execute(
+        'SELECT state, attempt_fence FROM "owner".runtime_runs WHERE run_id=?',
+        ["running-takeover"],
+    ).fetchone()
+    assert final_row is not None
+    final_state, final_fence = final_row
+    assert (final_state, final_fence) == ("succeeded", new_fence)
+
+
+def test_stale_task_claim_cannot_replace_takeover_task_fence():
+    import threading
+    from datetime import UTC, datetime, timedelta
+
+    con = duckdb.connect(":memory:")
+    plan = _plan()
+    old_claim_at_task_insert = threading.Event()
+    resume_old_task_insert = threading.Event()
+    new_attempt_running = threading.Event()
+    finish_new_attempt = threading.Event()
+    old_errors = []
+    new_result = []
+    new_errors = []
+    old_thread_id = []
+
+    class PausingConnection:
+        def execute(self, query, *args, **kwargs):
+            if threading.get_ident() == old_thread_id[0] and query.startswith(
+                'INSERT INTO "owner".runtime_tasks'
+            ):
+                old_claim_at_task_insert.set()
+                assert resume_old_task_insert.wait(timeout=5)
+            return con.execute(query, *args, **kwargs)
+
+        def cursor(self):
+            return con.cursor()
+
+    connection = PausingConnection()
+
+    def old_attempt():
+        old_thread_id.append(threading.get_ident())
+
+        def unexpected_task(task, dependencies) -> pa.Table:
+            raise AssertionError("old task claim must be rejected")
+
+        try:
+            execute_plan(
+                plan,
+                con=connection,
+                namespace="owner",
+                run_id="task-takeover",
+                run_task=unexpected_task,
+                publish=lambda plan, outputs, lease: "old",
+            )
+        except Exception as error:
+            old_errors.append(error)
+
+    def new_attempt():
+        try:
+            new_result.append(
+                execute_plan(
+                    plan,
+                    con=connection,
+                    namespace="owner",
+                    run_id="task-takeover",
+                    run_task=lambda task, dependencies: (
+                        new_attempt_running.set(),
+                        finish_new_attempt.wait(timeout=5),
+                        pa.table({"id": [2]}),
+                    )[-1],
+                    publish=lambda plan, outputs, lease: "new",
+                )
+            )
+        except Exception as error:
+            new_errors.append(error)
+
+    old_thread = threading.Thread(target=old_attempt)
+    old_thread.start()
+    assert old_claim_at_task_insert.wait(timeout=5)
+    lease_row = con.execute(
+        'SELECT fence, resource FROM "owner".runtime_leases WHERE owner=?',
+        ["task-takeover"],
+    ).fetchone()
+    assert lease_row is not None
+    con.execute(
+        'UPDATE "owner".runtime_leases SET expires_at=? WHERE resource=?',
+        [
+            (datetime.now(UTC) - timedelta(seconds=1)).isoformat(),
+            lease_row[1],
+        ],
+    )
+    new_thread = threading.Thread(target=new_attempt)
+    new_thread.start()
+    assert new_attempt_running.wait(timeout=5)
+    task_row = con.execute(
+        'SELECT task_fence FROM "owner".runtime_tasks WHERE run_id=?',
+        ["task-takeover"],
+    ).fetchone()
+    assert task_row is not None
+    new_task_fence = task_row[0]
+    resume_old_task_insert.set()
+    old_thread.join(timeout=5)
+    assert not old_thread.is_alive()
+    task_row_after_old_resume = con.execute(
+        'SELECT task_fence FROM "owner".runtime_tasks WHERE run_id=?',
+        ["task-takeover"],
+    ).fetchone()
+    assert task_row_after_old_resume is not None
+    task_fence_after_old_resume = task_row_after_old_resume[0]
+    assert task_fence_after_old_resume == new_task_fence
+    finish_new_attempt.set()
+    new_thread.join(timeout=5)
+    assert not new_thread.is_alive()
+    assert len(old_errors) == 1
+    assert "fenced" in str(old_errors[0])
+    assert new_errors == []
+    assert new_result[0].published_generation == "new"
+
+
 def test_intermediate_partition_sizes_do_not_consume_final_output_budget():
     from terrine.data import Budget
 
