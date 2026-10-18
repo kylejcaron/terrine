@@ -4,7 +4,7 @@ from math import fsum, isfinite
 from typing import Literal
 
 from terrine.errors import RefusalSpec
-from terrine.simulate.world import World
+from terrine.simulate.world import PanelWorld, World
 
 _INVALID_ORACLE = RefusalSpec(
     "terrine.simulate.invalid_oracle",
@@ -57,3 +57,27 @@ def ate(
         (weight / total) * difference
         for weight, difference in zip(scaled, differences, strict=True)
     )
+
+
+def panel_ate(
+    world: PanelWorld, *, target: Literal["population", "cohort"] = "population"
+) -> float:
+    """Return equal-unit or realized-cohort trial-weighted truth for a panel world."""
+    if target not in ("population", "cohort"):
+        raise ValueError("target must be 'population' or 'cohort'")
+    config = world.config
+    masses = (0.5, 0.5) if config.trial_masses == "equal" else (0.25, 0.75)
+    if target == "population":
+        effects = (0.0, 0.0) if config.effect_kind == "zero" else (1.5, 4.5)
+    else:
+        rows = world.oracle.to_pylist()
+        if not rows:
+            raise _INVALID_ORACLE.error(reason="empty panel oracle")
+        effects_by_trial = {}
+        for trial in ("early", "late"):
+            values = [row["y1"] - row["y0"] for row in rows if row["trial"] == trial]
+            if not values or any(not isfinite(value) for value in values):
+                raise _INVALID_ORACLE.error(reason="invalid panel potential outcomes")
+            effects_by_trial[trial] = fsum(values) / len(values)
+        effects = (effects_by_trial["early"], effects_by_trial["late"])
+    return fsum(mass * effect for mass, effect in zip(masses, effects, strict=True))

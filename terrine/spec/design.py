@@ -11,6 +11,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from terrine.frame import Frame
     from terrine.model import Model
+    from terrine.spec.panels import (
+        CalendarComparisonSpec,
+        EventPanelSpec,
+        MatchedT0Sample,
+        SequentialSpec,
+    )
 
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.expressions import (
@@ -73,8 +79,11 @@ class Design:
     eligibility: Mapping[str, Predicate]
     treatment: Treatment | None
     gap: int
-    shape: str | StatePanel | EventSequence
+    shape: (
+        str | StatePanel | EventSequence | SequentialSpec | EventPanelSpec | CalendarComparisonSpec
+    )
     anchor_range: AnchorRange | None
+    sample: MatchedT0Sample | None
 
     def __init__(
         self,
@@ -86,8 +95,14 @@ class Design:
         eligibility: Mapping[str, Predicate] | None = None,
         treatment: Treatment | None = None,
         gap: str | int = "0d",
-        shape: str | StatePanel | EventSequence = "cross_section",
+        shape: str
+        | StatePanel
+        | EventSequence
+        | SequentialSpec
+        | EventPanelSpec
+        | CalendarComparisonSpec = "cross_section",
         anchor_range: AnchorRange | None = None,
+        sample: MatchedT0Sample | None = None,
     ) -> None:
         if not isinstance(unit, str) or not unit.strip():
             raise ValueError("unit must be a non-empty string")
@@ -97,10 +112,36 @@ class Design:
             raise TypeError("treatment must be Treatment or None")
         if anchor_range is not None and not isinstance(anchor_range, AnchorRange):
             raise TypeError("anchor_range must be AnchorRange or None")
-        if not isinstance(shape, (str, StatePanel, EventSequence)) or (
-            isinstance(shape, str) and not shape.strip()
-        ):
-            raise ValueError("shape must be 'cross_section', StatePanel, or EventSequence")
+        from terrine.spec.panels import (
+            CalendarComparisonSpec,
+            EventPanelSpec,
+            MatchedT0Sample,
+            SequentialSpec,
+        )
+
+        if sample is not None and not isinstance(sample, MatchedT0Sample):
+            raise TypeError("sample must be MatchedT0Sample or None")
+
+        if not isinstance(
+            shape,
+            (
+                str,
+                StatePanel,
+                EventSequence,
+                SequentialSpec,
+                EventPanelSpec,
+                CalendarComparisonSpec,
+            ),
+        ) or (isinstance(shape, str) and not shape.strip()):
+            raise ValueError("shape must be a supported design shape")
+        if isinstance(shape, CalendarComparisonSpec) and treatment is not None:
+            from terrine.spec.panels import _CONFLICT
+
+            raise _CONFLICT.error()
+        if isinstance(shape, SequentialSpec) and treatment is not None:
+            from terrine.spec.panels import _CONFLICT
+
+            raise _CONFLICT.error()
         gap_seconds = seconds(gap)
         if gap_seconds < 0:
             raise ValueError("gap must be non-negative")
@@ -123,6 +164,7 @@ class Design:
         object.__setattr__(self, "gap", gap_seconds)
         object.__setattr__(self, "shape", shape)
         object.__setattr__(self, "anchor_range", anchor_range)
+        object.__setattr__(self, "sample", sample)
 
     def validate(self, model: Model) -> None:
         """Validate this design against bound model metadata without executing queries."""

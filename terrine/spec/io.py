@@ -14,6 +14,15 @@ from terrine._time import utc_instant
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import And, AttributeAsOf, Eq, EventTime, Gt, IsNull, MetricAgg
+from terrine.spec.panels import (
+    CalendarComparisonSpec,
+    EventPanelSpec,
+    Initiation,
+    MatchedT0Sample,
+    PersistentAdoption,
+    SequentialSpec,
+    TrialWeight,
+)
 from terrine.spec.sequence import EventSequence, FunnelSpec, SessionSpec
 from terrine.spec.state_panel import (
     BinnedMetricState,
@@ -69,6 +78,7 @@ def _encode(value: Any) -> Any:
             "gap": value.gap,
             "shape": _encode(value.shape),
             "anchor_range": None if value.anchor_range is None else _encode(value.anchor_range),
+            "sample": None if value.sample is None else _encode(value.sample),
         }
     if isinstance(value, Window):
         return {"type": "Window", "start": value.start, "end": value.end}
@@ -136,6 +146,61 @@ def _encode(value: Any) -> Any:
             "baseline_features": {
                 key: _encode(item) for key, item in value.baseline_features.items()
             },
+        }
+    if isinstance(value, Initiation):
+        return {
+            "type": "Initiation",
+            "source": value.source,
+            "property": value.property,
+            "history_start": value.history_start.isoformat(),
+            "knowledge": value.knowledge,
+        }
+    if isinstance(value, PersistentAdoption):
+        return {
+            "type": "PersistentAdoption",
+            "source": value.source,
+            "property": value.property,
+            "adopted_value": value.adopted_value,
+            "history_start": value.history_start.isoformat(),
+            "persistence": value.persistence,
+            "knowledge": value.knowledge,
+        }
+    if isinstance(value, MatchedT0Sample):
+        return {
+            "type": "MatchedT0Sample",
+            "strata": list(value.strata),
+            "controls_per_treated": value.controls_per_treated,
+            "seed": value.seed,
+        }
+    if isinstance(value, TrialWeight):
+        return {
+            "type": "TrialWeight",
+            "kind": value.kind,
+            "values": None if value.values is None else dict(value.values),
+        }
+    if isinstance(value, SequentialSpec):
+        return {
+            "type": "SequentialSpec",
+            "treatment": _encode(value.treatment),
+            "trial_weight": None if value.trial_weight is None else _encode(value.trial_weight),
+            "anticipation_seconds": value.anticipation_seconds,
+            "reference_period_seconds": value.reference_period_seconds,
+        }
+    if isinstance(value, EventPanelSpec):
+        return {
+            "type": "EventPanelSpec",
+            "periods": list(value.periods),
+            "period_seconds": value.period_seconds,
+            "reference_period": value.reference_period,
+        }
+    if isinstance(value, CalendarComparisonSpec):
+        return {
+            "type": "CalendarComparisonSpec",
+            "cohort": _encode(value.cohort),
+            "control": value.control,
+            "reference_period": value.reference_period,
+            "comparison_periods": list(value.comparison_periods),
+            "anticipation_periods": list(value.anticipation_periods),
         }
     if isinstance(value, MetricAgg):
         node = {"type": "MetricAgg", "metric": value.metric, "window": _encode(value.window)}
@@ -322,6 +387,83 @@ def _node(value: Any) -> Any:
         return StatePanel(
             _node(item["state"]), max_periods=item["max_periods"], baseline_features=baseline
         )
+    if tag == "Initiation":
+        item = _object(value, {"type", "source", "property", "history_start", "knowledge"})
+        return Initiation(
+            item["source"],
+            item["property"],
+            datetime.fromisoformat(item["history_start"]),
+            item["knowledge"],
+        )
+    if tag == "PersistentAdoption":
+        item = _object(
+            value,
+            {
+                "type",
+                "source",
+                "property",
+                "adopted_value",
+                "history_start",
+                "persistence",
+                "knowledge",
+            },
+        )
+        return PersistentAdoption(
+            item["source"],
+            item["property"],
+            item["adopted_value"],
+            datetime.fromisoformat(item["history_start"]),
+            item["persistence"],
+            item["knowledge"],
+        )
+    if tag == "MatchedT0Sample":
+        item = _object(value, {"type", "strata", "controls_per_treated", "seed"})
+        return MatchedT0Sample(tuple(item["strata"]), item["controls_per_treated"], item["seed"])
+    if tag == "TrialWeight":
+        item = _object(value, {"type", "kind", "values"})
+        return TrialWeight(item["kind"], item["values"])
+    if tag == "SequentialSpec":
+        item = _object(
+            value,
+            {
+                "type",
+                "treatment",
+                "trial_weight",
+                "anticipation_seconds",
+                "reference_period_seconds",
+            },
+        )
+        weight = None if item["trial_weight"] is None else _node(item["trial_weight"])
+        return SequentialSpec(
+            _node(item["treatment"]),
+            weight,
+            item["anticipation_seconds"],
+            item["reference_period_seconds"],
+        )
+    if tag == "EventPanelSpec":
+        item = _object(value, {"type", "periods", "period_seconds", "reference_period"})
+        return EventPanelSpec(
+            tuple(item["periods"]), item["period_seconds"], item["reference_period"]
+        )
+    if tag == "CalendarComparisonSpec":
+        item = _object(
+            value,
+            {
+                "type",
+                "cohort",
+                "control",
+                "reference_period",
+                "comparison_periods",
+                "anticipation_periods",
+            },
+        )
+        return CalendarComparisonSpec(
+            _node(item["cohort"]),
+            item["control"],
+            item["reference_period"],
+            tuple(item["comparison_periods"]),
+            tuple(item["anticipation_periods"]),
+        )
     if tag == "Window":
         item = _object(value, {"type", "start", "end"})
         return Window(item["start"], item["end"])
@@ -406,6 +548,7 @@ def _design(value: Any) -> Design:
             "gap",
             "shape",
             "anchor_range",
+            "sample",
         },
         {"unit", "anchor"},
     )
@@ -417,6 +560,7 @@ def _design(value: Any) -> Design:
         "gap": 0,
         "shape": "cross_section",
         "anchor_range": None,
+        "sample": None,
         **item,
     }
 
@@ -431,6 +575,7 @@ def _design(value: Any) -> Design:
     anchor = _node(item["anchor"])
     treatment = None if item["treatment"] is None else _node(item["treatment"])
     anchor_range = None if item["anchor_range"] is None else _node(item["anchor_range"])
+    sample = None if item["sample"] is None else _node(item["sample"])
     if not isinstance(anchor, (FixedDate, EventAnchor, Schedule)):
         raise ValueError("design anchor has invalid node type")
     if treatment is not None and not isinstance(treatment, Treatment):
@@ -450,6 +595,7 @@ def _design(value: Any) -> Design:
         gap=item["gap"],
         shape=item["shape"] if isinstance(item["shape"], str) else _node(item["shape"]),
         anchor_range=anchor_range,
+        sample=sample,
     )
 
 

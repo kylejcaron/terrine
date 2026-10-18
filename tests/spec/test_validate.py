@@ -126,6 +126,212 @@ def test_binned_state_metric_uses_ordinary_metric_admission():
         assert bound.con.calls == []
 
 
+@pytest.mark.parametrize(
+    "shape_name",
+    ["sequential_treatment", "calendar_cohort"],
+)
+def test_panel_sources_refuse_missing_analysis_unit_mapping(shape_name):
+    from terrine.spec.panels import CalendarComparisonSpec, Initiation, SequentialSpec
+    from terrine.spec.validate import validate_design
+
+    source_model = model(entities={"workspace": "workspace_id"})
+    selector = Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC))
+    shape = (
+        SequentialSpec(selector)
+        if shape_name == "sequential_treatment"
+        else CalendarComparisonSpec(selector, "never_treated", -1, (0,))
+    )
+    design = Design("user", Schedule("1d", "2025-01-01", "2025-01-04"), shape=shape)
+
+    with pytest.raises(TerrineError) as error:
+        validate_design(design, source_model)
+
+    assert error.value.code == "terrine.design.incompatible_unit"
+    assert error.value.context == {"unit": "user", "name": "session"}
+
+
+def test_calendar_comparison_requires_coverage_through_comparison_horizon():
+    from terrine.spec.panels import CalendarComparisonSpec, Initiation
+    from terrine.spec.validate import validate_design
+
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-01", "2025-01-04"),
+        shape=CalendarComparisonSpec(
+            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC), "recorded_at"),
+            "never_treated",
+            -1,
+            (0, 2),
+        ),
+    )
+    with pytest.raises(TerrineError) as error:
+        validate_design(design, model())
+    assert error.value.code == "terrine.design.incomplete_treatment_history"
+    assert error.value.context["boundary"] == "2025-01-05T00:00:00+00:00"
+
+
+def test_calendar_comparison_rejects_exclusive_coverage_equal_to_horizon():
+    from terrine.spec.panels import CalendarComparisonSpec, Initiation
+    from terrine.spec.validate import validate_design
+
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-01", "2025-01-04"),
+        shape=CalendarComparisonSpec(
+            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC), "recorded_at"),
+            "not_yet_treated",
+            -1,
+            (0, 2),
+        ),
+    )
+    bound = model()
+    bound.readiness = Readiness(
+        {
+            "events": BoundCoverage(
+                datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 5, tzinfo=UTC)
+            )
+        }
+    )
+    with pytest.raises(TerrineError) as error:
+        validate_design(design, bound)
+    assert error.value.context["boundary"] == "2025-01-05T00:00:00+00:00"
+
+
+def test_never_treated_negative_comparisons_still_require_full_schedule_history():
+    from terrine.spec.panels import CalendarComparisonSpec, Initiation
+    from terrine.spec.validate import validate_design
+
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-01", "2025-01-04"),
+        outcomes={"y": agg("sessions", window=("0d", "1d"))},
+        shape=CalendarComparisonSpec(
+            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            "never_treated",
+            -1,
+            (-2,),
+        ),
+    )
+    bound = model()
+    bound.readiness = Readiness(
+        {
+            "events": BoundCoverage(
+                datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 3, tzinfo=UTC)
+            )
+        }
+    )
+    with pytest.raises(TerrineError) as error:
+        validate_design(design, bound)
+    assert error.value.code == "terrine.design.incomplete_treatment_history"
+
+
+def test_never_treated_coverage_rejects_equality_at_anticipation_cutoff():
+    from terrine.spec.panels import CalendarComparisonSpec, Initiation
+    from terrine.spec.validate import validate_design
+
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-01", "2025-01-10"),
+        shape=CalendarComparisonSpec(
+            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            "never_treated",
+            -2,
+            (0,),
+            (-1,),
+        ),
+    )
+    bound = model()
+    bound.readiness = Readiness(
+        {
+            "events": BoundCoverage(
+                datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 10, tzinfo=UTC)
+            )
+        }
+    )
+    with pytest.raises(TerrineError) as error:
+        validate_design(design, bound)
+    assert error.value.code == "terrine.design.incomplete_treatment_history"
+
+
+def test_never_treated_schedule_boundary_coverage_is_admissible():
+    from terrine.spec.panels import CalendarComparisonSpec, Initiation
+    from terrine.spec.validate import validate_design
+
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-01", "2025-01-10"),
+        shape=CalendarComparisonSpec(
+            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            "never_treated",
+            -1,
+            (0,),
+        ),
+    )
+    bound = model()
+    bound.readiness = Readiness(
+        {
+            "events": BoundCoverage(
+                datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 10, tzinfo=UTC)
+            )
+        }
+    )
+    assert validate_design(design, bound).required_sources == ("events",)
+
+
+def test_never_treated_schedule_history_refusal_reports_schedule_boundary():
+    from terrine.spec.panels import CalendarComparisonSpec, Initiation
+    from terrine.spec.validate import validate_design
+
+    design = Design(
+        "user",
+        Schedule("7d", "2025-01-01", "2025-01-10"),
+        shape=CalendarComparisonSpec(
+            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            "never_treated",
+            -1,
+            (0,),
+        ),
+    )
+    bound = model()
+    bound.readiness = Readiness(
+        {
+            "events": BoundCoverage(
+                datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 9, tzinfo=UTC)
+            )
+        }
+    )
+    with pytest.raises(TerrineError) as error:
+        validate_design(design, bound)
+    assert error.value.context["boundary"] == "2025-01-10T00:00:00+00:00"
+
+
+def test_not_yet_treated_refusal_reports_comparison_horizon_only():
+    from terrine.spec.panels import CalendarComparisonSpec, Initiation
+    from terrine.spec.validate import validate_design
+
+    design = Design(
+        "user",
+        Schedule("7d", "2025-01-01", "2025-01-10"),
+        shape=CalendarComparisonSpec(
+            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            "not_yet_treated",
+            -1,
+            (0,),
+        ),
+    )
+    bound = model()
+    bound.readiness = Readiness(
+        {
+            "events": BoundCoverage(
+                datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 7, tzinfo=UTC)
+            )
+        }
+    )
+    with pytest.raises(TerrineError) as error:
+        validate_design(design, bound)
+    assert error.value.context["boundary"] == "2025-01-08T00:00:00+00:00"
+
+
 def test_window_extending_beyond_declared_coverage_is_runtime_incomplete_not_refused():
     design = Design(
         "user", EventAnchor("session"), features={"x": agg("sessions", window=("-7d", "0d"))}

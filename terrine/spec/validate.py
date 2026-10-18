@@ -50,6 +50,10 @@ _UNIT = RefusalSpec(
 )
 _WINDOW = RefusalSpec("terrine.design.invalid_window", "Window for {name!r} must have start < end.")
 _GAP = RefusalSpec("terrine.design.gap_violation", "{role} window or cutoff violates gap {gap}.")
+_INCOMPLETE_TREATMENT_HISTORY = RefusalSpec(
+    "terrine.design.incomplete_treatment_history",
+    "Treatment history for source {source!r} does not cover {boundary!r}.",
+)
 _METRIC_WINDOW = RefusalSpec(
     "terrine.design.metric_window_conflict",
     "Metric {metric!r} declares a conflicting window_days value.",
@@ -400,12 +404,122 @@ def _validate_sequence_shape(design: Design, model: Model, required: set[str]) -
 def _validate_shape(
     design: Design, model: Model, required: set[str], obligations: list[str]
 ) -> None:
+    from terrine.spec.panels import (
+        CalendarComparisonSpec,
+        EventPanelSpec,
+        PersistentAdoption,
+        SequentialSpec,
+    )
     from terrine.spec.state_panel import StatePanel, validate_state_panel
+
+    if design.sample is not None and not isinstance(design.shape, SequentialSpec):
+        raise _INVALID.error(reason="matched-t0 sampling requires a Sequential shape")
 
     if isinstance(design.shape, StatePanel):
         validate_state_panel(design, model, required, obligations)
     elif isinstance(design.shape, EventSequence):
         _validate_sequence_shape(design, model, required)
+    elif isinstance(design.shape, SequentialSpec):
+        if not isinstance(design.anchor, Schedule):
+            raise _INVALID.error(reason="Sequential requires a Schedule anchor")
+        source = model.sources.get(design.shape.treatment.source)
+        if source is None:
+            raise _MISSING.error(kind="treatment source", name=design.shape.treatment.source)
+        if design.unit not in source.entities:
+            raise _UNIT.error(unit=design.unit, name=design.shape.treatment.property)
+        declared = set(source.properties) | set(source.facts)
+        if design.shape.treatment.property not in declared:
+            raise _MISSING.error(kind="treatment property", name=design.shape.treatment.property)
+        if (
+            isinstance(design.shape.treatment, PersistentAdoption)
+            and design.shape.treatment.property in source.facts
+        ):
+            raise _INVALID.error(
+                reason="PersistentAdoption requires a value-bearing property selector"
+            )
+        coverage = model.readiness.for_fact(source.name)
+        span_seconds = (design.anchor.end - design.anchor.start).days * 86_400
+        last_offset = ((span_seconds - 1) // design.anchor.every) * design.anchor.every
+        outcome_horizons = [
+            expression.window.end
+            for expression in design.outcomes.values()
+            if isinstance(expression, MetricAgg)
+        ]
+        anticipation = design.shape.anticipation_seconds
+        if outcome_horizons:
+            followup_end = model.day_boundary(design.anchor.start) + timedelta(
+                seconds=last_offset + max(outcome_horizons) + anticipation
+            )
+        else:
+            followup_end = model.day_boundary(design.anchor.end) + timedelta(seconds=anticipation)
+        if (
+            coverage.start > design.shape.treatment.history_start
+            or coverage.end_exclusive < followup_end
+        ):
+            raise _INCOMPLETE_TREATMENT_HISTORY.error(
+                source=source.name,
+                boundary=design.shape.treatment.history_start.isoformat(),
+            )
+        _required(model, source.name, required)
+        if design.sample is not None:
+            missing = sorted(set(design.sample.strata) - set(design.features))
+            if missing:
+                raise _MISSING.error(kind="matched-t0 stratum", name=missing[0])
+    elif isinstance(design.shape, EventPanelSpec):
+        if not isinstance(design.anchor, EventAnchor):
+            raise _INVALID.error(reason="EventPanel requires an EventAnchor")
+    elif isinstance(design.shape, CalendarComparisonSpec):
+        if not isinstance(design.anchor, Schedule):
+            raise _INVALID.error(reason="CalendarComparison requires a Schedule anchor")
+        if design.sample is not None:
+            raise _INVALID.error(reason="calendar comparisons refuse sampled populations")
+        source = model.sources.get(design.shape.cohort.source)
+        if source is None:
+            raise _MISSING.error(kind="cohort source", name=design.shape.cohort.source)
+        if design.unit not in source.entities:
+            raise _UNIT.error(unit=design.unit, name=design.shape.cohort.property)
+        declared = set(source.properties) | set(source.facts)
+        if design.shape.cohort.property not in declared:
+            raise _MISSING.error(kind="cohort property", name=design.shape.cohort.property)
+        coverage = model.readiness.for_fact(source.name)
+        if coverage.start > design.shape.cohort.history_start:
+            raise _INCOMPLETE_TREATMENT_HISTORY.error(
+                source=source.name,
+                boundary=design.shape.cohort.history_start.isoformat(),
+            )
+        schedule = design.anchor
+        span_seconds = (schedule.end - schedule.start).days * 86_400
+        last_offset = ((span_seconds - 1) // schedule.every) * schedule.every
+        anticipation = max((abs(period) for period in design.shape.anticipation_periods), default=0)
+        outcome_horizons = [
+            expression.window.end
+            for expression in design.outcomes.values()
+            if isinstance(expression, MetricAgg)
+        ]
+        outcome_window_end = max(outcome_horizons, default=0)
+        horizon = model.day_boundary(schedule.start) + timedelta(
+            seconds=last_offset
+            + (max(0, max(design.shape.comparison_periods)) + anticipation) * schedule.every
+            + outcome_window_end
+        )
+        comparison_incomplete = (
+            coverage.end_exclusive < horizon
+            if outcome_window_end > 0
+            else coverage.end_exclusive <= horizon
+        )
+        schedule_incomplete = (
+            design.shape.control == "never_treated"
+            and coverage.end_exclusive < model.day_boundary(schedule.end)
+        )
+        if comparison_incomplete or schedule_incomplete:
+            required_boundary = (
+                max(horizon, model.day_boundary(schedule.end)) if schedule_incomplete else horizon
+            )
+            raise _INCOMPLETE_TREATMENT_HISTORY.error(
+                source=source.name,
+                boundary=required_boundary.isoformat(),
+            )
+        _required(model, source.name, required)
     elif design.shape != "cross_section":
         raise _INVALID.error(reason="unsupported design shape")
 

@@ -25,4 +25,21 @@ def compile_design(design: Design, model: Model) -> CompiledStudy:
         from terrine.compile.shapes.state_panel import compile_state_panel
 
         return compile_state_panel(design, model)
+    from terrine.spec.panels import EventPanelSpec, SequentialSpec
+
+    if isinstance(design.shape, SequentialSpec):
+        from terrine.compile.shapes.sequential import compile_sequential
+
+        return compile_sequential(design, model)
+
+    if isinstance(design.shape, EventPanelSpec):
+        from terrine.compile.shapes.event_panel import compile_event_panel
+
+        return compile_event_panel(design, model)
+    from terrine.spec.panels import CalendarComparisonSpec
+
+    if isinstance(design.shape, CalendarComparisonSpec):
+        from terrine.compile.shapes.calendar_comparison import compile_calendar_comparison
+
+        return compile_calendar_comparison(design, model)
     return compile_columns(design, model)

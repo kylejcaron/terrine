@@ -50,3 +50,25 @@
 - Add native end-to-end baseline recovery, population-target calibration, failure accounting, and uncertainty-validation guidance.
 - Add bounded state panels with canonical binned metrics, exact point-observation transitions, absorbing terminal suffix handling, baseline/per-origin timing, ordered metadata, and positive output-budget enforcement.
 - Add runtime event-time selectors and conservative re-anchoring, bounded event-sequence provenance with Arrow round-trip, and a local DuckDB sequence example.
+- Add canonical schedule-based sequential designs, distinct initiation/adoption history declarations, and event-relative panels with typed parent-period identity and Arrow provenance.
+- Add exact-t0 sequential treatment classification with complete declared history checks and refusal of later initiation under sustained no-initiation strategies; add hashed matched-t0 policies, deterministic contemporaneous risk-set sampling, exact inclusion-probability roles, and sampling provenance round trips.
+- Apply sequential anticipation to control initiation-risk and history horizons, retaining the declared interval in typed Arrow panel provenance.
+- Keep sequential source coverage and no-outcome fallback horizons aligned with anticipation buffers.
+- Correct matched-t0 control-only ranking, zero-treated strata, name-collision refusals, UTC treatment comparisons, fact-row initiation, roster observation bounds, eligibility-scoped follow-up checks, and treatment-history coverage through outcome follow-up; align the integration fixture and public example with declared history.
+- Add trial-weighted panel AIPW with trial-specific nuisance fits, unit-grouped cross-fitting, sampled-population refusal, and unit-cluster cross-fit inference.
+- Add canonical serialized calendar-comparison specifications with hashed control modes and reference/anticipation conflict refusals.
+- Compile roster-backed calendar comparisons with never-treated and admissible not-yet-treated controls, reference/anticipation eligibility, and portable Frame provenance.
+- Keep stacked comparison output restricted to compiled eligibility and label never-adopter controls explicitly as untreated.
+- Distinguish late-known treatment initiation from never-treated controls, require per-unit treatment-history bounds, and refuse requested comparison periods absent from the schedule.
+- Add weighted stacked cohort-time effects with target/cohort aggregation weights, joint unit-cluster covariance, sampled-population refusal, and an explicit naive staggered-TWFE warning.
+- Refuse sampled stacked analysis populations when either typed sampling metadata or the legacy `weight_kind="sampled_control"` marker is present.
+- Validate actual initiation timing and exclusive outcome-window coverage; refuse incomplete treated/admissible-control pairs, preserve numeric precision and finite-value refusals, safely scale large weights and means, and use tail-stable confidence quantiles.
+- Add evidence-only joint pretrend, placebo, and negative-control diagnostics with explicit low-power/unavailable status and non-identification caveats.
+- Allow explicitly declared pre-treatment comparison periods before the anticipation window, making compiled stacked results usable by the joint pretrend diagnostic.
+- Refuse negative stacked comparison windows whose outcome endpoints reach actual treated initiation/anticipation; require full-schedule treatment history for never-treated controls.
+- Preserve the inclusive-history refusal at an exact no-outcome anticipation cutoff, alongside full schedule-end coverage for never-treated panels.
+- Extend the independent simulator with repeated-trial potential outcomes, trial-specific assignment and baseline profiles, overlap regimes, heterogeneous cohort-time effects, and population/cohort truth; use it directly in the calibration harness.
+- Expand independent pandas panel-row references for canonical sequential/calendar rows, event-relative windows and cutoffs, and exact matched-t0 inclusion probabilities; add a temporary-output, smoke-only calibration-harness mode.
+- Predeclare eight stochastic heterogeneous stacked CATT recovery cells with per-cohort recovery, inference gates, per-cell JSON, and a deterministic fast smoke.
+- Gate CATT calibration on both cohort-specific effects and their normalized aggregate uncertainty.
+- Normalize calendar cohort timestamps to aware UTC instants, use exact timestamp ordering for sequential adoption history, validate treatment/cohort source units, and stabilize stacked weighted means and outcome-only risk horizons.

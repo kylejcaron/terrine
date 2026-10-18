@@ -59,6 +59,14 @@ def assign_folds(units: Sequence[int | str], *, folds: int, seed: int) -> np.nda
     return ids
 
 
+def assign_unit_folds(units: Sequence[int | str], *, folds: int, seed: int) -> np.ndarray:
+    """Assign one deterministic fold per distinct unit and broadcast to rows."""
+    distinct = sorted(set(units), key=encode_unit)
+    ids = assign_folds(distinct, folds=folds, seed=seed)
+    by_unit = dict(zip(distinct, ids, strict=True))
+    return np.fromiter((by_unit[unit] for unit in units), dtype=np.int64, count=len(units))
+
+
 def fold_digest(units: Sequence[int | str], ids: np.ndarray) -> str:
     digest = sha256(b"terrine-fold-assignment-v1")
     for unit, fold in sorted(

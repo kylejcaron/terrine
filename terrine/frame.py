@@ -16,7 +16,17 @@ from terrine.compile.cost import (
     _eligibility_summary,
     _scan_policy,
 )
-from terrine.data import Budget, MaterializedFrame, Provenance, StatePanelMeta
+from terrine.data import (
+    Budget,
+    CalendarComparisonMeta,
+    MaterializedFrame,
+    PanelMeta,
+    Provenance,
+    SamplingMeta,
+    StatePanelMeta,
+    TreatmentHistoryMeta,
+    TrialWeightMeta,
+)
 from terrine.errors import RefusalSpec
 from terrine.spec.anchors import FixedDate
 from terrine.spec.sequence import EventSequence
@@ -98,6 +108,65 @@ def _state_panel_metadata(design: Design, model: Model) -> StatePanelMeta | None
         scheduled_to_column="scheduled_to",
         gap_column="gap",
         terminal_column="terminal",
+    )
+
+
+def _panel_metadata(design: Design) -> PanelMeta | None:
+    from terrine.spec.anchors import Schedule
+    from terrine.spec.panels import EventPanelSpec, Initiation, PersistentAdoption, SequentialSpec
+
+    if isinstance(design.shape, SequentialSpec):
+        treatment = design.shape.treatment
+        history = TreatmentHistoryMeta(
+            "initiation" if isinstance(treatment, Initiation) else "persistent_adoption",
+            treatment.source,
+            treatment.property,
+            treatment.history_start,
+            treatment.knowledge,
+            treatment.adopted_value if isinstance(treatment, PersistentAdoption) else None,
+            treatment.persistence if isinstance(treatment, PersistentAdoption) else None,
+        )
+        assert isinstance(design.anchor, Schedule)
+        weight = design.shape.trial_weight
+        trial_weight = None if weight is None else TrialWeightMeta(weight.kind, weight.values)
+        span = (design.anchor.end - design.anchor.start).days * 86_400
+        count = (span - 1) // design.anchor.every + 1
+        trials = tuple(f"schedule:{index}" for index in range(count))
+        return PanelMeta(
+            "sequential",
+            history,
+            trial_weight,
+            trials=trials,
+            anticipation_seconds=design.shape.anticipation_seconds,
+        )
+    if isinstance(design.shape, EventPanelSpec):
+        return PanelMeta(
+            "event_panel",
+            periods=design.shape.periods,
+            period_seconds=design.shape.period_seconds,
+            reference_period=design.shape.reference_period,
+        )
+    return None
+
+
+def _calendar_comparison_metadata(design: Design) -> CalendarComparisonMeta | None:
+    from terrine.spec.anchors import Schedule
+    from terrine.spec.panels import CalendarComparisonSpec
+
+    if not isinstance(design.shape, CalendarComparisonSpec):
+        return None
+    assert isinstance(design.anchor, Schedule)
+    cohort = design.shape.cohort
+    return CalendarComparisonMeta(
+        design.shape.control,
+        cohort.source,
+        cohort.property,
+        cohort.history_start,
+        cohort.knowledge,
+        design.shape.reference_period,
+        design.shape.comparison_periods,
+        design.shape.anticipation_periods,
+        design.anchor.every,
     )
 
 
@@ -219,6 +288,8 @@ class Frame:
                 and treatment.known_at_t0
                 and pa.types.is_boolean(table.schema.field(treatment_column).type)
             )
+            calendar_comparison = _calendar_comparison_metadata(self._design)
+            panel = _panel_metadata(self._design)
             provenance = Provenance(
                 feature_cutoffs=compiled.feature_cutoffs,
                 eligibility_cutoffs=compiled.eligibility_cutoffs,
@@ -226,11 +297,19 @@ class Frame:
                 model_hash=model.model_hash,
                 source_generations=context.snapshot.source_generations,
                 execution_snapshot=context.snapshot,
-                shape="state_panel"
-                if isinstance(self._design.shape, StatePanel)
-                else "event_sequence"
-                if isinstance(self._design.shape, EventSequence)
-                else self._design.shape,
+                shape=(
+                    "state_panel"
+                    if isinstance(self._design.shape, StatePanel)
+                    else "event_sequence"
+                    if isinstance(self._design.shape, EventSequence)
+                    else "calendar_comparison"
+                    if calendar_comparison is not None
+                    else panel.shape
+                    if panel is not None
+                    else self._design.shape
+                    if isinstance(self._design.shape, str)
+                    else "cross_section"
+                ),
                 treatment_design="baseline_binary" if baseline_binary else None,
                 eligibility_summary=summary,
                 treatment_knowledge="retrospective_effective_time"
@@ -240,6 +319,17 @@ class Frame:
                 state_panel=_state_panel_metadata(self._design, model),
                 expression_timings=compiled.expression_timings,
                 sequence_meta=compiled.sequence_meta,
+                panel=panel,
+                sampling=(
+                    SamplingMeta(
+                        self._design.sample.strata,
+                        self._design.sample.controls_per_treated,
+                        self._design.sample.seed,
+                    )
+                    if self._design.sample is not None
+                    else None
+                ),
+                calendar_comparison=calendar_comparison,
             )
             return MaterializedFrame(table, compiled.roles, compiled.columns, provenance)
 
