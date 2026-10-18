@@ -220,6 +220,24 @@ def test_nanosecond_events_support_coverage_outside_nanosecond_range():
         con.disconnect()
 
 
+def test_nanosecond_source_accepts_administrative_cutoff_beyond_ns_range():
+    con, model = _model(nanosecond_outcomes=True)
+    try:
+        result = (
+            Design(
+                "user",
+                EventAnchor("signup", which="first"),
+                shape=TimeToEvent("churn"),
+                administrative_cutoff=datetime(2500, 1, 1, tzinfo=UTC),
+            )
+            .build(model)
+            .materialize()
+        )
+        assert result.table.num_rows > 0
+    finally:
+        con.disconnect()
+
+
 def test_internal_timestamp_aliases_are_reserved_feature_names():
     con, model = _model()
     try:

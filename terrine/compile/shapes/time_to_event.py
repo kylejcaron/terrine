@@ -151,7 +151,10 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         supported_start = ibis.greatest(supported_start, candidates._observed_from_naive)
     supported_end = ibis.least(end, candidates._observed_until_naive)
     if design.administrative_cutoff is not None:
-        cutoff = _utc_naive("UTC", ibis.literal(design.administrative_cutoff)).cast(time_type)
+        cutoff_value = design.administrative_cutoff
+        if time_type.scale == 9:
+            cutoff_value = min(max(cutoff_value, ns_min), ns_max)
+        cutoff = _utc_naive("UTC", ibis.literal(cutoff_value)).cast(time_type)
         supported_end = ibis.least(supported_end, cutoff)
     history_start = start
     checks = list(base._checks)
