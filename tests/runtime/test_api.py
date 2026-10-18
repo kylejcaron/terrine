@@ -292,3 +292,78 @@ def test_empty_plan_with_string_publisher_remains_successful():
 
     assert receipt.state == "succeeded"
     assert receipt.published_generation == "g0"
+
+
+def test_failed_run_retry_reuses_run_id_outputs_and_advances_fence():
+    con = duckdb.connect(":memory:")
+    destination = DestinationRef("out.duckdb", "analytics", "orders")
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="definition",
+        snapshot_id="snapshot",
+        graph=dependency_graph(
+            sources=("events",), definition_hash="definition", partitions=("p1",)
+        ),
+    )
+
+    class FailsOnce(_Executor):
+        def __init__(self):
+            super().__init__()
+            self.fail = True
+
+        def run_task(self, task, dependencies):
+            if self.fail and self.calls == 1:
+                self.fail = False
+                raise RuntimeError("transient task failure")
+            self.calls += 1
+            return pa.table({"id": [self.calls]})
+
+    executor = FailsOnce()
+    with pytest.raises(RuntimeError, match="transient task failure"):
+        runtime.run_plan(
+            plan,
+            con=con,
+            namespace="owner",
+            request_key="stable-request",
+            destination=destination,
+            executor=executor,
+        )
+    failed_receipt = runtime.find_run_by_request_key(
+        "stable-request", destination=destination, con=con, namespace="owner"
+    )
+    assert failed_receipt is not None
+    first = failed_receipt
+    failed_row = con.execute(
+        "SELECT state, attempt_fence FROM owner.runtime_runs WHERE run_id=?", [first.run_id]
+    ).fetchone()
+    assert failed_row is not None
+    failed = failed_row
+
+    second = runtime.run_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        request_key="stable-request",
+        destination=destination,
+        executor=executor,
+    )
+    after = runtime.get_run(second.run_id, con=con, namespace="owner")
+    task_results_row = con.execute(
+        "SELECT count(*) FROM owner.runtime_tasks WHERE run_id=? AND status='complete'",
+        [first.run_id],
+    ).fetchone()
+    advanced_fence_row = con.execute(
+        "SELECT attempt_fence FROM owner.runtime_runs WHERE run_id=?", [first.run_id]
+    ).fetchone()
+    assert task_results_row is not None
+    assert advanced_fence_row is not None
+    task_results = task_results_row[0]
+    advanced_fence = advanced_fence_row[0]
+
+    assert first.run_id == second.run_id
+    assert failed[0] == "failed"
+    assert after.durable_state == "succeeded"
+    assert advanced_fence > failed[1]
+    assert task_results == len(plan.tasks)
+    assert executor.calls == len(plan.tasks)

@@ -1,0 +1,175 @@
+import json
+import os
+import subprocess
+import sys
+import uuid
+from pathlib import Path
+
+import duckdb
+import ibis
+import pytest
+
+from terrine.data import Coverage, UnitSource
+from terrine.errors import TerrineError
+from terrine.model import Model
+from terrine.runtime.control import ControlClient, ControlEndpoint, ControlServer
+from terrine.runtime.graph import dependency_graph
+from terrine.runtime.owner import RuntimeOwner
+from terrine.runtime.planner import plan_refresh
+from terrine.runtime.planning import OwnerPlanner, PlanInvocation, PlanRequest
+from terrine.runtime.recipe import DestinationRef, ModelReference
+from terrine.runtime.snapshot import SnapshotAuthority
+from terrine.runtime.state import RuntimeStore
+from terrine.spec import agg
+from terrine.spec.anchors import FixedDate
+from terrine.spec.design import Design
+
+
+def _request():
+    return PlanRequest(
+        "airflow-run-1",
+        ModelReference("owner", "catalog", "model", "units", "readiness", "events"),
+        Design("user", FixedDate("2025-01-15")),
+        DestinationRef("warehouse.duckdb", "published", "study"),
+    )
+
+
+def test_plan_request_round_trips_as_versioned_owner_payload():
+    request = _request()
+
+    restored = PlanRequest.from_dict(request.to_dict())
+
+    assert restored == request
+    assert restored.schema_version == 1
+
+
+def test_plan_request_refuses_unknown_wire_version():
+    data = _request().to_dict()
+    data["schema_version"] = 99
+
+    with pytest.raises(TerrineError) as error:
+        PlanRequest.from_dict(data)
+
+    assert error.value.code == "terrine.runtime.plan_request_invalid"
+
+
+def test_plan_request_uses_owner_ipc_from_process_without_database_access(tmp_path):
+    request = _request()
+    database = tmp_path / "runtime.duckdb"
+    con = duckdb.connect(str(database))
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="study",
+        definition_hash=request.design.spec_hash,
+        snapshot_id="snapshot-1",
+        graph=dependency_graph(sources=("events",), definition_hash=request.design.spec_hash),
+    )
+    expected = PlanInvocation(
+        request.invocation_id,
+        plan.serialize().decode(),
+        "request-key",
+        request.destination,
+        plan.snapshot_id,
+        None,
+    )
+
+    class Planner:
+        def plan(self, actual, *, con, namespace):
+            assert actual == request
+            assert namespace == "owner"
+            return expected
+
+    endpoint = ControlEndpoint(Path(f"/tmp/terrine-plan-{os.getpid()}-{uuid.uuid4().hex[:8]}.sock"))
+    server = ControlServer(store, namespace="owner", endpoint=endpoint, plan_planner=Planner())
+    server.start()
+    request_path = tmp_path / "request.json"
+    request_path.write_text(json.dumps(request.to_dict()))
+    try:
+        script = (
+            "import json,sys; "
+            "from pathlib import Path; "
+            "from terrine.runtime.control import ControlClient,ControlEndpoint; "
+            "from terrine.runtime.planning import PlanRequest; "
+            "payload=json.loads(Path(sys.argv[2]).read_text()); "
+            "result=ControlClient(ControlEndpoint(Path(sys.argv[1])),namespace='owner').plan("
+            "PlanRequest.from_dict(payload)); "
+            "print(json.dumps(result.to_dict(),sort_keys=True))"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", script, str(endpoint.path), str(request_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        invocation = PlanInvocation.from_dict(json.loads(completed.stdout))
+        repeated = ControlClient(endpoint, namespace="owner").plan(request)
+    finally:
+        server.close()
+        con.close()
+
+    assert invocation == expected
+    assert repeated == expected
+
+
+def test_owner_planner_persists_same_snapshot_and_manifest_by_invocation(tmp_path):
+    from tests.runtime.test_recipe import _model
+
+    database = tmp_path / "catalog.duckdb"
+    ibis_connection = ibis.duckdb.connect(database=str(database))
+    ibis_connection.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+
+    ibis_connection.raw_sql("CREATE TABLE users (id INTEGER)")
+    base_model = _model(ibis_connection)
+    model = Model.from_catalog(
+        base_model.catalog,
+        con=ibis_connection,
+        units={"user": UnitSource("users", "id")},
+        readiness={"events": Coverage("2025-01-01", "2025-02-01")},
+    )
+    raw_connection = ibis_connection.con
+    store = RuntimeStore(raw_connection, namespace="runtime")
+    store.initialize()
+    request = PlanRequest(
+        "materialize-1",
+        ModelReference.from_model(model, owner_key="owner-model"),
+        Design(
+            "user",
+            FixedDate("2025-01-15"),
+            features={"total": agg("total", window=("-1d", "0s"))},
+            outcomes={},
+        ),
+        DestinationRef(str(database), "published", "study"),
+    )
+
+    class Resolver:
+        def resolve(self, reference):
+            return model
+
+    planner = OwnerPlanner(
+        resolver=Resolver(),
+        snapshot_authority=SnapshotAuthority(RuntimeOwner(database, tmp_path / "snapshots")),
+    )
+    try:
+        first = planner.plan(request, con=raw_connection, namespace="runtime")
+        second = planner.plan(request, con=raw_connection, namespace="runtime")
+        with pytest.raises(TerrineError) as conflict:
+            planner.plan(
+                PlanRequest(
+                    request.invocation_id,
+                    request.model,
+                    request.design,
+                    request.destination,
+                    requested_scope="different-scope",
+                ),
+                con=raw_connection,
+                namespace="runtime",
+            )
+    finally:
+        ibis_connection.disconnect()
+
+    assert second == first
+    assert second.snapshot_id == first.snapshot_id
+    assert second.expected_base_manifest is None
+    assert conflict.value.code == "terrine.runtime.plan_invocation_conflict"

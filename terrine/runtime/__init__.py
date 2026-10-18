@@ -13,6 +13,7 @@ from terrine.runtime.api import (
 from terrine.runtime.events import EventPage, RunEvent
 from terrine.runtime.graph import DependencyGraph, dependency_graph
 from terrine.runtime.owner import RuntimeOwner, SnapshotRetention
+from terrine.runtime.planning import OwnerPlanner, PlanInvocation, PlanRequest
 from terrine.runtime.recipe import (
     DestinationRef,
     ModelReference,
@@ -52,6 +53,9 @@ __all__ = [
     "LayerNode",
     "ModelReference",
     "ModelResolver",
+    "OwnerPlanner",
+    "PlanInvocation",
+    "PlanRequest",
     "ReopenableSnapshot",
     "RunEvent",
     "RunReceipt",
