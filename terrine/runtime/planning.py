@@ -141,6 +141,7 @@ class PlanInvocation:
     destination: DestinationRef
     snapshot_id: str
     expected_base_manifest: str | None
+    recipe_json: str = ""
     schema_version: int = 1
 
     def __post_init__(self) -> None:
@@ -159,6 +160,7 @@ class PlanInvocation:
             "destination": self.destination.to_dict(),
             "snapshot_id": self.snapshot_id,
             "expected_base_manifest": self.expected_base_manifest,
+            "recipe_json": self.recipe_json,
         }
 
     @classmethod
@@ -171,6 +173,7 @@ class PlanInvocation:
                 DestinationRef(**value["destination"]),
                 value["snapshot_id"],
                 value["expected_base_manifest"],
+                value.get("recipe_json", ""),
                 value["schema_version"],
             )
         except (KeyError, TypeError, ValueError) as error:
@@ -269,6 +272,7 @@ class OwnerPlanner:
             request.destination,
             snapshot.snapshot_id,
             expected_manifest,
+            recipe.to_json(),
         )
         con.execute(
             f"INSERT INTO {store._schema}.runtime_plan_invocations VALUES (?, ?, ?, ?)",

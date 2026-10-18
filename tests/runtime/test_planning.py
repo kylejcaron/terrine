@@ -17,7 +17,7 @@ from terrine.runtime.graph import dependency_graph
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.planning import OwnerPlanner, PlanInvocation, PlanRequest
-from terrine.runtime.recipe import DestinationRef, ModelReference
+from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.spec import agg
@@ -166,6 +166,16 @@ def test_owner_planner_persists_same_snapshot_and_manifest_by_invocation(tmp_pat
                 con=raw_connection,
                 namespace="runtime",
             )
+        persisted = raw_connection.execute(
+            "SELECT invocation_json FROM runtime.runtime_plan_invocations WHERE invocation_id=?",
+            [request.invocation_id],
+        ).fetchone()
+        saved_invocation = PlanInvocation.from_dict(json.loads(persisted[0]))
+        assert saved_invocation.recipe_json
+        recipe = SavedPlanRecipe.from_json(saved_invocation.recipe_json)
+        assert recipe.model == request.model
+        assert recipe.design_json
+        assert recipe.expected_base_manifest == first.expected_base_manifest
     finally:
         ibis_connection.disconnect()
 
