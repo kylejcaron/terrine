@@ -38,10 +38,10 @@ def execute_plan(
     publish: Callable[[RefreshPlan, Mapping[str, pa.Table], Lease], Any],
     cancelled: Callable[[], bool] | None = None,
     max_tasks: int = 4096,
-    max_concurrency: int = 4,
+    max_concurrency: int = 1,
     lease_ttl: timedelta = timedelta(minutes=5),
 ) -> RunReceipt:
-    """Execute a task DAG with bounded, disjoint-partition concurrency and durable outputs."""
+    """Execute a bounded DAG; callbacks must isolate connections when concurrency exceeds one."""
     if plan.namespace != namespace:
         raise ValueError("plan namespace does not match runtime namespace")
     if not run_id:
@@ -80,7 +80,6 @@ def execute_plan(
         if run[0] != plan.dataset or run[1] != plan.recipe.fingerprint:
             raise ValueError("run_id is already bound to a different plan")
         if run[2] in {"succeeded", "cancelled"}:
-            _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
             return RunReceipt(run_id, run[2], run[3])
     else:
         con.execute(
@@ -103,7 +102,6 @@ def execute_plan(
                 [lease.fence, run_id],
             )
             leases.release(lease)
-            _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
             return RunReceipt(run_id, "cancelled", current[1])
         leases.release(lease)
         if current is None:
@@ -169,8 +167,9 @@ def execute_plan(
         task_order = tuple(task.task_id for task in plan.tasks)
         inflight: dict[Future[pa.Table], TaskSpec] = {}
         active_partitions: set[str] = set()
+        task_failure: Exception | None = None
         with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
-            while pending or inflight:
+            while (pending and task_failure is None) or inflight:
                 made_progress = False
                 for task_id in task_order:
                     task = pending.get(task_id)
@@ -228,7 +227,12 @@ def execute_plan(
                 for future in completed_futures:
                     task = inflight.pop(future)
                     active_partitions.remove(task.partition)
-                    output = future.result()
+                    try:
+                        output = future.result()
+                    except Exception as error:
+                        if task_failure is None:
+                            task_failure = error
+                        continue
                     if not isinstance(output, pa.Table):
                         raise TypeError("task runner must return a PyArrow Table")
                     if task.layer == "frame":
@@ -254,6 +258,8 @@ def execute_plan(
                     if completed is None:
                         raise ValueError("lease attempt was fenced before task completion")
                     outputs[task.task_id] = output
+        if task_failure is not None:
+            raise task_failure
         with run_publication_lock(namespace, plan.dataset):
             return _finish_run(
                 plan=plan,

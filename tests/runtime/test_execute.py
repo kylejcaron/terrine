@@ -126,9 +126,13 @@ def test_disjoint_partition_tasks_run_concurrently_with_configured_bound():
             active += 1
             peak = max(peak, active)
         try:
+            with con.cursor() as worker_con:
+                row = worker_con.execute("SELECT ?", [task.partition]).fetchone()
+            assert row is not None
+            value = row[0]
             if task.partition in {"p1", "p2"}:
                 barrier.wait(timeout=5)
-            return pa.table({"task": [task.task_id]})
+            return pa.table({"task": [value]})
         finally:
             with lock:
                 active -= 1
@@ -143,6 +147,62 @@ def test_disjoint_partition_tasks_run_concurrently_with_configured_bound():
         max_concurrency=2,
     )
     assert peak == 2
+
+
+def test_successful_partition_output_is_persisted_when_sibling_fails():
+    import threading
+
+    con = duckdb.connect(":memory:")
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="def",
+        snapshot_id="s",
+        graph=dependency_graph(sources=("events",), definition_hash="def", partitions=("p1", "p2")),
+    )
+    sibling_finished = threading.Event()
+    calls = []
+
+    def fail_once(task, dependencies):
+        calls.append(task.task_id)
+        if task.partition == "p1":
+            assert sibling_finished.wait(timeout=5)
+            raise RuntimeError("partition failed")
+        sibling_finished.set()
+        return pa.table({"task": [task.task_id]})
+
+    with pytest.raises(RuntimeError, match="partition failed"):
+        execute_plan(
+            plan,
+            con=con,
+            namespace="owner",
+            run_id="sibling-retry",
+            run_task=fail_once,
+            publish=lambda plan, outputs, lease: "g1",
+            max_concurrency=2,
+        )
+    completed_before_retry = {
+        row[0]
+        for row in con.execute(
+            "SELECT task_id FROM owner.runtime_tasks WHERE run_id=? AND status='complete'",
+            ["sibling-retry"],
+        ).fetchall()
+    }
+    assert completed_before_retry
+    calls_after_failure = len(calls)
+    receipt = execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="sibling-retry",
+        run_task=lambda task, dependencies: (
+            calls.append(task.task_id) or pa.table({"task": [task.task_id]})
+        ),
+        publish=lambda plan, outputs, lease: "g1",
+        max_concurrency=2,
+    )
+    assert receipt.state == "succeeded"
+    assert not completed_before_retry.intersection(calls[calls_after_failure:])
 
 
 def test_runtime_budget_is_cumulative_across_final_frame_outputs():
