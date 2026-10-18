@@ -101,11 +101,11 @@ def compare_timestamps(
         equal_rank & ((left_seconds < right_seconds) | (equal_seconds & (left_nanos < right_nanos)))
     )
     if op == "eq":
-        return cast(ir.BooleanValue, equal)
+        return equal
     if op == "gt":
-        return cast(ir.BooleanValue, greater)
+        return greater
     if op == "ge":
-        return cast(ir.BooleanValue, greater | equal)
+        return greater | equal
     if op == "lt":
-        return cast(ir.BooleanValue, less)
-    return cast(ir.BooleanValue, less | equal)
+        return less
+    return less | equal
