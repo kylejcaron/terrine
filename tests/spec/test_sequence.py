@@ -82,3 +82,5 @@ def test_sequence_property_names_cannot_collide_with_generated_columns():
         EventSequence(
             "purchase", Window("0s", "1h"), max_events=2, properties=("value", "value_reason")
         )
+    with pytest.raises(TerrineError):
+        EventSequence("purchase", Window("0s", "1h"), max_events=2, properties=("sequence",))

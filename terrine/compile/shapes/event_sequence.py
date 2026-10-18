@@ -103,10 +103,13 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
     timestamp_check = _precision_check(
         model, normalized, "_timestamp", source_column=source.timestamp_column
     )
-    normalized = normalized.mutate(_sequence_raw_timestamp=normalized["_timestamp"]).drop(
-        "_timestamp"
-    )
-    normalized = _utc_column(model, normalized, "_sequence_raw_timestamp", "_timestamp")
+    timestamp_alias = "_sequence_raw_timestamp"
+    suffix = 0
+    while timestamp_alias in normalized.columns:
+        suffix += 1
+        timestamp_alias = f"_sequence_raw_timestamp_{suffix}"
+    normalized = normalized.mutate(**{timestamp_alias: normalized["_timestamp"]}).drop("_timestamp")
+    normalized = _utc_column(model, normalized, timestamp_alias, "_timestamp")
 
     internal_properties = tuple(
         name

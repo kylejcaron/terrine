@@ -120,7 +120,11 @@ class EventSequence:
             "event_values",
         }
         reason_names = {f"{name}_reason" for name in properties}
-        if generated.intersection(properties) or reason_names.intersection(properties):
+        if (
+            generated.intersection(properties)
+            or reason_names.intersection(properties)
+            or reason_names.intersection(generated)
+        ):
             raise _INVALID.error(
                 reason="event property names collide with generated output columns"
             )

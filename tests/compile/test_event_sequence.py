@@ -336,3 +336,52 @@ def test_sequence_compiler_projects_multiple_rebound_properties_from_original_ro
     compiled.validate(execute=model.con.to_pyarrow)
     child = next(row for row in model.con.to_pyarrow(compiled.table).to_pylist() if row["is_event"])
     assert (child["b"], child["a"]) == ("C", "B")
+
+
+def test_sequence_timestamp_temporary_alias_avoids_physical_property(sequence_model):
+    from terrine.semantic.models import Property, TableRef
+    from terrine.spec import Design, EventAnchor, EventSequence
+    from terrine.windows import Window
+
+    sequence_model.con.create_table(
+        "alias_events",
+        ibis.memtable(
+            {
+                "user_id": ["u"],
+                "ts": [datetime(2025, 1, 1, 12, tzinfo=UTC)],
+                "event_id": ["one"],
+                "_sequence_raw_timestamp": ["preserve-me"],
+            }
+        ),
+    )
+    source = sequence_model.catalog.sources["events"].model_copy(
+        update={"relation": TableRef(kind="table", name="alias_events"), "properties": ("raw",)}
+    )
+    catalog = sequence_model.catalog.model_copy(
+        update={
+            "sources": {"events": source},
+            "properties": {
+                "raw": Property(
+                    source="events",
+                    column="_sequence_raw_timestamp",
+                    dtype="string",
+                    as_of="event_time",
+                )
+            },
+        }
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=sequence_model.con,
+        readiness=sequence_model.readiness,
+        event_ids=sequence_model.event_ids,
+    )
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence("signup", Window("0s", "2h"), max_events=5, properties=("raw",)),
+    )
+    compiled = design.build(model)._compiled
+    compiled.validate(execute=model.con.to_pyarrow)
+    child = next(row for row in model.con.to_pyarrow(compiled.table).to_pylist() if row["is_event"])
+    assert child["raw"] == "preserve-me"
