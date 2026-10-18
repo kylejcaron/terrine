@@ -187,7 +187,19 @@ def plan_refresh(
             ordered = ()
         else:
             changed_sources = {change.source for change in changes.changes}
-            selected = {node for node in ordered if node.source in changed_sources}
+            readiness_only = all(change.kind == "readiness" for change in changes.changes)
+            auxiliary_only = all(
+                change.kind in {"readiness", "roster"} for change in changes.changes
+            )
+            selected = {
+                node
+                for node in ordered
+                if node.source in changed_sources
+                or (readiness_only and node.layer == "frame")
+                or (auxiliary_only and node.layer == "frame")
+            }
+            if any(source not in {node.source for node in ordered} for source in changed_sources):
+                selected.update(node for node in ordered if node.layer == "frame")
             pending = list(selected)
             while pending:
                 node = pending.pop()

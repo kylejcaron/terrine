@@ -41,8 +41,8 @@ class ChangeSet:
             return cls(
                 (Change("readiness", source, before_time_range=(after, before)),), "revision"
             )
-        # Advancing completeness is not evidence that source rows changed.
-        return cls((), "revision")
+        # Revalidate completeness-dependent outputs, without asserting row mutation.
+        return cls((Change("readiness", source, after_time_range=(before, after)),), "revision")
 
 
 def window_intersects(support: TimeRange, window: TimeRange) -> bool:

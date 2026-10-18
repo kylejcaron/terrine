@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 
 import pytest
 
@@ -124,6 +125,20 @@ def test_planner_limits_work_to_changed_sources_and_skips_readiness_only_advance
         changes=ChangeSet((), "revision"),
     )
     assert no_change.tasks == ()
+
+    readiness = plan_refresh(
+        namespace="owner",
+        dataset="ratio",
+        definition_hash="definition",
+        snapshot_id="snap",
+        graph=graph,
+        changes=ChangeSet.from_readiness_advance(
+            "events",
+            datetime(2025, 1, 2, tzinfo=UTC),
+            datetime(2025, 1, 3, tzinfo=UTC),
+        ),
+    )
+    assert any(task.layer == "frame" for task in readiness.tasks)
 
 
 def test_source_invalidation_includes_cross_source_dependents():
