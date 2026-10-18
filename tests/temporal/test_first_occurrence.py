@@ -15,7 +15,7 @@ def _relations(con):
         pa.table(
             {
                 "unit": ["u1", "u1", "u1", "u1", "u2"],
-                "event_id": ["z", "a", "b", "c", "x"],
+                "event_id": ["z", "a", "b", "c", "a"],
                 "event_time": pa.array(
                     [epoch_ns + 1, epoch_ns + 1, epoch_ns + 2, epoch_ns + 3, epoch_ns + 4],
                     type=pa.timestamp("ns"),
@@ -110,5 +110,65 @@ def test_duplicate_event_ids_are_checked_when_result_validates():
         with pytest.raises(TerrineError) as error:
             result.validate(con.to_pyarrow)
         assert error.value.code == "terrine.temporal.duplicate_event_id"
+    finally:
+        con.disconnect()
+
+
+def test_mixed_timestamp_precisions_preserve_half_open_bounds():
+    con = ibis.duckdb.connect()
+    try:
+        instant_us = 1_735_689_600_000_000
+        events = con.create_table(
+            "mixed_events",
+            pa.table(
+                {
+                    "unit": ["u"],
+                    "event_id": ["e"],
+                    "event_time": pa.array([instant_us], type=pa.timestamp("us", tz="UTC")),
+                }
+            ),
+        )
+        candidates = con.create_table(
+            "mixed_candidates",
+            pa.table(
+                {
+                    "unit": ["u"],
+                    "anchor_id": ["a"],
+                    "lower": pa.array([instant_us * 1000 - 1], type=pa.timestamp("ns")),
+                    "upper": pa.array([instant_us * 1000 + 1], type=pa.timestamp("ns")),
+                }
+            ),
+        )
+        result = _table(con, _lookup(events, candidates))
+        assert result.column("first_event_id").to_pylist() == ["e"]
+    finally:
+        con.disconnect()
+
+
+def test_unspecified_timestamp_scale_uses_native_microsecond_precision():
+    con = ibis.duckdb.connect()
+    try:
+        events, _ = _relations(con)
+        candidates = con.sql(
+            "SELECT 'u1' AS unit, 'a' AS anchor_id, "
+            "TIMESTAMPTZ '2025-01-01 00:00:00+00' AS lower, "
+            "TIMESTAMPTZ '2025-01-01 00:00:01+00' AS upper"
+        )
+        result = _table(con, _lookup(events, candidates))
+        assert result.num_rows == 1
+    finally:
+        con.disconnect()
+
+
+def test_lookup_preserves_fresh_memtable_dependencies():
+    con = ibis.duckdb.connect()
+    try:
+        events, candidates = _relations(con)
+        annotation = ibis.memtable(pa.table({"unit": ["u1"], "flag": [True]}))
+        decorated = events.join(annotation, events.unit == annotation.unit).select(
+            unit=events.unit, event_id=events.event_id, event_time=events.event_time
+        )
+        result = _table(con, _lookup(decorated, candidates))
+        assert result.column("anchor_id").to_pylist()
     finally:
         con.disconnect()
