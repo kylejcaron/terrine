@@ -185,6 +185,8 @@ def test_asof_before_offsets_relative_support_for_feature_cutoff():
         validate_design(design, bound)
     assert error.value.code == "terrine.sequence.reanchor_leak"
     assert bound.con.calls == []
+
+
 def test_event_sequence_validation_accepts_dimension_backed_event_property():
     from terrine.spec.anchors import EventAnchor
     from terrine.spec.design import Design
@@ -202,14 +204,10 @@ def test_event_sequence_validation_accepts_dimension_backed_event_property():
     design = Design(
         "user",
         EventAnchor("session"),
-        shape=EventSequence(
-            "session", Window("-1d", "0d"), max_events=3, properties=("region",)
-        ),
+        shape=EventSequence("session", Window("-1d", "0d"), max_events=3, properties=("region",)),
     )
     validate_design(design, bound)
     assert bound.con.calls == []
-
-
 
 
 def test_feature_and_eligibility_windows_must_end_by_minus_gap():
@@ -584,3 +582,16 @@ else:
         [sys.executable, "-c", code], capture_output=True, text=True, check=False
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_outcome_selector_support_is_not_checked_as_outcome_measurement():
+    from terrine.spec.expressions import agg
+    from terrine.windows import Window
+
+    selector = EventTime("session", Window("-2d", "-1d"))
+    design = Design(
+        "user",
+        EventAnchor("session"),
+        outcomes={"later": agg("sessions", window=("3d", "4d"), relative_to=selector)},
+    )
+    assert design.validate(model()) is None

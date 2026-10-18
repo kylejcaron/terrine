@@ -364,6 +364,12 @@ def _binned(design: Design, model: Model, panel: StatePanel) -> CompiledStudy:
         },
         anchors,
         tuple(checks),
+        {
+            **compiled.expression_timings,
+            **period_compiled.expression_timings,
+            **endpoint_compiled.expression_timings,
+            **(baseline_compiled.expression_timings if baseline_compiled is not None else {}),
+        },
     )
 
 

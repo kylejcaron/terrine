@@ -21,9 +21,9 @@ __all__ = [
     "UnitSource",
     "Roles",
     "ColumnMeta",
+    "FeatureCutoff",
     "ExpressionTiming",
     "StatePanelMeta",
-    "EligibilitySummary",
     "ExecutionSnapshot",
     "Provenance",
     "MaterializedFrame",
@@ -274,8 +274,7 @@ class ExpressionTiming:
             not isinstance(self.support_seconds, tuple)
             or len(self.support_seconds) != 2
             or any(
-                isinstance(item, bool) or not isinstance(item, int)
-                for item in self.support_seconds
+                isinstance(item, bool) or not isinstance(item, int) for item in self.support_seconds
             )
             or self.support_seconds[0] > self.support_seconds[1]
         ):
@@ -300,9 +299,7 @@ class ExpressionTiming:
         if set(dependencies) != set(supports):
             raise ValueError("selector dependency names must match support entries")
         object.__setattr__(self, "selector_dependencies", dependencies)
-        object.__setattr__(
-            self, "selector_support_seconds", MappingProxyType(supports)
-        )
+        object.__setattr__(self, "selector_support_seconds", MappingProxyType(supports))
 
 
 @dataclass(frozen=True, slots=True)
@@ -597,58 +594,61 @@ def _decode(value: Any, cls: type) -> Any:
     unknown = set(value) - {field.name for field in fields(cls)}
     if unknown:
         raise ValueError(f"unknown {cls.__name__} fields: {sorted(unknown)}")
-    for field in fields(cls):
-        if field.name not in value:
+    for metadata_field in fields(cls):
+        if metadata_field.name not in value:
             continue
-        item = value[field.name]
-        if field.name in ("feature_cutoffs", "eligibility_cutoffs"):
-            kwargs[field.name] = {k: _decode(v, FeatureCutoff) for k, v in item.items()}
-        elif field.name == "expression_timings":
-            kwargs[field.name] = {
-                key: ExpressionTiming(
-                    **{
-                        **timing,
-                        "relative_offsets": (
-                            None
-                            if timing["relative_offsets"] is None
-                            else tuple(timing["relative_offsets"])
-                        ),
-                        "support_seconds": tuple(timing["support_seconds"]),
-                        "selector_dependencies": tuple(timing["selector_dependencies"]),
-                        "selector_support_seconds": {
-                            name: tuple(bounds)
-                            for name, bounds in timing["selector_support_seconds"].items()
-                        },
-                    }
+        item = value[metadata_field.name]
+        if metadata_field.name in ("feature_cutoffs", "eligibility_cutoffs"):
+            kwargs[metadata_field.name] = {k: _decode(v, FeatureCutoff) for k, v in item.items()}
+        elif metadata_field.name == "expression_timings":
+            timings = {}
+            for key, raw_timing in item.items():
+                timing: dict[str, Any] = dict(raw_timing)
+                timing["relative_offsets"] = (
+                    None
+                    if timing["relative_offsets"] is None
+                    else tuple(timing["relative_offsets"])
                 )
-                for key, timing in item.items()
-            }
-        elif field.name in ("source_generations", "strategy"):
-            kwargs[field.name] = item
-        elif field.name == "coverage":
-            kwargs[field.name] = {k: _decode(v, CoverageSummary) for k, v in item.items()}
-        elif field.name == "execution_snapshot" and item is not None:
-            kwargs[field.name] = _decode(item, ExecutionSnapshot)
-        elif field.name == "eligibility_summary" and item is not None:
-            kwargs[field.name] = _decode(item, EligibilitySummary)
-        elif field.name == "weight_cutoff" and item is not None:
-            kwargs[field.name] = _decode(item, FeatureCutoff)
-        elif field.name == "state_panel" and item is not None:
-            kwargs[field.name] = _decode(item, StatePanelMeta)
-        elif field.name in ("panel_start", "administrative_end") and isinstance(item, dict):
-            kwargs[field.name] = datetime.fromisoformat(item["$datetime"])
-        elif field.name == "window" and item is not None:
-            kwargs[field.name] = Window(*item["$window"])
+                timing["support_seconds"] = tuple(timing["support_seconds"])
+                timing["selector_dependencies"] = tuple(timing["selector_dependencies"])
+                timing["selector_support_seconds"] = {
+                    name: tuple(bounds)
+                    for name, bounds in timing["selector_support_seconds"].items()
+                }
+                timings[key] = ExpressionTiming(**timing)
+            kwargs[metadata_field.name] = timings
+        elif metadata_field.name in ("source_generations", "strategy"):
+            kwargs[metadata_field.name] = item
+        elif metadata_field.name == "coverage":
+            kwargs[metadata_field.name] = {k: _decode(v, CoverageSummary) for k, v in item.items()}
+        elif metadata_field.name == "execution_snapshot" and item is not None:
+            kwargs[metadata_field.name] = _decode(item, ExecutionSnapshot)
+        elif metadata_field.name == "eligibility_summary" and item is not None:
+            kwargs[metadata_field.name] = _decode(item, EligibilitySummary)
+        elif metadata_field.name == "weight_cutoff" and item is not None:
+            kwargs[metadata_field.name] = _decode(item, FeatureCutoff)
+        elif metadata_field.name == "state_panel" and item is not None:
+            kwargs[metadata_field.name] = _decode(item, StatePanelMeta)
+        elif metadata_field.name in ("panel_start", "administrative_end") and isinstance(
+            item, dict
+        ):
+            kwargs[metadata_field.name] = datetime.fromisoformat(item["$datetime"])
+        elif metadata_field.name == "window" and item is not None:
+            kwargs[metadata_field.name] = Window(*item["$window"])
         elif (
-            field.name in ("start", "end_exclusive")
+            metadata_field.name in ("start", "end_exclusive")
             and isinstance(item, dict)
             and "$datetime" in item
         ):
-            kwargs[field.name] = datetime.fromisoformat(item["$datetime"])
-        elif field.name in ("start", "through") and isinstance(item, dict) and "$date" in item:
-            kwargs[field.name] = date.fromisoformat(item["$date"])
+            kwargs[metadata_field.name] = datetime.fromisoformat(item["$datetime"])
+        elif (
+            metadata_field.name in ("start", "through")
+            and isinstance(item, dict)
+            and "$date" in item
+        ):
+            kwargs[metadata_field.name] = date.fromisoformat(item["$date"])
         else:
-            kwargs[field.name] = item
+            kwargs[metadata_field.name] = item
     return cls(**kwargs)
 
 

@@ -13,8 +13,8 @@ from terrine.data import (
     CoverageSummary,
     EligibilitySummary,
     ExecutionSnapshot,
-    FeatureCutoff,
     ExpressionTiming,
+    FeatureCutoff,
     MaterializedFrame,
     Preview,
     Provenance,
@@ -62,6 +62,12 @@ def _provenance():
             )
         },
     )
+
+
+def test_data_exports_feature_cutoff():
+    import terrine.data as data
+
+    assert "FeatureCutoff" in data.__all__
 
 
 def test_coverage_requires_ordered_dates_and_binds_to_utc_instants():

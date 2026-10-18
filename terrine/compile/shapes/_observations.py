@@ -448,4 +448,8 @@ def compile_observed_state_panel(design: Design, model: Model, panel: StatePanel
         {**compiled.strategy, "from_state": "point_observation", "to_state": "point_observation"},
         anchors,
         tuple(deferred),
+        {
+            **compiled.expression_timings,
+            **(baseline_compiled.expression_timings if baseline_compiled is not None else {}),
+        },
     )

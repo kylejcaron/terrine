@@ -31,7 +31,7 @@ from terrine.spec.expressions import (
     MetricAgg,
     Predicate,
 )
-from terrine.spec.sequence import _UNSUPPORTED_SHAPE, EventSequence
+from terrine.spec.sequence import EventSequence
 from terrine.windows import Window
 
 if TYPE_CHECKING:
@@ -246,13 +246,10 @@ def _expression_timing(expr: Expr) -> tuple[tuple[int, int], tuple[tuple[int, in
     return support, dependencies
 
 
-def _check_expression_timing(
-    expr: Expr, role: str, design: Design
-) -> None:
+def _check_expression_timing(expr: Expr, role: str, design: Design) -> None:
     support, dependencies = _expression_timing(expr)
     if role in {"feature", "eligibility"} and (
-        support[1] > -design.gap
-        or any(dependency[1] > -design.gap for dependency in dependencies)
+        support[1] > -design.gap or any(dependency[1] > -design.gap for dependency in dependencies)
     ):
         if getattr(expr, "relative_to", None) is not None or isinstance(expr, EventTime):
             raise _REANCHOR_LEAK.error(role=role, gap=design.gap)
@@ -267,7 +264,16 @@ def _expression(
 ) -> None:
     relative_to = getattr(expr, "relative_to", None)
     if relative_to is not None:
-        _expression(relative_to, role, design, model, required, obligations)
+        # Selector support is validated as a dependency, not as the outcome's
+        # measured support. Outcome clocks may be established before t0.
+        _expression(
+            relative_to,
+            "feature" if role in {"feature", "eligibility"} else "selector_dependency",
+            design,
+            model,
+            required,
+            obligations,
+        )
     if isinstance(expr, AttributeAsOf):
         _check_expression_timing(expr, role, design)
         _resolve_property(expr, role, design, model, required, obligations)
@@ -317,7 +323,7 @@ def _expression(
         if measure.window_days is not None and win.end - win.start != measure.window_days * 86400:
             raise _METRIC_WINDOW.error(metric=expr.metric)
         if measure.aggregation == "avg_calendar_day":
-            anchors = _fixed_anchors(design, model)
+            anchors = None if expr.relative_to is not None else _fixed_anchors(design, model)
             if anchors is None:
                 alignment = calendar_average_alignment(
                     win, anchor=None, day_boundary=model.catalog.day_boundary
