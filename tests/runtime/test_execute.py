@@ -272,6 +272,55 @@ def test_expected_base_manifest_mismatch_refuses_before_source_work():
         )
     assert work == []
 
+    assert con.execute(
+        "SELECT state FROM owner.runtime_runs WHERE run_id='stale-base'"
+    ).fetchone() == ("failed",)
+
+
+def test_overlapping_saved_base_replay_returns_terminal_receipt(monkeypatch):
+    from dataclasses import replace
+
+    from terrine.runtime.leases import LeaseStore
+
+    con = duckdb.connect(":memory:")
+    plan = replace(
+        _plan(), expected_base_manifest="generation-1", expected_base_manifest_bound=True
+    )
+    con.execute(
+        "CREATE SCHEMA owner; CREATE TABLE owner.runtime_manifests "
+        "(dataset VARCHAR PRIMARY KEY,generation VARCHAR NOT NULL,version BIGINT NOT NULL)"
+    )
+    con.execute("INSERT INTO owner.runtime_manifests VALUES ('orders','generation-1',1)")
+    acquire = LeaseStore.acquire
+
+    def finish_before_lease(self, resource, owner, **kwargs):
+        con.execute(
+            "UPDATE owner.runtime_manifests SET generation='generation-2',version=2 "
+            "WHERE dataset='orders'"
+        )
+        con.execute(
+            "UPDATE owner.runtime_runs SET state='succeeded',published_generation='generation-2' "
+            "WHERE run_id='overlap'"
+        )
+        return acquire(self, resource, owner, **kwargs)
+
+    monkeypatch.setattr(LeaseStore, "acquire", finish_before_lease)
+    calls = []
+    receipt = execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="overlap",
+        run_task=lambda task, dependencies: (
+            calls.append("task"),
+            pa.table({"id": [task.task_id]}),
+        )[1],
+        publish=lambda plan, outputs, lease: (calls.append("publish"), "generation-3")[1],
+    )
+    assert receipt.state == "succeeded"
+    assert receipt.published_generation == "generation-2"
+    assert calls == []
+
 
 def test_plan_task_bound_is_checked_before_running_work():
     con = duckdb.connect(":memory:")

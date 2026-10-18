@@ -167,6 +167,14 @@ def execute_plan(
         return RunReceipt(run_id, run[2], run[3])
     leases.initialize()
     lease = leases.acquire(f"dataset:{plan.dataset}", run_id, ttl=lease_ttl, now=datetime.now(UTC))
+    current = con.execute(
+        f"SELECT state, published_generation FROM {schema}.runtime_runs WHERE run_id=?",
+        [run_id],
+    ).fetchone()
+    if current is not None and current[0] in {"succeeded", "cancelled"}:
+        leases.release(lease)
+        _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
+        return RunReceipt(run_id, current[0], current[1])
     if run is not None and run[2] == "cancel_requested":
         current = con.execute(
             f"SELECT state, published_generation FROM {schema}.runtime_runs WHERE run_id=?",
@@ -197,6 +205,22 @@ def execute_plan(
     try:
         _check_expected_base_manifest(plan, con=con, namespace=namespace)
     except Exception:
+        with event_transaction(con, namespace=namespace):
+            rejected = con.execute(
+                f"UPDATE {schema}.runtime_runs SET state='failed', attempt_fence=? "
+                "WHERE run_id=? AND state IN ('queued','running') "
+                "AND (attempt_fence IS NULL OR attempt_fence<?) RETURNING run_id",
+                [lease.fence, run_id, lease.fence],
+            ).fetchone()
+            if rejected is not None:
+                record_run_event(
+                    run_id,
+                    "lifecycle",
+                    {"state": "failed"},
+                    con=con,
+                    namespace=namespace,
+                    _in_transaction=True,
+                )
         leases.release(lease)
         raise
     try:
