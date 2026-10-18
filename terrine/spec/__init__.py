@@ -19,6 +19,16 @@ from terrine.spec.expressions import (
     is_null,
 )
 from terrine.spec.io import from_json, from_yaml, to_json, to_yaml
+from terrine.spec.panels import (
+    CalendarPanel,
+    EventPanel,
+    EventPanelSpec,
+    Initiation,
+    PersistentAdoption,
+    Sequential,
+    SequentialSpec,
+    TrialWeight,
+)
 from terrine.spec.state_panel import BinnedMetricState, StateObservations, StatePanel
 
 __all__ = [
@@ -49,4 +59,12 @@ __all__ = [
     "BinnedMetricState",
     "StateObservations",
     "StatePanel",
+    "Initiation",
+    "PersistentAdoption",
+    "TrialWeight",
+    "SequentialSpec",
+    "EventPanelSpec",
+    "Sequential",
+    "CalendarPanel",
+    "EventPanel",
 ]

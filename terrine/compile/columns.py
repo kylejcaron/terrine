@@ -53,6 +53,7 @@ _META_COLUMNS = (
 
 
 def _validate_names(design: Design) -> None:
+    from terrine.spec.panels import EventPanelSpec
     from terrine.spec.state_panel import StatePanel
 
     names = [*design.features, *design.outcomes, *design.eligibility]
@@ -76,6 +77,8 @@ def _validate_names(design: Design) -> None:
             "to_state_observed_from",
             "to_state_observed_until",
         }
+    elif isinstance(design.shape, EventPanelSpec):
+        reserved = _RESERVED | {"parent_event_id", "parent_t0", "event_period"}
     else:
         reserved = _RESERVED
     seen = {}
@@ -123,12 +126,16 @@ class CompiledStudy:
 
 
 def compile_columns(
-    design: Design, model: Model, *, include_membership: bool = True
+    design: Design,
+    model: Model,
+    *,
+    include_membership: bool = True,
+    _anchor_table: AnchorTable | None = None,
 ) -> CompiledStudy:
     """Compile candidates and distinct expressions once without reading source rows."""
     _validate_names(design)
     design.validate(model)
-    anchors = compile_anchors(design, model, include_membership=include_membership)
+    anchors = _anchor_table or compile_anchors(design, model, include_membership=include_membership)
     table = anchors.table
     values: dict[Expr, CompiledValue] = {}
     checks: list[TemporalResult | AsOfResult | _HistoryValidation | _Check] = []

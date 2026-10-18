@@ -23,6 +23,9 @@ __all__ = [
     "ColumnMeta",
     "FeatureCutoff",
     "StatePanelMeta",
+    "TreatmentHistoryMeta",
+    "TrialWeightMeta",
+    "PanelMeta",
     "EligibilitySummary",
     "ExecutionSnapshot",
     "Provenance",
@@ -308,6 +311,82 @@ class StatePanelMeta:
 
 
 @dataclass(frozen=True, slots=True)
+class TreatmentHistoryMeta:
+    kind: Literal["initiation", "persistent_adoption"]
+    source: str
+    property: str
+    history_start: datetime
+    knowledge: Literal["recorded_at", "retrospective_effective_time"]
+    adopted_value: str | None = None
+    persistence: Literal["absorbing"] | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind not in ("initiation", "persistent_adoption"):
+            raise ValueError("unsupported treatment-history kind")
+        _nonempty(self.source, "source")
+        _nonempty(self.property, "property")
+        _aware(self.history_start, "history_start")
+        if self.knowledge not in ("recorded_at", "retrospective_effective_time"):
+            raise ValueError("unsupported treatment-history knowledge policy")
+        if self.kind == "persistent_adoption":
+            if self.adopted_value is None:
+                raise ValueError("persistent adoption requires adopted_value")
+            _nonempty(self.adopted_value, "adopted_value")
+            if self.persistence != "absorbing":
+                raise ValueError("persistent adoption requires absorbing semantics")
+        elif self.adopted_value is not None or self.persistence is not None:
+            raise ValueError("initiation metadata cannot declare persistence")
+
+
+@dataclass(frozen=True, slots=True)
+class TrialWeightMeta:
+    kind: Literal["equal_trial", "explicit"]
+    values: Mapping[str, float] | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind not in ("equal_trial", "explicit"):
+            raise ValueError("unsupported trial-weight kind")
+        if self.kind == "explicit":
+            if not isinstance(self.values, Mapping) or not self.values:
+                raise ValueError("explicit trial weights require values")
+            if any(value <= 0 for value in self.values.values()):
+                raise ValueError("trial weights must be positive")
+            object.__setattr__(self, "values", _mapping(self.values, "trial weights"))
+        elif self.values is not None:
+            raise ValueError("equal_trial weights cannot include values")
+
+
+@dataclass(frozen=True, slots=True)
+class PanelMeta:
+    """Portable shape-specific identity and treatment-history metadata."""
+
+    shape: Literal["sequential", "event_panel"]
+    treatment: TreatmentHistoryMeta | None = None
+    trial_weight: TrialWeightMeta | None = None
+    periods: tuple[int, ...] = ()
+    period_seconds: int | None = None
+    reference_period: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.shape not in ("sequential", "event_panel"):
+            raise ValueError("unsupported panel metadata shape")
+        if self.treatment is not None and not isinstance(self.treatment, TreatmentHistoryMeta):
+            raise TypeError("invalid panel treatment metadata")
+        if self.trial_weight is not None and not isinstance(self.trial_weight, TrialWeightMeta):
+            raise TypeError("invalid trial weight metadata")
+        periods = tuple(self.periods)
+        if any(isinstance(period, bool) or not isinstance(period, int) for period in periods):
+            raise TypeError("panel periods must be integers")
+        object.__setattr__(self, "periods", periods)
+        if self.period_seconds is not None and (
+            isinstance(self.period_seconds, bool)
+            or not isinstance(self.period_seconds, int)
+            or self.period_seconds <= 0
+        ):
+            raise ValueError("period_seconds must be positive")
+
+
+@dataclass(frozen=True, slots=True)
 class EligibilitySummary:
     candidate: int
     excluded_false: int
@@ -379,6 +458,7 @@ class Provenance:
     treatment_known_at_t0: bool = False
 
     state_panel: StatePanelMeta | None = None
+    panel: PanelMeta | None = None
 
     def __post_init__(self) -> None:
         for name in ("design_hash", "model_hash", "shape"):
@@ -423,6 +503,8 @@ class Provenance:
             raise TypeError("execution_snapshot must be ExecutionSnapshot")
         if self.state_panel is not None and not isinstance(self.state_panel, StatePanelMeta):
             raise TypeError("state_panel must be StatePanelMeta or None")
+        if self.panel is not None and not isinstance(self.panel, PanelMeta):
+            raise TypeError("panel must be PanelMeta or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -541,8 +623,29 @@ def _decode(value: Any, cls: type) -> Any:
             kwargs[field.name] = _decode(item, EligibilitySummary)
         elif field.name == "weight_cutoff" and item is not None:
             kwargs[field.name] = _decode(item, FeatureCutoff)
-        elif field.name == "state_panel" and item is not None:
-            kwargs[field.name] = _decode(item, StatePanelMeta)
+        elif field.name == "panel" and item is not None:
+            treatment = item.get("treatment")
+            if treatment is not None:
+                treatment = TreatmentHistoryMeta(
+                    treatment["kind"],
+                    treatment["source"],
+                    treatment["property"],
+                    datetime.fromisoformat(treatment["history_start"]["$datetime"]),
+                    treatment["knowledge"],
+                    treatment.get("adopted_value"),
+                    treatment.get("persistence"),
+                )
+            weight = item.get("trial_weight")
+            if weight is not None:
+                weight = TrialWeightMeta(weight["kind"], weight.get("values"))
+            kwargs[field.name] = PanelMeta(
+                item["shape"],
+                treatment,
+                weight,
+                tuple(item.get("periods", ())),
+                item.get("period_seconds"),
+                item.get("reference_period"),
+            )
         elif field.name in ("panel_start", "administrative_end") and isinstance(item, dict):
             kwargs[field.name] = datetime.fromisoformat(item["$datetime"])
         elif field.name == "window" and item is not None:

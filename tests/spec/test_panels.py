@@ -1,0 +1,75 @@
+from datetime import UTC, datetime
+
+import pytest
+
+from terrine.spec import (
+    Design,
+    EventAnchor,
+    EventPanel,
+    EventPanelSpec,
+    Initiation,
+    PersistentAdoption,
+    Schedule,
+    Sequential,
+    from_json,
+    to_json,
+)
+
+
+def test_sequential_schedule_spec_round_trips_canonically():
+    design = Design("customer_id", Schedule(7, "2025-01-01", "2025-01-15"))
+    treatment = Initiation("events", "started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
+    sequential = Sequential(design, treatment=treatment)
+
+    assert from_json(to_json(sequential)) == sequential
+    assert sequential.spec_hash == from_json(to_json(sequential)).spec_hash
+
+
+def test_calendar_panel_is_canonical_sequential_composition():
+    from terrine.spec import CalendarPanel
+
+    design = Design("customer_id", Schedule(7, "2025-01-01", "2025-01-15"))
+    treatment = Initiation("events", "started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
+
+    assert CalendarPanel(Sequential(design, treatment=treatment)) == Sequential(
+        design, treatment=treatment
+    )
+
+
+def test_event_panel_emits_only_declared_relative_periods():
+    base = Design("customer_id", EventAnchor("purchase", "first"))
+    panel = EventPanel(base, periods=(-1, 0, 2), period_seconds=86_400)
+
+    assert isinstance(panel.shape, EventPanelSpec)
+    assert panel.shape.periods == (-1, 0, 2)
+
+
+def test_treatment_initiation_and_persistent_state_are_distinct():
+    initiation = Initiation("events", "started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
+    persistent = PersistentAdoption(
+        "events",
+        "started",
+        adopted_value="yes",
+        history_start=datetime(2024, 1, 1, tzinfo=UTC),
+        persistence="absorbing",
+    )
+
+    assert initiation != persistent
+
+
+def test_conflicting_design_inputs_refuse_before_hash():
+    from terrine.errors import TerrineError
+    from terrine.spec import Treatment
+
+    base = Design(
+        "customer_id", Schedule(7, "2025-01-01", "2025-01-15"), treatment=Treatment("started")
+    )
+    with pytest.raises(TerrineError) as error:
+        Sequential(
+            base,
+            treatment=Initiation(
+                "events", "started", history_start=datetime(2024, 1, 1, tzinfo=UTC)
+            ),
+        )
+
+    assert error.value.code == "terrine.design.conflicting_treatment"

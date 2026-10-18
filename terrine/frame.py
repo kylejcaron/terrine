@@ -16,7 +16,15 @@ from terrine.compile.cost import (
     _eligibility_summary,
     _scan_policy,
 )
-from terrine.data import Budget, MaterializedFrame, Provenance, StatePanelMeta
+from terrine.data import (
+    Budget,
+    MaterializedFrame,
+    PanelMeta,
+    Provenance,
+    StatePanelMeta,
+    TreatmentHistoryMeta,
+    TrialWeightMeta,
+)
 from terrine.errors import RefusalSpec
 from terrine.spec.anchors import FixedDate
 from terrine.spec.state_panel import BinnedMetricState, StatePanel, encode_cutpoint
@@ -93,6 +101,33 @@ def _state_panel_metadata(design: Design, model: Model) -> StatePanelMeta | None
         gap_column="gap",
         terminal_column="terminal",
     )
+
+
+def _panel_metadata(design: Design) -> PanelMeta | None:
+    from terrine.spec.panels import EventPanelSpec, Initiation, PersistentAdoption, SequentialSpec
+
+    if isinstance(design.shape, SequentialSpec):
+        treatment = design.shape.treatment
+        history = TreatmentHistoryMeta(
+            "initiation" if isinstance(treatment, Initiation) else "persistent_adoption",
+            treatment.source,
+            treatment.property,
+            treatment.history_start,
+            treatment.knowledge,
+            treatment.adopted_value if isinstance(treatment, PersistentAdoption) else None,
+            treatment.persistence if isinstance(treatment, PersistentAdoption) else None,
+        )
+        weight = design.shape.trial_weight
+        trial_weight = None if weight is None else TrialWeightMeta(weight.kind, weight.values)
+        return PanelMeta("sequential", history, trial_weight)
+    if isinstance(design.shape, EventPanelSpec):
+        return PanelMeta(
+            "event_panel",
+            periods=design.shape.periods,
+            period_seconds=design.shape.period_seconds,
+            reference_period=design.shape.reference_period,
+        )
+    return None
 
 
 @dataclass(frozen=True, slots=True, init=False, repr=False, eq=False)
@@ -205,6 +240,7 @@ class Frame:
                 and treatment.known_at_t0
                 and pa.types.is_boolean(table.schema.field(treatment_column).type)
             )
+            panel = _panel_metadata(self._design)
             provenance = Provenance(
                 feature_cutoffs=compiled.feature_cutoffs,
                 eligibility_cutoffs=compiled.eligibility_cutoffs,
@@ -212,9 +248,13 @@ class Frame:
                 model_hash=model.model_hash,
                 source_generations=context.snapshot.source_generations,
                 execution_snapshot=context.snapshot,
-                shape="state_panel"
-                if isinstance(self._design.shape, StatePanel)
-                else self._design.shape,
+                shape=(
+                    "state_panel"
+                    if isinstance(self._design.shape, StatePanel)
+                    else panel.shape
+                    if panel is not None
+                    else "cross_section"
+                ),
                 treatment_design="baseline_binary" if baseline_binary else None,
                 eligibility_summary=summary,
                 treatment_knowledge="retrospective_effective_time"
@@ -222,6 +262,7 @@ class Frame:
                 else None,
                 treatment_known_at_t0=treatment.known_at_t0 if treatment is not None else False,
                 state_panel=_state_panel_metadata(self._design, model),
+                panel=panel,
             )
             return MaterializedFrame(table, compiled.roles, compiled.columns, provenance)
 

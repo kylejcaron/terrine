@@ -14,6 +14,13 @@ from terrine._time import utc_instant
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import And, AttributeAsOf, Eq, Gt, IsNull, MetricAgg
+from terrine.spec.panels import (
+    EventPanelSpec,
+    Initiation,
+    PersistentAdoption,
+    SequentialSpec,
+    TrialWeight,
+)
 from terrine.spec.state_panel import (
     BinnedMetricState,
     StateObservations,
@@ -112,6 +119,41 @@ def _encode(value: Any) -> Any:
             "baseline_features": {
                 key: _encode(item) for key, item in value.baseline_features.items()
             },
+        }
+    if isinstance(value, Initiation):
+        return {
+            "type": "Initiation",
+            "source": value.source,
+            "property": value.property,
+            "history_start": value.history_start.isoformat(),
+            "knowledge": value.knowledge,
+        }
+    if isinstance(value, PersistentAdoption):
+        return {
+            "type": "PersistentAdoption",
+            "source": value.source,
+            "property": value.property,
+            "adopted_value": value.adopted_value,
+            "history_start": value.history_start.isoformat(),
+            "persistence": value.persistence,
+            "knowledge": value.knowledge,
+        }
+    if isinstance(value, TrialWeight):
+        return {"type": "TrialWeight", "kind": value.kind, "values": value.values}
+    if isinstance(value, SequentialSpec):
+        return {
+            "type": "SequentialSpec",
+            "treatment": _encode(value.treatment),
+            "trial_weight": None if value.trial_weight is None else _encode(value.trial_weight),
+            "anticipation_seconds": value.anticipation_seconds,
+            "reference_period_seconds": value.reference_period_seconds,
+        }
+    if isinstance(value, EventPanelSpec):
+        return {
+            "type": "EventPanelSpec",
+            "periods": list(value.periods),
+            "period_seconds": value.period_seconds,
+            "reference_period": value.reference_period,
         }
     if isinstance(value, Window):
         return {"type": "Window", "start": value.start, "end": value.end}
@@ -249,6 +291,61 @@ def _node(value: Any) -> Any:
         baseline = {key: _node(node) for key, node in raw.items()}
         return StatePanel(
             _node(item["state"]), max_periods=item["max_periods"], baseline_features=baseline
+        )
+    if tag == "Initiation":
+        item = _object(value, {"type", "source", "property", "history_start", "knowledge"})
+        return Initiation(
+            item["source"],
+            item["property"],
+            datetime.fromisoformat(item["history_start"]),
+            item["knowledge"],
+        )
+    if tag == "PersistentAdoption":
+        item = _object(
+            value,
+            {
+                "type",
+                "source",
+                "property",
+                "adopted_value",
+                "history_start",
+                "persistence",
+                "knowledge",
+            },
+        )
+        return PersistentAdoption(
+            item["source"],
+            item["property"],
+            item["adopted_value"],
+            datetime.fromisoformat(item["history_start"]),
+            item["persistence"],
+            item["knowledge"],
+        )
+    if tag == "TrialWeight":
+        item = _object(value, {"type", "kind", "values"})
+        return TrialWeight(item["kind"], item["values"])
+    if tag == "SequentialSpec":
+        item = _object(
+            value,
+            {
+                "type",
+                "treatment",
+                "trial_weight",
+                "anticipation_seconds",
+                "reference_period_seconds",
+            },
+        )
+        weight = None if item["trial_weight"] is None else _node(item["trial_weight"])
+        return SequentialSpec(
+            _node(item["treatment"]),
+            weight,
+            item["anticipation_seconds"],
+            item["reference_period_seconds"],
+        )
+    if tag == "EventPanelSpec":
+        item = _object(value, {"type", "periods", "period_seconds", "reference_period"})
+        return EventPanelSpec(
+            tuple(item["periods"]), item["period_seconds"], item["reference_period"]
         )
     if tag == "Window":
         item = _object(value, {"type", "start", "end"})

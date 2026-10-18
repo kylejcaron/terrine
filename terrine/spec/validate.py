@@ -250,10 +250,24 @@ def _range_bound(value: date | datetime | None, model: Model) -> datetime | None
 
 
 def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
+    from terrine.spec.panels import EventPanelSpec, SequentialSpec
     from terrine.spec.state_panel import StatePanel, validate_state_panel
 
     if isinstance(design.shape, StatePanel):
         validate_state_panel(design, model, required)
+    elif isinstance(design.shape, SequentialSpec):
+        if not isinstance(design.anchor, Schedule):
+            raise _INVALID.error(reason="Sequential requires a Schedule anchor")
+        source = model.sources.get(design.shape.treatment.source)
+        if source is None:
+            raise _MISSING.error(kind="treatment source", name=design.shape.treatment.source)
+        declared = set(source.dimensions) | set(source.properties) | set(source.facts)
+        if design.shape.treatment.property not in declared:
+            raise _MISSING.error(kind="treatment property", name=design.shape.treatment.property)
+        _required(model, source.name, required)
+    elif isinstance(design.shape, EventPanelSpec):
+        if not isinstance(design.anchor, EventAnchor):
+            raise _INVALID.error(reason="EventPanel requires an EventAnchor")
     elif design.shape != "cross_section":
         raise _INVALID.error(reason="unsupported design shape")
 
