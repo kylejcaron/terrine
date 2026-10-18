@@ -149,6 +149,31 @@ def test_event_sequence_validation_rejects_unknown_event_property_without_query(
         validate_design(design, bound)
     assert error.value.code == "terrine.design.missing_reference"
     assert bound.con.calls == []
+def test_event_sequence_validation_accepts_dimension_backed_event_property():
+    from terrine.spec.anchors import EventAnchor
+    from terrine.spec.design import Design
+    from terrine.spec.validate import validate_design
+    from terrine.windows import Window
+
+    dimension = SimpleNamespace(
+        name="regions",
+        properties={"region": SimpleNamespace(dtype="string", dimension_name="regions")},
+    )
+    bound = model(
+        dimensions=[dimension],
+        catalog_properties={"region": SimpleNamespace(source="events", dimension="regions")},
+    )
+    design = Design(
+        "user",
+        EventAnchor("session"),
+        shape=EventSequence(
+            "session", Window("-1d", "0d"), max_events=3, properties=("region",)
+        ),
+    )
+    validate_design(design, bound)
+    assert bound.con.calls == []
+
+
 
 
 def test_feature_and_eligibility_windows_must_end_by_minus_gap():

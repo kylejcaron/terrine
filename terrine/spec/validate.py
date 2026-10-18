@@ -82,10 +82,16 @@ def _metric(model: Model, name: str):
 
 def _event_property(model: Model, source_name: str, name: str) -> str:
     prop = model.catalog.properties.get(name)
-    if prop is None or prop.source != source_name:
-        raise _MISSING.error(kind="event property", name=name)
     source = model.sources.get(source_name)
-    if source is None or name not in source.properties:
+    if prop is None or source is None:
+        raise _MISSING.error(kind="event property", name=name)
+    if prop.dimension is not None:
+        for dimension in source.dimensions:
+            binding = dimension.properties.get(name)
+            if dimension.name == prop.dimension and binding is not None:
+                return binding.dtype
+        raise _MISSING.error(kind="bound event property", name=name)
+    if prop.source != source_name or name not in source.properties:
         raise _MISSING.error(kind="bound event property", name=name)
     return source.properties[name].dtype
 
