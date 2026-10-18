@@ -11,6 +11,7 @@ from terrine.semantic.models import BoundMeasure, BoundMetric
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import agg, asof, gt
+from terrine.spec.sequence import EventSequence
 from terrine.temporal.readiness import Readiness
 
 
@@ -129,6 +130,25 @@ def test_missing_referenced_source_readiness_refuses():
             "user", EventAnchor("session"), features={"x": agg("sessions", window=("-1d", "0d"))}
         ).validate(model(ready=False))
     assert error.value.code == "terrine.readiness.missing_source"
+
+
+def test_event_sequence_validation_rejects_unknown_event_property_without_query():
+    from terrine.errors import TerrineError
+    from terrine.spec.anchors import EventAnchor
+    from terrine.spec.design import Design
+    from terrine.spec.validate import validate_design
+    from terrine.windows import Window
+
+    bound = model()
+    design = Design(
+        "user",
+        EventAnchor("session"),
+        shape=EventSequence("session", Window("-1d", "0d"), max_events=3, properties=("missing",)),
+    )
+    with pytest.raises(TerrineError) as error:
+        validate_design(design, bound)
+    assert error.value.code == "terrine.design.missing_reference"
+    assert bound.con.calls == []
 
 
 def test_feature_and_eligibility_windows_must_end_by_minus_gap():

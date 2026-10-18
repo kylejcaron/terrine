@@ -6,12 +6,12 @@ import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
 
 import ibis
 import pyarrow as pa
 
-from terrine.compile._asof import AsOfResult, compile_asof
+from terrine.compile._asof import compile_asof
 from terrine.compile._predicates import CompiledValue, compile_predicate
 from terrine.compile.anchors import AnchorTable, compile_anchors
 from terrine.data import ColumnMeta, FeatureCutoff, Roles
@@ -21,10 +21,10 @@ from terrine.semantic.models import BoundDimension
 from terrine.semantic.rules import calendar_average_alignment
 from terrine.spec.anchors import FixedDate, Schedule
 from terrine.spec.design import Design
-from terrine.spec.expressions import And, AttributeAsOf, Eq, EventTime, Expr
+from terrine.spec.expressions import And, AttributeAsOf, Eq, EventTime, Expr, MetricAgg
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE
 from terrine.spec.validate import _fixed_anchors
-from terrine.temporal.aggregate import TemporalResult, _Check, aggregate_window
+from terrine.temporal.aggregate import aggregate_window
 from terrine.temporal.attributes import enrich_events, validate_history
 from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
 from terrine.temporal.prefix import sparse_prefix
@@ -43,6 +43,12 @@ _RESERVED_NAME = RefusalSpec(
     "Study output name {name!r} is reserved.",
 )
 _RESERVED = {"unit", "anchor_id", "t0", "treatment", "_observed_from", "_observed_until"}
+
+
+class _DeferredCheck(Protocol):
+    def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None: ...
+
+
 _ANCHOR_KEY = ("unit", "anchor_id")
 _META_COLUMNS = (
     "observed_from_column",
@@ -109,7 +115,7 @@ class CompiledStudy:
     eligibility_cutoffs: Mapping[str, FeatureCutoff]
     strategy: Mapping[str, str]
     _anchors: AnchorTable
-    _checks: tuple[TemporalResult | AsOfResult | _HistoryValidation | _Check, ...]
+    _checks: tuple[_DeferredCheck, ...]
 
     def __post_init__(self) -> None:
         for name in ("columns", "feature_cutoffs", "eligibility_cutoffs", "strategy"):
@@ -132,7 +138,7 @@ def compile_columns(
     anchors = compile_anchors(design, model, include_membership=include_membership)
     table = anchors.table
     values: dict[Expr, CompiledValue] = {}
-    checks: list[TemporalResult | AsOfResult | _HistoryValidation | _Check] = []
+    checks: list[_DeferredCheck] = []
     sources, states = {}, {}
     columns, feature_cutoffs, eligibility_cutoffs, strategies = {}, {}, {}, {}
     public: dict[str, str] = {}
@@ -158,7 +164,9 @@ def compile_columns(
         if node in values:
             return values[node]
         output = f"__terrine_value_{len(values)}"
-        if isinstance(node, EventTime):
+        if isinstance(node, EventTime) or (
+            isinstance(node, (MetricAgg, AttributeAsOf)) and node.relative_to is not None
+        ):
             raise _UNSUPPORTED_SHAPE.error()
         if isinstance(node, AttributeAsOf):
             result = compile_asof(

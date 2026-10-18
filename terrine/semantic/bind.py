@@ -234,14 +234,22 @@ def bind_metric(catalog: Catalog, metric_name: str) -> BoundMetric:
     )
 
 
-def normalize_events(source_table: Any, source: BoundSource, unit_column: str):
-    """Project normalized timestamp/unit names and all other declared physical columns."""
+def normalize_events(
+    source_table: Any,
+    source: BoundSource,
+    unit_column: str,
+    *,
+    extra_columns: Mapping[str, str] | None = None,
+):
+    """Project normalized timestamps, units, declared columns and requested identities."""
     if unit_column not in source.entities.values():
         raise _MISSING.error(reference=f"physical entity column:{unit_column}")
     physical = list(source.entities.values())
     physical.extend(column for column in source.facts.values() if column is not None)
     physical.extend(
-        prop.column for prop in source.properties.values() if prop.dimension_name is None
+        prop.column
+        for prop in source.properties.values()
+        if prop.dimension_name is None and prop.column is not None
     )
     physical = list(dict.fromkeys(physical))
     if ("_unit" in physical and unit_column != "_unit") or (
@@ -250,4 +258,11 @@ def normalize_events(source_table: Any, source: BoundSource, unit_column: str):
         raise _AMBIGUOUS.error(column="_unit" if "_unit" in physical else "_timestamp")
     columns = {"_timestamp": source.timestamp_column, "_unit": unit_column}
     columns.update((column, column) for column in physical)
+    if extra_columns:
+        for alias, column in extra_columns.items():
+            if column not in source_table.columns:
+                raise _SCHEMA.error(field="additional identity", column=column)
+            if alias in columns or alias in source_table.columns:
+                raise _AMBIGUOUS.error(column=alias)
+            columns[alias] = column
     return source_table.select(**{name: source_table[column] for name, column in columns.items()})

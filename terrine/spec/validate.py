@@ -28,9 +28,10 @@ from terrine.spec.expressions import (
     Expr,
     Gt,
     IsNull,
+    MetricAgg,
     Predicate,
 )
-from terrine.spec.sequence import EventSequence
+from terrine.spec.sequence import _UNSUPPORTED_SHAPE, EventSequence
 from terrine.windows import Window
 
 if TYPE_CHECKING:
@@ -77,6 +78,30 @@ def _metric(model: Model, name: str):
         return model.metrics[name]
     except KeyError as exc:
         raise _MISSING.error(kind="metric", name=name) from exc
+
+
+def _event_property(model: Model, source_name: str, name: str) -> str:
+    prop = model.catalog.properties.get(name)
+    if prop is None or prop.source != source_name:
+        raise _MISSING.error(kind="event property", name=name)
+    source = model.sources.get(source_name)
+    if source is None or name not in source.properties:
+        raise _MISSING.error(kind="bound event property", name=name)
+    return source.properties[name].dtype
+
+
+def _check_event_scalar(model: Model, source_name: str, name: str, value: object) -> None:
+    dtype = _event_property(model, source_name, name)
+    matches = {
+        "string": isinstance(value, str),
+        "int": isinstance(value, int) and not isinstance(value, bool),
+        "float": isinstance(value, (int, float)) and not isinstance(value, bool),
+        "bool": isinstance(value, bool),
+    }
+    if value is not None and not matches.get(dtype, False):
+        raise _SEQUENCE_INVALID.error(
+            reason=f"filter value is incompatible with event property {name!r}"
+        )
 
 
 def _fixed_anchors(design: Design, model: Model) -> tuple[datetime, ...] | None:
@@ -190,6 +215,10 @@ def _requires_event_resolution(win: Window, design: Design, model: Model) -> boo
 def _expression(
     expr: Expr, role: str, design: Design, model: Model, required: set[str], obligations: list[str]
 ) -> None:
+    if isinstance(expr, EventTime) and expr.relative_to is not None:
+        raise _UNSUPPORTED_SHAPE.error()
+    if isinstance(expr, (MetricAgg, AttributeAsOf)) and expr.relative_to is not None:
+        raise _UNSUPPORTED_SHAPE.error()
     if isinstance(expr, AttributeAsOf):
         _resolve_property(expr, role, design, model, required, obligations)
         return
@@ -202,17 +231,14 @@ def _expression(
             raise _MISSING.error(kind="bound fact", name=expr.fact)
         if design.unit not in source.entities:
             raise _UNIT.error(unit=design.unit, name=expr.fact)
+        if expr.label_property is not None:
+            _check_event_scalar(model, source.name, expr.label_property, expr.equals)
         _required(model, source.name, required)
         obligations.append("coverage_completeness")
-        if expr.relative_to is not None:
-            _expression(expr.relative_to, role, design, model, required, obligations)
         lower, upper = expr.window.start, expr.window.end
-        if expr.relative_to is not None:
-            lower += expr.relative_to.window.start
-            upper += expr.relative_to.window.end
         if role in {"feature", "eligibility"} and upper > -design.gap:
             raise _REANCHOR_LEAK.error(role=role, gap=design.gap)
-        if role == "outcome" and lower < design.gap:
+        if role == "outcome" and lower < 0:
             raise _GAP.error(role=role, gap=design.gap)
         return
     metric = _metric(model, expr.metric)
@@ -305,6 +331,13 @@ def _validate_sequence_shape(design: Design, model: Model, required: set[str]) -
     if design.unit not in source.entities:
         raise _UNIT.error(unit=design.unit, name=sequence.fact)
     _required(model, source.name, required)
+    requested_properties = [*sequence.properties]
+    if sequence.label_property is not None:
+        requested_properties.append(sequence.label_property)
+    if sequence.funnel is not None:
+        requested_properties.append(sequence.funnel.event_property)
+    for property_name in requested_properties:
+        _event_property(model, source.name, property_name)
 
 
 def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
