@@ -38,6 +38,40 @@ def test_duplicate_task_completion_is_idempotent():
     assert len(publish_calls) == 1
 
 
+def test_prefix_runner_receives_daily_output_for_certificate_plan():
+    from types import SimpleNamespace
+
+    con = duckdb.connect(":memory:")
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="def",
+        snapshot_id="s",
+        graph=dependency_graph(
+            sources=("events",),
+            design=SimpleNamespace(spec_hash="def", shape=object()),
+            partitions=("p1",),
+        ),
+    )
+    observed = {}
+
+    def run_task(task, dependencies):
+        if task.layer == "prefix":
+            observed.update(dependencies)
+        return pa.table({"layer": [task.layer]})
+
+    execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="prefix-dependency",
+        run_task=run_task,
+        publish=lambda plan, outputs, lease: "g1",
+    )
+    assert len(observed) == 1
+    assert next(iter(observed.values())).to_pylist() == [{"layer": "daily"}]
+
+
 def test_cancel_before_publish_never_exposes_generation():
     con = duckdb.connect(":memory:")
     published = []

@@ -63,6 +63,7 @@ def dependency_graph(
             anchor = LayerNode("anchor", source, partition, fingerprint, "pending")
             frame = LayerNode("frame", source, partition, fingerprint, "pending")
             nodes.extend((daily, prefix, anchor))
+            edges.append((daily, prefix))
             if tracks_certificates:
                 prefix_certificate = LayerNode(
                     "prefix_certificate", source, partition, fingerprint, "pending"
