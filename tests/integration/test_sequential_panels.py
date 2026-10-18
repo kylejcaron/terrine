@@ -23,7 +23,7 @@ def test_all_shapes_build_materialize_and_arrow_round_trip(native_inputs):
         units={"user": UnitSource("users", "user_id")},
         event_ids={"events": "event_id"},
     )
-    treatment = Initiation("events", "session", history_start=datetime(2024, 1, 1, tzinfo=UTC))
+    treatment = Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC))
     sequential = Sequential(
         Design("user", Schedule("1d", "2025-01-03", "2025-01-05")),
         treatment=treatment,

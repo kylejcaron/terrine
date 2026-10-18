@@ -98,9 +98,7 @@ def test_anchor_range_preserves_date_and_aware_instant_tags():
     spec = Design(
         unit="user",
         anchor=FixedDate("2025-03-01"),
-        anchor_range=AnchorRange(
-            start=datetime(2025, 3, 1, 1, tzinfo=UTC), end=date(2025, 3, 1)
-        ),
+        anchor_range=AnchorRange(start=datetime(2025, 3, 1, 1, tzinfo=UTC), end=date(2025, 3, 1)),
     )
     loaded = from_yaml(to_yaml(spec))
     assert loaded == spec

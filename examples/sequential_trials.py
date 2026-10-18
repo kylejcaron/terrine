@@ -68,8 +68,8 @@ def main() -> None:
         event_ids={"events": "event_id"},
     )
     try:
-        treatment = Initiation("events", "purchase", history_start=datetime(2024, 1, 1, tzinfo=UTC))
-        schedule_base = Design("user", Schedule("1d", "2025-01-01", "2025-01-04"))
+        treatment = Initiation("events", "purchase", history_start=datetime(2025, 1, 1, tzinfo=UTC))
+        schedule_base = Design("user", Schedule("1d", "2025-01-03", "2025-01-04"))
         sequential = Sequential(schedule_base, treatment=treatment)
         event_panel = EventPanel(
             Design("user", EventAnchor("purchase", "first")),
@@ -79,7 +79,7 @@ def main() -> None:
         )
         assert (
             Sequential(
-                Design("user", Schedule("1d", "2025-01-01", "2025-01-04")),
+                Design("user", Schedule("1d", "2025-01-03", "2025-01-04")),
                 treatment=treatment,
             )
             == sequential

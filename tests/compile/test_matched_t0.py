@@ -116,3 +116,20 @@ def test_matched_t0_convenience_lowers_policy_onto_design(native_inputs):
     materialized = frame.materialize()
     assert materialized.provenance.sampling is not None
     assert materialized.provenance.sampling.seed == 13
+
+
+def test_matched_t0_keeps_no_controls_from_zero_treated_strata(native_inputs):
+    model = _model(native_inputs)
+    model.con.raw_sql("DELETE FROM events WHERE user_id = 'a'")
+    design = Sequential(
+        Design(
+            "user",
+            Schedule("1d", "2025-01-03", "2025-01-04"),
+            sample=MatchedT0Sample((), controls_per_treated=1, seed=0),
+        ),
+        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+    )
+
+    rows = design.build(model)._compiled.table.to_pyarrow().to_pylist()
+
+    assert rows == []

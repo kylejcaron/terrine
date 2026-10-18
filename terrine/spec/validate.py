@@ -254,7 +254,7 @@ def _range_bound(value: date | datetime | None, model: Model) -> datetime | None
 
 
 def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
-    from terrine.spec.panels import EventPanelSpec, SequentialSpec
+    from terrine.spec.panels import EventPanelSpec, PersistentAdoption, SequentialSpec
     from terrine.spec.state_panel import StatePanel, validate_state_panel
 
     if design.sample is not None and not isinstance(design.shape, SequentialSpec):
@@ -271,9 +271,27 @@ def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
         declared = set(source.properties) | set(source.facts)
         if design.shape.treatment.property not in declared:
             raise _MISSING.error(kind="treatment property", name=design.shape.treatment.property)
+        if (
+            isinstance(design.shape.treatment, PersistentAdoption)
+            and design.shape.treatment.property in source.facts
+        ):
+            raise _INVALID.error(
+                reason="PersistentAdoption requires a value-bearing property selector"
+            )
         coverage = model.readiness.for_fact(source.name)
-        if coverage.start > design.shape.treatment.history_start or (
-            coverage.end_exclusive < model.day_boundary(design.anchor.end).astimezone(UTC)
+        followup_end = model.day_boundary(design.anchor.end) + timedelta(
+            seconds=max(
+                (
+                    expression.window.end
+                    for expression in design.outcomes.values()
+                    if isinstance(expression, MetricAgg)
+                ),
+                default=0,
+            )
+        )
+        if (
+            coverage.start > design.shape.treatment.history_start
+            or coverage.end_exclusive < followup_end
         ):
             raise _INCOMPLETE_TREATMENT_HISTORY.error(
                 source=source.name,

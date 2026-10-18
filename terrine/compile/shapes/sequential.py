@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import timedelta
+from typing import cast
 
 import ibis
+from ibis.expr import types as ir
 
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.compile.shapes.matched_t0 import sample_risk_sets
@@ -13,7 +16,9 @@ from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
 from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
+from terrine.spec.expressions import MetricAgg
 from terrine.spec.panels import Initiation, PersistentAdoption, SequentialSpec
+from terrine.temporal._timestamps import compare_timestamps
 from terrine.temporal.aggregate import _Check, _Failure
 
 _INVALID_TRIAL_WEIGHT = RefusalSpec(
@@ -24,6 +29,19 @@ _CONTRADICTORY_ADOPTION = RefusalSpec(
     "terrine.compile.contradictory_persistent_adoption_history",
     "Persistent adoption history contradicts absorbing state.",
 )
+
+
+def _followup_end(design: Design, model):
+    assert isinstance(design.anchor, Schedule)
+    horizon = max(
+        (
+            expression.window.end
+            for expression in design.outcomes.values()
+            if isinstance(expression, MetricAgg)
+        ),
+        default=0,
+    )
+    return model.day_boundary(design.anchor.end) + timedelta(seconds=horizon)
 
 
 def _trial_columns(table, design: Design):
@@ -52,6 +70,31 @@ _LATER_INITIATION = RefusalSpec(
     "terrine.compile.later_control_initiation",
     "Control initiates during the sustained no-initiation follow-up.",
 )
+
+_INCOMPLETE_UNIT_HISTORY = RefusalSpec(
+    "terrine.design.incomplete_unit_treatment_history",
+    "Roster observation bounds do not cover a scheduled treatment history.",
+)
+
+
+def _unit_history_gaps(design: Design, model, anchors):
+    assert isinstance(design.shape, SequentialSpec)
+    assert isinstance(design.anchor, Schedule)
+    selector = design.shape.treatment
+    table = anchors.table
+    history_start = cast(ir.TimestampScalar, ibis.literal(selector.history_start))
+    boundary = (
+        _followup_end(design, model)
+        if isinstance(selector, Initiation)
+        else model.day_boundary(design.anchor.end)
+    )
+    end = cast(ir.TimestampScalar, ibis.literal(boundary))
+    missing = ibis.literal(False)
+    if "_observed_from" in table.columns:
+        missing |= table._observed_from.notnull() & (table._observed_from > history_start)
+    if "_observed_until" in table.columns:
+        missing |= table._observed_until.notnull() & (table._observed_until <= end)
+    return table.filter(missing).select("unit").distinct()
 
 
 def _persistent_contradictions(design: Design, model):
@@ -105,10 +148,7 @@ def _treatment_rows(design: Design, model, anchors):
         model._relation(source.relation), source, source.entities[design.unit]
     )
     if selector.property in source.facts:
-        column = source.facts[selector.property]
         observed = events._timestamp.notnull()
-        if column is not None:
-            observed &= events[column].notnull()
     else:
         prop = source.properties[selector.property]
         if prop.dimension_name is not None:
@@ -121,8 +161,12 @@ def _treatment_rows(design: Design, model, anchors):
         events,
         [
             anchors.table.unit == events._unit,
-            events._timestamp >= ibis.literal(selector.history_start),
-            events._timestamp <= anchors.table.t0,
+            compare_timestamps(
+                events._timestamp,
+                cast(ir.TimestampScalar, ibis.literal(selector.history_start)),
+                "ge",
+            ),
+            compare_timestamps(events._timestamp, anchors.table.t0, "le"),
             observed,
         ],
         how="left",
@@ -132,38 +176,34 @@ def _treatment_rows(design: Design, model, anchors):
     )
 
 
-def _later_initiations(design: Design, model, anchors, treatment_rows):
+def _later_initiations(design: Design, model, eligible_table, treatment_rows):
     assert isinstance(design.shape, SequentialSpec)
     assert isinstance(design.shape.treatment, Initiation)
-    assert isinstance(design.anchor, Schedule)
     selector = design.shape.treatment
     source = model.sources[selector.source]
     events = normalize_events(
         model._relation(source.relation), source, source.entities[design.unit]
     )
     if selector.property in source.facts:
-        column = source.facts[selector.property]
         observed = events._timestamp.notnull()
-        if column is not None:
-            observed &= events[column].notnull()
     else:
         prop = source.properties[selector.property]
-        value = events[prop.column]
-        observed = value.notnull()
-    control = anchors.table.join(
+        observed = events[prop.column].notnull()
+    control = eligible_table.join(
         treatment_rows,
         [
-            anchors.table.unit == treatment_rows.unit,
-            anchors.table.anchor_id.identical_to(treatment_rows.anchor_id),
+            eligible_table.unit == treatment_rows.unit,
+            eligible_table.anchor_id.identical_to(treatment_rows.anchor_id),
         ],
     ).filter(~treatment_rows.treatment.fill_null(False))
+    followup_end = cast(ir.TimestampScalar, ibis.literal(_followup_end(design, model)))
     return (
         control.join(
             events,
             [
                 control.unit == events._unit,
-                events._timestamp > control.t0,
-                events._timestamp < ibis.literal(model.day_boundary(design.anchor.end)),
+                compare_timestamps(events._timestamp, control.t0, "gt"),
+                compare_timestamps(events._timestamp, followup_end, "lt"),
                 observed,
             ],
         )
@@ -195,10 +235,15 @@ def compile_sequential(design: Design, model) -> CompiledStudy:
     sample = design.sample
     table = _trial_columns(_attach_treatment(compiled.table, values), design)
     checks = list(compiled._checks)
+    checks.append(
+        _deferred_refusal(
+            _unit_history_gaps(design, model, compiled._anchors), _INCOMPLETE_UNIT_HISTORY
+        )
+    )
     if isinstance(design.shape.treatment, Initiation):
         checks.append(
             _deferred_refusal(
-                _later_initiations(design, model, compiled._anchors, values), _LATER_INITIATION
+                _later_initiations(design, model, compiled.table, values), _LATER_INITIATION
             )
         )
     elif isinstance(design.shape.treatment, PersistentAdoption):
