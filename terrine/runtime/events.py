@@ -12,7 +12,6 @@ __all__ = ["RunEvent", "EventPage", "read_run_events", "record_run_event"]
 
 _MAX_LIMIT = 1000
 _RETENTION = 10000
-_FORBIDDEN = {"sql", "key", "secret", "credential", "prompt", "error", "payload"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +42,12 @@ def _ensure_events(con: Any, schema: str) -> None:
 def record_run_event(
     run_id: str, kind: str, payload: dict[str, Any], *, con: Any, namespace: str
 ) -> None:
-    if not run_id or not kind or any(key.lower() in _FORBIDDEN for key in payload):
+    if (
+        kind != "phase"
+        or set(payload) != {"phase"}
+        or not isinstance(payload["phase"], str)
+        or len(payload["phase"]) > 128
+    ):
         raise ValueError("event fields are invalid or contain forbidden data")
     store = RuntimeStore(con, namespace=namespace)
     store.initialize()

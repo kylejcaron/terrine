@@ -89,6 +89,24 @@ def execute_plan(
         )
     leases.initialize()
     lease = leases.acquire(f"dataset:{plan.dataset}", run_id, ttl=lease_ttl, now=datetime.now(UTC))
+    if run is not None and run[2] == "cancel_requested":
+        current = con.execute(
+            f"SELECT state, published_generation FROM {schema}.runtime_runs WHERE run_id=?",
+            [run_id],
+        ).fetchone()
+        if current is not None and current[0] == "cancel_requested" and current[1] is None:
+            con.execute(
+                f"UPDATE {schema}.runtime_runs SET state='cancelled', attempt_fence=? "
+                "WHERE run_id=? AND state='cancel_requested' AND published_generation IS NULL",
+                [lease.fence, run_id],
+            )
+            leases.release(lease)
+            _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
+            return RunReceipt(run_id, "cancelled", current[1])
+        leases.release(lease)
+        if current is None:
+            raise RuntimeError("run disappeared while recovering cancellation")
+        return RunReceipt(run_id, current[0], current[1])
     transition = con.execute(
         f"UPDATE {schema}.runtime_runs SET state='running', attempt_fence=? "
         "WHERE run_id=? AND state IN ('running', 'failed') "
@@ -218,9 +236,10 @@ def execute_plan(
             )
     except Exception:
         con.execute(
-            f"UPDATE {schema}.runtime_runs SET state='failed' "
-            "WHERE run_id=? AND state='running' AND published_generation IS NULL "
-            "AND attempt_fence=?",
+            f"UPDATE {schema}.runtime_runs SET state=CASE "
+            "WHEN state='cancel_requested' THEN 'cancelled' ELSE 'failed' END "
+            "WHERE run_id=? AND state IN ('running','cancel_requested') "
+            "AND published_generation IS NULL AND attempt_fence=?",
             [run_id, lease.fence],
         )
         raise

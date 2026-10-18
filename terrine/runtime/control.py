@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import socket
 import socketserver
+import stat
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from terrine.errors import TerrineError
 from terrine.runtime.events import read_run_events
 from terrine.runtime.state import RuntimeStore
 from terrine.runtime.status import cancel_run, get_run
@@ -21,7 +24,7 @@ class ControlEndpoint:
     path: Path
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "path", Path(self.path).expanduser().resolve())
+        object.__setattr__(self, "path", Path(os.path.abspath(Path(self.path).expanduser())))
 
 
 class ControlServer:
@@ -35,7 +38,7 @@ class ControlServer:
         self.endpoint = endpoint
         self._server: socketserver.UnixStreamServer | None = None
         self._thread: threading.Thread | None = None
-        self._lock = threading.Lock()
+        self._endpoint_identity: tuple[int, int] | None = None
 
     def start(self) -> None:
         if self._server is not None:
@@ -45,22 +48,49 @@ class ControlServer:
 
         class Handler(socketserver.StreamRequestHandler):
             def handle(self) -> None:
+                self.connection.settimeout(2)
                 line = self.rfile.readline(65537)
                 if not line or len(line) > 65536:
                     return
+                con = server.store.con.cursor()
                 try:
                     request = json.loads(line)
-                    with server._lock:
-                        response = server._dispatch(request)
+                    self.connection.settimeout(None if request.get("operation") == "cancel" else 2)
+                    response = server._dispatch(request, con=con)
                     self.wfile.write(
                         json.dumps({"ok": True, "value": response}, default=str).encode() + b"\n"
                     )
-                except Exception:
-                    self.wfile.write(b'{"ok":false,"code":"terrine.runtime.control_unavailable"}\n')
+                except Exception as error:
+                    code = getattr(error, "code", "terrine.runtime.control_unavailable")
+                    self.wfile.write(json.dumps({"ok": False, "code": code}).encode() + b"\n")
+                finally:
+                    con.close()
 
-        self.endpoint.path.unlink(missing_ok=True)
-        self._server = socketserver.ThreadingUnixStreamServer(str(self.endpoint.path), Handler)
+        class OwnerUnixStreamServer(socketserver.ThreadingUnixStreamServer):
+            daemon_threads = True
+
+        try:
+            mode = self.endpoint.path.lstat().st_mode
+        except FileNotFoundError:
+            mode = None
+        if mode is not None:
+            if not stat.S_ISSOCK(mode):
+                raise FileExistsError("control endpoint exists and is not a socket")
+            probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                probe.connect(str(self.endpoint.path))
+            except OSError as error:
+                if error.errno != errno.ECONNREFUSED:
+                    raise
+                self.endpoint.path.unlink()
+            else:
+                raise FileExistsError("control endpoint is already active")
+            finally:
+                probe.close()
+        self._server = OwnerUnixStreamServer(str(self.endpoint.path), Handler)
         os.chmod(self.endpoint.path, 0o600)
+        socket_stat = self.endpoint.path.stat()
+        self._endpoint_identity = (socket_stat.st_dev, socket_stat.st_ino)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
 
@@ -73,23 +103,34 @@ class ControlServer:
         if self._thread is not None:
             self._thread.join()
             self._thread = None
-        self.endpoint.path.unlink(missing_ok=True)
+        try:
+            current = self.endpoint.path.lstat()
+        except FileNotFoundError:
+            current = None
+        if (
+            current is not None
+            and self._endpoint_identity == (current.st_dev, current.st_ino)
+            and stat.S_ISSOCK(current.st_mode)
+        ):
+            self.endpoint.path.unlink()
+        self._endpoint_identity = None
 
-    def _dispatch(self, request: dict[str, Any]) -> Any:
+    def _dispatch(self, request: dict[str, Any], *, con: Any) -> Any:
         if request.get("namespace") != self.namespace:
             raise ValueError("control namespace mismatch")
         operation = request.get("operation")
         run_id = request.get("run_id")
+
         if operation == "status":
             if not isinstance(run_id, str) or not run_id:
                 raise ValueError("run ID is required")
-            return asdict(get_run(run_id, con=self.store.con, namespace=self.namespace))
+            return asdict(get_run(run_id, con=con, namespace=self.namespace))
         if operation == "events":
             if not isinstance(run_id, str) or not run_id:
                 raise ValueError("run ID is required")
             page = read_run_events(
                 run_id,
-                con=self.store.con,
+                con=con,
                 namespace=self.namespace,
                 after=request.get("after"),
                 limit=request.get("limit", 100),
@@ -103,7 +144,7 @@ class ControlServer:
         if operation == "cancel":
             if not isinstance(run_id, str) or not run_id:
                 raise ValueError("run ID is required")
-            result = cancel_run(run_id, con=self.store.con, namespace=self.namespace)
+            result = cancel_run(run_id, con=con, namespace=self.namespace)
             return {
                 "run_id": result.run_id,
                 "disposition": result.disposition,
@@ -117,14 +158,14 @@ class ControlServer:
                 raise ValueError("destination reference is required")
             target = DestinationRef(**destination)
             schema = self.store._schema
-            self.store.con.execute(
+            con.execute(
                 f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS request_key VARCHAR"
             )
-            self.store.con.execute(
+            con.execute(
                 f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS "
                 "destination_json VARCHAR"
             )
-            row = self.store.con.execute(
+            row = con.execute(
                 f"SELECT run_id,state,published_generation FROM {schema}.runtime_runs "
                 "WHERE request_key=? AND destination_json=?",
                 [
@@ -146,12 +187,20 @@ class ControlClient:
     def _request(self, operation: str, **payload: Any) -> Any:
         request = json.dumps({"namespace": self.namespace, "operation": operation, **payload})
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.settimeout(2)
+            client.settimeout(None if operation == "cancel" else 2)
             client.connect(str(self.endpoint.path))
             client.sendall(request.encode() + b"\n")
-            response = json.loads(client.makefile("rb").readline(65537))
+            with client.makefile("rb") as response_stream:
+                line = response_stream.readline(16_777_217)
+            if not line.endswith(b"\n") or len(line) > 16_777_216:
+                raise ConnectionError("owner control response exceeded its limit")
+            response = json.loads(line)
         if not response.get("ok"):
-            raise ConnectionError(response.get("detail", "owner control endpoint is unavailable"))
+            raise TerrineError(
+                "Owner control request was refused.",
+                code=response.get("code", "terrine.runtime.control_unavailable"),
+                context={},
+            )
         return response["value"]
 
     def get_run(self, run_id: str):

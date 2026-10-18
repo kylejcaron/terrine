@@ -9,6 +9,7 @@ from typing import Any
 import ibis
 import pyarrow as pa
 from ibis.backends.duckdb import Backend as IbisDuckDBBackend
+from ibis.common.exceptions import TableNotFound
 
 from terrine.runtime.backends.base import (
     BackendCapabilities,
@@ -40,6 +41,7 @@ class DuckDBBackend:
         self.namespace = namespace
         self._schema = f'"{namespace}"'
         self.fault_injector: Callable[[str], None] | None = None
+        self._ibis_backend: Any | None = None
         self.initialize()
 
     def initialize(self) -> None:
@@ -289,7 +291,9 @@ class DuckDBBackend:
             raise KeyError(partition)
         return self.con.execute(f"SELECT * FROM {self._schema}.{_quote(row[0])}").to_arrow_table()
 
-    def read_relation(self, receipt: PublicationReceipt, partition: str) -> ibis.Table:
+    def read_relation(
+        self, receipt: PublicationReceipt, partition: str, *, ibis_backend: Any
+    ) -> ibis.Table:
         """Resolve a committed physical partition as a lazy Ibis table relation."""
         row = self.con.execute(
             f"SELECT table_name FROM {self._schema}.runtime_partitions "
@@ -298,7 +302,12 @@ class DuckDBBackend:
         ).fetchone()
         if row is None:
             raise KeyError(partition)
-        return IbisDuckDBBackend.from_connection(self.con).table(row[0], database=self.namespace)
+        try:
+            return ibis_backend.table(row[0], database=self.namespace)
+        except TableNotFound:
+            if self._ibis_backend is None:
+                self._ibis_backend = IbisDuckDBBackend.from_connection(self.con)
+            return self._ibis_backend.table(row[0], database=self.namespace)
 
     def reconcile(self, run_id: str) -> Reconciliation:
         row = self.con.execute(

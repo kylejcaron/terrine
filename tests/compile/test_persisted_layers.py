@@ -248,3 +248,31 @@ def test_same_fact_measures_keep_filter_and_aggregation_identity(column_model):
     assert column_model.con.to_pyarrow(expected.audit_table.order_by("unit")).equals(
         column_model.con.to_pyarrow(actual.audit_table.order_by("unit"))
     )
+
+
+def test_physical_source_type_change_invalidates_persisted_layer_identity(column_model):
+    design = Design(
+        "user",
+        FixedDate("2025-01-03T00:00:00+00:00"),
+        features={"total": agg("total", window=("-1d", "0s"))},
+    )
+    old_key = next(key for key in plan_layers(design, column_model).keys if key.layer == "prefix")
+    old_relation = ibis.memtable({"_unit": [], "_timestamp": [], "_prefix": []})
+
+    column_model.con.raw_sql("ALTER TABLE events ALTER amount TYPE DECIMAL(12, 4)")
+    changed_model = Model.from_catalog(
+        column_model.catalog,
+        con=column_model.con,
+        readiness=column_model.readiness,
+        units=column_model.units,
+        event_ids=column_model.event_ids,
+    )
+
+    new_key = next(key for key in plan_layers(design, changed_model).keys if key.layer == "prefix")
+    assert new_key.definition_hash != old_key.definition_hash
+    with pytest.raises(ValueError, match="identity"):
+        compose_materialized_frame(
+            design,
+            changed_model,
+            persisted={replace(old_key, snapshot_id="same-snapshot"): old_relation},
+        )

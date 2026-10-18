@@ -1,5 +1,4 @@
 from terrine.runtime.graph import DependencyGraph, dependency_graph
-from terrine.runtime.layers import translate_persisted_layers
 from terrine.runtime.owner import RuntimeOwner, SnapshotRetention
 from terrine.runtime.recipe import (
     DestinationRef,
@@ -17,6 +16,15 @@ from terrine.runtime.state import (
     RuntimeStore,
     SourceSnapshot,
 )
+
+
+def __getattr__(name: str):
+    if name == "translate_persisted_layers":
+        from terrine.runtime.layers import translate_persisted_layers
+
+        return translate_persisted_layers
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "DefinitionVersion",

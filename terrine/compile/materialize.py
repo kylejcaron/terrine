@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Mapping
 
 import ibis
 
 from terrine.compile.columns import CompiledStudy, compile_columns
-from terrine.compile.layers import LayerKey
+from terrine.compile.layers import LayerKey, plan_layers
 from terrine.data import Budget
 from terrine.errors import RefusalSpec
 from terrine.model import Model
@@ -46,7 +45,7 @@ def compose_materialized_frame(
         raise _STRICT_SCAN_UNKNOWN.error()
     if isinstance(design.shape, StatePanel):
         raise _STATE_PANEL_UNSUPPORTED.error()
-    definition_hash = hashlib.sha256(f"{design.spec_hash}:{model.model_hash}".encode()).hexdigest()
+    definition_hash = plan_layers(design, model).keys[0].definition_hash
     snapshot_ids = {key.snapshot_id for key in persisted}
     if len(snapshot_ids) > 1 or (snapshot_ids and not next(iter(snapshot_ids))):
         raise ValueError("persisted layers must belong to one non-empty snapshot")

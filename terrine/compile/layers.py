@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Literal
 
@@ -97,7 +98,20 @@ def plan_layers(design: Design, model) -> LayerPlan:
         *design.eligibility.values(),
     ):
         expression(node)
-    definition_hash = hashlib.sha256(f"{design.spec_hash}:{model.model_hash}".encode()).hexdigest()
+    source_schema = {
+        name: {
+            column: str(dtype)
+            for column, dtype in model._resolver(source.relation).schema().items()
+        }
+        for name, source in model.sources.items()
+    }
+    definition_hash = hashlib.sha256(
+        json.dumps(
+            [design.spec_hash, model.model_hash, source_schema],
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
     anchor = LayerKey(
         "anchor",
         "__design__",

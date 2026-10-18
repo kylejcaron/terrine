@@ -57,5 +57,5 @@ def translate_persisted_layers(
             raise ValueError("logical layer refers to a partition outside the publication receipt")
         if key in result:
             raise ValueError("duplicate logical layer key")
-        result[key] = backend.read_relation(receipt, partition)
+        result[key] = backend.read_relation(receipt, partition, ibis_backend=model.con)
     return MappingProxyType(result)
