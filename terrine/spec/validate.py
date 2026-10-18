@@ -334,11 +334,23 @@ def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
         span_seconds = (schedule.end - schedule.start).days * 86_400
         last_offset = ((span_seconds - 1) // schedule.every) * schedule.every
         anticipation = max((abs(period) for period in design.shape.anticipation_periods), default=0)
+        outcome_horizons = [
+            expression.window.end
+            for expression in design.outcomes.values()
+            if isinstance(expression, MetricAgg)
+        ]
+        outcome_window_end = max(outcome_horizons, default=0)
         horizon = model.day_boundary(schedule.start) + timedelta(
             seconds=last_offset
             + (max(design.shape.comparison_periods) + anticipation) * schedule.every
+            + outcome_window_end
         )
-        if coverage.end_exclusive <= horizon:
+        incomplete_coverage = (
+            coverage.end_exclusive < horizon
+            if outcome_window_end > 0
+            else coverage.end_exclusive <= horizon
+        )
+        if incomplete_coverage:
             raise _INCOMPLETE_TREATMENT_HISTORY.error(
                 source=source.name,
                 boundary=horizon.isoformat(),

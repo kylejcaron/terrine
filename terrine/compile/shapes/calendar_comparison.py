@@ -71,43 +71,12 @@ def _history_check(design: Design, model: Model, rows, outcome_window_end: int):
             & (participants._observed_from > ibis.literal(selector.history_start))
         )
     if "_observed_until" in participants.columns:
-        missing = missing | (
-            participants._observed_until.notnull() & (participants._observed_until <= latest)
+        observation_cutoff_failure = (
+            participants._observed_until < latest
+            if outcome_window_end > 0
+            else participants._observed_until <= latest
         )
-        if spec.control == "never_treated":
-            missing = missing | (
-                never_control
-                & participants._observed_until.notnull()
-                & (participants._observed_until < schedule_end)
-            )
-    query = participants.filter(missing).select("unit").distinct()
-    return _Check(
-        query.aggregate(failed_0=query.count().cast("string")),
-        (_Failure("failed_0", _INCOMPLETE_HISTORY, {}),),
-    )
-    anchor = design.anchor
-    assert isinstance(anchor, Schedule)
-    selector = spec.cohort
-    participants = rows
-    if "__terrine_eligible" in rows.columns:
-        participants = participants.filter(rows.__terrine_eligible)
-    reference_t0 = participants.cohort + ibis.interval(seconds=spec.reference_period * anchor.every)
-    anticipation = max((abs(value) for value in spec.anticipation_periods), default=0)
-    latest = cast(ir.TimestampValue, ibis.greatest(participants.t0, reference_t0)) + ibis.interval(
-        seconds=anticipation * anchor.every
-    )
-    schedule_end = ibis.literal(model.day_boundary(anchor.end))
-    never_control = participants.control_eligible & ~participants.treatment
-    missing = cast(ir.BooleanValue, ibis.literal(False))
-    if "_observed_from" in participants.columns:
-        missing = missing | (
-            participants._observed_from.notnull()
-            & (participants._observed_from > ibis.literal(selector.history_start))
-        )
-    if "_observed_until" in participants.columns:
-        missing = missing | (
-            participants._observed_until.notnull() & (participants._observed_until <= latest)
-        )
+        missing = missing | (participants._observed_until.notnull() & observation_cutoff_failure)
         if spec.control == "never_treated":
             missing = missing | (
                 never_control
@@ -238,9 +207,12 @@ def _stack(
     if spec.control == "never_treated":
         control = with_values.__terrine_initiation_time.isnull()
     else:
-        control = with_values.__terrine_initiation_time.isnull() | (
-            with_values.__terrine_initiation_time > latest
+        control_after_cutoff = (
+            with_values.__terrine_initiation_time >= latest
+            if outcome_window_end > 0
+            else with_values.__terrine_initiation_time > latest
         )
+        control = with_values.__terrine_initiation_time.isnull() | control_after_cutoff
     eligible = treated | control
     filtered = with_values.filter(eligible)
     columns = {
@@ -257,6 +229,7 @@ def _stack(
         "event_period": with_values.period,
         "treatment": treated,
         "control_eligible": control,
+        "__terrine_treatment_initiation_time": with_values.__terrine_initiation_time,
         **columns,
     }
     if "__terrine_eligible" in table.columns:
@@ -314,6 +287,9 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
             "event_period": ColumnMeta(None, "event period", None, None, None, None),
             "treatment": ColumnMeta(None, "treatment", None, None, None, None),
             "control_eligible": ColumnMeta(None, "control eligibility", None, None, None, None),
+            "__terrine_treatment_initiation_time": ColumnMeta(
+                None, "treatment initiation time", None, None, None, None
+            ),
         }
     )
     return CompiledStudy(

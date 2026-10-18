@@ -57,4 +57,4 @@
 - Keep stacked comparison output restricted to compiled eligibility and label never-adopter controls explicitly as untreated.
 - Distinguish late-known treatment initiation from never-treated controls, require per-unit treatment-history bounds, and refuse requested comparison periods absent from the schedule.
 - Add weighted stacked cohort-time effects with target/cohort aggregation weights, joint unit-cluster covariance, sampled-population refusal, and an explicit naive staggered-TWFE warning.
-- Validate stacked outcome windows and complete treated/admissible-control pairs; preserve numeric precision and finite-value refusals, normalize large weights safely, and use tail-stable confidence quantiles.
+- Validate actual initiation timing and exclusive outcome-window coverage; refuse incomplete treated/admissible-control pairs, preserve numeric precision and finite-value refusals, safely scale large weights and means, and use tail-stable confidence quantiles.

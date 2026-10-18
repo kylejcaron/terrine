@@ -47,6 +47,7 @@ def _frame(*, sampled=False):
                         "period": period,
                         "event_period": event_period,
                         "control_eligible": not treated,
+                        "__terrine_treatment_initiation_time": cohort if treated else None,
                         "y": baseline + trend * event_period + effect,
                         "q": 1.0 if unit != "c2" else 2.0,
                     }
@@ -186,6 +187,24 @@ def test_stacked_estimator_refuses_incomplete_admissible_control_pairs():
     assert error.value.context["reason"] == "incomplete_control_pair"
 
 
+def test_stacked_estimator_refuses_missing_comparison_for_admissible_control():
+    from dataclasses import replace
+
+    frame = _frame()
+    rows = [
+        row
+        for row in frame.table.to_pylist()
+        if not (row["unit"] == "c1" and row["event_period"] == 0)
+    ]
+    frame = replace(frame, table=pa.Table.from_pylist(rows))
+    with pytest.raises(TerrineError) as error:
+        stacked_event_study(
+            frame, outcome="y", treatment="treatment", cohort="cohort", period="period"
+        )
+    assert error.value.code == "terrine.estimate.stacked_input"
+    assert error.value.context["reason"] == "incomplete_control_pair"
+
+
 @pytest.mark.parametrize(
     ("outcomes", "expected_code"),
     [
@@ -247,3 +266,20 @@ def test_naive_staggered_twfe_request_returns_explicit_warning():
     assert diagnostic.name == "terrine.estimate.naive_staggered_twfe"
     assert diagnostic.status == "warn"
     assert diagnostic.metrics["robust"] is False
+
+
+def test_stacked_estimator_computes_magnitude_scaled_weighted_means():
+    from dataclasses import replace
+
+    frame = _frame()
+    rows = frame.table.to_pylist()
+    for row in rows:
+        if row["event_period"] == -1 or not row["treatment"]:
+            row["y"] = 0.0
+        else:
+            row["y"] = 1e308
+    frame = replace(frame, table=pa.Table.from_pylist(rows))
+    result = stacked_event_study(
+        frame, outcome="y", treatment="treatment", cohort="cohort", period="period"
+    )
+    assert result.effects == pytest.approx((1e308, 1e308))

@@ -70,10 +70,16 @@ def _normalized_cohort_weights(cohorts: tuple[datetime, ...], raw: Mapping[str, 
 def _checked_mean(
     values: list[tuple[object, float, float]], reason: str
 ) -> tuple[float, list[tuple[object, float, float]]]:
-    scale = max(weight for _, _, weight in values)
-    normalized = [(unit, delta, weight / scale) for unit, delta, weight in values]
+    weight_scale = max(weight for _, _, weight in values)
+    normalized = [(unit, delta, weight / weight_scale) for unit, delta, weight in values]
     denominator = math.fsum(weight for _, _, weight in normalized)
-    mean = math.fsum(weight * delta for _, delta, weight in normalized) / denominator
+    value_scale = max(abs(delta) for _, delta, _ in normalized)
+    if value_scale == 0:
+        return 0.0, normalized
+    scaled_mean = math.fsum(
+        (weight / denominator) * (delta / value_scale) for _, delta, weight in normalized
+    )
+    mean = value_scale * scaled_mean
     if not math.isfinite(mean):
         raise NONFINITE_RESULT.error(stage=reason)
     return mean, normalized
@@ -108,18 +114,10 @@ def stacked_event_study(
         raise _INPUT.error(reason="missing_role_column")
     if outcome not in frame.columns:
         raise _INPUT.error(reason="unknown_outcome")
-    outcome_meta = frame.columns[outcome]
-    window = outcome_meta.window
-    if window is not None and window.end > 0:
-        for focal in sorted(
-            {value for value in _column(frame, cohort) if isinstance(value, datetime)}
-        ):
-            earliest_uncontaminated = focal + timedelta(
-                seconds=min(meta.anticipation_periods, default=0) * meta.period_seconds
-            )
-            reference_time = focal + timedelta(seconds=meta.reference_period * meta.period_seconds)
-            if reference_time + timedelta(seconds=window.end) > earliest_uncontaminated:
-                raise _INPUT.error(reason="outcome_window_contaminates_reference")
+    window = frame.columns[outcome].window
+    initiation_column = "__terrine_treatment_initiation_time"
+    if window is not None and window.end > 0 and initiation_column not in frame.table.column_names:
+        raise _INPUT.error(reason="missing_actual_initiation_time")
     values = {
         "unit": _column(frame, roles.unit),
         "treatment": _column(frame, treatment),
@@ -127,6 +125,11 @@ def stacked_event_study(
         "period": _column(frame, period),
         "control": _column(frame, "control_eligible"),
     }
+    initiation_times = (
+        frame.table[initiation_column].to_pylist()
+        if initiation_column in frame.table.column_names
+        else [None] * frame.table.num_rows
+    )
     _column(frame, outcome)
     outcome_values, _ = _numeric(frame.table[outcome], outcome)
     if unit_weight is None:
@@ -135,7 +138,7 @@ def stacked_event_study(
         weights_array, _ = _numeric(frame.table[unit_weight], unit_weight, weight=True)
         weights = weights_array.tolist()
     rows_by_stack: dict[
-        tuple[datetime, object], dict[datetime, tuple[float, bool, bool, float]]
+        tuple[datetime, object], dict[datetime, tuple[float, bool, bool, float, datetime | None]]
     ] = {}
     for index in range(frame.table.num_rows):
         unit = values["unit"][index]
@@ -154,6 +157,7 @@ def stacked_event_study(
             bool(values["treatment"][index]),
             bool(values["control"][index]),
             weight,
+            initiation_times[index],
         )
     cohorts = tuple(sorted({row[0] for row in rows_by_stack}))
     if not cohorts:
@@ -177,16 +181,49 @@ def stacked_event_study(
                 was_treated = any(row[1] for row in times.values())
                 if was_treated and (baseline_pair is None or comparison_pair is None):
                     raise _INPUT.error(reason="incomplete_treated_pair")
+                if baseline_pair is not None and comparison_pair is None and baseline_pair[2]:
+                    initiation_time = baseline_pair[4]
+                    cutoff = max(reference_time, comparison_time) + timedelta(
+                        seconds=max((abs(value) for value in meta.anticipation_periods), default=0)
+                        * meta.period_seconds
+                        + (window.end if window is not None else 0)
+                    )
+                    remains_control = (
+                        meta.control == "never_treated" and initiation_time is None
+                    ) or (
+                        meta.control == "not_yet_treated"
+                        and (
+                            initiation_time is None
+                            or (
+                                initiation_time >= cutoff
+                                if window is not None and window.end > 0
+                                else initiation_time > cutoff
+                            )
+                        )
+                    )
+                    if remains_control:
+                        raise _INPUT.error(reason="incomplete_control_pair")
                 if comparison_pair is not None and comparison_pair[2] and baseline_pair is None:
                     raise _INPUT.error(reason="incomplete_control_pair")
                 if baseline_pair is None or comparison_pair is None:
                     continue
-                baseline, _, _, base_weight = baseline_pair
-                followup, is_treated, is_control, _ = comparison_pair
+                baseline, _, _, base_weight, _ = baseline_pair
+                followup, is_treated, is_control, _, initiation_time = comparison_pair
+                if is_treated and window is not None and window.end > 0:
+                    if not isinstance(initiation_time, datetime):
+                        raise _INPUT.error(reason="missing_actual_initiation_time")
+                    earliest_uncontaminated = initiation_time + timedelta(
+                        seconds=min(meta.anticipation_periods, default=0) * meta.period_seconds
+                    )
+                    if reference_time + timedelta(seconds=window.end) > earliest_uncontaminated:
+                        raise _INPUT.error(reason="outcome_window_contaminates_reference")
+                delta = followup - baseline
+                if not math.isfinite(delta):
+                    raise NONFINITE_RESULT.error(stage="outcome_difference")
                 if is_treated:
-                    treated.append((unit, followup - baseline, base_weight))
+                    treated.append((unit, delta, base_weight))
                 elif is_control:
-                    controls.append((unit, followup - baseline, base_weight))
+                    controls.append((unit, delta, base_weight))
             if not treated or not controls:
                 raise _INPUT.error(reason="comparison_requires_treated_and_control_units")
             mu_t, treated = _checked_mean(treated, "treated_weighted_mean")
