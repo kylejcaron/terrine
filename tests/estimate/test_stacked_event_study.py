@@ -283,3 +283,52 @@ def test_stacked_estimator_computes_magnitude_scaled_weighted_means():
         frame, outcome="y", treatment="treatment", cohort="cohort", period="period"
     )
     assert result.effects == pytest.approx((1e308, 1e308))
+
+
+def test_stacked_estimator_preserves_representable_mixed_magnitude_weights():
+    from dataclasses import replace
+
+    frame = _frame()
+    rows = frame.table.to_pylist()
+    for row in rows:
+        if row["unit"].endswith("a"):
+            row["q"] = 5e-324
+            row["y"] = 1e308 if row["event_period"] == 0 else 0.0
+        elif row["unit"].endswith("b"):
+            row["q"] = 1.0
+            row["y"] = 1e-16 if row["event_period"] == 0 else 0.0
+        else:
+            row["y"] = 0.0
+    frame = replace(frame, table=pa.Table.from_pylist(rows))
+    result = stacked_event_study(
+        frame,
+        outcome="y",
+        treatment="treatment",
+        cohort="cohort",
+        period="period",
+        unit_weight="q",
+    )
+    expected = 5e-324 * 1e308 + 1e-16
+    assert result.effects == pytest.approx((expected, expected), rel=1e-12, abs=0)
+
+
+def test_stacked_estimator_accepts_control_removed_by_longer_declared_window():
+    from dataclasses import replace
+
+    frame = _frame()
+    later = datetime(2025, 1, 10, tzinfo=UTC)
+    rows = frame.table.to_pylist()
+    rows = [row for row in rows if not (row["unit"] == "c1" and row["event_period"] == 0)]
+    for row in rows:
+        if row["unit"] == "c1":
+            row["__terrine_treatment_initiation_time"] = later
+    calendar = replace(frame.provenance.calendar_comparison, control="not_yet_treated")
+    columns = dict(frame.columns)
+    columns["long"] = ColumnMeta(Window("0d", "7d"), "outcome", None, None, None, None)
+    frame = replace(
+        frame,
+        table=pa.Table.from_pylist(rows),
+        columns=columns,
+        provenance=replace(frame.provenance, calendar_comparison=calendar),
+    )
+    stacked_event_study(frame, outcome="y", treatment="treatment", cohort="cohort", period="period")

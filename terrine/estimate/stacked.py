@@ -73,13 +73,7 @@ def _checked_mean(
     weight_scale = max(weight for _, _, weight in values)
     normalized = [(unit, delta, weight / weight_scale) for unit, delta, weight in values]
     denominator = math.fsum(weight for _, _, weight in normalized)
-    value_scale = max(abs(delta) for _, delta, _ in normalized)
-    if value_scale == 0:
-        return 0.0, normalized
-    scaled_mean = math.fsum(
-        (weight / denominator) * (delta / value_scale) for _, delta, weight in normalized
-    )
-    mean = value_scale * scaled_mean
+    mean = math.fsum((weight * delta) / denominator for _, delta, weight in normalized)
     if not math.isfinite(mean):
         raise NONFINITE_RESULT.error(stage=reason)
     return mean, normalized
@@ -115,6 +109,10 @@ def stacked_event_study(
     if outcome not in frame.columns:
         raise _INPUT.error(reason="unknown_outcome")
     window = frame.columns[outcome].window
+    risk_window_end = max(
+        (column.window.end for column in frame.columns.values() if column.window is not None),
+        default=window.end if window is not None else 0,
+    )
     initiation_column = "__terrine_treatment_initiation_time"
     if window is not None and window.end > 0 and initiation_column not in frame.table.column_names:
         raise _INPUT.error(reason="missing_actual_initiation_time")
@@ -186,7 +184,7 @@ def stacked_event_study(
                     cutoff = max(reference_time, comparison_time) + timedelta(
                         seconds=max((abs(value) for value in meta.anticipation_periods), default=0)
                         * meta.period_seconds
-                        + (window.end if window is not None else 0)
+                        + risk_window_end
                     )
                     remains_control = (
                         meta.control == "never_treated" and initiation_time is None
@@ -196,7 +194,7 @@ def stacked_event_study(
                             initiation_time is None
                             or (
                                 initiation_time >= cutoff
-                                if window is not None and window.end > 0
+                                if risk_window_end > 0
                                 else initiation_time > cutoff
                             )
                         )
