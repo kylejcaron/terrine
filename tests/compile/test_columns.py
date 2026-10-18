@@ -422,6 +422,23 @@ def test_relative_feature_cutoff_uses_absolute_support_and_selector_refs(column_
     assert timing.end_bound_column in row
 
 
+def test_reused_event_time_chain_allocates_unique_support_columns(column_model):
+    first = event_time("amount", window=("0s", "1s"))
+    second = event_time("amount", window=("0s", "1s"), relative_to=first)
+    compiled = _compile(
+        column_model,
+        outcomes={
+            "first_time": first,
+            "second_time": second,
+            "relative_amount": agg("total", window=("0s", "1s"), relative_to=second),
+        },
+    )
+    rows = column_model.con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
+    assert rows[0]["first_time"] == datetime(2025, 1, 2, 12, tzinfo=UTC)
+    assert rows[0]["second_time"] == datetime(2025, 1, 2, 12, tzinfo=UTC)
+    assert rows[0]["relative_amount"] == Decimal(7)
+
+
 def test_relative_attribute_asof_uses_selected_event_time(column_model):
     selector = event_time("amount", window=("0s", "1s"))
     compiled = _compile(
@@ -451,6 +468,10 @@ def test_event_time_selector_requires_source_readiness_for_its_full_search_windo
 def test_event_time_selector_resolves_dimension_backed_label_property(column_model):
     con = column_model.con
     con.raw_sql("""
+        INSERT INTO events VALUES
+            ('b', TIMESTAMPTZ '2025-01-02 12:00:01+00', 9, NULL)
+    """)
+    con.raw_sql("""
         CREATE TABLE tier_history AS SELECT 'a' AS id, 'gold' AS tier,
             TIMESTAMPTZ '2024-12-01' AS starts, TIMESTAMPTZ '2025-02-01' AS ends
     """)
@@ -470,12 +491,16 @@ def test_event_time_selector_resolves_dimension_backed_label_property(column_mod
         readiness=column_model.readiness,
         units=column_model.units,
     )
-    selector = event_time("amount", window=("0s", "1s"), label_property="tier", equals="gold")
+    selector = event_time("amount", window=("0s", "2s"), label_property="tier", equals="gold")
     compiled = _compile(model, outcomes={"selected_at": selector})
     compiled.validate(execute=con.to_pyarrow)
     rows = con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
     assert rows[0]["selected_at"] == datetime(2025, 1, 2, 12, tzinfo=UTC)
     assert rows[1]["selected_at"] is None
+    label_meta = compiled.columns["selected_at"]
+    assert label_meta.complete_column is not None and label_meta.reason_column is not None
+    assert rows[1][label_meta.complete_column] is False
+    assert rows[1][label_meta.reason_column] == "incomplete_label_history"
 
 
 def test_event_time_selector_metadata_distinguishes_known_absence_and_missing_origin(
