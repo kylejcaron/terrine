@@ -247,6 +247,7 @@ def test_trajectory_generated_names_are_reserved_from_features():
     finally:
         con.disconnect()
 
+
 def test_scale_zero_decimal_cumulative_retains_wide_values():
     con, model = _trajectory_model(decimal_type="DECIMAL(38, 0)")
     try:

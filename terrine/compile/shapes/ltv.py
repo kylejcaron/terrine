@@ -194,9 +194,7 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
             assert scale is not None
             decimal_text = table.period_value.cast("string")
             separator = decimal_text.find(".")
-            fractional_digits = ibis.ifelse(
-                separator < 0, 0, decimal_text.length() - separator - 1
-            )
+            fractional_digits = ibis.ifelse(separator < 0, 0, decimal_text.length() - separator - 1)
             coefficient_text = decimal_text.replace(".", "")
             coefficient = coefficient_text.rpad(
                 coefficient_text.length() + scale - fractional_digits, "0"
