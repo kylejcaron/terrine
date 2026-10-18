@@ -136,7 +136,11 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
     for property_name in (*sequence.properties, *internal_properties):
         prop = _property_binding(source, property_name)
         if prop.dimension_name is None:
-            targets = [property_name]
+            targets = (
+                []
+                if property_name == funnel_event_property and property_name not in sequence.properties
+                else [property_name]
+            )
             if property_name == funnel_event_property:
                 targets.append(funnel_event_property_column)
             for target in dict.fromkeys(targets):
@@ -154,7 +158,12 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
             prop = _property_binding(source, property_name)
             if prop.dimension_name is not None:
                 value_alias, _ = aliases[(prop.dimension_name, property_name)]
-                targets = [property_name]
+                targets = (
+                    []
+                    if property_name == funnel_event_property
+                    and property_name not in sequence.properties
+                    else [property_name]
+                )
                 if property_name == funnel_event_property:
                     targets.append(funnel_event_property_column)
                 for target in dict.fromkeys(targets):
