@@ -95,6 +95,8 @@ class RefreshPlan:
     recipe: PlanRecipe
     budget: Budget | None = None
     scan_bytes: int | None = None
+    expected_base_manifest: str | None = None
+    expected_base_manifest_bound: bool = False
 
     @classmethod
     def deserialize(cls, serialized: bytes | str) -> RefreshPlan:

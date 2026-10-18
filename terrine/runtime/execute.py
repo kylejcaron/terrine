@@ -76,6 +76,7 @@ def execute_plan(
     )
     runtime_store = RuntimeStore(con, namespace=namespace)
     runtime_store.initialize()
+    _check_expected_base_manifest(plan, con=con, namespace=namespace)
     leases = LeaseStore(con, namespace=namespace)
     schema = leases._schema
     con.execute(
@@ -481,6 +482,27 @@ def execute_plan(
                 _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
         finally:
             leases.release(lease)
+
+
+def _check_expected_base_manifest(plan: RefreshPlan, *, con: Any, namespace: str) -> None:
+    if not plan.expected_base_manifest_bound:
+        return
+    exists = con.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE lower(table_schema)=lower(?) AND table_name='runtime_manifests'",
+        [namespace],
+    ).fetchone()
+    current = (
+        con.execute(
+            f'SELECT generation FROM "{namespace}".runtime_manifests WHERE dataset=?',
+            [plan.dataset],
+        ).fetchone()
+        if exists is not None
+        else None
+    )
+    actual = current[0] if current is not None else None
+    if actual != plan.expected_base_manifest:
+        raise ValueError("expected base manifest does not match current publication")
 
 
 def _encode(table: pa.Table) -> bytes:

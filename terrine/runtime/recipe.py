@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from terrine.errors import RefusalSpec
@@ -271,4 +271,9 @@ def resolve_plan(
     ):
         raise _INVALID.error(reason="plan identity differs from owner-bound references")
     design = from_json(restored.design_json)
+    plan = replace(
+        plan,
+        expected_base_manifest=restored.expected_base_manifest,
+        expected_base_manifest_bound=True,
+    )
     return plan, model, design, restored.destination

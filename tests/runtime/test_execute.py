@@ -226,6 +226,31 @@ def test_post_commit_empty_refresh_restores_previous_result_partitions():
     ).fetchall()
 
 
+def test_expected_base_manifest_mismatch_refuses_before_source_work():
+    from dataclasses import replace
+
+    con = duckdb.connect(":memory:")
+    plan = replace(
+        _plan(), expected_base_manifest="generation-1", expected_base_manifest_bound=True
+    )
+    con.execute(
+        "CREATE SCHEMA owner; CREATE TABLE owner.runtime_manifests "
+        "(dataset VARCHAR PRIMARY KEY,generation VARCHAR NOT NULL,version BIGINT NOT NULL)"
+    )
+    con.execute("INSERT INTO owner.runtime_manifests VALUES ('orders','generation-2',2)")
+    work = []
+    with pytest.raises(ValueError, match="expected base manifest"):
+        execute_plan(
+            plan,
+            con=con,
+            namespace="owner",
+            run_id="stale-base",
+            run_task=lambda task, dependencies: work.append(task.task_id),
+            publish=lambda plan, outputs, lease: "g3",
+        )
+    assert work == []
+
+
 def test_plan_task_bound_is_checked_before_running_work():
     con = duckdb.connect(":memory:")
     calls = []

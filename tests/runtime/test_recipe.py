@@ -100,9 +100,16 @@ def test_saved_plan_recipe_reconstructs_design_and_verifies_owner_model_in_fresh
         resolved_plan, resolved_model, resolved_design, resolved_destination = resolve_plan(
             restored, resolver=_Resolver(model), namespace="runtime"
         )
-        assert resolved_plan == plan
+        assert resolved_plan.expected_base_manifest == "manifest-1"
+        assert resolved_plan.expected_base_manifest_bound
         assert resolved_model is model
         assert resolved_design.spec_hash == design.spec_hash
+        con.raw_sql(
+            "CREATE TABLE runtime.runtime_manifests "
+            "(dataset VARCHAR PRIMARY KEY,generation VARCHAR NOT NULL,version BIGINT NOT NULL,"
+            "snapshot_id VARCHAR)"
+        )
+        con.raw_sql("INSERT INTO runtime.runtime_manifests VALUES ('study','manifest-1',1,NULL)")
         assert resolved_destination == destination
         run = execute_plan(
             resolved_plan,
