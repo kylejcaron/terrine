@@ -13,7 +13,18 @@ if TYPE_CHECKING:
     from terrine.model import Model
 
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
-from terrine.spec.expressions import And, AttributeAsOf, Eq, Expr, Gt, IsNull, MetricAgg, Predicate
+from terrine.spec.expressions import (
+    And,
+    AttributeAsOf,
+    Eq,
+    EventTime,
+    Expr,
+    Gt,
+    IsNull,
+    MetricAgg,
+    Predicate,
+)
+from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import StatePanel
 from terrine.windows import seconds
 
@@ -62,7 +73,7 @@ class Design:
     eligibility: Mapping[str, Predicate]
     treatment: Treatment | None
     gap: int
-    shape: str | StatePanel
+    shape: str | StatePanel | EventSequence
     anchor_range: AnchorRange | None
 
     def __init__(
@@ -75,7 +86,7 @@ class Design:
         eligibility: Mapping[str, Predicate] | None = None,
         treatment: Treatment | None = None,
         gap: str | int = "0d",
-        shape: str | StatePanel = "cross_section",
+        shape: str | StatePanel | EventSequence = "cross_section",
         anchor_range: AnchorRange | None = None,
     ) -> None:
         if not isinstance(unit, str) or not unit.strip():
@@ -86,20 +97,24 @@ class Design:
             raise TypeError("treatment must be Treatment or None")
         if anchor_range is not None and not isinstance(anchor_range, AnchorRange):
             raise TypeError("anchor_range must be AnchorRange or None")
-        if not isinstance(shape, (str, StatePanel)) or (
+        if not isinstance(shape, (str, StatePanel, EventSequence)) or (
             isinstance(shape, str) and not shape.strip()
         ):
-            raise ValueError("shape must be 'cross_section' or StatePanel")
+            raise ValueError("shape must be 'cross_section', StatePanel, or EventSequence")
         gap_seconds = seconds(gap)
         if gap_seconds < 0:
             raise ValueError("gap must be non-negative")
         object.__setattr__(self, "unit", unit)
         object.__setattr__(self, "anchor", anchor)
         object.__setattr__(
-            self, "features", _named_nodes(features, (MetricAgg, AttributeAsOf), "features")
+            self,
+            "features",
+            _named_nodes(features, (MetricAgg, AttributeAsOf, EventTime), "features"),
         )
         object.__setattr__(
-            self, "outcomes", _named_nodes(outcomes, (MetricAgg, AttributeAsOf), "outcomes")
+            self,
+            "outcomes",
+            _named_nodes(outcomes, (MetricAgg, AttributeAsOf, EventTime), "outcomes"),
         )
         object.__setattr__(
             self, "eligibility", _named_nodes(eligibility, (Gt, Eq, IsNull, And), "eligibility")

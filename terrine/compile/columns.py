@@ -21,7 +21,8 @@ from terrine.semantic.models import BoundDimension
 from terrine.semantic.rules import calendar_average_alignment
 from terrine.spec.anchors import FixedDate, Schedule
 from terrine.spec.design import Design
-from terrine.spec.expressions import And, AttributeAsOf, Eq, Expr
+from terrine.spec.expressions import And, AttributeAsOf, Eq, EventTime, Expr
+from terrine.spec.sequence import _UNSUPPORTED_SHAPE
 from terrine.spec.validate import _fixed_anchors
 from terrine.temporal.aggregate import TemporalResult, _Check, aggregate_window
 from terrine.temporal.attributes import enrich_events, validate_history
@@ -157,6 +158,8 @@ def compile_columns(
         if node in values:
             return values[node]
         output = f"__terrine_value_{len(values)}"
+        if isinstance(node, EventTime):
+            raise _UNSUPPORTED_SHAPE.error()
         if isinstance(node, AttributeAsOf):
             result = compile_asof(
                 anchors.table,

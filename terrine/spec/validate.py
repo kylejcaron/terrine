@@ -20,12 +20,21 @@ from terrine.semantic.rules import (
 )
 from terrine.spec.anchors import EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
-from terrine.spec.expressions import And, AttributeAsOf, Eq, Expr, Gt, IsNull, MetricAgg, Predicate
+from terrine.spec.expressions import (
+    And,
+    AttributeAsOf,
+    Eq,
+    EventTime,
+    Expr,
+    Gt,
+    IsNull,
+    Predicate,
+)
+from terrine.spec.sequence import EventSequence
 from terrine.windows import Window
 
 if TYPE_CHECKING:
     from terrine.model import Model
-
 __all__ = ["ValidationReport", "validate_design"]
 
 _INVALID = RefusalSpec("terrine.design.invalid", "Design validation failed: {reason}.")
@@ -43,6 +52,15 @@ _GAP = RefusalSpec("terrine.design.gap_violation", "{role} window or cutoff viol
 _METRIC_WINDOW = RefusalSpec(
     "terrine.design.metric_window_conflict",
     "Metric {metric!r} declares a conflicting window_days value.",
+)
+
+
+_SEQUENCE_INVALID = RefusalSpec(
+    "terrine.sequence.invalid_spec", "Invalid event sequence design: {reason}."
+)
+_REANCHOR_LEAK = RefusalSpec(
+    "terrine.sequence.reanchor_leak",
+    "{role} expression support may cross the required gap {gap}.",
 )
 
 
@@ -175,9 +193,28 @@ def _expression(
     if isinstance(expr, AttributeAsOf):
         _resolve_property(expr, role, design, model, required, obligations)
         return
-    if not isinstance(expr, MetricAgg):
-        raise _INVALID.error(reason="unsupported expression")
-
+    if isinstance(expr, EventTime):
+        fact = model.catalog.facts.get(expr.fact)
+        if fact is None:
+            raise _MISSING.error(kind="fact", name=expr.fact)
+        source = model.sources.get(fact.source)
+        if source is None or expr.fact not in source.facts:
+            raise _MISSING.error(kind="bound fact", name=expr.fact)
+        if design.unit not in source.entities:
+            raise _UNIT.error(unit=design.unit, name=expr.fact)
+        _required(model, source.name, required)
+        obligations.append("coverage_completeness")
+        if expr.relative_to is not None:
+            _expression(expr.relative_to, role, design, model, required, obligations)
+        lower, upper = expr.window.start, expr.window.end
+        if expr.relative_to is not None:
+            lower += expr.relative_to.window.start
+            upper += expr.relative_to.window.end
+        if role in {"feature", "eligibility"} and upper > -design.gap:
+            raise _REANCHOR_LEAK.error(role=role, gap=design.gap)
+        if role == "outcome" and lower < design.gap:
+            raise _GAP.error(role=role, gap=design.gap)
+        return
     metric = _metric(model, expr.metric)
     if metric.entity != design.unit:
         raise _UNIT.error(unit=design.unit, name=expr.metric)
@@ -249,11 +286,34 @@ def _range_bound(value: date | datetime | None, model: Model) -> datetime | None
     return model.day_boundary(value)
 
 
+def _validate_sequence_shape(design: Design, model: Model, required: set[str]) -> None:
+    sequence = design.shape
+    if not isinstance(sequence, EventSequence):
+        return
+    if not isinstance(design.anchor, EventAnchor):
+        raise _SEQUENCE_INVALID.error(reason="event sequences require an EventAnchor")
+    if design.treatment is not None:
+        raise _SEQUENCE_INVALID.error(reason="event sequences do not support treatment")
+    if any(not isinstance(expr, EventTime) for expr in design.outcomes.values()):
+        raise _SEQUENCE_INVALID.error(reason="event sequences only support EventTime outcomes")
+    fact = model.catalog.facts.get(sequence.fact)
+    if fact is None:
+        raise _MISSING.error(kind="fact", name=sequence.fact)
+    source = model.sources.get(fact.source)
+    if source is None or sequence.fact not in source.facts:
+        raise _MISSING.error(kind="bound fact", name=sequence.fact)
+    if design.unit not in source.entities:
+        raise _UNIT.error(unit=design.unit, name=sequence.fact)
+    _required(model, source.name, required)
+
+
 def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
     from terrine.spec.state_panel import StatePanel, validate_state_panel
 
     if isinstance(design.shape, StatePanel):
         validate_state_panel(design, model, required)
+    elif isinstance(design.shape, EventSequence):
+        _validate_sequence_shape(design, model, required)
     elif design.shape != "cross_section":
         raise _INVALID.error(reason="unsupported design shape")
 

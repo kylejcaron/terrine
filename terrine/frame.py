@@ -19,6 +19,7 @@ from terrine.compile.cost import (
 from terrine.data import Budget, MaterializedFrame, Provenance, StatePanelMeta
 from terrine.errors import RefusalSpec
 from terrine.spec.anchors import FixedDate
+from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import BinnedMetricState, StatePanel, encode_cutpoint
 
 _STATE_PANEL_BUDGET = RefusalSpec(
@@ -214,6 +215,8 @@ class Frame:
                 execution_snapshot=context.snapshot,
                 shape="state_panel"
                 if isinstance(self._design.shape, StatePanel)
+                else "event_sequence"
+                if isinstance(self._design.shape, EventSequence)
                 else self._design.shape,
                 treatment_design="baseline_binary" if baseline_binary else None,
                 eligibility_summary=summary,
