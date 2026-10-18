@@ -74,6 +74,31 @@ def test_calendar_comparison_materializes_roster_controls_for_both_modes(native_
     assert restored.table.equals(not_yet.table)
 
 
+def test_never_treated_history_accepts_observation_through_schedule_end(native_inputs):
+    catalog, con = native_inputs
+    con.insert("users", pa.table({"user_id": ["c"], "alt_id": ["cc"]}))
+    con.raw_sql("ALTER TABLE users ADD COLUMN observed_until TIMESTAMPTZ")
+    con.raw_sql(
+        "UPDATE users SET observed_until = TIMESTAMPTZ '2025-01-12 00:00:00+00' WHERE user_id = 'c'"
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
+        units={"user": UnitSource("users", "user_id", observed_until="observed_until")},
+        event_ids={"events": "event_id"},
+    )
+    frame = CalendarComparisonPanel(
+        Design("user", Schedule("1d", "2025-01-01", "2025-01-12")),
+        model,
+        cohort=Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+        control="never_treated",
+        reference_period=-1,
+        comparison_periods=(0,),
+    ).materialize(Budget(max_rows=100, max_output_bytes=1_000_000))
+    assert frame.table.num_rows > 0
+
+
 def test_calendar_comparison_excludes_ineligible_units(native_inputs):
     from terrine.spec import gt
 
@@ -101,7 +126,10 @@ def test_calendar_comparison_excludes_ineligible_units(native_inputs):
     model = Model.from_catalog(
         catalog,
         con=con,
-        readiness={"events": Coverage("2024-12-29", "2025-01-31")},
+        readiness={
+            "events": Coverage("2024-12-29", "2025-01-31"),
+            "labels": Coverage("2024-12-29", "2025-01-31"),
+        },
         units={"user": UnitSource("users", "user_id", observed_from="observed_from")},
         event_ids={"events": "event_id"},
     )
@@ -113,7 +141,7 @@ def test_calendar_comparison_excludes_ineligible_units(native_inputs):
             eligibility={"eligible": gt(agg("sessions", window=("-2d", "-1d")), 0)},
         ),
         model,
-        cohort=Initiation("events", "session", datetime(2025, 1, 2, tzinfo=UTC)),
+        cohort=Initiation("labels", "churn", datetime(2024, 12, 30, tzinfo=UTC)),
         control="never_treated",
         reference_period=-1,
         comparison_periods=(0,),

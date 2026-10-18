@@ -61,13 +61,8 @@ def _history_check(design: Design, model: Model, rows):
     latest = cast(ir.TimestampValue, ibis.greatest(participants.t0, reference_t0)) + ibis.interval(
         seconds=anticipation * anchor.every
     )
-    if spec.control == "never_treated":
-        schedule_end = ibis.literal(model.day_boundary(anchor.end))
-        latest = ibis.ifelse(
-            participants.control_eligible & ~participants.treatment,
-            ibis.greatest(latest, schedule_end),
-            latest,
-        )
+    schedule_end = ibis.literal(model.day_boundary(anchor.end))
+    never_control = participants.control_eligible & ~participants.treatment
     missing = cast(ir.BooleanValue, ibis.literal(False))
     if "_observed_from" in participants.columns:
         missing = missing | (
@@ -78,6 +73,12 @@ def _history_check(design: Design, model: Model, rows):
         missing = missing | (
             participants._observed_until.notnull() & (participants._observed_until <= latest)
         )
+        if spec.control == "never_treated":
+            missing = missing | (
+                never_control
+                & participants._observed_until.notnull()
+                & (participants._observed_until < schedule_end)
+            )
     query = participants.filter(missing).select("unit").distinct()
     return _Check(
         query.aggregate(failed_0=query.count().cast("string")),
