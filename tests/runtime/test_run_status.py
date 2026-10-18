@@ -55,6 +55,11 @@ def test_cancel_updates_timestamp_when_column_is_available():
 
     con = duckdb.connect(":memory:")
     con.execute("CREATE SCHEMA owner")
+
+    con.execute("SET TimeZone = 'America/New_York'")
+    before_row = con.execute("SELECT CURRENT_TIMESTAMP AT TIME ZONE 'UTC'").fetchone()
+    assert before_row is not None
+    before = before_row[0]
     con.execute(
         "CREATE TABLE owner.runtime_runs (run_id VARCHAR, dataset VARCHAR, fingerprint VARCHAR, "
         "state VARCHAR, published_generation VARCHAR, attempt_fence BIGINT, updated_at TIMESTAMP)"
@@ -65,9 +70,13 @@ def test_cancel_updates_timestamp_when_column_is_available():
     )
 
     receipt = cancel_run("r1", con=con, namespace="owner")
+    after_row = con.execute("SELECT CURRENT_TIMESTAMP AT TIME ZONE 'UTC'").fetchone()
+    assert after_row is not None
+    after = after_row[0]
 
     assert receipt.status.updated_at is not None
-    assert receipt.status.updated_at > datetime(2000, 1, 1, tzinfo=UTC)
+    assert datetime(2000, 1, 1, tzinfo=UTC) < receipt.status.updated_at
+    assert before.replace(tzinfo=UTC) <= receipt.status.updated_at <= after.replace(tzinfo=UTC)
 
 
 def test_repeated_cancel_returns_already_requested():

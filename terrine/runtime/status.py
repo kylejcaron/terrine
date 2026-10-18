@@ -123,7 +123,9 @@ def cancel_run(run_id: str, *, con: Any, namespace: str) -> CancelReceipt:
             [namespace],
         ).fetchall()
     }
-    updated_at = ", updated_at=CURRENT_TIMESTAMP" if "updated_at" in columns else ""
+    updated_at = (
+        ", updated_at=CURRENT_TIMESTAMP AT TIME ZONE 'UTC'" if "updated_at" in columns else ""
+    )
     with run_publication_lock(namespace, row[0]):
         with event_transaction(con, namespace=namespace):
             current = con.execute(
