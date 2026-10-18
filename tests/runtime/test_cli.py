@@ -34,8 +34,8 @@ def test_cli_status_events_and_cancel_use_owner_ipc():
         "CREATE TABLE owner.runtime_runs (run_id VARCHAR PRIMARY KEY,dataset VARCHAR,"
         "fingerprint VARCHAR,state VARCHAR,published_generation VARCHAR,attempt_fence BIGINT)"
     )
-    con.execute("INSERT INTO owner.runtime_runs VALUES ('r1','orders','fp','running',NULL,1)")
-    record_run_event("r1", "lifecycle", {"state": "running"}, con=con, namespace="owner")
+    con.execute("INSERT INTO owner.runtime_runs VALUES ('r1','orders','fp','queued',NULL,1)")
+    record_run_event("r1", "lifecycle", {"state": "queued"}, con=con, namespace="owner")
     endpoint = ControlEndpoint(Path(f"/tmp/tcli-{os.getpid()}.sock"))
     server = ControlServer(store, namespace="owner", endpoint=endpoint, executor=_Executor())
     server.start()
@@ -103,6 +103,25 @@ def test_cli_status_events_and_cancel_use_owner_ipc():
         first_run = subprocess.run(command, check=True, capture_output=True, text=True, env=env)
         replay = subprocess.run(command, check=True, capture_output=True, text=True, env=env)
         assert json.loads(first_run.stdout)["run_id"] == json.loads(replay.stdout)["run_id"]
+        lookup = subprocess.run(
+            [
+                script,
+                "run",
+                "--lookup-request-key",
+                "shared",
+                "--destination-database",
+                "out.duckdb",
+                "--destination-schema",
+                "analytics",
+                "--destination-dataset",
+                "orders",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert json.loads(lookup.stdout)["run_id"] == json.loads(first_run.stdout)["run_id"]
         different_destination = command.copy()
         database_index = different_destination.index("--destination-database") + 1
         different_destination[database_index] = "other.duckdb"
@@ -118,7 +137,7 @@ def test_cli_status_events_and_cancel_use_owner_ipc():
             text=True,
             env=env,
         )
-        assert json.loads(status.stdout)["durable_state"] == "running"
+        assert json.loads(status.stdout)["durable_state"] == "queued"
         events = subprocess.run(
             [script, "events", "r1"],
             check=True,
@@ -127,7 +146,7 @@ def test_cli_status_events_and_cancel_use_owner_ipc():
             env=env,
         )
         event_page = json.loads(events.stdout)
-        assert [item["payload"]["state"] for item in event_page["events"]] == ["running"]
+        assert [item["payload"]["state"] for item in event_page["events"]] == ["queued"]
         cancelled = subprocess.run(
             [script, "cancel", "r1"],
             check=True,
@@ -137,7 +156,7 @@ def test_cli_status_events_and_cancel_use_owner_ipc():
         )
         assert json.loads(cancelled.stdout)["disposition"] == "requested"
         assert con.execute("SELECT state FROM owner.runtime_runs WHERE run_id='r1'").fetchone() == (
-            "cancel_requested",
+            "cancelled",
         )
     finally:
         server.close()
