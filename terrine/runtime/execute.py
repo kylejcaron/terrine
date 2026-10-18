@@ -173,9 +173,9 @@ def execute_plan(
         with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
             while (pending and task_failure is None) or inflight:
                 made_progress = False
-                if task_failure is not None:
-                    break
                 for task_id in task_order:
+                    if task_failure is not None:
+                        break
                     task = pending.get(task_id)
                     if task is None or len(inflight) >= max_concurrency:
                         continue

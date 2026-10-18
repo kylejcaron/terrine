@@ -149,8 +149,10 @@ def test_disjoint_partition_tasks_run_concurrently_with_configured_bound():
     assert peak == 2
 
 
-def test_successful_partition_output_is_persisted_when_sibling_fails():
+def test_successful_partition_output_is_persisted_when_sibling_fails(monkeypatch):
     import threading
+
+    import terrine.runtime.execute as execute_module
 
     con = duckdb.connect(":memory:")
     plan = plan_refresh(
@@ -159,21 +161,27 @@ def test_successful_partition_output_is_persisted_when_sibling_fails():
         definition_hash="def",
         snapshot_id="s",
         graph=dependency_graph(
-            sources=("events",),
-            definition_hash="def",
-            partitions=("p1", "p2", "p3"),
+            sources=("events",), definition_hash="def", partitions=("p1", "p2", "p3")
         ),
     )
-    sibling_finished = threading.Event()
+    release_sibling = threading.Event()
     calls = []
+    original_wait = execute_module.wait
+
+    def release_after_failure(futures, *, return_when):
+        completed, pending = original_wait(futures, return_when=return_when)
+        if any(future.exception() is not None for future in completed):
+            release_sibling.set()
+        return completed, pending
+
+    monkeypatch.setattr(execute_module, "wait", release_after_failure)
 
     def fail_once(task, dependencies):
         calls.append(task.partition)
         if task.partition == "p1":
-            assert sibling_finished.wait(timeout=5)
             raise RuntimeError("partition failed")
         if task.partition == "p2":
-            sibling_finished.set()
+            assert release_sibling.wait(timeout=5)
         return pa.table({"task": [task.task_id]})
 
     with pytest.raises(RuntimeError, match="partition failed"):
