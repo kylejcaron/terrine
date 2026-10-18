@@ -348,6 +348,41 @@ def test_high_scale_decimal_cohort_mean_does_not_overflow_intermediate_sum():
         con.disconnect()
 
 
+def test_high_scale_decimal_cohort_total_accumulates_cancellation_exactly():
+    con, model = _trajectory_model(decimal_type="DECIMAL(38, 30)")
+    try:
+        con.raw_sql("""
+            UPDATE events SET decimal_amount =
+              CASE user_id
+                WHEN 'u3' THEN -90000000.000000000000000000000000000000
+                ELSE 90000000.000000000000000000000000000000
+              END
+            WHERE kind = 'revenue'
+        """)
+        frame = Design(
+            "user",
+            EventAnchor("purchase", which="first"),
+            shape=CohortSpec(
+                origin="purchase",
+                trajectory=Trajectory("decimal_revenue", "7d", periods=1, cumulative=False),
+            ),
+        ).build(model)
+        rows = (
+            frame.cohorts(
+                grouping=CohortGrouping(
+                    bucket="7d", bucket_origin=datetime(2025, 1, 1, tzinfo=UTC), statistic="total"
+                ),
+                value_column="period_value",
+            )
+            .to_pyarrow()
+            .to_pylist()
+        )
+        group = next(row for row in rows if row["bucket_index"] == 0 and row["age"] == 0)
+        assert group["value"] == 90000000
+    finally:
+        con.disconnect()
+
+
 def test_cohort_float_total_enforces_final_tolerance():
     import pytest
 

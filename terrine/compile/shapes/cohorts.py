@@ -86,8 +86,34 @@ def compile_cohorts(
     )
     numeric_type = per_unit._value.type()
     reduction_table = per_unit
+    decimal_total_failure = None
     decimal_mean_failure = None
-    if grouping.statistic == "total":
+    if grouping.statistic == "total" and numeric_type.is_decimal():
+        scale = numeric_type.scale
+        assert scale is not None
+        keys = ["bucket_index", "age"]
+        exact_type = exact_literal(0).type()
+        total_inputs = per_unit
+        decimal_text = total_inputs._value.cast("string")
+        separator = decimal_text.find(".")
+        fractional_digits = ibis.ifelse(separator < 0, 0, decimal_text.length() - separator - 1)
+        coefficient_text = decimal_text.replace(".", "")
+        exact_coefficient = coefficient_text.rpad(
+            coefficient_text.length() + scale - fractional_digits, "0"
+        ).cast(exact_type)
+        total_state = total_inputs.group_by(*keys).aggregate(
+            _total=exact_sum(exact_coefficient),
+            _total_count=total_inputs._value.notnull().cast("int64").sum(),
+        )
+        decimal_total = _scaled_text(total_state._total, scale).try_cast(numeric_type)
+        total_state = total_state.mutate(
+            _total_value=decimal_total,
+            _total_unrepresentable=(total_state._total_count > 0) & decimal_total.isnull(),
+        )
+        reduction_table = per_unit.left_join(total_state, keys)
+        observed_value = reduction_table._total_value.first()
+        decimal_total_failure = reduction_table._total_unrepresentable.first()
+    elif grouping.statistic == "total":
         observed_value = per_unit._value.sum()
     elif numeric_type.is_integer():
         observed_value = (
@@ -140,6 +166,8 @@ def compile_cohorts(
         observed_value = normalized.mean() * reduction_table._scale.first()
     if decimal_mean_failure is None:
         decimal_mean_failure = ibis.literal(False)
+    if decimal_total_failure is None:
+        decimal_total_failure = ibis.literal(False)
     if checked_float and grouping.statistic == "total":
         error_count = per_unit._value.notnull().cast("float64").sum()
         inherited_error = per_unit._absolute_error.sum()
@@ -172,6 +200,7 @@ def compile_cohorts(
         _mature=reduction_table._mature.max(),
         _reason=reduction_table._reason.first(),
         _mean_unrepresentable=decimal_mean_failure,
+        _total_unrepresentable=decimal_total_failure,
     )
     joined = groups.left_join(risk, "bucket_index")
     mature = joined._mature.fill_null(False)
@@ -222,6 +251,21 @@ def compile_cohorts(
         )
     }
     checks = list(study._checks)
+    if numeric_type.is_decimal() and grouping.statistic == "total":
+        failure_column = "failed_cohort_exact_total"
+        failed = joined.filter(complete & joined._total_unrepresentable)
+        checks.append(
+            _Check(
+                failed.aggregate(ibis._.count().cast("string").name(failure_column)),
+                (
+                    _Failure(
+                        failure_column,
+                        _EXACT_OVERFLOW,
+                        {"source": "cohort", "measure": value_column, "output": "value"},
+                    ),
+                ),
+            )
+        )
     if numeric_type.is_decimal() and grouping.statistic == "mean":
         failure_column = "failed_cohort_exact_mean"
         failed = joined.filter(complete & joined._mean_unrepresentable)
