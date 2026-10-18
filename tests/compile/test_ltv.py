@@ -3,11 +3,11 @@ from __future__ import annotations
 import ibis
 import pytest
 
-from terrine.data import Coverage, UnitSource
+from terrine.data import Coverage, MaterializedFrame, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.models import Catalog
-from terrine.spec import CohortSpec, Design, EventAnchor, agg
+from terrine.spec import CohortSpec, Design, EventAnchor, agg, event_time
 from terrine.spec.trajectory import Trajectory
 
 
@@ -266,5 +266,37 @@ def test_scale_zero_decimal_cumulative_retains_wide_values():
         rows = frame.to_pyarrow().to_pylist()
         row = next(row for row in rows if row["unit"] == "u1")
         assert row["cumulative_value"] == 10**37
+    finally:
+        con.disconnect()
+
+
+def test_trajectory_preserves_event_feature_timing_through_arrow_round_trip():
+    con, model = _trajectory_model()
+    try:
+        frame = Design(
+            "user",
+            EventAnchor("purchase", which="first"),
+            features={
+                "prior_revenue": agg("net_revenue", window=("-1d", "0s")),
+                "purchase_time": event_time("purchase", window=("-1d", "0s")),
+            },
+            shape=CohortSpec(
+                "purchase", Trajectory("net_revenue", "7d", periods=1, cumulative=False)
+            ),
+        ).build(model)
+
+        arrow = frame.to_pyarrow()
+        restored = MaterializedFrame.from_arrow(arrow)
+        prior = restored.provenance.expression_timings["prior_revenue"]
+        assert prior.point_time_column == "cohort_time"
+        assert prior.point_time_column in arrow.column_names
+        if prior.start_bound_column is not None:
+            assert prior.start_bound_column in arrow.column_names
+        if prior.end_bound_column is not None:
+            assert prior.end_bound_column in arrow.column_names
+        timing = restored.provenance.expression_timings["purchase_time"]
+        assert timing.point_time_column in arrow.column_names
+        assert timing.start_bound_column in arrow.column_names
+        assert timing.end_bound_column in arrow.column_names
     finally:
         con.disconnect()

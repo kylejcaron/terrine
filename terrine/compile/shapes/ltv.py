@@ -154,6 +154,17 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
                     if column is not None:
                         projection[column] = source[column]
             projection[compiled.roles.treatment] = source[compiled.roles.treatment]
+        for feature in compiled.roles.features:
+            timing = compiled.expression_timings.get(feature)
+            if timing is None:
+                continue
+            for column in (
+                timing.point_time_column,
+                timing.start_bound_column,
+                timing.end_bound_column,
+            ):
+                if column is not None and column != compiled.roles.t0:
+                    projection[column] = source[column]
         age_tables.append(source.select(**projection))
     table = age_tables[0]
     for age_table in age_tables[1:]:
@@ -263,6 +274,17 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
             ),
         )
         outcome_names.append("cumulative_value")
+    expression_timings = {}
+    for feature in design.features:
+        timing = compiled.expression_timings.get(feature)
+        if timing is None:
+            continue
+        replacements = {
+            field: "cohort_time"
+            for field in ("point_time_column", "start_bound_column", "end_bound_column")
+            if getattr(timing, field) == compiled.roles.t0
+        }
+        expression_timings[feature] = replace(timing, **replacements)
     roles = Roles(
         unit="unit",
         anchor="anchor_id",
@@ -281,4 +303,5 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         strategy=compiled.strategy,
         _anchors=compiled._anchors,
         _checks=tuple(checks),
+        expression_timings=expression_timings,
     )

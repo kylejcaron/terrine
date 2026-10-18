@@ -858,3 +858,10 @@ def test_panel_history_validation_covers_reanchored_outcome_support(shape_name):
         design.validate(model())
 
     assert error.value.code == "terrine.design.incomplete_treatment_history"
+
+
+def test_unknown_string_shape_is_rejected():
+    design = Design("user", FixedDate(date(2025, 1, 1)), shape="ltv")
+    with pytest.raises(TerrineError) as error:
+        design.validate(model())
+    assert error.value.code == "terrine.design.invalid"

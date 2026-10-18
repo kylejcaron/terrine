@@ -82,3 +82,4 @@
 - Preserve native-precision coverage bounds for wide timestamp histories, avoid Python datetime conversion when recensoring Arrow timestamps, and retain support metadata for automatically included outcomes.
 - Compare backtest cutoffs at exact microsecond precision per cutoff; preserve mixed-resolution censor values and avoid out-of-range nanosecond casts for wide cutoffs.
 - Preserve fractional cohort means and checked-float reduction certificates, widen second-resolution censor outputs for fractional cutoffs, bound wide compiler cutoffs before nanosecond casts, and retain age/denominator axes in cohort surrogate exports.
+- Preserve event-relative timing provenance and support columns through LTV and survival materialization and reject unsupported string shapes during validation.

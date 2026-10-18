@@ -3,11 +3,11 @@ from datetime import UTC, datetime
 import ibis
 import pytest
 
-from terrine.data import Coverage
+from terrine.data import Coverage, MaterializedFrame
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.models import Catalog
-from terrine.spec import Design, EventAnchor, FixedDate, agg
+from terrine.spec import Design, EventAnchor, FixedDate, agg, event_time
 from terrine.spec.trajectory import TimeToEvent
 
 
@@ -621,5 +621,25 @@ def test_survival_generated_columns_cannot_overwrite_features():
         with pytest.raises(TerrineError) as error:
             design.build(model)
         assert error.value.code == "terrine.survival.invalid_compilation"
+    finally:
+        con.disconnect()
+
+
+def test_survival_preserves_event_feature_timing_through_arrow_round_trip():
+    con, model = _model()
+    try:
+        frame = Design(
+            "user",
+            EventAnchor("signup", which="first"),
+            features={"signup_time": event_time("signup", window=("-1d", "0s"))},
+            shape=TimeToEvent("churn"),
+        ).build(model)
+
+        arrow = frame.to_pyarrow()
+        restored = MaterializedFrame.from_arrow(arrow)
+        timing = restored.provenance.expression_timings["signup_time"]
+        assert timing.point_time_column in arrow.column_names
+        assert timing.start_bound_column in arrow.column_names
+        assert timing.end_bound_column in arrow.column_names
     finally:
         con.disconnect()

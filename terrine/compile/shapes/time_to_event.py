@@ -464,6 +464,14 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         complete=complete,
         reason=reason,
     )
+    for timing in base.expression_timings.values():
+        for column in (
+            timing.point_time_column,
+            timing.start_bound_column,
+            timing.end_bound_column,
+        ):
+            if column is not None:
+                output_projection[column] = retained[column]
     output = retained.select(**output_projection)
     audit = base.audit_table
     columns = {name: meta for name, meta in base.columns.items() if name in output_projection}

@@ -546,6 +546,8 @@ def _validate_shape(
             if design.unit not in source.entities:
                 raise _UNIT.error(unit=design.unit, name=name)
             _required(model, fact.source, required)
+    elif design.shape != "cross_section":
+        raise _INVALID.error(reason="unsupported design shape")
 
 
 def validate_design(design: Design, model: Model) -> ValidationReport:
