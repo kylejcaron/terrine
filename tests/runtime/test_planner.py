@@ -123,6 +123,56 @@ def test_planner_limits_work_to_changed_sources_and_skips_readiness_only_advance
     assert no_change.tasks == ()
 
 
+def test_source_invalidation_includes_cross_source_dependents():
+    from terrine.runtime.graph import DependencyGraph
+    from terrine.runtime.state import LayerNode
+
+    source = LayerNode("daily", "events", "p1", "d", "g")
+    dependent = LayerNode("frame", "study", "p1", "d", "g")
+    graph = DependencyGraph((source, dependent), ((source, dependent),))
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="study",
+        definition_hash="d",
+        snapshot_id="snap",
+        graph=graph,
+        changes=ChangeSet((Change("insert", "events", revision="r1"),), "change_feed"),
+    )
+    assert {task.source for task in plan.tasks} == {"events", "study"}
+
+
+def test_max_tasks_applies_after_change_selection():
+    graph = dependency_graph(
+        sources=("events", "other"),
+        definition_hash="definition",
+        partitions=("p1",),
+    )
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="study",
+        definition_hash="definition",
+        snapshot_id="snap",
+        graph=graph,
+        changes=ChangeSet((Change("insert", "events", revision="r1"),), "change_feed"),
+        max_tasks=4,
+    )
+    assert len(plan.tasks) == 4
+
+
+def test_readiness_only_noop_plan_satisfies_strict_scan_budget():
+    graph = dependency_graph(sources=("events",), definition_hash="definition")
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="study",
+        definition_hash="definition",
+        snapshot_id="snap",
+        graph=graph,
+        changes=ChangeSet((), "revision"),
+        budget=Budget(max_scan_bytes=1),
+    )
+    assert plan.tasks == ()
+
+
 def test_delimiter_fields_do_not_collide_in_task_identities():
     graph_a = dependency_graph(sources=("a:b",), definition_hash="def", partitions=("c",))
     graph_b = dependency_graph(sources=("a",), definition_hash="def", partitions=("b:c",))

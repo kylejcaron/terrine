@@ -115,8 +115,6 @@ def plan_refresh(
     if isinstance(max_tasks, bool) or max_tasks < 1:
         raise ValueError("max_tasks must be positive")
     ordered = graph.topological_order()
-    if len(ordered) > max_tasks:
-        raise ValueError("planned task count exceeds max_tasks")
     if changes is not None and changes.evidence != "conservative_rebuild":
         if any(change.kind == "definition" for change in changes.changes):
             pass
@@ -128,15 +126,24 @@ def plan_refresh(
             pending = list(selected)
             while pending:
                 node = pending.pop()
+                for parent, child in graph.edges:
+                    if parent == node and child not in selected:
+                        selected.add(child)
+                        pending.append(child)
+            pending = list(selected)
+            while pending:
+                node = pending.pop()
                 for parent in graph.dependencies(node):
                     if parent not in selected:
                         selected.add(parent)
                         pending.append(parent)
             ordered = tuple(node for node in ordered if node in selected)
+    if len(ordered) > max_tasks:
+        raise ValueError("planned task count exceeds max_tasks")
     if budget is not None:
         if not isinstance(budget, Budget):
             raise TypeError("budget must be Budget or None")
-        _scan_policy(budget, scan_bytes=None)
+        _scan_policy(budget, scan_bytes=0 if not ordered else None)
     change_evidence = (
         None
         if changes is None
