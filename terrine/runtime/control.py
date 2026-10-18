@@ -129,12 +129,20 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
 class ControlServer:
     """Owner-local Unix socket that serves control requests on the owner's connection."""
 
-    def __init__(self, store: RuntimeStore, *, namespace: str, endpoint: ControlEndpoint) -> None:
+    def __init__(
+        self,
+        store: RuntimeStore,
+        *,
+        namespace: str,
+        endpoint: ControlEndpoint,
+        executor: Any | None = None,
+    ) -> None:
         if store.namespace != namespace:
             raise ValueError("control namespace does not match runtime store")
         self.store = store
         self.namespace = namespace
         self.endpoint = endpoint
+        self.executor = executor
         self._server: socketserver.UnixStreamServer | None = None
         self._thread: threading.Thread | None = None
         self._endpoint_identity: tuple[int, int] | None = None
@@ -221,6 +229,30 @@ class ControlServer:
         _recover_interrupted_runs(con, namespace=self.namespace)
         operation = request.get("operation")
         run_id = request.get("run_id")
+        if operation == "plan":
+            from terrine.runtime.planner import RefreshPlan
+
+            plan = RefreshPlan.deserialize(request["serialized"])
+            if plan.namespace != self.namespace:
+                raise ValueError("plan namespace does not match owner")
+            return plan.serialize().decode("utf-8")
+        if operation == "run":
+            from terrine.runtime.api import run_serialized_plan
+            from terrine.runtime.recipe import DestinationRef
+
+            destination_data = request.get("destination")
+            destination = (
+                DestinationRef(**destination_data) if destination_data is not None else None
+            )
+            receipt = run_serialized_plan(
+                request["serialized"],
+                con=con,
+                namespace=self.namespace,
+                request_key=request.get("request_key"),
+                destination=destination,
+                executor=self.executor,
+            )
+            return asdict(receipt)
 
         if operation == "status":
             if not isinstance(run_id, str) or not run_id:
@@ -303,6 +335,26 @@ class ControlClient:
                 context={},
             )
         return response["value"]
+
+    def plan(self, serialized: bytes | str) -> str:
+        payload = serialized.decode("utf-8") if isinstance(serialized, bytes) else serialized
+        return self._request("plan", serialized=payload)
+
+    def run(
+        self,
+        serialized: bytes | str,
+        *,
+        request_key: str | None = None,
+        destination: Any | None = None,
+    ) -> RunReceipt:
+        payload = serialized.decode("utf-8") if isinstance(serialized, bytes) else serialized
+        value = self._request(
+            "run",
+            serialized=payload,
+            request_key=request_key,
+            destination=asdict(destination) if destination is not None else None,
+        )
+        return RunReceipt(value["run_id"], value["state"], value["published_generation"])
 
     def get_run(self, run_id: str) -> RunStatus:
         return _status(self._request("status", run_id=run_id))
