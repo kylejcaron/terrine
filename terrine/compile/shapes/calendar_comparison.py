@@ -14,6 +14,7 @@ from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
 from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
+from terrine.spec.expressions import MetricAgg
 from terrine.spec.panels import CalendarComparisonSpec
 from terrine.temporal.aggregate import _Check, _Failure
 
@@ -47,9 +48,43 @@ def _deferred_refusal(query):
     )
 
 
-def _history_check(design: Design, model: Model, rows):
+def _history_check(design: Design, model: Model, rows, outcome_window_end: int):
     spec = design.shape
     assert isinstance(spec, CalendarComparisonSpec)
+    anchor = design.anchor
+    assert isinstance(anchor, Schedule)
+    selector = spec.cohort
+    participants = rows
+    if "__terrine_eligible" in rows.columns:
+        participants = participants.filter(rows.__terrine_eligible)
+    reference_t0 = participants.cohort + ibis.interval(seconds=spec.reference_period * anchor.every)
+    anticipation = max((abs(value) for value in spec.anticipation_periods), default=0)
+    latest = cast(ir.TimestampValue, ibis.greatest(participants.t0, reference_t0)) + ibis.interval(
+        seconds=anticipation * anchor.every + outcome_window_end
+    )
+    schedule_end = ibis.literal(model.day_boundary(anchor.end))
+    never_control = participants.control_eligible & ~participants.treatment
+    missing = cast(ir.BooleanValue, ibis.literal(False))
+    if "_observed_from" in participants.columns:
+        missing = missing | (
+            participants._observed_from.notnull()
+            & (participants._observed_from > ibis.literal(selector.history_start))
+        )
+    if "_observed_until" in participants.columns:
+        missing = missing | (
+            participants._observed_until.notnull() & (participants._observed_until <= latest)
+        )
+        if spec.control == "never_treated":
+            missing = missing | (
+                never_control
+                & participants._observed_until.notnull()
+                & (participants._observed_until < schedule_end)
+            )
+    query = participants.filter(missing).select("unit").distinct()
+    return _Check(
+        query.aggregate(failed_0=query.count().cast("string")),
+        (_Failure("failed_0", _INCOMPLETE_HISTORY, {}),),
+    )
     anchor = design.anchor
     assert isinstance(anchor, Schedule)
     selector = spec.cohort
@@ -133,7 +168,16 @@ def _cohort_units(design: Design, model: Model, anchors: AnchorTable):
     return cohorts, initiation
 
 
-def _stack(table, *, anchors, cohorts, initiations, spec: CalendarComparisonSpec, every: int):
+def _stack(
+    table,
+    *,
+    anchors,
+    cohorts,
+    initiations,
+    spec: CalendarComparisonSpec,
+    every: int,
+    outcome_window_end: int,
+):
     period_values = tuple(
         dict.fromkeys((spec.reference_period, *spec.comparison_periods, *spec.anticipation_periods))
     )
@@ -188,7 +232,7 @@ def _stack(table, *, anchors, cohorts, initiations, spec: CalendarComparisonSpec
     anticipation = max((abs(value) for value in spec.anticipation_periods), default=0)
     comparison_t0 = with_values.t0
     latest = cast(ir.TimestampValue, ibis.greatest(comparison_t0, reference_t0)) + ibis.interval(
-        seconds=anticipation * every
+        seconds=anticipation * every + outcome_window_end
     )
     treated = (with_values.unit_cohort == with_values.focal_cohort).fill_null(False)
     if spec.control == "never_treated":
@@ -244,6 +288,10 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
     compiled = compile_columns(base, model)
     anchors = compiled._anchors
     cohort_units, initiation_times = _cohort_units(design, model, anchors)
+    outcome_window_end = max(
+        (node.window.end for node in design.outcomes.values() if isinstance(node, MetricAgg)),
+        default=0,
+    )
 
     def stack(source):
         return _stack(
@@ -253,6 +301,7 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
             initiations=initiation_times,
             spec=spec,
             every=schedule.every,
+            outcome_window_end=outcome_window_end,
         )
 
     retained = stack(compiled.table)
@@ -287,7 +336,7 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
         anchors,
         (
             *compiled._checks,
-            _history_check(design, model, audit),
+            _history_check(design, model, audit, outcome_window_end),
             _period_check(
                 cohort_units,
                 anchors,

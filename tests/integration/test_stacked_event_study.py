@@ -15,15 +15,18 @@ from terrine.spec import (
 
 def test_calendar_comparison_materializes_roster_controls_for_both_modes(native_inputs):
     catalog, con = native_inputs
-    con.insert("users", pa.table({"user_id": ["c", "d"], "alt_id": ["cc", "dd"]}))
+    con.insert("users", pa.table({"user_id": ["c", "d", "e"], "alt_id": ["cc", "dd", "ee"]}))
     con.insert(
         "events",
         pa.table(
             {
-                "user_id": ["d"],
-                "ts": [datetime(2025, 1, 8, tzinfo=UTC)],
-                "event_id": ["d1"],
-                "alternate_event_id": ["d2"],
+                "user_id": ["d", "e"],
+                "ts": [
+                    datetime(2025, 1, 8, tzinfo=UTC),
+                    datetime(2025, 1, 4, tzinfo=UTC),
+                ],
+                "event_id": ["d1", "e1"],
+                "alternate_event_id": ["d2", "e2"],
             }
         ),
     )
@@ -67,7 +70,9 @@ def test_calendar_comparison_materializes_roster_controls_for_both_modes(native_
         row for row in not_yet_rows if row["cohort"] == datetime(2025, 1, 3, tzinfo=UTC)
     ]
     assert {row["unit"] for row in early_never if not row["treatment"]} == {"c"}
-    assert {row["unit"] for row in early_not_yet if not row["treatment"]} == {"c", "d"}
+    assert {
+        row["unit"] for row in early_not_yet if row["event_period"] == 0 and not row["treatment"]
+    } == {"c", "d"}
     assert all(row["event_period"] in (-1, 0, 1) for row in not_yet_rows)
     restored = MaterializedFrame.from_arrow(not_yet.to_arrow())
     assert restored.provenance.calendar_comparison == not_yet.provenance.calendar_comparison

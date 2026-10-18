@@ -15,6 +15,7 @@ from terrine.data import (
 )
 from terrine.errors import TerrineError
 from terrine.estimate import stacked_event_study
+from terrine.windows import Window
 from tests.reference.panel_did import clustered_catt_reference
 
 
@@ -132,6 +133,111 @@ def test_conditional_but_not_weighted_unconditional_trends_counterexample():
         frame, outcome="y", treatment="treatment", cohort="cohort", period="period"
     )
     assert result.effects == pytest.approx((0.5, 0.5))
+
+
+def test_stacked_estimator_refuses_outcome_windows_crossing_treatment():
+    from dataclasses import replace
+
+    frame = _frame()
+    columns = dict(frame.columns)
+    columns["y"] = ColumnMeta(Window("0d", "7d"), "outcome", None, None, None, None)
+    frame = replace(frame, columns=columns)
+    with pytest.raises(TerrineError) as error:
+        stacked_event_study(
+            frame, outcome="y", treatment="treatment", cohort="cohort", period="period"
+        )
+    assert error.value.code == "terrine.estimate.stacked_input"
+    assert error.value.context["reason"] == "outcome_window_contaminates_reference"
+
+
+def test_stacked_estimator_refuses_incomplete_treated_pairs():
+    from dataclasses import replace
+
+    frame = _frame()
+    rows = [
+        row
+        for row in frame.table.to_pylist()
+        if not (row["unit"] == "t0a" and row["event_period"] == -1)
+    ]
+    frame = replace(frame, table=pa.Table.from_pylist(rows))
+    with pytest.raises(TerrineError) as error:
+        stacked_event_study(
+            frame, outcome="y", treatment="treatment", cohort="cohort", period="period"
+        )
+    assert error.value.code == "terrine.estimate.stacked_input"
+    assert error.value.context["reason"] == "incomplete_treated_pair"
+
+
+def test_stacked_estimator_refuses_incomplete_admissible_control_pairs():
+    from dataclasses import replace
+
+    frame = _frame()
+    rows = [
+        row
+        for row in frame.table.to_pylist()
+        if not (row["unit"] == "c1" and row["event_period"] == -1)
+    ]
+    frame = replace(frame, table=pa.Table.from_pylist(rows))
+    with pytest.raises(TerrineError) as error:
+        stacked_event_study(
+            frame, outcome="y", treatment="treatment", cohort="cohort", period="period"
+        )
+    assert error.value.code == "terrine.estimate.stacked_input"
+    assert error.value.context["reason"] == "incomplete_control_pair"
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "expected_code"),
+    [
+        ([2**53, 2**53 + 1], "terrine.estimate.input_precision"),
+        ([1.0, float("nan")], "terrine.estimate.nonfinite_data"),
+    ],
+)
+def test_stacked_estimator_uses_checked_numeric_outcomes(outcomes, expected_code):
+    from dataclasses import replace
+
+    frame = _frame()
+    rows = frame.table.to_pylist()
+    for index, row in enumerate(rows):
+        row["y"] = outcomes[index % len(outcomes)]
+    frame = replace(frame, table=pa.Table.from_pylist(rows))
+    with pytest.raises(TerrineError) as error:
+        stacked_event_study(
+            frame, outcome="y", treatment="treatment", cohort="cohort", period="period"
+        )
+    assert error.value.code == expected_code
+
+
+def test_stacked_estimator_is_invariant_to_large_common_weight_scale():
+    from dataclasses import replace
+
+    frame = _frame()
+    baseline = stacked_event_study(
+        frame, outcome="y", treatment="treatment", cohort="cohort", period="period", unit_weight="q"
+    )
+    rows = frame.table.to_pylist()
+    for row in rows:
+        row["q"] = 5e307 if row["q"] == 1.0 else 1e308
+    frame = replace(frame, table=pa.Table.from_pylist(rows))
+    result = stacked_event_study(
+        frame, outcome="y", treatment="treatment", cohort="cohort", period="period", unit_weight="q"
+    )
+    assert np.isfinite(result.effects).all()
+    assert result.effects == pytest.approx(baseline.effects)
+    assert np.asarray(result.covariance) == pytest.approx(np.asarray(baseline.covariance))
+    assert np.isfinite(np.asarray(result.covariance)).all()
+
+
+def test_stacked_estimator_accepts_small_alpha():
+    result = stacked_event_study(
+        _frame(),
+        outcome="y",
+        treatment="treatment",
+        cohort="cohort",
+        period="period",
+        alpha=1e-20,
+    )
+    assert result.provenance["confidence_multiplier"] > 9
 
 
 def test_naive_staggered_twfe_request_returns_explicit_warning():

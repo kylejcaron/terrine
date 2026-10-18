@@ -6,12 +6,13 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from statistics import NormalDist
 
 import numpy as np
 
 from terrine.data import MaterializedFrame
 from terrine.errors import RefusalSpec
+from terrine.estimate._data import INVALID_WEIGHT, _numeric
+from terrine.estimate.inference import NONFINITE_RESULT, critical_value
 from terrine.results import Diagnostic
 
 __all__ = ["StackedEventStudy", "stacked_event_study", "naive_staggered_twfe_warning"]
@@ -66,6 +67,18 @@ def _normalized_cohort_weights(cohorts: tuple[datetime, ...], raw: Mapping[str, 
     return {key: value / total for key, value in zip(keys, scaled, strict=True)}
 
 
+def _checked_mean(
+    values: list[tuple[object, float, float]], reason: str
+) -> tuple[float, list[tuple[object, float, float]]]:
+    scale = max(weight for _, _, weight in values)
+    normalized = [(unit, delta, weight / scale) for unit, delta, weight in values]
+    denominator = math.fsum(weight for _, _, weight in normalized)
+    mean = math.fsum(weight * delta for _, delta, weight in normalized) / denominator
+    if not math.isfinite(mean):
+        raise NONFINITE_RESULT.error(stage=reason)
+    return mean, normalized
+
+
 def stacked_event_study(
     frame: MaterializedFrame,
     *,
@@ -78,13 +91,12 @@ def stacked_event_study(
     alpha: float = 0.05,
 ) -> StackedEventStudy:
     """Estimate weighted CATTs and their joint unit-cluster covariance."""
+    z = critical_value(alpha)
     if frame.provenance.sampling is not None:
         raise _SAMPLED.error()
     meta = frame.provenance.calendar_comparison
     if frame.provenance.shape != "calendar_comparison" or meta is None:
         raise _INPUT.error(reason="not_calendar_comparison")
-    if not 0 < alpha < 1 or not math.isfinite(alpha):
-        raise _INPUT.error(reason="invalid_alpha")
     roles = frame.roles
     if roles.unit == "" or treatment != roles.treatment:
         raise _INPUT.error(reason="treatment_role_mismatch")
@@ -94,15 +106,34 @@ def stacked_event_study(
         or period not in frame.table.column_names
     ):
         raise _INPUT.error(reason="missing_role_column")
+    if outcome not in frame.columns:
+        raise _INPUT.error(reason="unknown_outcome")
+    outcome_meta = frame.columns[outcome]
+    window = outcome_meta.window
+    if window is not None and window.end > 0:
+        for focal in sorted(
+            {value for value in _column(frame, cohort) if isinstance(value, datetime)}
+        ):
+            earliest_uncontaminated = focal + timedelta(
+                seconds=min(meta.anticipation_periods, default=0) * meta.period_seconds
+            )
+            reference_time = focal + timedelta(seconds=meta.reference_period * meta.period_seconds)
+            if reference_time + timedelta(seconds=window.end) > earliest_uncontaminated:
+                raise _INPUT.error(reason="outcome_window_contaminates_reference")
     values = {
         "unit": _column(frame, roles.unit),
-        "outcome": _column(frame, outcome),
         "treatment": _column(frame, treatment),
         "cohort": _column(frame, cohort),
         "period": _column(frame, period),
         "control": _column(frame, "control_eligible"),
     }
-    weights = [1.0] * frame.table.num_rows if unit_weight is None else _column(frame, unit_weight)
+    _column(frame, outcome)
+    outcome_values, _ = _numeric(frame.table[outcome], outcome)
+    if unit_weight is None:
+        weights = [1.0] * frame.table.num_rows
+    else:
+        weights_array, _ = _numeric(frame.table[unit_weight], unit_weight, weight=True)
+        weights = weights_array.tolist()
     rows_by_stack: dict[
         tuple[datetime, object], dict[datetime, tuple[float, bool, bool, float]]
     ] = {}
@@ -114,12 +145,12 @@ def stacked_event_study(
             raise _INPUT.error(reason="cohort_period_must_be_timestamps")
         weight = float(weights[index])
         if not math.isfinite(weight) or weight <= 0:
-            raise _INPUT.error(reason="unit_weights_must_be_positive_finite")
+            raise INVALID_WEIGHT.error(column=unit_weight or "unit_weight")
         stack = rows_by_stack.setdefault((focal_cohort, unit), {})
         if time in stack:
             raise _INPUT.error(reason="duplicate_unit_cohort_period")
         stack[time] = (
-            float(values["outcome"][index]),
+            float(outcome_values[index]),
             bool(values["treatment"][index]),
             bool(values["control"][index]),
             weight,
@@ -141,22 +172,32 @@ def stacked_event_study(
             for (stack_cohort, unit), times in rows_by_stack.items():
                 if stack_cohort != focal:
                     continue
-                if reference_time not in times or comparison_time not in times:
+                baseline_pair = times.get(reference_time)
+                comparison_pair = times.get(comparison_time)
+                was_treated = any(row[1] for row in times.values())
+                if was_treated and (baseline_pair is None or comparison_pair is None):
+                    raise _INPUT.error(reason="incomplete_treated_pair")
+                if comparison_pair is not None and comparison_pair[2] and baseline_pair is None:
+                    raise _INPUT.error(reason="incomplete_control_pair")
+                if baseline_pair is None or comparison_pair is None:
                     continue
-                baseline, _, _, base_weight = times[reference_time]
-                followup, is_treated, is_control, _ = times[comparison_time]
+                baseline, _, _, base_weight = baseline_pair
+                followup, is_treated, is_control, _ = comparison_pair
                 if is_treated:
                     treated.append((unit, followup - baseline, base_weight))
                 elif is_control:
                     controls.append((unit, followup - baseline, base_weight))
             if not treated or not controls:
                 raise _INPUT.error(reason="comparison_requires_treated_and_control_units")
+            mu_t, treated = _checked_mean(treated, "treated_weighted_mean")
+            mu_c, controls = _checked_mean(controls, "control_weighted_mean")
             q_t = math.fsum(weight for _, _, weight in treated)
             q_c = math.fsum(weight for _, _, weight in controls)
-            mu_t = math.fsum(weight * delta for _, delta, weight in treated) / q_t
-            mu_c = math.fsum(weight * delta for _, delta, weight in controls) / q_c
             contrast_index = len(effects)
-            effects.append(mu_t - mu_c)
+            effect = mu_t - mu_c
+            if not math.isfinite(effect):
+                raise NONFINITE_RESULT.error(stage="cohort_time_effect")
+            effects.append(effect)
             for unit, delta, weight in treated:
                 vector = influence_by_unit.setdefault(unit, [0.0] * n_contrasts)
                 vector[contrast_index] += weight * (delta - mu_t) / q_t
@@ -167,7 +208,8 @@ def stacked_event_study(
     covariance = cluster_scores.T @ cluster_scores
     covariance = (covariance + covariance.T) * 0.5
     standard_errors = np.sqrt(np.maximum(np.diag(covariance), 0.0))
-    z = NormalDist().inv_cdf(1 - alpha / 2)
+    if not np.all(np.isfinite(covariance)):
+        raise NONFINITE_RESULT.error(stage="cluster_covariance")
     aggregate_effects: dict[int, float] = {}
     aggregate_ses: dict[int, float] = {}
     for period_index, event_period in enumerate(periods):
