@@ -1,0 +1,48 @@
+from decimal import Decimal
+
+import pytest
+
+from terrine.errors import TerrineError
+from terrine.spec.expressions import MetricQuantile, quantile
+from terrine.temporal.nonadditive import exact_quantile
+
+
+def test_quantile_declares_type7_rank_and_exact_interpolation():
+    assert exact_quantile(
+        [Decimal("1.00"), Decimal("2.00"), Decimal("8.00")], Decimal("0.25")
+    ) == Decimal("1.50")
+    assert exact_quantile([1, 2, 8], Decimal("0.25")) == Decimal("1.5")
+
+    probability = Decimal("0." + "1" * 40)
+    assert exact_quantile([0, 1], probability) == Decimal(probability)
+
+
+def test_quantile_probability_is_canonical_decimal_and_in_range():
+    node = quantile("revenue", Decimal("0.2500"), window=("-7d", "0d"))
+    assert isinstance(node, MetricQuantile)
+    assert node.probability == Decimal("0.25")
+    for probability in (Decimal("-0.01"), Decimal("1.01")):
+        with pytest.raises(ValueError):
+            quantile("revenue", probability, window=("-7d", "0d"))
+    with pytest.raises(TypeError):
+        quantile("revenue", 0.25, window=("-7d", "0d"))  # ty: ignore[invalid-argument-type]
+
+
+def test_empty_and_all_null_quantiles_are_unavailable():
+    with pytest.raises(ValueError):
+        exact_quantile([], Decimal("0.5"))
+    with pytest.raises(ValueError):
+        exact_quantile([None, None], Decimal("0.5"))
+
+
+def test_approximate_quantile_refuses_without_owner_approved_sketch():
+    from terrine.spec.expressions import SketchRequest, approx_quantile
+
+    with pytest.raises(TerrineError) as error:
+        approx_quantile(
+            "revenue",
+            Decimal("0.5"),
+            window=("-7d", "0d"),
+            sketch=SketchRequest("tdigest", "1", Decimal("0.01")),
+        )
+    assert error.value.code == "terrine.metric.sketch_unavailable"

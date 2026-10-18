@@ -13,7 +13,18 @@ from yaml.resolver import BaseResolver
 from terrine._time import utc_instant
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
-from terrine.spec.expressions import And, AttributeAsOf, Eq, EventTime, Gt, IsNull, MetricAgg
+from terrine.spec.expressions import (
+    And,
+    ApproxMetricQuantile,
+    AttributeAsOf,
+    Eq,
+    EventTime,
+    Gt,
+    IsNull,
+    MetricAgg,
+    MetricQuantile,
+    SketchRequest,
+)
 from terrine.spec.panels import (
     CalendarComparisonSpec,
     EventPanelSpec,
@@ -229,6 +240,29 @@ def _encode(value: Any) -> Any:
             "period": value.period,
             "periods": value.periods,
             "cumulative": value.cumulative,
+        }
+    if isinstance(value, MetricQuantile):
+        return {
+            "type": "MetricQuantile",
+            "metric": value.metric,
+            "probability": str(value.probability),
+            "window": _encode(value.window),
+            "interpolation": value.interpolation,
+        }
+    if isinstance(value, ApproxMetricQuantile):
+        return {
+            "type": "ApproxMetricQuantile",
+            "metric": value.metric,
+            "probability": str(value.probability),
+            "window": _encode(value.window),
+            "sketch": _encode(value.sketch),
+        }
+    if isinstance(value, SketchRequest):
+        return {
+            "type": "SketchRequest",
+            "algorithm": value.algorithm,
+            "version": value.version,
+            "rank_error": str(value.rank_error),
         }
     if isinstance(value, MetricAgg):
         node = {"type": "MetricAgg", "metric": value.metric, "window": _encode(value.window)}
@@ -509,6 +543,31 @@ def _node(value: Any) -> Any:
     if tag == "Window":
         item = _object(value, {"type", "start", "end"})
         return Window(item["start"], item["end"])
+    if tag == "SketchRequest":
+        from decimal import Decimal
+
+        item = _object(value, {"type", "algorithm", "version", "rank_error"})
+        return SketchRequest(item["algorithm"], item["version"], Decimal(item["rank_error"]))
+    if tag == "MetricQuantile":
+        from decimal import Decimal
+
+        item = _object(value, {"type", "metric", "probability", "window", "interpolation"})
+        return MetricQuantile(
+            item["metric"],
+            Decimal(item["probability"]),
+            _node(item["window"]),
+            item["interpolation"],
+        )
+    if tag == "ApproxMetricQuantile":
+        from decimal import Decimal
+
+        item = _object(value, {"type", "metric", "probability", "window", "sketch"})
+        return ApproxMetricQuantile(
+            item["metric"],
+            Decimal(item["probability"]),
+            _node(item["window"]),
+            _node(item["sketch"]),
+        )
     if tag == "MetricAgg":
         item = _object(
             value,
@@ -637,8 +696,14 @@ def _design(value: Any) -> Design:
     return Design(
         unit,
         anchor,
-        features=named(item["features"], (MetricAgg, AttributeAsOf, EventTime)),
-        outcomes=named(item["outcomes"], (MetricAgg, AttributeAsOf, EventTime)),
+        features=named(
+            item["features"],
+            (MetricAgg, MetricQuantile, ApproxMetricQuantile, AttributeAsOf, EventTime),
+        ),
+        outcomes=named(
+            item["outcomes"],
+            (MetricAgg, MetricQuantile, ApproxMetricQuantile, AttributeAsOf, EventTime),
+        ),
         eligibility=named(item["eligibility"], (Gt, Eq, IsNull, And)),
         treatment=treatment,
         gap=item["gap"],

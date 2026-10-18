@@ -4,6 +4,7 @@ from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import (
     And,
+    ApproxMetricQuantile,
     AttributeAsOf,
     Eq,
     EventTime,
@@ -11,14 +12,18 @@ from terrine.spec.expressions import (
     Gt,
     IsNull,
     MetricAgg,
+    MetricQuantile,
     Predicate,
+    SketchRequest,
     agg,
     all_of,
+    approx_quantile,
     asof,
     eq,
     event_time,
     gt,
     is_null,
+    quantile,
 )
 from terrine.spec.io import from_json, from_yaml, to_json, to_yaml
 from terrine.spec.panels import (
@@ -64,6 +69,9 @@ __all__ = [
     "IsNull",
     "MatchedT0Sample",
     "MetricAgg",
+    "ApproxMetricQuantile",
+    "MetricQuantile",
+    "SketchRequest",
     "PersistentAdoption",
     "Predicate",
     "Schedule",
@@ -80,6 +88,8 @@ __all__ = [
     "all_of",
     "asof",
     "eq",
+    "approx_quantile",
+    "quantile",
     "event_time",
     "from_json",
     "from_yaml",

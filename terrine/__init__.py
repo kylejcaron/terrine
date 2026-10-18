@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from terrine.model import Model
     from terrine.spec import (
         AnchorRange,
+        ApproxMetricQuantile,
         BinnedMetricState,
         CohortGrouping,
         CohortSpec,
@@ -21,8 +22,10 @@ if TYPE_CHECKING:
         EventTime,
         FixedDate,
         FunnelSpec,
+        MetricQuantile,
         Schedule,
         SessionSpec,
+        SketchRequest,
         StateObservations,
         StatePanel,
         TimeToEvent,
@@ -30,18 +33,21 @@ if TYPE_CHECKING:
         Treatment,
         agg,
         all_of,
+        approx_quantile,
         asof,
         eq,
         event_time,
         from_yaml,
         gt,
         is_null,
+        quantile,
         to_yaml,
     )
 from terrine.windows import Window
 
 __all__ = [
     "AnchorRange",
+    "ApproxMetricQuantile",
     "Budget",
     "EventSequence",
     "EventTime",
@@ -52,14 +58,17 @@ __all__ = [
     "EventAnchor",
     "FixedDate",
     "Frame",
+    "MetricQuantile",
     "Model",
     "Schedule",
+    "SketchRequest",
     "Treatment",
     "UnitSource",
     "Window",
     "TerrineError",
     "agg",
     "all_of",
+    "approx_quantile",
     "asof",
     "eq",
     "from_yaml",
@@ -76,6 +85,7 @@ __all__ = [
     "Trajectory",
     "TimeToEvent",
     "to_yaml",
+    "quantile",
 ]
 
 _LAZY_MODULES = {

@@ -92,6 +92,24 @@ instants, or choose aligned anchors and endpoints. Unsupported temporal kinds
 and declared transforms retain their meaning and are refused rather than
 silently approximated.
 
+## Quantile declarations
+
+`quantile(metric, probability, window=...)` is a typed, canonical specification:
+the probability is a `Decimal` or decimal string in `[0, 1]`, the window is
+half-open, and interpolation is Hyndman--Fan type 7 (`linear_type7`). The
+specification serializes through Design JSON/YAML and contributes to its
+canonical hash. Exact local order-statistic arithmetic is available internally
+through `terrine.temporal.nonadditive.exact_quantile`; it excludes null values
+and preserves integer/Decimal values without binary floating-point conversion.
+
+The current temporal compiler does not execute quantile expressions and refuses
+them during metadata validation, before source reads, with
+`terrine.metric.quantile_unavailable`. Approximate quantiles are never selected
+implicitly: `approx_quantile` requires a named `SketchRequest`, but requests
+currently refuse with `terrine.metric.sketch_unavailable` pending owner approval
+of a sketch package and its accuracy/merge contract. Use a supported additive
+metric until an exact backend order-statistic capability is implemented.
+
 Catalog records and bound Models are immutable, including nested definition maps.
 Create a new definition and bind a new Model when semantics change; an existing
 model's hash cannot drift with a mutated catalog.

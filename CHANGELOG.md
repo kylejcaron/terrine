@@ -87,3 +87,4 @@
 - Add `terrine plan|run|status|events|cancel` commands over owner IPC with destination-scoped request-key replay.
 - Document Model/Design materialization plans, owner CLI workflows, exact-generation reads, and backend consistency limits.
 - Add an opt-in OpenTelemetry lifecycle projection with redacted attributes and bounded nonblocking export.
+- Add a canonical Decimal type-7 quantile expression and exact in-memory order-statistic primitive; keep approximate sketch requests explicitly refused until an owner-approved adapter is available.

@@ -22,6 +22,7 @@ from terrine.spec.anchors import EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.expressions import (
     And,
+    ApproxMetricQuantile,
     AttributeAsOf,
     Eq,
     EventTime,
@@ -29,6 +30,7 @@ from terrine.spec.expressions import (
     Gt,
     IsNull,
     MetricAgg,
+    MetricQuantile,
     Predicate,
     _expression_support_seconds,
 )
@@ -41,6 +43,11 @@ if TYPE_CHECKING:
 __all__ = ["ValidationReport", "validate_design"]
 
 _INVALID = RefusalSpec("terrine.design.invalid", "Design validation failed: {reason}.")
+_QUANTILE_UNAVAILABLE = RefusalSpec(
+    "terrine.metric.quantile_unavailable",
+    "Exact quantile expressions are not yet executable by the temporal compiler; use a "
+    "supported additive metric or implement a backend exact-order-statistic capability.",
+)
 _MISSING = RefusalSpec(
     "terrine.design.missing_reference", "Design references unknown {kind} {name!r}."
 )
@@ -240,6 +247,8 @@ def _selector_timing(selector: EventTime) -> tuple[tuple[int, int], tuple[tuple[
 def _expression_timing(expr: Expr) -> tuple[tuple[int, int], tuple[tuple[int, int], ...]]:
     if isinstance(expr, EventTime):
         return _selector_timing(expr)
+    if isinstance(expr, (MetricQuantile, ApproxMetricQuantile)):
+        return (expr.window.start, expr.window.end), ()
     if expr.relative_to is None:
         if isinstance(expr, AttributeAsOf):
             return (expr.before, expr.before), ()
@@ -299,6 +308,8 @@ def _expression(
         obligations.append("coverage_completeness")
         _check_expression_timing(expr, role, design)
         return
+    if isinstance(expr, (MetricQuantile, ApproxMetricQuantile)):
+        raise _QUANTILE_UNAVAILABLE.error()
     if isinstance(expr, MetricAgg):
         _check_expression_timing(expr, role, design)
     metric = _metric(model, expr.metric)

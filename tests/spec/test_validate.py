@@ -10,7 +10,7 @@ from terrine.errors import TerrineError
 from terrine.semantic.models import BoundMeasure, BoundMetric
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
-from terrine.spec.expressions import EventTime, agg, asof, gt
+from terrine.spec.expressions import EventTime, agg, asof, gt, quantile
 from terrine.spec.sequence import EventSequence
 from terrine.temporal.readiness import Readiness
 
@@ -360,6 +360,16 @@ def test_unknown_metric_refuses_with_stable_code():
             "user", EventAnchor("session"), features={"x": agg("missing", window=("-1d", "0d"))}
         ).validate(model())
     assert error.value.code == "terrine.design.missing_reference"
+
+
+def test_unimplemented_exact_quantile_compilation_refuses_before_query():
+    with pytest.raises(TerrineError) as error:
+        Design(
+            "user",
+            EventAnchor("session"),
+            features={"p50": quantile("sessions", "0.5", window=("-7d", "0d"))},
+        ).validate(model())
+    assert error.value.code == "terrine.metric.quantile_unavailable"
 
 
 def test_missing_referenced_source_readiness_refuses():
