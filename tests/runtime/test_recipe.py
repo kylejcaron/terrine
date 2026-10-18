@@ -87,6 +87,14 @@ def test_saved_plan_recipe_reconstructs_design_and_verifies_owner_model_in_fresh
         )
         store = RuntimeStore(con.con, namespace="runtime")
         store.initialize()
+        other_store = RuntimeStore(con.con, namespace="other")
+        other_store.initialize()
+        with pytest.raises(TerrineError) as pin_error:
+            recipe.pin_snapshot(other_store)
+        assert pin_error.value.code == "terrine.runtime.plan_recipe_mismatch"
+        with pytest.raises(TerrineError) as release_error:
+            recipe.release_snapshot(other_store)
+        assert release_error.value.code == "terrine.runtime.plan_recipe_mismatch"
         assert recipe.pin_snapshot(store) == "snapshot-1"
         restored = SavedPlanRecipe.from_json(recipe.to_json())
         resolved_plan, resolved_model, resolved_design, resolved_destination = resolve_plan(
@@ -105,7 +113,7 @@ def test_saved_plan_recipe_reconstructs_design_and_verifies_owner_model_in_fresh
             publish=lambda plan, outputs, lease: "generation-1",
         )
         assert store.snapshot_references("snapshot-1") == (
-            ("published_manifest", "study:generation-1"),
+            ("published_manifest", '["study","generation-1"]'),
             ("saved_plan", recipe.recipe_hash),
         )
         assert recipe.release_snapshot(store) == "snapshot-1"

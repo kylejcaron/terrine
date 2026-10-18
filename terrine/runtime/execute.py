@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -70,7 +71,7 @@ def execute_plan(
         if run[0] != plan.dataset or run[1] != plan.recipe.fingerprint:
             raise ValueError("run_id is already bound to a different plan")
         if run[2] in {"succeeded", "cancelled"}:
-            runtime_store.unpin_snapshot(plan.snapshot_id, kind="active_run", reference=run_id)
+            _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
             return RunReceipt(run_id, run[2], run[3])
     else:
         con.execute(
@@ -106,7 +107,17 @@ def execute_plan(
         if current is None:
             raise RuntimeError("run disappeared while claiming its lease")
         return RunReceipt(run_id, current[0], current[1])
-    runtime_store.pin_snapshot(plan.snapshot_id, kind="active_run", reference=run_id)
+    active_reference = json.dumps((run_id, lease.fence), separators=(",", ":"))
+    try:
+        runtime_store.pin_snapshot(plan.snapshot_id, kind="active_run", reference=active_reference)
+    except Exception:
+        con.execute(
+            f"UPDATE {schema}.runtime_runs SET state='failed' "
+            "WHERE run_id=? AND state='running' AND attempt_fence=?",
+            [run_id, lease.fence],
+        )
+        leases.release(lease)
+        raise
     heartbeat_con = con.cursor()
     heartbeat_store = LeaseStore(heartbeat_con, namespace=namespace)
     outputs: dict[str, pa.Table] = {}
@@ -201,12 +212,8 @@ def execute_plan(
         generation = getattr(published, "generation", published)
         generation_text = str(generation) if generation is not None else None
         if generation_text is not None:
-            manifest_reference = f"{plan.dataset}:{generation_text}"
-            for kind, reference in runtime_store.snapshot_references(plan.snapshot_id):
-                if kind == "published_manifest" and reference.startswith(f"{plan.dataset}:"):
-                    runtime_store.unpin_snapshot(plan.snapshot_id, kind=kind, reference=reference)
-            runtime_store.pin_snapshot(
-                plan.snapshot_id, kind="published_manifest", reference=manifest_reference
+            runtime_store.replace_published_snapshot(
+                plan.dataset, generation_text, plan.snapshot_id
             )
         terminal = con.execute(
             f"UPDATE {schema}.runtime_runs SET state='succeeded', published_generation=? "
@@ -228,7 +235,11 @@ def execute_plan(
         stop_heartbeat.set()
         heartbeat_thread.join()
         heartbeat_con.close()
-        runtime_store.unpin_snapshot(plan.snapshot_id, kind="active_run", reference=run_id)
+        state = con.execute(
+            f"SELECT state FROM {schema}.runtime_runs WHERE run_id=?", [run_id]
+        ).fetchone()
+        if state is not None and state[0] in {"succeeded", "cancelled"}:
+            _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
         leases.release(lease)
 
 
@@ -241,6 +252,20 @@ def _encode(table: pa.Table) -> bytes:
 
 def _decode(payload: bytes) -> pa.Table:
     return pa.ipc.open_stream(payload).read_all()
+
+
+def _release_run_snapshot_refs(store: RuntimeStore, snapshot_id: str, run_id: str) -> None:
+    for kind, reference in store.snapshot_references(snapshot_id):
+        if kind != "active_run":
+            continue
+        try:
+            owner, _fence = json.loads(reference)
+        except (TypeError, ValueError):
+            if reference == run_id:
+                store.unpin_snapshot(snapshot_id, kind=kind, reference=reference)
+            continue
+        if owner == run_id:
+            store.unpin_snapshot(snapshot_id, kind=kind, reference=reference)
 
 
 def _check_budget(

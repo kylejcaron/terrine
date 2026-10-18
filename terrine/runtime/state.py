@@ -17,6 +17,7 @@ __all__ = [
     "LayerNode",
     "RuntimeStore",
     "SourceSnapshot",
+    "snapshot_manifest_reference",
 ]
 
 
@@ -116,6 +117,14 @@ class RuntimeStore:
         self.con.execute(
             f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_gc ("
             "snapshot_id VARCHAR PRIMARY KEY)"
+        )
+        self.con.execute(
+            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_guards ("
+            "snapshot_id VARCHAR PRIMARY KEY, guard_version BIGINT NOT NULL)"
+        )
+        self.con.execute(
+            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_manifests ("
+            "dataset VARCHAR PRIMARY KEY, generation VARCHAR NOT NULL, snapshot_id VARCHAR)"
         )
 
     def write_generation(
@@ -319,15 +328,26 @@ class RuntimeStore:
                 raise ValueError("generation changed concurrently during collection") from exc
             raise
 
+    def advance_snapshot_guard(self, snapshot_id: str) -> None:
+        if not isinstance(snapshot_id, str) or not snapshot_id:
+            raise ValueError("snapshot_id must not be empty")
+        self.con.execute(
+            f"INSERT INTO {self._schema}.runtime_snapshot_guards VALUES (?, 0) "
+            "ON CONFLICT DO NOTHING",
+            [snapshot_id],
+        )
+        self.con.execute(
+            f"UPDATE {self._schema}.runtime_snapshot_guards "
+            "SET guard_version=guard_version+1 WHERE snapshot_id=?",
+            [snapshot_id],
+        )
+
     def pin_snapshot(self, snapshot_id: str, *, kind: str, reference: str) -> None:
         _check_snapshot_reference(snapshot_id, kind, reference)
         self.con.execute("BEGIN TRANSACTION")
         try:
-            collected = self.con.execute(
-                f"SELECT 1 FROM {self._schema}.runtime_snapshot_gc WHERE snapshot_id=?",
-                [snapshot_id],
-            ).fetchone()
-            if collected is not None:
+            self.advance_snapshot_guard(snapshot_id)
+            if self.snapshot_marked_for_gc(snapshot_id):
                 raise ValueError("collected snapshots cannot be pinned")
             self.con.execute(
                 f"INSERT INTO {self._schema}.runtime_snapshot_references VALUES (?, ?, ?) "
@@ -341,11 +361,18 @@ class RuntimeStore:
 
     def unpin_snapshot(self, snapshot_id: str, *, kind: str, reference: str) -> None:
         _check_snapshot_reference(snapshot_id, kind, reference)
-        self.con.execute(
-            f"DELETE FROM {self._schema}.runtime_snapshot_references "
-            "WHERE snapshot_id=? AND kind=? AND reference=?",
-            [snapshot_id, kind, reference],
-        )
+        self.con.execute("BEGIN TRANSACTION")
+        try:
+            self.advance_snapshot_guard(snapshot_id)
+            self.con.execute(
+                f"DELETE FROM {self._schema}.runtime_snapshot_references "
+                "WHERE snapshot_id=? AND kind=? AND reference=?",
+                [snapshot_id, kind, reference],
+            )
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
 
     def snapshot_references(self, snapshot_id: str) -> tuple[tuple[str, str], ...]:
         if not isinstance(snapshot_id, str) or not snapshot_id:
@@ -357,11 +384,66 @@ class RuntimeStore:
         ).fetchall()
         return tuple((kind, reference) for kind, reference in rows)
 
+    def replace_published_snapshot(
+        self, dataset: str, generation: str, snapshot_id: str | None
+    ) -> None:
+        if not dataset or not generation:
+            raise ValueError("dataset and generation must not be empty")
+        self.con.execute("BEGIN TRANSACTION")
+        try:
+            previous = self.con.execute(
+                f"SELECT generation, snapshot_id FROM {self._schema}.runtime_snapshot_manifests "
+                "WHERE dataset=?",
+                [dataset],
+            ).fetchone()
+            reference = snapshot_manifest_reference(dataset, generation)
+            previous_reference = (
+                snapshot_manifest_reference(dataset, previous[0]) if previous is not None else None
+            )
+            if previous is not None and previous[0] == generation and previous[1] != snapshot_id:
+                raise ValueError("retry snapshot identity does not match published generation")
+            for guarded in (
+                previous[1] if previous is not None else None,
+                snapshot_id,
+            ):
+                if guarded is not None:
+                    self.advance_snapshot_guard(guarded)
+            if snapshot_id is not None and self.snapshot_marked_for_gc(snapshot_id):
+                raise ValueError("collected snapshots cannot be published")
+            if previous is not None and previous[1] is not None:
+                self.con.execute(
+                    f"DELETE FROM {self._schema}.runtime_snapshot_references "
+                    "WHERE snapshot_id=? AND kind='published_manifest' AND reference=?",
+                    [previous[1], previous_reference],
+                )
+            if snapshot_id is None:
+                self.con.execute(
+                    f"DELETE FROM {self._schema}.runtime_snapshot_manifests WHERE dataset=?",
+                    [dataset],
+                )
+            else:
+                self.con.execute(
+                    f"INSERT INTO {self._schema}.runtime_snapshot_manifests "
+                    "VALUES (?, ?, ?) ON CONFLICT(dataset) DO UPDATE SET "
+                    "generation=excluded.generation, snapshot_id=excluded.snapshot_id",
+                    [dataset, generation, snapshot_id],
+                )
+                self.con.execute(
+                    f"INSERT INTO {self._schema}.runtime_snapshot_references VALUES "
+                    "(?, 'published_manifest', ?) ON CONFLICT DO NOTHING",
+                    [snapshot_id, reference],
+                )
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
+
     def mark_snapshot_for_gc(self, snapshot_id: str) -> bool:
         if not isinstance(snapshot_id, str) or not snapshot_id:
             raise ValueError("snapshot_id must not be empty")
         self.con.execute("BEGIN TRANSACTION")
         try:
+            self.advance_snapshot_guard(snapshot_id)
             refs = self.con.execute(
                 f"SELECT 1 FROM {self._schema}.runtime_snapshot_references "
                 "WHERE snapshot_id=? LIMIT 1",
@@ -402,6 +484,10 @@ def _check_snapshot_reference(snapshot_id: str, kind: str, reference: str) -> No
     ):
         if not isinstance(value, str) or not value:
             raise ValueError(f"{name} must not be empty")
+
+
+def snapshot_manifest_reference(dataset: str, generation: str) -> str:
+    return json.dumps((dataset, generation), separators=(",", ":"))
 
 
 def _snapshot_json(snapshot: SourceSnapshot) -> dict[str, Any]:

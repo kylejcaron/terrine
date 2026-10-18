@@ -4,7 +4,6 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import duckdb
 import ibis
 import pytest
 
@@ -164,7 +163,17 @@ def test_snapshot_gc_respects_pins_and_tombstones_collected_inputs(tmp_path):
     receipt = authority.capture(
         model, con=con, namespace="runtime", run_id="collect", budget=Budget()
     )
-    store = RuntimeStore(duckdb.connect(":memory:"), namespace="runtime")
+    import duckdb
+
+    wrong_store = RuntimeStore(duckdb.connect(":memory:"), namespace="runtime")
+    wrong_store.initialize()
+    with pytest.raises(TerrineError) as owner_error:
+        authority.collect_unreferenced(
+            wrong_store, namespace="runtime", retain=timedelta(0), now=datetime.now(UTC)
+        )
+    assert owner_error.value.code == "terrine.runtime.snapshot_invalid"
+    assert Path(receipt.artifact_path).exists()
+    store = RuntimeStore(con.con, namespace="runtime")
     store.initialize()
     store.pin_snapshot(receipt.snapshot_id, kind="saved_plan", reference="recipe")
     past = datetime.now(UTC) + timedelta(seconds=1)
@@ -172,7 +181,7 @@ def test_snapshot_gc_respects_pins_and_tombstones_collected_inputs(tmp_path):
         authority.collect_unreferenced(store, namespace="runtime", retain=timedelta(0), now=past)
         == ()
     )
-    store.unpin_snapshot(receipt.snapshot_id, kind="saved_plan", reference="recipe")
+    authority.release(receipt, store, kind="saved_plan", reference="recipe")
     assert authority.collect_unreferenced(
         store, namespace="runtime", retain=timedelta(0), now=past
     ) == (receipt.snapshot_id,)

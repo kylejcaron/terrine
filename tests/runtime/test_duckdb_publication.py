@@ -30,14 +30,14 @@ def test_manifest_publication_atomically_moves_snapshot_reference():
         expected_manifest=None,
         lease=lease,
     )
-    assert store.snapshot_references("snap-1") == (("published_manifest", "orders:g1"),)
+    assert store.snapshot_references("snap-1") == (("published_manifest", '["orders","g1"]'),)
     backend.publish_generation(
         StagedGeneration("orders", "g2", {"p1": pa.table({"id": [2]})}, snapshot_id="snap-2"),
         expected_manifest="g1",
         lease=lease,
     )
     assert store.snapshot_references("snap-1") == ()
-    assert store.snapshot_references("snap-2") == (("published_manifest", "orders:g2"),)
+    assert store.snapshot_references("snap-2") == (("published_manifest", '["orders","g2"]'),)
     manifest = con.execute(
         'SELECT snapshot_id FROM "owner".runtime_manifests WHERE dataset=?', ["orders"]
     ).fetchone()

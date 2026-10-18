@@ -188,8 +188,12 @@ class SavedPlanRecipe:
         """Retain this verified recipe's exact input snapshot."""
         verified = SavedPlanRecipe.from_json(self.to_json())
         plan = RefreshPlan.deserialize(verified.plan_json)
-        if plan.namespace != verified.namespace or plan.dataset != verified.destination.dataset:
-            raise _INVALID.error(reason="plan identity differs from saved recipe")
+        if (
+            verified.namespace != store.namespace
+            or plan.namespace != verified.namespace
+            or plan.dataset != verified.destination.dataset
+        ):
+            raise _INVALID.error(reason="plan identity or store namespace differs")
         store.pin_snapshot(
             plan.snapshot_id,
             kind="saved_plan",
@@ -201,6 +205,8 @@ class SavedPlanRecipe:
         """Release this recipe's input snapshot reference."""
         verified = SavedPlanRecipe.from_json(self.to_json())
         plan = RefreshPlan.deserialize(verified.plan_json)
+        if verified.namespace != store.namespace or plan.namespace != verified.namespace:
+            raise _INVALID.error(reason="plan identity or store namespace differs")
         store.unpin_snapshot(
             plan.snapshot_id,
             kind="saved_plan",

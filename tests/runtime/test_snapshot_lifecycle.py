@@ -49,7 +49,7 @@ def test_execution_pins_snapshot_for_active_run_and_published_manifest():
     seen = []
 
     def publish(plan, outputs, lease):
-        assert store.snapshot_references("snapshot") == (("active_run", "run-1"),)
+        assert store.snapshot_references("snapshot") == (("active_run", '["run-1",1]'),)
         return "g1"
 
     result = execute_plan(
@@ -62,8 +62,8 @@ def test_execution_pins_snapshot_for_active_run_and_published_manifest():
     )
     seen.append(result.state)
     assert seen == ["succeeded"]
-    assert store.snapshot_references("snapshot") == (("published_manifest", "orders:g1"),)
-    store.pin_snapshot("snapshot", kind="active_run", reference="run-1")
+    assert store.snapshot_references("snapshot") == (("published_manifest", '["orders","g1"]'),)
+    store.pin_snapshot("snapshot", kind="active_run", reference='["run-1",99]')
     execute_plan(
         plan,
         con=con,
@@ -72,4 +72,89 @@ def test_execution_pins_snapshot_for_active_run_and_published_manifest():
         run_task=lambda task, dependencies: pa.table({"task": [task.task_id]}),
         publish=publish,
     )
-    assert store.snapshot_references("snapshot") == (("published_manifest", "orders:g1"),)
+    assert store.snapshot_references("snapshot") == (("published_manifest", '["orders","g1"]'),)
+
+
+def test_retryable_failed_run_keeps_snapshot_until_successful_retry():
+    con = duckdb.connect(":memory:")
+    store = RuntimeStore(con, namespace="owner")
+    graph = dependency_graph(sources=("events",), definition_hash="def", partitions=("p1",))
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="def",
+        snapshot_id="snapshot",
+        graph=graph,
+    )
+    with pytest.raises(RuntimeError, match="task failed"):
+        execute_plan(
+            plan,
+            con=con,
+            namespace="owner",
+            run_id="retry",
+            run_task=lambda task, dependencies: (_ for _ in ()).throw(RuntimeError("task failed")),
+            publish=lambda plan, outputs, lease: "g1",
+        )
+    assert store.snapshot_references("snapshot") == (("active_run", '["retry",1]'),)
+    execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="retry",
+        run_task=lambda task, dependencies: pa.table({"id": [1]}),
+        publish=lambda plan, outputs, lease: "g1",
+    )
+    assert store.snapshot_references("snapshot") == (("published_manifest", '["orders","g1"]'),)
+
+
+def test_string_publisher_moves_manifest_pin_between_snapshots():
+    con = duckdb.connect(":memory:")
+    store = RuntimeStore(con, namespace="owner")
+    graph = dependency_graph(sources=("events",), definition_hash="def", partitions=("p1",))
+    for index, snapshot in enumerate(("snapshot-1", "snapshot-2"), start=1):
+        plan = plan_refresh(
+            namespace="owner",
+            dataset="orders",
+            definition_hash="def",
+            snapshot_id=snapshot,
+            graph=graph,
+        )
+        execute_plan(
+            plan,
+            con=con,
+            namespace="owner",
+            run_id=f"run-{index}",
+            run_task=lambda task, dependencies, index=index: pa.table({"id": [index]}),
+            publish=lambda plan, outputs, lease, index=index: f"g{index}",
+        )
+    assert store.snapshot_references("snapshot-1") == ()
+    assert store.snapshot_references("snapshot-2") == (("published_manifest", '["orders","g2"]'),)
+
+
+def test_collected_snapshot_pin_failure_records_run_and_releases_lease():
+    con = duckdb.connect(":memory:")
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
+    store.mark_snapshot_for_gc("snapshot")
+    graph = dependency_graph(sources=("events",), definition_hash="def", partitions=("p1",))
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="def",
+        snapshot_id="snapshot",
+        graph=graph,
+    )
+    with pytest.raises(ValueError, match="collected"):
+        execute_plan(
+            plan,
+            con=con,
+            namespace="owner",
+            run_id="collected-run",
+            run_task=lambda task, dependencies: pa.table({"id": [1]}),
+            publish=lambda plan, outputs, lease: "g1",
+        )
+    run = con.execute(
+        'SELECT state FROM "owner".runtime_runs WHERE run_id=?', ["collected-run"]
+    ).fetchone()
+    assert run is not None and run[0] == "failed"
+    assert con.execute('SELECT resource FROM "owner".runtime_leases').fetchall() == []

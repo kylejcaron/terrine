@@ -147,6 +147,7 @@ class SnapshotAuthority:
         """Delete only verified owner snapshots beyond retention with no live references."""
         if store.namespace != namespace:
             raise ValueError("snapshot namespace does not match runtime store")
+        _assert_owner_connection(self.owner, store.con)
         if retain < timedelta(0):
             raise ValueError("snapshot retention must not be negative")
         root = self.owner.snapshot_root / namespace
@@ -178,6 +179,25 @@ class SnapshotAuthority:
             shutil.rmtree(directory)
             removed.append(receipt.snapshot_id)
         return tuple(sorted(removed))
+
+    def release(
+        self,
+        snapshot: ReopenableSnapshot,
+        store: RuntimeStore,
+        *,
+        kind: str,
+        reference: str,
+    ) -> None:
+        """Release one verified owner reference; physical deletion remains GC-only."""
+        verified = ReopenableSnapshot.from_json(snapshot.to_json())
+        if (
+            verified.owner_reference != self.owner.reference
+            or verified.namespace != store.namespace
+            or not Path(verified.receipt_path).is_file()
+        ):
+            raise _INVALID.error(reason="snapshot release identity does not match owner")
+        _assert_owner_connection(self.owner, store.con)
+        store.unpin_snapshot(verified.snapshot_id, kind=kind, reference=reference)
 
     def capture(
         self,

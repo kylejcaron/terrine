@@ -17,6 +17,7 @@ from terrine.runtime.backends.base import (
     StagedGeneration,
 )
 from terrine.runtime.leases import LeaseStore
+from terrine.runtime.state import RuntimeStore, snapshot_manifest_reference
 
 __all__ = ["DuckDBBackend"]
 
@@ -77,6 +78,14 @@ class DuckDBBackend:
             f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_gc ("
             "snapshot_id VARCHAR PRIMARY KEY)"
         )
+        self.con.execute(
+            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_guards ("
+            "snapshot_id VARCHAR PRIMARY KEY, guard_version BIGINT NOT NULL)"
+        )
+        self.con.execute(
+            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_manifests ("
+            "dataset VARCHAR PRIMARY KEY, generation VARCHAR NOT NULL, snapshot_id VARCHAR)"
+        )
         LeaseStore(self.con, namespace=self.namespace).initialize()
 
     def publish_generation(
@@ -94,6 +103,12 @@ class DuckDBBackend:
         lease_store.assert_current(lease)
         current = self.current_generation(stage.dataset)
         if current == stage.generation:
+            manifest_snapshot = self.con.execute(
+                f"SELECT snapshot_id FROM {self._schema}.runtime_manifests WHERE dataset=?",
+                [stage.dataset],
+            ).fetchone()
+            if manifest_snapshot is None or manifest_snapshot[0] != stage.snapshot_id:
+                raise ValueError("retry snapshot identity does not match published generation")
             receipt = self._matching_receipt(stage)
             if stage.run_id is not None:
                 self.con.execute("BEGIN TRANSACTION")
@@ -120,7 +135,7 @@ class DuckDBBackend:
             if published_before is not None:
                 raise ValueError("generation was already published and cannot be reactivated")
             previous = self.con.execute(
-                f"SELECT version, snapshot_id FROM {self._schema}.runtime_manifests "
+                f"SELECT version, generation, snapshot_id FROM {self._schema}.runtime_manifests "
                 "WHERE dataset=?",
                 [stage.dataset],
             ).fetchone()
@@ -168,23 +183,42 @@ class DuckDBBackend:
                 "version=excluded.version, snapshot_id=excluded.snapshot_id",
                 [stage.dataset, stage.generation, version, stage.snapshot_id],
             )
-            if previous is not None and previous[1] is not None:
-                self.con.execute(
-                    f"DELETE FROM {self._schema}.runtime_snapshot_references "
-                    "WHERE snapshot_id=? AND kind='published_manifest' AND reference=?",
-                    [previous[1], f"{stage.dataset}:{expected_manifest}"],
-                )
+            snapshot_store = RuntimeStore(self.con, namespace=self.namespace)
+            if previous is not None and previous[2] is not None:
+                snapshot_store.advance_snapshot_guard(previous[2])
             if stage.snapshot_id is not None:
-                collected = self.con.execute(
-                    f"SELECT 1 FROM {self._schema}.runtime_snapshot_gc WHERE snapshot_id=?",
-                    [stage.snapshot_id],
-                ).fetchone()
-                if collected is not None:
+                if not stage.snapshot_id:
+                    raise ValueError("snapshot_id must not be empty")
+                snapshot_store.advance_snapshot_guard(stage.snapshot_id)
+                if snapshot_store.snapshot_marked_for_gc(stage.snapshot_id):
                     raise ValueError("collected snapshots cannot be published")
                 self.con.execute(
                     f"INSERT INTO {self._schema}.runtime_snapshot_references VALUES "
                     "(?, 'published_manifest', ?) ON CONFLICT DO NOTHING",
-                    [stage.snapshot_id, f"{stage.dataset}:{stage.generation}"],
+                    [
+                        stage.snapshot_id,
+                        snapshot_manifest_reference(stage.dataset, stage.generation),
+                    ],
+                )
+                self.con.execute(
+                    f"INSERT INTO {self._schema}.runtime_snapshot_manifests "
+                    "VALUES (?, ?, ?) ON CONFLICT(dataset) DO UPDATE SET "
+                    "generation=excluded.generation, snapshot_id=excluded.snapshot_id",
+                    [stage.dataset, stage.generation, stage.snapshot_id],
+                )
+            else:
+                self.con.execute(
+                    f"DELETE FROM {self._schema}.runtime_snapshot_manifests WHERE dataset=?",
+                    [stage.dataset],
+                )
+            if previous is not None and previous[2] is not None:
+                self.con.execute(
+                    f"DELETE FROM {self._schema}.runtime_snapshot_references "
+                    "WHERE snapshot_id=? AND kind='published_manifest' AND reference=?",
+                    [
+                        previous[2],
+                        snapshot_manifest_reference(stage.dataset, previous[1]),
+                    ],
                 )
             if self.fault_injector is not None:
                 self.fault_injector("before_commit")
