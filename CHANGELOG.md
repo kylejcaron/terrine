@@ -69,3 +69,4 @@
 - Expand independent pandas panel-row references for canonical sequential/calendar rows, event-relative windows and cutoffs, and exact matched-t0 inclusion probabilities; add a temporary-output, smoke-only calibration-harness mode.
 - Predeclare eight stochastic heterogeneous stacked CATT recovery cells with per-cohort recovery, inference gates, per-cell JSON, and a deterministic fast smoke.
 - Gate CATT calibration on both cohort-specific effects and their normalized aggregate uncertainty.
+- Normalize calendar cohort timestamps to aware UTC instants, use exact timestamp ordering for sequential adoption history, validate treatment/cohort source units, and stabilize stacked weighted means and outcome-only risk horizons.
