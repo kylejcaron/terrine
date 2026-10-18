@@ -246,3 +246,24 @@ def test_trajectory_generated_names_are_reserved_from_features():
         assert error.value.code == "terrine.spec.reserved_output_name"
     finally:
         con.disconnect()
+
+def test_scale_zero_decimal_cumulative_retains_wide_values():
+    con, model = _trajectory_model(decimal_type="DECIMAL(38, 0)")
+    try:
+        con.raw_sql(
+            "UPDATE events SET decimal_amount = 10000000000000000000000000000000000000 "
+            "WHERE user_id = 'u1' AND kind = 'revenue'"
+        )
+        frame = Design(
+            "user",
+            EventAnchor("purchase", which="first"),
+            shape=CohortSpec(
+                origin="purchase",
+                trajectory=Trajectory("decimal_revenue", "7d", periods=1, cumulative=True),
+            ),
+        ).build(model)
+        rows = frame.to_pyarrow().to_pylist()
+        row = next(row for row in rows if row["unit"] == "u1")
+        assert row["cumulative_value"] == 10**37
+    finally:
+        con.disconnect()

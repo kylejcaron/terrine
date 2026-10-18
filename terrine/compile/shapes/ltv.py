@@ -13,9 +13,11 @@ from terrine.errors import RefusalSpec
 from terrine.spec.design import Design
 from terrine.spec.expressions import MetricAgg
 from terrine.spec.trajectory import CohortSpec
-from terrine.temporal.aggregate import _Check, _Failure
+from terrine.temporal.aggregate import _Check, _Failure, _scaled_text
 from terrine.temporal.prefix import (
     FLOAT64_PRECISION,
+    exact_literal,
+    exact_sum,
     float64_rounding_radius,
     float64_tolerance,
     outward_add,
@@ -186,7 +188,23 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
             order_by=[table.age],
             rows=(None, 0),
         )
-        total = table.period_value.sum().over(frame)
+        if table.period_value.type().is_decimal():
+            numeric_type = table.period_value.type()
+            scale = numeric_type.scale
+            assert scale is not None
+            decimal_text = table.period_value.cast("string")
+            separator = decimal_text.find(".")
+            fractional_digits = ibis.ifelse(
+                separator < 0, 0, decimal_text.length() - separator - 1
+            )
+            coefficient_text = decimal_text.replace(".", "")
+            coefficient = coefficient_text.rpad(
+                coefficient_text.length() + scale - fractional_digits, "0"
+            ).cast(exact_literal(0).type())
+            exact_total = exact_sum(coefficient).over(frame)
+            total = _scaled_text(exact_total, scale).try_cast(numeric_type)
+        else:
+            total = table.period_value.sum().over(frame)
         missing = table.period_value.isnull().cast("int64").sum().over(frame) > 0
         cumulative = missing.ifelse(ibis.null().cast(total.type()), total)
         table = table.mutate(cumulative_value=cumulative)
