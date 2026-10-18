@@ -37,6 +37,8 @@ class ChangeSet:
 
     @classmethod
     def from_readiness_advance(cls, source: str, before: datetime, after: datetime) -> ChangeSet:
+        if after == before:
+            return cls((), "revision")
         if after < before:
             return cls(
                 (Change("readiness", source, before_time_range=(after, before)),), "revision"

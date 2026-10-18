@@ -223,6 +223,23 @@ def test_readiness_only_noop_plan_satisfies_strict_scan_budget():
     assert plan.tasks == ()
 
 
+def test_unchanged_readiness_produces_strict_budget_noop_plan():
+    from datetime import UTC, datetime
+
+    graph = dependency_graph(sources=("events",), definition_hash="definition")
+    unchanged = datetime(2025, 1, 2, tzinfo=UTC)
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="study",
+        definition_hash="definition",
+        snapshot_id="snap",
+        graph=graph,
+        changes=ChangeSet.from_readiness_advance("events", unchanged, unchanged),
+        budget=Budget(max_scan_bytes=1),
+    )
+    assert plan.tasks == ()
+
+
 def test_definition_change_starts_new_fingerprint():
     first_graph = dependency_graph(sources=("events",), definition_hash="v1")
     next_graph = dependency_graph(sources=("events",), definition_hash="v2")
