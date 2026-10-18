@@ -93,6 +93,30 @@ def model(
     )()
 
 
+@pytest.mark.parametrize(
+    "shape_name",
+    ["sequential_treatment", "calendar_cohort"],
+)
+def test_panel_sources_refuse_missing_analysis_unit_mapping(shape_name):
+    from terrine.spec.panels import CalendarComparisonSpec, Initiation, SequentialSpec
+    from terrine.spec.validate import validate_design
+
+    source_model = model(entities={"workspace": "workspace_id"})
+    selector = Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC))
+    shape = (
+        SequentialSpec(selector)
+        if shape_name == "sequential_treatment"
+        else CalendarComparisonSpec(selector, "never_treated", -1, (0,))
+    )
+    design = Design("user", Schedule("1d", "2025-01-01", "2025-01-04"), shape=shape)
+
+    with pytest.raises(TerrineError) as error:
+        validate_design(design, source_model)
+
+    assert error.value.code == "terrine.design.incompatible_unit"
+    assert error.value.context == {"unit": "user", "name": "session"}
+
+
 def test_calendar_comparison_requires_coverage_through_comparison_horizon():
     from terrine.spec.panels import CalendarComparisonSpec, Initiation
     from terrine.spec.validate import validate_design

@@ -273,6 +273,8 @@ def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
         source = model.sources.get(design.shape.treatment.source)
         if source is None:
             raise _MISSING.error(kind="treatment source", name=design.shape.treatment.source)
+        if design.unit not in source.entities:
+            raise _UNIT.error(unit=design.unit, name=design.shape.treatment.property)
         declared = set(source.properties) | set(source.facts)
         if design.shape.treatment.property not in declared:
             raise _MISSING.error(kind="treatment property", name=design.shape.treatment.property)
@@ -322,6 +324,8 @@ def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
         source = model.sources.get(design.shape.cohort.source)
         if source is None:
             raise _MISSING.error(kind="cohort source", name=design.shape.cohort.source)
+        if design.unit not in source.entities:
+            raise _UNIT.error(unit=design.unit, name=design.shape.cohort.property)
         declared = set(source.properties) | set(source.facts)
         if design.shape.cohort.property not in declared:
             raise _MISSING.error(kind="cohort property", name=design.shape.cohort.property)
