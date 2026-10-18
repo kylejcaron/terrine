@@ -18,6 +18,24 @@ def test_duckdb_manifest_switch_is_atomic_with_generation():
     assert backend.read_partition(receipt, "p1").to_pylist() == [{"id": 1}, {"id": 2}]
 
 
+def test_empty_generation_is_rejected_without_changing_manifest():
+    con = duckdb.connect(":memory:")
+    backend = DuckDBBackend(con, namespace="owner")
+    lease = _lease(con, "owner")
+    backend.publish_generation(
+        StagedGeneration("orders", "g1", {"p1": pa.table({"id": [1]})}),
+        expected_manifest=None,
+        lease=lease,
+    )
+    with pytest.raises(ValueError):
+        backend.publish_generation(
+            StagedGeneration("orders", "g2", {}),
+            expected_manifest="g1",
+            lease=lease,
+        )
+    assert backend.current_generation("orders") == "g1"
+
+
 def test_partial_stage_never_becomes_visible():
     con = duckdb.connect(":memory:")
     backend = DuckDBBackend(con, namespace="owner")
