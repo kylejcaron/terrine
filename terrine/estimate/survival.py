@@ -430,8 +430,14 @@ def to_surrogate_arrow(
         raise _INVALID.error(reason="duplicate_surrogate_column")
     if any(name not in data.table.column_names for name in requested):
         raise _INVALID.error(reason="missing_surrogate_column")
-    identity = (data.roles.unit, data.roles.t0)
-    metadata_columns = tuple(dict.fromkeys((*requested, *data.roles.outcomes, *structural)))
+    identity = tuple(
+        dict.fromkeys(
+            name for name in (data.roles.unit, data.roles.anchor, data.roles.t0) if name is not None
+        )
+    )
+    metadata_columns = tuple(
+        dict.fromkeys((*requested, *data.roles.outcomes, *structural, *identity))
+    )
     support = []
     for name in metadata_columns:
         meta = data.columns.get(name)
