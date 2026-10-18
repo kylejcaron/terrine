@@ -127,7 +127,7 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
             if error is None:
                 raise _INVALID.error(reason="missing_numeric_certificate")
             projection["period_value_absolute_error"] = error
-        for feature in compiled.roles.features:
+        for feature in (*compiled.roles.features, *design.eligibility):
             feature_meta = compiled.columns[feature]
             for column in (
                 feature_meta.observed_from_column,
@@ -160,7 +160,9 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
     output_columns = {
         name: meta
         for name, meta in compiled.columns.items()
-        if name in compiled.roles.features or name == compiled.roles.treatment
+        if name in compiled.roles.features
+        or name in design.eligibility
+        or name == compiled.roles.treatment
     }
     output_columns["period_value"] = ColumnMeta(
         Window(0, trajectory.period),
