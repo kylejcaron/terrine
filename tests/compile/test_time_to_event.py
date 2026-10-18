@@ -11,7 +11,18 @@ from terrine.spec import Design, EventAnchor, agg
 from terrine.spec.trajectory import TimeToEvent
 
 
-def _model(*, outcome_start="2024-12-30", naive_outcomes=False, nanosecond_outcomes=False):
+def _model(
+    *,
+    outcome_start="2024-12-30",
+    outcome_end="2025-01-11",
+    anchor_end="2025-01-11",
+    entry_start="2025-01-01",
+    entry_end="2025-01-11",
+    naive_outcomes=False,
+    exit_start="2025-01-01",
+    exit_end="2025-01-11",
+    nanosecond_outcomes=False,
+):
 
     con = ibis.duckdb.connect()
     con.raw_sql("""
@@ -55,6 +66,7 @@ def _model(*, outcome_start="2024-12-30", naive_outcomes=False, nanosecond_outco
           ('u3', TIMESTAMPTZ '2025-01-03 00:00:00+00')
         ) AS x(user_id, ts)
     """)
+    con.raw_sql("CREATE TABLE exits AS SELECT * FROM entries")
     catalog = Catalog.model_validate(
         {
             "schema_version": 1,
@@ -85,11 +97,20 @@ def _model(*, outcome_start="2024-12-30", naive_outcomes=False, nanosecond_outco
                     "properties": [],
                     "dimensions": [],
                 },
+                "exits": {
+                    "relation": {"kind": "table", "name": "exits"},
+                    "timestamp": "ts",
+                    "entities": {"user": "user_id"},
+                    "facts": ["closed"],
+                    "properties": [],
+                    "dimensions": [],
+                },
             },
             "facts": {
                 "signup": {"source": "anchors", "column": None},
                 "churn": {"source": "outcomes", "column": None},
                 "enrolled": {"source": "entries", "column": None},
+                "closed": {"source": "exits", "column": None},
             },
             "properties": {},
             "dimensions": {},
@@ -101,9 +122,10 @@ def _model(*, outcome_start="2024-12-30", naive_outcomes=False, nanosecond_outco
         catalog,
         con=con,
         readiness={
-            "anchors": Coverage("2025-01-01", "2025-01-11"),
-            "outcomes": Coverage(outcome_start, "2025-01-11"),
-            "entries": Coverage("2025-01-01", "2025-01-11"),
+            "anchors": Coverage("2025-01-01", anchor_end),
+            "outcomes": Coverage(outcome_start, outcome_end),
+            "entries": Coverage(entry_start, entry_end),
+            "exits": Coverage(exit_start, exit_end),
         },
     )
     return con, model
@@ -240,6 +262,82 @@ def test_nanosecond_events_support_coverage_outside_nanosecond_range():
         con.disconnect()
 
 
+def test_nanosecond_event_after_python_microsecond_clamp_is_retained():
+    con, model = _model(
+        nanosecond_outcomes=True,
+        outcome_end="2262-04-12",
+    )
+    try:
+        con.raw_sql("DELETE FROM outcomes WHERE user_id = 'u1'")
+        con.raw_sql(
+            "INSERT INTO outcomes VALUES ('u1', TIMESTAMP_NS '2262-04-11 23:47:16.854775500')"
+        )
+        result = (
+            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
+            .build(model)
+            .materialize()
+        )
+        rows = {row["unit"]: row for row in result.table.to_pylist()}
+        assert rows["u1"]["event"] is True
+    finally:
+        con.disconnect()
+
+
+def test_wide_entry_coverage_start_is_intersected_before_narrowing():
+    con, model = _model(
+        nanosecond_outcomes=True,
+        entry_start="2500-01-01",
+        entry_end="2501-01-01",
+    )
+    try:
+        result = (
+            Design(
+                "user",
+                EventAnchor("signup", which="first"),
+                shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
+            )
+            .build(model)
+            .materialize()
+        )
+        assert result.table.num_rows > 0
+    finally:
+        con.disconnect()
+
+
+def test_wide_exit_coverage_start_is_intersected_before_narrowing():
+    con, model = _model(
+        nanosecond_outcomes=True,
+        exit_start="2500-01-01",
+        exit_end="2501-01-01",
+    )
+    try:
+        result = (
+            Design(
+                "user",
+                EventAnchor("signup", which="first"),
+                shape=TimeToEvent("churn", exit="closed"),
+            )
+            .build(model)
+            .materialize()
+        )
+        assert result.table.num_rows > 0
+    finally:
+        con.disconnect()
+
+
+def test_wide_roster_observation_end_is_intersected_before_narrowing():
+    con, model = _model(nanosecond_outcomes=True, anchor_end="2500-01-01")
+    try:
+        result = (
+            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
+            .build(model)
+            .materialize()
+        )
+        assert result.table.num_rows > 0
+    finally:
+        con.disconnect()
+
+
 def test_nanosecond_source_accepts_administrative_cutoff_beyond_ns_range():
     con, model = _model(nanosecond_outcomes=True)
     try:
@@ -249,6 +347,23 @@ def test_nanosecond_source_accepts_administrative_cutoff_beyond_ns_range():
                 EventAnchor("signup", which="first"),
                 shape=TimeToEvent("churn"),
                 administrative_cutoff=datetime(2500, 1, 1, tzinfo=UTC),
+            )
+            .build(model)
+            .materialize()
+        )
+        assert result.table.num_rows > 0
+    finally:
+        con.disconnect()
+
+
+def test_nanosecond_event_source_accepts_utc_timestamptz_entry_source():
+    con, model = _model(nanosecond_outcomes=True)
+    try:
+        result = (
+            Design(
+                "user",
+                EventAnchor("signup", which="first"),
+                shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
             )
             .build(model)
             .materialize()
