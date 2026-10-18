@@ -83,8 +83,76 @@ def test_sequence_compiler_uses_configured_event_id_and_preserves_tied_order(seq
     compiled = compile_design(design, sequence_model)
     compiled.validate(execute=sequence_model.con.to_pyarrow)
     rows = sequence_model.con.to_pyarrow(compiled.table).to_pylist()
+
     children = [row for row in rows if row["is_event"]]
     assert [row["event_id"] for row in children] == ["a", "z", "end"]
+
+
+def test_sequence_excludes_rows_without_selected_fact_before_event_cap():
+    con = ibis.duckdb.connect()
+    con.create_table(
+        "events",
+        pa.table(
+            {
+                "user_id": ["u", "u", "u", "u"],
+                "ts": [
+                    datetime(2025, 1, 1, 12, tzinfo=UTC),
+                    datetime(2025, 1, 1, 13, tzinfo=UTC),
+                    datetime(2025, 1, 1, 14, tzinfo=UTC),
+                    datetime(2025, 1, 1, 15, tzinfo=UTC),
+                ],
+                "event_id": ["anchor", "view", "purchase", "not-an-activity"],
+                "signup": ["yes", None, None, None],
+                "activity": [None, "view", "purchase", None],
+            }
+        ),
+    )
+    catalog = Catalog.model_validate(
+        {
+            "schema_version": 1,
+            "day_boundary": "UTC",
+            "dialect": "duckdb",
+            "sources": {
+                "events": {
+                    "relation": {"kind": "table", "name": "events"},
+                    "timestamp": "ts",
+                    "entities": {"user": "user_id"},
+                    "facts": ["signup", "activity"],
+                    "properties": [],
+                    "dimensions": [],
+                }
+            },
+            "facts": {
+                "signup": {"source": "events", "column": "signup"},
+                "activity": {"source": "events", "column": "activity"},
+            },
+            "properties": {},
+            "dimensions": {},
+            "measures": {},
+            "metrics": {},
+        }
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={"events": Coverage("2025-01-01", "2025-01-02")},
+        event_ids={"events": "event_id"},
+    )
+    try:
+        from terrine.compile.dispatch import compile_design
+
+        design = Design(
+            "user",
+            EventAnchor("signup"),
+            shape=EventSequence("activity", Window("0s", "4h"), max_events=2),
+        )
+        compiled = compile_design(design, model)
+        compiled.validate(execute=con.to_pyarrow)
+        rows = con.to_pyarrow(compiled.table).to_pylist()
+        assert [row["event_id"] for row in rows if row["is_event"]] == ["view", "purchase"]
+        assert [row["event_count"] for row in rows if not row["is_event"]] == [2]
+    finally:
+        con.disconnect()
 
 
 def test_sequence_compiler_publishes_funnel_attempt_schema(sequence_model):
