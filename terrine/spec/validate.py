@@ -356,9 +356,10 @@ def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
             and coverage.end_exclusive < model.day_boundary(schedule.end)
         )
         if comparison_incomplete or schedule_incomplete:
+            required_boundary = max(horizon, model.day_boundary(schedule.end))
             raise _INCOMPLETE_TREATMENT_HISTORY.error(
                 source=source.name,
-                boundary=horizon.isoformat(),
+                boundary=required_boundary.isoformat(),
             )
         _required(model, source.name, required)
     elif design.shape != "cross_section":
