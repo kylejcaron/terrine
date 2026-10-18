@@ -1,4 +1,4 @@
-"""Configuration and Arrow containers for independent baseline-treatment worlds."""
+"""Configuration and Arrow containers for independent baseline and panel worlds."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import pyarrow as pa
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -14,6 +14,32 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validato
 from terrine._time import utc_instant
 from terrine.data import Coverage, UnitSource
 from terrine.errors import freeze
+
+
+class PanelWorldConfig(BaseModel):
+    """Two-cohort potential-outcome law for repeated-trial calibration."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
+
+    n_units: Annotated[int, Field(strict=True, gt=0, le=2**63 - 1)] = 2000
+    effect_kind: Literal["zero", "heterogeneous"] = "heterogeneous"
+    trial_masses: Literal["equal", "unequal"] = "equal"
+    overlap: Literal["disjoint", "overlap"] = "disjoint"
+    assignment_profile: Literal["profile_a", "profile_b"] = "profile_a"
+    outcome_noise_sd: Annotated[float, Field(ge=0)] = 2
+
+
+@dataclass(frozen=True, slots=True)
+class PanelWorld:
+    """Observed repeated-trial rows and their segregated paired-outcome oracle."""
+
+    config: PanelWorldConfig
+    metadata: Mapping[str, Any]
+    observations: pa.Table
+    oracle: pa.Table
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "metadata", freeze(self.metadata))
 
 
 class WorldConfig(BaseModel):

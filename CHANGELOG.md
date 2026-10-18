@@ -59,3 +59,4 @@
 - Add weighted stacked cohort-time effects with target/cohort aggregation weights, joint unit-cluster covariance, sampled-population refusal, and an explicit naive staggered-TWFE warning.
 - Validate actual initiation timing and exclusive outcome-window coverage; refuse incomplete treated/admissible-control pairs, preserve numeric precision and finite-value refusals, safely scale large weights and means, and use tail-stable confidence quantiles.
 - Add evidence-only joint pretrend, placebo, and negative-control diagnostics with explicit low-power/unavailable status and non-identification caveats.
+- Extend the independent simulator with repeated-trial potential outcomes, trial-specific assignment and baseline profiles, overlap regimes, heterogeneous cohort-time effects, and population/cohort truth; use it directly in the calibration harness.

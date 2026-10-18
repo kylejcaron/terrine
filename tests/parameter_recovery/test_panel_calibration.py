@@ -12,10 +12,9 @@ import sys
 import time
 from dataclasses import replace
 from pathlib import Path
+from typing import Literal, cast
 
 import numpy as np
-import pandas as pd
-import pyarrow as pa
 import pytest
 from scipy.stats import binomtest, chi2, norm
 
@@ -23,12 +22,17 @@ from terrine.data import ColumnMeta, TrialWeightMeta
 from terrine.errors import TerrineError
 from terrine.estimate.panel import panel_aipw
 from terrine.estimate.stacked import stacked_event_study
+from terrine.simulate import PanelWorldConfig, simulate_panel
+from terrine.simulate.truth import panel_ate
 from terrine.windows import Window
 from tests.estimate.test_panel_aipw import panel_frame
 from tests.estimate.test_stacked_event_study import _frame as _stacked_frame
 
-SEEDS = tuple(range(400))
-N_UNITS = 2000
+SMOKE_SEEDS = (1, 2, 7)
+SMOKE_ONLY = os.environ.get("TERRINE_CALIBRATION_SMOKE") == "1"
+SMOKE_N_UNITS = int(os.environ.get("TERRINE_CALIBRATION_SMOKE_N_UNITS", "120"))
+SEEDS = SMOKE_SEEDS if SMOKE_ONLY else tuple(range(400))
+N_UNITS = SMOKE_N_UNITS if SMOKE_ONLY else 2000
 FAMILY_ALPHA = 0.01
 CELLS = tuple(
     itertools.product(
@@ -46,49 +50,24 @@ STUDENTIZATION_LIMITS = (
 )
 
 
-def _frame(seed: int, cell: tuple[str, str, str, str], n_units: int = N_UNITS):
+def _config(cell: tuple[str, str, str, str], n_units: int = N_UNITS) -> PanelWorldConfig:
     effect_kind, mass_kind, overlap_kind, profile = cell
-    rng = np.random.default_rng(seed)
+    return PanelWorldConfig(
+        n_units=n_units,
+        effect_kind=cast(Literal["zero", "heterogeneous"], effect_kind),
+        trial_masses=cast(Literal["equal", "unequal"], mass_kind),
+        overlap=cast(Literal["disjoint", "overlap"], overlap_kind),
+        assignment_profile=cast(Literal["profile_a", "profile_b"], profile),
+    )
+
+
+def _frame(seed: int, cell: tuple[str, str, str, str], n_units: int = N_UNITS):
     base = panel_frame()
-    shared_x = rng.uniform(-1.0, 1.0, n_units)
-    rows = []
-    for trial_index, trial in enumerate(("early", "late")):
-        intercept = (1.0, 7.0)[trial_index]
-        if profile == "profile_a":
-            propensity_intercept, propensity_slope = (-0.8, 0.9)[trial_index], 0.7
-        else:
-            propensity_intercept, propensity_slope = (0.6, -0.7)[trial_index], -0.55
-        x = shared_x if overlap_kind == "overlap" else rng.uniform(-1.0, 1.0, n_units)
-        probability = 1.0 / (1.0 + np.exp(-(propensity_intercept + propensity_slope * x)))
-        treatment = rng.binomial(1, probability)
-        effect = 0.0 if effect_kind == "zero" else (1.5, 4.5)[trial_index] + 0.6 * x
-        baseline = intercept + 1.3 * x
-        y = baseline + treatment * effect + rng.normal(0.0, 2.0, n_units)
-        unit_ids = (
-            np.arange(n_units)
-            if overlap_kind == "overlap"
-            else np.arange(n_units) + trial_index * n_units
-        )
-        rows.extend(
-            {
-                "unit": int(unit),
-                "trial": trial,
-                "a": int(a),
-                "x": float(value),
-                "y": float(outcome),
-                "anchor_id": trial,
-                "t0": pd.Timestamp("2025-01-01", tz="UTC"),
-                "complete": True,
-                "reason": None,
-                "q": 1.0,
-                "lambda": (1.0 if mass_kind == "equal" else (1.0, 3.0)[trial_index]),
-            }
-            for unit, a, value, outcome in zip(unit_ids, treatment, x, y, strict=True)
-        )
-    weights = {"early": 1.0, "late": 1.0} if mass_kind == "equal" else {"early": 1.0, "late": 3.0}
+    world = simulate_panel(_config(cell, n_units), seed=seed)
+    weights = {"early": 1.0, "late": 1.0} if cell[1] == "equal" else {"early": 1.0, "late": 3.0}
     meta = replace(base.provenance.panel, trial_weight=TrialWeightMeta("explicit", weights))
     provenance = replace(base.provenance, panel=meta)
-    return replace(base, table=pa.Table.from_pylist(rows), provenance=provenance)
+    return replace(base, table=world.observations, provenance=provenance)
 
 
 def _paired_refusal(seed: int) -> dict[str, str]:
@@ -110,10 +89,7 @@ def _paired_refusal(seed: int) -> dict[str, str]:
 
 
 def _truth(cell: tuple[str, str, str, str]) -> float:
-    if cell[0] == "zero":
-        return 0.0
-    masses = (0.5, 0.5) if cell[1] == "equal" else (0.25, 0.75)
-    return math.fsum(mass * effect for mass, effect in zip(masses, (1.5, 4.5), strict=True))
+    return panel_ate(simulate_panel(_config(cell, n_units=1), seed=0))
 
 
 def test_zero_effect_calibration_truth_is_zero():
@@ -130,9 +106,9 @@ def _manifest(cell: tuple[str, str, str, str]) -> dict:
         },
         "seeds": list(SEEDS),
         "n_units_per_trial": N_UNITS,
+        "run_mode": "smoke_only" if SMOKE_ONLY else "full_calibration",
         "alpha": 0.05,
         "family_alpha": FAMILY_ALPHA,
-        "per_gate_alpha": PER_GATE_ALPHA,
         "bias_log_two_sided_critical": BIAS_CRITICAL,
         "studentization_chi_square_limits": list(STUDENTIZATION_LIMITS),
         "paired_refusal_attempted": 0,
@@ -247,10 +223,11 @@ def test_panel_calibration_cell(cell):
     }
     assert evidence["paired_refusal_attempted"] == len(SEEDS)
     assert evidence["paired_refusal_completed"] == len(SEEDS), evidence["paired_refusal_codes"]
-    assert evidence["bias_log_p"] >= math.log(PER_GATE_ALPHA)
-    assert evidence["coverage_exact_binomial_p"] >= PER_GATE_ALPHA
-    assert (
-        STUDENTIZATION_LIMITS[0]
-        <= evidence["studentization_chi_square"]
-        <= STUDENTIZATION_LIMITS[1]
-    )
+    if not SMOKE_ONLY:
+        assert evidence["bias_log_p"] >= math.log(PER_GATE_ALPHA)
+        assert evidence["coverage_exact_binomial_p"] >= PER_GATE_ALPHA
+        assert (
+            STUDENTIZATION_LIMITS[0]
+            <= evidence["studentization_chi_square"]
+            <= STUDENTIZATION_LIMITS[1]
+        )

@@ -1,4 +1,4 @@
-"""Independent paired potential outcomes, followed by assignment and raw facts."""
+"""Independent paired-outcome generators for baseline and repeated-trial worlds."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pyarrow as pa
 
 from terrine.data import Coverage, UnitSource
 from terrine.errors import RefusalSpec
-from terrine.simulate.world import World, WorldConfig
+from terrine.simulate.world import PanelWorld, PanelWorldConfig, World, WorldConfig
 
 _INVALID_SEED = RefusalSpec("terrine.simulate.invalid_seed", "Use an integer seed in [0, 2**64).")
 _NONFINITE = RefusalSpec(
@@ -190,4 +190,79 @@ def simulate(config: WorldConfig, seed: int) -> World:
             )
         },
         event_ids={"world_events": "event_id"},
+    )
+
+
+def simulate_panel(config: PanelWorldConfig, seed: int) -> PanelWorld:
+    """Generate paired outcomes and treatment assignments for two repeated trials."""
+    if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**64:
+        raise _INVALID_SEED.error()
+    children = np.random.SeedSequence(seed).spawn(3)
+    baseline, assignment, outcome = [
+        np.random.Generator(np.random.PCG64(child)) for child in children
+    ]
+    shared_x = baseline.uniform(-1.0, 1.0, config.n_units)
+    masses = (0.5, 0.5) if config.trial_masses == "equal" else (0.25, 0.75)
+    propensity_intercepts = (-0.8, 0.9) if config.assignment_profile == "profile_a" else (0.6, -0.7)
+    propensity_slope = 0.7 if config.assignment_profile == "profile_a" else -0.55
+    observed_rows = []
+    oracle_rows = []
+    for trial_index, trial in enumerate(("early", "late")):
+        x = shared_x if config.overlap == "overlap" else baseline.uniform(-1.0, 1.0, config.n_units)
+        eta = propensity_intercepts[trial_index] + propensity_slope * x
+        propensity = 1.0 / (1.0 + np.exp(-eta))
+        assigned = assignment.binomial(1, propensity, config.n_units)
+        effect = (
+            np.zeros_like(x) if config.effect_kind == "zero" else (1.5, 4.5)[trial_index] + 0.6 * x
+        )
+        baseline_mean = (1.0, 7.0)[trial_index] + 1.3 * x
+        shock = outcome.normal(0.0, config.outcome_noise_sd, config.n_units)
+        y0 = baseline_mean + shock
+        y1 = baseline_mean + effect + shock
+        unit_ids = (
+            np.arange(config.n_units)
+            if config.overlap == "overlap"
+            else np.arange(config.n_units) + trial_index * config.n_units
+        )
+        if not all(np.isfinite(values).all() for values in (x, propensity, effect, y0, y1)):
+            raise _NONFINITE.error(quantity="panel outcome")
+        for index, unit in enumerate(unit_ids):
+            row = {
+                "unit": int(unit),
+                "trial": trial,
+                "a": int(assigned[index]),
+                "x": float(x[index]),
+                "y": float(y1[index] if assigned[index] else y0[index]),
+                "anchor_id": trial,
+                "t0": datetime(2025, 1, 1 + trial_index, tzinfo=UTC),
+                "complete": True,
+                "reason": None,
+                "q": 1.0,
+                "lambda": masses[trial_index],
+            }
+            observed_rows.append(row)
+            oracle_rows.append(
+                {
+                    "unit": int(unit),
+                    "trial": trial,
+                    "x": float(x[index]),
+                    "e": float(propensity[index]),
+                    "baseline": float(baseline_mean[index]),
+                    "effect": float(effect[index]),
+                    "y0": float(y0[index]),
+                    "y1": float(y1[index]),
+                    "target_weight": 1.0,
+                    "lambda": masses[trial_index],
+                }
+            )
+    return PanelWorld(
+        config,
+        {
+            "generator_version": 1,
+            "seed": seed,
+            "rng": "PCG64",
+            "streams": {"baseline": 0, "assignment": 1, "outcomes": 2},
+        },
+        pa.Table.from_pylist(observed_rows),
+        pa.Table.from_pylist(oracle_rows),
     )

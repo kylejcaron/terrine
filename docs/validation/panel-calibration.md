@@ -14,7 +14,19 @@ Full-grid command:
 uv run pytest tests/parameter_recovery/test_panel_calibration.py -m 'slow and parameter_recovery' -q
 ```
 
-The ordinary suite contains only a deterministic three-seed, `n_units=120` recovery smoke. The full grid is intentionally not run as part of ordinary pytest. Per-cell JSON is written only after its cell has actually run beneath `docs/validation/generated/panel_calibration/`; a missing JSON record means that cell has not been run. The committed records and outcomes are added after the full command executes; no calibration results are claimed in this document before then.
+The ordinary suite contains only a deterministic three-seed, `n_units=120` recovery smoke. For an explicit calibration-harness wiring check that writes a clearly marked smoke-only record to a temporary directory, run:
+
+```sh
+TERRINE_CALIBRATION_SMOKE=1 \
+TERRINE_CALIBRATION_DIR=/tmp/terrine-panel-calibration-smoke \
+uv run pytest tests/parameter_recovery/test_panel_calibration.py \
+  -m 'slow and parameter_recovery' \
+  -k 'heterogeneous-unequal-overlap-profile_a' -q
+```
+
+Smoke mode uses fixed seeds `(1, 2, 7)`, `n_units=120`, skips only the statistical calibration gates, still requires every requested estimate and paired refusal to complete, and writes `run_mode: smoke_only`. Do not treat its JSON as a full-cell calibration record. An implementation-owner timing probe ran the same three seeds at `n_units=2000` in 0.38 seconds of test-call time; scaling to 16 cells × 400 replications gives an estimated full-grid runtime of about 14 minutes on that environment. This is an estimate, not a full-grid run.
+
+The full grid is intentionally not run as part of ordinary pytest. Per-cell JSON from full calibration runs is written beneath `docs/validation/generated/panel_calibration/`; a missing JSON record means that full cell has not been run. The committed records and outcomes are added after the full command executes; no calibration results are claimed in this document before then.
 
 ## Interpretation limits
 

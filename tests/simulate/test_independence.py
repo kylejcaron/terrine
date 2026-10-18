@@ -15,8 +15,8 @@ class BlockedImports(importlib.abc.MetaPathFinder):
             raise AssertionError('forbidden import: ' + fullname)
 sys.meta_path.insert(0, BlockedImports())
 from importlib.resources import files
-from terrine.simulate import WorldConfig, simulate
-from terrine.simulate.truth import ate
+from terrine.simulate import PanelWorldConfig, WorldConfig, simulate, simulate_panel
+from terrine.simulate.truth import ate, panel_ate
 from tests.fixtures.baseline import materialized_baseline
 from tests.reference.baseline import reference_rows
 w = simulate(WorldConfig(n_units=8, outcome_noise_sd=0), seed=17)
@@ -24,6 +24,8 @@ assert reference_rows(w).equals(w.analysis_table)
 f = materialized_baseline(w, weighted=True)
 assert f.table.num_rows == 8 and f.roles.weight == 'target_weight'
 assert ate(w, weighted=True) == ate(w)
+w_panel = simulate_panel(PanelWorldConfig(n_units=8, effect_kind='zero'), seed=17)
+assert w_panel.observations.num_rows == 16 and panel_ate(w_panel) == 0
 assert w.semantic_yaml == files('terrine.simulate').joinpath('baseline.yaml').read_text()
 assert not any(name == prefix or name.startswith(prefix + '.')
                for name in sys.modules for prefix in blocked)
