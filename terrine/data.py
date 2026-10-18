@@ -25,7 +25,7 @@ __all__ = [
     "StatePanelMeta",
     "TreatmentHistoryMeta",
     "SamplingMeta",
-    "PanelMeta",
+    "CalendarComparisonMeta",
     "EligibilitySummary",
     "ExecutionSnapshot",
     "Provenance",
@@ -430,6 +430,34 @@ class PanelMeta:
 
 
 @dataclass(frozen=True, slots=True)
+class CalendarComparisonMeta:
+    """Portable control, cohort and period policy for stacked comparisons."""
+
+    control: Literal["never_treated", "not_yet_treated"]
+    cohort_source: str
+    cohort_property: str
+    history_start: datetime
+    knowledge: Literal["recorded_at", "retrospective_effective_time"]
+    reference_period: int
+    comparison_periods: tuple[int, ...]
+    anticipation_periods: tuple[int, ...]
+    period_seconds: int
+
+    def __post_init__(self) -> None:
+        if self.control not in ("never_treated", "not_yet_treated"):
+            raise ValueError("invalid calendar comparison control")
+        for name in ("cohort_source", "cohort_property"):
+            _nonempty(getattr(self, name), name)
+        _aware(self.history_start, "history_start")
+        if self.knowledge not in ("recorded_at", "retrospective_effective_time"):
+            raise ValueError("invalid cohort knowledge policy")
+        if self.period_seconds <= 0:
+            raise ValueError("period_seconds must be positive")
+        for name in ("comparison_periods", "anticipation_periods"):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
+
+
+@dataclass(frozen=True, slots=True)
 class EligibilitySummary:
     candidate: int
     excluded_false: int
@@ -503,6 +531,7 @@ class Provenance:
     state_panel: StatePanelMeta | None = None
     panel: PanelMeta | None = None
     sampling: SamplingMeta | None = None
+    calendar_comparison: CalendarComparisonMeta | None = None
 
     def __post_init__(self) -> None:
         for name in ("design_hash", "model_hash", "shape"):
@@ -551,6 +580,10 @@ class Provenance:
             raise TypeError("panel must be PanelMeta or None")
         if self.sampling is not None and not isinstance(self.sampling, SamplingMeta):
             raise TypeError("sampling must be SamplingMeta or None")
+        if self.calendar_comparison is not None and not isinstance(
+            self.calendar_comparison, CalendarComparisonMeta
+        ):
+            raise TypeError("calendar_comparison must be CalendarComparisonMeta or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -694,6 +727,18 @@ def _decode(value: Any, cls: type) -> Any:
                 item.get("period_seconds"),
                 item.get("reference_period"),
                 tuple(item.get("trials", ())),
+            )
+        elif field.name == "calendar_comparison" and item is not None:
+            kwargs[field.name] = CalendarComparisonMeta(
+                item["control"],
+                item["cohort_source"],
+                item["cohort_property"],
+                datetime.fromisoformat(item["history_start"]["$datetime"]),
+                item["knowledge"],
+                item["reference_period"],
+                tuple(item["comparison_periods"]),
+                tuple(item["anticipation_periods"]),
+                item["period_seconds"],
             )
         elif field.name == "sampling" and item is not None:
             kwargs[field.name] = SamplingMeta(

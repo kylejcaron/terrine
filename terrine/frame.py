@@ -18,6 +18,7 @@ from terrine.compile.cost import (
 )
 from terrine.data import (
     Budget,
+    CalendarComparisonMeta,
     MaterializedFrame,
     PanelMeta,
     Provenance,
@@ -136,6 +137,27 @@ def _panel_metadata(design: Design) -> PanelMeta | None:
     return None
 
 
+def _calendar_comparison_metadata(design: Design) -> CalendarComparisonMeta | None:
+    from terrine.spec.anchors import Schedule
+    from terrine.spec.panels import CalendarComparisonSpec
+
+    if not isinstance(design.shape, CalendarComparisonSpec):
+        return None
+    assert isinstance(design.anchor, Schedule)
+    cohort = design.shape.cohort
+    return CalendarComparisonMeta(
+        design.shape.control,
+        cohort.source,
+        cohort.property,
+        cohort.history_start,
+        cohort.knowledge,
+        design.shape.reference_period,
+        design.shape.comparison_periods,
+        design.shape.anticipation_periods,
+        design.anchor.every,
+    )
+
+
 @dataclass(frozen=True, slots=True, init=False, repr=False, eq=False)
 class Frame:
     """A compiled study, not executed data.
@@ -246,6 +268,7 @@ class Frame:
                 and treatment.known_at_t0
                 and pa.types.is_boolean(table.schema.field(treatment_column).type)
             )
+            calendar_comparison = _calendar_comparison_metadata(self._design)
             panel = _panel_metadata(self._design)
             provenance = Provenance(
                 feature_cutoffs=compiled.feature_cutoffs,
@@ -255,7 +278,9 @@ class Frame:
                 source_generations=context.snapshot.source_generations,
                 execution_snapshot=context.snapshot,
                 shape=(
-                    "state_panel"
+                    "calendar_comparison"
+                    if calendar_comparison is not None
+                    else "state_panel"
                     if isinstance(self._design.shape, StatePanel)
                     else panel.shape
                     if panel is not None
@@ -278,6 +303,7 @@ class Frame:
                     if self._design.sample is not None
                     else None
                 ),
+                calendar_comparison=calendar_comparison,
             )
             return MaterializedFrame(table, compiled.roles, compiled.columns, provenance)
 

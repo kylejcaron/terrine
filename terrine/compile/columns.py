@@ -53,7 +53,7 @@ _META_COLUMNS = (
 
 
 def _validate_names(design: Design) -> None:
-    from terrine.spec.panels import EventPanelSpec, SequentialSpec
+    from terrine.spec.panels import CalendarComparisonSpec, EventPanelSpec, SequentialSpec
     from terrine.spec.state_panel import StatePanel
 
     names = [*design.features, *design.outcomes, *design.eligibility]
@@ -87,6 +87,8 @@ def _validate_names(design: Design) -> None:
             "n_treated",
             "n_controls",
         }
+    elif isinstance(design.shape, CalendarComparisonSpec):
+        reserved = _RESERVED | {"cohort", "period", "event_period", "control_eligible"}
     else:
         reserved = _RESERVED
     seen = {}

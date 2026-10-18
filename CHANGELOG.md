@@ -53,3 +53,4 @@
 - Correct matched-t0 control-only ranking, zero-treated strata, name-collision refusals, UTC treatment comparisons, fact-row initiation, roster observation bounds, eligibility-scoped follow-up checks, and treatment-history coverage through outcome follow-up; align the integration fixture and public example with declared history.
 - Add trial-weighted panel AIPW with trial-specific nuisance fits, unit-grouped cross-fitting, sampled-population refusal, and unit-cluster cross-fit inference.
 - Add canonical serialized calendar-comparison specifications with hashed control modes and reference/anticipation conflict refusals.
+- Compile roster-backed calendar comparisons with never-treated and admissible not-yet-treated controls, reference/anticipation eligibility, and portable Frame provenance.
