@@ -65,8 +65,8 @@ class DuckDBBackend:
         expected_manifest: str | None,
         lease,
     ) -> PublicationReceipt:
-        if not stage.dataset or not stage.generation or not stage.partitions:
-            raise ValueError("a staged generation requires identity and at least one partition")
+        if lease.resource != f"dataset:{stage.dataset}":
+            raise ValueError("lease resource does not match staged dataset")
         lease_store = LeaseStore(self.con, namespace=self.namespace)
         lease_store.assert_current(lease)
         current = self.current_generation(stage.dataset)

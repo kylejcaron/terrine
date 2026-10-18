@@ -90,6 +90,26 @@ def test_expired_writer_cannot_publish_after_new_fence():
     assert backend.current_generation("orders") is None
 
 
+def test_publish_requires_lease_for_staged_dataset():
+    con = duckdb.connect(":memory:")
+    backend = DuckDBBackend(con, namespace="owner")
+    lease = LeaseStore(con, namespace="owner").acquire(
+        "dataset:customers",
+        "customer-writer",
+        ttl=timedelta(minutes=1),
+        now=datetime.now(UTC),
+    )
+
+    with pytest.raises(ValueError, match="lease resource"):
+        backend.publish_generation(
+            StagedGeneration("orders", "g1", {"p1": pa.table({"id": [1]})}),
+            expected_manifest=None,
+            lease=lease,
+        )
+
+    assert backend.current_generation("orders") is None
+
+
 def _lease(con, namespace):
     store = LeaseStore(con, namespace=namespace)
     store.initialize()
