@@ -46,3 +46,12 @@ Tasks 3–5 remain incomplete: panel AIPW, stacked DiD, diagnostics, and calibra
 - RED/GREEN regressions cover complete history bounds, exact-t0 classification, contradictory adoption, later initiation refusal, trial-weight columns, target-weight role, sample/hash policy, risk-set probability, insufficiency, row-order invariance, and Arrow/materialization persistence.
 - Final focused checks: the focused five-file pytest command passed 39 tests; `ruff check terrine tests examples`, `ty check terrine tests`, and `tach check` passed.
 - Review 8486 flagged missing sampling application/constructor preservation (addressed in `cbb5a2d`) and omitted `anchor_range` defaults (fixed with a regression in the following fix commit); review disposition: fixed findings commented and closed.
+
+### Review 8500 remediation
+
+- Fixed matched-t0 controls-only/zero-treated ranking and collision-safe internal counts; reserved generated sequential outputs; fact selectors now use row occurrence; timestamp comparisons, persistent fact-selector refusal, treatment follow-up coverage, per-unit roster observation limits, and eligible-population follow-up checks were corrected.
+- Updated integration history declarations and the executable sequential example for the strengthened coverage and no-later-initiation contract.
+- Review remediation commits: `6c4c5a3` and `74991ef`; 8500 closed after dispositions recorded. Review 8502 was a pass and already closed.
+- Follow-up review 8511 caught incorrect schedule endpoint handling and missing roster-bound test coverage; endpoint semantics were corrected and added exact-boundary, earlier-bound, and eligibility-exclusion materialization regressions.
+- Focused verification: `uv run pytest tests/compile/test_panels.py tests/compile/test_matched_t0.py tests/integration/test_sequential_panels.py -q` — 21 passed; ruff, ty, tach, and `uv run python examples/sequential_trials.py` passed.
+- Review 8520 follow-up remains pending; its only finding requested regression coverage, now added and verified. Tasks 3–5 remain incomplete.

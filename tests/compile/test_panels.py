@@ -280,3 +280,71 @@ def test_later_initiation_at_trial_specific_exclusive_horizon_is_not_refused(nat
     )
 
     design.build(model).materialize()
+
+
+@pytest.mark.parametrize(
+    ("observed_until", "raises"),
+    [("2025-01-10 00:00:00+00", False), ("2025-01-09 23:59:59+00", True)],
+)
+def test_sequential_roster_history_uses_exclusive_trial_horizon(
+    native_inputs, observed_until, raises
+):
+    from terrine.errors import TerrineError
+
+    catalog, con = native_inputs
+    con.raw_sql("ALTER TABLE users ADD observed_until TIMESTAMPTZ")
+    con.raw_sql(f"UPDATE users SET observed_until = TIMESTAMPTZ '{observed_until}'")
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
+        units={"user": UnitSource("users", "user_id", observed_until="observed_until")},
+        event_ids={"events": "event_id"},
+    )
+    design = Sequential(
+        Design(
+            "user",
+            Schedule("1d", "2025-01-03", "2025-01-04"),
+            outcomes={"sessions_after_t0": agg("sessions", window=("0d", "7d"))},
+        ),
+        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+    )
+
+    if raises:
+        with pytest.raises(TerrineError) as error:
+            design.build(model).materialize()
+        assert error.value.code == "terrine.design.incomplete_unit_treatment_history"
+    else:
+        design.build(model).materialize()
+
+
+def test_sequential_roster_history_ignores_ineligible_anchor_rows(native_inputs):
+    catalog, con = native_inputs
+    con.raw_sql("ALTER TABLE users ADD observed_from TIMESTAMPTZ")
+    con.raw_sql(
+        "UPDATE users SET observed_from = TIMESTAMPTZ '2025-01-02 00:00:00+00' WHERE user_id = 'b'"
+    )
+    con.raw_sql(
+        "INSERT INTO events VALUES ('a', TIMESTAMPTZ '2025-01-02 00:00:00+00', 'a0', 'a00')"
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
+        units={"user": UnitSource("users", "user_id", observed_from="observed_from")},
+        event_ids={"events": "event_id"},
+    )
+    from terrine.spec import gt
+
+    design = Sequential(
+        Design(
+            "user",
+            Schedule("1d", "2025-01-03", "2025-01-04"),
+            eligibility={"prior_session": gt(agg("sessions", window=("-1d", "0d")), 0)},
+        ),
+        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+    )
+
+    rows = design.build(model).materialize().table.to_pylist()
+
+    assert [row["unit"] for row in rows] == ["a"]
