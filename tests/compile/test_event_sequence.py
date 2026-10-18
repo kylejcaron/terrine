@@ -506,6 +506,46 @@ def test_sequence_sessions_are_compiled_per_anchor(sequence_model):
         ]
 
 
+def test_sessions_preserve_properties_matching_summary_helpers(sequence_model):
+    from terrine.spec import SessionSpec
+
+    definition = sequence_model.catalog.model_dump(mode="python")
+    properties = ("kind", "_sequence_unit", "_sessions")
+    definition["sources"]["events"]["properties"] = properties
+    for name in properties[1:]:
+        definition["properties"][name] = {
+            "source": "events",
+            "column": "kind",
+            "dtype": "string",
+            "as_of": "event_time",
+        }
+    model = Model.from_catalog(
+        Catalog.model_validate(definition),
+        con=sequence_model.con,
+        readiness=sequence_model.readiness,
+        event_ids=sequence_model.event_ids,
+    )
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence(
+            "signup",
+            Window("0s", "2h"),
+            max_events=5,
+            properties=("_sequence_unit", "_sessions"),
+            sessions=SessionSpec("1h"),
+        ),
+    )
+    rows = model.con.to_pyarrow(design.build(model)._compiled.table).to_pylist()
+    header = next(row for row in rows if not row["is_event"])
+    children = [row for row in rows if row["is_event"]]
+    assert [row["_sequence_unit"] for row in children] == ["view", "click", "purchase"]
+    assert [row["_sessions"] for row in children] == ["view", "click", "purchase"]
+    assert header["_sequence_unit"] is None
+    assert header["_sessions"] is None
+    assert len(header["sessions"]) == 1
+
+
 def test_sequence_sessions_emit_requested_label_transitions(sequence_model):
     from terrine.spec import Design, EventAnchor, EventSequence, FunnelSpec, SessionSpec
 

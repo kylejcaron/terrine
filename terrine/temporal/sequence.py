@@ -667,15 +667,37 @@ def event_sequence(
                 "session_end_time": session_rows.session_end_time,
             }
         )
-        sessions = session_rows.group_by(
+        session_groups = session_rows.group_by(
             [session_rows._sequence_unit, session_rows._sequence_anchor]
         ).aggregate(_sessions=session_values.collect(order_by=session_rows.session_index))
-        session_type = sessions.schema()["_sessions"]
+        occupied = set(table.columns) | set(session_groups.columns)
+
+        def fresh_session_column(base: str) -> str:
+            name = base
+            suffix = 0
+            while name in occupied:
+                suffix += 1
+                name = f"{base}_{suffix}"
+            occupied.add(name)
+            return name
+
+        session_unit_column = fresh_session_column("__terrine_session_unit")
+        session_anchor_column = fresh_session_column("__terrine_session_anchor")
+        session_list_column = fresh_session_column("__terrine_session_values")
+        sessions = session_groups.select(
+            **{
+                session_unit_column: session_groups._sequence_unit,
+                session_anchor_column: session_groups._sequence_anchor,
+                session_list_column: session_groups._sessions,
+            }
+        )
+        session_type = sessions.schema()[session_list_column]
+        table_columns = tuple(table.columns)
         joined = table.left_join(
             sessions,
             [
-                table.unit == sessions._sequence_unit,
-                table.anchor_id == sessions._sequence_anchor,
+                table.unit == sessions[session_unit_column],
+                table.anchor_id == sessions[session_anchor_column],
             ],
         )
         session_payload = ibis.ifelse(
@@ -683,16 +705,12 @@ def event_sequence(
             ibis.literal(None, type=session_type),
             ibis.ifelse(
                 joined.sequence_complete,
-                ibis.coalesce(joined._sessions, ibis.literal([], type=session_type)),
+                ibis.coalesce(joined[session_list_column], ibis.literal([], type=session_type)),
                 ibis.literal(None, type=session_type),
             ),
         )
         table = joined.select(
-            **{
-                name: joined[name]
-                for name in joined.columns
-                if name not in {"_sequence_unit", "_sequence_anchor", "_sessions"}
-            },
+            **{name: joined[name] for name in table_columns},
             sessions=session_payload,
             sessions_complete=ibis.ifelse(
                 joined.is_event,
