@@ -88,3 +88,4 @@
 - Document Model/Design materialization plans, owner CLI workflows, exact-generation reads, and backend consistency limits.
 - Add an opt-in OpenTelemetry lifecycle projection with redacted attributes and bounded nonblocking export.
 - Add a canonical Decimal type-7 quantile expression and exact in-memory order-statistic primitive; keep approximate sketch requests explicitly refused until an owner-approved adapter is available.
+- Execute exact Decimal type-7 quantiles and sparse min/max/distinct windows on DuckDB, preserving null reasons and refusing unsupported quantile capabilities; keep owner-gated sketches coded as unavailable.

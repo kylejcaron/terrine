@@ -44,10 +44,12 @@ if TYPE_CHECKING:
 __all__ = ["ValidationReport", "validate_design"]
 
 _INVALID = RefusalSpec("terrine.design.invalid", "Design validation failed: {reason}.")
-_QUANTILE_UNAVAILABLE = RefusalSpec(
-    "terrine.metric.quantile_unavailable",
-    "Exact quantile expressions are not yet executable by the temporal compiler; use a "
-    "supported additive metric or implement a backend exact-order-statistic capability.",
+_QUANTILE_BACKEND = RefusalSpec(
+    "terrine.metric.exact_quantile_backend_unsupported",
+    (
+        "Exact type-7 quantiles are unavailable for backend {dialect!r}; "
+        "use a verified supported backend."
+    ),
 )
 _MISSING = RefusalSpec(
     "terrine.design.missing_reference", "Design references unknown {kind} {name!r}."
@@ -313,8 +315,6 @@ def _expression(
         raise _SKETCH_UNAVAILABLE.error(
             algorithm=expr.sketch.algorithm, version=expr.sketch.version
         )
-    if isinstance(expr, MetricQuantile):
-        raise _QUANTILE_UNAVAILABLE.error()
     if isinstance(expr, MetricAgg):
         _check_expression_timing(expr, role, design)
     metric = _metric(model, expr.metric)
@@ -323,6 +323,11 @@ def _expression(
     win = expr.window
     if not isinstance(win, Window) or win.start >= win.end:
         raise _WINDOW.error(name=expr.metric)
+    if isinstance(expr, MetricQuantile):
+        for source_name in metric.source_names:
+            dialect = model.sources[source_name].dialect
+            if dialect != "duckdb":
+                raise _QUANTILE_BACKEND.error(dialect=dialect)
     for source_name in metric.source_names:
         _required(model, source_name, required)
     obligations.append("coverage_completeness")
@@ -331,21 +336,30 @@ def _expression(
             source = model.sources[source_name]
             if not supports_event_resolution(source.dialect):
                 raise UNSUPPORTED_EVENT_RESOLUTION.error(dialect=source.dialect)
-    if expr.relative_to is None and role in {"feature", "eligibility"} and win.end > -design.gap:
+    if relative_to is None and role in {"feature", "eligibility"} and win.end > -design.gap:
         raise _GAP.error(role=role, gap=design.gap)
-    if expr.relative_to is None and role == "outcome" and win.start < 0:
+    if relative_to is None and role == "outcome" and win.start < 0:
         raise _GAP.error(role=role, gap=design.gap)
     if metric.kind not in {"mean", "conversion", "ratio"}:
         raise UNSUPPORTED_TEMPORAL_KIND.error(kind=metric.kind)
     if metric.transforms:
         raise UNSUPPORTED_TRANSFORM.error(transform=type(metric.transforms[0]).__name__)
+    if isinstance(expr, MetricQuantile) and len(metric.measures) != 1:
+        raise RefusalSpec(
+            "terrine.metric.quantile_requires_single_measure",
+            "Exact quantile requires metric {metric!r} to have exactly one measure.",
+        ).error(metric=expr.metric)
     for measure in metric.measures:
-        if not supports_temporal_aggregation(measure.aggregation):
+        if not supports_temporal_aggregation(measure.aggregation) and measure.aggregation not in {
+            "min",
+            "max",
+            "count_distinct",
+        }:
             raise UNSUPPORTED_TEMPORAL_AGGREGATION.error(aggregation=measure.aggregation)
         if measure.window_days is not None and win.end - win.start != measure.window_days * 86400:
             raise _METRIC_WINDOW.error(metric=expr.metric)
         if measure.aggregation == "avg_calendar_day":
-            anchors = None if expr.relative_to is not None else _fixed_anchors(design, model)
+            anchors = None if relative_to is not None else _fixed_anchors(design, model)
             if anchors is None:
                 alignment = calendar_average_alignment(
                     win, anchor=None, day_boundary=model.catalog.day_boundary

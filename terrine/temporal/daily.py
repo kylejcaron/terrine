@@ -59,17 +59,19 @@ def _utc_aware(zone, timestamp):
 
 
 def resolve_measure(
-    events: ibis.Table, measure: BoundMeasure, *, source: BoundSource
+    events: ibis.Table,
+    measure: BoundMeasure,
+    *,
+    source: BoundSource,
+    allow_nonadditive: bool = False,
 ) -> BoundMeasure:
-    """Return the late-bound immutable descriptor from actual relation schema.
-
-    A compiler retains this replacement and passes it to state/window builders;
-    users do not supply value_type. Already resolved descriptors are checked for
-    schema drift without reading event rows.
-    """
+    """Resolve a fact's dtype, optionally admitting direct nonadditive windows."""
     if measure.source_name != source.name or measure.fact not in source.facts:
         raise _MISSING.error(reference=f"fact {measure.fact} on source {source.name}")
-    if not supports_temporal_aggregation(measure.aggregation):
+    supported_nonadditive = {"min", "max", "count_distinct"}
+    if not supports_temporal_aggregation(measure.aggregation) and not (
+        allow_nonadditive and measure.aggregation in supported_nonadditive
+    ):
         raise UNSUPPORTED_TEMPORAL_AGGREGATION.error(aggregation=measure.aggregation)
     column = source.facts[measure.fact]
     if column is None:

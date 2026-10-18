@@ -31,7 +31,15 @@ from terrine.semantic.models import BoundDimension
 from terrine.semantic.rules import calendar_average_alignment
 from terrine.spec.anchors import FixedDate, Schedule
 from terrine.spec.design import Design
-from terrine.spec.expressions import And, AttributeAsOf, Eq, EventTime, Expr
+from terrine.spec.expressions import (
+    And,
+    AttributeAsOf,
+    Eq,
+    EventTime,
+    Expr,
+    MetricAgg,
+    MetricQuantile,
+)
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE
 from terrine.spec.validate import _fixed_anchors
 from terrine.temporal.aggregate import aggregate_window
@@ -41,6 +49,7 @@ from terrine.temporal.attributes import (
     validate_history,
 )
 from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
+from terrine.temporal.nonadditive import aggregate_nonadditive_window
 from terrine.temporal.prefix import sparse_prefix
 
 if TYPE_CHECKING:
@@ -613,6 +622,59 @@ def compile_columns(
             )
             cutoff = FeatureCutoff(cutoff_seconds, True, "retrospective_effective_time")
             strategy = "strict_history"
+            result_table = result.table
+        elif isinstance(node, MetricQuantile):
+            metric = model.metrics[node.metric]
+            if len(metric.measures) != 1:
+                raise RefusalSpec(
+                    "terrine.metric.quantile_requires_single_measure",
+                    "Exact quantile requires metric {metric!r} to have exactly one measure.",
+                ).error(metric=node.metric)
+            unresolved = metric.measures[0]
+            source = model.sources[unresolved.source_name]
+            events = events_for(source.name)
+            measure = resolve_measure(events, unresolved, source=source)
+            result = aggregate_nonadditive_window(
+                expression_anchors,
+                events,
+                measure,
+                source,
+                node.window,
+                model.readiness,
+                output=output,
+                role="feature",
+                operation="quantile",
+                probability=node.probability,
+            )
+            meta = result.columns[output]
+            cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
+            strategy = "sparse_range_join/exact_type7"
+            result_table = result.table
+        elif (
+            isinstance(node, MetricAgg)
+            and len(model.metrics[node.metric].measures) == 1
+            and model.metrics[node.metric].measures[0].aggregation
+            in {"min", "max", "count_distinct"}
+        ):
+            metric = model.metrics[node.metric]
+            unresolved = metric.measures[0]
+            source = model.sources[unresolved.source_name]
+            events = events_for(source.name)
+            measure = resolve_measure(events, unresolved, source=source, allow_nonadditive=True)
+            result = aggregate_nonadditive_window(
+                expression_anchors,
+                events,
+                measure,
+                source,
+                node.window,
+                model.readiness,
+                output=output,
+                role="feature",
+                operation=cast(Literal["min", "max", "count_distinct"], measure.aggregation),
+            )
+            meta = result.columns[output]
+            cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
+            strategy = "sparse_range_join/nonadditive"
             result_table = result.table
         elif not isinstance(node, EventTime):
             metric = model.metrics[node.metric]

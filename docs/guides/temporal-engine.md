@@ -98,17 +98,21 @@ silently approximated.
 the probability is a `Decimal` or decimal string in `[0, 1]`, the window is
 half-open, and interpolation is Hyndman--Fan type 7 (`linear_type7`). The
 specification serializes through Design JSON/YAML and contributes to its
-canonical hash. Exact local order-statistic arithmetic is available internally
-through `terrine.temporal.nonadditive.exact_quantile`; it excludes null values
-and preserves integer/Decimal values without binary floating-point conversion.
+canonical hash.
+The native DuckDB compiler executes exact type-7 order statistics over matched
+half-open event windows. Integer and Decimal facts retain exact decimal
+interpolation at a supported output scale; unsupported numeric types or
+precision refuse with a stable error before query execution. Results exclude
+null observations and preserve distinct reasons for no observations, all-null
+windows, and incomplete coverage. Min, max, and distinct-count operations use
+the same sparse range join; distinct values are counted once across the full
+window rather than by adding daily counts.
 
-The current temporal compiler does not execute quantile expressions and refuses
-them during metadata validation, before source reads, with
-`terrine.metric.quantile_unavailable`. Approximate quantiles are never selected
-implicitly: `approx_quantile` requires a named `SketchRequest`, but requests
-currently refuse with `terrine.metric.sketch_unavailable` pending owner approval
-of a sketch package and its accuracy/merge contract. Use a supported additive
-metric until an exact backend order-statistic capability is implemented.
+Exact quantiles are capability-gated to DuckDB until other backend behavior is
+verified. Approximate quantiles are never selected implicitly:
+`approx_quantile` requires a named `SketchRequest`, but requests currently
+refuse with `terrine.metric.sketch_unavailable` pending owner approval of a
+sketch package and its accuracy/merge contract.
 
 Catalog records and bound Models are immutable, including nested definition maps.
 Create a new definition and bind a new Model when semantics change; an existing

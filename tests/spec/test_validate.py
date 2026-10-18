@@ -362,14 +362,23 @@ def test_unknown_metric_refuses_with_stable_code():
     assert error.value.code == "terrine.design.missing_reference"
 
 
-def test_unimplemented_exact_quantile_compilation_refuses_before_query():
+def test_exact_quantile_is_admitted_without_query():
+    design = Design(
+        "user",
+        EventAnchor("session"),
+        features={"p50": quantile("sessions", "0.5", window=("-7d", "0d"))},
+    )
+    assert design.validate(model()) is None
+
+
+def test_exact_quantile_refuses_unverified_backend_before_query():
     with pytest.raises(TerrineError) as error:
         Design(
             "user",
-            EventAnchor("session"),
+            FixedDate(date(2025, 1, 1)),
             features={"p50": quantile("sessions", "0.5", window=("-7d", "0d"))},
-        ).validate(model())
-    assert error.value.code == "terrine.metric.quantile_unavailable"
+        ).validate(model(dialect="postgres"))
+    assert error.value.code == "terrine.metric.exact_quantile_backend_unsupported"
 
 
 def test_missing_referenced_source_readiness_refuses():
@@ -567,14 +576,13 @@ def test_subday_schedule_calendar_average_refuses_known_intraday_anchor():
 
 
 @pytest.mark.parametrize("aggregation", ["min", "max", "count_distinct"])
-def test_nonadditive_aggregations_refuse(aggregation):
-    with pytest.raises(TerrineError) as error:
-        Design(
-            "user",
-            EventAnchor("session"),
-            features={"x": agg("sessions", window=("-1d", "0d"))},
-        ).validate(model(aggregation=aggregation))
-    assert error.value.code == "terrine.metric.unsupported_aggregation"
+def test_nonadditive_aggregations_are_admitted(aggregation):
+    design = Design(
+        "user",
+        EventAnchor("session"),
+        features={"x": agg("sessions", window=("-1d", "0d"))},
+    )
+    assert design.validate(model(aggregation=aggregation)) is None
 
 
 def test_named_dimension_ambiguity_refuses_and_does_not_conflate_entity_keys():
