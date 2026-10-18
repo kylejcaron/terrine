@@ -52,3 +52,4 @@
 - Persist destination-scoped request keys for response-loss replay, expose the explicit runtime Python facade, and reconcile expired owner runs on restart.
 - Add `terrine plan|run|status|events|cancel` commands over owner IPC with destination-scoped request-key replay.
 - Document Model/Design materialization plans, owner CLI workflows, exact-generation reads, and backend consistency limits.
+- Add an opt-in OpenTelemetry lifecycle projection with redacted attributes and bounded nonblocking export.
