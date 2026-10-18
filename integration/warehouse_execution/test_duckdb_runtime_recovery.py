@@ -67,7 +67,7 @@ def test_duckdb_crash_boundary_retry_reconciles_manifest(
     if process.is_alive():
         process.kill()
         process.join()
-        pytest.fail("crash-boundary process did not exit")
+        raise AssertionError("crash-boundary process did not exit")
     assert process.exitcode == 91
 
     reader = duckdb.connect(path)
@@ -76,6 +76,7 @@ def test_duckdb_crash_boundary_retry_reconciles_manifest(
     version_row = reader.execute(
         'SELECT version FROM "runtime_owner".runtime_manifests WHERE dataset=?', ["orders"]
     ).fetchone()
+    assert version_row is not None
     publication = PublicationReceipt("orders", expected_generation, version_row[0], ("all",))
     assert recovered.read_partition(publication, "all")["id"].to_pylist() == expected_values
     reader.close()

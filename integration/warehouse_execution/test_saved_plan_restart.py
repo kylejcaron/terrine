@@ -9,6 +9,7 @@ import ibis
 
 import pyarrow as pa
 
+from terrine.semantic.models import Catalog
 from terrine.data import Budget, Coverage
 from terrine.model import Model
 from terrine.runtime.execute import execute_plan

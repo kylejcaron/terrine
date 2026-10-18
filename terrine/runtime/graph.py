@@ -113,6 +113,11 @@ def _selector_nodes(
         return set()
     from terrine.spec.expressions import EventTime
 
+    catalog = getattr(model, "catalog", None)
+    facts = getattr(catalog, "facts", None)
+    if facts is None:
+        return set(_model_sources(model))
+
     selectors: dict[str, EventTime] = {}
 
     def visit(value: object) -> None:
@@ -134,8 +139,7 @@ def _selector_nodes(
         visit(getattr(design, role, {}))
     sources: set[str] = set()
     unknown_reference = False
-    timings = expression_timings or {}
-    for timing in timings.values():
+    for timing in (expression_timings or {}).values():
         references = (
             getattr(timing, "selector_ref", None),
             *getattr(timing, "selector_dependencies", ()),
@@ -148,7 +152,7 @@ def _selector_nodes(
                 continue
             selectors.setdefault(reference, selectors[reference])
     for selector in selectors.values():
-        fact = model.catalog.facts.get(selector.fact)
+        fact = facts.get(selector.fact)
         if fact is None:
             unknown_reference = True
         else:
