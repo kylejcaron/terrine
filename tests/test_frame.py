@@ -2,10 +2,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from terrine.data import BoundCoverage, Coverage, UnitSource
+from terrine.data import Budget, BoundCoverage, Coverage, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
-from terrine.spec import Design, EventAnchor, agg
+from terrine.spec import Design, EventAnchor, EventSequence, agg
+from terrine.windows import Window
+
 
 
 def test_unused_label_source_readiness_is_not_a_model_requirement(native_inputs):
@@ -52,3 +54,22 @@ def test_model_hash_tracks_observation_and_identity_bindings(native_inputs):
         datetime(2025, 1, 31, 19, tzinfo=offset),
     )
     assert bind(readiness={**readiness, "events": equivalent}).model_hash == base
+
+
+@pytest.mark.parametrize("budget", [None, Budget(max_rows=1), Budget(max_output_bytes=1024)])
+def test_sequence_materialization_requires_positive_row_and_byte_limits(native_inputs, budget):
+    catalog, con = native_inputs
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={name: Coverage("2025-01-01", "2025-01-31") for name in catalog.sources},
+        units={"user": UnitSource("users", "user_id")},
+    )
+    frame = Design(
+        "user",
+        EventAnchor("session"),
+        shape=EventSequence("session", Window("0s", "1d"), max_events=2),
+    ).build(model)
+    with pytest.raises(TerrineError) as error:
+        frame.materialize(budget)
+    assert error.value.code == "terrine.sequence.budget_required"

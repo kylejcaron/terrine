@@ -26,6 +26,11 @@ _STATE_PANEL_BUDGET = RefusalSpec(
     "terrine.state_panel.budget_required",
     "State-panel materialization requires positive max_rows and max_output_bytes budgets.",
 )
+_SEQUENCE_BUDGET = RefusalSpec(
+    "terrine.sequence.budget_required",
+    "Event-sequence materialization requires positive max_rows and max_output_bytes budgets.",
+)
+
 
 if TYPE_CHECKING:
     from terrine.compile.columns import CompiledStudy
@@ -143,6 +148,14 @@ class Frame:
             or budget.max_output_bytes <= 0
         ):
             raise _STATE_PANEL_BUDGET.error()
+        if isinstance(self._design.shape, EventSequence) and (
+            budget is None
+            or budget.max_rows is None
+            or budget.max_output_bytes is None
+            or budget.max_rows <= 0
+            or budget.max_output_bytes <= 0
+        ):
+            raise _SEQUENCE_BUDGET.error()
         for warning in _scan_policy(budget):
             warnings.warn(warning, RuntimeWarning, stacklevel=2)
         from terrine.compile.dispatch import compile_design
