@@ -283,6 +283,71 @@ def test_nanosecond_event_after_python_microsecond_clamp_is_retained():
         con.disconnect()
 
 
+def test_nanosecond_delayed_entry_keeps_entry_before_outcome_coverage():
+    con, model = _model(
+        outcome_start="2025-01-03",
+        nanosecond_outcomes=True,
+    )
+    try:
+        con.raw_sql("DELETE FROM outcomes WHERE user_id = 'u1' AND ts < TIMESTAMP_NS '2025-01-02'")
+        result = (
+            Design(
+                "user",
+                EventAnchor("signup", which="first"),
+                shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
+            )
+            .build(model)
+            .materialize()
+        )
+        rows = {row["unit"]: row for row in result.table.to_pylist()}
+        assert rows["u1"]["complete"] is True
+    finally:
+        con.disconnect()
+
+
+def test_nanosecond_exit_before_outcome_coverage_is_not_ignored():
+    con, model = _model(
+        outcome_start="2025-01-03",
+        nanosecond_outcomes=True,
+    )
+    try:
+        con.raw_sql("DELETE FROM outcomes WHERE user_id = 'u1' AND ts < TIMESTAMP_NS '2025-01-02'")
+        result = (
+            Design(
+                "user",
+                EventAnchor("signup", which="first"),
+                shape=TimeToEvent("churn", exit="closed"),
+            )
+            .build(model)
+            .materialize()
+        )
+        rows = {row["unit"]: row for row in result.table.to_pylist()}
+        assert rows["u1"]["complete"] is False
+    finally:
+        con.disconnect()
+
+
+def test_nanosecond_wide_outcome_and_exit_coverages_do_not_narrow_out_of_range():
+    con, model = _model(
+        nanosecond_outcomes=True,
+        outcome_end="2501-01-01",
+        exit_end="2502-01-01",
+    )
+    try:
+        result = (
+            Design(
+                "user",
+                EventAnchor("signup", which="first"),
+                shape=TimeToEvent("churn", exit="closed"),
+            )
+            .build(model)
+            .materialize()
+        )
+        assert result.table.num_rows > 0
+    finally:
+        con.disconnect()
+
+
 def test_wide_entry_coverage_start_is_intersected_before_narrowing():
     con, model = _model(
         nanosecond_outcomes=True,

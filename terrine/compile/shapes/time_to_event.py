@@ -15,7 +15,7 @@ from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
 from terrine.spec.design import Design
 from terrine.spec.trajectory import TimeToEvent
-from terrine.temporal._timestamps import compare_timestamps
+from terrine.temporal._timestamps import compare_timestamps, timestamp_order_key
 from terrine.temporal.first import first_occurrence
 
 if TYPE_CHECKING:
@@ -59,18 +59,44 @@ def _narrow_bound(value, lower, upper, time_type) -> ir.TimestampValue:
     normalized = cast(ir.TimestampValue, _utc_naive("UTC", value))
     lower_timestamp = cast(ir.TimestampValue, lower)
     upper_timestamp = cast(ir.TimestampValue, upper)
-    return cast(
-        ir.TimestampValue,
-        ibis.ifelse(
-            compare_timestamps(normalized, lower_timestamp, "le"),
-            lower_timestamp,
-            ibis.ifelse(
-                compare_timestamps(normalized, upper_timestamp, "ge"),
-                upper_timestamp,
-                normalized.cast(time_type),
-            ),
-        ),
+    below_lower = compare_timestamps(normalized, lower_timestamp, "le")
+    above_upper = compare_timestamps(normalized, upper_timestamp, "ge")
+    narrowed = ibis.ifelse(
+        below_lower,
+        lower_timestamp,
+        ibis.ifelse(above_upper, upper_timestamp, normalized.try_cast(time_type)),
     )
+    if time_type.scale == 9:
+        key = timestamp_order_key(normalized)
+        seconds = cast(ir.IntegerValue, key["seconds"])
+        nanos = cast(ir.IntegerValue, key["nanos"])
+        min_seconds = ibis.literal(-9_223_372_036).cast("int64")
+        min_nanos = ibis.literal(-854_775_808).cast("int64")
+        max_seconds = ibis.literal(9_223_372_036).cast("int64")
+        max_nanos = ibis.literal(854_775_807).cast("int64")
+        before_minimum = (
+            ~below_lower
+            & ~above_upper
+            & ((seconds < min_seconds) | ((seconds == min_seconds) & (nanos < min_nanos)))
+        )
+        after_maximum = (
+            ~below_lower
+            & ~above_upper
+            & ((seconds > max_seconds) | ((seconds == max_seconds) & (nanos > max_nanos)))
+        )
+        return cast(
+            ir.TimestampValue,
+            ibis.ifelse(
+                before_minimum,
+                ibis.literal("-infinity").cast(time_type),
+                ibis.ifelse(
+                    after_maximum,
+                    ibis.literal("infinity").cast(time_type),
+                    narrowed,
+                ),
+            ),
+        )
+    return cast(ir.TimestampValue, narrowed)
 
 
 def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
@@ -198,17 +224,24 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         if entry_events.schema()["_timestamp"].timezone is not None:
             entry_timestamp = _utc_naive("UTC", entry_timestamp)
         entry_events = entry_events.mutate(_timestamp=entry_timestamp.cast(time_type))
+        entry_coverage = model.readiness.sources[entry_source.name]
         entry_start = _narrow_bound(
-            ibis.literal(model.readiness.sources[entry_source.name].start),
-            start,
-            end,
+            ibis.literal(entry_coverage.start),
+            ibis.literal("-infinity").cast(time_type),
+            ibis.literal("infinity").cast(time_type),
+            time_type,
+        )
+        entry_end = _narrow_bound(
+            ibis.literal(entry_coverage.end_exclusive),
+            ibis.literal("-infinity").cast(time_type),
+            ibis.literal("infinity").cast(time_type),
             time_type,
         )
         entry_candidates = candidates.select(
             unit=candidates.unit,
             anchor_id=candidates.anchor_id,
             lower=entry_start,
-            upper=supported_end.cast(time_type),
+            upper=ibis.least(supported_end, entry_end).cast(time_type),
         )
         entered = first_occurrence(
             entry_events,
@@ -240,10 +273,20 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         exit_coverage = model.readiness.sources.get(exit_source.name)
         if exit_coverage is None:
             raise _INVALID.error(reason="exit_source_coverage_required")
-        exit_start = _narrow_bound(ibis.literal(exit_coverage.start), start, end, time_type)
+        exit_start = _narrow_bound(
+            ibis.literal(exit_coverage.start),
+            ibis.literal("-infinity").cast(time_type),
+            ibis.literal("infinity").cast(time_type),
+            time_type,
+        )
         history_start = ibis.greatest(history_start, exit_start)
         supported_start = ibis.greatest(supported_start, exit_start)
-        exit_end = _narrow_bound(ibis.literal(exit_coverage.end_exclusive), start, end, time_type)
+        exit_end = _narrow_bound(
+            ibis.literal(exit_coverage.end_exclusive),
+            ibis.literal("-infinity").cast(time_type),
+            ibis.literal("infinity").cast(time_type),
+            time_type,
+        )
         supported_end = ibis.least(supported_end, exit_end)
         exit_events, exit_event_id = _events(model, exit_source, exit_unit)
         exit_timestamp = exit_events._timestamp
