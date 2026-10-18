@@ -391,14 +391,33 @@ def test_wide_exit_coverage_start_is_intersected_before_narrowing():
 
 
 def test_wide_roster_observation_end_is_intersected_before_narrowing():
-    con, model = _model(nanosecond_outcomes=True, anchor_end="2500-01-01")
+    from terrine.data import UnitSource
+
+    con, model = _model(nanosecond_outcomes=True)
     try:
+        con.raw_sql("""
+            CREATE TABLE roster AS SELECT * FROM (VALUES
+              ('u1', TIMESTAMPTZ '2500-01-01 00:00:00+00'),
+              ('u2', TIMESTAMPTZ '2500-01-01 00:00:00+00'),
+              ('u3', TIMESTAMPTZ '2500-01-01 00:00:00+00')
+            ) AS r(user_id, observed_until)
+        """)
+        con.raw_sql("DELETE FROM outcomes")
+        model = Model.from_catalog(
+            model.catalog,
+            con=con,
+            readiness=model.readiness.sources,
+            units={"user": UnitSource("roster", "user_id", observed_until="observed_until")},
+        )
         result = (
             Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
             .build(model)
             .materialize()
         )
-        assert result.table.num_rows > 0
+        rows = result.table.to_pylist()
+        assert rows
+        assert all(row["event"] is False for row in rows)
+        assert all(row["censor_time"] == datetime(2025, 1, 12, tzinfo=UTC) for row in rows)
     finally:
         con.disconnect()
 
