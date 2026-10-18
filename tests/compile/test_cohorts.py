@@ -345,3 +345,29 @@ def test_cohort_float_total_enforces_final_tolerance():
         assert error.value.code == "terrine.temporal.float64_precision"
     finally:
         con.disconnect()
+
+
+def test_cohort_summary_surrogate_export_retains_age_and_denominators():
+    from terrine.estimate.survival import to_surrogate_arrow
+
+    con, model = _trajectory_model()
+    try:
+        cohort = Design(
+            "user",
+            EventAnchor("purchase", which="first"),
+            shape=CohortSpec(
+                origin="purchase",
+                trajectory=Trajectory("net_revenue", "7d", periods=2, cumulative=False),
+            ),
+        ).build(model).cohorts(
+            grouping=CohortGrouping(
+                bucket="7d", bucket_origin=datetime(2025, 1, 1, tzinfo=UTC), statistic="mean"
+            ),
+            value_column="period_value",
+        )
+        materialized = cohort.materialize()
+        exported = to_surrogate_arrow(materialized, features=(), outcomes=("value",))
+        assert {"age", "at_risk", "observable"} <= set(exported.data.column_names)
+        assert sorted(set(exported.data["age"].to_pylist())) == [0, 1]
+    finally:
+        con.disconnect()

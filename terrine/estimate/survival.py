@@ -434,6 +434,7 @@ def to_surrogate_arrow(
     structural = {
         "time_to_event": ("entry_time",),
         "ltv": ("age",),
+        "cohort_table": ("age", "at_risk", "observable"),
     }.get(data.provenance.shape, ())
     requested = (*features, *outcomes)
     if len(set(requested)) != len(requested):
