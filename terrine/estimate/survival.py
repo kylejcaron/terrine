@@ -272,7 +272,19 @@ def backtest_survival(
     _utc_timestamp_type(table, duration)
     _utc_timestamp_type(table, entry)
     _utc_timestamp_type(table, data.roles.t0)
-    output_duration_type = pa.timestamp("ns", tz="UTC")
+    timestamp_types = [
+        table.schema.field(name).type
+        for name in (duration, entry, data.roles.t0, "event_time", "censor_time")
+        if name in table.column_names
+    ]
+    precision = {"s": 0, "ms": 1, "us": 2, "ns": 3}
+    output_unit = max(
+        (dtype.unit for dtype in timestamp_types),
+        key=precision.__getitem__,
+    )
+    if any(cutoff.microsecond for cutoff in prediction_cutoffs):
+        output_unit = max((output_unit, "us"), key=precision.__getitem__)
+    output_duration_type = pa.timestamp(output_unit, tz="UTC")
     for optional_time in ("event_time", "censor_time"):
         if optional_time in table.column_names:
             _utc_timestamp_type(table, optional_time)
@@ -304,8 +316,8 @@ def backtest_survival(
         kept: list[int] = []
         observed_duration: list[int] = []
         observed_event: list[bool] = []
-        updated_event_time: list[datetime | None] = []
-        updated_censor_time: list[datetime | None] = []
+        updated_event_time: list[int | None] = []
+        updated_censor_time: list[int] = []
         for index in range(table.num_rows):
             origin = origins[index]
             entered = entries[index]
@@ -329,24 +341,28 @@ def backtest_survival(
                 observed_event.append(False)
             if event_time_array is not None:
                 event_scalar = event_time_array[index]
-                event_time = event_scalar.as_py()
-                updated_event_time.append(
-                    event_time
-                    if event_time is not None
+                if (
+                    event_scalar.is_valid
                     and _timestamp_elapsed(event_scalar, origin, row=index, name="event_time")
                     < cutoff_elapsed
-                    else None
-                )
+                ):
+                    updated_event_time.append(
+                        event_scalar.cast(output_duration_type).cast(pa.int64()).as_py()
+                    )
+                else:
+                    updated_event_time.append(None)
             if censor_time_array is not None:
                 censor_scalar = censor_time_array[index]
-                censor_time = censor_scalar.as_py()
-                updated_censor_time.append(
-                    cutoff
-                    if censor_time is None
+                if (
+                    not censor_scalar.is_valid
                     or _timestamp_elapsed(censor_scalar, origin, row=index, name="censor_time")
                     >= cutoff_elapsed
-                    else censor_time
-                )
+                ):
+                    updated_censor_time.append(cutoff_scalar.cast(pa.int64()).as_py())
+                else:
+                    updated_censor_time.append(
+                        censor_scalar.cast(output_duration_type).cast(pa.int64()).as_py()
+                    )
         sample = table.take(pa.array(kept, type=pa.int64()))
         sample = sample.set_column(
             sample.schema.get_field_index(duration),
@@ -393,8 +409,9 @@ def to_surrogate_arrow(
     if any(name not in data.table.column_names for name in requested):
         raise _INVALID.error(reason="missing_surrogate_column")
     identity = (data.roles.unit, data.roles.t0)
+    metadata_columns = tuple(dict.fromkeys((*requested, *data.roles.outcomes, *structural)))
     support = []
-    for name in requested:
+    for name in metadata_columns:
         meta = data.columns.get(name)
         if meta is not None:
             support.extend(

@@ -126,6 +126,65 @@ def test_backtest_preserves_subsecond_cutoff_with_seconds_origin():
     assert captured[0]["duration"][0].as_py() == cutoff
 
 
+def test_backtest_preserves_wide_microsecond_timestamps():
+    source = _frame()
+    table = source.table
+    for name in ("t0", "entry", "duration", "event_time", "censor_time"):
+        table = table.set_column(
+            table.schema.get_field_index(name),
+            name,
+            table[name].cast(pa.timestamp("us", tz="UTC")),
+        )
+    origin = datetime(1600, 1, 1, tzinfo=UTC)
+    cutoff = datetime(1600, 1, 1, 0, 0, 0, 500000, tzinfo=UTC)
+    shift = datetime(2025, 1, 1, tzinfo=UTC)
+    delta = origin - shift
+    for name in ("t0", "entry", "duration", "event_time", "censor_time"):
+        table = table.set_column(
+            table.schema.get_field_index(name),
+            name,
+            pa.array(
+                [value.as_py() + delta for value in table[name]],
+                type=pa.timestamp("us", tz="UTC"),
+            ),
+        )
+    source = MaterializedFrame(table, source.roles, source.columns, source.provenance)
+    seen = []
+    backtest_survival(
+        source,
+        duration="duration",
+        event="event",
+        entry="entry",
+        prediction_cutoffs=[cutoff],
+        fitter=lambda data: seen.append(data.table),
+    )
+    assert seen[0]["duration"][0].as_py() == cutoff
+    assert seen[0].schema.field("duration").type == pa.timestamp("us", tz="UTC")
+
+
+def test_backtest_masks_submicrosecond_event_without_python_datetime_conversion():
+    source = _frame()
+    table = source.table.set_column(
+        source.table.schema.get_field_index("event_time"),
+        "event_time",
+        pa.array(
+            [1735862400000000001, 1735862400000000001],
+            type=pa.timestamp("ns", tz="UTC"),
+        ),
+    )
+    source = MaterializedFrame(table, source.roles, source.columns, source.provenance)
+    seen = []
+    backtest_survival(
+        source,
+        duration="duration",
+        event="event",
+        entry="entry",
+        prediction_cutoffs=[datetime(2025, 1, 3, tzinfo=UTC)],
+        fitter=lambda data: seen.append(data.table),
+    )
+    assert seen[0]["event_time"].to_pylist() == [None, None]
+
+
 def test_backtest_recensors_survivors_and_is_post_cutoff_invariant():
     cutoffs = (datetime(2025, 1, 3, tzinfo=UTC), datetime(2025, 1, 4, tzinfo=UTC))
     captured = []
@@ -280,3 +339,37 @@ def test_surrogate_arrow_retains_ltv_age_axis():
     assert "age" in restored.data.column_names
     outcome_columns = cast(list[str], restored.metadata["outcome_columns"])
     assert "age" in outcome_columns
+
+
+def test_surrogate_retains_support_for_automatically_retained_outcomes():
+    source = _frame()
+    table = source.table.append_column("period_value", pa.array([1.0, 2.0]))
+    table = table.append_column("cumulative_value", pa.array([1.0, 3.0]))
+    table = table.append_column("cumulative_value_complete", pa.array([True, False]))
+    table = table.append_column("age", pa.array([1.0, 2.0]))
+    table = table.append_column("cumulative_value_reason", pa.array([None, "incomplete_period"]))
+    table = table.append_column("cumulative_value_error", pa.array([0.0, None]))
+    columns = dict(source.columns)
+    columns["cumulative_value"] = ColumnMeta(
+        None,
+        "outcome",
+        None,
+        None,
+        "cumulative_value_complete",
+        "cumulative_value_reason",
+        numeric_policy="checked_float64_v1",
+        absolute_error_column="cumulative_value_error",
+    )
+    roles = replace(source.roles, outcomes=("period_value", "cumulative_value"))
+    source = MaterializedFrame(table, roles, columns, replace(source.provenance, shape="ltv"))
+    surrogate = to_surrogate_arrow(source, features=("feature",), outcomes=("period_value",))
+    assert {
+        "cumulative_value_complete",
+        "cumulative_value_reason",
+        "cumulative_value_error",
+    } <= set(surrogate.data.column_names)
+    assert {
+        "cumulative_value_complete",
+        "cumulative_value_reason",
+        "cumulative_value_error",
+    } <= set(cast(list[str], surrogate.metadata["support_columns"]))
