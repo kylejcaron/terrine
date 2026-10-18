@@ -11,7 +11,7 @@ from terrine.spec import Design, EventAnchor, agg
 from terrine.spec.trajectory import TimeToEvent
 
 
-def _model(*, outcome_start="2024-12-30", naive_outcomes=False):
+def _model(*, outcome_start="2024-12-30", naive_outcomes=False, nanosecond_outcomes=False):
 
     con = ibis.duckdb.connect()
     con.raw_sql("""
@@ -21,7 +21,16 @@ def _model(*, outcome_start="2024-12-30", naive_outcomes=False):
           ('u3', TIMESTAMPTZ '2025-01-03 00:00:00+00')
         ) AS a(user_id, ts)
     """)
-    if naive_outcomes:
+    if nanosecond_outcomes:
+        con.raw_sql("""
+            CREATE TABLE outcomes AS SELECT * FROM (VALUES
+              ('u1', TIMESTAMP_NS '2025-01-01 00:00:00.000000001'),
+              ('u1', TIMESTAMP_NS '2025-01-03 00:00:00'),
+              ('u2', TIMESTAMP_NS '2025-01-02 00:00:00.000000002'),
+              ('u3', TIMESTAMP_NS '2025-01-01 00:00:00')
+            ) AS e(user_id, ts)
+        """)
+    elif naive_outcomes:
         con.raw_sql("""
             CREATE TABLE outcomes AS SELECT * FROM (VALUES
               ('u1', TIMESTAMP '2025-01-01 00:00:00'),
@@ -198,7 +207,21 @@ def test_cutoff_before_anchor_is_not_emitted_as_complete_followup():
         con.disconnect()
 
 
-def test_naive_event_timestamps_are_normalized_for_kaplan_meier():
+def test_nanosecond_events_survive_compile_and_estimation_in_any_session_timezone():
+    from terrine.estimate.survival import ElapsedTime, kaplan_meier
+
+    con, model = _model(nanosecond_outcomes=True)
+    try:
+        con.raw_sql("SET TimeZone='America/Los_Angeles'")
+        result = (
+            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
+            .build(model)
+            .materialize()
+        )
+        curve = kaplan_meier(result, duration="duration", event="event")
+        assert curve.time == (ElapsedTime(0, 1), ElapsedTime(0, 2))
+    finally:
+        con.disconnect()
     from terrine.estimate.survival import kaplan_meier
 
     con, model = _model(naive_outcomes=True)

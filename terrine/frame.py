@@ -211,6 +211,16 @@ class Frame:
                 table = pa.Table.from_batches(batches, schema=schema)
             finally:
                 reader.close()
+            if isinstance(self._design.shape, TimeToEvent):
+                for name in ("event_time", "censor_time", "duration", "entry_time"):
+                    if name not in table.column_names:
+                        continue
+                    dtype = table.schema.field(name).type
+                    if pa.types.is_timestamp(dtype) and dtype.tz is None:
+                        timestamp = table[name].cast(pa.timestamp(dtype.unit, tz="UTC"))
+                        table = table.set_column(
+                            table.schema.get_field_index(name), name, timestamp
+                        )
             if isinstance(self._design.shape, StatePanel):
                 gap_index = table.schema.get_field_index("gap")
                 gap = table.column(gap_index).cast(pa.duration("us"))

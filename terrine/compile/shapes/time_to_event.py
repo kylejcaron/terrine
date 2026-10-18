@@ -27,6 +27,13 @@ _INVALID = RefusalSpec(
 _INCOMPLETE_HISTORY = "incomplete_initial_history"
 
 
+@ibis.udf.scalar.builtin(
+    name="timezone", signature=((dt.string, dt.Timestamp(timezone="UTC")), dt.timestamp)
+)
+def _utc_naive(zone, timestamp):
+    """Normalize an aware UTC instant to a timezone-independent wall timestamp."""
+
+
 def _source(model: Model, unit: str, fact_name: str):
     fact = model.catalog.facts[fact_name]
     source = model.sources[fact.source]
@@ -105,25 +112,35 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
     zones = {dtype.timezone for dtype in timestamp_types}
     if len(zones) != 1:
         raise _INVALID.error(reason="event_entry_exit_timestamp_zones_must_match")
-    time_type = dt.Timestamp(
-        timezone="UTC",
-        scale=max(dtype.scale or 6 for dtype in timestamp_types),
-    )
-    event_relation = event_relation.mutate(_timestamp=event_relation._timestamp.cast(time_type))
+    time_type = dt.Timestamp(scale=max(dtype.scale or 6 for dtype in timestamp_types))
+    event_timestamp = event_relation._timestamp
+    if event_relation.schema()["_timestamp"].timezone is not None:
+        event_timestamp = _utc_naive("UTC", event_timestamp)
+    event_relation = event_relation.mutate(_timestamp=event_timestamp.cast(time_type))
     coverage = model.readiness.sources.get(event_source.name)
     if coverage is None:
         raise _INVALID.error(reason="event_source_coverage_required")
-    start = ibis.literal(coverage.start)
-    end = ibis.literal(coverage.end_exclusive)
+    start = _utc_naive("UTC", ibis.literal(coverage.start)).cast(time_type)
+    end = _utc_naive("UTC", ibis.literal(coverage.end_exclusive)).cast(time_type)
     candidates = base.table.select(
         **{name: base.table[name] for name in base.table.columns if name != "__terrine_eligible"}
     )
-    supported_start = ibis.greatest(start, candidates.t0)
+    candidates = candidates.mutate(
+        _t0_naive=_utc_naive("UTC", candidates.t0).cast(time_type),
+        _observed_from_naive=_utc_naive("UTC", candidates._observed_from).cast(time_type)
+        if "_observed_from" in candidates.columns
+        else ibis.null().cast(time_type),
+        _observed_until_naive=_utc_naive("UTC", candidates._observed_until).cast(time_type)
+        if "_observed_until" in candidates.columns
+        else ibis.null().cast(time_type),
+    )
+    supported_start = ibis.greatest(start, candidates._t0_naive)
     if "_observed_from" in candidates.columns:
-        supported_start = ibis.greatest(supported_start, candidates._observed_from)
-    supported_end = ibis.least(end, candidates._observed_until)
+        supported_start = ibis.greatest(supported_start, candidates._observed_from_naive)
+    supported_end = ibis.least(end, candidates._observed_until_naive)
     if design.administrative_cutoff is not None:
-        supported_end = ibis.least(supported_end, ibis.literal(design.administrative_cutoff))
+        cutoff = _utc_naive("UTC", ibis.literal(design.administrative_cutoff)).cast(time_type)
+        supported_end = ibis.least(supported_end, cutoff)
     history_start = start
     checks = list(base._checks)
     if shape.entry is not None:
@@ -131,11 +148,17 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         if entry_unit is None:
             raise _INVALID.error(reason="entry_source_missing_unit")
         entry_events, entry_event_id = _events(model, entry_source, entry_unit)
-        entry_events = entry_events.mutate(_timestamp=entry_events._timestamp.cast(time_type))
+        entry_timestamp = entry_events._timestamp
+        if entry_events.schema()["_timestamp"].timezone is not None:
+            entry_timestamp = _utc_naive("UTC", entry_timestamp)
+        entry_events = entry_events.mutate(_timestamp=entry_timestamp.cast(time_type))
+        entry_start = _utc_naive(
+            "UTC", ibis.literal(model.readiness.sources[entry_source.name].start)
+        ).cast(time_type)
         entry_candidates = candidates.select(
             unit=candidates.unit,
             anchor_id=candidates.anchor_id,
-            lower=ibis.literal(model.readiness.sources[entry_source.name].start).cast(time_type),
+            lower=entry_start,
             upper=supported_end.cast(time_type),
         )
         entered = first_occurrence(
@@ -168,16 +191,20 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         exit_coverage = model.readiness.sources.get(exit_source.name)
         if exit_coverage is None:
             raise _INVALID.error(reason="exit_source_coverage_required")
-        exit_start = ibis.literal(exit_coverage.start)
+        exit_start = _utc_naive("UTC", ibis.literal(exit_coverage.start)).cast(time_type)
         history_start = ibis.greatest(history_start, exit_start)
         supported_start = ibis.greatest(supported_start, exit_start)
-        supported_end = ibis.least(supported_end, ibis.literal(exit_coverage.end_exclusive))
+        exit_end = _utc_naive("UTC", ibis.literal(exit_coverage.end_exclusive)).cast(time_type)
+        supported_end = ibis.least(supported_end, exit_end)
         exit_events, exit_event_id = _events(model, exit_source, exit_unit)
-        exit_events = exit_events.mutate(_timestamp=exit_events._timestamp.cast(time_type))
+        exit_timestamp = exit_events._timestamp
+        if exit_events.schema()["_timestamp"].timezone is not None:
+            exit_timestamp = _utc_naive("UTC", exit_timestamp)
+        exit_events = exit_events.mutate(_timestamp=exit_timestamp.cast(time_type))
         exit_candidates = candidates.select(
             unit=candidates.unit,
             anchor_id=candidates.anchor_id,
-            lower=exit_start.cast(time_type),
+            lower=exit_start,
             upper=supported_end.cast(time_type),
         )
         exited = first_occurrence(
@@ -208,9 +235,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         unit=candidates.unit,
         anchor_id=candidates.anchor_id,
         lower=earliest_event,
-        upper=(
-            candidates._followup_start if shape.entry is not None else candidates.t0.cast(time_type)
-        ),
+        upper=(candidates._followup_start if shape.entry is not None else candidates._t0_naive),
     )
     prior = first_occurrence(
         event_relation,
@@ -255,11 +280,13 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         ),
         [result.unit == prior.table.unit, result.anchor_id == prior.table.anchor_id],
     )
-    initial_gap = candidates.t0 < history_start
+    initial_gap = candidates._t0_naive < history_start
     if shape.delayed_entry:
         initial_gap = ibis.literal(False)
     if "_observed_from" in candidates.columns and not shape.delayed_entry:
-        initial_gap = initial_gap | (candidates._observed_from > candidates.t0).fill_null(False)
+        initial_gap = initial_gap | (
+            candidates._observed_from_naive > candidates._t0_naive
+        ).fill_null(False)
     entry_missing = candidates._entry_time.isnull() if shape.delayed_entry else ibis.literal(False)
     no_followup = candidates._followup_end <= candidates._followup_start
     complete = ibis.ifelse(
