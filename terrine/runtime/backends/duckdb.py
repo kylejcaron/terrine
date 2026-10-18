@@ -9,7 +9,6 @@ from typing import Any
 import ibis
 import pyarrow as pa
 from ibis.backends.duckdb import Backend as IbisDuckDBBackend
-from ibis.common.exceptions import TableNotFound
 
 from terrine.runtime.backends.base import (
     BackendCapabilities,
@@ -302,12 +301,12 @@ class DuckDBBackend:
         ).fetchone()
         if row is None:
             raise KeyError(partition)
-        try:
+        model_connection = getattr(ibis_backend, "con", None)
+        if model_connection is self.con:
             return ibis_backend.table(row[0], database=self.namespace)
-        except TableNotFound:
-            if self._ibis_backend is None:
-                self._ibis_backend = IbisDuckDBBackend.from_connection(self.con)
-            return self._ibis_backend.table(row[0], database=self.namespace)
+        if self._ibis_backend is None:
+            self._ibis_backend = IbisDuckDBBackend.from_connection(self.con)
+        return self._ibis_backend.table(row[0], database=self.namespace)
 
     def reconcile(self, run_id: str) -> Reconciliation:
         row = self.con.execute(

@@ -26,3 +26,10 @@ def test_event_payload_is_strictly_allowlisted():
             con=con,
             namespace="owner",
         )
+
+
+def test_event_record_rejects_empty_run_id():
+    with pytest.raises(ValueError, match="invalid"):
+        record_run_event(
+            "", "phase", {"phase": "active"}, con=duckdb.connect(":memory:"), namespace="owner"
+        )

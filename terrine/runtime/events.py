@@ -42,7 +42,7 @@ def _ensure_events(con: Any, schema: str) -> None:
 def record_run_event(
     run_id: str, kind: str, payload: dict[str, Any], *, con: Any, namespace: str
 ) -> None:
-    if (
+    if not run_id or (
         kind != "phase"
         or set(payload) != {"phase"}
         or not isinstance(payload["phase"], str)

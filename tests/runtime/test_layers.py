@@ -105,6 +105,31 @@ def test_runtime_translates_persisted_anchor_record(column_model):
     ) == [{"unit": "a", "anchor_id": "fixed", "anchor_provenance": "fixed_date"}]
 
 
+def test_runtime_partition_does_not_resolve_same_name_from_model_database(column_model):
+    design = _design()
+    con, store, backend, ref, receipt, key = _published_generation(column_model, design)
+    table_name = con.execute(
+        "SELECT table_name FROM owner.runtime_partitions WHERE dataset=? AND generation=? "
+        "AND partition=?",
+        [receipt.dataset, receipt.generation, "prefix-partition"],
+    ).fetchone()[0]
+    column_model.con.raw_sql("CREATE SCHEMA owner")
+    column_model.con.raw_sql(
+        f'CREATE TABLE owner."{table_name}" AS SELECT '
+        "'wrong'::VARCHAR AS unit, 999::INTEGER AS sum"
+    )
+    actual = translate_persisted_layers(
+        store,
+        backend,
+        design=design,
+        model=column_model,
+        ref=ref,
+        receipt=receipt,
+        partitions={key: "prefix-partition"},
+    )
+    assert actual[key].execute().to_dict("records") == [{"unit": "a", "sum": 7}]
+
+
 @pytest.mark.parametrize(
     "field,value",
     [("definition_hash", "wrong"), ("snapshot_id", "wrong"), ("unit", "other")],
