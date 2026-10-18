@@ -272,22 +272,6 @@ def backtest_survival(
     _utc_timestamp_type(table, duration)
     _utc_timestamp_type(table, entry)
     _utc_timestamp_type(table, data.roles.t0)
-    timestamp_types = [
-        table.schema.field(name).type
-        for name in (duration, entry, data.roles.t0, "event_time", "censor_time")
-        if name in table.column_names
-    ]
-    precision = {"s": 0, "ms": 1, "us": 2, "ns": 3}
-    output_unit = max(
-        (dtype.unit for dtype in timestamp_types),
-        key=precision.__getitem__,
-    )
-    if any(cutoff.microsecond for cutoff in prediction_cutoffs):
-        output_unit = max((output_unit, "us"), key=precision.__getitem__)
-    output_duration_type = pa.timestamp(output_unit, tz="UTC")
-    for optional_time in ("event_time", "censor_time"):
-        if optional_time in table.column_names:
-            _utc_timestamp_type(table, optional_time)
     if event not in table.column_names:
         raise _INVALID.error(reason=f"missing_column_{event}")
     if table.schema.field(event).type != pa.bool_():
@@ -301,6 +285,20 @@ def backtest_survival(
     normalized = tuple(cutoff.astimezone(UTC) for cutoff in cutoffs)
     if any(left >= right for left, right in zip(normalized, normalized[1:], strict=False)):
         raise _INVALID.error(reason="cutoffs_must_be_strictly_increasing")
+    for optional_time in ("event_time", "censor_time"):
+        if optional_time in table.column_names:
+            _utc_timestamp_type(table, optional_time)
+    timestamp_types = [
+        table.schema.field(name).type
+        for name in (duration, entry, data.roles.t0, "event_time", "censor_time")
+        if name in table.column_names
+    ]
+    precision = {"s": 0, "ms": 1, "us": 2, "ns": 3}
+    output_unit = max(
+        (dtype.unit for dtype in timestamp_types),
+        key=precision.__getitem__,
+    )
+    output_duration_type = pa.timestamp(output_unit, tz="UTC")
     results: list[object] = []
     event_time_array = (
         table["event_time"].combine_chunks() if "event_time" in table.column_names else None
@@ -324,7 +322,7 @@ def backtest_survival(
             ended = durations[index]
             if not origin.is_valid or not entered.is_valid or not ended.is_valid:
                 raise _INVALID.error(reason=f"null_survival_time_at_row_{index}")
-            cutoff_scalar = pa.scalar(cutoff, type=output_duration_type)
+            cutoff_scalar = pa.scalar(cutoff, type=pa.timestamp("us", tz="UTC"))
             cutoff_elapsed = _timestamp_elapsed(cutoff_scalar, origin, row=index, name="cutoff")
             entry_elapsed = _timestamp_elapsed(entered, origin, row=index, name=entry)
             if entry_elapsed >= cutoff_elapsed:
@@ -337,7 +335,9 @@ def backtest_survival(
                 observed_duration.append(ended.cast(output_duration_type).cast(pa.int64()).as_py())
                 observed_event.append(events[index] is True)
             else:
-                observed_duration.append(cutoff_scalar.cast(pa.int64()).as_py())
+                observed_duration.append(
+                    cutoff_scalar.cast(output_duration_type).cast(pa.int64()).as_py()
+                )
                 observed_event.append(False)
             if event_time_array is not None:
                 event_scalar = event_time_array[index]
@@ -358,7 +358,9 @@ def backtest_survival(
                     or _timestamp_elapsed(censor_scalar, origin, row=index, name="censor_time")
                     >= cutoff_elapsed
                 ):
-                    updated_censor_time.append(cutoff_scalar.cast(pa.int64()).as_py())
+                    updated_censor_time.append(
+                        cutoff_scalar.cast(output_duration_type).cast(pa.int64()).as_py()
+                    )
                 else:
                     updated_censor_time.append(
                         censor_scalar.cast(output_duration_type).cast(pa.int64()).as_py()

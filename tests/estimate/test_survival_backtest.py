@@ -373,3 +373,47 @@ def test_surrogate_retains_support_for_automatically_retained_outcomes():
         "cumulative_value_reason",
         "cumulative_value_error",
     } <= set(cast(list[str], surrogate.metadata["support_columns"]))
+
+
+def test_backtest_accepts_wide_cutoff_with_nanosecond_inputs():
+    seen = []
+    backtest_survival(
+        _frame(),
+        duration="duration",
+        event="event",
+        entry="entry",
+        prediction_cutoffs=[datetime(2500, 1, 1, tzinfo=UTC)],
+        fitter=lambda data: seen.append(data.table),
+    )
+    assert seen[0].num_rows == 2
+    assert seen[0]["duration"].to_pylist() == [
+        datetime(2025, 1, 3, tzinfo=UTC),
+        datetime(2025, 1, 5, tzinfo=UTC),
+    ]
+
+
+def test_backtest_coded_refusal_for_malformed_cutoff_and_optional_timestamp():
+    with pytest.raises(TerrineError):
+        backtest_survival(
+            _frame(),
+            duration="duration",
+            event="event",
+            entry="entry",
+            prediction_cutoffs=cast(list[datetime], [None]),
+            fitter=lambda data: data,
+        )
+    source = _frame()
+    table = source.table.set_column(
+        source.table.schema.get_field_index("event_time"),
+        "event_time",
+        pa.array([1, 2], type=pa.int64()),
+    )
+    with pytest.raises(TerrineError):
+        backtest_survival(
+            MaterializedFrame(table, source.roles, source.columns, source.provenance),
+            duration="duration",
+            event="event",
+            entry="entry",
+            prediction_cutoffs=[datetime(2025, 1, 4, tzinfo=UTC)],
+            fitter=lambda data: data,
+        )
