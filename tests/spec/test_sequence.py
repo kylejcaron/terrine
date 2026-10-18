@@ -27,6 +27,28 @@ def test_event_sequence_validates_positive_max_events_and_window():
         EventSequence("purchase", Window("-1d", "0d"), max_events=True)
 
 
+@pytest.mark.parametrize(
+    "property_name",
+    [
+        "session_index",
+        "previous_event_id",
+        "previous_event_time",
+        "transition_reason",
+        "transition",
+    ],
+)
+def test_session_output_names_cannot_be_event_properties(property_name):
+    with pytest.raises(TerrineError) as error:
+        EventSequence(
+            "purchase",
+            Window("-1d", "0d"),
+            max_events=5,
+            properties=(property_name,),
+            sessions=SessionSpec("1h"),
+        )
+    assert error.value.code == "terrine.sequence.invalid_spec"
+
+
 def test_sequence_request_round_trips_through_json_yaml_and_spec_hash():
     shape = EventSequence(
         "purchase",

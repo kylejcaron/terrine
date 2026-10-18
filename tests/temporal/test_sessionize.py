@@ -73,3 +73,33 @@ def test_overlapping_each_anchor_sessions_are_independent():
         .to_pylist()
     )
     assert {(row["anchor"], row["session_index"]) for row in result} == {(1, 0), (2, 0)}
+
+
+def test_session_start_temporary_name_preserves_same_named_input_property():
+    con = ibis.duckdb.connect()
+    events = con.create_table(
+        "events",
+        ibis.memtable(
+            {
+                "unit": ["u"],
+                "anchor": [1],
+                "time": [datetime(2025, 1, 1, tzinfo=UTC)],
+                "id": ["a"],
+                "_new_session": ["user-value"],
+            }
+        ).to_pyarrow(),
+    )
+    result = (
+        sessionize(
+            events,
+            unit_column="unit",
+            anchor_id_column="anchor",
+            timestamp_column="time",
+            event_id_column="id",
+            gap_seconds=0,
+            max_events=1,
+        )
+        .to_pyarrow()
+        .to_pylist()
+    )
+    assert result[0]["_new_session"] == "user-value"

@@ -38,20 +38,27 @@ def sessionize(
         previous_event_id=ordered[event_id_column].lag().over(group_by=groups, order_by=order),
         previous_event_time=ordered[timestamp_column].lag().over(group_by=groups, order_by=order),
     )
+    session_start_column = "_new_session"
+    suffix = 0
+    while session_start_column in ordered.columns:
+        suffix += 1
+        session_start_column = f"_new_session_{suffix}"
     starts = prior.mutate(
-        _new_session=(
-            prior.previous_event_time.isnull()
-            | (
-                (prior[timestamp_column] - prior.previous_event_time)
-                > ibis.interval(seconds=gap_seconds)
-            )
-        ).cast("int64")
+        **{
+            session_start_column: (
+                prior.previous_event_time.isnull()
+                | (
+                    (prior[timestamp_column] - prior.previous_event_time)
+                    > ibis.interval(seconds=gap_seconds)
+                )
+            ).cast("int64")
+        }
     )
     running = ibis.cumulative_window(group_by=groups, order_by=order)
     annotated = starts.mutate(
-        session_index=starts._new_session.cumsum().over(running) - 1,
+        session_index=starts[session_start_column].cumsum().over(running) - 1,
         transition_reason=ibis.ifelse(
             starts.previous_event_id.isnull(), "missing_predecessor", None
         ),
     )
-    return annotated.drop("_new_session")
+    return annotated.drop(session_start_column)

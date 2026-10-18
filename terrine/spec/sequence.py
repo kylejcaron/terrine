@@ -119,6 +119,15 @@ class EventSequence:
             "sequence_reason",
             "event_values",
         }
+        if sessions is not None:
+            generated.update(
+                {
+                    "session_index",
+                    "previous_event_id",
+                    "previous_event_time",
+                    "transition_reason",
+                }
+            )
         reason_names = {f"{name}_reason" for name in properties}
         if (
             generated.intersection(properties)
