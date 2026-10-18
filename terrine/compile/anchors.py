@@ -474,6 +474,7 @@ def compile_anchors(
         if not isinstance(timestamp_type, dt.Timestamp) or timestamp_type.timezone != "UTC":
             raise ValueError("persisted anchor timestamp must be UTC")
         checks = list(source_checks)
+        checks.extend(_unique_checks(persisted, "anchor_id", "event", scope=("unit",)))
         checks.extend(
             (
                 _null_check(persisted, "unit", "null_unit"),

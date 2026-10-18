@@ -73,6 +73,28 @@ def test_persisted_daily_prefix_anchor_reuse_matches_ordinary_frame_compiler(col
     assert ordinary.columns == reused.columns
 
 
+@pytest.mark.parametrize(
+    ("invalid_anchor", "check_key"),
+    [
+        (lambda table: table.union(table, distinct=False), "duplicate_event_id"),
+        (
+            lambda table: table.mutate(anchor_id=ibis.literal(None, type="string")),
+            "null_event_id",
+        ),
+    ],
+)
+def test_persisted_anchor_validation_checks_candidate_identity(
+    column_model, invalid_anchor, check_key
+):
+    design = Design("user", FixedDate("2025-01-03T00:00:00+00:00"))
+    persisted = invalid_anchor(compile_anchors(design, column_model).table)
+    compiled = compile_anchors(design, column_model, persisted=persisted)
+    with pytest.raises(TerrineError) as error:
+        compiled.validate(execute=column_model.con.to_pyarrow)
+    assert error.value.code == "terrine.compile.anchor_integrity"
+    assert error.value.context["check_key"] == check_key
+
+
 def test_layer_substitution_checks_measure_unit_grain_and_resolution_identity(column_model):
     design = Design(
         "user",
