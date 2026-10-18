@@ -13,13 +13,19 @@ from typing import Any
 import pyarrow as pa
 
 from terrine.compile.cost import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED
+from terrine.errors import RefusalSpec
 from terrine.runtime.events import event_transaction, record_run_event
 from terrine.runtime.leases import Lease, LeaseStore
 from terrine.runtime.planner import RefreshPlan, TaskSpec
+from terrine.runtime.recipe import DestinationRef
 from terrine.runtime.state import RuntimeStore
 from terrine.runtime.synchronization import run_publication_lock
 
 __all__ = ["RunReceipt", "execute_plan"]
+_REQUEST_KEY_CONFLICT = RefusalSpec(
+    "terrine.runtime.request_key_conflict",
+    "Request key is already bound to a different plan or destination.",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +43,8 @@ def execute_plan(
     run_id: str,
     run_task: Callable[[TaskSpec, Mapping[str, pa.Table]], pa.Table],
     publish: Callable[[RefreshPlan, Mapping[str, pa.Table], Lease], Any],
+    request_key: str | None = None,
+    destination: DestinationRef | None = None,
     cancelled: Callable[[], bool] | None = None,
     max_tasks: int = 4096,
     max_concurrency: int = 1,
@@ -51,6 +59,21 @@ def execute_plan(
         raise ValueError("plan task count exceeds configured max_tasks")
     if isinstance(max_concurrency, bool) or max_concurrency < 1:
         raise ValueError("max_concurrency must be positive")
+    if request_key is not None and (
+        not isinstance(request_key, str) or not request_key.strip() or len(request_key) > 256
+    ):
+        raise ValueError("request_key must be a non-empty string of at most 256 characters")
+    if (request_key is None) != (destination is None):
+        raise ValueError("request_key and destination must be supplied together")
+    if destination is not None and (
+        not isinstance(destination, DestinationRef) or destination.dataset != plan.dataset
+    ):
+        raise ValueError("destination must identify the planned dataset")
+    destination_json = (
+        json.dumps(destination.to_dict(), sort_keys=True, separators=(",", ":"))
+        if destination is not None
+        else None
+    )
     runtime_store = RuntimeStore(con, namespace=namespace)
     runtime_store.initialize()
     leases = LeaseStore(con, namespace=namespace)
@@ -66,30 +89,53 @@ def execute_plan(
     con.execute(
         f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP"
     )
+    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS request_key VARCHAR")
+    con.execute(
+        f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS destination_json VARCHAR"
+    )
+    con.execute(
+        f"CREATE UNIQUE INDEX IF NOT EXISTS runtime_runs_request_destination "
+        f"ON {schema}.runtime_runs (request_key, destination_json)"
+    )
     con.execute(
         f"CREATE TABLE IF NOT EXISTS {schema}.runtime_tasks ("
         "run_id VARCHAR NOT NULL, task_id VARCHAR NOT NULL, status VARCHAR NOT NULL, "
         "output_blob BLOB, task_fence BIGINT, PRIMARY KEY(run_id, task_id))"
     )
     con.execute(f"ALTER TABLE {schema}.runtime_tasks ADD COLUMN IF NOT EXISTS task_fence BIGINT")
-    run = con.execute(
-        f"SELECT dataset, fingerprint, state, published_generation "
-        f"FROM {schema}.runtime_runs WHERE run_id=?",
-        [run_id],
-    ).fetchone()
-    if run is not None:
-        if run[0] != plan.dataset or run[1] != plan.recipe.fingerprint:
-            raise ValueError("run_id is already bound to a different plan")
-        if run[2] in {"succeeded", "cancelled"}:
-            _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
-            return RunReceipt(run_id, run[2], run[3])
-    else:
-        con.execute(
-            f"INSERT INTO {schema}.runtime_runs "
-            "(run_id, dataset, fingerprint, state, published_generation) "
-            "VALUES (?, ?, ?, 'running', NULL)",
-            [run_id, plan.dataset, plan.recipe.fingerprint],
-        )
+    existing_request = None
+    with event_transaction(con, namespace=namespace):
+        if request_key is not None:
+            existing_request = con.execute(
+                f"SELECT run_id, dataset, fingerprint, state, published_generation "
+                f"FROM {schema}.runtime_runs WHERE request_key=? AND destination_json=?",
+                [request_key, destination_json],
+            ).fetchone()
+        if existing_request is not None:
+            if (
+                existing_request[1] != plan.dataset
+                or existing_request[2] != plan.recipe.fingerprint
+            ):
+                raise _REQUEST_KEY_CONFLICT.error()
+            if existing_request[0] != run_id:
+                return RunReceipt(existing_request[0], existing_request[3], existing_request[4])
+        run = con.execute(
+            f"SELECT dataset, fingerprint, state, published_generation, request_key, "
+            f"destination_json FROM {schema}.runtime_runs WHERE run_id=?",
+            [run_id],
+        ).fetchone()
+        if run is not None:
+            if run[0] != plan.dataset or run[1] != plan.recipe.fingerprint:
+                raise ValueError("run_id is already bound to a different plan")
+            if request_key is not None and (run[4] != request_key or run[5] != destination_json):
+                raise _REQUEST_KEY_CONFLICT.error()
+        else:
+            con.execute(
+                f"INSERT INTO {schema}.runtime_runs "
+                "(run_id, dataset, fingerprint, state, published_generation, request_key, "
+                "destination_json) VALUES (?, ?, ?, 'running', NULL, ?, ?)",
+                [run_id, plan.dataset, plan.recipe.fingerprint, request_key, destination_json],
+            )
     leases.initialize()
     lease = leases.acquire(f"dataset:{plan.dataset}", run_id, ttl=lease_ttl, now=datetime.now(UTC))
     if run is not None and run[2] == "cancel_requested":

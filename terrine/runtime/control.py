@@ -13,7 +13,13 @@ from pathlib import Path
 from typing import Any
 
 from terrine.errors import TerrineError
-from terrine.runtime.events import EventPage, RunEvent, read_run_events
+from terrine.runtime.events import (
+    EventPage,
+    RunEvent,
+    event_transaction,
+    read_run_events,
+    record_run_event,
+)
 from terrine.runtime.execute import RunReceipt
 from terrine.runtime.state import RuntimeStore
 from terrine.runtime.status import CancelReceipt, RunStatus, cancel_run, get_run
@@ -27,6 +33,70 @@ class ControlEndpoint:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "path", Path(os.path.abspath(Path(self.path).expanduser())))
+
+
+def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
+    """Reconcile runs only after the durable owner has reacquired its database."""
+    store = RuntimeStore(con, namespace=namespace)
+    store.initialize()
+    schema = store._schema
+    exists = con.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE lower(table_schema)=lower(?) AND table_name='runtime_runs'",
+        [namespace],
+    ).fetchone()
+    if exists is None:
+        return
+    lease_table = con.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE lower(table_schema)=lower(?) AND table_name='runtime_leases'",
+        [namespace],
+    ).fetchone()
+    if lease_table is None:
+        return
+    stale = con.execute(
+        f"SELECT r.run_id,r.state FROM {schema}.runtime_runs r "
+        f"JOIN {schema}.runtime_leases l ON l.resource='dataset:' || r.dataset "
+        "AND l.owner=r.run_id AND l.fence=r.attempt_fence "
+        "WHERE r.state IN ('running','cancel_requested') AND l.expires_at<=current_timestamp "
+        "ORDER BY r.run_id"
+    ).fetchall()
+    if not stale:
+        return
+    publications = con.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE lower(table_schema)=lower(?) AND table_name='runtime_run_publications'",
+        [namespace],
+    ).fetchone()
+    recovered = {}
+    if publications is not None:
+        recovered = {
+            run_id: ("succeeded", generation)
+            for run_id, generation in con.execute(
+                f"SELECT p.run_id,p.generation FROM {schema}.runtime_run_publications p "
+                f"JOIN {schema}.runtime_runs r ON r.run_id=p.run_id "
+                "WHERE r.state IN ('running','cancel_requested')"
+            ).fetchall()
+        }
+    with event_transaction(con, namespace=namespace):
+        for run_id, old_state in stale:
+            state, generation = recovered.get(
+                run_id, ("cancelled" if old_state == "cancel_requested" else "failed", None)
+            )
+            con.execute(
+                f"UPDATE {schema}.runtime_runs SET state=?, "
+                "published_generation=COALESCE(?,published_generation) "
+                "WHERE run_id=? AND state IN ('running','cancel_requested')",
+                [state, generation, run_id],
+            )
+            record_run_event(
+                run_id,
+                "lifecycle",
+                {"state": state},
+                con=con,
+                namespace=namespace,
+                _in_transaction=True,
+            )
 
 
 class ControlServer:
@@ -46,6 +116,7 @@ class ControlServer:
         if self._server is not None:
             return
         self.endpoint.path.parent.mkdir(parents=True, exist_ok=True)
+        _recover_interrupted_runs(self.store.con, namespace=self.namespace)
         server = self
 
         class Handler(socketserver.StreamRequestHandler):
