@@ -6,10 +6,12 @@ import hashlib
 import json
 import math
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from decimal import Decimal
 from fractions import Fraction
 from typing import Any, Literal
+
+from terrine.semantic.time import instant
 
 __all__ = [
     "TimeSplit",
@@ -22,21 +24,35 @@ __all__ = [
 ]
 
 
-def _instant(value: date | datetime | str) -> datetime:
+def _boundary(value: date | datetime | str) -> date | datetime:
+    if isinstance(value, datetime):
+        return _instant(value)
+    if isinstance(value, date):
+        return value
     if isinstance(value, str):
         try:
-            value = date.fromisoformat(value) if len(value) == 10 else datetime.fromisoformat(value)
+            if len(value) == 10:
+                return date.fromisoformat(value)
+            return _instant(value)
         except ValueError as error:
             raise ValueError(
-                "split boundaries must be explicit ISO dates or aware instants"
+                "split boundaries must be explicit ISO dates or representable aware instants"
             ) from error
-    if isinstance(value, datetime):
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("split datetime boundaries must be timezone-aware")
-        return value.astimezone(UTC)
-    if isinstance(value, date):
-        return datetime.combine(value, datetime.min.time(), UTC)
     raise TypeError("split boundary must be date, aware datetime, or ISO string")
+
+
+def _instant(value: date | datetime | str) -> datetime:
+    if isinstance(value, date) and not isinstance(value, datetime):
+        raise TypeError("calendar dates require binding to a Catalog timezone")
+    if isinstance(value, (datetime, str)):
+        return instant(value, "UTC")
+    raise TypeError("expected an aware timestamp")
+
+
+def _order_instant(value: date | datetime) -> datetime:
+    if isinstance(value, datetime):
+        return _instant(value)
+    return datetime.combine(value, datetime.min.time(), UTC)
 
 
 def _duration(value: str | timedelta) -> timedelta:
@@ -65,8 +81,8 @@ def _duration(value: str | timedelta) -> timedelta:
 
 @dataclass(frozen=True, slots=True, init=False)
 class TimeSplit:
-    train_until: datetime
-    validation_until: datetime | None
+    train_until: date | datetime
+    validation_until: date | datetime | None
     embargo: timedelta
     groups: GroupSplit | None
 
@@ -78,9 +94,9 @@ class TimeSplit:
         embargo: str | timedelta = "0d",
         groups: GroupSplit | None = None,
     ) -> None:
-        train = _instant(train_until)
-        validation = None if validation_until is None else _instant(validation_until)
-        if validation is not None and validation <= train:
+        train = _boundary(train_until)
+        validation = None if validation_until is None else _boundary(validation_until)
+        if validation is not None and _order_instant(validation) <= _order_instant(train):
             raise ValueError("validation_until must follow train_until")
         if groups is not None and not isinstance(groups, GroupSplit):
             raise TypeError("groups must be GroupSplit or None")
@@ -88,6 +104,28 @@ class TimeSplit:
         object.__setattr__(self, "validation_until", validation)
         object.__setattr__(self, "embargo", _duration(embargo))
         object.__setattr__(self, "groups", groups)
+
+    def bind(self, catalog_timezone: tzinfo) -> TimeSplit:
+        """Resolve calendar-date boundaries at the Catalog-local start of day."""
+        if not isinstance(catalog_timezone, tzinfo):
+            raise TypeError("catalog_timezone must be a timezone")
+
+        def resolve(value: date | datetime | None) -> datetime | None:
+            if value is None:
+                return None
+            if isinstance(value, datetime):
+                return _instant(value)
+            return datetime.combine(value, datetime.min.time(), catalog_timezone).astimezone(UTC)
+
+        train = resolve(self.train_until)
+        if train is None:
+            raise ValueError("train_until cannot be missing")
+        return TimeSplit(
+            train_until=train,
+            validation_until=resolve(self.validation_until),
+            embargo=self.embargo,
+            groups=self.groups,
+        )
 
     def to_record(self) -> dict[str, Any]:
         return _time_record(self)
@@ -200,9 +238,25 @@ class SplitAssignment:
 
 
 def assign_splits(
-    rows: list[dict[str, Any]], policy: TimeSplit, *, group_keys: dict[Any, str | int] | None = None
+    rows: list[dict[str, Any]],
+    policy: TimeSplit,
+    *,
+    group_keys: dict[Any, str | int] | None = None,
+    catalog_timezone: Any = None,
 ) -> dict[Any, SplitAssignment]:
-    """Assign origins; purge any selected label reaching its split's next boundary."""
+    """Assign origins using label support and leakage-safe split boundaries."""
+    if isinstance(policy.train_until, date) and not isinstance(policy.train_until, datetime):
+        if catalog_timezone is None:
+            raise ValueError("date boundaries require catalog_timezone or TimeSplit.bind()")
+        policy = policy.bind(catalog_timezone)
+    elif (
+        policy.validation_until is not None
+        and isinstance(policy.validation_until, date)
+        and not isinstance(policy.validation_until, datetime)
+    ):
+        if catalog_timezone is None:
+            raise ValueError("date boundaries require catalog_timezone or TimeSplit.bind()")
+        policy = policy.bind(catalog_timezone)
     output: dict[Any, SplitAssignment] = {}
     for row in rows:
         key = row["id"]
@@ -225,12 +279,43 @@ def assign_splits(
         else:
             output[key] = SplitAssignment("unassigned", "embargo")
             continue
-        end_value = row.get("label_end")
-        if end_value is not None and boundary is not None:
-            end = _instant(end_value)
-            available = end < boundary if row.get("point_label", False) else end <= boundary
-            if not available:
-                output[key] = SplitAssignment("unassigned", "label_overlap")
+        support = row.get("label_support")
+        if isinstance(support, dict):
+            unavailable = [
+                (name, item) for name, item in support.items() if not item.get("available", False)
+            ]
+            if unavailable:
+                reasons = row.get("label_reasons", {})
+                name, _ = unavailable[0]
+                output[key] = SplitAssignment("unassigned", reasons.get(name, "label_unavailable"))
+                continue
+        elif row.get("label_available", row.get("label_end") is not None) is False:
+            output[key] = SplitAssignment(
+                "unassigned", row.get("label_reason", "label_unavailable")
+            )
+            continue
+        elif "label_end" not in row:
+            output[key] = SplitAssignment("unassigned", "label_unavailable")
+            continue
+        ends: list[tuple[Any, bool]] = []
+        if isinstance(support, dict):
+            ends.extend(
+                (item.get("end"), bool(item.get("point", False))) for item in support.values()
+            )
+        else:
+            ends.append((row.get("label_end"), bool(row.get("point_label", False))))
+        if boundary is not None:
+            for end_value, point in ends:
+                if end_value is None:
+                    output[key] = SplitAssignment(
+                        "unassigned", row.get("label_reason", "label_unavailable")
+                    )
+                    break
+                end = _instant(end_value)
+                if not (end < boundary if point else end <= boundary):
+                    output[key] = SplitAssignment("unassigned", "label_overlap")
+                    break
+            if key in output:
                 continue
         if policy.groups is not None:
             group = (group_keys or {}).get(key, row.get(policy.groups.group))

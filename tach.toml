@@ -78,6 +78,9 @@ path = "terrine.compile.materialize"
 depends_on = ["terrine.compile", "terrine.compile.dispatch", "terrine.data", "terrine.errors", "terrine.model", "terrine.spec"]
 
 [[modules]]
+path = "terrine.dataset"
+depends_on = ["terrine.errors", "terrine.semantic", "terrine.spec"]
+[[modules]]
 path = "terrine.runtime.materialize"
 depends_on = ["terrine.compile", "terrine.compile.cost", "terrine.compile.materialize", "terrine.data", "terrine.execution", "terrine.model", "terrine.spec"]
 [[modules]]
