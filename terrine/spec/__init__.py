@@ -1,6 +1,7 @@
 """Data-only study design specifications."""
 
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
+from terrine.spec.dataset import DatasetRecipe
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import (
     And,
@@ -40,6 +41,7 @@ from terrine.spec.state_panel import BinnedMetricState, StateObservations, State
 from terrine.spec.trajectory import CohortGrouping, CohortSpec, TimeToEvent, Trajectory
 
 __all__ = [
+    "DatasetRecipe",
     "And",
     "AnchorRange",
     "AttributeAsOf",

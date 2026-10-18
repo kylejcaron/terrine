@@ -24,6 +24,7 @@ __all__ = [
     "ColumnMeta",
     "Coverage",
     "CoverageSummary",
+    "DatasetViewMeta",
     "EligibilitySummary",
     "ExecutionSnapshot",
     "ExpressionTiming",
@@ -713,6 +714,52 @@ class ExecutionSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class DatasetViewMeta:
+    """Portable selections and split/exclusion summary for a dataset view."""
+
+    kind: Literal["training", "scoring"]
+    selected_features: tuple[str, ...]
+    selected_labels: tuple[str, ...]
+    view_hash: str
+    feature_definition_hash: str
+    resolved_as_of: datetime | None = None
+    incomplete_labels: Literal["drop", "keep"] | None = None
+    split_policy: Mapping[str, Any] | None = None
+    counts_by_reason: Mapping[str, int] = dataclass_field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.kind not in ("training", "scoring"):
+            raise ValueError("invalid dataset view kind")
+        for name in ("view_hash", "feature_definition_hash"):
+            _nonempty(getattr(self, name), name)
+        for name in ("selected_features", "selected_labels"):
+            values = tuple(getattr(self, name))
+            if any(not isinstance(value, str) or not value for value in values) or len(
+                set(values)
+            ) != len(values):
+                raise ValueError(f"{name} must contain unique non-empty names")
+            object.__setattr__(self, name, values)
+        if self.resolved_as_of is not None:
+            _aware(self.resolved_as_of, "resolved_as_of")
+            object.__setattr__(self, "resolved_as_of", self.resolved_as_of.astimezone(UTC))
+        if self.incomplete_labels not in (None, "drop", "keep"):
+            raise ValueError("invalid incomplete-label policy")
+        if self.split_policy is not None:
+            object.__setattr__(self, "split_policy", _mapping(self.split_policy, "split_policy"))
+        counts = dict(self.counts_by_reason)
+        if any(
+            not isinstance(key, str)
+            or not key
+            or isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 0
+            for key, value in counts.items()
+        ):
+            raise ValueError("counts_by_reason must contain nonnegative integer counts")
+        object.__setattr__(self, "counts_by_reason", MappingProxyType(counts))
+
+
+@dataclass(frozen=True, slots=True)
 class Provenance:
     feature_cutoffs: Mapping[str, FeatureCutoff]
     eligibility_cutoffs: Mapping[str, FeatureCutoff]
@@ -739,6 +786,7 @@ class Provenance:
     measurement_knowledge: (
         Literal["measurement_time", "retrospective_effective_time", "recorded_at"] | None
     ) = None
+    dataset_view: DatasetViewMeta | None = None
 
     def __post_init__(self) -> None:
         for name in ("design_hash", "model_hash", "shape"):
@@ -788,6 +836,8 @@ class Provenance:
             raise TypeError("execution_snapshot must be ExecutionSnapshot")
         if self.state_panel is not None and not isinstance(self.state_panel, StatePanelMeta):
             raise TypeError("state_panel must be StatePanelMeta or None")
+        if self.dataset_view is not None and not isinstance(self.dataset_view, DatasetViewMeta):
+            raise TypeError("dataset_view must be DatasetViewMeta or None")
         if self.sequence_meta is not None and not isinstance(self.sequence_meta, SequenceMeta):
             raise TypeError("sequence_meta must be SequenceMeta or None")
         if self.panel is not None and not isinstance(self.panel, PanelMeta):
@@ -951,6 +1001,8 @@ def _decode(value: Any, cls: type) -> Any:
             kwargs[field.name] = _decode(item, FeatureCutoff)
         elif field.name == "state_panel" and item is not None:
             kwargs[field.name] = _decode(item, StatePanelMeta)
+        elif field.name == "dataset_view" and item is not None:
+            kwargs[field.name] = _decode(item, DatasetViewMeta)
         elif field.name == "sequence_meta" and item is not None:
             kwargs[field.name] = _decode(item, SequenceMeta)
         elif field.name == "panel" and item is not None:

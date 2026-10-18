@@ -15,6 +15,7 @@ if TYPE_CHECKING:
         BinnedMetricState,
         CohortGrouping,
         CohortSpec,
+        DatasetRecipe,
         Design,
         EventAnchor,
         EventSequence,
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
 from terrine.windows import Window
 
 __all__ = [
+    "DatasetRecipe",
     "AnchorRange",
     "Budget",
     "EventSequence",
