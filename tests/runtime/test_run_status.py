@@ -46,3 +46,21 @@ def test_cancel_request_persists_lifecycle_event():
     assert [(event.kind, event.payload) for event in events] == [
         ("lifecycle", {"state": "cancel_requested"})
     ]
+
+
+def test_repeated_cancel_returns_already_requested():
+    from terrine.runtime.status import cancel_run
+
+    con = duckdb.connect(":memory:")
+    con.execute("CREATE SCHEMA owner")
+    con.execute(
+        "CREATE TABLE owner.runtime_runs (run_id VARCHAR, dataset VARCHAR, fingerprint VARCHAR, "
+        "state VARCHAR, published_generation VARCHAR, attempt_fence BIGINT)"
+    )
+    con.execute("INSERT INTO owner.runtime_runs VALUES ('r1','d','f','running',NULL,1)")
+
+    first = cancel_run("r1", con=con, namespace="owner")
+    second = cancel_run("r1", con=con, namespace="owner")
+
+    assert first.disposition == "requested"
+    assert second.disposition == "already_requested"

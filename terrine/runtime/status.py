@@ -113,6 +113,8 @@ def cancel_run(run_id: str, *, con: Any, namespace: str) -> CancelReceipt:
         status = get_run(run_id, con=con, namespace=namespace)
         if status.durable_state in {"succeeded", "failed", "cancelled"}:
             return CancelReceipt(run_id, "already_terminal", status)
+        if status.durable_state == "cancel_requested":
+            return CancelReceipt(run_id, "already_requested", status)
         with event_transaction(con, namespace=namespace):
             transitioned = con.execute(
                 f"UPDATE {store._schema}.runtime_runs SET state='cancel_requested' "

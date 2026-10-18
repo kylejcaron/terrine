@@ -163,19 +163,20 @@ def execute_plan(
         runtime_store.pin_snapshot(plan.snapshot_id, kind="active_run", reference=active_reference)
     except Exception:
         with event_transaction(con, namespace=namespace):
-            con.execute(
+            failed = con.execute(
                 f"UPDATE {schema}.runtime_runs SET state='failed' "
-                "WHERE run_id=? AND state='running' AND attempt_fence=?",
+                "WHERE run_id=? AND state='running' AND attempt_fence=? RETURNING state",
                 [run_id, lease.fence],
-            )
-            record_run_event(
-                run_id,
-                "lifecycle",
-                {"state": "failed"},
-                con=con,
-                namespace=namespace,
-                _in_transaction=True,
-            )
+            ).fetchone()
+            if failed is not None:
+                record_run_event(
+                    run_id,
+                    "lifecycle",
+                    {"state": failed[0]},
+                    con=con,
+                    namespace=namespace,
+                    _in_transaction=True,
+                )
         leases.release(lease)
         raise
     heartbeat_con = con.cursor()

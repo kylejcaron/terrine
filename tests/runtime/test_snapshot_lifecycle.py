@@ -251,3 +251,44 @@ def test_collected_snapshot_pin_failure_records_run_and_releases_lease():
         "running",
         "failed",
     ]
+
+
+def test_cancel_during_snapshot_pin_failure_does_not_emit_false_failure(monkeypatch):
+    from terrine.runtime.events import read_run_events
+    from terrine.runtime.status import cancel_run, get_run
+
+    con = duckdb.connect(":memory:")
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
+    store.mark_snapshot_for_gc("snapshot")
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="def",
+        snapshot_id="snapshot",
+        graph=dependency_graph(sources=("events",), definition_hash="def", partitions=("p1",)),
+    )
+    original_pin = RuntimeStore.pin_snapshot
+
+    def cancel_then_pin(runtime_store, snapshot_id, *, kind, reference):
+        cancel_run("cancel-at-pin", con=con, namespace="owner")
+        return original_pin(runtime_store, snapshot_id, kind=kind, reference=reference)
+
+    monkeypatch.setattr(RuntimeStore, "pin_snapshot", cancel_then_pin)
+    with pytest.raises(ValueError, match="collected"):
+        execute_plan(
+            plan,
+            con=con,
+            namespace="owner",
+            run_id="cancel-at-pin",
+            run_task=lambda task, dependencies: pa.table({"id": [1]}),
+            publish=lambda plan, outputs, lease: "g1",
+        )
+
+    status = get_run("cancel-at-pin", con=con, namespace="owner")
+    events = read_run_events("cancel-at-pin", con=con, namespace="owner").events
+    assert status.durable_state == "cancel_requested"
+    assert [event.payload["state"] for event in events if event.kind == "lifecycle"] == [
+        "running",
+        "cancel_requested",
+    ]
