@@ -346,14 +346,16 @@ def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
             + (max(0, max(design.shape.comparison_periods)) + anticipation) * schedule.every
             + outcome_window_end
         )
-        if design.shape.control == "never_treated":
-            horizon = max(horizon, model.day_boundary(schedule.end))
-        incomplete_coverage = (
+        comparison_incomplete = (
             coverage.end_exclusive < horizon
             if outcome_window_end > 0
             else coverage.end_exclusive <= horizon
         )
-        if incomplete_coverage:
+        schedule_incomplete = (
+            design.shape.control == "never_treated"
+            and coverage.end_exclusive < model.day_boundary(schedule.end)
+        )
+        if comparison_incomplete or schedule_incomplete:
             raise _INCOMPLETE_TREATMENT_HISTORY.error(
                 source=source.name,
                 boundary=horizon.isoformat(),
