@@ -1,4 +1,6 @@
+from dataclasses import replace
 from datetime import UTC, datetime
+from typing import cast
 
 import pyarrow as pa
 import pytest
@@ -34,8 +36,20 @@ def _frame(*, later_event=datetime(2025, 1, 5, tzinfo=UTC)):
                 [datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 2, tzinfo=UTC)],
                 type=pa.timestamp("ns", tz="UTC"),
             ),
+            "entry_time": pa.array(
+                [datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 2, tzinfo=UTC)],
+                type=pa.timestamp("ns", tz="UTC"),
+            ),
             "duration": pa.array(
                 [datetime(2025, 1, 3, tzinfo=UTC), later_event],
+                type=pa.timestamp("ns", tz="UTC"),
+            ),
+            "event_time": pa.array(
+                [datetime(2025, 1, 3, tzinfo=UTC), later_event],
+                type=pa.timestamp("ns", tz="UTC"),
+            ),
+            "censor_time": pa.array(
+                [datetime(2025, 1, 12, tzinfo=UTC)] * 2,
                 type=pa.timestamp("ns", tz="UTC"),
             ),
             "event": pa.array([True, True]),
@@ -48,7 +62,7 @@ def _frame(*, later_event=datetime(2025, 1, 5, tzinfo=UTC)):
     )
     return MaterializedFrame(
         table,
-        Roles("unit", "unit", "t0", None, ("feature",), ("duration", "event", "entry")),
+        Roles("unit", "unit", "t0", None, ("feature",), ("duration", "event")),
         {
             "feature": ColumnMeta(
                 None, "feature", None, None, "feature_complete", "feature_reason"
@@ -68,6 +82,48 @@ def _frame(*, later_event=datetime(2025, 1, 5, tzinfo=UTC)):
             None,
         ),
     )
+
+
+def test_backtest_masks_future_event_time_and_recensors_censor_time():
+    captured = []
+    backtest_survival(
+        _frame(later_event=datetime(2025, 1, 8, tzinfo=UTC)),
+        duration="duration",
+        event="event",
+        entry="entry",
+        prediction_cutoffs=[datetime(2025, 1, 4, tzinfo=UTC)],
+        fitter=lambda data: captured.append(data.table.to_pylist()),
+    )
+    rows = captured[0]
+    assert rows[0]["event_time"] == datetime(2025, 1, 3, tzinfo=UTC)
+    assert rows[1]["event_time"] is None
+    assert [row["censor_time"] for row in rows] == [
+        datetime(2025, 1, 4, tzinfo=UTC),
+        datetime(2025, 1, 4, tzinfo=UTC),
+    ]
+
+
+def test_backtest_preserves_subsecond_cutoff_with_seconds_origin():
+    source = _frame()
+    source_table = source.table.set_column(
+        source.table.schema.get_field_index("t0"),
+        "t0",
+        source.table["t0"].cast(pa.timestamp("s", tz="UTC")),
+    )
+    source = MaterializedFrame(source_table, source.roles, source.columns, source.provenance)
+    cutoff = datetime(2025, 1, 1, 0, 0, 0, 500000, tzinfo=UTC)
+    captured = []
+    backtest_survival(
+        source,
+        duration="duration",
+        event="event",
+        entry="entry",
+        prediction_cutoffs=[cutoff],
+        fitter=lambda data: captured.append(data.table),
+    )
+    assert captured[0].num_rows == 1
+    assert captured[0].schema.field("duration").type == pa.timestamp("ns", tz="UTC")
+    assert captured[0]["duration"][0].as_py() == cutoff
 
 
 def test_backtest_recensors_survivors_and_is_post_cutoff_invariant():
@@ -201,7 +257,26 @@ def test_surrogate_arrow_round_trip_preserves_projection_metadata_and_null_reaso
     assert restored.metadata["design_hash"] == "design-hash"
     assert "unit" in restored.data.column_names
     assert "t0" in restored.data.column_names
+    assert "entry_time" in restored.data.column_names
     assert "feature_reason" in restored.data.column_names
     assert restored.data["feature"].null_count == 1
     assert restored.data["feature_reason"].to_pylist() == [None, "incomplete_coverage"]
+    columns = cast(dict[str, object], restored.metadata["columns"])
+    feature = cast(dict[str, object], columns["feature"])
+    roles = cast(dict[str, object], restored.metadata["roles"])
+    assert feature["reason_column"] == "feature_reason"
+    assert roles["outcomes"] == ["duration", "event", "entry_time"]
     assert ElapsedTime(2, 3).nanoseconds == 3
+
+
+def test_surrogate_arrow_retains_ltv_age_axis():
+    source = _frame()
+    table = source.table.append_column("age", pa.array([1.0, 2.0]))
+    source = MaterializedFrame(
+        table, source.roles, source.columns, replace(source.provenance, shape="ltv")
+    )
+    surrogate = to_surrogate_arrow(source, features=("feature",), outcomes=("duration",))
+    restored = type(surrogate).from_arrow(surrogate.to_arrow())
+    assert "age" in restored.data.column_names
+    outcome_columns = cast(list[str], restored.metadata["outcome_columns"])
+    assert "age" in outcome_columns

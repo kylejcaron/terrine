@@ -53,3 +53,4 @@
 - Compile bounded time-to-event histories with prevalent-event exclusion, explicit observation/censor bounds, optional delayed entry and independent administrative cutoffs; compute Arrow-only Kaplan–Meier curves with tied-time ordering, Greenwood variance and exact nanosecond elapsed-time support.
 - Refit earlier-only measurement-time survival backtests with exact per-row cutoff recensoring and explicit retrospective-effective-time labeling; refuse unsupported recorded-at claims and export versioned Arrow surrogate projections with provenance.
 - Normalize survival timestamps independently of DuckDB session timezone while preserving nanosecond event ties through Arrow estimation.
+- Mask post-cutoff failure timestamps, preserve subsecond censor cutoffs, retain structural survival axes and projected typed metadata, and reserve internal timestamp aliases while supporting wide coverage bounds.

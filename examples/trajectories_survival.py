@@ -95,6 +95,10 @@ def _survival_data() -> MaterializedFrame:
                 [datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 2, tzinfo=UTC)],
                 type=pa.timestamp("ns", tz="UTC"),
             ),
+            "entry_time": pa.array(
+                [datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 2, tzinfo=UTC)],
+                type=pa.timestamp("ns", tz="UTC"),
+            ),
             "duration": pa.array(
                 [datetime(2025, 1, 3, tzinfo=UTC), datetime(2025, 1, 8, tzinfo=UTC)],
                 type=pa.timestamp("ns", tz="UTC"),

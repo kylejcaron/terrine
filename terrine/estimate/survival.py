@@ -269,9 +269,13 @@ def backtest_survival(
     if not callable(fitter):
         raise _INVALID.error(reason="fitter_must_be_callable")
     table = data.table
-    duration_type = _utc_timestamp_type(table, duration)
+    _utc_timestamp_type(table, duration)
     _utc_timestamp_type(table, entry)
-    origin_type = _utc_timestamp_type(table, data.roles.t0)
+    _utc_timestamp_type(table, data.roles.t0)
+    output_duration_type = pa.timestamp("ns", tz="UTC")
+    for optional_time in ("event_time", "censor_time"):
+        if optional_time in table.column_names:
+            _utc_timestamp_type(table, optional_time)
     if event not in table.column_names:
         raise _INVALID.error(reason=f"missing_column_{event}")
     if table.schema.field(event).type != pa.bool_():
@@ -286,6 +290,12 @@ def backtest_survival(
     if any(left >= right for left, right in zip(normalized, normalized[1:], strict=False)):
         raise _INVALID.error(reason="cutoffs_must_be_strictly_increasing")
     results: list[object] = []
+    event_time_array = (
+        table["event_time"].combine_chunks() if "event_time" in table.column_names else None
+    )
+    censor_time_array = (
+        table["censor_time"].combine_chunks() if "censor_time" in table.column_names else None
+    )
     durations = table[duration].combine_chunks()
     entries = table[entry].combine_chunks()
     origins = table[data.roles.t0].combine_chunks()
@@ -294,13 +304,15 @@ def backtest_survival(
         kept: list[int] = []
         observed_duration: list[int] = []
         observed_event: list[bool] = []
+        updated_event_time: list[datetime | None] = []
+        updated_censor_time: list[datetime | None] = []
         for index in range(table.num_rows):
             origin = origins[index]
             entered = entries[index]
             ended = durations[index]
             if not origin.is_valid or not entered.is_valid or not ended.is_valid:
                 raise _INVALID.error(reason=f"null_survival_time_at_row_{index}")
-            cutoff_scalar = pa.scalar(cutoff, type=origin_type)
+            cutoff_scalar = pa.scalar(cutoff, type=output_duration_type)
             cutoff_elapsed = _timestamp_elapsed(cutoff_scalar, origin, row=index, name="cutoff")
             entry_elapsed = _timestamp_elapsed(entered, origin, row=index, name=entry)
             if entry_elapsed >= cutoff_elapsed:
@@ -310,22 +322,54 @@ def backtest_survival(
             end_elapsed = _timestamp_elapsed(ended, origin, row=index, name=duration)
             kept.append(index)
             if end_elapsed < cutoff_elapsed:
-                observed_duration.append(ended.cast(pa.int64()).as_py())
+                observed_duration.append(ended.cast(output_duration_type).cast(pa.int64()).as_py())
                 observed_event.append(events[index] is True)
             else:
-                observed_duration.append(cutoff_scalar.cast(duration_type).cast(pa.int64()).as_py())
+                observed_duration.append(cutoff_scalar.cast(pa.int64()).as_py())
                 observed_event.append(False)
+            if event_time_array is not None:
+                event_scalar = event_time_array[index]
+                event_time = event_scalar.as_py()
+                updated_event_time.append(
+                    event_time
+                    if event_time is not None
+                    and _timestamp_elapsed(event_scalar, origin, row=index, name="event_time")
+                    < cutoff_elapsed
+                    else None
+                )
+            if censor_time_array is not None:
+                censor_scalar = censor_time_array[index]
+                censor_time = censor_scalar.as_py()
+                updated_censor_time.append(
+                    cutoff
+                    if censor_time is None
+                    or _timestamp_elapsed(censor_scalar, origin, row=index, name="censor_time")
+                    >= cutoff_elapsed
+                    else censor_time
+                )
         sample = table.take(pa.array(kept, type=pa.int64()))
         sample = sample.set_column(
             sample.schema.get_field_index(duration),
             duration,
-            pa.array(observed_duration, type=duration_type),
+            pa.array(observed_duration, type=output_duration_type),
         )
         sample = sample.set_column(
             sample.schema.get_field_index(event),
             event,
             pa.array(observed_event, type=pa.bool_()),
         )
+        if event_time_array is not None:
+            sample = sample.set_column(
+                sample.schema.get_field_index("event_time"),
+                "event_time",
+                pa.array(updated_event_time, type=output_duration_type),
+            )
+        if censor_time_array is not None:
+            sample = sample.set_column(
+                sample.schema.get_field_index("censor_time"),
+                "censor_time",
+                pa.array(updated_censor_time, type=output_duration_type),
+            )
         provenance = replace(data.provenance, measurement_knowledge="retrospective_effective_time")
         results.append(fitter(MaterializedFrame(sample, data.roles, data.columns, provenance)))
     return tuple(results)
@@ -339,6 +383,10 @@ def to_surrogate_arrow(
 
     if not isinstance(data, MaterializedFrame):
         raise _INVALID.error(reason="materialized_frame_required")
+    structural = {
+        "time_to_event": ("entry_time",),
+        "ltv": ("age",),
+    }.get(data.provenance.shape, ())
     requested = (*features, *outcomes)
     if len(set(requested)) != len(requested):
         raise _INVALID.error(reason="duplicate_surrogate_column")
@@ -360,27 +408,42 @@ def to_surrogate_arrow(
                 )
                 if column is not None
             )
-    retained = tuple(dict.fromkeys((*identity, *requested, *data.roles.outcomes, *support)))
+    retained = tuple(
+        dict.fromkeys((*identity, *requested, *data.roles.outcomes, *structural, *support))
+    )
     missing = [name for name in retained if name not in data.table.column_names]
     if missing:
         raise _INVALID.error(reason=f"missing_surrogate_support_{missing[0]}")
     projected = data.table.select(retained)
+    serialized = data.to_metadata()
+    role_metadata = dict(serialized["roles"])
+    projected_outcomes = [
+        name for name in (*outcomes, *data.roles.outcomes, *structural) if name in retained
+    ]
+    role_metadata["features"] = [name for name in features if name in retained]
+    role_metadata["outcomes"] = list(dict.fromkeys(projected_outcomes))
+    for role in ("unit", "anchor", "t0", "treatment", "weight", "cluster_unit", "prior_state"):
+        if role in role_metadata and role_metadata[role] not in retained:
+            role_metadata[role] = None
     metadata = {
         "schema_version": 1,
         "design_hash": data.provenance.design_hash,
         "model_hash": data.provenance.model_hash,
         "source_generations": dict(data.provenance.source_generations),
-        "execution_snapshot": data.to_metadata()["provenance"]["execution_snapshot"],
-        "provenance": data.to_metadata()["provenance"],
-        "roles": data.to_metadata()["roles"],
+        "execution_snapshot": serialized["provenance"]["execution_snapshot"],
+        "provenance": serialized["provenance"],
+        "roles": role_metadata,
         "feature_columns": list(features),
-        "outcome_columns": list(outcomes),
+        "outcome_columns": list(dict.fromkeys(projected_outcomes)),
         "support_columns": list(support),
+        "columns": {
+            name: value for name, value in serialized["columns"].items() if name in retained
+        },
         "administrative_cutoff": (
             data.provenance.administrative_cutoff.isoformat()
             if data.provenance.administrative_cutoff is not None
             else None
         ),
-        "cohort_operation": data.to_metadata()["provenance"].get("cohort_operation"),
+        "cohort_operation": serialized["provenance"].get("cohort_operation"),
     }
     return ArrowSurrogate(projected, metadata)

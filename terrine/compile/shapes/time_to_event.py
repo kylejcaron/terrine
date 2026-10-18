@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import ibis
@@ -75,6 +76,9 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         "_followup_end",
         "_event_time",
         "_prior_event_time",
+        "_t0_naive",
+        "_observed_from_naive",
+        "_observed_until_naive",
     }
     for name in (*design.features, *design.eligibility):
         if name.casefold() in generated:
@@ -120,8 +124,12 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
     coverage = model.readiness.sources.get(event_source.name)
     if coverage is None:
         raise _INVALID.error(reason="event_source_coverage_required")
-    start = _utc_naive("UTC", ibis.literal(coverage.start)).cast(time_type)
-    end = _utc_naive("UTC", ibis.literal(coverage.end_exclusive)).cast(time_type)
+    ns_min = datetime(1677, 9, 21, 0, 12, 43, 145225, tzinfo=UTC)
+    ns_max = datetime(2262, 4, 11, 23, 47, 16, 854775, tzinfo=UTC)
+    start_value = min(max(coverage.start, ns_min), ns_max)
+    end_value = min(max(coverage.end_exclusive, ns_min), ns_max)
+    start = _utc_naive("UTC", ibis.literal(start_value)).cast(time_type)
+    end = _utc_naive("UTC", ibis.literal(end_value)).cast(time_type)
     candidates = base.table.select(
         **{name: base.table[name] for name in base.table.columns if name != "__terrine_eligible"}
     )

@@ -207,6 +207,33 @@ def test_cutoff_before_anchor_is_not_emitted_as_complete_followup():
         con.disconnect()
 
 
+def test_nanosecond_events_support_coverage_outside_nanosecond_range():
+    con, model = _model(outcome_start="1600-01-01", nanosecond_outcomes=True)
+    try:
+        result = (
+            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
+            .build(model)
+            .materialize()
+        )
+        assert result.table.num_rows > 0
+    finally:
+        con.disconnect()
+
+
+def test_internal_timestamp_aliases_are_reserved_feature_names():
+    con, model = _model()
+    try:
+        with pytest.raises(TerrineError, match="generated_column_collision"):
+            Design(
+                "user",
+                EventAnchor("signup", which="first"),
+                features={"_t0_naive": agg("signup", window=("-1d", "0d"))},
+                shape=TimeToEvent("churn"),
+            ).build(model)
+    finally:
+        con.disconnect()
+
+
 def test_nanosecond_events_survive_compile_and_estimation_in_any_session_timezone():
     from terrine.estimate.survival import ElapsedTime, kaplan_meier
 
