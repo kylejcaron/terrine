@@ -42,6 +42,8 @@ class PlanRecipe:
     budget: dict[str, int | bool | None] | None
     change_evidence: dict[str, Any] | None
     fingerprint: str
+    expected_base_manifest: str | None = None
+    expected_base_manifest_bound: bool = False
 
     def to_json(self) -> str:
         return json.dumps(
@@ -54,6 +56,8 @@ class PlanRecipe:
                 "tasks": self.tasks,
                 "budget": self.budget,
                 "change_evidence": self.change_evidence,
+                "expected_base_manifest": self.expected_base_manifest,
+                "expected_base_manifest_bound": self.expected_base_manifest_bound,
                 "fingerprint": self.fingerprint,
             },
             sort_keys=True,
@@ -111,6 +115,8 @@ class RefreshPlan:
             raw_tasks = data["tasks"]
             budget_record = data["budget"]
             change_evidence = data.get("change_evidence")
+            expected_base_manifest = data.get("expected_base_manifest")
+            expected_base_manifest_bound = data.get("expected_base_manifest_bound", False)
             fingerprint = data["fingerprint"]
             if schema_version != 1 or not isinstance(raw_tasks, list):
                 raise ValueError("unsupported serialized plan")
@@ -139,6 +145,8 @@ class RefreshPlan:
                 "tasks": bodies,
                 "change_evidence": change_evidence,
                 "budget": budget_record,
+                "expected_base_manifest": expected_base_manifest,
+                "expected_base_manifest_bound": expected_base_manifest_bound,
             }
             expected = hashlib.sha256(
                 json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -147,6 +155,10 @@ class RefreshPlan:
                 raise ValueError("serialized plan fingerprint does not match")
         except (ValueError, TypeError, KeyError) as exc:
             raise ValueError("serialized plan is malformed or unverifiable") from exc
+        if not isinstance(expected_base_manifest_bound, bool) or (
+            expected_base_manifest is not None and not isinstance(expected_base_manifest, str)
+        ):
+            raise ValueError("serialized base-manifest binding is invalid")
         plan_recipe = PlanRecipe(
             schema_version,
             namespace,
@@ -157,8 +169,20 @@ class RefreshPlan:
             budget_record,
             change_evidence,
             fingerprint,
+            expected_base_manifest,
+            expected_base_manifest_bound,
         )
-        return cls(namespace, dataset, definition_hash, snapshot_id, tasks, plan_recipe, budget)
+        return cls(
+            namespace,
+            dataset,
+            definition_hash,
+            snapshot_id,
+            tasks,
+            plan_recipe,
+            budget,
+            expected_base_manifest=expected_base_manifest,
+            expected_base_manifest_bound=expected_base_manifest_bound,
+        )
 
     def serialize(self) -> bytes:
         return self.recipe.to_json().encode("utf-8")
@@ -264,6 +288,8 @@ def plan_refresh(
         "tasks": bodies,
         "change_evidence": change_evidence,
         "budget": budget_record,
+        "expected_base_manifest": None,
+        "expected_base_manifest_bound": False,
     }
     fingerprint = hashlib.sha256(
         json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode()

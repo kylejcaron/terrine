@@ -102,6 +102,9 @@ def test_saved_plan_recipe_reconstructs_design_and_verifies_owner_model_in_fresh
         )
         assert resolved_plan.expected_base_manifest == "manifest-1"
         assert resolved_plan.expected_base_manifest_bound
+        restored_plan = type(resolved_plan).deserialize(resolved_plan.serialize())
+        assert restored_plan.expected_base_manifest == "manifest-1"
+        assert restored_plan.expected_base_manifest_bound
         assert resolved_model is model
         assert resolved_design.spec_hash == design.spec_hash
         con.raw_sql(

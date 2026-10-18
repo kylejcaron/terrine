@@ -271,8 +271,29 @@ def resolve_plan(
     ):
         raise _INVALID.error(reason="plan identity differs from owner-bound references")
     design = from_json(restored.design_json)
+    bound_payload = {
+        "namespace": plan.namespace,
+        "dataset": plan.dataset,
+        "definition_hash": plan.definition_hash,
+        "snapshot_id": plan.snapshot_id,
+        "tasks": plan.recipe.tasks,
+        "change_evidence": plan.recipe.change_evidence,
+        "budget": plan.recipe.budget,
+        "expected_base_manifest": restored.expected_base_manifest,
+        "expected_base_manifest_bound": True,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(bound_payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    plan_recipe = replace(
+        plan.recipe,
+        fingerprint=fingerprint,
+        expected_base_manifest=restored.expected_base_manifest,
+        expected_base_manifest_bound=True,
+    )
     plan = replace(
         plan,
+        recipe=plan_recipe,
         expected_base_manifest=restored.expected_base_manifest,
         expected_base_manifest_bound=True,
     )

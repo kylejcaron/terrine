@@ -76,7 +76,6 @@ def execute_plan(
     )
     runtime_store = RuntimeStore(con, namespace=namespace)
     runtime_store.initialize()
-    _check_expected_base_manifest(plan, con=con, namespace=namespace)
     leases = LeaseStore(con, namespace=namespace)
     schema = leases._schema
     con.execute(
@@ -195,6 +194,11 @@ def execute_plan(
         if current is None:
             raise RuntimeError("run disappeared while recovering cancellation")
         return RunReceipt(run_id, current[0], current[1])
+    try:
+        _check_expected_base_manifest(plan, con=con, namespace=namespace)
+    except Exception:
+        leases.release(lease)
+        raise
     try:
         with event_transaction(con, namespace=namespace):
             transition = con.execute(
