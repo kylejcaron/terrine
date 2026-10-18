@@ -12,10 +12,12 @@ from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
 from terrine.spec.trajectory import CohortGrouping
 from terrine.temporal._timestamps import timestamp_order_key
-from terrine.temporal.aggregate import _Check, _Failure
+from terrine.temporal.aggregate import _EXACT_OVERFLOW, _Check, _Failure, _scaled_text
 from terrine.temporal.prefix import (
     FLOAT64_PRECISION,
     _isfinite,
+    exact_literal,
+    exact_sum,
     float64_rounding_radius,
     float64_tolerance,
     outward_add,
@@ -84,6 +86,7 @@ def compile_cohorts(
     )
     numeric_type = per_unit._value.type()
     reduction_table = per_unit
+    decimal_mean_failure = None
     if grouping.statistic == "total":
         observed_value = per_unit._value.sum()
     elif numeric_type.is_integer():
@@ -92,10 +95,38 @@ def compile_cohorts(
             / per_unit._value.notnull().cast("int64").sum()
         )
     elif numeric_type.is_decimal():
-        observed_value = (
-            per_unit._value.cast(f"decimal(38, {numeric_type.scale})").sum()
-            / per_unit._value.notnull().cast("int64").sum()
+        scale = numeric_type.scale
+        assert scale is not None
+        keys = ["bucket_index", "age"]
+        exact_type = exact_literal(0).type()
+        exact_count = per_unit._value.notnull().cast("int64").sum()
+        counts = per_unit.group_by(*keys).aggregate(_mean_count=exact_count)
+        mean_inputs = per_unit.left_join(counts, keys)
+        decimal_text = mean_inputs._value.cast("string")
+        separator = decimal_text.find(".")
+        fractional_digits = ibis.ifelse(separator < 0, 0, decimal_text.length() - separator - 1)
+        coefficient_text = decimal_text.replace(".", "")
+        exact_coefficient = coefficient_text.rpad(
+            coefficient_text.length() + scale - fractional_digits, "0"
+        ).cast(exact_type)
+        mean_state = mean_inputs.group_by(*keys).aggregate(
+            _mean_total=exact_sum(exact_coefficient),
+            _mean_count=mean_inputs._mean_count.first(),
         )
+        exact_total = _scaled_text(mean_state._mean_total, scale).try_cast("float64")
+        decimal_value = exact_total / mean_state._mean_count.cast("float64")
+        mean_state = mean_state.mutate(
+            _mean_value=ibis.ifelse(
+                mean_state._mean_count == 0,
+                ibis.null().cast("float64"),
+                decimal_value,
+            ),
+            _mean_unrepresentable=(mean_state._mean_count > 0)
+            & (decimal_value.isnull() | ~_isfinite(decimal_value)),
+        )
+        reduction_table = per_unit.left_join(mean_state, keys)
+        observed_value = reduction_table._mean_value.first()
+        decimal_mean_failure = reduction_table._mean_unrepresentable.first()
     else:
         scales = per_unit.group_by("bucket_index", "age").aggregate(
             _scale=per_unit._value.abs().max()
@@ -107,6 +138,8 @@ def compile_cohorts(
         )
         normalized = reduction_table._value / reduction_table._scale
         observed_value = normalized.mean() * reduction_table._scale.first()
+    if decimal_mean_failure is None:
+        decimal_mean_failure = ibis.literal(False)
     if checked_float and grouping.statistic == "total":
         error_count = per_unit._value.notnull().cast("float64").sum()
         inherited_error = per_unit._absolute_error.sum()
@@ -138,6 +171,7 @@ def compile_cohorts(
         _absolute_error=absolute_error,
         _mature=reduction_table._mature.max(),
         _reason=reduction_table._reason.first(),
+        _mean_unrepresentable=decimal_mean_failure,
     )
     joined = groups.left_join(risk, "bucket_index")
     mature = joined._mature.fill_null(False)
@@ -188,6 +222,21 @@ def compile_cohorts(
         )
     }
     checks = list(study._checks)
+    if numeric_type.is_decimal() and grouping.statistic == "mean":
+        failure_column = "failed_cohort_exact_mean"
+        failed = joined.filter(complete & joined._mean_unrepresentable)
+        checks.append(
+            _Check(
+                failed.aggregate(ibis._.count().cast("string").name(failure_column)),
+                (
+                    _Failure(
+                        failure_column,
+                        _EXACT_OVERFLOW,
+                        {"source": "cohort", "measure": value_column, "output": "value"},
+                    ),
+                ),
+            )
+        )
     if checked_float:
         failed = result.value.notnull() & (
             result.value_absolute_error.isnull()

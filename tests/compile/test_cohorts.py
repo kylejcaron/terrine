@@ -312,6 +312,42 @@ def test_cohort_mean_preserves_fractional_decimal_and_float_values():
         con.disconnect()
 
 
+def test_high_scale_decimal_cohort_mean_does_not_overflow_intermediate_sum():
+    con, model = _trajectory_model(decimal_type="DECIMAL(38, 30)")
+    try:
+        con.raw_sql(
+            "UPDATE events SET decimal_amount = 90000000.000000000000000000000000000000 "
+            "WHERE kind = 'revenue'"
+        )
+        con.raw_sql(
+            "INSERT INTO events (user_id, ts, kind, amount, decimal_amount, float_amount) "
+            "VALUES ('u2', TIMESTAMPTZ '2025-01-03 00:00:00+00', 'revenue', 0, "
+            "90000000.000000000000000000000000000000, 0)"
+        )
+        frame = Design(
+            "user",
+            EventAnchor("purchase", which="first"),
+            shape=CohortSpec(
+                origin="purchase",
+                trajectory=Trajectory("decimal_revenue", "7d", periods=1, cumulative=False),
+            ),
+        ).build(model)
+        rows = (
+            frame.cohorts(
+                grouping=CohortGrouping(
+                    bucket="7d", bucket_origin=datetime(2025, 1, 1, tzinfo=UTC), statistic="mean"
+                ),
+                value_column="period_value",
+            )
+            .to_pyarrow()
+            .to_pylist()
+        )
+        group = next(row for row in rows if row["bucket_index"] == 0 and row["age"] == 0)
+        assert group["value"] == 90000000
+    finally:
+        con.disconnect()
+
+
 def test_cohort_float_total_enforces_final_tolerance():
     import pytest
 

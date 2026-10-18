@@ -11,7 +11,7 @@ from terrine.spec import CohortSpec, Design, EventAnchor, agg
 from terrine.spec.trajectory import Trajectory
 
 
-def _trajectory_model():
+def _trajectory_model(*, decimal_type="DECIMAL(18, 2)"):
     con = ibis.duckdb.connect()
     con.raw_sql("""
         CREATE TABLE events AS SELECT * FROM (VALUES
@@ -22,7 +22,7 @@ def _trajectory_model():
             ('u3', TIMESTAMPTZ '2025-01-15 00:00:00+00', 'purchase', 0::BIGINT)
         ) AS e(user_id, ts, kind, amount)
     """)
-    con.raw_sql("ALTER TABLE events ADD COLUMN decimal_amount DECIMAL(18, 2)")
+    con.raw_sql(f"ALTER TABLE events ADD COLUMN decimal_amount {decimal_type}")
     con.raw_sql("UPDATE events SET decimal_amount = amount::DECIMAL(18, 2) / 100")
     con.raw_sql("ALTER TABLE events ADD COLUMN float_amount DOUBLE")
     con.raw_sql("CREATE TABLE users AS SELECT * FROM (VALUES ('u1'), ('u2'), ('u3')) AS u(id)")
