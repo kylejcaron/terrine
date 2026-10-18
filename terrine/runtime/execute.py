@@ -414,27 +414,13 @@ def execute_plan(
                 }
                 has_results = any(task.task_id not in dependencies for task in plan.tasks)
                 if not has_results:
-                    current_version = con.execute(
-                        f"SELECT version FROM {schema}.runtime_run_publications WHERE run_id=?",
-                        [run_id],
-                    ).fetchone()[0]
-                    previous = con.execute(
-                        "SELECT DISTINCT result.partition FROM "
-                        f"{schema}.runtime_run_results result "
-                        f"JOIN {schema}.runtime_run_publications prior "
-                        "ON prior.run_id=result.run_id "
-                        "WHERE prior.dataset=? AND prior.version=("
-                        f"SELECT max(version) FROM {schema}.runtime_publications "
-                        "WHERE dataset=? AND version<?) AND result.run_id<>? "
-                        "ORDER BY result.partition",
-                        [plan.dataset, plan.dataset, current_version, run_id],
-                    ).fetchall()
-                    for (partition,) in previous:
-                        con.execute(
-                            f"INSERT INTO {schema}.runtime_run_results VALUES (?, ?) "
-                            "ON CONFLICT DO NOTHING",
-                            [run_id, partition],
-                        )
+                    _copy_result_partitions(
+                        con,
+                        schema=schema,
+                        run_id=run_id,
+                        dataset=plan.dataset,
+                        generation=generation,
+                    )
                 reconciled = con.execute(
                     f"UPDATE {schema}.runtime_runs SET state='succeeded', "
                     "published_generation=? WHERE run_id=? "
@@ -503,6 +489,42 @@ def _check_expected_base_manifest(plan: RefreshPlan, *, con: Any, namespace: str
     actual = current[0] if current is not None else None
     if actual != plan.expected_base_manifest:
         raise ValueError("expected base manifest does not match current publication")
+
+
+def _copy_result_partitions(
+    con: Any, *, schema: str, run_id: str, dataset: str, generation: str
+) -> None:
+    previous = con.execute(
+        f"SELECT DISTINCT result.partition FROM {schema}.runtime_run_results result "
+        f"JOIN {schema}.runtime_run_publications prior ON prior.run_id=result.run_id "
+        "WHERE prior.dataset=? AND prior.generation=? AND prior.run_id<>? "
+        "ORDER BY result.partition",
+        [dataset, generation, run_id],
+    ).fetchall()
+    if not previous:
+        version = con.execute(
+            f"SELECT version FROM {schema}.runtime_run_publications WHERE run_id=?",
+            [run_id],
+        ).fetchone()
+        if version is not None:
+            prior_generation = con.execute(
+                f"SELECT generation FROM {schema}.runtime_publications "
+                "WHERE dataset=? AND version<? ORDER BY version DESC LIMIT 1",
+                [dataset, version[0]],
+            ).fetchone()
+            if prior_generation is not None:
+                previous = con.execute(
+                    f"SELECT DISTINCT result.partition FROM {schema}.runtime_run_results result "
+                    f"JOIN {schema}.runtime_run_publications prior ON prior.run_id=result.run_id "
+                    "WHERE prior.dataset=? AND prior.generation=? AND prior.run_id<>? "
+                    "ORDER BY result.partition",
+                    [dataset, prior_generation[0], run_id],
+                ).fetchall()
+    for (partition,) in previous:
+        con.execute(
+            f"INSERT INTO {schema}.runtime_run_results VALUES (?, ?) ON CONFLICT DO NOTHING",
+            [run_id, partition],
+        )
 
 
 def _encode(table: pa.Table) -> bytes:
@@ -625,29 +647,13 @@ def _finish_run(
                 else None
             )
             if publication is not None:
-                previous = con.execute(
-                    f"SELECT DISTINCT result.partition FROM {schema}.runtime_run_results result "
-                    f"JOIN {schema}.runtime_run_publications prior ON prior.run_id=result.run_id "
-                    "WHERE prior.dataset=? AND prior.version=("
-                    f"SELECT max(version) FROM {schema}.runtime_publications "
-                    "WHERE dataset=? AND version<?) AND result.run_id<>? "
-                    "ORDER BY result.partition",
-                    [
-                        publication[0],
-                        publication[0],
-                        con.execute(
-                            f"SELECT version FROM {schema}.runtime_run_publications WHERE run_id=?",
-                            [run_id],
-                        ).fetchone()[0],
-                        run_id,
-                    ],
-                ).fetchall()
-                for (partition,) in previous:
-                    con.execute(
-                        f"INSERT INTO {schema}.runtime_run_results VALUES (?, ?) "
-                        "ON CONFLICT DO NOTHING",
-                        [run_id, partition],
-                    )
+                _copy_result_partitions(
+                    con,
+                    schema=schema,
+                    run_id=run_id,
+                    dataset=publication[0],
+                    generation=publication[1],
+                )
         terminal = con.execute(
             f"UPDATE {schema}.runtime_runs SET state='succeeded', published_generation=? "
             "WHERE run_id=? AND state='running' AND attempt_fence=? RETURNING run_id",

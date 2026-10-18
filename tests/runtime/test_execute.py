@@ -130,7 +130,6 @@ def test_post_commit_publish_error_reconciles_run_and_retains_snapshot():
                 plan.dataset,
                 "generation-1",
                 {"all": next(iter(outputs.values()))},
-                snapshot_id=plan.snapshot_id,
                 run_id="ambiguous-run",
             ),
             expected_manifest=None,
@@ -223,6 +222,29 @@ def test_post_commit_empty_refresh_restores_previous_result_partitions():
     assert result.state == "succeeded"
     assert ("all",) in con.execute(
         "SELECT partition FROM owner.runtime_run_results WHERE run_id='empty-run'"
+    ).fetchall()
+
+    same_generation = execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="same-generation-run",
+        run_task=lambda task, dependencies: pa.table({"id": []}),
+        publish=lambda current_plan, outputs, lease: backend.publish_generation(
+            StagedGeneration(
+                "orders",
+                "generation-empty",
+                {"all": pa.table({"id": [7]})},
+                snapshot_id="s",
+                run_id="same-generation-run",
+            ),
+            expected_manifest="generation-empty",
+            lease=lease,
+        ),
+    )
+    assert same_generation.state == "succeeded"
+    assert ("all",) in con.execute(
+        "SELECT partition FROM owner.runtime_run_results WHERE run_id='same-generation-run'"
     ).fetchall()
 
 
