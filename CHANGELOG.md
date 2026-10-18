@@ -3,6 +3,7 @@
 ## 0.1.0
 
 - Define versioned canonical dataset recipes and manifests, including owner-scoped immutable content-addressed recipe references verified on reopening.
+- Add lazy Frame.training_set feature/label projections, metadata-derived completeness handling, exact incomplete-label reason counts, and train-only preprocessing acceptance coverage.
 - Establish the standalone Python package and development quality gates.
 - Expose the implemented elapsed-time `Window` and coded `TerrineError` contracts.
 - Include inline type metadata so installed-package consumers receive type checking.

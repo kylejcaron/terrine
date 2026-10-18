@@ -5,10 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC
 from importlib import import_module
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 import pyarrow as pa
 
@@ -17,6 +17,7 @@ from terrine.data import (
     Budget,
     CalendarComparisonMeta,
     CohortOperationMeta,
+    DatasetViewMeta,
     MaterializedFrame,
     PanelMeta,
     Provenance,
@@ -50,6 +51,82 @@ def _optional_dependency(name: str):
         return import_module(name)
     except ImportError as exc:
         raise _MISSING_DEPENDENCY.error(extra=name) from exc
+
+
+class _SplitPolicy(Protocol):
+    def to_record(self) -> dict: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _TrainingView:
+    features: tuple[str, ...]
+    labels: tuple[str, ...]
+    incomplete_labels: Literal["drop", "keep"]
+    split: object | None
+
+
+def _view_digest(
+    features: tuple[str, ...],
+    labels: tuple[str, ...],
+    policy: Literal["drop", "keep"],
+    split: object | None,
+) -> str:
+    payload = {
+        "kind": "training",
+        "features": features,
+        "labels": labels,
+        "incomplete_labels": policy,
+        "split": None if split is None else cast(_SplitPolicy, split).to_record(),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _apply_training_view(compiled: CompiledStudy, view: _TrainingView) -> CompiledStudy:
+    table = compiled.table
+    roles = compiled.roles
+    label_metadata = [compiled.columns[name] for name in view.labels]
+    if view.incomplete_labels == "drop":
+        for metadata in label_metadata:
+            assert metadata.complete_column is not None
+            table = table.filter(table[metadata.complete_column].fill_null(False))
+    names = list(dict.fromkeys((roles.unit, roles.anchor, roles.t0, *view.features, *view.labels)))
+    for name in (*view.features, *view.labels):
+        metadata = compiled.columns[name]
+        for support in (
+            metadata.observed_from_column,
+            metadata.observed_until_column,
+            metadata.complete_column,
+            metadata.reason_column,
+            metadata.absolute_error_column,
+        ):
+            if support is not None and support not in names:
+                names.append(support)
+    table = table.select(*names)
+    selected_columns = {name: compiled.columns[name] for name in names if name in compiled.columns}
+    return replace(
+        compiled,
+        table=table,
+        roles=replace(roles, features=view.features, outcomes=view.labels),
+        columns=selected_columns,
+    )
+
+
+def _excluded_label_counts(compiled: CompiledStudy, view: _TrainingView, execute) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for name in view.labels:
+        metadata = compiled.columns[name]
+        assert metadata.complete_column is not None and metadata.reason_column is not None
+        incomplete = compiled.table.filter(
+            ~compiled.table[metadata.complete_column].fill_null(False)
+        )
+        grouped = incomplete.group_by(metadata.reason_column).aggregate(rows=incomplete.count())
+        for row in execute(grouped).to_pylist():
+            reason = row[metadata.reason_column]
+            key = "unknown" if reason is None else reason
+            counts[key] = counts.get(key, 0) + row["rows"]
+    return dict(sorted(counts.items()))
 
 
 def _state_panel_metadata(design: Design, model: Model) -> StatePanelMeta | None:
@@ -167,6 +244,7 @@ class Frame:
     _design: Design
     _model: Model
     _compiled: CompiledStudy
+    _training_view: _TrainingView | None
 
     def __init__(self, design: Design, model: Model) -> None:
         from terrine.compile.dispatch import compile_design
@@ -174,19 +252,79 @@ class Frame:
         object.__setattr__(self, "_design", design)
         object.__setattr__(self, "_model", model)
         object.__setattr__(self, "_compiled", compile_design(design, model))
+        object.__setattr__(self, "_training_view", None)
+
+    def _active_compiled(self) -> CompiledStudy:
+        if self._training_view is None:
+            return self._compiled
+        return _apply_training_view(self._compiled, self._training_view)
 
     @property
     def expr(self):
         """Return the Ibis graph; direct execution bypasses all export safeguards."""
-        return self._compiled.table
+        return self._active_compiled().table
 
     @property
     def roles(self):
-        return self._compiled.roles
+        return self._active_compiled().roles
 
     @property
     def columns(self):
-        return self._compiled.columns
+        return self._active_compiled().columns
+
+    def training_set(
+        self,
+        *,
+        label: str | tuple[str, ...],
+        features: tuple[str, ...] | None = None,
+        incomplete_labels: Literal["drop", "keep"] = "drop",
+        split: object | None = None,
+    ) -> Frame:
+        """Return a lazy feature/label projection with explicit label completeness."""
+        if split is not None and not callable(getattr(split, "to_record", None)):
+            raise TypeError("split must be a supported serializable split policy")
+
+        labels = (label,) if isinstance(label, str) else tuple(label)
+        if not labels or any(not isinstance(name, str) or not name for name in labels):
+            raise ValueError("label must select one or more non-empty outcome names")
+        if len(set(labels)) != len(labels):
+            raise ValueError("label names must be unique")
+        unknown = set(labels) - set(self.roles.outcomes)
+        if unknown:
+            raise RefusalSpec(
+                "terrine.dataset.invalid_selection",
+                "Unknown training label selection: {names}",
+            ).error(names=tuple(sorted(unknown)))
+        selected_features = self.roles.features if features is None else tuple(features)
+        if any(not isinstance(name, str) or not name for name in selected_features):
+            raise ValueError("features must contain non-empty column names")
+        if len(set(selected_features)) != len(selected_features):
+            raise ValueError("feature names must be unique")
+        available_features = set(self.roles.features)
+        if self.roles.prior_state is not None:
+            available_features.add(self.roles.prior_state)
+        unknown = set(selected_features) - available_features
+        if unknown:
+            raise RefusalSpec(
+                "terrine.dataset.invalid_selection",
+                "Unknown training feature selection: {names}",
+            ).error(names=tuple(sorted(unknown)))
+        if incomplete_labels not in ("drop", "keep"):
+            raise ValueError("incomplete_labels must be 'drop' or 'keep'")
+        for name in labels:
+            metadata = self.columns[name]
+            if metadata.complete_column is None or metadata.reason_column is None:
+                raise RefusalSpec(
+                    "terrine.dataset.invalid_label_support",
+                    "Selected label lacks completeness and reason metadata: {label}",
+                ).error(label=name)
+        result = Frame(self._design, self._model)
+        object.__setattr__(
+            result,
+            "_training_view",
+            _TrainingView(selected_features, labels, incomplete_labels, split),
+        )
+        return result
 
     def materialize(self, budget: Budget | None = None) -> MaterializedFrame:
         return self._materialize(budget)
@@ -222,6 +360,14 @@ class Frame:
                 unit_name=self._design.unit,
             )
             compiled = compile_design(self._design, execution_model)
+            excluded_counts = {}
+            if self._training_view is not None:
+                compiled.validate(execute=context.execute)
+                if self._training_view.incomplete_labels == "drop":
+                    excluded_counts = _excluded_label_counts(
+                        compiled, self._training_view, context.execute
+                    )
+                compiled = _apply_training_view(compiled, self._training_view)
             if transform is not None:
                 compiled = transform(compiled)
             summary = validate_compiled_output(compiled, context.execute)
@@ -329,6 +475,26 @@ class Frame:
                 administrative_cutoff=self._design.administrative_cutoff,
                 cohort_operation=cohort_operation,
             )
+            if self._training_view is not None:
+                view = self._training_view
+                split_policy = (
+                    None if view.split is None else cast(_SplitPolicy, view.split).to_record()
+                )
+                provenance = replace(
+                    provenance,
+                    dataset_view=DatasetViewMeta(
+                        kind="training",
+                        selected_features=view.features,
+                        selected_labels=view.labels,
+                        view_hash=_view_digest(
+                            view.features, view.labels, view.incomplete_labels, view.split
+                        ),
+                        feature_definition_hash=self._design.spec_hash,
+                        incomplete_labels=view.incomplete_labels,
+                        split_policy=split_policy,
+                        counts_by_reason=excluded_counts,
+                    ),
+                )
             return MaterializedFrame(table, compiled.roles, compiled.columns, provenance)
 
     def to_pyarrow(self, *, budget: Budget | None = None) -> pa.Table:
