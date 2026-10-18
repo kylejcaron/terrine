@@ -93,6 +93,28 @@ def model(
     )()
 
 
+def test_calendar_comparison_requires_coverage_through_comparison_horizon():
+    from terrine.spec.panels import CalendarComparisonSpec, Initiation
+    from terrine.spec.validate import validate_design
+
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-01", "2025-01-04"),
+        shape=CalendarComparisonSpec(
+            Initiation(
+                "events", "session", datetime(2025, 1, 1, tzinfo=UTC), "recorded_at"
+            ),
+            "never_treated",
+            -1,
+            (0, 2),
+        ),
+    )
+    with pytest.raises(TerrineError) as error:
+        validate_design(design, model())
+    assert error.value.code == "terrine.design.incomplete_treatment_history"
+    assert error.value.context["boundary"] == "2025-01-05T00:00:00+00:00"
+
+
 def test_window_extending_beyond_declared_coverage_is_runtime_incomplete_not_refused():
     design = Design(
         "user", EventAnchor("session"), features={"x": agg("sessions", window=("-7d", "0d"))}
