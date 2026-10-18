@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -47,6 +48,9 @@ class _MaterializationOperator(BaseOperator):
             destination=invocation.destination,
         )
         status = client.get_run(receipt.run_id)
+        while status.run_id == receipt.run_id and status.durable_state == "running":
+            time.sleep(1)
+            status = client.get_run(receipt.run_id)
         if status.durable_state == "cancelled":
             raise AirflowFailException(
                 f"Terrine runtime run {receipt.run_id} was cancelled and is terminal"

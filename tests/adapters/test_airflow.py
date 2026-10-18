@@ -1,6 +1,6 @@
 import subprocess
 import sys
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -42,6 +42,53 @@ def test_airflow_group_uses_one_owner_task_and_bounds_whole_run(tmp_path):
     assert task.retries == 2
     assert task.pool == "terrine-owner"
     assert task.task_id == "terrine.materialize"
+
+
+def test_airflow_reconnect_waits_for_existing_run_before_releasing_pool_slot(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    import terrine.orchestration.airflow as airflow_adapter
+
+    states = iter(("running", "succeeded"))
+    sleeps = []
+
+    class Client:
+        def __init__(self, endpoint, *, namespace):
+            pass
+
+        def plan(self, request):
+            return SimpleNamespace(
+                invocation_id=request.invocation_id,
+                serialized_plan="{}",
+                request_key="same-key",
+                destination=request.destination,
+                snapshot_id="snapshot",
+                to_dict=lambda: {},
+            )
+
+        def run(self, serialized, *, request_key, destination):
+            return SimpleNamespace(run_id="active-run", published_generation=1, state="running")
+
+        def get_run(self, run_id):
+            return SimpleNamespace(run_id=run_id, durable_state=next(states))
+
+    monkeypatch.setattr(airflow_adapter, "ControlClient", Client)
+    monkeypatch.setattr(
+        airflow_adapter, "time", SimpleNamespace(sleep=sleeps.append), raising=False
+    )
+    with DAG(dag_id="active-retry", schedule=None, start_date=None):
+        group = build_materialization_group(
+            plan_request_provider=lambda context: _plan_request(),
+            endpoint=ControlEndpoint(tmp_path / "owner.sock"),
+            namespace="owner",
+            pool="terrine-owner",
+        )
+    task = cast(BaseOperator, next(iter(group.children.values())))
+    result = task.execute(cast(Any, {"ti": SimpleNamespace(xcom_push=lambda **kwargs: None)}))
+
+    assert result["run_id"] == "active-run"
+    assert sleeps == [1]
+    assert task.pool == "terrine-owner"
 
 
 def test_base_import_does_not_load_airflow():
