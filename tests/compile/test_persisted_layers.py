@@ -190,9 +190,8 @@ def test_layer_definition_identity_binds_catalog_and_design(column_model):
         column_model.con.to_pyarrow(actual.audit_table.order_by("unit"))
     )
 
-
-def test_state_panel_uses_shape_dispatch_for_runtime_full_rebuild(column_model):
     from terrine.compile.dispatch import compile_design
+    from terrine.runtime.materialize import compose_runtime_frame
     from terrine.spec import BinnedMetricState, Schedule, StatePanel
 
     design = Design(
@@ -204,19 +203,118 @@ def test_state_panel_uses_shape_dispatch_for_runtime_full_rebuild(column_model):
         ),
     )
     ordinary = compile_design(design, column_model)
-    materialized = compose_materialized_frame(design, column_model, persisted={})
+    budget = Budget(max_rows=100, max_output_bytes=100_000)
+    materialized = compose_runtime_frame(design, column_model, persisted={}, budget=budget)
     assert column_model.con.to_pyarrow(ordinary.audit_table.order_by("unit")).equals(
         column_model.con.to_pyarrow(materialized.audit_table.order_by("unit"))
     )
 
 
-def test_unsupported_runtime_shape_refusal_names_shape_and_route(column_model):
-    design = Design("user", FixedDate("2025-01-03T00:00:00+00:00"), shape="custom_shape")
+@pytest.mark.parametrize(
+    "shape_name",
+    [
+        "custom_shape",
+        "EventSequence",
+        "SequentialSpec",
+        "EventPanelSpec",
+        "CalendarComparisonSpec",
+        "CohortSpec",
+        "TimeToEvent",
+    ],
+)
+def test_unsupported_runtime_shape_refusal_names_shape_and_route(column_model, shape_name):
+    from datetime import UTC, datetime
+
+    from terrine.spec import (
+        CalendarComparisonSpec,
+        CohortSpec,
+        EventAnchor,
+        EventPanelSpec,
+        EventSequence,
+        Initiation,
+        SequentialSpec,
+        TimeToEvent,
+        Trajectory,
+    )
+    from terrine.windows import Window
+
+    initiation = Initiation("events", "tier", datetime(2025, 1, 1, tzinfo=UTC))
+    shapes = {
+        "EventSequence": EventSequence("amount", Window("-1d", "0d"), max_events=3),
+        "SequentialSpec": SequentialSpec(initiation),
+        "EventPanelSpec": EventPanelSpec((-1, 0), 86_400, -1),
+        "CalendarComparisonSpec": CalendarComparisonSpec(initiation, "never_treated", -2, (0,)),
+        "CohortSpec": CohortSpec("amount", Trajectory("total", "1d", 2)),
+        "TimeToEvent": TimeToEvent("amount"),
+    }
+    shape = shapes.get(shape_name, shape_name)
+    anchor = (
+        EventAnchor("amount")
+        if shape_name == "CohortSpec"
+        else FixedDate("2025-01-03T00:00:00+00:00")
+    )
+    design = Design("user", anchor, shape=shape)
     with pytest.raises(TerrineError) as error:
         compose_materialized_frame(design, column_model, persisted={})
     assert error.value.code == "terrine.compile.runtime_shape_unsupported"
-    assert error.value.context["shape"] == "custom_shape"
+    assert error.value.context["shape"] == shape_name
     assert error.value.context["route"] == "ordinary Frame materialization or a full rebuild"
+
+
+def test_runtime_and_frame_share_shape_budget_refusal():
+    from typing import cast
+
+    from terrine.frame import Frame
+    from terrine.runtime.materialize import compose_runtime_frame
+    from terrine.spec import BinnedMetricState, Schedule, StatePanel
+
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-02", "2025-01-03"),
+        shape=StatePanel(
+            BinnedMetricState("total", cutpoints=(0,), levels=("none", "some")),
+            max_periods=2,
+        ),
+    )
+    frame = object.__new__(Frame)
+    object.__setattr__(frame, "_design", design)
+    object.__setattr__(frame, "_model", None)
+    refusals = []
+    for operation in (
+        lambda: frame.materialize(),
+        lambda: compose_runtime_frame(design, cast(Model, None), persisted={}),
+    ):
+        with pytest.raises(TerrineError) as error:
+            operation()
+        refusals.append(error.value.code)
+    assert refusals == ["terrine.state_panel.budget_required"] * 2
+
+
+def test_runtime_and_frame_share_unknown_eligibility_refusal(column_model):
+    from terrine.runtime.materialize import compose_runtime_frame
+    from terrine.spec import all_of, asof, eq, gt
+
+    design = Design(
+        "user",
+        FixedDate("2025-01-03T00:00:00+00:00"),
+        eligibility={
+            "eligible": all_of(
+                eq(asof("tier", before="0s"), "not-present"),
+                gt(asof("tier", before="-2d"), "a"),
+            )
+        },
+    )
+    frame = design.build(column_model)
+    refusals = []
+    for operation in (
+        lambda: frame.materialize(),
+        lambda: compose_runtime_frame(design, column_model, persisted={}),
+    ):
+        with pytest.raises(TerrineError) as error:
+            operation()
+        refusals.append((error.value.code, error.value.context))
+    assert refusals[0] == refusals[1]
+    assert refusals[0][0] == "terrine.study.eligibility_unknown"
 
 
 def test_same_fact_measures_keep_filter_and_aggregation_identity(column_model):

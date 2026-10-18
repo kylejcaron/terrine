@@ -40,19 +40,15 @@ def compose_materialized_frame(
     Persisted relations are compiler logical inputs, never final frame partitions.
     The caller verifies physical generation provenance before crossing this boundary.
     """
-    if budget is not None and not isinstance(budget, Budget):
-        raise TypeError("budget must be Budget or None")
-    if budget is not None and budget.max_scan_bytes is not None and budget.strict_scan:
-        raise _STRICT_SCAN_UNKNOWN.error()
-    from terrine.compile.dispatch import compile_design
-
-    if isinstance(design.shape, StatePanel):
-        return compile_design(design, model)
-    if design.shape != "cross_section":
+    if design.shape != "cross_section" and not isinstance(design.shape, StatePanel):
         shape = design.shape if isinstance(design.shape, str) else type(design.shape).__name__
         raise _RUNTIME_SHAPE_UNSUPPORTED.error(
             shape=shape, route="ordinary Frame materialization or a full rebuild"
         )
+    if budget is not None and budget.max_scan_bytes is not None and budget.strict_scan:
+        raise _STRICT_SCAN_UNKNOWN.error()
+    from terrine.compile.dispatch import compile_design
+
     definition_hash = plan_layers(design, model).keys[0].definition_hash
     snapshot_ids = {key.snapshot_id for key in persisted}
     if len(snapshot_ids) > 1 or (snapshot_ids and not next(iter(snapshot_ids))):

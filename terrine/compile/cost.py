@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-import pyarrow as pa
-
-from terrine.data import Budget, CoverageSummary, EligibilitySummary, Preview
-from terrine.errors import RefusalSpec, TerrineError
+from terrine.data import Budget, CoverageSummary, Preview
+from terrine.errors import RefusalSpec
+from terrine.execution.gates import _eligibility_summary
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -46,36 +44,6 @@ def _scan_policy(budget: Budget | None, scan_bytes: int | None = None) -> tuple[
     if scan_bytes > budget.max_scan_bytes:
         raise _SCAN_EXCEEDED.error(limit=budget.max_scan_bytes)
     return ()
-
-
-def _eligibility_summary(
-    table: Any,
-    execute: Callable[[Any], pa.Table],
-    *,
-    cap: int | None = None,
-) -> EligibilitySummary:
-    if cap is not None:
-        table = table.limit(min(cap + 1, 2**63 - 1))
-    eligible = table["__terrine_eligible"]
-    query = table.aggregate(
-        candidate=table.count(),
-        excluded_false=(~eligible).sum().fill_null(0),
-        unknown=eligible.isnull().sum().fill_null(0),
-        retained=eligible.sum().fill_null(0),
-    )
-    result = execute(query)
-    names = ("candidate", "excluded_false", "unknown", "retained")
-    if (
-        not isinstance(result, pa.Table)
-        or result.num_rows != 1
-        or set(result.column_names) != set(names)
-    ):
-        raise TerrineError(
-            "Eligibility audit did not return one aggregate count record",
-            code="terrine.metadata.invalid_eligibility_summary",
-            context={},
-        )
-    return EligibilitySummary(**{name: result[name][0].as_py() for name in names})
 
 
 def preview(

@@ -12,12 +12,7 @@ from typing import TYPE_CHECKING
 
 import pyarrow as pa
 
-from terrine.compile.cost import (
-    _OUTPUT_BYTES_EXCEEDED,
-    _ROWS_EXCEEDED,
-    _eligibility_summary,
-    _scan_policy,
-)
+from terrine.compile.cost import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED, _scan_policy
 from terrine.data import (
     Budget,
     CalendarComparisonMeta,
@@ -31,20 +26,11 @@ from terrine.data import (
     TrialWeightMeta,
 )
 from terrine.errors import RefusalSpec
+from terrine.execution.gates import enforce_shape_budget, validate_compiled_output
 from terrine.spec.anchors import FixedDate
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import BinnedMetricState, StatePanel, encode_cutpoint
 from terrine.spec.trajectory import CohortGrouping, CohortSpec, TimeToEvent
-
-_STATE_PANEL_BUDGET = RefusalSpec(
-    "terrine.state_panel.budget_required",
-    "State-panel materialization requires positive max_rows and max_output_bytes budgets.",
-)
-_SEQUENCE_BUDGET = RefusalSpec(
-    "terrine.sequence.budget_required",
-    "Event-sequence materialization requires positive max_rows and max_output_bytes budgets.",
-)
-
 
 if TYPE_CHECKING:
     from terrine.compile.columns import CompiledStudy
@@ -53,11 +39,6 @@ if TYPE_CHECKING:
 
 __all__ = ["Frame", "CohortTable"]
 
-_ELIGIBILITY_UNKNOWN = RefusalSpec(
-    "terrine.study.eligibility_unknown",
-    "Eligibility is unresolved for {unknown} of {candidate} candidates; "
-    "complete the required history before exporting rows.",
-)
 _MISSING_DEPENDENCY = RefusalSpec(
     "terrine.convert.missing_dependency",
     "Conversion requires the optional {extra!r} dependency; install terrine[{extra}].",
@@ -223,22 +204,7 @@ class Frame:
         No partial output is returned on limits, invalid history or stream errors.
         Concurrent writes after the execution view is established are excluded.
         """
-        if isinstance(self._design.shape, StatePanel) and (
-            budget is None
-            or budget.max_rows is None
-            or budget.max_output_bytes is None
-            or budget.max_rows <= 0
-            or budget.max_output_bytes <= 0
-        ):
-            raise _STATE_PANEL_BUDGET.error()
-        if isinstance(self._design.shape, EventSequence) and (
-            budget is None
-            or budget.max_rows is None
-            or budget.max_output_bytes is None
-            or budget.max_rows <= 0
-            or budget.max_output_bytes <= 0
-        ):
-            raise _SEQUENCE_BUDGET.error()
+        enforce_shape_budget(self._design.shape, budget)
         for warning in _scan_policy(budget):
             warnings.warn(warning, RuntimeWarning, stacklevel=2)
         from terrine.compile.dispatch import compile_design
@@ -251,15 +217,7 @@ class Frame:
             compiled = compile_design(self._design, model._for_execution(context))
             if transform is not None:
                 compiled = transform(compiled)
-            compiled.validate(execute=context.execute)
-            summary = _eligibility_summary(compiled.audit_table, context.execute)
-            if summary.unknown:
-                raise _ELIGIBILITY_UNKNOWN.error(
-                    candidate=summary.candidate,
-                    excluded_false=summary.excluded_false,
-                    unknown=summary.unknown,
-                    retained=summary.retained,
-                )
+            summary = validate_compiled_output(compiled, context.execute)
             query = compiled.table
             chunk_size = 65_536
             if budget is not None and budget.max_rows is not None:
