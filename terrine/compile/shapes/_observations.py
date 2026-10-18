@@ -408,6 +408,7 @@ def compile_observed_state_panel(design: Design, model: Model, panel: StatePanel
         "from_state",
         "to_state",
         "terminal",
+        *design.eligibility,
         *feature_names,
         "from_state_complete",
         "from_state_reason",

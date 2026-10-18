@@ -630,6 +630,102 @@ def test_float_metric_cut_precision_and_near_boundary(native_inputs, cut, ambigu
     assert row["to_state_reason"] == "ambiguous_state_bin"
 
 
+@pytest.mark.slow
+def test_binned_state_preserves_metric_null_reasons():
+    import ibis
+    import pyarrow as pa
+
+    from terrine.compile.shapes.state_panel import _state_value
+    from terrine.data import ColumnMeta
+
+    state = BinnedMetricState("sessions", (0,), ("none", "some"))
+    meta = ColumnMeta(None, "state", None, None, None, None)
+    relation = ibis.memtable(
+        pa.table(
+            {
+                "_state_period": pa.array([None] * 4, type=pa.float64()),
+                "__terrine_state_complete": pa.array([True] * 4),
+                "__terrine_state_reason": pa.array(
+                    ["all_values_null", "no_observations", "zero_denominator", None],
+                    type=pa.string(),
+                ),
+            }
+        )
+    )
+    value, complete, reason = _state_value(relation, state, meta)
+    con = ibis.duckdb.connect()
+    try:
+        result = con.execute(relation.select(value=value, complete=complete, reason=reason))
+    finally:
+        con.disconnect()
+    assert result["value"].isna().all()
+    assert not result["complete"].any()
+    assert result["reason"].tolist() == [
+        "all_values_null",
+        "no_observations",
+        "zero_denominator",
+        "state_value_null",
+    ]
+
+
+@pytest.mark.slow
+def test_binned_panel_retains_named_eligibility_column(panel_model):
+    from terrine.compile.dispatch import compile_design
+    from terrine.spec import gt
+
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-03", "2025-01-05"),
+        eligibility={"has_history": gt(agg("sessions", window=("-1d", "0d")), 0)},
+        shape=StatePanel(
+            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
+            max_periods=2,
+        ),
+    )
+    compiled = compile_design(design, panel_model)
+    assert "has_history" in compiled.audit_table.columns
+    materialized = design.build(panel_model).materialize(
+        Budget(max_rows=10, max_output_bytes=100_000)
+    )
+    assert materialized.table["has_history"].to_pylist() == [True, True]
+
+
+@pytest.mark.slow
+def test_observed_panel_retains_named_eligibility_column(observed_model_factory):
+    from terrine.compile.dispatch import compile_design
+    from terrine.spec import StateObservations, gt
+
+    model = observed_model_factory(
+        [
+            ("a", datetime(2025, 1, 3, tzinfo=UTC), "active"),
+            ("a", datetime(2025, 1, 4, tzinfo=UTC), "active"),
+        ]
+    )
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-03", "2025-01-05"),
+        eligibility={"has_history": gt(agg("sessions", window=("-1d", "0d")), 0)},
+        shape=StatePanel(
+            StateObservations("state", ("active", "closed")),
+            max_periods=2,
+        ),
+    )
+    compiled = compile_design(design, model)
+    assert "has_history" in compiled.audit_table.columns
+    materialized = design.build(model).materialize(Budget(max_rows=10, max_output_bytes=100_000))
+    assert materialized.table["has_history"].to_pylist() == [True, True]
+
+
+def test_float_metric_rejects_integer_cutpoint_outside_float64_range():
+    import ibis.expr.datatypes as dt
+
+    from terrine.compile.shapes.state_panel import _cut_literal
+
+    with pytest.raises(TerrineError) as error:
+        _cut_literal(10**400, dt.float64)
+    assert error.value.code == "terrine.state_panel.unsupported_combination"
+
+
 def test_observed_state_property_must_be_source_owned(panel_model):
     design = Design(
         "user",

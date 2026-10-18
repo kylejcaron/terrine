@@ -55,7 +55,12 @@ def _cut_literal(cut: int | float | Decimal, source_type: dt.DataType):
         if source_type != dt.float64:
             raise _UNSUPPORTED.error(reason="Float64 bins require Float64 metric output")
         decimal_cut = Decimal.from_float(cut) if isinstance(cut, float) else Decimal(cut)
-        floating_cut = float(cut)
+        try:
+            floating_cut = float(cut)
+        except OverflowError:
+            raise _UNSUPPORTED.error(
+                reason="cutpoint cannot be represented exactly as Float64"
+            ) from None
         if not math.isfinite(floating_cut) or Decimal.from_float(floating_cut) != decimal_cut:
             raise _UNSUPPORTED.error(reason="cutpoint cannot be represented exactly as Float64")
         return ibis.literal(floating_cut, type=dt.float64)
@@ -127,7 +132,10 @@ def _state_value(relation, state: BinnedMetricState, meta: ColumnMeta):
             ~available,
             relation.__terrine_state_reason.fill_null(ibis.literal("incomplete_observation")),
         ),
-        (available & raw.isnull(), "state_value_null"),
+        (
+            available & raw.isnull(),
+            relation.__terrine_state_reason.fill_null("state_value_null"),
+        ),
         (ambiguous, "ambiguous_state_bin"),
         else_=ibis.null().cast("string"),
     )
@@ -309,6 +317,7 @@ def _binned(design: Design, model: Model, panel: StatePanel) -> CompiledStudy:
         "to_state",
         "terminal",
         *feature_names,
+        *design.eligibility,
         "from_state_complete",
         "from_state_reason",
         "to_state_complete",
