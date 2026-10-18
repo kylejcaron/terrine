@@ -37,6 +37,10 @@ class LeaseStore:
             f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_lease_fences ("
             "resource VARCHAR PRIMARY KEY, last_fence BIGINT NOT NULL)"
         )
+        self.con.execute(
+            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_resource_guards ("
+            "resource VARCHAR PRIMARY KEY, guard_version BIGINT NOT NULL)"
+        )
 
     def acquire(self, resource: str, owner: str, *, ttl: timedelta, now: datetime) -> Lease:
         self._validate(resource, owner, ttl, now)
@@ -66,6 +70,16 @@ class LeaseStore:
                 "expires_at=excluded.expires_at",
                 [resource, owner, fence, expires.isoformat()],
             )
+            self.con.execute(
+                f"INSERT INTO {self._schema}.runtime_resource_guards VALUES (?, 0) "
+                "ON CONFLICT DO NOTHING",
+                [resource],
+            )
+            self.con.execute(
+                f"UPDATE {self._schema}.runtime_resource_guards "
+                "SET guard_version=guard_version+1 WHERE resource=?",
+                [resource],
+            )
             self.con.execute("COMMIT")
         except Exception:
             self.con.execute("ROLLBACK")
@@ -91,6 +105,15 @@ class LeaseStore:
 
     def assert_current(self, lease: Lease) -> None:
         self._assert_matches(lease, datetime.now(UTC))
+
+    def guard_publication(self, lease: Lease) -> None:
+        """Fence takeover against a publication transaction's final lease check."""
+        self._assert_matches(lease, datetime.now(UTC))
+        self.con.execute(
+            f"UPDATE {self._schema}.runtime_resource_guards "
+            "SET guard_version=guard_version+1 WHERE resource=?",
+            [lease.resource],
+        )
 
     def _assert_matches(self, lease: Lease, now: datetime) -> None:
         row = self.con.execute(

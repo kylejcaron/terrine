@@ -88,6 +88,10 @@ class RuntimeStore:
             "superseded_by VARCHAR, PRIMARY KEY(dataset, generation))"
         )
         self.con.execute(
+            f"ALTER TABLE {self._schema}.runtime_generations "
+            "ADD COLUMN IF NOT EXISTS guard_version BIGINT DEFAULT 0"
+        )
+        self.con.execute(
             f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_generation_pins ("
             "dataset VARCHAR NOT NULL, generation VARCHAR NOT NULL, reader VARCHAR NOT NULL, "
             "PRIMARY KEY(dataset, generation, reader))"
@@ -123,7 +127,9 @@ class RuntimeStore:
         inserted = False
         try:
             self.con.execute(
-                f"INSERT INTO {self._schema}.runtime_generations VALUES (?, ?, ?, ?, ?, ?, NULL)",
+                f"INSERT INTO {self._schema}.runtime_generations "
+                "(dataset, generation, definition_json, snapshot_json, created_at, supersedes, "
+                "superseded_by) VALUES (?, ?, ?, ?, ?, ?, NULL)",
                 [
                     ref.dataset,
                     ref.generation,
@@ -194,13 +200,29 @@ class RuntimeStore:
         self._check_ref(ref)
         if not reader:
             raise ValueError("reader must not be empty")
-        if self.read_generation(ref) is None:
-            raise ValueError("cannot pin an absent generation")
-        self.con.execute(
-            f"INSERT INTO {self._schema}.runtime_generation_pins VALUES (?, ?, ?) "
-            "ON CONFLICT DO NOTHING",
-            [ref.dataset, ref.generation, reader],
-        )
+        self.con.execute("BEGIN TRANSACTION")
+        try:
+            self.con.execute(
+                f"UPDATE {self._schema}.runtime_generations "
+                "SET guard_version=guard_version+1 WHERE dataset=? AND generation=?",
+                [ref.dataset, ref.generation],
+            )
+            exists = self.con.execute(
+                f"SELECT 1 FROM {self._schema}.runtime_generations "
+                "WHERE dataset=? AND generation=?",
+                [ref.dataset, ref.generation],
+            ).fetchone()
+            if exists is None:
+                raise ValueError("cannot pin an absent generation")
+            self.con.execute(
+                f"INSERT INTO {self._schema}.runtime_generation_pins VALUES (?, ?, ?) "
+                "ON CONFLICT DO NOTHING",
+                [ref.dataset, ref.generation, reader],
+            )
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
 
     def unpin_generation(self, ref: GenerationRef, reader: str) -> None:
         self._check_ref(ref)
@@ -214,6 +236,11 @@ class RuntimeStore:
         self._check_ref(ref)
         self.con.execute("BEGIN TRANSACTION")
         try:
+            self.con.execute(
+                f"UPDATE {self._schema}.runtime_generations "
+                "SET guard_version=guard_version+1 WHERE dataset=? AND generation=?",
+                [ref.dataset, ref.generation],
+            )
             row = self.con.execute(
                 f"SELECT superseded_by FROM {self._schema}.runtime_generations "
                 "WHERE dataset=? AND generation=?",
@@ -265,8 +292,10 @@ class RuntimeStore:
                 [ref.dataset, ref.generation],
             )
             self.con.execute("COMMIT")
-        except Exception:
+        except Exception as exc:
             self.con.execute("ROLLBACK")
+            if type(exc).__name__ == "TransactionException":
+                raise ValueError("generation changed concurrently during collection") from exc
             raise
 
     def _check_ref(self, ref: GenerationRef) -> None:

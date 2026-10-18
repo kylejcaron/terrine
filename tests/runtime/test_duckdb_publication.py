@@ -90,6 +90,47 @@ def test_expired_writer_cannot_publish_after_new_fence():
     assert backend.current_generation("orders") is None
 
 
+def test_takeover_after_final_fence_check_cannot_publish():
+    con = duckdb.connect(":memory:")
+    backend = DuckDBBackend(con, namespace="owner")
+    leases = LeaseStore(con, namespace="owner")
+    now = datetime.now(UTC)
+    old = leases.acquire("dataset:orders", "old", ttl=timedelta(seconds=1), now=now)
+    takeover = LeaseStore(con.cursor(), namespace="owner")
+
+    def take_over(phase):
+        if phase != "before_commit":
+            return
+        takeover.acquire(
+            "dataset:orders",
+            "new",
+            ttl=timedelta(minutes=1),
+            now=now + timedelta(seconds=2),
+        )
+
+    backend.fault_injector = take_over
+    with pytest.raises(duckdb.TransactionException):
+        backend.publish_generation(
+            StagedGeneration("orders", "g1", {"p1": pa.table({"id": [1]})}),
+            expected_manifest=None,
+            lease=old,
+        )
+    assert backend.current_generation("orders") is None
+
+
+def test_reconcile_uses_durable_run_to_publication_mapping():
+    con = duckdb.connect(":memory:")
+    backend = DuckDBBackend(con, namespace="owner")
+    lease = _lease(con, "owner")
+    stage = StagedGeneration("orders", "g1", {"p1": pa.table({"id": [1]})}, run_id="run-1")
+    backend.publish_generation(stage, expected_manifest=None, lease=lease)
+    result = backend.reconcile("run-1")
+    assert result.run_id == "run-1"
+    assert result.published_generation == "g1"
+    assert result.manifest_version == 1
+    assert backend.reconcile("orders").published_generation is None
+
+
 def test_previously_published_generation_cannot_be_reactivated():
     con = duckdb.connect(":memory:")
     backend = DuckDBBackend(con, namespace="owner")

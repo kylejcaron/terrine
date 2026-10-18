@@ -51,6 +51,11 @@ class DuckDBBackend:
             "PRIMARY KEY(dataset, generation))"
         )
         self.con.execute(
+            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_run_publications ("
+            "run_id VARCHAR PRIMARY KEY, dataset VARCHAR NOT NULL, generation VARCHAR NOT NULL, "
+            "version BIGINT NOT NULL)"
+        )
+        self.con.execute(
             f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_partitions ("
             "dataset VARCHAR NOT NULL, generation VARCHAR NOT NULL, "
             "partition VARCHAR NOT NULL, table_name VARCHAR NOT NULL, "
@@ -71,7 +76,16 @@ class DuckDBBackend:
         lease_store.assert_current(lease)
         current = self.current_generation(stage.dataset)
         if current == stage.generation:
-            return self._matching_receipt(stage)
+            receipt = self._matching_receipt(stage)
+            if stage.run_id is not None:
+                self.con.execute("BEGIN TRANSACTION")
+                try:
+                    self._record_run_publication(stage, receipt.manifest_version)
+                    self.con.execute("COMMIT")
+                except Exception:
+                    self.con.execute("ROLLBACK")
+                    raise
+            return receipt
         if current != expected_manifest:
             raise ValueError("expected manifest does not match current publication")
 
@@ -124,7 +138,10 @@ class DuckDBBackend:
                 "ON CONFLICT(dataset, generation) DO NOTHING",
                 [stage.dataset, stage.generation, version],
             )
+            if stage.run_id is not None:
+                self._record_run_publication(stage, version)
             lease_store.assert_current(lease)
+            lease_store.guard_publication(lease)
             self.con.execute(
                 f"INSERT INTO {self._schema}.runtime_manifests VALUES (?, ?, ?) "
                 "ON CONFLICT(dataset) DO UPDATE SET generation=excluded.generation, "
@@ -186,10 +203,25 @@ class DuckDBBackend:
 
     def reconcile(self, run_id: str) -> Reconciliation:
         row = self.con.execute(
-            f"SELECT generation, version FROM {self._schema}.runtime_manifests WHERE dataset=?",
+            f"SELECT generation, version FROM {self._schema}.runtime_run_publications "
+            "WHERE run_id=?",
             [run_id],
         ).fetchone()
         return Reconciliation(run_id, row[0], row[1]) if row else Reconciliation(run_id, None, None)
+
+    def _record_run_publication(self, stage: StagedGeneration, version: int) -> None:
+        self.con.execute(
+            f"INSERT INTO {self._schema}.runtime_run_publications "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(run_id) DO NOTHING",
+            [stage.run_id, stage.dataset, stage.generation, version],
+        )
+        row = self.con.execute(
+            f"SELECT dataset, generation, version FROM {self._schema}.runtime_run_publications "
+            "WHERE run_id=?",
+            [stage.run_id],
+        ).fetchone()
+        if row != (stage.dataset, stage.generation, version):
+            raise ValueError("run_id is already bound to a different publication")
 
 
 def _quote(value: str) -> str:

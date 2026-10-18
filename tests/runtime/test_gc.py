@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import duckdb
+import pytest
 
 from terrine.runtime.backends.duckdb import DuckDBBackend
 from terrine.runtime.gc import collect_superseded
@@ -29,6 +30,35 @@ def test_gc_only_removes_explicit_unpinned_superseded_generations():
     assert removed.removed == (old,)
     assert store.read_generation(old) is None
     assert store.read_generation(current) is not None
+
+
+def test_pin_conflicts_with_in_progress_gc_guard_update():
+    con = duckdb.connect(":memory:")
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
+    definition = DefinitionVersion("d", "s", "1")
+    snapshot = SourceSnapshot("snap", {}, {}, datetime(2025, 1, 1, tzinfo=UTC), "owner")
+    old = GenerationRef("owner", "orders", "g1")
+    new = GenerationRef("owner", "orders", "g2")
+    store.write_generation(old, definition=definition, snapshot=snapshot)
+    store.write_generation(new, definition=definition, snapshot=snapshot, supersedes=old)
+
+    gc_con = con.cursor()
+    pin_store = RuntimeStore(con.cursor(), namespace="owner")
+    gc_con.execute("BEGIN TRANSACTION")
+    gc_con.execute(
+        'UPDATE "owner".runtime_generations SET guard_version=guard_version+1 '
+        "WHERE dataset=? AND generation=?",
+        ["orders", "g1"],
+    )
+    with pytest.raises(duckdb.TransactionException):
+        pin_store.pin_generation(old, "reader")
+    gc_con.execute("ROLLBACK")
+    pin_count = con.execute(
+        'SELECT count(*) FROM "owner".runtime_generation_pins WHERE dataset=? AND generation=?',
+        ["orders", "g1"],
+    ).fetchone()
+    assert pin_count is not None and pin_count[0] == 0
 
 
 def test_gc_never_removes_manifest_referenced_generation():
