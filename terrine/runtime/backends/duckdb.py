@@ -139,6 +139,22 @@ class DuckDBBackend:
                 "WHERE dataset=?",
                 [stage.dataset],
             ).fetchone()
+            tracked_previous = self.con.execute(
+                f"SELECT generation, snapshot_id FROM {self._schema}.runtime_snapshot_manifests "
+                "WHERE dataset=?",
+                [stage.dataset],
+            ).fetchone()
+            previous_snapshot_id = (
+                tracked_previous[1]
+                if (
+                    previous is not None
+                    and tracked_previous is not None
+                    and tracked_previous[0] == previous[1]
+                )
+                else previous[2]
+                if previous is not None
+                else None
+            )
             version = (previous[0] if previous else 0) + 1
             stored = []
             for partition, table in sorted(stage.partitions.items()):
@@ -211,12 +227,12 @@ class DuckDBBackend:
                     f"DELETE FROM {self._schema}.runtime_snapshot_manifests WHERE dataset=?",
                     [stage.dataset],
                 )
-            if previous is not None and previous[2] is not None:
+            if previous is not None and previous_snapshot_id is not None:
                 self.con.execute(
                     f"DELETE FROM {self._schema}.runtime_snapshot_references "
                     "WHERE snapshot_id=? AND kind='published_manifest' AND reference=?",
                     [
-                        previous[2],
+                        previous_snapshot_id,
                         snapshot_manifest_reference(stage.dataset, previous[1]),
                     ],
                 )

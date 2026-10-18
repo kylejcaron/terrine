@@ -115,6 +115,32 @@ def test_retry_reuses_only_matching_generation_partitions():
         )
 
 
+def test_publication_without_snapshot_releases_previous_tracked_reference():
+    con = duckdb.connect(":memory:")
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
+    backend = DuckDBBackend(con, namespace="owner")
+    lease = _lease(con, "owner")
+    backend.publish_generation(
+        StagedGeneration("orders", "g1", {"p1": pa.table({"id": [1]})}, snapshot_id="snap-1"),
+        expected_manifest=None,
+        lease=lease,
+    )
+    backend.publish_generation(
+        StagedGeneration("orders", "g2", {"p1": pa.table({"id": [2]})}),
+        expected_manifest="g1",
+        lease=lease,
+    )
+    assert store.snapshot_references("snap-1") == ()
+    assert (
+        con.execute(
+            'SELECT snapshot_id FROM "owner".runtime_snapshot_manifests WHERE dataset=?',
+            ["orders"],
+        ).fetchall()
+        == []
+    )
+
+
 def test_expired_writer_cannot_publish_after_new_fence():
     con = duckdb.connect(":memory:")
     backend = DuckDBBackend(con, namespace="owner")

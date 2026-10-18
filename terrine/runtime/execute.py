@@ -213,7 +213,7 @@ def execute_plan(
         generation_text = str(generation) if generation is not None else None
         if generation_text is not None:
             runtime_store.replace_published_snapshot(
-                plan.dataset, generation_text, plan.snapshot_id
+                plan.dataset, generation_text, plan.snapshot_id, lease=lease
             )
         terminal = con.execute(
             f"UPDATE {schema}.runtime_runs SET state='succeeded', published_generation=? "
@@ -238,9 +238,11 @@ def execute_plan(
         state = con.execute(
             f"SELECT state FROM {schema}.runtime_runs WHERE run_id=?", [run_id]
         ).fetchone()
-        if state is not None and state[0] in {"succeeded", "cancelled"}:
-            _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
-        leases.release(lease)
+        try:
+            if state is not None and state[0] in {"succeeded", "cancelled"}:
+                _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
+        finally:
+            leases.release(lease)
 
 
 def _encode(table: pa.Table) -> bytes:

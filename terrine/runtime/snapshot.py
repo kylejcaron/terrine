@@ -59,10 +59,9 @@ def _assert_owner_connection(owner: RuntimeOwner, con: Any) -> None:
         raw = _native.raw_connection(con)
         with _native.connection_lock(raw):
             rows = raw.execute("PRAGMA database_list").fetchall()
+            current_catalog = raw.execute("SELECT current_database()").fetchone()[0]
         database_path = next(
-            location
-            for _sequence, _name, location in rows
-            if location and Path(location).resolve() == owner.state_path
+            location for _sequence, name, location in rows if name == current_catalog and location
         )
     except Exception as exc:
         raise _INVALID.error(reason="owner database identity is unavailable") from exc

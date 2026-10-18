@@ -189,3 +189,19 @@ def test_snapshot_gc_respects_pins_and_tombstones_collected_inputs(tmp_path):
     with pytest.raises(ValueError, match="collected"):
         store.pin_snapshot(receipt.snapshot_id, kind="saved_plan", reference="recipe")
     con.disconnect()
+
+
+def test_snapshot_gc_rejects_attached_noncurrent_owner_database(tmp_path):
+    owner = RuntimeOwner(state_path=tmp_path / "owner.duckdb", snapshot_root=tmp_path / "snapshots")
+    owner_con = ibis.duckdb.connect(str(owner.state_path))
+    owner_con.disconnect()
+    con = ibis.duckdb.connect(":memory:")
+    con.raw_sql(f"ATTACH '{owner.state_path}' AS owner_db")
+    store = RuntimeStore(con.con, namespace="runtime")
+    store.initialize()
+    with pytest.raises(TerrineError) as error:
+        SnapshotAuthority(owner).collect_unreferenced(
+            store, namespace="runtime", retain=timedelta(0), now=datetime.now(UTC)
+        )
+    assert error.value.code == "terrine.runtime.snapshot_invalid"
+    con.disconnect()

@@ -9,6 +9,7 @@ from types import MappingProxyType
 from typing import Any
 
 from terrine.data import BoundCoverage
+from terrine.runtime.leases import Lease, LeaseStore
 
 __all__ = [
     "DefinitionVersion",
@@ -385,12 +386,19 @@ class RuntimeStore:
         return tuple((kind, reference) for kind, reference in rows)
 
     def replace_published_snapshot(
-        self, dataset: str, generation: str, snapshot_id: str | None
+        self,
+        dataset: str,
+        generation: str,
+        snapshot_id: str | None,
+        *,
+        lease: Lease | None = None,
     ) -> None:
         if not dataset or not generation:
             raise ValueError("dataset and generation must not be empty")
         self.con.execute("BEGIN TRANSACTION")
         try:
+            if lease is not None:
+                LeaseStore(self.con, namespace=self.namespace).guard_publication(lease)
             previous = self.con.execute(
                 f"SELECT generation, snapshot_id FROM {self._schema}.runtime_snapshot_manifests "
                 "WHERE dataset=?",

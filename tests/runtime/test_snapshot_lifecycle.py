@@ -1,9 +1,12 @@
+from datetime import UTC, datetime, timedelta
+
 import duckdb
 import pyarrow as pa
 import pytest
 
 from terrine.runtime.execute import execute_plan
 from terrine.runtime.graph import dependency_graph
+from terrine.runtime.leases import LeaseStore
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.state import RuntimeStore
 
@@ -33,6 +36,19 @@ def test_snapshot_reference_identity_is_validated():
         store.pin_snapshot("", kind="run", reference="run")
     with pytest.raises(ValueError):
         store.pin_snapshot("snapshot", kind="", reference="run")
+
+
+def test_publication_reference_replacement_requires_current_lease():
+    con = duckdb.connect(":memory:")
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
+    leases = LeaseStore(con, namespace="owner")
+    leases.initialize()
+    stale = leases.acquire("dataset:orders", "old", ttl=timedelta(minutes=1), now=datetime.now(UTC))
+    leases.release(stale)
+    with pytest.raises(ValueError, match="lease"):
+        store.replace_published_snapshot("orders", "g1", "snapshot", lease=stale)
+    assert store.snapshot_references("snapshot") == ()
 
 
 def test_execution_pins_snapshot_for_active_run_and_published_manifest():
