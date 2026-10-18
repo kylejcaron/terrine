@@ -1,0 +1,94 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
+
+import ibis
+
+from terrine.spec.design import Design
+
+LayerResolution = Literal["day", "event", "point", "period"]
+LayerName = Literal["daily", "prefix", "anchor", "state_point", "state_period"]
+
+
+@dataclass(frozen=True, slots=True)
+class LayerKey:
+    layer: LayerName
+    source: str
+    measure: str | None
+    unit: str
+    grain: str
+    resolution: LayerResolution
+    definition_hash: str
+    snapshot_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class LayerSubstitution:
+    key: LayerKey
+    relation: ibis.Table
+
+
+@dataclass(frozen=True, slots=True)
+class LayerPlan:
+    keys: tuple[LayerKey, ...]
+
+
+def plan_layers(design: Design, model) -> LayerPlan:
+    """Describe compiler input layers for a design, without consulting runtime state."""
+    from terrine.semantic.rules import calendar_average_alignment
+    from terrine.spec.anchors import FixedDate, Schedule
+    from terrine.spec.expressions import And, AttributeAsOf, Eq, Gt, IsNull, MetricAgg
+    from terrine.spec.validate import _fixed_anchors
+
+    measures: dict[tuple[str, str, str], LayerResolution] = {}
+
+    def expression(node) -> None:
+        if isinstance(node, And):
+            for term in node.terms:
+                expression(term)
+        elif isinstance(node, (Eq, Gt)):
+            expression(node.left if isinstance(node, Eq) else node.expr)
+        elif isinstance(node, IsNull):
+            expression(node.expr)
+        elif isinstance(node, AttributeAsOf):
+            return
+        elif isinstance(node, MetricAgg):
+            metric = model.metrics[node.metric]
+            fixed = (
+                _fixed_anchors(design, model)
+                if isinstance(design.anchor, (FixedDate, Schedule))
+                else None
+            )
+            resolution: LayerResolution = (
+                "day"
+                if fixed
+                and all(
+                    calendar_average_alignment(
+                        node.window, anchor=instant, day_boundary=model.catalog.day_boundary
+                    )
+                    == "aligned"
+                    for instant in fixed
+                )
+                else "event"
+            )
+            for measure in metric.measures:
+                measures[(measure.source_name, measure.fact, design.unit)] = resolution
+        else:
+            raise TypeError(f"unsupported design expression: {type(node).__name__}")
+
+    for node in (
+        *design.features.values(),
+        *design.outcomes.values(),
+        *design.eligibility.values(),
+    ):
+        expression(node)
+    definition_hash = design.spec_hash
+    return LayerPlan(
+        tuple(
+            LayerKey(
+                "prefix", source, measure, unit, "unit", resolution, definition_hash, "unbound"
+            )
+            for (source, measure, unit), resolution in sorted(measures.items())
+        )
+    )
