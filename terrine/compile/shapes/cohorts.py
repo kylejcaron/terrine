@@ -122,7 +122,7 @@ def compile_cohorts(
             outward_add(inherited_error, inherited_rounding), value_rounding
         )
     elif checked_float:
-        input_error = per_unit._absolute_error.mean()
+        input_error = per_unit._absolute_error.max()
         error_count = per_unit._value.notnull().cast("float64").sum()
         reduction_error = outward_multiply(
             float64_rounding_radius(reduction_table._magnitude.first()),
