@@ -248,6 +248,33 @@ def test_never_treated_schedule_history_refusal_reports_schedule_boundary():
     assert error.value.context["boundary"] == "2025-01-10T00:00:00+00:00"
 
 
+def test_not_yet_treated_refusal_reports_comparison_horizon_only():
+    from terrine.spec.panels import CalendarComparisonSpec, Initiation
+    from terrine.spec.validate import validate_design
+
+    design = Design(
+        "user",
+        Schedule("7d", "2025-01-01", "2025-01-10"),
+        shape=CalendarComparisonSpec(
+            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            "not_yet_treated",
+            -1,
+            (0,),
+        ),
+    )
+    bound = model()
+    bound.readiness = Readiness(
+        {
+            "events": BoundCoverage(
+                datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 7, tzinfo=UTC)
+            )
+        }
+    )
+    with pytest.raises(TerrineError) as error:
+        validate_design(design, bound)
+    assert error.value.context["boundary"] == "2025-01-08T00:00:00+00:00"
+
+
 def test_window_extending_beyond_declared_coverage_is_runtime_incomplete_not_refused():
     design = Design(
         "user", EventAnchor("session"), features={"x": agg("sessions", window=("-7d", "0d"))}
