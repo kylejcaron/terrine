@@ -13,6 +13,7 @@ from typing import Any
 import pyarrow as pa
 
 from terrine.compile.cost import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED
+from terrine.runtime.events import record_run_event
 from terrine.runtime.leases import Lease, LeaseStore
 from terrine.runtime.planner import RefreshPlan, TaskSpec
 from terrine.runtime.state import RuntimeStore
@@ -104,6 +105,9 @@ def execute_plan(
             )
             leases.release(lease)
             _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
+            record_run_event(
+                run_id, "lifecycle", {"state": "cancelled"}, con=con, namespace=namespace
+            )
             return RunReceipt(run_id, "cancelled", current[1])
         leases.release(lease)
         if current is None:
@@ -134,6 +138,7 @@ def execute_plan(
         if current is None:
             raise RuntimeError("run disappeared while claiming its lease")
         return RunReceipt(run_id, current[0], current[1])
+    record_run_event(run_id, "lifecycle", {"state": "running"}, con=con, namespace=namespace)
     active_reference = json.dumps((run_id, lease.fence), separators=(",", ":"))
     try:
         runtime_store.pin_snapshot(plan.snapshot_id, kind="active_run", reference=active_reference)
@@ -278,13 +283,17 @@ def execute_plan(
                 leases=leases,
             )
     except Exception:
-        con.execute(
+        terminal = con.execute(
             f"UPDATE {schema}.runtime_runs SET state=CASE "
             "WHEN state='cancel_requested' THEN 'cancelled' ELSE 'failed' END "
             "WHERE run_id=? AND state IN ('running','cancel_requested') "
-            "AND published_generation IS NULL AND attempt_fence=?",
+            "AND published_generation IS NULL AND attempt_fence=? RETURNING state",
             [run_id, lease.fence],
-        )
+        ).fetchone()
+        if terminal is not None:
+            record_run_event(
+                run_id, "lifecycle", {"state": terminal[0]}, con=con, namespace=namespace
+            )
         raise
     finally:
         stop_heartbeat.set()
@@ -383,6 +392,13 @@ def _finish_run(
         ).fetchone()
         if terminal is None:
             raise ValueError("lease attempt was fenced before cancellation")
+        record_run_event(
+            run_id,
+            "lifecycle",
+            {"state": "cancelled"},
+            con=con,
+            namespace=runtime_store.namespace,
+        )
         return RunReceipt(run_id, "cancelled", None)
     leases.assert_current(lease)
     published = publish(plan, MappingProxyType(dict(outputs)), lease)
@@ -399,4 +415,11 @@ def _finish_run(
     ).fetchone()
     if terminal is None:
         raise ValueError("lease attempt was fenced before recording success")
+    record_run_event(
+        run_id,
+        "lifecycle",
+        {"state": "succeeded"},
+        con=con,
+        namespace=runtime_store.namespace,
+    )
     return RunReceipt(run_id, "succeeded", generation_text)

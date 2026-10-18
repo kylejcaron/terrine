@@ -123,4 +123,14 @@ def cancel_run(run_id: str, *, con: Any, namespace: str) -> CancelReceipt:
         disposition = (
             "requested" if updated.durable_state == "cancel_requested" else "already_terminal"
         )
+        if updated.durable_state == "cancel_requested":
+            from terrine.runtime.events import record_run_event
+
+            record_run_event(
+                run_id,
+                "lifecycle",
+                {"state": "cancel_requested"},
+                con=con,
+                namespace=namespace,
+            )
         return CancelReceipt(run_id, disposition, updated)

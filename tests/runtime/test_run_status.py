@@ -25,3 +25,24 @@ def test_status_reads_durable_run_and_preserves_unknown_metrics():
     assert status.durable_state == "running"
     assert status.cost is None
     assert status.freshness is None
+
+
+def test_cancel_request_persists_lifecycle_event():
+    from terrine.runtime.events import read_run_events
+    from terrine.runtime.status import cancel_run
+
+    con = duckdb.connect(":memory:")
+    con.execute("CREATE SCHEMA owner")
+    con.execute(
+        "CREATE TABLE owner.runtime_runs (run_id VARCHAR, dataset VARCHAR, fingerprint VARCHAR, "
+        "state VARCHAR, published_generation VARCHAR, attempt_fence BIGINT)"
+    )
+    con.execute("INSERT INTO owner.runtime_runs VALUES ('r1','d','f','running',NULL,1)")
+
+    receipt = cancel_run("r1", con=con, namespace="owner")
+
+    events = read_run_events("r1", con=con, namespace="owner").events
+    assert receipt.disposition == "requested"
+    assert [(event.kind, event.payload) for event in events] == [
+        ("lifecycle", {"state": "cancel_requested"})
+    ]

@@ -40,26 +40,50 @@ def _ensure_events(con: Any, schema: str) -> None:
 
 
 def record_run_event(
-    run_id: str, kind: str, payload: dict[str, Any], *, con: Any, namespace: str
+    run_id: str,
+    kind: str,
+    payload: dict[str, Any],
+    *,
+    con: Any,
+    namespace: str,
+    at: datetime | None = None,
 ) -> None:
-    if not run_id or (
-        kind != "phase"
-        or set(payload) != {"phase"}
-        or not isinstance(payload["phase"], str)
-        or len(payload["phase"]) > 128
-    ):
+    valid = (
+        kind == "phase"
+        and set(payload) == {"phase"}
+        and isinstance(payload["phase"], str)
+        and len(payload["phase"]) <= 128
+    ) or (
+        kind == "lifecycle"
+        and set(payload) == {"state"}
+        and payload["state"]
+        in {"queued", "running", "cancel_requested", "succeeded", "failed", "cancelled"}
+    )
+    if not run_id or not valid:
         raise ValueError("event fields are invalid or contain forbidden data")
+    event_at = (at or datetime.now(UTC)).astimezone(UTC)
     store = RuntimeStore(con, namespace=namespace)
     store.initialize()
     schema = store._schema
     _ensure_events(con, schema)
+    if kind == "phase":
+        previous = con.execute(
+            f"SELECT event_at FROM {schema}.runtime_run_events "
+            "WHERE run_id=? AND kind='phase' ORDER BY sequence DESC LIMIT 1",
+            [run_id],
+        ).fetchone()
+        if (
+            previous is not None
+            and (event_at - previous[0].replace(tzinfo=UTC)).total_seconds() < 1
+        ):
+            return
     sequence = con.execute(
         f"SELECT coalesce(max(sequence), 0)+1 FROM {schema}.runtime_run_events WHERE run_id=?",
         [run_id],
     ).fetchone()[0]
     con.execute(
         f"INSERT INTO {schema}.runtime_run_events VALUES (?, ?, ?, ?, ?)",
-        [run_id, sequence, datetime.now(UTC).replace(tzinfo=None), kind, json.dumps(payload)],
+        [run_id, sequence, event_at.replace(tzinfo=None), kind, json.dumps(payload)],
     )
     con.execute(
         f"DELETE FROM {schema}.runtime_run_events WHERE run_id=? AND sequence <= ?",

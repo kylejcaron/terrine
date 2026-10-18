@@ -8,13 +8,15 @@ import socketserver
 import stat
 import threading
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from terrine.errors import TerrineError
-from terrine.runtime.events import read_run_events
+from terrine.runtime.events import EventPage, RunEvent, read_run_events
+from terrine.runtime.execute import RunReceipt
 from terrine.runtime.state import RuntimeStore
-from terrine.runtime.status import cancel_run, get_run
+from terrine.runtime.status import CancelReceipt, RunStatus, cancel_run, get_run
 
 __all__ = ["ControlEndpoint", "ControlServer", "ControlClient"]
 
@@ -203,16 +205,40 @@ class ControlClient:
             )
         return response["value"]
 
-    def get_run(self, run_id: str):
-        return self._request("status", run_id=run_id)
+    def get_run(self, run_id: str) -> RunStatus:
+        return _status(self._request("status", run_id=run_id))
 
-    def read_run_events(self, run_id: str, *, after: str | None = None, limit: int = 100):
-        return self._request("events", run_id=run_id, after=after, limit=limit)
+    def read_run_events(
+        self, run_id: str, *, after: str | None = None, limit: int = 100
+    ) -> EventPage:
+        value = self._request("events", run_id=run_id, after=after, limit=limit)
+        events = tuple(
+            RunEvent(
+                event["run_id"],
+                event["sequence"],
+                datetime.fromisoformat(event["at"]),
+                event["kind"],
+                event["payload"],
+            )
+            for event in value["events"]
+        )
+        return EventPage(events, value["next_cursor"], value["has_more"], value["cursor_gap"])
 
-    def cancel_run(self, run_id: str):
-        return self._request("cancel", run_id=run_id)
+    def cancel_run(self, run_id: str) -> CancelReceipt:
+        value = self._request("cancel", run_id=run_id)
+        return CancelReceipt(run_id, value["disposition"], _status(value["status"]))
 
-    def find_run_by_request_key(self, request_key: str, *, destination: Any):
-        return self._request(
+    def find_run_by_request_key(self, request_key: str, *, destination: Any) -> RunReceipt | None:
+        value = self._request(
             "request_key", request_key=request_key, destination=asdict(destination)
         )
+        if value is None:
+            return None
+        return RunReceipt(value["run_id"], value["state"], value["published_generation"])
+
+
+def _status(value: dict[str, Any]) -> RunStatus:
+    for field in ("updated_at", "heartbeat_at", "lease_expires_at"):
+        if value[field] is not None and isinstance(value[field], str):
+            value[field] = datetime.fromisoformat(value[field])
+    return RunStatus(**value)

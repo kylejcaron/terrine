@@ -38,6 +38,26 @@ def test_duplicate_task_completion_is_idempotent():
     assert len(publish_calls) == 1
 
 
+def test_execution_persists_lifecycle_events_for_terminal_replay():
+    from terrine.runtime.events import read_run_events
+
+    con = duckdb.connect(":memory:")
+    execute_plan(
+        _plan(),
+        con=con,
+        namespace="owner",
+        run_id="evented-run",
+        run_task=lambda task, dependencies: pa.table({"task": [task.task_id]}),
+        publish=lambda plan, outputs, lease: "g1",
+    )
+
+    events = read_run_events("evented-run", con=con, namespace="owner").events
+    assert [event.payload["state"] for event in events if event.kind == "lifecycle"] == [
+        "running",
+        "succeeded",
+    ]
+
+
 def test_prefix_runner_receives_daily_output_for_certificate_plan():
     from types import SimpleNamespace
 

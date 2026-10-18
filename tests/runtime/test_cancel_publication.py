@@ -107,7 +107,7 @@ def test_cancel_waits_on_publication_boundary(monkeypatch):
     server.close()
     assert not executor.is_alive() and not canceller.is_alive()
     assert results[0].state == "succeeded"
-    assert cancellation[0]["disposition"] == "already_terminal"
+    assert cancellation[0].disposition == "already_terminal"
 
 
 def test_reexecution_recovers_pending_cancellation():
