@@ -4,6 +4,7 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
+from typing import cast
 
 import duckdb
 import ibis
@@ -183,3 +184,39 @@ def test_owner_planner_persists_same_snapshot_and_manifest_by_invocation(tmp_pat
     assert second.snapshot_id == first.snapshot_id
     assert second.expected_base_manifest is None
     assert conflict.value.code == "terrine.runtime.plan_invocation_conflict"
+
+
+def test_owner_plan_refuses_unsupported_runtime_shape_before_resolving_sources():
+    from terrine.errors import TerrineError
+    from terrine.spec.sequence import EventSequence
+    from terrine.windows import Window
+
+    request = PlanRequest(
+        "unsupported-shape",
+        _request().model,
+        Design(
+            "user",
+            FixedDate("2025-01-15"),
+            shape=EventSequence("purchase", Window("0s", "1d"), max_events=3),
+        ),
+        _request().destination,
+    )
+    con = duckdb.connect(":memory:")
+
+    class Resolver:
+        resolved = False
+
+        def resolve(self, reference):
+            self.resolved = True
+            raise AssertionError("unsupported shapes must be refused before source resolution")
+
+    resolver = Resolver()
+    planner = OwnerPlanner(resolver=resolver, snapshot_authority=cast(SnapshotAuthority, object()))
+    try:
+        with pytest.raises(TerrineError) as error:
+            planner.plan(request, con=con, namespace="owner")
+    finally:
+        con.close()
+
+    assert error.value.code == "terrine.compile.runtime_shape_unsupported"
+    assert not resolver.resolved

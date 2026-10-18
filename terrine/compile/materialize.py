@@ -10,18 +10,14 @@ from terrine.data import Budget
 from terrine.errors import RefusalSpec
 from terrine.model import Model
 from terrine.spec.design import Design
-from terrine.spec.state_panel import StatePanel
+from terrine.spec.validate import ensure_runtime_shape_supported
 
 _STRICT_SCAN_UNKNOWN = RefusalSpec(
     "terrine.budget.scan_unknown",
     "A strict scan-byte budget requires a verified scan bound; this backend has none. "
     "Explicitly choose non-strict scan policy after reviewing upstream work.",
 )
-_RUNTIME_SHAPE_UNSUPPORTED = RefusalSpec(
-    "terrine.compile.runtime_shape_unsupported",
-    "Persisted-layer runtime does not support shape {shape!r}; use ordinary Frame "
-    "materialization or a full rebuild.",
-)
+
 _ANCHOR_LAYER_INVALID = RefusalSpec(
     "terrine.compile.persisted_anchor_invalid",
     "Persisted anchor layer identity does not match compiler requirements.",
@@ -40,11 +36,7 @@ def compose_materialized_frame(
     Persisted relations are compiler logical inputs, never final frame partitions.
     The caller verifies physical generation provenance before crossing this boundary.
     """
-    if design.shape != "cross_section" and not isinstance(design.shape, StatePanel):
-        shape = design.shape if isinstance(design.shape, str) else type(design.shape).__name__
-        raise _RUNTIME_SHAPE_UNSUPPORTED.error(
-            shape=shape, route="ordinary Frame materialization or a full rebuild"
-        )
+    ensure_runtime_shape_supported(design.shape)
     if budget is not None and budget.max_scan_bytes is not None and budget.strict_scan:
         raise _STRICT_SCAN_UNKNOWN.error()
     from terrine.compile.dispatch import compile_design

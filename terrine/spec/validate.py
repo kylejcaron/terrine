@@ -41,6 +41,25 @@ if TYPE_CHECKING:
 __all__ = ["ValidationReport", "validate_design"]
 
 _INVALID = RefusalSpec("terrine.design.invalid", "Design validation failed: {reason}.")
+
+_RUNTIME_SHAPE_UNSUPPORTED = RefusalSpec(
+    "terrine.compile.runtime_shape_unsupported",
+    "Persisted-layer runtime does not support shape {shape!r}; use ordinary Frame "
+    "materialization or a full rebuild.",
+)
+
+
+def ensure_runtime_shape_supported(shape: object) -> None:
+    """Apply the canonical persisted-layer runtime supported-shape matrix."""
+    from terrine.spec.state_panel import StatePanel
+
+    if shape != "cross_section" and not isinstance(shape, StatePanel):
+        name = shape if isinstance(shape, str) else type(shape).__name__
+        raise _RUNTIME_SHAPE_UNSUPPORTED.error(
+            shape=name, route="ordinary Frame materialization or a full rebuild"
+        )
+
+
 _MISSING = RefusalSpec(
     "terrine.design.missing_reference", "Design references unknown {kind} {name!r}."
 )

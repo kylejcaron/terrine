@@ -25,6 +25,7 @@ from terrine.runtime.snapshot import SnapshotAuthority, _design_root_names
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.design import Design
 from terrine.spec.io import from_json, to_json
+from terrine.spec.validate import ensure_runtime_shape_supported
 
 __all__ = ["PlanRequest", "PlanInvocation", "OwnerPlanner"]
 
@@ -208,6 +209,7 @@ class OwnerPlanner:
                 raise _INVOCATION_CONFLICT.error()
             return PlanInvocation.from_dict(json.loads(prior[1]))
 
+        ensure_runtime_shape_supported(request.design.shape)
         model = self.resolver.resolve(request.model)
         if (
             not isinstance(model, Model)
