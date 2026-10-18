@@ -28,6 +28,12 @@ Persist `saved_plan` with the owner's job/configuration records before submittin
 
 A destination reference identifies `(database, schema, dataset)` for request-key isolation. It is not a provisioning command: arrange the customer-owned database and schema through the application before starting the owner. The owner uses its configured connection and namespace; do not put a connection string or secret in a plan or request key.
 
+`SnapshotAuthority.capture` is scoped to the resolved `Design`: it captures only required fact/property sources, their required dimensions and integrity inputs, and that design unit's roster. It keeps the full Catalog/model identity bound in the receipt without copying unrelated source rows. For example, a label source unused by the plan is not captured.
+
+## Runtime shape support
+
+Runtime composition enters through the same `compile_design` dispatcher as ordinary Frames. `cross_section` reuses verified persisted anchor/prefix layers. `StatePanel` is supported through that dispatcher as a full rebuild. Other specialized shapes are refused before source work with `terrine.compile.runtime_shape_unsupported`; the coded refusal carries the shape and the route `ordinary Frame materialization or a full rebuild`. Use ordinary Frame materialization or perform a full rebuild for those shapes.
+
 ## Save, run, and follow runs
 
 An owner process keeps the database connection open, configures its executor, and serves a private local IPC endpoint:
@@ -64,6 +70,8 @@ terrine cancel RUN_ID
 `plan` verifies the serialized plan version/fingerprint at the owner and emits its canonical serialization. `run` sends the plan to the owner; it never opens the owner's DuckDB file. A request key is optional for a one-off run. If present, it must be paired with all destination fields. The owner binds that key to the canonical plan fingerprint and destination: replaying the same pair returns the existing run, while changing its plan is refused. The same key may name a different destination without aliasing the prior run. Use a new key after an intentional source correction or definition change.
 
 Status, event pages, and cancellation are projections of durable owner state. Event cursors are exclusive and pages bounded. Endpoint availability is tied to the owner process: after a crash, wait until a recovery owner can reacquire the DuckDB database and reconcile before querying again. A cancellation request is durable but does not prove that an active backend query or its billing stopped. A stale heartbeat means liveness is unknown, not that a run is safely terminal.
+
+Run-state transitions distinguish recoverable failure from terminal results. A `failed` run may retry only after acquiring a newer lease fencing token; an expired writer cannot resume or publish. `succeeded` and `cancelled` runs are terminal and never regress.
 
 ### Optional telemetry
 

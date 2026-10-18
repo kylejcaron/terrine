@@ -409,6 +409,10 @@ def test_failed_run_retries_to_a_persisted_success_receipt():
             publish=lambda plan, outputs, lease: "g1",
         )
 
+    failed_fence = con.execute(
+        'SELECT attempt_fence FROM "owner".runtime_runs WHERE run_id=?', ["retry-run"]
+    ).fetchone()[0]
+
     result = execute_plan(
         plan,
         con=con,
@@ -417,6 +421,9 @@ def test_failed_run_retries_to_a_persisted_success_receipt():
         run_task=run_task,
         publish=lambda plan, outputs, lease: publish_calls.append("g1") or "g1",
     )
+    succeeded_state, succeeded_fence = con.execute(
+        'SELECT state, attempt_fence FROM "owner".runtime_runs WHERE run_id=?', ["retry-run"]
+    ).fetchone()
     replay = execute_plan(
         plan,
         con=con,
@@ -428,6 +435,8 @@ def test_failed_run_retries_to_a_persisted_success_receipt():
     assert result.state == "succeeded"
     assert replay == result
     assert publish_calls == ["g1"]
+    assert succeeded_state == "succeeded"
+    assert succeeded_fence > failed_fence
 
 
 def test_lease_heartbeat_keeps_long_task_alive(monkeypatch):

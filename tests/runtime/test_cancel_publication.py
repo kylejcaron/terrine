@@ -151,3 +151,13 @@ def test_reexecution_recovers_pending_cancellation():
     )
     assert receipt.state == "cancelled"
     assert ran == []
+    replay = execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="recover-cancel",
+        run_task=lambda task, dependencies: ran.append(task),
+        publish=lambda *args: "unexpected",
+    )
+    assert replay.state == "cancelled"
+    assert ran == []
