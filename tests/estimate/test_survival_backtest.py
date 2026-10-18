@@ -103,6 +103,34 @@ def test_backtest_masks_future_event_time_and_recensors_censor_time():
     ]
 
 
+@pytest.mark.parametrize(
+    "cutoff",
+    [
+        datetime(2025, 1, 1, 0, 0, 0, 500000, tzinfo=UTC),
+        datetime(2025, 1, 1, 0, 0, 0, 500001, tzinfo=UTC),
+    ],
+)
+def test_backtest_preserves_fractional_cutoff_for_seconds_censor_input(cutoff):
+    source = _frame()
+    table = source.table
+    for name in ("t0", "censor_time"):
+        table = table.set_column(
+            table.schema.get_field_index(name),
+            name,
+            table[name].cast(pa.timestamp("s", tz="UTC")),
+        )
+    source = MaterializedFrame(table, source.roles, source.columns, source.provenance)
+    captured = []
+    backtest_survival(
+        source,
+        duration="duration",
+        event="event",
+        entry="entry",
+        prediction_cutoffs=[cutoff],
+        fitter=lambda data: captured.append(data.table),
+    )
+    assert captured[0]["censor_time"][0].as_py() == cutoff
+    assert captured[0].schema.field("censor_time").type == pa.timestamp("us", tz="UTC")
 def test_backtest_preserves_subsecond_cutoff_with_seconds_origin():
     source = _frame()
     source_table = source.table.set_column(

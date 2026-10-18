@@ -328,9 +328,8 @@ def backtest_survival(
         censor_output_type = censor_input_type or output_duration_type
         if censor_input_type is not None:
             if (
-                censor_input_type.unit != "ns"
+                precision[censor_input_type.unit] < precision["us"]
                 and cutoff.microsecond
-                and cutoff.microsecond % 1_000 != 0
             ):
                 censor_output_type = pa.timestamp("us", tz="UTC")
             elif (
