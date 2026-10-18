@@ -116,3 +116,18 @@ def test_dataset_recipe_rejects_unknown_fields_tags_and_runtime_values() -> None
             base_design=design(),
             view={"kind": "training", "features": [object()]},
         )
+
+
+def test_recipe_put_removes_temporary_file_after_io_failure(tmp_path, monkeypatch) -> None:
+    import os
+
+    recipe = DatasetRecipe(schema_version=1, base_design=design())
+    store = DatasetRecipeStore(tmp_path / "owner-a", owner="owner-a")
+
+    def fail_fsync(_):
+        raise OSError("injected fsync failure")
+
+    monkeypatch.setattr(os, "fsync", fail_fsync)
+    with pytest.raises(OSError, match="injected fsync failure"):
+        store.put(recipe)
+    assert list(store.root.iterdir()) == []

@@ -132,12 +132,15 @@ class DatasetRecipeStore:
         content = recipe.canonical_json()
         path = self.root / f"{recipe.digest}.json"
         self.root.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(dir=self.root, prefix=".recipe-", delete=False) as stream:
-            temporary = Path(stream.name)
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
+        temporary: Path | None = None
         try:
+            with tempfile.NamedTemporaryFile(
+                dir=self.root, prefix=".recipe-", delete=False
+            ) as stream:
+                temporary = Path(stream.name)
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
             try:
                 os.link(temporary, path)
             except FileExistsError as error:
@@ -152,7 +155,8 @@ class DatasetRecipeStore:
                         reason="immutable recipe content conflicts"
                     ) from error
         finally:
-            temporary.unlink(missing_ok=True)
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
         return DatasetRecipeReference(self.owner, recipe.digest)
 
     def resolve(self, reference: DatasetRecipeReference) -> DatasetRecipe:
