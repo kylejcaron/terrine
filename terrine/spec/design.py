@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING
+
+from terrine._time import utc_instant
 
 if TYPE_CHECKING:
     from terrine.frame import Frame
@@ -121,7 +123,7 @@ class Design:
                 or administrative_cutoff.utcoffset() is None
             ):
                 raise ValueError("administrative_cutoff must be timezone-aware or None")
-            administrative_cutoff = administrative_cutoff.astimezone(UTC)
+            administrative_cutoff = utc_instant(administrative_cutoff)
         if isinstance(shape, CohortSpec) and (
             not isinstance(anchor, EventAnchor)
             or anchor.which != "first"

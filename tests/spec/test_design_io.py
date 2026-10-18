@@ -1,12 +1,14 @@
 from datetime import UTC, date, datetime
+from typing import cast
 
+import pandas as pd
 import pytest
 
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import agg, all_of, asof, eq, gt, is_null
 from terrine.spec.io import from_json, from_yaml, to_json, to_yaml
-from terrine.spec.trajectory import CohortSpec, Trajectory
+from terrine.spec.trajectory import CohortGrouping, CohortSpec, Trajectory
 
 
 def test_subday_duration_forms_share_canonical_spec_hashes():
@@ -214,3 +216,20 @@ def test_time_to_event_design_round_trips_and_requires_matching_occurrence_ancho
             anchor=Schedule("1d", "2025-03-01", "2025-03-04"),
             shape=TimeToEvent("churn"),
         )
+
+
+def test_submicrosecond_datetime_subclasses_are_rejected_at_construction():
+    value = pd.Timestamp("2025-01-04T00:00:00.000000001Z")
+    with pytest.raises(ValueError, match="microsecond precision"):
+        Design("user", FixedDate("2025-01-01"), administrative_cutoff=cast(datetime, value))
+    with pytest.raises(ValueError, match="microsecond precision"):
+        CohortGrouping("1d", bucket_origin=cast(datetime, value))
+
+
+def test_microsecond_datetime_subclass_is_normalized_for_round_trip():
+    value = pd.Timestamp("2025-01-04T00:00:00.123456Z")
+    design = Design("user", FixedDate("2025-01-01"), administrative_cutoff=cast(datetime, value))
+    assert type(design.administrative_cutoff) is datetime
+    assert from_json(to_json(design)) == design
+    grouping = CohortGrouping("1d", bucket_origin=cast(datetime, value))
+    assert type(grouping.bucket_origin) is datetime

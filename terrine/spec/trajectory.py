@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Literal
 
+from terrine._time import utc_instant
 from terrine.windows import seconds
 
 __all__ = ["Trajectory", "CohortSpec", "CohortGrouping", "TimeToEvent"]
@@ -72,7 +73,7 @@ class CohortGrouping:
         if statistic not in ("total", "mean"):
             raise ValueError("statistic must be 'total' or 'mean'")
         object.__setattr__(self, "bucket", duration)
-        object.__setattr__(self, "bucket_origin", bucket_origin.astimezone(UTC))
+        object.__setattr__(self, "bucket_origin", utc_instant(bucket_origin))
         object.__setattr__(self, "statistic", statistic)
 
 
