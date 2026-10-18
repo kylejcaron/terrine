@@ -223,7 +223,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         entry_timestamp = entry_events._timestamp
         if entry_events.schema()["_timestamp"].timezone is not None:
             entry_timestamp = _utc_naive("UTC", entry_timestamp)
-        entry_events = entry_events.mutate(_timestamp=entry_timestamp.cast(time_type))
+        entry_events = entry_events.mutate(_timestamp=entry_timestamp)
         entry_coverage = model.readiness.sources[entry_source.name]
         entry_start = _narrow_bound(
             ibis.literal(entry_coverage.start),
@@ -292,7 +292,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         exit_timestamp = exit_events._timestamp
         if exit_events.schema()["_timestamp"].timezone is not None:
             exit_timestamp = _utc_naive("UTC", exit_timestamp)
-        exit_events = exit_events.mutate(_timestamp=exit_timestamp.cast(time_type))
+        exit_events = exit_events.mutate(_timestamp=exit_timestamp)
         exit_candidates = candidates.select(
             unit=candidates.unit,
             anchor_id=candidates.anchor_id,
@@ -403,7 +403,11 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
     retained = result.filter(~prevalent)
     support_columns = {
         column
-        for name in (*design.features, *((base.roles.treatment,) if base.roles.treatment else ()))
+        for name in (
+            *design.features,
+            *design.eligibility,
+            *((base.roles.treatment,) if base.roles.treatment else ()),
+        )
         for column in (
             base.columns[name].observed_from_column,
             base.columns[name].observed_until_column,
@@ -417,7 +421,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         name: retained[name]
         for name in (
             *design.features,
-            *((base.roles.treatment,) if base.roles.treatment else ()),
+            *design.eligibility,
             *(name for name in base.table.columns if name.startswith("_observed_")),
             *support_columns,
         )

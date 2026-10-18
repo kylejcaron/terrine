@@ -392,6 +392,48 @@ def test_wide_exit_coverage_start_is_intersected_before_narrowing():
         con.disconnect()
 
 
+def test_wide_exit_source_timestamp_is_not_cast_to_nanoseconds():
+    con, model = _model(
+        nanosecond_outcomes=True,
+        exit_end="2501-01-01",
+    )
+    try:
+        con.raw_sql("UPDATE exits SET ts = TIMESTAMPTZ '2500-01-01 00:00:00+00'")
+        result = (
+            Design(
+                "user",
+                EventAnchor("signup", which="first"),
+                shape=TimeToEvent("churn", exit="closed"),
+            )
+            .build(model)
+            .materialize()
+        )
+        assert result.table.num_rows > 0
+    finally:
+        con.disconnect()
+
+
+def test_wide_entry_source_timestamp_is_not_cast_to_nanoseconds():
+    con, model = _model(
+        nanosecond_outcomes=True,
+        entry_end="2501-01-01",
+    )
+    try:
+        con.raw_sql("UPDATE entries SET ts = TIMESTAMPTZ '2500-01-01 00:00:00+00'")
+        result = (
+            Design(
+                "user",
+                EventAnchor("signup", which="first"),
+                shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
+            )
+            .build(model)
+            .materialize()
+        )
+        assert result.table.num_rows > 0
+    finally:
+        con.disconnect()
+
+
 def test_wide_roster_observation_end_is_intersected_before_narrowing():
     from terrine.data import UnitSource
 
