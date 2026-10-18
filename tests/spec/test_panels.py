@@ -9,6 +9,7 @@ from terrine.spec import (
     EventPanel,
     EventPanelSpec,
     Initiation,
+    MatchedT0Sample,
     PersistentAdoption,
     Schedule,
     Sequential,
@@ -18,6 +19,26 @@ from terrine.spec import (
     from_json,
     to_json,
 )
+
+
+def test_matched_t0_policy_is_serialized_and_in_design_hash():
+    base = Design("user", Schedule("1d", "2025-01-01", "2025-01-03"))
+    sample = MatchedT0Sample(("region", "channel"), controls_per_treated=2, seed=17)
+    design = Design(
+        base.unit,
+        base.anchor,
+        shape=SequentialSpec(
+            Initiation("events", "started", datetime(2024, 1, 1, tzinfo=UTC)),
+            TrialWeight("equal_trial"),
+        ),
+        sample=sample,
+    )
+
+    restored = from_json(to_json(design))
+
+    assert restored == design
+    assert restored.spec_hash == design.spec_hash
+    assert restored.sample == sample
 
 
 def test_sequential_schedule_spec_round_trips_canonically():

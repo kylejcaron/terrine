@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from terrine.frame import Frame
     from terrine.model import Model
-    from terrine.spec.panels import EventPanelSpec, SequentialSpec
+    from terrine.spec.panels import EventPanelSpec, MatchedT0Sample, SequentialSpec
 
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.expressions import And, AttributeAsOf, Eq, Expr, Gt, IsNull, MetricAgg, Predicate
@@ -65,6 +65,7 @@ class Design:
     gap: int
     shape: str | StatePanel | SequentialSpec | EventPanelSpec
     anchor_range: AnchorRange | None
+    sample: MatchedT0Sample | None
 
     def __init__(
         self,
@@ -78,6 +79,7 @@ class Design:
         gap: str | int = "0d",
         shape: str | StatePanel | SequentialSpec | EventPanelSpec = "cross_section",
         anchor_range: AnchorRange | None = None,
+        sample: MatchedT0Sample | None = None,
     ) -> None:
         if not isinstance(unit, str) or not unit.strip():
             raise ValueError("unit must be a non-empty string")
@@ -87,7 +89,10 @@ class Design:
             raise TypeError("treatment must be Treatment or None")
         if anchor_range is not None and not isinstance(anchor_range, AnchorRange):
             raise TypeError("anchor_range must be AnchorRange or None")
-        from terrine.spec.panels import EventPanelSpec, SequentialSpec
+        from terrine.spec.panels import EventPanelSpec, MatchedT0Sample, SequentialSpec
+
+        if sample is not None and not isinstance(sample, MatchedT0Sample):
+            raise TypeError("sample must be MatchedT0Sample or None")
 
         if not isinstance(shape, (str, StatePanel, SequentialSpec, EventPanelSpec)) or (
             isinstance(shape, str) and not shape.strip()
@@ -115,6 +120,7 @@ class Design:
         object.__setattr__(self, "gap", gap_seconds)
         object.__setattr__(self, "shape", shape)
         object.__setattr__(self, "anchor_range", anchor_range)
+        object.__setattr__(self, "sample", sample)
 
     def validate(self, model: Model) -> None:
         """Validate this design against bound model metadata without executing queries."""

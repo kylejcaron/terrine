@@ -17,6 +17,7 @@ from terrine.spec.expressions import And, AttributeAsOf, Eq, Gt, IsNull, MetricA
 from terrine.spec.panels import (
     EventPanelSpec,
     Initiation,
+    MatchedT0Sample,
     PersistentAdoption,
     SequentialSpec,
     TrialWeight,
@@ -75,6 +76,7 @@ def _encode(value: Any) -> Any:
             "gap": value.gap,
             "shape": _encode(value.shape),
             "anchor_range": None if value.anchor_range is None else _encode(value.anchor_range),
+            "sample": None if value.sample is None else _encode(value.sample),
         }
     if isinstance(value, FixedDate):
         return {"type": "FixedDate", "date": _date_value(value.date)}
@@ -137,6 +139,13 @@ def _encode(value: Any) -> Any:
             "history_start": value.history_start.isoformat(),
             "persistence": value.persistence,
             "knowledge": value.knowledge,
+        }
+    if isinstance(value, MatchedT0Sample):
+        return {
+            "type": "MatchedT0Sample",
+            "strata": list(value.strata),
+            "controls_per_treated": value.controls_per_treated,
+            "seed": value.seed,
         }
     if isinstance(value, TrialWeight):
         return {
@@ -325,6 +334,9 @@ def _node(value: Any) -> Any:
             item["persistence"],
             item["knowledge"],
         )
+    if tag == "MatchedT0Sample":
+        item = _object(value, {"type", "strata", "controls_per_treated", "seed"})
+        return MatchedT0Sample(tuple(item["strata"]), item["controls_per_treated"], item["seed"])
     if tag == "TrialWeight":
         item = _object(value, {"type", "kind", "values"})
         return TrialWeight(item["kind"], item["values"])
@@ -395,6 +407,7 @@ def _design(value: Any) -> Design:
             "gap",
             "shape",
             "anchor_range",
+            "sample",
         },
         {"unit", "anchor"},
     )
@@ -405,7 +418,7 @@ def _design(value: Any) -> Design:
         "treatment": None,
         "gap": 0,
         "shape": "cross_section",
-        "anchor_range": None,
+        "sample": None,
         **item,
     }
 
@@ -420,6 +433,7 @@ def _design(value: Any) -> Design:
     anchor = _node(item["anchor"])
     treatment = None if item["treatment"] is None else _node(item["treatment"])
     anchor_range = None if item["anchor_range"] is None else _node(item["anchor_range"])
+    sample = None if item["sample"] is None else _node(item["sample"])
     if not isinstance(anchor, (FixedDate, EventAnchor, Schedule)):
         raise ValueError("design anchor has invalid node type")
     if treatment is not None and not isinstance(treatment, Treatment):
@@ -439,6 +453,7 @@ def _design(value: Any) -> Design:
         gap=item["gap"],
         shape=item["shape"] if isinstance(item["shape"], str) else _node(item["shape"]),
         anchor_range=anchor_range,
+        sample=sample,
     )
 
 

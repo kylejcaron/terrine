@@ -20,6 +20,7 @@ __all__ = [
     "Initiation",
     "PersistentAdoption",
     "TrialWeight",
+    "MatchedT0Sample",
     "SequentialSpec",
     "EventPanelSpec",
     "Sequential",
@@ -131,6 +132,31 @@ class TrialWeight:
             raise ValueError("equal_trial does not accept values")
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "values", values)
+
+
+@dataclass(frozen=True, slots=True)
+class MatchedT0Sample:
+    """Canonical matched-t0 sampling policy, retained on its Design."""
+
+    strata: tuple[str, ...]
+    controls_per_treated: int
+    seed: int
+
+    def __post_init__(self) -> None:
+        strata = tuple(self.strata)
+        if any(not isinstance(name, str) or not name.strip() for name in strata):
+            raise ValueError("strata must contain non-empty names")
+        if len(set(strata)) != len(strata):
+            raise ValueError("strata must be unique")
+        if (
+            isinstance(self.controls_per_treated, bool)
+            or not isinstance(self.controls_per_treated, int)
+            or self.controls_per_treated <= 0
+        ):
+            raise ValueError("controls_per_treated must be a positive integer")
+        if isinstance(self.seed, bool) or not isinstance(self.seed, int) or self.seed < 0:
+            raise ValueError("seed must be a nonnegative integer")
+        object.__setattr__(self, "strata", strata)
 
 
 @dataclass(frozen=True, slots=True)
