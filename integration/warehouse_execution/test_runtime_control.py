@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import duckdb
 
@@ -27,7 +28,7 @@ def test_separate_process_status_and_cancel_use_owner_connection(tmp_path):
         "UPDATE owner.runtime_runs SET request_key=?, destination_json=?",
         ["req", '{"database":"out.duckdb","dataset":"d","schema":"analytics"}'],
     )
-    endpoint = ControlEndpoint(tmp_path / f"terrine-control-{os.getpid()}.sock")
+    endpoint = ControlEndpoint(Path(f"/tmp/terrine-control-{os.getpid()}.sock"))
     server = ControlServer(store, namespace="owner", endpoint=endpoint)
     server.start()
     try:
