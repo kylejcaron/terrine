@@ -31,7 +31,7 @@ class LeaseStore:
         self.con.execute(
             f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_leases ("
             "resource VARCHAR PRIMARY KEY, owner VARCHAR NOT NULL, fence BIGINT NOT NULL, "
-            "expires_at VARCHAR NOT NULL)"
+            "expires_at TIMESTAMP NOT NULL)"
         )
         self.con.execute(
             f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_lease_fences ("
@@ -52,7 +52,7 @@ class LeaseStore:
                 f"FROM {self._schema}.runtime_leases WHERE resource=?",
                 [resource],
             ).fetchone()
-            if row is not None and datetime.fromisoformat(row[2]) > now:
+            if row is not None and row[2].replace(tzinfo=UTC) > now:
                 raise ValueError("resource is leased by an active owner")
             fence_row = self.con.execute(
                 f"SELECT last_fence FROM {self._schema}.runtime_lease_fences WHERE resource=?",
@@ -68,7 +68,7 @@ class LeaseStore:
                 f"INSERT INTO {self._schema}.runtime_leases VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(resource) DO UPDATE SET owner=excluded.owner, fence=excluded.fence, "
                 "expires_at=excluded.expires_at",
-                [resource, owner, fence, expires.isoformat()],
+                [resource, owner, fence, _naive_utc(expires)],
             )
             self.con.execute(
                 f"INSERT INTO {self._schema}.runtime_resource_guards VALUES (?, 0) "
@@ -93,7 +93,7 @@ class LeaseStore:
         self.con.execute(
             f"UPDATE {self._schema}.runtime_leases SET expires_at=? "
             "WHERE resource=? AND owner=? AND fence=?",
-            [renewed.expires_at.isoformat(), lease.resource, lease.owner, lease.fence],
+            [_naive_utc(renewed.expires_at), lease.resource, lease.owner, lease.fence],
         )
         return renewed
 
@@ -124,7 +124,7 @@ class LeaseStore:
             row is None
             or row[0] != lease.owner
             or row[1] != lease.fence
-            or datetime.fromisoformat(row[2]) <= now
+            or row[2].replace(tzinfo=UTC) <= now
         ):
             raise ValueError("lease is expired or fenced by a newer owner")
 
@@ -136,3 +136,7 @@ class LeaseStore:
             raise ValueError("lease ttl must be positive")
         if now.tzinfo is None:
             raise ValueError("lease clock must be timezone-aware")
+
+
+def _naive_utc(value: datetime) -> datetime:
+    return value.astimezone(UTC).replace(tzinfo=None)

@@ -91,7 +91,7 @@ def execute_plan(
             lease.resource,
             lease.owner,
             lease.fence,
-            datetime.now(UTC).isoformat(),
+            datetime.now(UTC).replace(tzinfo=None),
         ],
     ).fetchone()
     if transition is None:
@@ -149,7 +149,7 @@ def execute_plan(
                         lease.resource,
                         lease.owner,
                         lease.fence,
-                        datetime.now(UTC).isoformat(),
+                        datetime.now(UTC).replace(tzinfo=None),
                     ],
                 ).fetchone()
                 if claimed_task is None:
@@ -175,7 +175,7 @@ def execute_plan(
                         lease.resource,
                         lease.owner,
                         lease.fence,
-                        datetime.now(UTC).isoformat(),
+                        datetime.now(UTC).replace(tzinfo=None),
                     ],
                 ).fetchone()
                 if completed is None:

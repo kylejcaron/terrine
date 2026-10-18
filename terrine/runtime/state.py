@@ -4,7 +4,7 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Any
 
@@ -84,7 +84,7 @@ class RuntimeStore:
             f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_generations ("
             "dataset VARCHAR NOT NULL, generation VARCHAR NOT NULL, "
             "definition_json VARCHAR NOT NULL, snapshot_json VARCHAR NOT NULL, "
-            "created_at VARCHAR NOT NULL, supersedes VARCHAR, "
+            "created_at TIMESTAMP NOT NULL, supersedes VARCHAR, "
             "superseded_by VARCHAR, PRIMARY KEY(dataset, generation))"
         )
         self.con.execute(
@@ -112,7 +112,7 @@ class RuntimeStore:
                 raise ValueError("a generation cannot supersede itself")
             if supersedes.dataset != ref.dataset:
                 raise ValueError("superseded generation must belong to the same dataset")
-        now = datetime.now().astimezone()
+        now = datetime.now(UTC)
         definition_json = json.dumps(
             {
                 "definition_hash": definition.definition_hash,
@@ -135,7 +135,7 @@ class RuntimeStore:
                     ref.generation,
                     definition_json,
                     snapshot_json,
-                    now.isoformat(),
+                    now.replace(tzinfo=None),
                     supersedes.generation if supersedes else None,
                 ],
             )
@@ -180,7 +180,7 @@ class RuntimeStore:
             ref,
             definition,
             snapshot,
-            datetime.fromisoformat(created_at),
+            created_at.replace(tzinfo=UTC),
             GenerationRef(self.namespace, ref.dataset, supersedes) if supersedes else None,
             GenerationRef(self.namespace, ref.dataset, superseded_by) if superseded_by else None,
         )
