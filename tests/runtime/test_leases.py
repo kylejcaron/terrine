@@ -53,6 +53,23 @@ def test_initialize_migrates_existing_lease_timestamp_values_to_naive_utc():
         )
 
 
+def test_lease_initialization_migrates_timestamp_with_case_variant_namespace():
+    con = duckdb.connect(":memory:")
+    con.execute("CREATE SCHEMA owner")
+    con.execute(
+        "CREATE TABLE owner.runtime_leases (resource VARCHAR PRIMARY KEY, "
+        "owner VARCHAR NOT NULL, fence BIGINT NOT NULL, expires_at VARCHAR NOT NULL)"
+    )
+    con.execute(
+        "INSERT INTO owner.runtime_leases VALUES (?, ?, ?, ?)",
+        ["dataset:orders", "run", 1, "2025-01-01T00:00:01+00:00"],
+    )
+    LeaseStore(con, namespace="OWNER").initialize()
+    assert con.execute("SELECT typeof(expires_at) FROM owner.runtime_leases").fetchone() == (
+        "TIMESTAMP",
+    )
+
+
 def test_lease_heartbeat_renewal_and_fencing():
     store = LeaseStore(duckdb.connect(":memory:"), namespace="owner")
     store.initialize()

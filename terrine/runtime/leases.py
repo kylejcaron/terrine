@@ -35,7 +35,8 @@ class LeaseStore:
         )
         column_type = self.con.execute(
             "SELECT data_type FROM information_schema.columns "
-            "WHERE table_schema=? AND table_name='runtime_leases' AND column_name='expires_at'",
+            "WHERE lower(table_schema)=lower(?) "
+            "AND table_name='runtime_leases' AND column_name='expires_at'",
             [self.namespace],
         ).fetchone()[0]
         if column_type != "TIMESTAMP":

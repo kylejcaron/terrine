@@ -153,3 +153,32 @@ def test_initialize_migrates_existing_generation_timestamp_to_naive_utc():
     assert con.execute(
         "SELECT typeof(created_at), created_at FROM owner.runtime_generations"
     ).fetchone() == ("TIMESTAMP", datetime(2025, 1, 1, 0, 0, 0, 123456))
+
+
+def test_generation_initialization_migrates_timestamp_with_case_variant_namespace():
+    con = duckdb.connect(":memory:")
+    con.execute("CREATE SCHEMA owner")
+    con.execute(
+        "CREATE TABLE owner.runtime_generations (dataset VARCHAR NOT NULL, "
+        "generation VARCHAR NOT NULL, definition_json VARCHAR NOT NULL, "
+        "snapshot_json VARCHAR NOT NULL, created_at VARCHAR NOT NULL, "
+        "supersedes VARCHAR, superseded_by VARCHAR, "
+        "PRIMARY KEY(dataset, generation))"
+    )
+    con.execute(
+        "INSERT INTO owner.runtime_generations VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            "orders",
+            "g1",
+            '{"definition_hash":"d","schema_hash":"s","codec_version":"1"}',
+            '{"snapshot_id":"snap","source_revisions":{},"readiness":{},'
+            '"captured_at":"2025-01-01T00:00:00+00:00","owner_reference":"owner"}',
+            "2025-01-01T00:00:00+00:00",
+            None,
+            None,
+        ],
+    )
+    RuntimeStore(con, namespace="OWNER").initialize()
+    assert con.execute("SELECT typeof(created_at) FROM owner.runtime_generations").fetchone() == (
+        "TIMESTAMP",
+    )

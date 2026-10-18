@@ -89,8 +89,8 @@ class RuntimeStore:
         )
         column_type = self.con.execute(
             "SELECT data_type FROM information_schema.columns "
-            "WHERE table_schema=? AND table_name='runtime_generations' "
-            "AND column_name='created_at'",
+            "WHERE lower(table_schema)=lower(?) "
+            "AND table_name='runtime_generations' AND column_name='created_at'",
             [self.namespace],
         ).fetchone()[0]
         if column_type != "TIMESTAMP":
