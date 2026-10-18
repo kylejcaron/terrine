@@ -323,6 +323,8 @@ def test_nanosecond_exit_before_outcome_coverage_is_not_ignored():
         )
         rows = {row["unit"]: row for row in result.table.to_pylist()}
         assert rows["u1"]["complete"] is False
+        assert rows["u1"]["event"] is False
+        assert rows["u1"]["censor_time"] == datetime(2025, 1, 2, tzinfo=UTC)
     finally:
         con.disconnect()
 
