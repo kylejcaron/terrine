@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -103,7 +105,9 @@ class DatasetRecipeReference:
 
     def __post_init__(self) -> None:
         if (
-            not self.owner
+            not isinstance(self.owner, str)
+            or not self.owner
+            or not isinstance(self.digest, str)
             or len(self.digest) != 64
             or any(char not in "0123456789abcdef" for char in self.digest)
         ):
@@ -119,8 +123,8 @@ class DatasetRecipeStore:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "root", Path(self.root).expanduser().resolve())
-        if not self.owner:
-            raise ValueError("owner must be non-empty")
+        if not isinstance(self.owner, str) or not self.owner:
+            raise ValueError("owner must be a non-empty string")
 
     def put(self, recipe: DatasetRecipe) -> DatasetRecipeReference:
         if not isinstance(recipe, DatasetRecipe):
@@ -128,18 +132,36 @@ class DatasetRecipeStore:
         content = recipe.canonical_json()
         path = self.root / f"{recipe.digest}.json"
         self.root.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=self.root, prefix=".recipe-", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
         try:
-            with path.open("xb") as stream:
-                stream.write(content)
-        except FileExistsError as error:
-            if path.read_bytes() != content:
-                raise INVALID_RECIPE.error(reason="immutable recipe content conflicts") from error
+            try:
+                os.link(temporary, path)
+            except FileExistsError as error:
+                try:
+                    existing = path.read_bytes()
+                except OSError as read_error:
+                    raise INVALID_RECIPE.error(
+                        reason="immutable recipe object cannot be read"
+                    ) from read_error
+                if existing != content:
+                    raise INVALID_RECIPE.error(
+                        reason="immutable recipe content conflicts"
+                    ) from error
+        finally:
+            temporary.unlink(missing_ok=True)
         return DatasetRecipeReference(self.owner, recipe.digest)
 
     def resolve(self, reference: DatasetRecipeReference) -> DatasetRecipe:
         if not isinstance(reference, DatasetRecipeReference) or reference.owner != self.owner:
             raise INVALID_RECIPE.error(reason="recipe reference belongs to another owner")
-        content = (self.root / f"{reference.digest}.json").read_bytes()
+        try:
+            content = (self.root / f"{reference.digest}.json").read_bytes()
+        except OSError as error:
+            raise INVALID_RECIPE.error(reason="recipe reference object is unavailable") from error
         if hashlib.sha256(content).hexdigest() != reference.digest:
             raise INVALID_RECIPE.error(reason="recipe reference digest mismatch")
         recipe = DatasetRecipe.from_json(content)

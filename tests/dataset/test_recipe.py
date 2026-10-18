@@ -1,4 +1,5 @@
 from datetime import date
+from typing import cast
 
 import pytest
 
@@ -25,6 +26,40 @@ def test_recipe_reference_store_refuses_corrupt_content(tmp_path) -> None:
     (tmp_path / "owner-a" / f"{recipe.digest}.json").write_bytes(b"corrupt")
     with pytest.raises(TerrineError):
         store.resolve(reference)
+
+
+def test_recipe_reference_missing_object_uses_invalid_recipe_refusal(tmp_path) -> None:
+    recipe = DatasetRecipe(schema_version=1, base_design=design())
+    store = DatasetRecipeStore(tmp_path / "owner-a", owner="owner-a")
+    reference = store.put(recipe)
+    (store.root / f"{recipe.digest}.json").unlink()
+    with pytest.raises(TerrineError) as error:
+        store.resolve(reference)
+    assert error.value.code == "terrine.dataset.invalid_recipe"
+
+
+def test_recipe_reference_rejects_non_string_fields() -> None:
+    with pytest.raises(TerrineError) as error:
+        DatasetRecipeReference("owner", cast(str, None))
+    assert error.value.code == "terrine.dataset.invalid_recipe"
+
+
+def test_concurrent_identical_recipe_puts_publish_complete_content(tmp_path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    recipe = DatasetRecipe(schema_version=1, base_design=design())
+    store = DatasetRecipeStore(tmp_path / "owner-a", owner="owner-a")
+    barrier = Barrier(2)
+
+    def put():
+        barrier.wait()
+        return store.put(recipe)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        references = list(executor.map(lambda _: put(), range(2)))
+    assert references == [DatasetRecipeReference("owner-a", recipe.digest)] * 2
+    assert store.resolve(references[0]).canonical_json() == recipe.canonical_json()
 
 
 def design() -> Design:
