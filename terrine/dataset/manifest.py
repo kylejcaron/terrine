@@ -8,7 +8,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from terrine.errors import freeze, thaw
-from terrine.spec.dataset import INVALID_RECIPE, DatasetRecipe
+from terrine.spec.dataset import (
+    INVALID_RECIPE,
+    DatasetRecipe,
+    DatasetRecipeReference,
+    DatasetRecipeStore,
+)
 
 __all__ = ["DatasetManifest", "ManifestColumn", "ManifestGeneration"]
 
@@ -67,10 +72,17 @@ class DatasetManifest:
     split_policy: Any = None
     schema_version: int = 1
     compiler_version: str = "1"
+    recipe_reference: DatasetRecipeReference | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != 1 or not isinstance(self.recipe, DatasetRecipe):
             raise ValueError("unsupported manifest schema or recipe")
+        if self.recipe_reference is not None:
+            if (
+                not isinstance(self.recipe_reference, DatasetRecipeReference)
+                or self.recipe_reference.digest != self.recipe.digest
+            ):
+                raise INVALID_RECIPE.error(reason="recipe reference does not match manifest recipe")
         if not isinstance(self.generation, ManifestGeneration):
             raise TypeError("generation must be ManifestGeneration")
         if not self.design_hash or not self.model_hash:
@@ -82,47 +94,56 @@ class DatasetManifest:
         object.__setattr__(self, "columns", tuple(self.columns))
 
     def to_json(self) -> bytes:
-        return _canonical(
-            {
-                "schema_version": 1,
-                "recipe": json.loads(self.recipe.canonical_json()),
-                "recipe_hash": self.recipe.digest,
-                "generation": {
-                    "dataset_id": self.generation.dataset_id,
-                    "generation_id": self.generation.generation_id,
-                    "output_refs": self.generation.output_refs,
-                    "checksums": self.generation.checksums,
-                    "row_count": self.generation.row_count,
-                },
-                "columns": [
-                    {
-                        "name": c.name,
-                        "data_type": c.data_type,
-                        "role": c.role,
-                        "metadata": thaw(c.metadata),
-                    }
-                    for c in self.columns
-                ],
-                "design_hash": self.design_hash,
-                "model_hash": self.model_hash,
-                "source_coverage": thaw(self.source_coverage),
-                "source_snapshots": thaw(self.source_snapshots),
-                "readiness": thaw(self.readiness),
-                "split_policy": thaw(self.split_policy),
-                "compiler_version": self.compiler_version,
+        payload = {
+            "schema_version": 1,
+            "recipe": json.loads(self.recipe.canonical_json()),
+            "recipe_hash": self.recipe.digest,
+            "generation": {
+                "dataset_id": self.generation.dataset_id,
+                "generation_id": self.generation.generation_id,
+                "output_refs": self.generation.output_refs,
+                "checksums": self.generation.checksums,
+                "row_count": self.generation.row_count,
+            },
+            "columns": [
+                {
+                    "name": column.name,
+                    "data_type": column.data_type,
+                    "role": column.role,
+                    "metadata": thaw(column.metadata),
+                }
+                for column in self.columns
+            ],
+            "design_hash": self.design_hash,
+            "model_hash": self.model_hash,
+            "source_coverage": thaw(self.source_coverage),
+            "source_snapshots": thaw(self.source_snapshots),
+            "readiness": thaw(self.readiness),
+            "split_policy": thaw(self.split_policy),
+            "compiler_version": self.compiler_version,
+        }
+        if self.recipe_reference is not None:
+            del payload["recipe"]
+            payload["recipe_reference"] = {
+                "owner": self.recipe_reference.owner,
+                "digest": self.recipe_reference.digest,
             }
-        )
+        return _canonical(payload)
 
     @property
     def digest(self) -> str:
         return hashlib.sha256(self.to_json()).hexdigest()
 
     @classmethod
-    def from_json(cls, value: str | bytes) -> DatasetManifest:
+    def from_json(
+        cls,
+        value: str | bytes,
+        *,
+        recipe_store: DatasetRecipeStore | None = None,
+    ) -> DatasetManifest:
         payload = json.loads(value)
-        expected = {
+        common = {
             "schema_version",
-            "recipe",
             "recipe_hash",
             "generation",
             "columns",
@@ -134,13 +155,25 @@ class DatasetManifest:
             "split_policy",
             "compiler_version",
         }
+        is_reference = "recipe_reference" in payload if isinstance(payload, dict) else False
+        expected = common | ({"recipe_reference"} if is_reference else {"recipe"})
         if (
             not isinstance(payload, dict)
             or set(payload) != expected
             or payload["schema_version"] != 1
         ):
             raise ValueError("invalid dataset manifest")
-        recipe = DatasetRecipe.from_json(_canonical(payload["recipe"]))
+        reference = None
+        if is_reference:
+            if recipe_store is None:
+                raise INVALID_RECIPE.error(reason="owner-configured recipe storage is required")
+            record = payload["recipe_reference"]
+            if not isinstance(record, dict) or set(record) != {"owner", "digest"}:
+                raise INVALID_RECIPE.error(reason="invalid recipe reference")
+            reference = DatasetRecipeReference(**record)
+            recipe = recipe_store.resolve(reference)
+        else:
+            recipe = DatasetRecipe.from_json(_canonical(payload["recipe"]))
         if recipe.digest != payload["recipe_hash"]:
             raise INVALID_RECIPE.error(reason="recipe digest mismatch")
         gen = payload["generation"]
@@ -159,4 +192,5 @@ class DatasetManifest:
             payload["split_policy"],
             1,
             payload["compiler_version"],
+            reference,
         )

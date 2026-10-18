@@ -2,7 +2,7 @@
 
 ## 0.1.0
 
-- Define versioned canonical dataset recipes and manifests, plus typed deterministic time/group split policies with leakage exclusions.
+- Define versioned canonical dataset recipes and manifests, including owner-scoped immutable content-addressed recipe references verified on reopening.
 - Establish the standalone Python package and development quality gates.
 - Expose the implemented elapsed-time `Window` and coded `TerrineError` contracts.
 - Include inline type metadata so installed-package consumers receive type checking.

@@ -4,7 +4,27 @@ import pytest
 
 from terrine.errors import TerrineError
 from terrine.spec import Design, FixedDate
-from terrine.spec.dataset import DatasetRecipe
+from terrine.spec.dataset import DatasetRecipe, DatasetRecipeReference, DatasetRecipeStore
+
+
+def test_recipe_reference_resolves_only_from_configured_owner_store(tmp_path) -> None:
+    recipe = DatasetRecipe(schema_version=1, base_design=design())
+    store = DatasetRecipeStore(tmp_path / "owner-a", owner="owner-a")
+    reference = store.put(recipe)
+    assert reference == DatasetRecipeReference("owner-a", recipe.digest)
+    assert store.resolve(reference).canonical_json() == recipe.canonical_json()
+    other = DatasetRecipeStore(tmp_path / "owner-b", owner="owner-b")
+    with pytest.raises(TerrineError):
+        other.resolve(reference)
+
+
+def test_recipe_reference_store_refuses_corrupt_content(tmp_path) -> None:
+    recipe = DatasetRecipe(schema_version=1, base_design=design())
+    store = DatasetRecipeStore(tmp_path / "owner-a", owner="owner-a")
+    reference = store.put(recipe)
+    (tmp_path / "owner-a" / f"{recipe.digest}.json").write_bytes(b"corrupt")
+    with pytest.raises(TerrineError):
+        store.resolve(reference)
 
 
 def design() -> Design:

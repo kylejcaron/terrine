@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from terrine.errors import RefusalSpec, freeze, thaw
@@ -12,7 +13,12 @@ from terrine.spec.design import Design
 from terrine.spec.io import canonical_json as design_json
 from terrine.spec.io import from_json as design_from_json
 
-__all__ = ["DatasetRecipe", "INVALID_RECIPE"]
+__all__ = [
+    "DatasetRecipe",
+    "DatasetRecipeReference",
+    "DatasetRecipeStore",
+    "INVALID_RECIPE",
+]
 
 INVALID_RECIPE = RefusalSpec("terrine.dataset.invalid_recipe", "Invalid dataset recipe: {reason}")
 
@@ -86,6 +92,60 @@ class DatasetRecipe:
             if getattr(error, "code", None) == INVALID_RECIPE.code:
                 raise
             raise INVALID_RECIPE.error(reason="malformed or unsupported content") from error
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetRecipeReference:
+    """Content-addressed recipe identity scoped to a configured owner."""
+
+    owner: str
+    digest: str
+
+    def __post_init__(self) -> None:
+        if (
+            not self.owner
+            or len(self.digest) != 64
+            or any(char not in "0123456789abcdef" for char in self.digest)
+        ):
+            raise INVALID_RECIPE.error(reason="invalid owner-bound recipe reference")
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetRecipeStore:
+    """Immutable local recipe storage configured for one data owner."""
+
+    root: Path
+    owner: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "root", Path(self.root).expanduser().resolve())
+        if not self.owner:
+            raise ValueError("owner must be non-empty")
+
+    def put(self, recipe: DatasetRecipe) -> DatasetRecipeReference:
+        if not isinstance(recipe, DatasetRecipe):
+            raise TypeError("recipe must be DatasetRecipe")
+        content = recipe.canonical_json()
+        path = self.root / f"{recipe.digest}.json"
+        self.root.mkdir(parents=True, exist_ok=True)
+        try:
+            with path.open("xb") as stream:
+                stream.write(content)
+        except FileExistsError as error:
+            if path.read_bytes() != content:
+                raise INVALID_RECIPE.error(reason="immutable recipe content conflicts") from error
+        return DatasetRecipeReference(self.owner, recipe.digest)
+
+    def resolve(self, reference: DatasetRecipeReference) -> DatasetRecipe:
+        if not isinstance(reference, DatasetRecipeReference) or reference.owner != self.owner:
+            raise INVALID_RECIPE.error(reason="recipe reference belongs to another owner")
+        content = (self.root / f"{reference.digest}.json").read_bytes()
+        if hashlib.sha256(content).hexdigest() != reference.digest:
+            raise INVALID_RECIPE.error(reason="recipe reference digest mismatch")
+        recipe = DatasetRecipe.from_json(content)
+        if recipe.digest != reference.digest:
+            raise INVALID_RECIPE.error(reason="recipe reference digest mismatch")
+        return recipe
 
 
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

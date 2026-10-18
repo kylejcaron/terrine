@@ -2,7 +2,37 @@ from datetime import date
 
 from terrine.dataset.manifest import DatasetManifest, ManifestColumn, ManifestGeneration
 from terrine.spec import Design, FixedDate
-from terrine.spec.dataset import DatasetRecipe
+from terrine.spec.dataset import DatasetRecipe, DatasetRecipeStore
+
+
+def test_manifest_recipe_reference_requires_owner_storage_and_verifies_digest(tmp_path) -> None:
+    import pytest
+
+    from terrine.errors import TerrineError
+
+    recipe = DatasetRecipe(
+        schema_version=1, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
+    )
+    store = DatasetRecipeStore(tmp_path / "owner-a", owner="owner-a")
+    reference = store.put(recipe)
+    manifest = DatasetManifest(
+        recipe,
+        ManifestGeneration("ds", "g1", ("table:g1",), ("sha256:x",), 0),
+        (),
+        "design",
+        "model",
+        {},
+        {},
+        recipe_reference=reference,
+    )
+    with pytest.raises(TerrineError):
+        DatasetManifest.from_json(manifest.to_json())
+    reopened = DatasetManifest.from_json(manifest.to_json(), recipe_store=store)
+    assert reopened.recipe == recipe
+    assert reopened.recipe_reference == reference
+    other = DatasetRecipeStore(tmp_path / "owner-b", owner="owner-b")
+    with pytest.raises(TerrineError):
+        DatasetManifest.from_json(manifest.to_json(), recipe_store=other)
 
 
 def test_dataset_manifest_round_trip_preserves_generation_schema_roles_and_certificates() -> None:
