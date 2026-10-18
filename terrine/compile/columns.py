@@ -129,11 +129,14 @@ def compile_columns(
     *,
     include_membership: bool = True,
     persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None = None,
+    persisted_anchors: ibis.Table | None = None,
 ) -> CompiledStudy:
     """Compile candidates and distinct expressions once without reading source rows."""
     _validate_names(design)
     design.validate(model)
-    anchors = compile_anchors(design, model, include_membership=include_membership)
+    anchors = compile_anchors(
+        design, model, include_membership=include_membership, persisted=persisted_anchors
+    )
     table = anchors.table
     values: dict[Expr, CompiledValue] = {}
     checks: list[TemporalResult | AsOfResult | _HistoryValidation | _Check] = []

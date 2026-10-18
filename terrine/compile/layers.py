@@ -98,11 +98,18 @@ def plan_layers(design: Design, model) -> LayerPlan:
     ):
         expression(node)
     definition_hash = hashlib.sha256(f"{design.spec_hash}:{model.model_hash}".encode()).hexdigest()
-    return LayerPlan(
-        tuple(
-            LayerKey(
-                "prefix", source, measure, unit, "unit", resolution, definition_hash, "unbound"
-            )
-            for source, measure, unit, resolution in sorted(measures)
-        )
+    anchor = LayerKey(
+        "anchor",
+        "__design__",
+        None,
+        design.unit,
+        "unit_anchor",
+        "point",
+        definition_hash,
+        "unbound",
     )
+    prefixes = tuple(
+        LayerKey("prefix", source, measure, unit, "unit", resolution, definition_hash, "unbound")
+        for source, measure, unit, resolution in sorted(measures)
+    )
+    return LayerPlan((anchor, *prefixes))

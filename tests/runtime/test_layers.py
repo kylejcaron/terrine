@@ -32,16 +32,32 @@ def _published_generation(model, design):
         definition=DefinitionVersion(design.spec_hash, "schema", "v1"),
         snapshot=SourceSnapshot("snapshot", {}, {}, datetime.now(UTC), "owner"),
     )
+    anchor_partition = pa.table(
+        {
+            "unit": pa.array(["a"], type=pa.string()),
+            "anchor_id": pa.array(["fixed"], type=pa.string()),
+            "t0": pa.array([datetime(2025, 1, 2, tzinfo=UTC)], type=pa.timestamp("us", tz="UTC")),
+            "_observed_from": pa.array([None], type=pa.timestamp("us", tz="UTC")),
+            "_observed_until": pa.array([None], type=pa.timestamp("us", tz="UTC")),
+            "anchor_provenance": pa.array(["fixed_date"], type=pa.string()),
+        }
+    )
     receipt = backend.publish_generation(
         StagedGeneration(
             "orders",
             "g1",
-            {"prefix-partition": pa.table({"unit": ["a"], "sum": [7]})},
+            {
+                "prefix-partition": pa.table({"unit": ["a"], "sum": [7]}),
+                "anchor-partition": anchor_partition,
+            },
         ),
         expected_manifest=None,
         lease=_lease(con),
     )
-    key = replace(plan_layers(design, model).keys[0], snapshot_id="snapshot")
+    key = replace(
+        next(key for key in plan_layers(design, model).keys if key.layer == "prefix"),
+        snapshot_id="snapshot",
+    )
     return con, store, backend, ref, receipt, key
 
 
@@ -66,6 +82,27 @@ def test_runtime_translates_verified_physical_partition_to_compiler_layer_key(co
         partitions={key: "prefix-partition"},
     )
     assert actual[key].execute().to_dict("records") == [{"unit": "a", "sum": 7}]
+
+
+def test_runtime_translates_persisted_anchor_record(column_model):
+    design = _design()
+    _, store, backend, ref, receipt, _prefix_key = _published_generation(column_model, design)
+    key = replace(
+        next(key for key in plan_layers(design, column_model).keys if key.layer == "anchor"),
+        snapshot_id="snapshot",
+    )
+    actual = translate_persisted_layers(
+        store,
+        backend,
+        design=design,
+        model=column_model,
+        ref=ref,
+        receipt=receipt,
+        partitions={key: "anchor-partition"},
+    )
+    assert actual[key].select("unit", "anchor_id", "anchor_provenance").execute().to_dict(
+        "records"
+    ) == [{"unit": "a", "anchor_id": "fixed", "anchor_provenance": "fixed_date"}]
 
 
 @pytest.mark.parametrize(

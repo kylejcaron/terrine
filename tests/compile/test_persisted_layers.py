@@ -3,6 +3,7 @@ from dataclasses import replace
 import ibis
 import pytest
 
+from terrine.compile.anchors import compile_anchors
 from terrine.compile.columns import compile_columns
 from terrine.compile.layers import measure_identity, plan_layers
 from terrine.compile.materialize import compose_materialized_frame
@@ -24,9 +25,10 @@ def _persisted_prefixes(design, model):
         for metric in model.metrics.values()
         for measure in metric.measures
     }
-    layers = plan_layers(design, model).keys
     result = {}
-    for key in layers:
+    for key in plan_layers(design, model).keys:
+        if key.layer != "prefix":
+            continue
         source = model.sources[key.source]
         events = normalize_events(
             model._relation(source.relation), source, source.entities[design.unit]
@@ -46,7 +48,9 @@ def _persisted_prefixes(design, model):
     return result
 
 
-def test_persisted_daily_prefix_anchor_reuse_matches_ordinary_frame_compiler(column_model):
+def test_persisted_daily_prefix_anchor_reuse_matches_ordinary_frame_compiler(
+    column_model, monkeypatch
+):
     design = Design(
         "user",
         FixedDate("2025-01-03T00:00:00+00:00"),
@@ -54,7 +58,21 @@ def test_persisted_daily_prefix_anchor_reuse_matches_ordinary_frame_compiler(col
     )
     ordinary = compile_columns(design, column_model)
     persisted = _persisted_prefixes(design, column_model)
+    anchor_key = next(
+        key for key in plan_layers(design, column_model).keys if key.layer == "anchor"
+    )
+    anchor_table = compile_anchors(design, column_model).table
+    anchor_arrow = column_model.con.to_pyarrow(anchor_table)
+    persisted[replace(anchor_key, snapshot_id="same-snapshot")] = ibis.memtable(anchor_arrow)
+
+    def forbidden_anchor_recompile(*args, **kwargs):
+        raise AssertionError("persisted anchor substitution must not recompile candidates")
+
+    monkeypatch.setattr("terrine.compile.anchors._roster_anchors", forbidden_anchor_recompile)
+    monkeypatch.setattr("terrine.compile.anchors._event_anchors", forbidden_anchor_recompile)
     reused = compose_materialized_frame(design, column_model, persisted=persisted)
+    ordinary.validate(execute=column_model.con.to_pyarrow)
+    reused.validate(execute=column_model.con.to_pyarrow)
     assert column_model.con.to_pyarrow(ordinary.audit_table.order_by("unit")).equals(
         column_model.con.to_pyarrow(reused.audit_table.order_by("unit"))
     )
@@ -67,7 +85,7 @@ def test_layer_substitution_checks_measure_unit_grain_and_resolution_identity(co
         FixedDate("2025-01-02T12:00:00+00:00"),
         features={"total": agg("total", window=("-1d", "0s"))},
     )
-    key = plan_layers(design, column_model).keys[0]
+    key = next(key for key in plan_layers(design, column_model).keys if key.layer == "prefix")
     for bad in (replace(key, grain="event"), replace(key, unit="other")):
         with pytest.raises(ValueError, match="identity"):
             compose_materialized_frame(
@@ -81,7 +99,7 @@ def test_layer_substitution_rejects_cross_snapshot_relations(column_model):
         FixedDate("2025-01-02T12:00:00+00:00"),
         features={"total": agg("total", window=("-1d", "0s"))},
     )
-    key = plan_layers(design, column_model).keys[0]
+    key = next(key for key in plan_layers(design, column_model).keys if key.layer == "prefix")
     a = replace(key, snapshot_id="snapshot-a")
     b = replace(key, snapshot_id="snapshot-b", source="other")
     empty = ibis.memtable({"_unit": [], "_timestamp": [], "_value": []})
@@ -98,7 +116,7 @@ def test_layer_plan_retains_distinct_day_and_event_resolutions(column_model):
             "hourly": agg("total", window=("-1h", "0s")),
         },
     )
-    keys = plan_layers(design, column_model).keys
+    keys = tuple(key for key in plan_layers(design, column_model).keys if key.layer == "prefix")
     assert {key.resolution for key in keys} == {"day", "event"}
 
 
@@ -206,7 +224,7 @@ def test_same_fact_measures_keep_filter_and_aggregation_identity(column_model):
             "filtered": agg("new_amount", window=("-1d", "0s")),
         },
     )
-    layers = plan_layers(design, model).keys
+    layers = tuple(key for key in plan_layers(design, model).keys if key.layer == "prefix")
     assert len(layers) == 3
     persisted = _persisted_prefixes(design, model)
     expected = compile_columns(design, model)

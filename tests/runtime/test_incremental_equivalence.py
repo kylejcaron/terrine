@@ -25,6 +25,8 @@ def _same_snapshot_prefixes(design, model):
     }
     persisted = {}
     for key in plan_layers(design, model).keys:
+        if key.layer != "prefix":
+            continue
         source = model.sources[key.source]
         events = normalize_events(
             model._relation(source.relation), source, source.entities[design.unit]

@@ -22,6 +22,10 @@ _STATE_PANEL_UNSUPPORTED = RefusalSpec(
     "terrine.compile.persisted_state_panel_unsupported",
     "Persisted-layer composition does not support StatePanel designs; use Design.build(model).",
 )
+_ANCHOR_LAYER_INVALID = RefusalSpec(
+    "terrine.compile.persisted_anchor_invalid",
+    "Persisted anchor layer identity does not match compiler requirements.",
+)
 
 
 def compose_materialized_frame(
@@ -31,11 +35,10 @@ def compose_materialized_frame(
     persisted: Mapping[LayerKey, ibis.Table],
     budget: Budget | None = None,
 ) -> CompiledStudy:
-    """Compose normal compiler output using verified logical prefix substitutions.
+    """Compose standard compiler output from verified logical anchor and prefix layers.
 
-    Relations are prefix sufficient-state relations, not final frame partitions. The
-    caller is responsible for verifying the physical record and translating it to a
-    logical key before entering this compiler-owned API.
+    Persisted relations are compiler logical inputs, never final frame partitions.
+    The caller verifies physical generation provenance before crossing this boundary.
     """
     if budget is not None and not isinstance(budget, Budget):
         raise TypeError("budget must be Budget or None")
@@ -48,20 +51,41 @@ def compose_materialized_frame(
     if len(snapshot_ids) > 1 or (snapshot_ids and not next(iter(snapshot_ids))):
         raise ValueError("persisted layers must belong to one non-empty snapshot")
     substitutions: dict[tuple[str, str, str, str], ibis.Table] = {}
+    persisted_anchors: ibis.Table | None = None
     for key, relation in persisted.items():
+        if (
+            key.unit != design.unit
+            or key.definition_hash != definition_hash
+            or key.resolution not in {"day", "event", "point", "period"}
+        ):
+            raise ValueError("persisted layer identity does not match compiler requirements")
+        if not isinstance(relation, ibis.Table):
+            raise TypeError("persisted layer relations must be Ibis tables")
+        if key.layer == "anchor":
+            if (
+                key.source != "__design__"
+                or key.measure is not None
+                or key.grain != "unit_anchor"
+                or key.resolution != "point"
+                or persisted_anchors is not None
+            ):
+                raise _ANCHOR_LAYER_INVALID.error()
+            persisted_anchors = relation
+            continue
         if (
             key.layer != "prefix"
             or key.grain != "unit"
-            or key.unit != design.unit
-            or key.definition_hash != definition_hash
             or key.measure is None
             or key.resolution not in {"day", "event"}
         ):
             raise ValueError("persisted layer identity does not match compiler requirements")
-        if not isinstance(relation, ibis.Table):
-            raise TypeError("persisted prefix relations must be Ibis tables")
         identity = (key.source, key.measure, key.unit, key.resolution)
         if identity in substitutions:
             raise ValueError("duplicate persisted logical layer key")
         substitutions[identity] = relation
-    return compile_columns(design, model, persisted_prefixes=substitutions)
+    return compile_columns(
+        design,
+        model,
+        persisted_prefixes=substitutions,
+        persisted_anchors=persisted_anchors,
+    )
