@@ -98,6 +98,30 @@ def test_observed_state_panel_compiles_point_lookup_contract(observed_panel_mode
     )
 
 
+def test_observed_panel_baseline_preserves_event_origin_timing(observed_panel_model):
+    from terrine.spec import EventTime, StateObservations
+    from terrine.windows import Window
+
+    origin = EventTime("session", Window("-2d", "-1d"))
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-03", "2025-01-05"),
+        shape=StatePanel(
+            StateObservations("state", ("active", "closed"), absorbing=("closed",)),
+            max_periods=2,
+            baseline_features={
+                "event_origin": agg("sessions", window=("-1d", "0d"), relative_to=origin)
+            },
+        ),
+    )
+    compiled = design.build(observed_panel_model)._compiled
+    timing = compiled.expression_timings["event_origin"]
+    assert timing.kind == "event_time"
+    assert timing.point_time_column != "__terrine_panel_start"
+    assert timing.start_bound_column in compiled.table.columns
+    assert timing.end_bound_column in compiled.table.columns
+
+
 @pytest.fixture
 def observed_model_factory(native_inputs):
     import pyarrow as pa
@@ -194,6 +218,30 @@ def test_binned_state_panel_compiles_bounded_period_pairing(panel_model):
         "gap",
     )
     assert compiled.expression_timings["panel_metric"].kind == "fixed_t0"
+
+
+def test_panel_baseline_preserves_event_origin_timing_references(panel_model):
+    from terrine.spec import EventTime
+    from terrine.windows import Window
+
+    origin = EventTime("session", Window("-2d", "-1d"))
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-03", "2025-01-05"),
+        shape=StatePanel(
+            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
+            max_periods=2,
+            baseline_features={
+                "event_origin": agg("sessions", window=("-1d", "0d"), relative_to=origin)
+            },
+        ),
+    )
+    compiled = design.build(panel_model)._compiled
+    timing = compiled.expression_timings["event_origin"]
+    assert timing.kind == "event_time"
+    assert timing.point_time_column != "__terrine_panel_start"
+    assert timing.start_bound_column in compiled.table.columns
+    assert timing.end_bound_column in compiled.table.columns
 
 
 def test_panel_baseline_and_per_origin_feature_cutoffs_are_distinct(panel_model):

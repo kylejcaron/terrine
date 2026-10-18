@@ -334,6 +334,7 @@ def compile_observed_state_panel(design: Design, model: Model, panel: StatePanel
 
     retained = attach(compiled.table)
     audit = attach(compiled.audit_table)
+    baseline_expression_timings = {}
     baseline_compiled = None
     if panel.baseline_features:
         baseline_design = _period_design(
@@ -345,6 +346,7 @@ def compile_observed_state_panel(design: Design, model: Model, panel: StatePanel
         base = baseline_compiled.table
         projection = {"unit": base.unit}
         remapped = {}
+        remapped_timings = {}
         for index, name in enumerate(panel.baseline_features):
             projection[name] = base[name]
             meta = baseline_compiled.columns[name]
@@ -361,7 +363,22 @@ def compile_observed_state_panel(design: Design, model: Model, panel: StatePanel
                     alias = f"__terrine_baseline_{index}_{attribute}"
                     projection[alias] = base[old]
                     renames[attribute] = alias
+            timing = baseline_compiled.expression_timings.get(name)
+            if timing is not None:
+                timing_replacements = {}
+                for field in (
+                    "point_time_column",
+                    "start_bound_column",
+                    "end_bound_column",
+                ):
+                    original = getattr(timing, field)
+                    if original is not None:
+                        alias = f"__terrine_baseline_{index}_{field}"
+                        projection[alias] = base[original]
+                        timing_replacements[field] = alias
+                remapped_timings[name] = replace(timing, **timing_replacements)
             remapped[name] = replace(meta, **renames)
+        baseline_expression_timings = remapped_timings
         baseline = base.select(**projection)
         retained = retained.left_join(baseline, retained.unit == baseline.unit)
         audit = audit.left_join(baseline, audit.unit == baseline.unit)
@@ -427,7 +444,7 @@ def compile_observed_state_panel(design: Design, model: Model, panel: StatePanel
                 projection_names.append(name)
     for timing in (
         *compiled.expression_timings.values(),
-        *(baseline_compiled.expression_timings.values() if baseline_compiled is not None else ()),
+        *(baseline_expression_timings.values() if baseline_compiled is not None else ()),
     ):
         for name in (
             timing.point_time_column,
@@ -471,7 +488,7 @@ def compile_observed_state_panel(design: Design, model: Model, panel: StatePanel
                         if timing.kind == "fixed_t0"
                         else timing
                     )
-                    for name, timing in baseline_compiled.expression_timings.items()
+                    for name, timing in baseline_expression_timings.items()
                 }
                 if baseline_compiled is not None
                 else {}

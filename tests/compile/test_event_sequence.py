@@ -133,6 +133,23 @@ def test_event_sequence_composes_dimension_label_selector(sequence_model):
     )
 
 
+def test_sequence_compiler_excludes_known_false_eligibility_anchors(sequence_model):
+    from terrine.spec import asof, eq
+
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        eligibility={"not_purchase": eq(asof("kind", before="-1s"), "purchase")},
+        shape=EventSequence("signup", Window("0s", "2h"), max_events=5),
+    )
+    compiled = design.build(sequence_model)._compiled
+    rows = sequence_model.con.to_pyarrow(compiled.table).to_pylist()
+    audit = sequence_model.con.to_pyarrow(compiled.audit_table).to_pylist()
+    assert rows == []
+    assert audit
+    assert all(row["__terrine_eligible"] is not True for row in audit)
+
+
 def test_sequence_excludes_rows_without_selected_fact_before_event_cap():
     con = ibis.duckdb.connect()
     con.create_table(
@@ -352,10 +369,23 @@ def test_sequence_sessions_are_compiled_per_anchor(sequence_model):
     assert sum(row["transition_reason"] == "missing_predecessor" for row in events) == len(
         {row["anchor_id"] for row in events}
     )
+    headers = [row for row in rows if not row["is_event"]]
+    for header in headers:
+        anchor_events = [row for row in events if row["anchor_id"] == header["anchor_id"]]
+        assert header["sessions_complete"] is True
+        assert header["sessions_reason"] is None
+        assert header["sessions"] == [
+            {
+                "session_index": 0,
+                "session_event_count": len(anchor_events),
+                "session_start_time": min(row["event_time"] for row in anchor_events),
+                "session_end_time": max(row["event_time"] for row in anchor_events),
+            }
+        ]
 
 
 def test_sequence_sessions_emit_requested_label_transitions(sequence_model):
-    from terrine.spec import Design, EventAnchor, EventSequence, SessionSpec
+    from terrine.spec import Design, EventAnchor, EventSequence, FunnelSpec, SessionSpec
 
     design = Design(
         "user",
@@ -366,12 +396,81 @@ def test_sequence_sessions_emit_requested_label_transitions(sequence_model):
             max_events=5,
             label_property="kind",
             sessions=SessionSpec("1h"),
+            funnel=FunnelSpec("kind", ("view", "purchase")),
         ),
     )
     rows = design.build(sequence_model)._compiled.table.to_pyarrow().to_pylist()
     events = [row for row in rows if row["is_event"]]
     assert next(row for row in events if row["event_id"] == "end")["transition_from"] == "click"
     assert next(row for row in events if row["event_id"] == "end")["transition_to"] == "purchase"
+
+
+def test_transition_label_named_unit_uses_property_value(sequence_model):
+    from terrine.semantic.models import Property
+    from terrine.spec import Design, EventAnchor, EventSequence, SessionSpec
+
+    source = sequence_model.catalog.sources["events"].model_copy(update={"properties": ("unit",)})
+    catalog = sequence_model.catalog.model_copy(
+        update={
+            "sources": {"events": source},
+            "properties": {
+                **sequence_model.catalog.properties,
+                "unit": Property(
+                    source="events", column="kind", dtype="string", as_of="event_time"
+                ),
+            },
+        }
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=sequence_model.con,
+        readiness=sequence_model.readiness,
+        event_ids=sequence_model.event_ids,
+    )
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence(
+            "signup",
+            Window("0s", "2h"),
+            max_events=5,
+            label_property="unit",
+            sessions=SessionSpec("1h"),
+        ),
+    )
+    rows = model.con.to_pyarrow(design.build(model)._compiled.table).to_pylist()
+    end = next(row for row in rows if row.get("event_id") == "end")
+    assert end["transition_from"] == "click"
+    assert end["transition_to"] == "purchase"
+
+
+def test_session_output_names_are_reserved_from_event_properties():
+    from terrine.errors import TerrineError
+    from terrine.spec import EventSequence, SessionSpec
+
+    with pytest.raises(TerrineError) as error:
+        EventSequence(
+            "signup",
+            Window("0s", "1d"),
+            max_events=5,
+            properties=("sessions",),
+            sessions=SessionSpec(3600),
+        )
+    assert error.value.code == "terrine.sequence.invalid_spec"
+
+
+def test_design_output_names_cannot_collide_with_sequence_columns(sequence_model):
+    from terrine.errors import TerrineError
+    from terrine.spec import EventTime
+
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        features={"event_count": EventTime("signup", Window("0s", "2h"))},
+        shape=EventSequence("signup", Window("0s", "2h"), max_events=5),
+    )
+    with pytest.raises(TerrineError):
+        design.build(sequence_model)
 
 
 @pytest.mark.parametrize(
@@ -405,14 +504,23 @@ def test_configured_identity_rejects_null_unit_or_timestamp(
     assert error.value.context["check_key"] == check_key
 
 
-def test_sequence_compiler_projects_dimension_backed_property(sequence_model):
+@pytest.mark.parametrize("has_history_match", [True, False])
+def test_sequence_compiler_projects_dimension_backed_property(sequence_model, has_history_match):
     from terrine.semantic.models import Dimension, Property, TableRef
-    from terrine.spec import Design, EventAnchor, EventSequence
+    from terrine.spec import Design, EventAnchor, EventSequence, FunnelSpec
     from terrine.windows import Window
 
-    sequence_model.con.create_table(
-        "regions", ibis.memtable({"user_id": ["u"], "region": ["west"]})
+    history = (
+        pa.table({"user_id": ["u"], "region": ["west"]})
+        if has_history_match
+        else pa.table(
+            {
+                "user_id": pa.array([], type=pa.string()),
+                "region": pa.array([], type=pa.string()),
+            }
+        )
     )
+    sequence_model.con.create_table("regions", history)
     source = sequence_model.catalog.sources["events"].model_copy(
         update={"properties": (), "dimensions": ("regions",)}
     )
@@ -447,12 +555,60 @@ def test_sequence_compiler_projects_dimension_backed_property(sequence_model):
     design = Design(
         "user",
         EventAnchor("signup"),
-        shape=EventSequence("signup", Window("0s", "2h"), max_events=5, properties=("region",)),
+        shape=EventSequence(
+            "signup",
+            Window("0s", "2h"),
+            max_events=5,
+            properties=("region",),
+            funnel=FunnelSpec("region", ("west", "east")) if not has_history_match else None,
+        ),
     )
     compiled = design.build(model)._compiled
     compiled.validate(execute=model.con.to_pyarrow)
     rows = model.con.to_pyarrow(compiled.table).to_pylist()
-    assert [row["region"] for row in rows if row["is_event"]] == ["west", "west", "west"]
+    if not has_history_match:
+        header = next(row for row in rows if not row["is_event"])
+        assert header["funnel_attempts_complete"] is False
+        assert header["funnel_attempts_reason"] == "missing_history"
+    assert [row["region"] for row in rows if row["is_event"]] == (
+        ["west", "west", "west"] if has_history_match else [None, None, None]
+    )
+    assert [row["region_reason"] for row in rows if row["is_event"]] == (
+        [None, None, None] if has_history_match else ["missing_history"] * 3
+    )
+
+
+def test_selected_property_named_normalized_unit_preserves_event_identity(sequence_model):
+    from terrine.semantic.models import Property
+
+    source = sequence_model.catalog.sources["events"].model_copy(update={"properties": ("_unit",)})
+    catalog = sequence_model.catalog.model_copy(
+        update={
+            "sources": {"events": source},
+            "properties": {
+                **sequence_model.catalog.properties,
+                "_unit": Property(
+                    source="events", column="kind", dtype="string", as_of="event_time"
+                ),
+            },
+        }
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=sequence_model.con,
+        readiness=sequence_model.readiness,
+        event_ids=sequence_model.event_ids,
+    )
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence("signup", Window("0s", "2h"), max_events=5, properties=("_unit",)),
+    )
+    compiled = design.build(model)._compiled
+    rows = model.con.to_pyarrow(compiled.table).to_pylist()
+    header = next(row for row in rows if not row["is_event"])
+    assert header["event_count"] == 3
+    assert [row["_unit"] for row in rows if row["is_event"]] == ["view", "click", "purchase"]
 
 
 def test_funnel_dependency_preserves_entity_key_for_dimension_enrichment(sequence_model):

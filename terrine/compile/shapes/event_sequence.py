@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -16,7 +17,12 @@ from terrine.compile.anchors import (
     _unique_checks,
     _utc_column,
 )
-from terrine.compile.columns import CompiledStudy, _HistoryValidation, compile_columns
+from terrine.compile.columns import (
+    _RESERVED_NAME,
+    CompiledStudy,
+    _HistoryValidation,
+    compile_columns,
+)
 from terrine.data import Roles, SequenceMeta
 from terrine.semantic.bind import normalize_events
 from terrine.spec.design import Design
@@ -68,11 +74,55 @@ def _identity_checks(events: ibis.Table, unit: str, identity: str, *, configured
     return [*checks, _integrity_check("tied_event_timestamps", ties)]
 
 
+def _validate_sequence_column_names(design: Design, sequence: EventSequence) -> None:
+    generated = {
+        "unit",
+        "anchor_id",
+        "t0",
+        "is_event",
+        "sequence_position",
+        "event_id",
+        "event_time",
+        "event_count",
+        "sequence_complete",
+        "sequence_reason",
+        "event_values",
+        "funnel_attempts",
+        "funnel_attempts_complete",
+        "funnel_attempts_reason",
+        *sequence.properties,
+        *(f"{name}_reason" for name in sequence.properties),
+    }
+    if sequence.sessions is not None:
+        generated.update(
+            {
+                "session_index",
+                "session_event_count",
+                "session_start_time",
+                "session_end_time",
+                "previous_event_id",
+                "previous_event_time",
+                "transition_reason",
+                "transition",
+                "transition_from",
+                "transition_to",
+                "sessions",
+                "sessions_complete",
+                "sessions_reason",
+            }
+        )
+    canonical = {unicodedata.normalize("NFC", name).casefold() for name in generated}
+    for name in (*design.features, *design.outcomes, *design.eligibility):
+        if unicodedata.normalize("NFC", name).casefold() in canonical:
+            raise _RESERVED_NAME.error(name=name)
+
+
 def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
     """Compile a bounded EventSequence through the shared anchor and column paths."""
     sequence = design.shape
     if not isinstance(sequence, EventSequence):
         raise TypeError("design shape must be EventSequence")
+    _validate_sequence_column_names(design, sequence)
     design.validate(model)
     # Column expressions remain anchor-grain values; event payloads are joined to them
     # only after sequence selection, using the same compiled anchor relation.
@@ -86,7 +136,9 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         anchor_range=design.anchor_range,
     )
     base = compile_columns(base_design, model)
-    anchors = base._anchors.table.select(*base._anchors.table.columns)
+    anchors = base.table.select(
+        *(name for name in base._anchors.table.columns if name in base.table.columns)
+    )
     fact = model.catalog.facts[sequence.fact]
     source = model.sources[fact.source]
     physical_unit = source.entities[design.unit]
@@ -120,13 +172,42 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         for name in dict.fromkeys(internal_names)
         if name is not None and name not in sequence.properties
     )
+    generated_sequence_names = {
+        "unit",
+        "anchor_id",
+        "t0",
+        "is_event",
+        "sequence_position",
+        "event_id",
+        "event_time",
+        "event_count",
+        "sequence_complete",
+        "sequence_reason",
+        "event_values",
+        "funnel_attempts",
+        "funnel_attempts_complete",
+        "funnel_attempts_reason",
+        "sessions",
+        "sessions_complete",
+        "sessions_reason",
+        "session_index",
+        "session_event_count",
+        "session_start_time",
+        "session_end_time",
+        "previous_event_id",
+        "previous_event_time",
+        "transition_reason",
+        "transition",
+        "transition_from",
+        "transition_to",
+    }
     reserved_property_names = (
         set(normalized.columns) | set(sequence.properties) | set(internal_properties)
     )
     property_aliases = {}
     for index, name in enumerate(dict.fromkeys((*sequence.properties, *internal_properties))):
         alias = name
-        if name in normalized.columns:
+        if name in normalized.columns or name in generated_sequence_names:
             alias = f"__terrine_sequence_property_{index}"
             suffix = 0
             while alias in reserved_property_names:
@@ -166,6 +247,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
                 []
                 if property_name == funnel_event_property
                 and property_name not in sequence.properties
+                and property_name != sequence.label_property
                 else [property_aliases[property_name]]
             )
             if property_name == funnel_event_property:
@@ -191,6 +273,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
                     []
                     if property_name == funnel_event_property
                     and property_name not in sequence.properties
+                    and property_name != sequence.label_property
                     else [property_aliases[property_name]]
                 )
                 if property_name == funnel_event_property:
@@ -336,6 +419,11 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
                     "sessions",
                     "sessions_complete",
                     "sessions_reason",
+                    *(
+                        ("transition_from", "transition_to")
+                        if sequence.label_property is not None
+                        else ()
+                    ),
                 )
                 if sequence.sessions is not None
                 else ()
@@ -363,6 +451,26 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
                 sequence.funnel.within_seconds if sequence.funnel is not None else None
             ),
             funnel_attempts_column="funnel_attempts" if sequence.funnel is not None else None,
+            funnel_attempts_complete_column=(
+                "funnel_attempts_complete" if sequence.funnel is not None else None
+            ),
+            funnel_attempts_reason_column=(
+                "funnel_attempts_reason" if sequence.funnel is not None else None
+            ),
+            funnel_fields=(
+                (
+                    "start_time",
+                    "matched_event_ids",
+                    "matched_event_times",
+                    "step0_event_id",
+                    "deadline",
+                    "progress",
+                    "status",
+                    "reason",
+                )
+                if sequence.funnel is not None
+                else ()
+            ),
             identity_kind="configured" if configured_id is not None else "timestamp",
         ),
     )

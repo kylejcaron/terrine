@@ -6,9 +6,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, cast
 
 import ibis
+import ibis.expr.types as ir
 import pyarrow as pa
 
 from terrine.data import ColumnMeta, Roles
@@ -60,6 +61,7 @@ def funnel_progress(
     timestamp_column: str,
     event_id_column: str,
     position_column: str,
+    event_property_found_column: str | None = None,
 ) -> ibis.Table:
     """Return one bounded attempt row per step-zero event."""
     required = (
@@ -71,6 +73,8 @@ def funnel_progress(
         event_id_column,
         position_column,
     )
+    if event_property_found_column is not None:
+        required = (*required, event_property_found_column)
     if (
         len(steps) < 2
         or any(not isinstance(step, str) or not step for step in steps)
@@ -89,6 +93,7 @@ def funnel_progress(
         _f_anchor=events[anchor_id_column],
         _f_start_id=events[event_id_column],
         _f_start_time=events[timestamp_column],
+        _f_start_position=events[position_column],
         _f_last_id=events[event_id_column],
         _f_last_time=events[timestamp_column],
         _f_last_position=events[position_column],
@@ -143,6 +148,7 @@ def funnel_progress(
             _f_anchor=left._f_anchor,
             _f_start_id=left._f_start_id,
             _f_start_time=left._f_start_time,
+            _f_start_position=left._f_start_position,
             _f_last_id=ibis.coalesce(right._next_id, left._f_last_id),
             _f_last_time=ibis.coalesce(right._next_time, left._f_last_time),
             _f_last_position=ibis.coalesce(right._next_position, left._f_last_position),
@@ -164,8 +170,38 @@ def funnel_progress(
             _f_deadline=left._f_deadline,
             _f_sequence_end=left._f_sequence_end,
         )
+    if event_property_found_column is not None:
+        attempt = attempts.view()
+        candidate = events.view()
+        unknown = (
+            attempt.join(
+                candidate,
+                [
+                    attempt._f_unit == candidate[unit_column],
+                    attempt._f_anchor == candidate[anchor_id_column],
+                    candidate[position_column] > attempt._f_start_position,
+                    candidate[timestamp_column] < attempt._f_deadline,
+                    ~candidate[event_property_found_column],
+                ],
+            )
+            .group_by(list(keys))
+            .aggregate(_unknown_count=ibis._.count())
+        )
+        left = attempts.view()
+        right = unknown.view()
+        joined = left.left_join(right, [left[key] == right[key] for key in keys])
+        attempts = joined.select(
+            **{name: left[name] for name in attempts.columns},
+            _f_unknown=right._unknown_count.notnull(),
+        )
     complete = attempts._f_progress == len(steps)
-    failed = attempts._f_deadline <= attempts._f_sequence_end
+    unknown_label = cast(
+        ir.BooleanValue,
+        attempts._f_unknown
+        if "_f_unknown" in attempts.columns
+        else ibis.literal(False, type="boolean"),
+    )
+    failed = (attempts._f_deadline <= attempts._f_sequence_end) & ~unknown_label
     return attempts.select(
         unit=attempts._f_unit,
         anchor_id=attempts._f_anchor,
@@ -184,9 +220,13 @@ def funnel_progress(
             complete,
             ibis.literal(None, type="string"),
             ibis.ifelse(
-                failed,
-                "deadline_elapsed",
-                "sequence_window_end_before_deadline",
+                unknown_label,
+                "missing_history",
+                ibis.ifelse(
+                    failed,
+                    "deadline_elapsed",
+                    "sequence_window_end_before_deadline",
+                ),
             ),
         ),
     )
@@ -665,6 +705,7 @@ def event_sequence(
             timestamp_column=timestamp_column,
             event_id_column=event_id_column,
             position_column="sequence_position",
+            event_property_found_column=funnel_event_property_found_column,
         )
         attempt_values = ibis.struct(
             {
@@ -688,13 +729,35 @@ def event_sequence(
                 table.anchor_id == attempts_by_anchor.anchor_id,
             ],
         )
+        if funnel_event_property_found_column is not None:
+            unknown_by_anchor = complete_children.group_by(
+                [complete_children._sequence_unit, complete_children._sequence_anchor]
+            ).aggregate(
+                _funnel_has_missing_history=(
+                    ~complete_children[funnel_event_property_found_column]
+                ).any()
+            )
+            joined_table = joined_table.left_join(
+                unknown_by_anchor,
+                [
+                    joined_table.unit == unknown_by_anchor._sequence_unit,
+                    joined_table.anchor_id == unknown_by_anchor._sequence_anchor,
+                ],
+            )
         funnel_type = attempts_by_anchor.schema()["funnel_attempts"]
+        funnel_missing_history = cast(
+            ir.BooleanValue,
+            joined_table._funnel_has_missing_history.fill_null(False)
+            if "_funnel_has_missing_history" in joined_table.columns
+            else ibis.literal(False, type="boolean"),
+        )
+        funnel_complete = joined_table.sequence_complete & ~funnel_missing_history
         if "is_event" in joined_table.columns:
             payload = ibis.ifelse(
                 joined_table.is_event,
                 ibis.literal(None, type=funnel_type),
                 ibis.ifelse(
-                    joined_table.sequence_complete,
+                    funnel_complete,
                     ibis.coalesce(
                         joined_table.funnel_attempts,
                         ibis.literal([], type=funnel_type),
@@ -704,7 +767,7 @@ def event_sequence(
             )
         else:
             payload = ibis.ifelse(
-                joined_table.sequence_complete,
+                funnel_complete,
                 ibis.coalesce(
                     joined_table.funnel_attempts,
                     ibis.literal([], type=funnel_type),
@@ -715,18 +778,30 @@ def event_sequence(
             **{
                 name: joined_table[name]
                 for name in joined_table.columns
-                if name not in {"unit_right", "anchor_id_right", "funnel_attempts"}
+                if name
+                not in {
+                    "unit_right",
+                    "anchor_id_right",
+                    "funnel_attempts",
+                    "_sequence_unit",
+                    "_sequence_anchor",
+                    "_funnel_has_missing_history",
+                }
             },
             funnel_attempts=payload,
             funnel_attempts_complete=ibis.ifelse(
                 joined_table.is_event,
                 ibis.literal(None, type="boolean"),
-                joined_table.sequence_complete,
+                funnel_complete,
             ),
             funnel_attempts_reason=ibis.ifelse(
                 joined_table.is_event,
                 ibis.literal(None, type="string"),
-                joined_table.sequence_reason,
+                ibis.ifelse(
+                    funnel_missing_history,
+                    "missing_history",
+                    joined_table.sequence_reason,
+                ),
             ),
         )
         feature_names = (

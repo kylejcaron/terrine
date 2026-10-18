@@ -400,6 +400,9 @@ class SequenceMeta:
     funnel_steps: tuple[str, ...] = ()
     funnel_within_seconds: int | None = None
     funnel_attempts_column: str | None = None
+    funnel_attempts_complete_column: str | None = None
+    funnel_attempts_reason_column: str | None = None
+    funnel_fields: tuple[str, ...] = ()
     identity_kind: Literal["configured", "timestamp"] = "timestamp"
 
     def __post_init__(self) -> None:
@@ -435,6 +438,8 @@ class SequenceMeta:
             "transition_to_column",
             "funnel_event_property",
             "funnel_attempts_column",
+            "funnel_attempts_complete_column",
+            "funnel_attempts_reason_column",
         ):
             value = getattr(self, name)
             if value is not None:
@@ -453,7 +458,7 @@ class SequenceMeta:
             raise ValueError("funnel_within_seconds must be positive or None")
         if self.identity_kind not in ("configured", "timestamp"):
             raise ValueError("unsupported identity kind")
-        for field_name in ("session_fields", "funnel_steps"):
+        for field_name in ("session_fields", "funnel_steps", "funnel_fields"):
             values = tuple(getattr(self, field_name))
             if any(not isinstance(value, str) or not value for value in values):
                 raise ValueError(f"{field_name} must contain non-empty strings")

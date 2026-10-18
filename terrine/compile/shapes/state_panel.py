@@ -223,6 +223,7 @@ def _binned(design: Design, model: Model, panel: StatePanel) -> CompiledStudy:
     retained = attach(compiled.table)
     audit = attach(compiled.audit_table)
     # Baseline values are evaluated at the common panel start, then broadcast by unit.
+    baseline_expression_timings = {}
     baseline_compiled = None
     if panel.baseline_features:
         baseline_design = _state_panel_design(
@@ -234,6 +235,7 @@ def _binned(design: Design, model: Model, panel: StatePanel) -> CompiledStudy:
         raw_baseline = baseline_compiled.table
         baseline_projection = {"unit": raw_baseline.unit}
         remapped = {}
+        remapped_timings = {}
         for index, name in enumerate(panel.baseline_features):
             baseline_projection[name] = raw_baseline[name]
             meta = baseline_compiled.columns[name]
@@ -250,7 +252,22 @@ def _binned(design: Design, model: Model, panel: StatePanel) -> CompiledStudy:
                     alias = f"__terrine_baseline_{index}_{attribute}"
                     baseline_projection[alias] = raw_baseline[original]
                     replacements[attribute] = alias
+            timing = baseline_compiled.expression_timings.get(name)
+            if timing is not None:
+                timing_replacements = {}
+                for field in (
+                    "point_time_column",
+                    "start_bound_column",
+                    "end_bound_column",
+                ):
+                    original = getattr(timing, field)
+                    if original is not None:
+                        alias = f"__terrine_baseline_{index}_{field}"
+                        baseline_projection[alias] = raw_baseline[original]
+                        timing_replacements[field] = alias
+                remapped_timings[name] = replace(timing, **timing_replacements)
             remapped[name] = replace(meta, **replacements)
+        baseline_expression_timings = remapped_timings
         baseline = raw_baseline.select(**baseline_projection)
         retained = retained.left_join(baseline, retained.unit == baseline.unit)
         audit = audit.left_join(baseline, audit.unit == baseline.unit)
@@ -335,7 +352,7 @@ def _binned(design: Design, model: Model, panel: StatePanel) -> CompiledStudy:
                 required_columns.append(name)
     for timing in (
         *compiled.expression_timings.values(),
-        *(baseline_compiled.expression_timings.values() if baseline_compiled is not None else ()),
+        *(baseline_expression_timings.values() if baseline_compiled is not None else ()),
     ):
         for name in (
             timing.point_time_column,
@@ -387,7 +404,7 @@ def _binned(design: Design, model: Model, panel: StatePanel) -> CompiledStudy:
                         if timing.kind == "fixed_t0"
                         else timing
                     )
-                    for name, timing in baseline_compiled.expression_timings.items()
+                    for name, timing in baseline_expression_timings.items()
                 }
                 if baseline_compiled is not None
                 else {}

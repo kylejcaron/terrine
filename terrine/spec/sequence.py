@@ -119,6 +119,8 @@ class EventSequence:
             "sequence_reason",
             "event_values",
             "funnel_attempts",
+            "funnel_attempts_complete",
+            "funnel_attempts_reason",
         }
         if sessions is not None:
             generated.update(
@@ -131,6 +133,11 @@ class EventSequence:
                     "previous_event_time",
                     "transition_reason",
                     "transition",
+                    "transition_from",
+                    "transition_to",
+                    "sessions",
+                    "sessions_complete",
+                    "sessions_reason",
                 }
             )
         reason_names = {f"{name}_reason" for name in properties}
