@@ -72,3 +72,13 @@
 - Predeclare eight stochastic heterogeneous stacked CATT recovery cells with per-cohort recovery, inference gates, per-cell JSON, and a deterministic fast smoke.
 - Gate CATT calibration on both cohort-specific effects and their normalized aggregate uncertainty.
 - Normalize calendar cohort timestamps to aware UTC instants, use exact timestamp ordering for sequential adoption history, validate treatment/cohort source units, and stabilize stacked weighted means and outcome-only risk horizons.
+- Select exact first eligible event occurrences with stable tie ordering, candidate retention and deferred event-ID integrity checks.
+- Compile bounded additive LTV age trajectories with null-preserving cumulative values and recipe-backed cohort summaries under the verified execution snapshot, with explicit cutoff completeness, denominators, operation provenance and output budgets.
+- Compile bounded time-to-event histories with prevalent-event exclusion, explicit observation/censor bounds, optional delayed entry and independent administrative cutoffs; compute Arrow-only Kaplan–Meier curves with tied-time ordering, Greenwood variance and exact nanosecond elapsed-time support.
+- Refit earlier-only measurement-time survival backtests with exact per-row cutoff recensoring and explicit retrospective-effective-time labeling; refuse unsupported recorded-at claims and export versioned Arrow surrogate projections with provenance.
+- Normalize survival timestamps independently of DuckDB session timezone while preserving nanosecond event ties through Arrow estimation.
+- Mask post-cutoff failure timestamps, preserve subsecond censor cutoffs, retain structural survival axes and projected typed metadata, and reserve internal timestamp aliases while supporting wide coverage bounds.
+
+- Preserve native-precision coverage bounds for wide timestamp histories, avoid Python datetime conversion when recensoring Arrow timestamps, and retain support metadata for automatically included outcomes.
+- Compare backtest cutoffs at exact microsecond precision per cutoff; preserve mixed-resolution censor values and avoid out-of-range nanosecond casts for wide cutoffs.
+- Preserve fractional cohort means and checked-float reduction certificates, widen second-resolution censor outputs for fractional cutoffs, bound wide compiler cutoffs before nanosecond casts, and retain age/denominator axes in cohort surrogate exports.

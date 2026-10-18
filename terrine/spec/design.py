@@ -5,8 +5,11 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING
+
+from terrine._time import utc_instant
 
 if TYPE_CHECKING:
     from terrine.frame import Frame
@@ -32,6 +35,7 @@ from terrine.spec.expressions import (
 )
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import StatePanel
+from terrine.spec.trajectory import CohortSpec, TimeToEvent
 from terrine.windows import seconds
 
 __all__ = ["Treatment", "Design"]
@@ -80,10 +84,18 @@ class Design:
     treatment: Treatment | None
     gap: int
     shape: (
-        str | StatePanel | EventSequence | SequentialSpec | EventPanelSpec | CalendarComparisonSpec
+        str
+        | StatePanel
+        | EventSequence
+        | SequentialSpec
+        | EventPanelSpec
+        | CalendarComparisonSpec
+        | CohortSpec
+        | TimeToEvent
     )
     anchor_range: AnchorRange | None
     sample: MatchedT0Sample | None
+    administrative_cutoff: datetime | None
 
     def __init__(
         self,
@@ -100,9 +112,12 @@ class Design:
         | EventSequence
         | SequentialSpec
         | EventPanelSpec
-        | CalendarComparisonSpec = "cross_section",
+        | CalendarComparisonSpec
+        | CohortSpec
+        | TimeToEvent = "cross_section",
         anchor_range: AnchorRange | None = None,
         sample: MatchedT0Sample | None = None,
+        administrative_cutoff: datetime | None = None,
     ) -> None:
         if not isinstance(unit, str) or not unit.strip():
             raise ValueError("unit must be a non-empty string")
@@ -131,6 +146,8 @@ class Design:
                 SequentialSpec,
                 EventPanelSpec,
                 CalendarComparisonSpec,
+                CohortSpec,
+                TimeToEvent,
             ),
         ) or (isinstance(shape, str) and not shape.strip()):
             raise ValueError("shape must be a supported design shape")
@@ -165,6 +182,32 @@ class Design:
         object.__setattr__(self, "shape", shape)
         object.__setattr__(self, "anchor_range", anchor_range)
         object.__setattr__(self, "sample", sample)
+        if administrative_cutoff is not None:
+            if (
+                not isinstance(administrative_cutoff, datetime)
+                or administrative_cutoff.tzinfo is None
+                or administrative_cutoff.utcoffset() is None
+            ):
+                raise ValueError("administrative_cutoff must be timezone-aware or None")
+            administrative_cutoff = utc_instant(administrative_cutoff)
+        if isinstance(shape, CohortSpec) and (
+            not isinstance(anchor, EventAnchor)
+            or anchor.which != "first"
+            or anchor.fact != shape.origin
+        ):
+            raise ValueError("CohortSpec requires its matching first-event anchor")
+        if isinstance(shape, CohortSpec) and outcomes:
+            raise ValueError("CohortSpec generates outcomes; explicit outcomes are not allowed")
+        if isinstance(shape, TimeToEvent) and (
+            isinstance(anchor, Schedule)
+            or (isinstance(anchor, EventAnchor) and anchor.which == "each")
+        ):
+            raise ValueError("TimeToEvent requires one analysis entry per unit")
+        if isinstance(shape, TimeToEvent) and outcomes:
+            raise ValueError(
+                "TimeToEvent has generated outcomes; explicit outcomes are not allowed"
+            )
+        object.__setattr__(self, "administrative_cutoff", administrative_cutoff)
 
     def validate(self, model: Model) -> None:
         """Validate this design against bound model metadata without executing queries."""

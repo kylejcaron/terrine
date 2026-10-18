@@ -33,6 +33,7 @@ from terrine.spec.expressions import (
     _expression_support_seconds,
 )
 from terrine.spec.sequence import EventSequence
+from terrine.spec.trajectory import CohortSpec, TimeToEvent
 from terrine.windows import Window
 
 if TYPE_CHECKING:
@@ -521,8 +522,30 @@ def _validate_shape(
                 boundary=required_boundary.isoformat(),
             )
         _required(model, source.name, required)
-    elif design.shape != "cross_section":
-        raise _INVALID.error(reason="unsupported design shape")
+    elif isinstance(design.shape, CohortSpec):
+        metric = _metric(model, design.shape.trajectory.metric)
+        if metric.entity != design.unit:
+            raise _UNIT.error(unit=design.unit, name=design.shape.trajectory.metric)
+        if metric.kind != "mean" or len(metric.measures) != 1:
+            raise _INVALID.error(reason="trajectory_metric_must_be_additive")
+        measure = metric.measures[0]
+        if measure.aggregation != "sum" or metric.transforms:
+            raise _INVALID.error(reason="trajectory_metric_must_be_additive")
+        for source_name in metric.source_names:
+            _required(model, source_name, required)
+    elif isinstance(design.shape, TimeToEvent):
+        for name in (design.shape.event, design.shape.exit, design.shape.entry):
+            if name is None:
+                continue
+            fact = model.catalog.facts.get(name)
+            if fact is None:
+                raise _MISSING.error(kind="fact", name=name)
+            source = model.sources.get(fact.source)
+            if source is None or name not in source.facts:
+                raise _MISSING.error(kind="fact", name=name)
+            if design.unit not in source.entities:
+                raise _UNIT.error(unit=design.unit, name=name)
+            _required(model, fact.source, required)
 
 
 def validate_design(design: Design, model: Model) -> ValidationReport:

@@ -20,6 +20,7 @@ __all__ = [
     "BoundCoverage",
     "Budget",
     "CalendarComparisonMeta",
+    "CohortOperationMeta",
     "ColumnMeta",
     "Coverage",
     "CoverageSummary",
@@ -634,6 +635,30 @@ class CalendarComparisonMeta:
 
 
 @dataclass(frozen=True, slots=True)
+class CohortOperationMeta:
+    bucket_seconds: int
+    bucket_origin: datetime
+    statistic: Literal["total", "mean"]
+    value_column: str
+    parent_design_hash: str
+    derived_operation_hash: str
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.bucket_seconds, bool)
+            or not isinstance(self.bucket_seconds, int)
+            or self.bucket_seconds <= 0
+        ):
+            raise ValueError("bucket_seconds must be positive")
+        _aware(self.bucket_origin, "bucket_origin")
+        object.__setattr__(self, "bucket_origin", self.bucket_origin.astimezone(UTC))
+        if self.statistic not in ("total", "mean"):
+            raise ValueError("statistic must be total or mean")
+        for name in ("value_column", "parent_design_hash", "derived_operation_hash"):
+            _nonempty(getattr(self, name), name)
+
+
+@dataclass(frozen=True, slots=True)
 class EligibilitySummary:
     candidate: int
     excluded_false: int
@@ -703,13 +728,17 @@ class Provenance:
     weight_cutoff: FeatureCutoff | None = None
     weight_depends_on_treatment: bool | None = None
     treatment_known_at_t0: bool = False
-
     state_panel: StatePanelMeta | None = None
     expression_timings: Mapping[str, ExpressionTiming] = dataclass_field(default_factory=dict)
     sequence_meta: SequenceMeta | None = None
     panel: PanelMeta | None = None
     sampling: SamplingMeta | None = None
     calendar_comparison: CalendarComparisonMeta | None = None
+    cohort_operation: CohortOperationMeta | None = None
+    administrative_cutoff: datetime | None = None
+    measurement_knowledge: (
+        Literal["measurement_time", "retrospective_effective_time", "recorded_at"] | None
+    ) = None
 
     def __post_init__(self) -> None:
         for name in ("design_hash", "model_hash", "shape"):
@@ -769,6 +798,22 @@ class Provenance:
             self.calendar_comparison, CalendarComparisonMeta
         ):
             raise TypeError("calendar_comparison must be CalendarComparisonMeta or None")
+        if self.cohort_operation is not None and not isinstance(
+            self.cohort_operation, CohortOperationMeta
+        ):
+            raise TypeError("cohort_operation must be CohortOperationMeta or None")
+        if self.measurement_knowledge not in (
+            None,
+            "measurement_time",
+            "retrospective_effective_time",
+            "recorded_at",
+        ):
+            raise ValueError("invalid measurement knowledge provenance")
+        if self.administrative_cutoff is not None:
+            _aware(self.administrative_cutoff, "administrative_cutoff")
+            object.__setattr__(
+                self, "administrative_cutoff", self.administrative_cutoff.astimezone(UTC)
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -949,7 +994,14 @@ def _decode(value: Any, cls: type) -> Any:
             kwargs[field.name] = SamplingMeta(
                 tuple(item["strata"]), item["controls_per_treated"], item["seed"]
             )
-        elif field.name in ("panel_start", "administrative_end") and isinstance(item, dict):
+        elif field.name == "cohort_operation" and item is not None:
+            kwargs[field.name] = _decode(item, CohortOperationMeta)
+        elif field.name in (
+            "panel_start",
+            "administrative_end",
+            "bucket_origin",
+            "administrative_cutoff",
+        ) and isinstance(item, dict):
             kwargs[field.name] = datetime.fromisoformat(item["$datetime"])
         elif field.name == "window" and item is not None:
             kwargs[field.name] = Window(*item["$window"])

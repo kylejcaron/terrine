@@ -37,6 +37,7 @@ from terrine.spec.panels import (
 )
 from terrine.spec.sequence import EventSequence, FunnelSpec, SessionSpec
 from terrine.spec.state_panel import BinnedMetricState, StateObservations, StatePanel
+from terrine.spec.trajectory import CohortGrouping, CohortSpec, TimeToEvent, Trajectory
 
 __all__ = [
     "And",
@@ -46,6 +47,8 @@ __all__ = [
     "CalendarComparisonPanel",
     "CalendarComparisonSpec",
     "CalendarPanel",
+    "CohortGrouping",
+    "CohortSpec",
     "Design",
     "Eq",
     "EventAnchor",
@@ -69,6 +72,8 @@ __all__ = [
     "SessionSpec",
     "StateObservations",
     "StatePanel",
+    "TimeToEvent",
+    "Trajectory",
     "Treatment",
     "TrialWeight",
     "agg",

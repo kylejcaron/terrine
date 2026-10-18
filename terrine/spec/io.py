@@ -31,6 +31,7 @@ from terrine.spec.state_panel import (
     decode_cutpoint,
     encode_cutpoint,
 )
+from terrine.spec.trajectory import CohortSpec, TimeToEvent, Trajectory
 from terrine.windows import Window
 
 __all__ = ["SCHEMA_VERSION", "canonical_json", "to_json", "from_json", "to_yaml", "from_yaml"]
@@ -79,6 +80,11 @@ def _encode(value: Any) -> Any:
             "shape": _encode(value.shape),
             "anchor_range": None if value.anchor_range is None else _encode(value.anchor_range),
             "sample": None if value.sample is None else _encode(value.sample),
+            "administrative_cutoff": (
+                None
+                if value.administrative_cutoff is None
+                else _date_value(value.administrative_cutoff)
+            ),
         }
     if isinstance(value, Window):
         return {"type": "Window", "start": value.start, "end": value.end}
@@ -201,6 +207,28 @@ def _encode(value: Any) -> Any:
             "reference_period": value.reference_period,
             "comparison_periods": list(value.comparison_periods),
             "anticipation_periods": list(value.anticipation_periods),
+        }
+    if isinstance(value, CohortSpec):
+        return {
+            "type": "CohortSpec",
+            "origin": value.origin,
+            "trajectory": _encode(value.trajectory),
+        }
+    if isinstance(value, TimeToEvent):
+        return {
+            "type": "TimeToEvent",
+            "event": value.event,
+            "exit": value.exit,
+            "entry": value.entry,
+            "delayed_entry": value.delayed_entry,
+        }
+    if isinstance(value, Trajectory):
+        return {
+            "type": "Trajectory",
+            "metric": value.metric,
+            "period": value.period,
+            "periods": value.periods,
+            "cumulative": value.cumulative,
         }
     if isinstance(value, MetricAgg):
         node = {"type": "MetricAgg", "metric": value.metric, "window": _encode(value.window)}
@@ -464,6 +492,20 @@ def _node(value: Any) -> Any:
             tuple(item["comparison_periods"]),
             tuple(item["anticipation_periods"]),
         )
+    if tag == "Trajectory":
+        item = _object(value, {"type", "metric", "period", "periods", "cumulative"})
+        return Trajectory(item["metric"], item["period"], item["periods"], item["cumulative"])
+    if tag == "CohortSpec":
+        item = _object(value, {"type", "origin", "trajectory"})
+        return CohortSpec(item["origin"], _node(item["trajectory"]))
+    if tag == "TimeToEvent":
+        item = _object(value, {"type", "event", "exit", "entry", "delayed_entry"})
+        return TimeToEvent(
+            item["event"],
+            exit=item["exit"],
+            entry=item["entry"],
+            delayed_entry=item["delayed_entry"],
+        )
     if tag == "Window":
         item = _object(value, {"type", "start", "end"})
         return Window(item["start"], item["end"])
@@ -549,6 +591,7 @@ def _design(value: Any) -> Design:
             "shape",
             "anchor_range",
             "sample",
+            "administrative_cutoff",
         },
         {"unit", "anchor"},
     )
@@ -561,6 +604,7 @@ def _design(value: Any) -> Design:
         "shape": "cross_section",
         "anchor_range": None,
         "sample": None,
+        "administrative_cutoff": None,
         **item,
     }
 
@@ -576,6 +620,11 @@ def _design(value: Any) -> Design:
     treatment = None if item["treatment"] is None else _node(item["treatment"])
     anchor_range = None if item["anchor_range"] is None else _node(item["anchor_range"])
     sample = None if item["sample"] is None else _node(item["sample"])
+    cutoff = (
+        None if item["administrative_cutoff"] is None else _read_date(item["administrative_cutoff"])
+    )
+    if cutoff is not None and not isinstance(cutoff, datetime):
+        raise ValueError("administrative_cutoff requires a datetime")
     if not isinstance(anchor, (FixedDate, EventAnchor, Schedule)):
         raise ValueError("design anchor has invalid node type")
     if treatment is not None and not isinstance(treatment, Treatment):
@@ -596,6 +645,7 @@ def _design(value: Any) -> Design:
         shape=item["shape"] if isinstance(item["shape"], str) else _node(item["shape"]),
         anchor_range=anchor_range,
         sample=sample,
+        administrative_cutoff=cutoff,
     )
 
 

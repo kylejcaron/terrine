@@ -1,11 +1,14 @@
 from datetime import UTC, date, datetime
+from typing import cast
 
+import pandas as pd
 import pytest
 
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import agg, all_of, asof, eq, gt, is_null
 from terrine.spec.io import from_json, from_yaml, to_json, to_yaml
+from terrine.spec.trajectory import CohortGrouping, CohortSpec, Trajectory
 
 
 def test_subday_duration_forms_share_canonical_spec_hashes():
@@ -181,3 +184,52 @@ def test_yaml_and_json_reject_duplicates_unknown_schema_nodes_and_extra_fields()
         )
     with pytest.raises((TypeError, ValueError)):
         Design(unit="user", anchor=FixedDate("2025-03-01"), features={"bad": lambda: 1})  # ty: ignore[invalid-argument-type]
+
+
+def test_trajectory_and_administrative_cutoff_round_trip_with_canonical_hash():
+    design = Design(
+        unit="user",
+        anchor=EventAnchor("purchase", which="first"),
+        shape=CohortSpec(
+            origin="purchase",
+            trajectory=Trajectory("net_revenue", "7d", periods=3, cumulative=True),
+        ),
+        administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
+    )
+    assert from_yaml(to_yaml(design)) == design
+    assert from_json(to_json(design)).spec_hash == design.spec_hash
+
+
+def test_time_to_event_design_round_trips_and_requires_matching_occurrence_anchor():
+    from terrine.spec.trajectory import TimeToEvent
+
+    design = Design(
+        unit="user",
+        anchor=EventAnchor("signup", which="first"),
+        shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
+        administrative_cutoff=datetime(2025, 4, 1, tzinfo=UTC),
+    )
+    assert from_json(to_json(design)).spec_hash == design.spec_hash
+    with pytest.raises(ValueError):
+        Design(
+            unit="user",
+            anchor=Schedule("1d", "2025-03-01", "2025-03-04"),
+            shape=TimeToEvent("churn"),
+        )
+
+
+def test_submicrosecond_datetime_subclasses_are_rejected_at_construction():
+    value = pd.Timestamp("2025-01-04T00:00:00.000000001Z")
+    with pytest.raises(ValueError, match="microsecond precision"):
+        Design("user", FixedDate("2025-01-01"), administrative_cutoff=cast(datetime, value))
+    with pytest.raises(ValueError, match="microsecond precision"):
+        CohortGrouping("1d", bucket_origin=cast(datetime, value))
+
+
+def test_microsecond_datetime_subclass_is_normalized_for_round_trip():
+    value = pd.Timestamp("2025-01-04T00:00:00.123456Z")
+    design = Design("user", FixedDate("2025-01-01"), administrative_cutoff=cast(datetime, value))
+    assert type(design.administrative_cutoff) is datetime
+    assert from_json(to_json(design)) == design
+    grouping = CohortGrouping("1d", bucket_origin=cast(datetime, value))
+    assert type(grouping.bucket_origin) is datetime
