@@ -105,6 +105,7 @@ def _state_panel_metadata(design: Design, model: Model) -> StatePanelMeta | None
 
 
 def _panel_metadata(design: Design) -> PanelMeta | None:
+    from terrine.spec.anchors import Schedule
     from terrine.spec.panels import EventPanelSpec, Initiation, PersistentAdoption, SequentialSpec
 
     if isinstance(design.shape, SequentialSpec):
@@ -118,9 +119,13 @@ def _panel_metadata(design: Design) -> PanelMeta | None:
             treatment.adopted_value if isinstance(treatment, PersistentAdoption) else None,
             treatment.persistence if isinstance(treatment, PersistentAdoption) else None,
         )
+        assert isinstance(design.anchor, Schedule)
         weight = design.shape.trial_weight
         trial_weight = None if weight is None else TrialWeightMeta(weight.kind, weight.values)
-        return PanelMeta("sequential", history, trial_weight)
+        span = (design.anchor.end - design.anchor.start).days * 86_400
+        count = (span - 1) // design.anchor.every + 1
+        trials = tuple(f"schedule:{index}" for index in range(count))
+        return PanelMeta("sequential", history, trial_weight, trials=trials)
     if isinstance(design.shape, EventPanelSpec):
         return PanelMeta(
             "event_panel",

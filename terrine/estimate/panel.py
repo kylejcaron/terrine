@@ -65,13 +65,21 @@ def _array(frame: MaterializedFrame, name: str, *, weight: bool = False) -> np.n
 
 
 def _trial_weights(frame: MaterializedFrame, trials: tuple[str, ...]) -> dict[str, float]:
-    meta = frame.provenance.panel.trial_weight if frame.provenance.panel else None
+    panel = frame.provenance.panel
+    meta = panel.trial_weight if panel else None
     if meta is None:
         raise _TRIAL_WEIGHT.error(reason="missing_declaration")
+    domain = set(panel.trials) if panel else set()
     if meta.kind == "equal_trial":
+        if not domain or domain != set(trials):
+            raise _TRIAL_WEIGHT.error(reason="trial_domain_mismatch")
         return dict.fromkeys(trials, 1.0 / len(trials))
     values = meta.values
-    if not isinstance(values, Mapping) or set(values) != set(trials):
+    if (
+        not isinstance(values, Mapping)
+        or set(values) != set(trials)
+        or (domain and domain != set(trials))
+    ):
         raise _TRIAL_WEIGHT.error(reason="trial_domain_mismatch")
     raw = [float(values[t]) for t in trials]
     if any(not math.isfinite(v) or v <= 0 for v in raw):
@@ -110,8 +118,6 @@ def panel_aipw(
         or provenance.treatment_design == "grace_initiation"
         or provenance.panel is None
         or provenance.panel.treatment is None
-        or not provenance.treatment_known_at_t0
-        or provenance.treatment_knowledge is None
     ):
         raise _PANEL_INPUT.error(reason="trial_roles_or_treatment_design")
     if provenance.sampling is not None or provenance.weight_kind == "sampled_control":
@@ -279,13 +285,13 @@ def panel_aipw(
             raise _PANEL_SUPPORT.error(
                 trial=trial_name, reason="unsupported_propensity_overlap", metrics=support.metrics
             )
-
         psi = pseudo_outcome("aipw", local.a, local.y, pred.log_e, pred.log1m_e, pred.mu0, pred.mu1)
         tau = _mean(psi, local.q)
         estimate += lambdas[trial_name] * tau
         influence = _unit_influence(local, pred, "aipw", tau)
+        global_scale = len(global_units) / local.n
         for unit, contribution in zip(local.units, influence, strict=True):
-            cluster_if[unit] += lambdas[trial_name] * float(contribution)
+            cluster_if[unit] += lambdas[trial_name] * global_scale * float(contribution)
     values = np.asarray(list(cluster_if.values()), dtype=float)
     se = _standard_error(values)
     width = z * se

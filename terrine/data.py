@@ -402,6 +402,7 @@ class PanelMeta:
     periods: tuple[int, ...] = ()
     period_seconds: int | None = None
     reference_period: int | None = None
+    trials: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.shape not in ("sequential", "event_panel"):
@@ -420,6 +421,12 @@ class PanelMeta:
             or self.period_seconds <= 0
         ):
             raise ValueError("period_seconds must be positive")
+        trials = tuple(self.trials)
+        if any(not isinstance(trial, str) or not trial for trial in trials):
+            raise TypeError("panel trials must be non-empty strings")
+        if len(set(trials)) != len(trials):
+            raise ValueError("panel trial identities must be unique")
+        object.__setattr__(self, "trials", trials)
 
 
 @dataclass(frozen=True, slots=True)
@@ -686,6 +693,7 @@ def _decode(value: Any, cls: type) -> Any:
                 tuple(item.get("periods", ())),
                 item.get("period_seconds"),
                 item.get("reference_period"),
+                tuple(item.get("trials", ())),
             )
         elif field.name == "sampling" and item is not None:
             kwargs[field.name] = SamplingMeta(

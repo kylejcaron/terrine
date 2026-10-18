@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import numpy as np
@@ -16,6 +17,7 @@ from terrine.data import (
     TreatmentHistoryMeta,
     TrialWeightMeta,
 )
+from terrine.errors import TerrineError
 from terrine.estimate.nuisance import NuisanceSpec
 from terrine.estimate.panel import panel_aipw
 from terrine.windows import Window
@@ -80,6 +82,7 @@ def panel_frame(*, sampled=False, explicit_weights=None, target_scales=None):
                 "recorded_at",
             ),
             trial_weight=TrialWeightMeta("explicit", weights),
+            trials=("early", "late"),
         ),
         sampling=sampling,
     )
@@ -187,6 +190,43 @@ def test_trial_order_and_row_order_preserve_result():
     )
     assert reversed_result.value == pytest.approx(original.value, abs=1e-12)
     assert reversed_result.se == pytest.approx(original.se, abs=1e-12)
+
+
+def test_sequential_history_metadata_is_authoritative_for_treatment():
+
+    frame = panel_frame()
+    native_style = MaterializedFrame(
+        frame.table,
+        frame.roles,
+        frame.columns,
+        replace(
+            frame.provenance,
+            treatment_design=None,
+            treatment_known_at_t0=False,
+            treatment_knowledge=None,
+        ),
+    )
+    estimate = panel_aipw(native_style, outcome="y", treatment="a", trial="trial", folds=3, seed=29)
+    assert estimate.n_clusters == 180
+
+
+def test_equal_trial_weighting_refuses_a_missing_declared_trial():
+
+    frame = panel_frame()
+    panel = replace(
+        frame.provenance.panel,
+        trial_weight=TrialWeightMeta("equal_trial"),
+        trials=("early", "late", "schedule:absent"),
+    )
+    incomplete = MaterializedFrame(
+        frame.table,
+        frame.roles,
+        frame.columns,
+        replace(frame.provenance, panel=panel),
+    )
+    with pytest.raises(TerrineError) as exc:
+        panel_aipw(incomplete, outcome="y", treatment="a", trial="trial", folds=3)
+    assert exc.value.code == "terrine.estimate.invalid_trial_weights"
 
 
 def test_sampled_analysis_population_is_refused():

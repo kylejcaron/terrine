@@ -5,6 +5,7 @@ import pyarrow as pa
 import pytest
 
 from terrine.data import MaterializedFrame, PanelMeta, TrialWeightMeta
+from terrine.estimate.nuisance import LinearTerms, NuisanceSpec
 from terrine.estimate.panel import panel_aipw
 from tests.estimate.test_panel_aipw import panel_frame
 
@@ -26,6 +27,7 @@ def test_duplicate_trials_are_summed_within_unit_for_cluster_uncertainty():
                 "explicit",
                 {"early-a": 1.0, "early-b": 1.0, "late-a": 3.0, "late-b": 3.0},
             ),
+            trials=("early-a", "early-b", "late-a", "late-b"),
         ),
     )
     repeated = MaterializedFrame(
@@ -70,3 +72,50 @@ def test_cluster_standard_error_matches_independent_row_reference():
         / (len(influence) * (len(influence) - 1))
     )
     assert result.se == pytest.approx(reference_se, abs=1e-10)
+
+
+def test_disjoint_trial_cluster_se_matches_global_unit_reference():
+    import math
+
+    import numpy as np
+
+    frame = panel_frame()
+    rows = frame.table.to_pandas()
+    rows = rows.loc[
+        ((rows["trial"] == "early") & (rows["unit"] < 90))
+        | ((rows["trial"] == "late") & (rows["unit"] >= 90))
+    ].copy()
+    disjoint = MaterializedFrame(
+        pa.Table.from_pandas(rows, preserve_index=False),
+        frame.roles,
+        frame.columns,
+        frame.provenance,
+    )
+    result = panel_aipw(
+        disjoint,
+        outcome="y",
+        treatment="a",
+        trial="trial",
+        folds=3,
+        seed=31,
+        nuisance=NuisanceSpec(propensity=LinearTerms(features=())),
+    )
+    masses = {"early": 0.25, "late": 0.75}
+    n_units = rows["unit"].nunique()
+    cluster_score = dict.fromkeys(rows["unit"].unique(), 0.0)
+    for trial, group in rows.groupby("trial", sort=True):
+        q = group["q"].to_numpy()
+        q = q * len(q) / math.fsum(q)
+        effect = (
+            group["trial"].map({"early": 1.5, "late": 4.5}).to_numpy() + 0.2 * group["x"].to_numpy()
+        )
+        mean = math.fsum(float(w * value) for w, value in zip(q, effect, strict=True)) / len(q)
+        scale = n_units / len(group)
+        for unit, weight, value in zip(group["unit"], q, effect, strict=True):
+            cluster_score[unit] += masses[trial] * scale * weight * (value - mean)
+    scores = np.asarray(list(cluster_score.values()))
+    centered = scores - math.fsum(scores) / n_units
+    expected = math.sqrt(
+        math.fsum(float(value * value) for value in centered) / (n_units * (n_units - 1))
+    )
+    assert result.se == pytest.approx(expected, abs=1e-10)

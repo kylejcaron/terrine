@@ -45,3 +45,5 @@ def test_all_shapes_build_materialize_and_arrow_round_trip(native_inputs):
             "sequential" if design is sequential else "event_panel"
         )
         assert restored.provenance.panel is not None
+        if design is sequential:
+            assert restored.provenance.panel.trials == ("schedule:0", "schedule:1")
