@@ -77,8 +77,8 @@ class Diagnostic:
 
 @dataclass(frozen=True, slots=True)
 class Estimate:
-    method: Literal["ipw", "aipw", "regression_adjustment"]
-    estimand: Literal["ATE"]
+    method: Literal["ipw", "aipw", "regression_adjustment", "panel_aipw"]
+    estimand: Literal["ATE", "trial_weighted_ATE"]
     outcome: str
     value: float
     se: float
@@ -87,13 +87,17 @@ class Estimate:
     n: int
     n_clusters: int
     weighting: Literal["unit", "target"]
-    inference: Literal["crossfit_parametric_sandwich"]
+    inference: Literal["crossfit_parametric_sandwich", "unit_cluster_crossfit_sandwich"]
     diagnostics: tuple[Diagnostic, ...]
     provenance: Mapping
 
     def __post_init__(self) -> None:
-        if self.method not in ("ipw", "aipw", "regression_adjustment") or self.estimand != "ATE":
+        if self.method not in ("ipw", "aipw", "regression_adjustment", "panel_aipw") or (
+            self.estimand not in ("ATE", "trial_weighted_ATE")
+        ):
             raise ValueError("unsupported estimate method or estimand")
+        if (self.method == "panel_aipw") != (self.estimand == "trial_weighted_ATE"):
+            raise ValueError("panel AIPW requires the trial-weighted ATE estimand")
         if not isinstance(self.outcome, str) or not self.outcome:
             raise ValueError("outcome must be a non-empty string")
         for label, value in (("value", self.value), ("se", self.se), ("alpha", self.alpha)):
@@ -107,11 +111,13 @@ class Estimate:
         for label, value in (("n", self.n), ("n_clusters", self.n_clusters)):
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{label} must be a positive integer")
-        if self.n_clusters != self.n:
-            raise ValueError("n_clusters must equal n for this estimator slice")
+        if self.method != "panel_aipw" and self.n_clusters != self.n:
+            raise ValueError("n_clusters must equal n for fixed-cohort estimators")
         if (
             self.weighting not in ("unit", "target")
-            or self.inference != "crossfit_parametric_sandwich"
+            or self.inference
+            not in ("crossfit_parametric_sandwich", "unit_cluster_crossfit_sandwich")
+            or (self.method == "panel_aipw") != (self.inference == "unit_cluster_crossfit_sandwich")
         ):
             raise ValueError("unsupported weighting or inference")
         if not isinstance(self.diagnostics, tuple) or not all(

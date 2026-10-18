@@ -56,3 +56,21 @@ frame = sampled.materialize()
 For each t0 and declared stratum, all treated units are retained and eligible controls are sampled without replacement. The compiler refuses a stratum without enough eligible controls. Output roles identify the trial and inclusion-probability columns; the exact policy and probability survive materialization and Arrow metadata round trips. Inclusion probabilities are 1 for treated units and `n_sampled_controls / n_eligible_controls` for sampled controls. Recompilation uses the serialized sample policy and deterministic identity-based ranking, so input row order does not alter selected units. A sampled population must not be analyzed as an unweighted full risk set.
 
 `TrialWeight` is separate from sampling probability and unit-level target weights. Explicit trial aggregation weights are normalized once and retained in panel provenance; omitting a target-weight column means unit weights, not an inferred sampling correction.
+
+## Trial-weighted AIPW
+
+`panel_aipw` estimates one AIPW effect per declared trial, then combines those effects using the positive aggregation weights stored in panel provenance. The optional target-weight column is normalized within each trial; it cannot silently redefine trial aggregation. Propensity and arm-specific outcome models are fitted separately within each trial and training fold. A unit is assigned one deterministic fold across all of its trials. The estimator refuses sampled analysis populations, incomplete outcomes, missing trial weights, and trials/folds without both supported treatment arms.
+
+```python
+from terrine.estimate import panel_aipw
+
+estimate = panel_aipw(
+    materialized,
+    outcome="outcome",
+    treatment="treatment",
+    trial="trial_id",
+    target_weight="target_weight",  # omit for unit target weights
+)
+```
+
+The returned `trial_weighted_ATE` reports trial rows in `n` and unique units in `n_clusters`. Its unit-cluster cross-fit sandwich sums each unit's influence contributions across all trials before computing uncertainty. This is not the fixed-cohort ATE, and trial weights, target weights, and matched-sample inclusion probabilities are distinct quantities.
