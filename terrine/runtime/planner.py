@@ -179,7 +179,8 @@ def plan_refresh(
     if isinstance(max_tasks, bool) or max_tasks < 1:
         raise ValueError("max_tasks must be positive")
     ordered = graph.topological_order()
-    if changes is not None and changes.evidence != "conservative_rebuild":
+    has_state_panel = any(node.layer in {"state_point", "state_period"} for node in ordered)
+    if changes is not None and changes.evidence != "conservative_rebuild" and not has_state_panel:
         if any(change.kind == "definition" for change in changes.changes):
             pass
         elif not changes.changes:

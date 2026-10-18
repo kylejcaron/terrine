@@ -303,6 +303,40 @@ def test_state_panel_correction_rebuilds_adjacent_terminal_and_baseline_layers()
     }
 
 
+def test_state_panel_incremental_change_routes_to_clean_rebuild():
+    from types import SimpleNamespace
+
+    from terrine.spec.state_panel import StateObservations, StatePanel
+
+    design = SimpleNamespace(
+        spec_hash="d",
+        shape=StatePanel(StateObservations("status", ("new", "old")), max_periods=3),
+    )
+    graph = dependency_graph(
+        design=design,
+        sources=("events",),
+        definition_hash="d",
+        partitions=("p1", "p2"),
+    )
+    incremental = plan_refresh(
+        namespace="owner",
+        dataset="panel",
+        definition_hash="d",
+        snapshot_id="s2",
+        graph=graph,
+        changes=ChangeSet((Change("update", "events", revision="r2"),), "change_feed"),
+    )
+    clean = plan_refresh(
+        namespace="owner",
+        dataset="panel",
+        definition_hash="d",
+        snapshot_id="s2",
+        graph=graph,
+    )
+
+    assert incremental.tasks == clean.tasks
+
+
 def test_historical_float64_prefix_change_revalidates_certificates_and_results():
     from datetime import UTC, datetime
     from types import SimpleNamespace
