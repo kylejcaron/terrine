@@ -104,6 +104,47 @@ def test_plan_task_bound_is_checked_before_running_work():
     assert calls == []
 
 
+def test_disjoint_partition_tasks_run_concurrently_with_configured_bound():
+    import threading
+
+    con = duckdb.connect(":memory:")
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="def",
+        snapshot_id="s",
+        graph=dependency_graph(sources=("events",), definition_hash="def", partitions=("p1", "p2")),
+    )
+    barrier = threading.Barrier(2)
+    lock = threading.Lock()
+    active = 0
+    peak = 0
+
+    def run_task(task, dependencies):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        try:
+            if task.partition in {"p1", "p2"}:
+                barrier.wait(timeout=5)
+            return pa.table({"task": [task.task_id]})
+        finally:
+            with lock:
+                active -= 1
+
+    execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="parallel-partitions",
+        run_task=run_task,
+        publish=lambda plan, outputs, lease: "g1",
+        max_concurrency=2,
+    )
+    assert peak == 2
+
+
 def test_runtime_budget_is_cumulative_across_final_frame_outputs():
     from terrine.data import Budget
 

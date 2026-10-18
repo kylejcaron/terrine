@@ -4,6 +4,7 @@ import json
 import threading
 import time
 from collections.abc import Callable, Mapping
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
@@ -37,6 +38,7 @@ def execute_plan(
     publish: Callable[[RefreshPlan, Mapping[str, pa.Table], Lease], Any],
     cancelled: Callable[[], bool] | None = None,
     max_tasks: int = 4096,
+    max_concurrency: int = 4,
     lease_ttl: timedelta = timedelta(minutes=5),
 ) -> RunReceipt:
     """Execute one bounded task DAG, durably caching completed Arrow partitions."""
@@ -46,8 +48,8 @@ def execute_plan(
         raise ValueError("run_id must not be empty")
     if isinstance(max_tasks, bool) or max_tasks < 1 or len(plan.tasks) > max_tasks:
         raise ValueError("plan task count exceeds configured max_tasks")
-    if lease_ttl <= timedelta(0):
-        raise ValueError("lease_ttl must be positive")
+    if isinstance(max_concurrency, bool) or max_concurrency < 1:
+        raise ValueError("max_concurrency must be positive")
     runtime_store = RuntimeStore(con, namespace=namespace)
     runtime_store.initialize()
     leases = LeaseStore(con, namespace=namespace)
@@ -163,64 +165,95 @@ def execute_plan(
     heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
     heartbeat_thread.start()
     try:
-        for task in plan.tasks:
-            saved = con.execute(
-                f"SELECT status, output_blob FROM {schema}.runtime_tasks "
-                "WHERE run_id=? AND task_id=?",
-                [run_id, task.task_id],
-            ).fetchone()
-            if saved is not None and saved[0] == "complete":
-                output = _decode(saved[1])
-            else:
-                claimed_task = con.execute(
-                    f"INSERT INTO {schema}.runtime_tasks "
-                    "(run_id, task_id, status, output_blob, task_fence) "
-                    f"SELECT ?, ?, 'running', NULL, ? WHERE EXISTS ("
-                    f"SELECT 1 FROM {schema}.runtime_leases WHERE resource=? AND owner=? "
-                    "AND fence=? AND expires_at>?) "
-                    "ON CONFLICT(run_id, task_id) DO UPDATE SET status='running', "
-                    "output_blob=NULL, task_fence=excluded.task_fence "
-                    "WHERE runtime_tasks.task_fence IS NULL "
-                    "OR runtime_tasks.task_fence<excluded.task_fence RETURNING task_id",
-                    [
-                        run_id,
-                        task.task_id,
-                        lease.fence,
-                        lease.resource,
-                        lease.owner,
-                        lease.fence,
-                        datetime.now(UTC).replace(tzinfo=None),
-                    ],
-                ).fetchone()
-                if claimed_task is None:
-                    raise ValueError("lease attempt was fenced before task start")
-                dependencies = MappingProxyType({key: outputs[key] for key in task.dependencies})
-                output = run_task(task, dependencies)
-                if not isinstance(output, pa.Table):
-                    raise TypeError("task runner must return a PyArrow Table")
-                if task.layer == "frame":
-                    _check_budget(task, output, plan, outputs)
-                leases.assert_current(lease)
-                completed = con.execute(
-                    f"UPDATE {schema}.runtime_tasks SET status='complete', output_blob=? "
-                    "WHERE run_id=? AND task_id=? AND status='running' AND task_fence=? "
-                    "AND EXISTS ("
-                    f"SELECT 1 FROM {schema}.runtime_leases WHERE resource=? AND owner=? "
-                    "AND fence=? AND expires_at>?) RETURNING task_id",
-                    [
-                        _encode(output),
-                        run_id,
-                        task.task_id,
-                        lease.fence,
-                        lease.resource,
-                        lease.owner,
-                        lease.fence,
-                        datetime.now(UTC).replace(tzinfo=None),
-                    ],
-                ).fetchone()
-                if completed is None:
-                    raise ValueError("lease attempt was fenced before task completion")
-            outputs[task.task_id] = output
+        pending = {task.task_id: task for task in plan.tasks}
+        task_order = tuple(task.task_id for task in plan.tasks)
+        inflight: dict[Future[pa.Table], TaskSpec] = {}
+        active_partitions: set[str] = set()
+        with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
+            while pending or inflight:
+                made_progress = False
+                for task_id in task_order:
+                    task = pending.get(task_id)
+                    if task is None or len(inflight) >= max_concurrency:
+                        continue
+                    if not set(task.dependencies).issubset(outputs):
+                        continue
+                    if task.partition in active_partitions:
+                        continue
+                    del pending[task_id]
+                    saved = con.execute(
+                        f"SELECT status, output_blob FROM {schema}.runtime_tasks "
+                        "WHERE run_id=? AND task_id=?",
+                        [run_id, task.task_id],
+                    ).fetchone()
+                    if saved is not None and saved[0] == "complete":
+                        outputs[task.task_id] = _decode(saved[1])
+                        made_progress = True
+                        continue
+                    claimed_task = con.execute(
+                        f"INSERT INTO {schema}.runtime_tasks "
+                        "(run_id, task_id, status, output_blob, task_fence) "
+                        f"SELECT ?, ?, 'running', NULL, ? WHERE EXISTS ("
+                        f"SELECT 1 FROM {schema}.runtime_leases WHERE resource=? AND owner=? "
+                        "AND fence=? AND expires_at>?) "
+                        "ON CONFLICT(run_id, task_id) DO UPDATE SET status='running', "
+                        "output_blob=NULL, task_fence=excluded.task_fence "
+                        "WHERE runtime_tasks.task_fence IS NULL "
+                        "OR runtime_tasks.task_fence<excluded.task_fence RETURNING task_id",
+                        [
+                            run_id,
+                            task.task_id,
+                            lease.fence,
+                            lease.resource,
+                            lease.owner,
+                            lease.fence,
+                            datetime.now(UTC).replace(tzinfo=None),
+                        ],
+                    ).fetchone()
+                    if claimed_task is None:
+                        raise ValueError("lease attempt was fenced before task start")
+                    dependencies = MappingProxyType(
+                        {key: outputs[key] for key in task.dependencies}
+                    )
+                    inflight[executor.submit(run_task, task, dependencies)] = task
+                    active_partitions.add(task.partition)
+                    made_progress = True
+                if not inflight:
+                    if pending:
+                        raise ValueError("task dependencies contain a cycle or unknown task")
+                    continue
+                if len(inflight) < max_concurrency and made_progress and pending:
+                    continue
+                completed_futures, _ = wait(inflight, return_when=FIRST_COMPLETED)
+                for future in completed_futures:
+                    task = inflight.pop(future)
+                    active_partitions.remove(task.partition)
+                    output = future.result()
+                    if not isinstance(output, pa.Table):
+                        raise TypeError("task runner must return a PyArrow Table")
+                    if task.layer == "frame":
+                        _check_budget(task, output, plan, outputs)
+                    leases.assert_current(lease)
+                    completed = con.execute(
+                        f"UPDATE {schema}.runtime_tasks SET status='complete', output_blob=? "
+                        "WHERE run_id=? AND task_id=? AND status='running' AND task_fence=? "
+                        "AND EXISTS ("
+                        f"SELECT 1 FROM {schema}.runtime_leases WHERE resource=? AND owner=? "
+                        "AND fence=? AND expires_at>?) RETURNING task_id",
+                        [
+                            _encode(output),
+                            run_id,
+                            task.task_id,
+                            lease.fence,
+                            lease.resource,
+                            lease.owner,
+                            lease.fence,
+                            datetime.now(UTC).replace(tzinfo=None),
+                        ],
+                    ).fetchone()
+                    if completed is None:
+                        raise ValueError("lease attempt was fenced before task completion")
+                    outputs[task.task_id] = output
         with run_publication_lock(namespace, plan.dataset):
             return _finish_run(
                 plan=plan,
