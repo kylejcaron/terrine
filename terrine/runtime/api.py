@@ -174,7 +174,7 @@ def _record_result_partitions(
     dependencies = {dependency for task in plan.tasks for dependency in task.dependencies}
     results = sorted(task.task_id for task in plan.tasks if task.task_id not in dependencies)
     if not results:
-        raise ValueError("published plan has no final result task")
+        return
     for partition in results:
         con.execute(
             f"INSERT INTO {schema}.runtime_run_results VALUES (?, ?) ON CONFLICT DO NOTHING",

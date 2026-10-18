@@ -55,3 +55,30 @@ def test_owner_start_reconciles_expired_runs_and_emits_lifecycle_events():
         assert [event.payload["state"] for event in events] == ["failed"]
     finally:
         server.close()
+
+
+def test_queued_run_cancellation_is_terminal_without_worker_acknowledgement():
+    from terrine.runtime.status import cancel_run
+
+    con = duckdb.connect(":memory:")
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
+    schema = store._schema
+    con.execute(
+        f"CREATE TABLE {schema}.runtime_runs "
+        "(run_id VARCHAR PRIMARY KEY,dataset VARCHAR,fingerprint VARCHAR,state VARCHAR,"
+        "published_generation VARCHAR,attempt_fence BIGINT,updated_at TIMESTAMP,"
+        "heartbeat_at TIMESTAMP)"
+    )
+    con.execute(
+        f"INSERT INTO {schema}.runtime_runs VALUES "
+        "('queued-run','orders','fp','queued',NULL,NULL,NULL,NULL)"
+    )
+    receipt = cancel_run("queued-run", con=con, namespace="owner")
+
+    assert receipt.disposition == "requested"
+    assert receipt.status.durable_state == "cancelled"
+    assert [
+        event.payload["state"]
+        for event in read_run_events("queued-run", con=con, namespace="owner").events
+    ] == ["cancelled"]

@@ -151,3 +151,50 @@ def test_public_request_replay_refuses_a_different_plan_without_executor():
         )
 
     assert error.value.code == "terrine.runtime.request_key_conflict"
+
+
+def test_empty_refresh_plan_reuses_existing_result_selection():
+    from terrine.runtime.changes import ChangeSet
+
+    con = duckdb.connect(":memory:")
+    executor = _Executor()
+    destination = DestinationRef("out.duckdb", "analytics", "orders")
+    first = runtime.run_plan(
+        _plan(),
+        con=con,
+        namespace="owner",
+        request_key="initial",
+        destination=destination,
+        executor=executor,
+    )
+    no_op = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="definition",
+        snapshot_id="snapshot",
+        graph=dependency_graph(
+            sources=("events",), definition_hash="definition", partitions=("p1",)
+        ),
+        changes=ChangeSet((), "revision"),
+    )
+
+    receipt = runtime.run_plan(
+        no_op,
+        con=con,
+        namespace="owner",
+        request_key="no-op",
+        destination=destination,
+        executor=executor,
+    )
+
+    assert receipt.state == "succeeded"
+    schema = '"owner"'
+    previous = con.execute(
+        f"SELECT partition FROM {schema}.runtime_run_results WHERE run_id=?",
+        [first.run_id],
+    ).fetchall()
+    retained = con.execute(
+        f"SELECT partition FROM {schema}.runtime_run_results WHERE run_id=?",
+        [receipt.run_id],
+    ).fetchall()
+    assert retained == previous

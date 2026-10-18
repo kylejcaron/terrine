@@ -121,23 +121,23 @@ def cancel_run(run_id: str, *, con: Any, namespace: str) -> CancelReceipt:
             return CancelReceipt(run_id, "already_terminal", status)
         if status.durable_state == "cancel_requested":
             return CancelReceipt(run_id, "already_requested", status)
+        terminal = status.durable_state == "queued"
+        next_state = "cancelled" if terminal else "cancel_requested"
         with event_transaction(con, namespace=namespace):
             transitioned = con.execute(
-                f"UPDATE {store._schema}.runtime_runs SET state='cancel_requested' "
-                "WHERE run_id=? AND state IN ('queued','running') RETURNING run_id",
-                [run_id],
+                f"UPDATE {store._schema}.runtime_runs SET state=? "
+                "WHERE run_id=? AND state=? RETURNING run_id",
+                [next_state, run_id, status.durable_state],
             ).fetchone()
             if transitioned is not None:
                 record_run_event(
                     run_id,
                     "lifecycle",
-                    {"state": "cancel_requested"},
+                    {"state": next_state},
                     con=con,
                     namespace=namespace,
                     _in_transaction=True,
                 )
         updated = get_run(run_id, con=con, namespace=namespace)
-        disposition = (
-            "requested" if updated.durable_state == "cancel_requested" else "already_terminal"
-        )
+        disposition = "requested" if transitioned is not None else "already_terminal"
         return CancelReceipt(run_id, disposition, updated)

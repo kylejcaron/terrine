@@ -103,6 +103,14 @@ def execute_plan(
         "output_blob BLOB, task_fence BIGINT, PRIMARY KEY(run_id, task_id))"
     )
     con.execute(f"ALTER TABLE {schema}.runtime_tasks ADD COLUMN IF NOT EXISTS task_fence BIGINT")
+    con.execute(
+        f"CREATE TABLE IF NOT EXISTS {schema}.runtime_run_results "
+        "(run_id VARCHAR NOT NULL, partition VARCHAR NOT NULL, PRIMARY KEY(run_id,partition))"
+    )
+    dependencies = {dependency for task in plan.tasks for dependency in task.dependencies}
+    result_partitions = sorted(
+        task.task_id for task in plan.tasks if task.task_id not in dependencies
+    )
     existing_request = None
     with event_transaction(con, namespace=namespace):
         if request_key is not None:
@@ -147,6 +155,26 @@ def execute_plan(
                 namespace=namespace,
                 _in_transaction=True,
             )
+        if result_partitions:
+            for partition in result_partitions:
+                con.execute(
+                    f"INSERT INTO {schema}.runtime_run_results VALUES (?, ?) "
+                    "ON CONFLICT DO NOTHING",
+                    [run_id, partition],
+                )
+        else:
+            previous = con.execute(
+                f"SELECT p.partition FROM {schema}.runtime_run_results p "
+                f"JOIN {schema}.runtime_runs r ON r.run_id=p.run_id "
+                "WHERE r.dataset=? AND r.state='succeeded' ORDER BY p.partition",
+                [plan.dataset],
+            ).fetchall()
+            for (partition,) in previous:
+                con.execute(
+                    f"INSERT INTO {schema}.runtime_run_results VALUES (?, ?) "
+                    "ON CONFLICT DO NOTHING",
+                    [run_id, partition],
+                )
     if run is not None and run[2] in {"succeeded", "cancelled"}:
         _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
         return RunReceipt(run_id, run[2], run[3])
