@@ -229,10 +229,8 @@ class CalendarComparisonSpec:
             raise TypeError("calendar periods must be integers")
         comparisons = tuple(self.comparison_periods)
         anticipations = tuple(self.anticipation_periods)
-        if not comparisons or any(value < 0 for value in comparisons):
-            raise _INVALID_COMPARISON.error(
-                reason="comparison periods must be nonnegative and nonempty"
-            )
+        if not comparisons:
+            raise _INVALID_COMPARISON.error(reason="comparison periods must be nonempty")
         if len(set(comparisons)) != len(comparisons):
             raise _INVALID_COMPARISON.error(reason="comparison periods must be unique")
         if any(value >= 0 for value in anticipations) or len(set(anticipations)) != len(
@@ -245,6 +243,10 @@ class CalendarComparisonSpec:
         if self.reference_period >= boundary:
             raise _INVALID_COMPARISON.error(
                 reason="reference period must precede the anticipation window"
+            )
+        if any(value < 0 and value >= boundary for value in comparisons):
+            raise _INVALID_COMPARISON.error(
+                reason="pre-treatment comparisons must precede the anticipation window"
             )
         if self.reference_period in comparisons:
             raise _INVALID_COMPARISON.error(

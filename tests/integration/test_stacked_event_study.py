@@ -482,3 +482,54 @@ def test_not_yet_treated_observation_covers_exclusive_window_endpoint(native_inp
         comparison_periods=(0,),
     ).materialize(Budget(max_rows=100, max_output_bytes=1_000_000))
     assert frame.table.num_rows > 0
+
+
+def test_compiled_comparison_exposes_pre_treatment_lead_to_pretrend_test(native_inputs):
+    from terrine.diagnostics import pretrend_test
+    from terrine.estimate.stacked import stacked_event_study
+
+    catalog, con = native_inputs
+    con.insert("users", pa.table({"user_id": ["c"], "alt_id": ["cc"]}))
+    con.insert(
+        "events",
+        pa.table(
+            {
+                "user_id": ["d", "e"],
+                "ts": [
+                    datetime(2025, 1, 8, tzinfo=UTC),
+                    datetime(2025, 1, 4, tzinfo=UTC),
+                ],
+                "event_id": ["d1", "e1"],
+                "alternate_event_id": ["d2", "e2"],
+            }
+        ),
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
+        units={"user": UnitSource("users", "user_id")},
+        event_ids={"events": "event_id"},
+    )
+    frame = CalendarComparisonPanel(
+        Design(
+            "user",
+            Schedule("1d", "2025-01-01", "2025-01-12"),
+            outcomes={"y": agg("sessions", window=("0d", "1d"))},
+        ),
+        model,
+        cohort=Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+        control="never_treated",
+        reference_period=-1,
+        comparison_periods=(-2, 0),
+    ).materialize(Budget(max_rows=300, max_output_bytes=1_000_000))
+
+    result = stacked_event_study(
+        frame,
+        outcome="y",
+        treatment="treatment",
+        cohort="cohort",
+        period="period",
+    )
+    assert result.periods == (-2, 0)
+    assert pretrend_test(result).metrics["n_leads"] == 1

@@ -88,6 +88,11 @@ Run `python examples/stacked_event_study.py` for an executable DuckDB example th
 
 `pretrend_test(stacked_result)` jointly tests every declared negative event-time
 contrast using the corresponding full unit-cluster covariance submatrix.
+
+Declare uncontaminated negative comparison periods in `comparison_periods`
+to expose pre-treatment contrasts through the compiled pipeline. Every negative
+comparison must precede the declared anticipation window, and the reference
+period remains distinct; `pretrend_test` then jointly tests those compiled leads.
 `placebo_test(frame, outcome=..., placebo_periods=...)` checks treatment-group
 differences at declared pre-treatment event periods; `negative_control_test`
 uses the declared negative-control outcome. Each returns the shared immutable
