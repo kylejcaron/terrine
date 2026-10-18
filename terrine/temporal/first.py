@@ -100,6 +100,22 @@ def first_occurrence(
         if name.casefold() in used:
             raise _INVALID.error(reason=f"output_column_collision_{name}")
 
+    def fresh_name(base: str) -> str:
+        candidate = base
+        suffix = 0
+        while candidate.casefold() in used:
+            suffix += 1
+            candidate = f"{base}_{suffix}"
+        used.add(candidate.casefold())
+        return candidate
+
+    first_lower_key = fresh_name("__terrine_first_lower_key")
+    event_unit = fresh_name("__terrine_event_unit")
+    event_key = fresh_name("__terrine_event_key")
+    event_time = fresh_name("__terrine_event_time")
+    event_identifier = fresh_name("__terrine_event_id")
+    event_value_id = fresh_name("__terrine_event_id_value")
+
     checks: tuple[_Check, ...] = ()
     if event_id is not None:
         projected = events.select(_unit=events[unit], _event_id=events[event_id])
@@ -112,53 +128,56 @@ def first_occurrence(
         checks = (_Check(duplicates, (_Failure("_duplicate_count", _DUPLICATE_EVENT_ID, {}),)),)
 
     events_view = events.view()
-    event_columns = {
-        "__terrine_event_unit": events_view[unit],
-        "__terrine_event_time": events_view[timestamp],
-    }
+    event_columns = {event_unit: events_view[unit], event_time: events_view[timestamp]}
     if event_id is None:
         event_relation = (
             events_view.filter(events_view[timestamp].notnull()).select(**event_columns).distinct()
         )
-        event_relation = event_relation.mutate(__terrine_event_id=ibis.null().cast("string"))
+        event_relation = event_relation.mutate(**{event_identifier: ibis.null().cast("string")})
     else:
+        event_columns[event_value_id] = events_view[event_id]
         event_relation = events_view.filter(events_view[timestamp].notnull()).select(
-            **event_columns,
-            __terrine_event_id=events_view[event_id],
+            **event_columns
         )
-        event_relation = event_relation.group_by(
-            "__terrine_event_unit", "__terrine_event_time"
-        ).aggregate(__terrine_event_id=event_relation.__terrine_event_id.min())
+        event_relation = event_relation.group_by(event_unit, event_time).aggregate(
+            **{event_identifier: event_relation[event_value_id].min()}
+        )
 
     candidates_view = candidates.view()
     left = candidates_view.select(
         **{name: candidates_view[name] for name in candidates_view.columns},
-        __terrine_first_lower_key=_reverse_time_key(candidates_view[lower]),
+        **{first_lower_key: _reverse_time_key(candidates_view[lower])},
     )
     events_view = event_relation.view()
     right = events_view.select(
-        __terrine_event_unit=events_view.__terrine_event_unit,
-        __terrine_event_key=_reverse_time_key(events_view.__terrine_event_time),
-        __terrine_event_time=events_view.__terrine_event_time,
-        __terrine_event_id=events_view.__terrine_event_id,
+        **{
+            event_unit: events_view[event_unit],
+            event_key: _reverse_time_key(events_view[event_time]),
+            event_time: events_view[event_time],
+            event_identifier: events_view[event_identifier],
+        }
     )
     joined = left.asof_join(
         right,
-        on=left.__terrine_first_lower_key >= right.__terrine_event_key,
-        predicates=[left[unit] == right.__terrine_event_unit],
+        on=left[first_lower_key] >= right[event_key],
+        predicates=[left[unit] == right[event_unit]],
     )
-    eligible = joined.__terrine_event_time.notnull() & (
-        timestamp_order_key(joined.__terrine_event_time) < timestamp_order_key(joined[upper])
+    upper_value = joined[upper]
+    eligible = (
+        joined[event_time].notnull()
+        & joined[lower].notnull()
+        & upper_value.notnull()
+        & (timestamp_order_key(joined[event_time]) < timestamp_order_key(upper_value))
     )
     output = {name: joined[name] for name in candidates.columns}
     output["first_timestamp"] = eligible.ifelse(
-        joined.__terrine_event_time,
-        ibis.null().cast(event_relation.__terrine_event_time.type()),
+        joined[event_time],
+        ibis.null().cast(event_relation[event_time].type()),
     )
     if event_id is not None:
         output["first_event_id"] = eligible.ifelse(
-            joined.__terrine_event_id,
-            ibis.null().cast(event_relation.__terrine_event_id.type()),
+            joined[event_identifier],
+            ibis.null().cast(event_relation[event_identifier].type()),
         )
     output["no_event"] = ~eligible
     result = joined.select(**output)

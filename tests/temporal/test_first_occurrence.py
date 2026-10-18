@@ -172,3 +172,22 @@ def test_lookup_preserves_fresh_memtable_dependencies():
         assert result.column("anchor_id").to_pylist()
     finally:
         con.disconnect()
+
+
+def test_lookup_avoids_candidate_column_collisions_and_null_bounds_are_no_event():
+    con = ibis.duckdb.connect()
+    try:
+        events, candidates = _relations(con)
+        candidates = candidates.mutate(
+            __terrine_event_id=ibis.literal("candidate metadata"),
+            __terrine_first_lower_key=ibis.literal("candidate key"),
+        )
+        candidates = candidates.mutate(upper=ibis.null().cast(candidates.upper.type()))
+        result = _table(con, _lookup(events, candidates)).to_pylist()
+        assert len(result) == 3
+        assert all(row["first_timestamp"] is None for row in result)
+        assert all(row["first_event_id"] is None for row in result)
+        assert all(row["no_event"] is True for row in result)
+        assert all(row["__terrine_event_id"] == "candidate metadata" for row in result)
+    finally:
+        con.disconnect()
