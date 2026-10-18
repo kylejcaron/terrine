@@ -21,7 +21,6 @@ from terrine.temporal.readiness import Readiness
 
 if TYPE_CHECKING:
     from terrine.execution.inputs import ExecutionContext, VerifiedInputBinding
-
 __all__ = ["Model"]
 
 _INVALID = RefusalSpec("terrine.model.invalid_binding", "Model binding input is invalid: {reason}.")
@@ -159,10 +158,16 @@ class Model:
         event_ids: Mapping[str, str],
         resolver: Callable[[RelationSpec], Any],
         input_binding: VerifiedInputBinding | None,
+        source_names: set[str] | None = None,
     ) -> Model:
+        selected_sources = (
+            catalog.sources
+            if source_names is None
+            else {name: catalog.sources[name] for name in sorted(source_names)}
+        )
         sources = {
             name: normalize_source(con, catalog, name, resolver=resolver)
-            for name in catalog.sources
+            for name in selected_sources
         }
         metrics = {name: bind_metric(catalog, name) for name in catalog.metrics}
         for unit in units.values():
@@ -219,11 +224,26 @@ class Model:
             check_native_functions(raw, sql, None)
             return self.con.sql(sql)
 
-    def _for_execution(self, context: ExecutionContext) -> Model:
+    def _for_execution(
+        self,
+        context: ExecutionContext,
+        *,
+        source_names: set[str] | None = None,
+        unit_name: str | None = None,
+    ) -> Model:
+        selected_sources = set(self.catalog.sources) if source_names is None else source_names
+        units = (
+            self.units
+            if unit_name is None
+            else ({unit_name: self.units[unit_name]} if unit_name in self.units else {})
+        )
+        dimension_names = {
+            name for source in selected_sources for name in self.catalog.sources[source].dimensions
+        }
         relations = (
-            *(source.relation for source in self.catalog.sources.values()),
-            *(dimension.relation for dimension in self.catalog.dimensions.values()),
-            *(TableRef(kind="table", name=unit.table) for unit in self.units.values()),
+            *(self.catalog.sources[name].relation for name in sorted(selected_sources)),
+            *(self.catalog.dimensions[name].relation for name in sorted(dimension_names)),
+            *(TableRef(kind="table", name=unit.table) for unit in units.values()),
         )
         for relation in relations:
             if self._relation(relation).schema() != context.resolve(relation).schema():
@@ -232,10 +252,13 @@ class Model:
             self.catalog,
             con=context.con,
             readiness=self.readiness,
-            units=self.units,
-            event_ids=self.event_ids,
+            units=units,
+            event_ids={
+                name: column for name, column in self.event_ids.items() if name in selected_sources
+            },
             resolver=context.resolve,
             input_binding=self.input_binding,
+            source_names=selected_sources,
         )
 
     @classmethod

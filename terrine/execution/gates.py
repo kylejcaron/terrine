@@ -27,12 +27,12 @@ _ELIGIBILITY_UNKNOWN = RefusalSpec(
 
 def enforce_shape_budget(shape: object, budget: Budget | None) -> None:
     """Refuse unbounded exports for shapes whose output size must be bounded."""
-    shape_name = type(shape).__name__
+    shape_types = {base.__name__ for base in type(shape).__mro__}
     refusal = (
         _STATE_PANEL_BUDGET
-        if shape_name == "StatePanel"
+        if "StatePanel" in shape_types
         else _SEQUENCE_BUDGET
-        if shape_name == "EventSequence"
+        if "EventSequence" in shape_types
         else None
     )
     if refusal is not None and (

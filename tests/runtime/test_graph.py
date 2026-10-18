@@ -85,6 +85,8 @@ def test_nested_event_selector_dependencies_invalidate_frame_outside_window():
         node.source for node in graph.dependencies(frame) if node.layer == "selector"
     }
     assert selector_sources == {"events", "statuses"}
+    selector_order = [node.source for node in graph.nodes if node.layer == "selector"]
+    assert selector_order == ["events", "statuses"]
 
 
 def test_partition_iterator_is_reused_for_every_source():

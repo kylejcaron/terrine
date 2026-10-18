@@ -7,7 +7,7 @@ from pathlib import Path
 import ibis
 import pytest
 
-from terrine.data import Budget, Coverage
+from terrine.data import Budget, Coverage, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.runtime.owner import RuntimeOwner
@@ -223,6 +223,8 @@ def test_snapshot_captures_only_sources_in_design_dependency_closure(tmp_path):
     con = ibis.duckdb.connect(str(state_path))
     con.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
     con.raw_sql("INSERT INTO events VALUES ('2025-01-01', 1, 3)")
+    con.raw_sql("CREATE TABLE users (user_id INTEGER)")
+    con.raw_sql("INSERT INTO users VALUES (1)")
     con.raw_sql("CREATE TABLE labels (ts TIMESTAMP, user_id INTEGER, label VARCHAR)")
     con.raw_sql("INSERT INTO labels VALUES ('2025-01-01', 1, 'unused')")
     definition = _catalog().model_dump(mode="python")
@@ -248,13 +250,30 @@ def test_snapshot_captures_only_sources_in_design_dependency_closure(tmp_path):
             "events": Coverage("2025-01-01", "2025-02-01"),
             "labels": Coverage("2025-01-01", "2025-02-01"),
         },
+        units={"user": UnitSource("users", "user_id")},
     )
     try:
         receipt = SnapshotAuthority(owner).capture(
             model, design=_design(), con=con, namespace="runtime", run_id="closure", budget=Budget()
         )
+        from terrine.compile.dispatch import compile_design
+        from terrine.spec.validate import validate_design
+
+        execution = SnapshotAuthority(owner).reopen(receipt, con=con, namespace="runtime")
+        try:
+            design = _design()
+            sources = set(validate_design(design, model).required_sources)
+            execution_model = model._for_execution(
+                execution, source_names=sources, unit_name=design.unit
+            )
+            compiled = compile_design(design, execution_model)
+            compiled.validate(execute=execution.execute)
+            assert execution.execute(compiled.table).num_rows == 1
+        finally:
+            execution.close()
         assert {entry["relation_key"] for entry in receipt.roots if entry["kind"] == "table"} == {
-            "events"
+            "events",
+            "users",
         }
     finally:
         con.disconnect()

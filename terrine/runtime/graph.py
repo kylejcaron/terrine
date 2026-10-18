@@ -96,7 +96,7 @@ def dependency_graph(
                 export = LayerNode("export", source, partition, fingerprint, "pending")
                 nodes.append(export)
                 edges.append((frame, export))
-            for selector_source in selector_nodes:
+            for selector_source in sorted(selector_nodes):
                 selector = LayerNode("selector", selector_source, partition, fingerprint, "pending")
                 if selector not in nodes:
                     nodes.append(selector)

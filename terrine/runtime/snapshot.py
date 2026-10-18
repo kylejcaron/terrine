@@ -261,12 +261,14 @@ class SnapshotAuthority:
                 model.catalog.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
             )
             units_json = json.dumps(
-                {name: asdict(unit) for name, unit in sorted(model.units.items())},
+                {name: asdict(model.units[name]) for name in sorted(unit_names)},
                 sort_keys=True,
                 separators=(",", ":"),
             )
             event_ids_json = json.dumps(
-                dict(model.event_ids), sort_keys=True, separators=(",", ":")
+                {name: column for name, column in model.event_ids.items() if name in source_names},
+                sort_keys=True,
+                separators=(",", ":"),
             )
             artifact = directory / "inputs.duckdb"
             receipt_path = directory / "receipt.json"
@@ -385,7 +387,13 @@ class _SnapshotContext(ExecutionContext):
 def _design_root_names(
     model: Model, design: Design
 ) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
-    sources: set[str] = set()
+    from terrine.spec.validate import validate_design
+
+    sources: set[str] = (
+        set(validate_design(design, model).required_sources)
+        if design.unit in model.units
+        else set()
+    )
     properties: set[str] = set()
 
     def visit(value: Any) -> None:
@@ -439,4 +447,5 @@ def _design_root_names(
         source = model.catalog.sources.get(source_name)
         if source is not None:
             dimension_names.update(source.dimensions)
-    return frozenset(sources), frozenset(dimension_names), frozenset({design.unit})
+    unit_names = {design.unit} if design.unit in model.units else set()
+    return frozenset(sources), frozenset(dimension_names), frozenset(unit_names)

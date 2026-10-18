@@ -268,10 +268,13 @@ def test_runtime_and_frame_share_shape_budget_refusal():
     from terrine.runtime.materialize import compose_runtime_frame
     from terrine.spec import BinnedMetricState, Schedule, StatePanel
 
+    class DerivedStatePanel(StatePanel):
+        pass
+
     design = Design(
         "user",
         Schedule("1d", "2025-01-02", "2025-01-03"),
-        shape=StatePanel(
+        shape=DerivedStatePanel(
             BinnedMetricState("total", cutpoints=(0,), levels=("none", "some")),
             max_periods=2,
         ),

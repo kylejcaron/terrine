@@ -214,7 +214,14 @@ class Frame:
         with open_execution(
             model.catalog, model.con, units=model.units, input_binding=model.input_binding
         ) as context:
-            compiled = compile_design(self._design, model._for_execution(context))
+            from terrine.spec.validate import validate_design
+
+            execution_model = model._for_execution(
+                context,
+                source_names=set(validate_design(self._design, model).required_sources),
+                unit_name=self._design.unit,
+            )
+            compiled = compile_design(self._design, execution_model)
             if transform is not None:
                 compiled = transform(compiled)
             summary = validate_compiled_output(compiled, context.execute)

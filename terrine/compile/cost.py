@@ -74,7 +74,14 @@ def preview(
         with open_execution(
             model.catalog, model.con, units=model.units, input_binding=model.input_binding
         ) as context:
-            compiled = compile_design(design, model._for_execution(context))
+            from terrine.spec.validate import validate_design
+
+            execution_model = model._for_execution(
+                context,
+                source_names=set(validate_design(design, model).required_sources),
+                unit_name=design.unit,
+            )
+            compiled = compile_design(design, execution_model)
             compiled.validate(execute=context.execute)
             summary = _eligibility_summary(compiled.audit_table, context.execute, cap=bounded_count)
         capped = summary.candidate > bounded_count
