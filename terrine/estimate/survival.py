@@ -298,7 +298,23 @@ def backtest_survival(
         (dtype.unit for dtype in timestamp_types),
         key=precision.__getitem__,
     )
+    if output_unit != "ns" and any(cutoff.microsecond for cutoff in normalized):
+        output_unit = max((output_unit, "us"), key=precision.__getitem__)
     output_duration_type = pa.timestamp(output_unit, tz="UTC")
+    censor_output_type = (
+        table.schema.field("censor_time").type
+        if "censor_time" in table.column_names
+        else output_duration_type
+    )
+    wide_ns_cutoff = output_unit == "ns" and any(
+        cutoff.year < 1678 or cutoff.year > 2262 for cutoff in normalized
+    )
+    if wide_ns_cutoff and "censor_time" in table.column_names:
+        censor_values = table["censor_time"].combine_chunks().cast(pa.int64()).to_pylist()
+        if all(value is None or value % 1_000 == 0 for value in censor_values):
+            censor_output_type = pa.timestamp("us", tz="UTC")
+    elif "censor_time" in table.column_names and output_unit == "us":
+        censor_output_type = pa.timestamp("us", tz="UTC")
     results: list[object] = []
     event_time_array = (
         table["event_time"].combine_chunks() if "event_time" in table.column_names else None
@@ -315,7 +331,7 @@ def backtest_survival(
         observed_duration: list[int] = []
         observed_event: list[bool] = []
         updated_event_time: list[int | None] = []
-        updated_censor_time: list[int] = []
+        updated_censor_time: list[int | None] = []
         for index in range(table.num_rows):
             origin = origins[index]
             entered = entries[index]
@@ -353,17 +369,20 @@ def backtest_survival(
                     updated_event_time.append(None)
             if censor_time_array is not None:
                 censor_scalar = censor_time_array[index]
-                if (
+                cutoff_out_of_ns_range = wide_ns_cutoff and censor_output_type.unit == "ns"
+                if cutoff_out_of_ns_range and not censor_scalar.is_valid:
+                    updated_censor_time.append(None)
+                elif (
                     not censor_scalar.is_valid
                     or _timestamp_elapsed(censor_scalar, origin, row=index, name="censor_time")
                     >= cutoff_elapsed
                 ):
                     updated_censor_time.append(
-                        cutoff_scalar.cast(output_duration_type).cast(pa.int64()).as_py()
+                        cutoff_scalar.cast(censor_output_type).cast(pa.int64()).as_py()
                     )
                 else:
                     updated_censor_time.append(
-                        censor_scalar.cast(output_duration_type).cast(pa.int64()).as_py()
+                        censor_scalar.cast(censor_output_type).cast(pa.int64()).as_py()
                     )
         sample = table.take(pa.array(kept, type=pa.int64()))
         sample = sample.set_column(
@@ -386,7 +405,7 @@ def backtest_survival(
             sample = sample.set_column(
                 sample.schema.get_field_index("censor_time"),
                 "censor_time",
-                pa.array(updated_censor_time, type=output_duration_type),
+                pa.array(updated_censor_time, type=censor_output_type),
             )
         provenance = replace(data.provenance, measurement_knowledge="retrospective_effective_time")
         results.append(fitter(MaterializedFrame(sample, data.roles, data.columns, provenance)))

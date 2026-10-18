@@ -417,3 +417,50 @@ def test_backtest_coded_refusal_for_malformed_cutoff_and_optional_timestamp():
             prediction_cutoffs=[datetime(2025, 1, 4, tzinfo=UTC)],
             fitter=lambda data: data,
         )
+
+
+def test_backtest_fractional_cutoff_expands_seconds_and_milliseconds_output():
+    source = _frame()
+    table = source.table
+    for name in ("t0", "entry", "duration", "event_time", "censor_time"):
+        table = table.set_column(
+            table.schema.get_field_index(name),
+            name,
+            table[name].cast(pa.timestamp("ms", tz="UTC")),
+        )
+    source = MaterializedFrame(table, source.roles, source.columns, source.provenance)
+    cutoff = datetime(2025, 1, 1, 0, 0, 0, 500001, tzinfo=UTC)
+    seen = []
+    backtest_survival(
+        source,
+        duration="duration",
+        event="event",
+        entry="entry",
+        prediction_cutoffs=[cutoff],
+        fitter=lambda data: seen.append(data.table),
+    )
+    assert seen[0].schema.field("duration").type == pa.timestamp("us", tz="UTC")
+    assert seen[0]["duration"][0].as_py() == cutoff
+
+
+def test_backtest_wide_cutoff_emits_microsecond_censor_time():
+    source = _frame()
+    table = source.table.set_column(
+        source.table.schema.get_field_index("censor_time"),
+        "censor_time",
+        pa.nulls(source.table.num_rows, type=pa.timestamp("ns", tz="UTC")),
+    )
+    source = MaterializedFrame(table, source.roles, source.columns, source.provenance)
+    cutoff = datetime(2500, 1, 1, tzinfo=UTC)
+    seen = []
+    backtest_survival(
+        source,
+        duration="duration",
+        event="event",
+        entry="entry",
+        prediction_cutoffs=[cutoff],
+        fitter=lambda data: seen.append(data.table),
+    )
+    assert seen[0].schema.field("duration").type == pa.timestamp("ns", tz="UTC")
+    assert seen[0].schema.field("censor_time").type == pa.timestamp("us", tz="UTC")
+    assert seen[0]["censor_time"].to_pylist() == [cutoff, cutoff]
