@@ -197,18 +197,78 @@ def test_invalid_namespace_is_rejected_before_sql_execution():
     assert statements == []
 
 
-def test_lease_heartbeat_keeps_long_task_alive():
-    import time
+def test_failed_run_retries_to_a_persisted_success_receipt():
+    con = duckdb.connect(":memory:")
+    plan = _plan()
+    calls = 0
+    publish_calls = []
+
+    def run_task(task, dependencies):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("initial failure")
+        return pa.table({"id": [1]})
+
+    with pytest.raises(RuntimeError, match="initial failure"):
+        execute_plan(
+            plan,
+            con=con,
+            namespace="owner",
+            run_id="retry-run",
+            run_task=run_task,
+            publish=lambda plan, outputs, lease: "g1",
+        )
+
+    result = execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="retry-run",
+        run_task=run_task,
+        publish=lambda plan, outputs, lease: publish_calls.append("g1") or "g1",
+    )
+    replay = execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="retry-run",
+        run_task=run_task,
+        publish=lambda plan, outputs, lease: publish_calls.append("unexpected"),
+    )
+    assert result.state == "succeeded"
+    assert replay == result
+    assert publish_calls == ["g1"]
+
+
+def test_lease_heartbeat_keeps_long_task_alive(monkeypatch):
+    import threading
     from datetime import timedelta
 
+    from terrine.runtime.leases import LeaseStore
+
     con = duckdb.connect(":memory:")
+    renewed = threading.Event()
+    original_renew = LeaseStore.renew
+
+    def renew(store, lease, *, ttl, now):
+        result = original_renew(store, lease, ttl=ttl, now=now)
+        renewed.set()
+        return result
+
+    monkeypatch.setattr(LeaseStore, "renew", renew)
+
+    def run_task(task, dependencies):
+        assert renewed.wait(timeout=3)
+        return pa.table({"id": [1]})
+
     result = execute_plan(
         _plan(),
         con=con,
         namespace="owner",
         run_id="long-task",
-        run_task=lambda task, dependencies: time.sleep(0.05) or pa.table({"id": [1]}),
+        run_task=run_task,
         publish=lambda plan, outputs, lease: "g1",
-        lease_ttl=timedelta(milliseconds=15),
+        lease_ttl=timedelta(seconds=30),
     )
     assert result.state == "succeeded"

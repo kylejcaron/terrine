@@ -50,13 +50,15 @@ def execute_plan(
     con.execute(
         f"CREATE TABLE IF NOT EXISTS {schema}.runtime_runs ("
         "run_id VARCHAR PRIMARY KEY, dataset VARCHAR NOT NULL, fingerprint VARCHAR NOT NULL, "
-        "state VARCHAR NOT NULL, published_generation VARCHAR)"
+        "state VARCHAR NOT NULL, published_generation VARCHAR, attempt_fence BIGINT)"
     )
+    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS attempt_fence BIGINT")
     con.execute(
         f"CREATE TABLE IF NOT EXISTS {schema}.runtime_tasks ("
         "run_id VARCHAR NOT NULL, task_id VARCHAR NOT NULL, status VARCHAR NOT NULL, "
-        "output_blob BLOB, PRIMARY KEY(run_id, task_id))"
+        "output_blob BLOB, task_fence BIGINT, PRIMARY KEY(run_id, task_id))"
     )
+    con.execute(f"ALTER TABLE {schema}.runtime_tasks ADD COLUMN IF NOT EXISTS task_fence BIGINT")
     run = con.execute(
         f"SELECT dataset, fingerprint, state, published_generation "
         f"FROM {schema}.runtime_runs WHERE run_id=?",
@@ -69,12 +71,23 @@ def execute_plan(
             return RunReceipt(run_id, run[2], run[3])
     else:
         con.execute(
-            f"INSERT INTO {schema}.runtime_runs VALUES (?, ?, ?, 'running', NULL)",
+            f"INSERT INTO {schema}.runtime_runs "
+            "(run_id, dataset, fingerprint, state, published_generation) "
+            "VALUES (?, ?, ?, 'running', NULL)",
             [run_id, plan.dataset, plan.recipe.fingerprint],
         )
     leases.initialize()
-    now = datetime.now(UTC)
-    lease = leases.acquire(f"dataset:{plan.dataset}", run_id, ttl=lease_ttl, now=now)
+    lease = leases.acquire(f"dataset:{plan.dataset}", run_id, ttl=lease_ttl, now=datetime.now(UTC))
+    transition = con.execute(
+        f"UPDATE {schema}.runtime_runs SET state='running', attempt_fence=? "
+        "WHERE run_id=? AND state IN ('running', 'failed') RETURNING run_id",
+        [lease.fence, run_id],
+    ).fetchone()
+    if transition is None:
+        leases.release(lease)
+        return RunReceipt(run_id, run[2], run[3])
+    heartbeat_con = con.cursor()
+    heartbeat_store = LeaseStore(heartbeat_con, namespace=namespace)
     outputs: dict[str, pa.Table] = {}
     stop_heartbeat = threading.Event()
     heartbeat_error: list[Exception] = []
@@ -84,7 +97,7 @@ def execute_plan(
         current = lease
         while not stop_heartbeat.wait(interval):
             try:
-                current = leases.renew(current, ttl=lease_ttl, now=datetime.now(UTC))
+                current = heartbeat_store.renew(current, ttl=lease_ttl, now=datetime.now(UTC))
             except Exception as error:
                 heartbeat_error.append(error)
                 stop_heartbeat.set()
@@ -103,9 +116,12 @@ def execute_plan(
                 output = _decode(saved[1])
             else:
                 con.execute(
-                    f"INSERT INTO {schema}.runtime_tasks VALUES (?, ?, 'running', NULL) "
-                    "ON CONFLICT(run_id, task_id) DO UPDATE SET status='running', output_blob=NULL",
-                    [run_id, task.task_id],
+                    f"INSERT INTO {schema}.runtime_tasks "
+                    "(run_id, task_id, status, output_blob, task_fence) "
+                    "VALUES (?, ?, 'running', NULL, ?) "
+                    "ON CONFLICT(run_id, task_id) DO UPDATE SET status='running', "
+                    "output_blob=NULL, task_fence=excluded.task_fence",
+                    [run_id, task.task_id, lease.fence],
                 )
                 dependencies = MappingProxyType({key: outputs[key] for key in task.dependencies})
                 output = run_task(task, dependencies)
@@ -114,41 +130,61 @@ def execute_plan(
                 if task.layer == "frame":
                     _check_budget(task, output, plan, outputs)
                 leases.assert_current(lease)
-                con.execute(
+                completed = con.execute(
                     f"UPDATE {schema}.runtime_tasks SET status='complete', output_blob=? "
-                    "WHERE run_id=? AND task_id=? AND status='running'",
-                    [_encode(output), run_id, task.task_id],
-                )
+                    "WHERE run_id=? AND task_id=? AND status='running' AND task_fence=? "
+                    "AND EXISTS ("
+                    f"SELECT 1 FROM {schema}.runtime_leases WHERE resource=? AND owner=? "
+                    "AND fence=? AND expires_at>?) RETURNING task_id",
+                    [
+                        _encode(output),
+                        run_id,
+                        task.task_id,
+                        lease.fence,
+                        lease.resource,
+                        lease.owner,
+                        lease.fence,
+                        datetime.now(UTC).isoformat(),
+                    ],
+                ).fetchone()
+                if completed is None:
+                    raise ValueError("lease attempt was fenced before task completion")
             outputs[task.task_id] = output
         if heartbeat_error:
             raise heartbeat_error[0]
         if cancelled is not None and cancelled():
-            con.execute(
+            terminal = con.execute(
                 f"UPDATE {schema}.runtime_runs SET state='cancelled' "
-                "WHERE run_id=? AND state='running'",
-                [run_id],
-            )
+                "WHERE run_id=? AND state='running' AND attempt_fence=? RETURNING run_id",
+                [run_id, lease.fence],
+            ).fetchone()
+            if terminal is None:
+                raise ValueError("lease attempt was fenced before cancellation")
             return RunReceipt(run_id, "cancelled", None)
         leases.assert_current(lease)
         published = publish(plan, MappingProxyType(outputs), lease)
         generation = getattr(published, "generation", published)
         generation_text = str(generation) if generation is not None else None
-        con.execute(
+        terminal = con.execute(
             f"UPDATE {schema}.runtime_runs SET state='succeeded', published_generation=? "
-            "WHERE run_id=? AND state='running'",
-            [generation_text, run_id],
-        )
+            "WHERE run_id=? AND state='running' AND attempt_fence=? RETURNING run_id",
+            [generation_text, run_id, lease.fence],
+        ).fetchone()
+        if terminal is None:
+            raise ValueError("lease attempt was fenced before recording success")
         return RunReceipt(run_id, "succeeded", generation_text)
     except Exception:
         con.execute(
             f"UPDATE {schema}.runtime_runs SET state='failed' "
-            "WHERE run_id=? AND state='running' AND published_generation IS NULL",
-            [run_id],
+            "WHERE run_id=? AND state='running' AND published_generation IS NULL "
+            "AND attempt_fence=?",
+            [run_id, lease.fence],
         )
         raise
     finally:
         stop_heartbeat.set()
         heartbeat_thread.join()
+        heartbeat_con.close()
         leases.release(lease)
 
 
