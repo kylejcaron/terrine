@@ -148,3 +148,4 @@ Window endpoints represent elapsed durations, not calendar dates.
 - [Native baseline ATE estimation](docs/guides/baseline-estimation.md)
 - [Baseline recovery and calibration](docs/guides/baseline-recovery.md) ([calibration record](docs/validation/baseline-calibration.md))
 - [Shared dataset contract with increment](docs/guides/shared-dataset-contract.md)
+- [Bounded state panels](docs/guides/state-panels.md)

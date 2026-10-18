@@ -12,10 +12,13 @@ if TYPE_CHECKING:
     from terrine.model import Model
     from terrine.spec import (
         AnchorRange,
+        BinnedMetricState,
         Design,
         EventAnchor,
         FixedDate,
         Schedule,
+        StateObservations,
+        StatePanel,
         Treatment,
         agg,
         all_of,
@@ -50,6 +53,9 @@ __all__ = [
     "gt",
     "is_null",
     "preview",
+    "BinnedMetricState",
+    "StateObservations",
+    "StatePanel",
     "to_yaml",
 ]
 

@@ -14,6 +14,13 @@ from terrine._time import utc_instant
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import And, AttributeAsOf, Eq, Gt, IsNull, MetricAgg
+from terrine.spec.state_panel import (
+    BinnedMetricState,
+    StateObservations,
+    StatePanel,
+    decode_cutpoint,
+    encode_cutpoint,
+)
 from terrine.windows import Window
 
 __all__ = ["SCHEMA_VERSION", "canonical_json", "to_json", "from_json", "to_yaml", "from_yaml"]
@@ -59,7 +66,7 @@ def _encode(value: Any) -> Any:
             "eligibility": {key: _encode(item) for key, item in value.eligibility.items()},
             "treatment": None if value.treatment is None else _encode(value.treatment),
             "gap": value.gap,
-            "shape": value.shape,
+            "shape": _encode(value.shape),
             "anchor_range": None if value.anchor_range is None else _encode(value.anchor_range),
         }
     if isinstance(value, FixedDate):
@@ -81,6 +88,30 @@ def _encode(value: Any) -> Any:
             "type": "AnchorRange",
             "start": None if value.start is None else _date_value(value.start),
             "end": None if value.end is None else _date_value(value.end),
+        }
+    if isinstance(value, StateObservations):
+        return {
+            "type": "StateObservations",
+            "property": value.property,
+            "levels": list(value.levels),
+            "ordered": value.ordered,
+            "absorbing": list(value.absorbing),
+        }
+    if isinstance(value, BinnedMetricState):
+        return {
+            "type": "BinnedMetricState",
+            "metric": value.metric,
+            "cutpoints": [encode_cutpoint(v) for v in value.cutpoints],
+            "levels": list(value.levels),
+        }
+    if isinstance(value, StatePanel):
+        return {
+            "type": "StatePanel",
+            "state": _encode(value.state),
+            "max_periods": value.max_periods,
+            "baseline_features": {
+                key: _encode(item) for key, item in value.baseline_features.items()
+            },
         }
     if isinstance(value, Window):
         return {"type": "Window", "start": value.start, "end": value.end}
@@ -191,6 +222,34 @@ def _node(value: Any) -> Any:
         start = None if item["start"] is None else _read_date(item["start"])
         end = None if item["end"] is None else _read_date(item["end"])
         return AnchorRange(start, end)
+    if tag == "StateObservations":
+        item = _object(
+            value,
+            {"type", "property", "levels", "ordered", "absorbing"},
+            {"type", "property", "levels"},
+        )
+        return StateObservations(
+            item["property"],
+            tuple(item["levels"]),
+            item.get("ordered", True),
+            tuple(item.get("absorbing", ())),
+        )
+    if tag == "BinnedMetricState":
+        item = _object(value, {"type", "metric", "cutpoints", "levels"})
+        return BinnedMetricState(
+            item["metric"],
+            tuple(decode_cutpoint(v) for v in item["cutpoints"]),
+            tuple(item["levels"]),
+        )
+    if tag == "StatePanel":
+        item = _object(value, {"type", "state", "max_periods", "baseline_features"})
+        raw = item["baseline_features"]
+        if not isinstance(raw, dict):
+            raise ValueError("baseline_features must be a mapping")
+        baseline = {key: _node(node) for key, node in raw.items()}
+        return StatePanel(
+            _node(item["state"]), max_periods=item["max_periods"], baseline_features=baseline
+        )
     if tag == "Window":
         item = _object(value, {"type", "start", "end"})
         return Window(item["start"], item["end"])
@@ -277,7 +336,7 @@ def _design(value: Any) -> Design:
         eligibility=named(item["eligibility"], (Gt, Eq, IsNull, And)),
         treatment=treatment,
         gap=item["gap"],
-        shape=item["shape"],
+        shape=item["shape"] if isinstance(item["shape"], str) else _node(item["shape"]),
         anchor_range=anchor_range,
     )
 

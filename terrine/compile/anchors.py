@@ -212,6 +212,7 @@ def _roster_candidates(
     anchor_rows: Any,
     *,
     filter_range: AnchorRange | None,
+    include_membership: bool = True,
     match_unit: bool = True,
 ) -> tuple[ibis.Table, list[_AnchorCheck]]:
     raw = model._relation(TableRef(kind="table", name=unit_source.table))
@@ -254,10 +255,10 @@ def _roster_candidates(
     else:
         candidates = roster.cross_join(anchor_rows)
         unit_value = roster.unit
-    if "entered_utc" in roster.columns:
+    if include_membership and "entered_utc" in roster.columns:
         entered = roster.entered_utc
         candidates = candidates.filter(entered.isnull() | (entered <= candidates.t0))
-    if "exited_utc" in roster.columns:
+    if include_membership and "exited_utc" in roster.columns:
         exited = roster.exited_utc
         candidates = candidates.filter(exited.isnull() | (candidates.t0 < exited))
     observed_from = (
@@ -281,7 +282,9 @@ def _roster_candidates(
     return _range_filter(result, filter_range, model), checks
 
 
-def _roster_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_AnchorCheck]]:
+def _roster_anchors(
+    model: Model, design: Design, *, include_membership: bool
+) -> tuple[ibis.Table, list[_AnchorCheck]]:
     unit_source = model.units.get(design.unit)
     if unit_source is None:
         raise _UNIT.error(unit=design.unit, name="roster")
@@ -314,7 +317,12 @@ def _roster_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anc
             anchor_provenance=ibis.literal("schedule"),
         ).filter(t0 < ibis.literal(end))
     return _roster_candidates(
-        model, unit_source, base, filter_range=design.anchor_range, match_unit=False
+        model,
+        unit_source,
+        base,
+        filter_range=design.anchor_range,
+        match_unit=False,
+        include_membership=include_membership,
     )
 
 
@@ -432,12 +440,14 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
     return candidates, checks
 
 
-def compile_anchors(design: Design, model: Model) -> AnchorTable:
+def compile_anchors(
+    design: Design, model: Model, *, include_membership: bool = True
+) -> AnchorTable:
     """Build a lazy candidate relation without executing data-dependent checks."""
     if not isinstance(design, Design) or not isinstance(model, Model):
         raise TypeError("compile_anchors requires a Design and a bound Model")
     if isinstance(design.anchor, (FixedDate, Schedule)):
-        table, checks = _roster_anchors(model, design)
+        table, checks = _roster_anchors(model, design, include_membership=include_membership)
     elif isinstance(design.anchor, EventAnchor):
         table, checks = _event_anchors(model, design)
     else:

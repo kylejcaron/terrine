@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.expressions import And, AttributeAsOf, Eq, Expr, Gt, IsNull, MetricAgg, Predicate
+from terrine.spec.state_panel import StatePanel
 from terrine.windows import seconds
 
 __all__ = ["Treatment", "Design"]
@@ -61,7 +62,7 @@ class Design:
     eligibility: Mapping[str, Predicate]
     treatment: Treatment | None
     gap: int
-    shape: str
+    shape: str | StatePanel
     anchor_range: AnchorRange | None
 
     def __init__(
@@ -74,7 +75,7 @@ class Design:
         eligibility: Mapping[str, Predicate] | None = None,
         treatment: Treatment | None = None,
         gap: str | int = "0d",
-        shape: str = "cross_section",
+        shape: str | StatePanel = "cross_section",
         anchor_range: AnchorRange | None = None,
     ) -> None:
         if not isinstance(unit, str) or not unit.strip():
@@ -85,8 +86,10 @@ class Design:
             raise TypeError("treatment must be Treatment or None")
         if anchor_range is not None and not isinstance(anchor_range, AnchorRange):
             raise TypeError("anchor_range must be AnchorRange or None")
-        if not isinstance(shape, str) or not shape.strip():
-            raise ValueError("shape must be a non-empty string")
+        if not isinstance(shape, (str, StatePanel)) or (
+            isinstance(shape, str) and not shape.strip()
+        ):
+            raise ValueError("shape must be 'cross_section' or StatePanel")
         gap_seconds = seconds(gap)
         if gap_seconds < 0:
             raise ValueError("gap must be non-negative")

@@ -47,3 +47,4 @@
 - Preserve UTC Arrow output under non-UTC SQL sessions and coordinate shared-origin metadata and capture across concurrent exports.
 - Add a focused optional-increment per-unit frame parity pilot with an explicit exposure-boundary comparison and shared-dataset evidence guide.
 - Add native end-to-end baseline recovery, population-target calibration, failure accounting, and uncertainty-validation guidance.
+- Add bounded state panels with canonical binned metrics, exact point-observation transitions, absorbing terminal suffix handling, baseline/per-origin timing, ordered metadata, and positive output-budget enforcement.

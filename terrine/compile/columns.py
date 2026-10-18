@@ -53,10 +53,36 @@ _META_COLUMNS = (
 
 
 def _validate_names(design: Design) -> None:
+    from terrine.spec.state_panel import StatePanel
+
+    names = [*design.features, *design.outcomes, *design.eligibility]
+    if isinstance(design.shape, StatePanel):
+        names.extend(design.shape.baseline_features)
+        reserved = _RESERVED | {
+            "from_time",
+            "to_time",
+            "scheduled_to",
+            "period_index",
+            "gap",
+            "from_state",
+            "to_state",
+            "terminal",
+            "from_state_complete",
+            "from_state_reason",
+            "to_state_complete",
+            "to_state_reason",
+            "from_state_observed_from",
+            "from_state_observed_until",
+            "to_state_observed_from",
+            "to_state_observed_until",
+        }
+    else:
+        reserved = _RESERVED
     seen = {}
-    for name in (*design.features, *design.outcomes, *design.eligibility):
+    reserved_casefold = {value.casefold() for value in reserved}
+    for name in names:
         normalized = unicodedata.normalize("NFC", name).casefold()
-        if normalized in _RESERVED or normalized.startswith("__terrine_"):
+        if normalized in reserved_casefold or normalized.startswith("__terrine_"):
             raise _RESERVED_NAME.error(name=name)
         if normalized in seen:
             raise _NAME_CONFLICT.error(name=name, other=seen[normalized])
@@ -96,11 +122,13 @@ class CompiledStudy:
             check.validate(execute)
 
 
-def compile_columns(design: Design, model: Model) -> CompiledStudy:
+def compile_columns(
+    design: Design, model: Model, *, include_membership: bool = True
+) -> CompiledStudy:
     """Compile candidates and distinct expressions once without reading source rows."""
     _validate_names(design)
     design.validate(model)
-    anchors = compile_anchors(design, model)
+    anchors = compile_anchors(design, model, include_membership=include_membership)
     table = anchors.table
     values: dict[Expr, CompiledValue] = {}
     checks: list[TemporalResult | AsOfResult | _HistoryValidation | _Check] = []

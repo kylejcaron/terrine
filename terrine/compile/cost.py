@@ -94,9 +94,9 @@ def preview(
         raise ValueError("bounded_count must be a nonnegative integer")
     if budget is not None and not isinstance(budget, Budget):
         raise TypeError("budget must be Budget or None")
-    from terrine.compile.columns import compile_columns
+    from terrine.compile.dispatch import compile_design
 
-    planned = compile_columns(design, model)
+    planned = compile_design(design, model)
     warnings = (_SCAN_WARNING,)
     counts: dict[str, Any] = {}
     if bounded_count:
@@ -106,7 +106,7 @@ def preview(
         with open_execution(
             model.catalog, model.con, units=model.units, input_binding=model.input_binding
         ) as context:
-            compiled = compile_columns(design, model._for_execution(context))
+            compiled = compile_design(design, model._for_execution(context))
             compiled.validate(execute=context.execute)
             summary = _eligibility_summary(compiled.audit_table, context.execute, cap=bounded_count)
         capped = summary.candidate > bounded_count

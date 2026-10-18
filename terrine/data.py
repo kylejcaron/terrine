@@ -22,6 +22,7 @@ __all__ = [
     "Roles",
     "ColumnMeta",
     "FeatureCutoff",
+    "StatePanelMeta",
     "EligibilitySummary",
     "ExecutionSnapshot",
     "Provenance",
@@ -166,11 +167,12 @@ class Roles:
     outcomes: tuple[str, ...]
     weight: str | None = None
     cluster_unit: str | None = None
+    prior_state: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("unit", "anchor", "t0"):
             _nonempty(getattr(self, name), name)
-        for name in ("treatment", "weight", "cluster_unit"):
+        for name in ("treatment", "weight", "cluster_unit", "prior_state"):
             value = getattr(self, name)
             if value is not None:
                 _nonempty(value, name)
@@ -225,6 +227,7 @@ class FeatureCutoff:
     latest_seconds: int
     strict: bool
     knowledge: Literal["recorded_at", "retrospective_effective_time"]
+    reference: Literal["row_t0", "panel_start"] = "row_t0"
 
     def __post_init__(self) -> None:
         value = seconds(self.latest_seconds)
@@ -232,6 +235,76 @@ class FeatureCutoff:
             raise ValueError("invalid feature cutoff")
         if self.knowledge not in ("recorded_at", "retrospective_effective_time"):
             raise ValueError("unsupported cutoff knowledge")
+        if self.reference not in ("row_t0", "panel_start"):
+            raise ValueError("unsupported cutoff reference")
+
+
+@dataclass(frozen=True, slots=True)
+class StatePanelMeta:
+    """Portable state-panel definition and structural timing references."""
+
+    state_source: Mapping[str, Any]
+    levels: tuple[str, ...]
+    ordered: bool
+    absorbing: tuple[str, ...]
+    panel_start: datetime
+    administrative_end: datetime
+    period_seconds: int
+    baseline_features: tuple[str, ...]
+    time_varying_features: tuple[str, ...]
+    prior_state_timing: Literal["strict_period", "at_origin"]
+    period_column: str
+    from_time_column: str
+    to_time_column: str
+    scheduled_to_column: str
+    gap_column: str
+    terminal_column: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.state_source, Mapping):
+            raise TypeError("state_source must be a mapping")
+        object.__setattr__(self, "state_source", _mapping(self.state_source, "state_source"))
+        object.__setattr__(self, "levels", tuple(self.levels))
+        object.__setattr__(self, "absorbing", tuple(self.absorbing))
+        object.__setattr__(self, "baseline_features", tuple(self.baseline_features))
+        object.__setattr__(self, "time_varying_features", tuple(self.time_varying_features))
+        if (
+            not self.levels
+            or any(not isinstance(x, str) or not x for x in self.levels)
+            or len(set(self.levels)) != len(self.levels)
+        ):
+            raise ValueError("levels must be distinct non-empty strings")
+        if not isinstance(self.ordered, bool):
+            raise TypeError("ordered must be bool")
+        if any(value not in self.levels for value in self.absorbing) or len(
+            set(self.absorbing)
+        ) != len(self.absorbing):
+            raise ValueError("invalid absorbing states")
+        for name in ("panel_start", "administrative_end"):
+            _aware(getattr(self, name), name)
+        if self.panel_start >= self.administrative_end:
+            raise ValueError("panel bounds must be increasing")
+        if (
+            isinstance(self.period_seconds, bool)
+            or not isinstance(self.period_seconds, int)
+            or self.period_seconds <= 0
+        ):
+            raise ValueError("period_seconds must be positive")
+        for name in ("baseline_features", "time_varying_features"):
+            value = getattr(self, name)
+            if not isinstance(value, tuple) or any(not isinstance(x, str) or not x for x in value):
+                raise TypeError(f"{name} must be a tuple of names")
+        if self.prior_state_timing not in ("strict_period", "at_origin"):
+            raise ValueError("unsupported prior-state timing")
+        for name in (
+            "period_column",
+            "from_time_column",
+            "to_time_column",
+            "scheduled_to_column",
+            "gap_column",
+            "terminal_column",
+        ):
+            _nonempty(getattr(self, name), name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,6 +378,8 @@ class Provenance:
     weight_depends_on_treatment: bool | None = None
     treatment_known_at_t0: bool = False
 
+    state_panel: StatePanelMeta | None = None
+
     def __post_init__(self) -> None:
         for name in ("design_hash", "model_hash", "shape"):
             _nonempty(getattr(self, name), name)
@@ -346,6 +421,8 @@ class Provenance:
             raise TypeError("eligibility_summary must be EligibilitySummary or None")
         if not isinstance(self.execution_snapshot, ExecutionSnapshot):
             raise TypeError("execution_snapshot must be ExecutionSnapshot")
+        if self.state_panel is not None and not isinstance(self.state_panel, StatePanelMeta):
+            raise TypeError("state_panel must be StatePanelMeta or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -464,6 +541,10 @@ def _decode(value: Any, cls: type) -> Any:
             kwargs[field.name] = _decode(item, EligibilitySummary)
         elif field.name == "weight_cutoff" and item is not None:
             kwargs[field.name] = _decode(item, FeatureCutoff)
+        elif field.name == "state_panel" and item is not None:
+            kwargs[field.name] = _decode(item, StatePanelMeta)
+        elif field.name in ("panel_start", "administrative_end") and isinstance(item, dict):
+            kwargs[field.name] = datetime.fromisoformat(item["$datetime"])
         elif field.name == "window" and item is not None:
             kwargs[field.name] = Window(*item["$window"])
         elif (

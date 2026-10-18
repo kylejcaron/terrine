@@ -19,6 +19,7 @@ from terrine.spec.expressions import (
     is_null,
 )
 from terrine.spec.io import from_json, from_yaml, to_json, to_yaml
+from terrine.spec.state_panel import BinnedMetricState, StateObservations, StatePanel
 
 __all__ = [
     "AnchorRange",
@@ -45,4 +46,7 @@ __all__ = [
     "from_yaml",
     "to_json",
     "to_yaml",
+    "BinnedMetricState",
+    "StateObservations",
+    "StatePanel",
 ]

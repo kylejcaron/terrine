@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
+from datetime import UTC
 from importlib import import_module
 from typing import TYPE_CHECKING
 
@@ -15,9 +16,15 @@ from terrine.compile.cost import (
     _eligibility_summary,
     _scan_policy,
 )
-from terrine.data import Budget, MaterializedFrame, Provenance
+from terrine.data import Budget, MaterializedFrame, Provenance, StatePanelMeta
 from terrine.errors import RefusalSpec
 from terrine.spec.anchors import FixedDate
+from terrine.spec.state_panel import BinnedMetricState, StatePanel, encode_cutpoint
+
+_STATE_PANEL_BUDGET = RefusalSpec(
+    "terrine.state_panel.budget_required",
+    "State-panel materialization requires positive max_rows and max_output_bytes budgets.",
+)
 
 if TYPE_CHECKING:
     from terrine.compile.columns import CompiledStudy
@@ -44,6 +51,50 @@ def _optional_dependency(name: str):
         raise _MISSING_DEPENDENCY.error(extra=name) from exc
 
 
+def _state_panel_metadata(design: Design, model: Model) -> StatePanelMeta | None:
+    from terrine.spec.anchors import Schedule
+
+    if not isinstance(design.shape, StatePanel):
+        return None
+    schedule = design.anchor
+    assert isinstance(schedule, Schedule)
+    state = design.shape.state
+    if isinstance(state, BinnedMetricState):
+        source = {
+            "kind": "binned_metric",
+            "metric": state.metric,
+            "cutpoints": [encode_cutpoint(value) for value in state.cutpoints],
+        }
+        levels, ordered, absorbing = state.levels, True, ()
+        timing = "strict_period"
+    else:
+        source = {
+            "kind": "observations",
+            "property": state.property,
+            "point_time_columns": {"from_state": "from_time", "to_state": "to_time"},
+        }
+        levels, ordered, absorbing = state.levels, state.ordered, state.absorbing
+        timing = "at_origin"
+    return StatePanelMeta(
+        state_source=source,
+        levels=levels,
+        ordered=ordered,
+        absorbing=absorbing,
+        panel_start=model.day_boundary(schedule.start).astimezone(UTC),
+        administrative_end=model.day_boundary(schedule.end).astimezone(UTC),
+        period_seconds=schedule.every,
+        baseline_features=tuple(design.shape.baseline_features),
+        time_varying_features=tuple(design.features),
+        prior_state_timing=timing,
+        period_column="period_index",
+        from_time_column="from_time",
+        to_time_column="to_time",
+        scheduled_to_column="scheduled_to",
+        gap_column="gap",
+        terminal_column="terminal",
+    )
+
+
 @dataclass(frozen=True, slots=True, init=False, repr=False, eq=False)
 class Frame:
     """A compiled study, not executed data.
@@ -58,11 +109,11 @@ class Frame:
     _compiled: CompiledStudy
 
     def __init__(self, design: Design, model: Model) -> None:
-        from terrine.compile.columns import compile_columns
+        from terrine.compile.dispatch import compile_design
 
         object.__setattr__(self, "_design", design)
         object.__setattr__(self, "_model", model)
-        object.__setattr__(self, "_compiled", compile_columns(design, model))
+        object.__setattr__(self, "_compiled", compile_design(design, model))
 
     @property
     def expr(self):
@@ -83,16 +134,24 @@ class Frame:
         No partial output is returned on limits, invalid history or stream errors.
         Concurrent writes after the execution view is established are excluded.
         """
+        if isinstance(self._design.shape, StatePanel) and (
+            budget is None
+            or budget.max_rows is None
+            or budget.max_output_bytes is None
+            or budget.max_rows <= 0
+            or budget.max_output_bytes <= 0
+        ):
+            raise _STATE_PANEL_BUDGET.error()
         for warning in _scan_policy(budget):
             warnings.warn(warning, RuntimeWarning, stacklevel=2)
-        from terrine.compile.columns import compile_columns
+        from terrine.compile.dispatch import compile_design
         from terrine.execution.inputs import open_execution
 
         model = self._model
         with open_execution(
             model.catalog, model.con, units=model.units, input_binding=model.input_binding
         ) as context:
-            compiled = compile_columns(self._design, model._for_execution(context))
+            compiled = compile_design(self._design, model._for_execution(context))
             compiled.validate(execute=context.execute)
             summary = _eligibility_summary(compiled.audit_table, context.execute)
             if summary.unknown:
@@ -131,6 +190,10 @@ class Frame:
                 table = pa.Table.from_batches(batches, schema=schema)
             finally:
                 reader.close()
+            if isinstance(self._design.shape, StatePanel):
+                gap_index = table.schema.get_field_index("gap")
+                gap = table.column(gap_index).cast(pa.duration("us"))
+                table = table.set_column(gap_index, "gap", gap)
             treatment = self._design.treatment
             treatment_column = compiled.roles.treatment
             baseline_binary = (
@@ -149,13 +212,16 @@ class Frame:
                 model_hash=model.model_hash,
                 source_generations=context.snapshot.source_generations,
                 execution_snapshot=context.snapshot,
-                shape=self._design.shape,
+                shape="state_panel"
+                if isinstance(self._design.shape, StatePanel)
+                else self._design.shape,
                 treatment_design="baseline_binary" if baseline_binary else None,
                 eligibility_summary=summary,
                 treatment_knowledge="retrospective_effective_time"
                 if treatment is not None
                 else None,
                 treatment_known_at_t0=treatment.known_at_t0 if treatment is not None else False,
+                state_panel=_state_panel_metadata(self._design, model),
             )
             return MaterializedFrame(table, compiled.roles, compiled.columns, provenance)
 

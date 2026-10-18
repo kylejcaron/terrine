@@ -249,9 +249,19 @@ def _range_bound(value: date | datetime | None, model: Model) -> datetime | None
     return model.day_boundary(value)
 
 
+def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
+    from terrine.spec.state_panel import StatePanel, validate_state_panel
+
+    if isinstance(design.shape, StatePanel):
+        validate_state_panel(design, model, required)
+    elif design.shape != "cross_section":
+        raise _INVALID.error(reason="unsupported design shape")
+
+
 def validate_design(design: Design, model: Model) -> ValidationReport:
     required: set[str] = set()
     obligations: list[str] = []
+    _validate_shape(design, model, required)
     anchor = design.anchor
     if isinstance(anchor, EventAnchor):
         fact = model.catalog.facts.get(anchor.fact)
@@ -274,6 +284,11 @@ def validate_design(design: Design, model: Model) -> ValidationReport:
     for role, expressions in (("feature", design.features), ("outcome", design.outcomes)):
         for expr in expressions.values():
             _expression(expr, role, design, model, required, obligations)
+    from terrine.spec.state_panel import StatePanel
+
+    if isinstance(design.shape, StatePanel):
+        for expr in design.shape.baseline_features.values():
+            _expression(expr, "feature", design, model, required, obligations)
     for predicate in design.eligibility.values():
         _predicate(predicate, design, model, required, obligations)
     if design.treatment is not None:

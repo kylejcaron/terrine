@@ -18,6 +18,7 @@ from terrine.data import (
     Preview,
     Provenance,
     Roles,
+    StatePanelMeta,
     UnitSource,
 )
 from terrine.errors import TerrineError
@@ -209,3 +210,53 @@ def test_estimation_result_models_reject_nonfinite_values_and_preserve_status():
             (diagnostic,),
             {},
         )
+
+
+def test_state_panel_roles_and_metadata_survive_arrow_json_roundtrip():
+    from dataclasses import replace
+
+    meta = StatePanelMeta(
+        state_source={"kind": "observations", "property": "status"},
+        levels=("new", "active", "closed"),
+        ordered=True,
+        absorbing=("closed",),
+        panel_start=datetime(2025, 1, 1, tzinfo=UTC),
+        administrative_end=datetime(2025, 2, 1, tzinfo=UTC),
+        period_seconds=604800,
+        baseline_features=("plan",),
+        time_varying_features=("sessions",),
+        prior_state_timing="at_origin",
+        period_column="period_index",
+        from_time_column="from_time",
+        to_time_column="to_time",
+        scheduled_to_column="scheduled_to",
+        gap_column="gap",
+        terminal_column="terminal",
+    )
+    frame = MaterializedFrame(
+        table=pa.table(
+            {
+                "unit": ["u"],
+                "anchor_id": ["a"],
+                "t0": pa.array(
+                    [datetime(2025, 1, 1, tzinfo=UTC)], type=pa.timestamp("us", tz="UTC")
+                ),
+            }
+        ),
+        roles=Roles(
+            "unit",
+            "anchor_id",
+            "t0",
+            None,
+            (),
+            ("to_state",),
+            cluster_unit="unit",
+            prior_state="from_state",
+        ),
+        columns={},
+        provenance=replace(_provenance(), state_panel=meta),
+    )
+    recovered = MaterializedFrame.from_arrow(frame.to_arrow())
+    assert recovered.roles == frame.roles
+    assert recovered.provenance.state_panel == meta
+    assert recovered.provenance.state_panel.levels == ("new", "active", "closed")

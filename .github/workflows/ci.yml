@@ -17,9 +17,10 @@ jobs:
           python-version: "3.13"
       - run: uv sync --group dev --extra duckdb --extra pandas
       - run: make check TESTS="tests/test_windows.py tests/test_errors.py tests/test_metadata.py tests/spec tests/semantic tests/temporal/test_semantic_binding.py tests/temporal/test_readiness.py tests/temporal/test_scd2_attributes.py tests/temporal/test_sparse_state.py tests/temporal/test_prefix_lookup.py tests/temporal/test_window_aggregates.py tests/compile tests/execution tests/test_frame.py tests/test_frame_runtime.py tests/simulate tests/reference/test_baseline.py tests/fixtures/test_baseline.py tests/estimate tests/diagnostics tests/integration/test_baseline_recovery.py tests/integration/test_baseline_metadata.py"
-      - run: uv run pytest tests/temporal/test_window_aggregates.py tests/compile/test_columns.py tests/test_frame_runtime.py -m slow
+      - run: uv run pytest tests/temporal/test_window_aggregates.py tests/compile/test_columns.py tests/compile/test_state_panel.py tests/spec/test_state_panel.py tests/test_frame_runtime.py -m slow
       - run: uv run python -m tests.integration.study_api_smoke
       - run: uv run python tests/integration/native_estimation_smoke.py
+      - run: uv run python examples/state_panel.py
       - run: uv build
 
   increment-compatibility:
