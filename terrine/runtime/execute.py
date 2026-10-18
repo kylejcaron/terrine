@@ -55,9 +55,14 @@ def execute_plan(
     con.execute(
         f"CREATE TABLE IF NOT EXISTS {schema}.runtime_runs ("
         "run_id VARCHAR PRIMARY KEY, dataset VARCHAR NOT NULL, fingerprint VARCHAR NOT NULL, "
-        "state VARCHAR NOT NULL, published_generation VARCHAR, attempt_fence BIGINT)"
+        "state VARCHAR NOT NULL, published_generation VARCHAR, attempt_fence BIGINT, "
+        "updated_at TIMESTAMP, heartbeat_at TIMESTAMP)"
     )
     con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS attempt_fence BIGINT")
+    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP")
+    con.execute(
+        f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP"
+    )
     con.execute(
         f"CREATE TABLE IF NOT EXISTS {schema}.runtime_tasks ("
         "run_id VARCHAR NOT NULL, task_id VARCHAR NOT NULL, status VARCHAR NOT NULL, "

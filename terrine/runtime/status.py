@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from terrine.errors import RefusalSpec
@@ -52,36 +52,50 @@ def get_run(run_id: str, *, con: Any, namespace: str) -> RunStatus:
     con.execute(
         f"CREATE TABLE IF NOT EXISTS {schema}.runtime_runs ("
         "run_id VARCHAR PRIMARY KEY, dataset VARCHAR NOT NULL, fingerprint VARCHAR NOT NULL, "
-        "state VARCHAR NOT NULL, published_generation VARCHAR, attempt_fence BIGINT)"
+        "state VARCHAR NOT NULL, published_generation VARCHAR, attempt_fence BIGINT, "
+        "updated_at TIMESTAMP, heartbeat_at TIMESTAMP)"
     )
     leases = LeaseStore(con, namespace=namespace)
     leases.initialize()
     schema = store._schema
-    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP")
-    con.execute(
-        f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP"
-    )
+    columns = {
+        item[0]
+        for item in con.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE lower(table_schema)=lower(?) AND table_name='runtime_runs'",
+            [namespace],
+        ).fetchall()
+    }
+    updated_at = "updated_at" if "updated_at" in columns else "NULL"
+    heartbeat_at = "heartbeat_at" if "heartbeat_at" in columns else "NULL"
     row = con.execute(
-        f"SELECT state, attempt_fence, updated_at, heartbeat_at, published_generation "
+        f"SELECT state, attempt_fence, {updated_at}, {heartbeat_at}, published_generation "
         f"FROM {schema}.runtime_runs WHERE run_id=?",
         [run_id],
     ).fetchone()
     if row is None:
         raise _UNAVAILABLE.error()
     lease = con.execute(
-        f"SELECT expires_at FROM {schema}.runtime_leases l JOIN {schema}.runtime_runs r "
-        "ON l.resource='dataset:' || r.dataset WHERE r.run_id=?",
+        f"SELECT l.expires_at FROM {schema}.runtime_leases l "
+        f"JOIN {schema}.runtime_runs r ON l.resource='dataset:' || r.dataset "
+        "AND l.owner=r.run_id AND l.fence=r.attempt_fence WHERE r.run_id=?",
         [run_id],
     ).fetchone()
     return RunStatus(
         run_id,
         row[0],
         row[1],
-        row[2],
-        row[3],
-        lease[0] if lease else None,
+        _utc(row[2]),
+        _utc(row[3]),
+        _utc(lease[0]) if lease else None,
         pinned_result_ref=row[4],
     )
+
+
+def _utc(value: datetime | None) -> datetime | None:
+    if value is None or value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=UTC)
 
 
 def cancel_run(run_id: str, *, con: Any, namespace: str) -> CancelReceipt:
@@ -99,8 +113,8 @@ def cancel_run(run_id: str, *, con: Any, namespace: str) -> CancelReceipt:
         if status.durable_state == "cancel_requested":
             return CancelReceipt(run_id, "already_requested", status)
         con.execute(
-            f"UPDATE {store._schema}.runtime_runs SET state='cancel_requested', "
-            "updated_at=current_timestamp WHERE run_id=? AND state IN ('queued','running')",
+            f"UPDATE {store._schema}.runtime_runs SET state='cancel_requested' "
+            "WHERE run_id=? AND state IN ('queued','running')",
             [run_id],
         )
         updated = get_run(run_id, con=con, namespace=namespace)
