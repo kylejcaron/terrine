@@ -17,6 +17,7 @@ from terrine.temporal.prefix import (
     float64_rounding_radius,
     float64_tolerance,
     outward_add,
+    outward_multiply,
 )
 from terrine.temporal._timestamps import timestamp_order_key
 
@@ -64,8 +65,7 @@ def compile_cohorts(
     value_meta = study.columns.get(value_column)
     error_column = value_meta.absolute_error_column if value_meta is not None else None
     checked_float = (
-        grouping.statistic == "total"
-        and value_meta is not None
+        value_meta is not None
         and value_meta.numeric_policy == "checked_float64_v1"
         and error_column is not None
         and error_column in table.columns
@@ -80,6 +80,7 @@ def compile_cohorts(
         else ibis.null().cast("string"),
     )
     numeric_type = per_unit._value.type()
+    reduction_table = per_unit
     if grouping.statistic == "total":
         observed_value = per_unit._value.sum()
     elif numeric_type.is_integer():
@@ -93,27 +94,37 @@ def compile_cohorts(
             / per_unit._value.notnull().cast("int64").sum()
         )
     else:
-        observed_value = (
-            per_unit._value.sum() / per_unit._value.notnull().cast("int64").sum()
+        scales = per_unit.group_by("bucket_index", "age").aggregate(
+            _scale=per_unit._value.abs().max()
         )
-    groups = per_unit.group_by("bucket_index", "age").aggregate(
-        observable=per_unit._complete.cast("int64").sum(),
-        _value_count=per_unit._value.notnull().cast("int64").sum(),
+        scaled = per_unit.left_join(scales, ["bucket_index", "age"])
+        reduction_table = scaled.mutate(
+            _scale=ibis.ifelse(scaled._scale == 0.0, 1.0, scaled._scale)
+        )
+        normalized = reduction_table._value / reduction_table._scale
+        observed_value = normalized.mean() * reduction_table._scale.first()
+    if checked_float and grouping.statistic == "total":
+        absolute_error = outward_add(
+            per_unit._absolute_error.sum(),
+            float64_rounding_radius(per_unit._value.abs().sum()),
+        )
+    elif checked_float:
+        input_error = per_unit._absolute_error.mean()
+        mean_magnitude = (
+            (reduction_table._value.abs() / reduction_table._scale).mean()
+            * reduction_table._scale.first()
+        )
+        reduction_error = outward_multiply(float64_rounding_radius(mean_magnitude), 2.0)
+        absolute_error = outward_add(input_error, reduction_error)
+    else:
+        absolute_error = ibis.null().cast("float64")
+    groups = reduction_table.group_by("bucket_index", "age").aggregate(
+        observable=reduction_table._complete.cast("int64").sum(),
+        _value_count=reduction_table._value.notnull().cast("int64").sum(),
         _observed_value=observed_value,
-        _absolute_error=(
-            ibis.ifelse(
-                grouping.statistic == "total",
-                outward_add(
-                    per_unit._absolute_error.sum(),
-                    float64_rounding_radius(per_unit._value.abs().sum()),
-                ),
-                per_unit._absolute_error.sum(),
-            )
-            if checked_float
-            else ibis.null().cast("float64")
-        ),
-        _mature=per_unit._mature.max(),
-        _reason=per_unit._reason.first(),
+        _absolute_error=absolute_error,
+        _mature=reduction_table._mature.max(),
+        _reason=reduction_table._reason.first(),
     )
     joined = groups.left_join(risk, "bucket_index")
     mature = joined._mature.fill_null(False)

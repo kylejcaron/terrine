@@ -371,3 +371,41 @@ def test_cohort_summary_surrogate_export_retains_age_and_denominators():
         assert sorted(set(exported.data["age"].to_pylist())) == [0, 1]
     finally:
         con.disconnect()
+
+
+def test_float_cohort_mean_avoids_overflow_and_retains_certificate():
+    con, model = _trajectory_model()
+    try:
+        con.raw_sql(
+            "UPDATE events SET float_amount = 1e308 "
+            "WHERE user_id = 'u1' AND kind = 'revenue'"
+        )
+        con.raw_sql(
+            "UPDATE events SET float_amount = 0 WHERE user_id = 'u1' AND ts = "
+            "TIMESTAMPTZ '2025-01-10 00:00:00+00'"
+        )
+        con.raw_sql(
+            "INSERT INTO events (user_id, ts, kind, amount, decimal_amount, float_amount) VALUES "
+            "('u2', TIMESTAMPTZ '2025-01-03 00:00:00+00', 'revenue', 0, 0, 1e308)"
+        )
+        frame = Design(
+            "user",
+            EventAnchor("purchase", which="first"),
+            shape=CohortSpec(
+                origin="purchase",
+                trajectory=Trajectory("float_revenue", "7d", periods=1, cumulative=False),
+            ),
+        ).build(model)
+        result = frame.cohorts(
+            grouping=CohortGrouping(
+                bucket="7d", bucket_origin=datetime(2025, 1, 1, tzinfo=UTC), statistic="mean"
+            ),
+            value_column="period_value",
+        ).materialize()
+        row = next(row for row in result.table.to_pylist() if row["bucket_index"] == 0)
+        assert row["value"] == 1e308
+        error_column = result.columns["value"].absolute_error_column
+        assert result.columns["value"].numeric_policy == "checked_float64_v1"
+        assert error_column is not None and row[error_column] > 0
+    finally:
+        con.disconnect()
