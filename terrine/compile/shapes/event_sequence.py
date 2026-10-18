@@ -12,7 +12,9 @@ from terrine.compile.anchors import (
     AnchorTable,
     _integrity_check,
     _null_check,
+    _precision_check,
     _unique_checks,
+    _utc_column,
 )
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.data import Roles
@@ -50,8 +52,12 @@ def _property_binding(source, name: str):
 
 
 def _identity_checks(events: ibis.Table, unit: str, identity: str, *, configured: bool):
+    checks = [
+        _null_check(events, unit, "null_event_unit"),
+        _null_check(events, "_timestamp", "null_event_timestamp"),
+    ]
     if configured:
-        return _unique_checks(events, identity, "event_id", scope=(unit,))
+        return [*checks, *_unique_checks(events, identity, "event_id", scope=(unit,))]
     ties = (
         events.select(_unit=events[unit], _timestamp=events["_timestamp"])
         .group_by("_unit", "_timestamp")
@@ -59,11 +65,7 @@ def _identity_checks(events: ibis.Table, unit: str, identity: str, *, configured
         .filter(ibis._._count > 1)
         .aggregate(invalid_count=ibis._.count())
     )
-    return [
-        _null_check(events, unit, "null_event_unit"),
-        _null_check(events, "_timestamp", "null_event_timestamp"),
-        _integrity_check("tied_event_timestamps", ties),
-    ]
+    return [*checks, _integrity_check("tied_event_timestamps", ties)]
 
 
 def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
@@ -71,9 +73,11 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
     sequence = design.shape
     if not isinstance(sequence, EventSequence):
         raise TypeError("design shape must be EventSequence")
+    design.validate(model)
+    if sequence.sessions is not None or sequence.funnel is not None:
+        raise _UNSUPPORTED_SHAPE.error()
     if design.features or design.outcomes:
         raise _UNSUPPORTED_SHAPE.error()
-
     # Existing cross-section machinery retains candidate identity, eligibility, and audit roles.
     base_design = Design(
         design.unit,
@@ -96,25 +100,32 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         physical_unit,
         extra_columns={identity_alias: configured_id} if configured_id is not None else None,
     )
+    timestamp_check = _precision_check(
+        model, normalized, "_timestamp", source_column=source.timestamp_column
+    )
+    normalized = normalized.mutate(_sequence_raw_timestamp=normalized["_timestamp"]).drop(
+        "_timestamp"
+    )
+    normalized = _utc_column(model, normalized, "_sequence_raw_timestamp", "_timestamp")
 
     internal_properties = tuple(
         name
-        for name in (
-            sequence.label_property,
-            sequence.funnel.event_property if sequence.funnel is not None else None,
-        )
+        for name in (sequence.label_property,)
         if name is not None and name not in sequence.properties
     )
+    direct = {}
     for property_name in (*sequence.properties, *internal_properties):
         prop = _property_binding(source, property_name)
         if prop.dimension_name is None:
-            normalized = normalized.mutate(**{property_name: normalized[prop.column]})
+            direct[property_name] = normalized[prop.column]
+    if direct:
+        normalized = normalized.mutate(**direct)
+    aliases = _enriched_property_columns(source.dimensions, normalized.columns)
     dimensions = {
         dimension.name: model._relation(dimension.relation) for dimension in source.dimensions
     }
     if dimensions:
         normalized = enrich_events(normalized, source, dimensions)
-        aliases = _enriched_property_columns(source.dimensions, normalized.columns)
         derived = {}
         for property_name in (*sequence.properties, *internal_properties):
             prop = _property_binding(source, property_name)
@@ -149,28 +160,26 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         complete_from=readiness.start,
         complete_until=readiness.end_exclusive,
     )
-    anchor_table = AnchorTable(
-        base._anchors.table,
-        base._anchors._checks
-        + tuple(
-            _identity_checks(
-                normalized,
-                "_unit",
-                event_id_column,
-                configured=configured_id is not None,
-            )
-        ),
+    integrity_checks = list(base._anchors._checks)
+    if timestamp_check is not None:
+        integrity_checks.append(timestamp_check)
+    integrity_checks.extend(
+        _identity_checks(
+            normalized,
+            "_unit",
+            event_id_column,
+            configured=configured_id is not None,
+        )
     )
+    anchor_table = AnchorTable(base._anchors.table, tuple(integrity_checks))
     checks = (*base._checks, _SequencePreflight(result))
-    columns = dict(base.columns)
-    columns.update(result.columns)
     return CompiledStudy(
         result.table,
         base.audit_table,
         Roles("unit", "anchor_id", "t0", None, result.roles.features, tuple(design.outcomes)),
-        columns,
+        result.columns,
         base.feature_cutoffs,
-        base.eligibility_cutoffs,
+        {},
         {**base.strategy, **{name: "bounded_event_sequence" for name in result.roles.features}},
         anchor_table,
         tuple(checks),

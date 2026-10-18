@@ -106,6 +106,24 @@ class EventSequence:
         properties = tuple(_name(v, "property") for v in properties)
         if len(set(properties)) != len(properties):
             raise _INVALID.error(reason="properties must be distinct")
+        generated = {
+            "unit",
+            "anchor_id",
+            "t0",
+            "is_event",
+            "sequence_position",
+            "event_id",
+            "event_time",
+            "event_count",
+            "sequence_complete",
+            "sequence_reason",
+            "event_values",
+        }
+        reason_names = {f"{name}_reason" for name in properties}
+        if generated.intersection(properties) or reason_names.intersection(properties):
+            raise _INVALID.error(
+                reason="event property names collide with generated output columns"
+            )
         if label_property is not None:
             label_property = _name(label_property, "label_property")
         if sessions is not None and not isinstance(sessions, SessionSpec):

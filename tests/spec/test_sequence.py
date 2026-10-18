@@ -72,3 +72,13 @@ def test_session_gap_normalizes_to_integral_seconds():
     assert SessionSpec("30m").gap_seconds == 1800
     with pytest.raises(TerrineError):
         SessionSpec(True)
+
+
+def test_sequence_property_names_cannot_collide_with_generated_columns():
+    with pytest.raises(TerrineError) as error:
+        EventSequence("purchase", Window("0s", "1h"), max_events=2, properties=("event_time",))
+    assert error.value.code == "terrine.sequence.invalid_spec"
+    with pytest.raises(TerrineError):
+        EventSequence(
+            "purchase", Window("0s", "1h"), max_events=2, properties=("value", "value_reason")
+        )

@@ -4,6 +4,8 @@ import ibis
 import pyarrow as pa
 import pytest
 
+from terrine.compile.anchors import AnchorTable
+from terrine.compile.shapes.event_sequence import _identity_checks
 from terrine.data import Coverage
 from terrine.model import Model
 from terrine.semantic.models import Catalog
@@ -106,3 +108,231 @@ def test_timestamp_identity_refuses_ties_without_configured_id(sequence_model):
         compiled.validate(execute=model_without_id.con.to_pyarrow)
     assert error.value.code == "terrine.compile.anchor_integrity"
     assert error.value.context["check_key"] == "tied_event_timestamps"
+
+
+def test_sequence_arrays_support_default_empty_property_list(sequence_model):
+    from terrine.spec import Design, EventAnchor, EventSequence
+    from terrine.windows import Window
+
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence("signup", Window("0s", "2h"), max_events=5, representation="arrays"),
+    )
+    compiled = design.build(sequence_model)._compiled
+    compiled.validate(execute=sequence_model.con.to_pyarrow)
+    rows = compiled.table.to_pyarrow().to_pylist()
+    assert "event_values" in compiled.table.columns
+    assert rows[0]["event_values"] == [
+        {
+            "event_id": event_id,
+            "event_time": datetime(2025, 1, 1, hour, tzinfo=UTC),
+        }
+        for event_id, hour in (("a", 12), ("z", 12), ("end", 13))
+    ]
+
+
+def test_sequence_refuses_unimplemented_session_output(sequence_model):
+    from terrine.errors import TerrineError
+    from terrine.spec import Design, EventAnchor, EventSequence, SessionSpec
+    from terrine.windows import Window
+
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence("signup", Window("0s", "2h"), max_events=5, sessions=SessionSpec("1h")),
+    )
+    with pytest.raises(TerrineError) as error:
+        design.build(sequence_model)
+    assert error.value.code == "terrine.sequence.unsupported_shape"
+
+
+@pytest.mark.parametrize(
+    ("unit", "timestamp", "check_key"),
+    [
+        (None, datetime(2025, 1, 1, 12, tzinfo=UTC), "null_event_unit"),
+        ("u", None, "null_event_timestamp"),
+    ],
+)
+def test_configured_identity_rejects_null_unit_or_timestamp(
+    sequence_model, unit, timestamp, check_key
+):
+    from terrine.errors import TerrineError
+
+    events = ibis.memtable(
+        pa.table(
+            {
+                "_unit": [unit],
+                "_timestamp": pa.array([timestamp], type=pa.timestamp("us", tz="UTC")),
+                "identity": ["event-1"],
+            }
+        )
+    )
+    anchors = AnchorTable(
+        events,
+        tuple(_identity_checks(events, "_unit", "identity", configured=True)),
+    )
+    with pytest.raises(TerrineError) as error:
+        anchors.validate(execute=sequence_model.con.to_pyarrow)
+    assert error.value.code == "terrine.compile.anchor_integrity"
+    assert error.value.context["check_key"] == check_key
+
+
+def test_sequence_compiler_projects_dimension_backed_property(sequence_model):
+    from terrine.semantic.models import Dimension, Property, TableRef
+    from terrine.spec import Design, EventAnchor, EventSequence
+    from terrine.windows import Window
+
+    sequence_model.con.create_table(
+        "regions", ibis.memtable({"user_id": ["u"], "region": ["west"]})
+    )
+    source = sequence_model.catalog.sources["events"].model_copy(
+        update={"properties": (), "dimensions": ("regions",)}
+    )
+    dimension = Dimension.model_validate(
+        {
+            "relation": TableRef(kind="table", name="regions"),
+            "source_entity": "user",
+            "entity_column": "user_id",
+            "properties": ("region",),
+        }
+    )
+    region = Property(
+        source="events",
+        column="region",
+        dtype="string",
+        as_of="event_time",
+        dimension="regions",
+    )
+    catalog = sequence_model.catalog.model_copy(
+        update={
+            "sources": {"events": source},
+            "dimensions": {"regions": dimension},
+            "properties": {"region": region},
+        }
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=sequence_model.con,
+        readiness=sequence_model.readiness,
+        event_ids=sequence_model.event_ids,
+    )
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence("signup", Window("0s", "2h"), max_events=5, properties=("region",)),
+    )
+    compiled = design.build(model)._compiled
+    compiled.validate(execute=model.con.to_pyarrow)
+    rows = model.con.to_pyarrow(compiled.table).to_pylist()
+    assert [row["region"] for row in rows if row["is_event"]] == ["west", "west", "west"]
+
+
+def test_sequence_compiler_publishes_naive_source_times_as_utc(sequence_model):
+    from terrine.semantic.models import TableRef
+    from terrine.spec import Design, EventAnchor, EventSequence
+    from terrine.windows import Window
+
+    sequence_model.con.create_table(
+        "naive_events",
+        ibis.memtable(
+            {
+                "user_id": ["u", "u"],
+                "ts": [datetime(2025, 1, 1, 12), datetime(2025, 1, 1, 13)],
+                "event_id": ["a", "b"],
+                "kind": ["click", "purchase"],
+            }
+        ),
+    )
+    source = sequence_model.catalog.sources["events"].model_copy(
+        update={"relation": TableRef(kind="table", name="naive_events")}
+    )
+    catalog = sequence_model.catalog.model_copy(update={"sources": {"events": source}})
+    model = Model.from_catalog(
+        catalog,
+        con=sequence_model.con,
+        readiness=sequence_model.readiness,
+        event_ids=sequence_model.event_ids,
+    )
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence("signup", Window("0s", "2h"), max_events=5),
+    )
+    compiled = design.build(model)._compiled
+    compiled.validate(execute=model.con.to_pyarrow)
+    rows = model.con.to_pyarrow(compiled.table).to_pylist()
+    event = next(row for row in rows if row["is_event"])
+    assert event["event_time"] == datetime(2025, 1, 1, 12, tzinfo=UTC)
+
+
+def test_sequence_compiler_validates_original_design_treatment(sequence_model):
+    from terrine.errors import TerrineError
+    from terrine.spec import Design, EventAnchor, EventSequence
+    from terrine.spec.design import Treatment
+    from terrine.windows import Window
+
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        treatment=Treatment("kind"),
+        shape=EventSequence("signup", Window("0s", "2h"), max_events=5),
+    )
+    with pytest.raises(TerrineError) as error:
+        design.build(sequence_model)
+    assert error.value.code == "terrine.sequence.invalid_spec"
+
+
+def test_sequence_compiler_projects_multiple_rebound_properties_from_original_row(
+    sequence_model,
+):
+    from terrine.semantic.models import Property, TableRef
+    from terrine.spec import Design, EventAnchor, EventSequence
+    from terrine.windows import Window
+
+    sequence_model.con.create_table(
+        "alias_events",
+        ibis.memtable(
+            {
+                "user_id": ["u"],
+                "ts": [datetime(2025, 1, 1, 12, tzinfo=UTC)],
+                "event_id": ["one"],
+                "physical_b": ["B"],
+                "physical_c": ["C"],
+            }
+        ),
+    )
+    source = sequence_model.catalog.sources["events"].model_copy(
+        update={
+            "relation": TableRef(kind="table", name="alias_events"),
+            "properties": ("a", "b"),
+        }
+    )
+    catalog = sequence_model.catalog.model_copy(
+        update={
+            "sources": {"events": source},
+            "properties": {
+                "a": Property(
+                    source="events", column="physical_b", dtype="string", as_of="event_time"
+                ),
+                "b": Property(
+                    source="events", column="physical_c", dtype="string", as_of="event_time"
+                ),
+            },
+        }
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=sequence_model.con,
+        readiness=sequence_model.readiness,
+        event_ids=sequence_model.event_ids,
+    )
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence("signup", Window("0s", "2h"), max_events=5, properties=("b", "a")),
+    )
+    compiled = design.build(model)._compiled
+    compiled.validate(execute=model.con.to_pyarrow)
+    child = next(row for row in model.con.to_pyarrow(compiled.table).to_pylist() if row["is_event"])
+    assert (child["b"], child["a"]) == ("C", "B")

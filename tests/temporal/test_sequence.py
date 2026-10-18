@@ -77,6 +77,8 @@ def test_sequence_tie_order_is_stable_under_input_shuffle():
         return [row["event_id"] for row in result.table.to_pyarrow().to_pylist() if row["is_event"]]
 
     assert event_ids(first) == event_ids(second) == ["a", "z"]
+    ordered_events = [row for row in first.table.to_pyarrow().to_pylist() if row["is_event"]]
+    assert [row["sequence_position"] for row in ordered_events] == [0, 1]
 
 
 def test_sequence_max_events_refuses_before_array_or_position_output():
@@ -137,8 +139,18 @@ def test_array_and_position_representations_have_same_ordered_events():
     assert [row["event_id"] for row in children] == ["a", "b"]
     assert [row["value"] for row in children] == [1, 2]
     assert array["event_values"] == [
-        {"value": 1, "value_reason": None},
-        {"value": 2, "value_reason": None},
+        {
+            "event_id": "a",
+            "event_time": datetime(2025, 1, 1, 12, tzinfo=UTC),
+            "value": 1,
+            "value_reason": None,
+        },
+        {
+            "event_id": "b",
+            "event_time": datetime(2025, 1, 1, 12, tzinfo=UTC),
+            "value": 2,
+            "value_reason": None,
+        },
     ]
 
 
@@ -170,7 +182,7 @@ def test_unavailable_anchor_has_only_header_in_both_representations(representati
     assert rows[0]["is_event"] is False
     assert rows[0]["event_count"] is None
     assert rows[0]["sequence_complete"] is False
-    assert rows[0]["sequence_reason"] == "source_coverage"
+    assert rows[0]["sequence_reason"] == "unit_observation"
     if representation == "arrays":
         assert rows[0]["event_values"] is None
 
@@ -186,4 +198,9 @@ def test_known_null_event_property_has_stable_reason():
     assert child["value_reason"] == "known_null"
 
     array = _run(rows, representation="arrays").table.to_pyarrow().to_pylist()[0]
-    assert array["event_values"][0] == {"value": None, "value_reason": "known_null"}
+    assert array["event_values"][0] == {
+        "event_id": "null",
+        "event_time": datetime(2025, 1, 1, 12, tzinfo=UTC),
+        "value": None,
+        "value_reason": "known_null",
+    }

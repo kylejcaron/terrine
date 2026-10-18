@@ -112,7 +112,6 @@ def event_sequence(
         sequence_position=ibis.row_number().over(
             group_by=[joined._sequence_unit, joined._sequence_anchor], order_by=order
         )
-        - 1
     )
     present = ranked.filter(ranked[event_id_column].notnull())
     counts = present.group_by([present._sequence_unit, present._sequence_anchor]).aggregate(
@@ -122,11 +121,12 @@ def event_sequence(
         exceeded=ibis._.count() > 0
     )
 
-    complete_expr = (
+    coverage_complete = (
         anchor._sequence_t0 + ibis.interval(seconds=window_start) >= ibis.literal(complete_from)
     ) & (anchor._sequence_t0 + ibis.interval(seconds=window_end) <= ibis.literal(complete_until))
+    observation_complete = ibis.literal(True)
     if observed_from_column is not None:
-        complete_expr = complete_expr & (
+        observation_complete = observation_complete & (
             anchor._sequence_observed_from.isnull()
             | (
                 anchor._sequence_observed_from
@@ -134,14 +134,18 @@ def event_sequence(
             )
         )
     if observed_until_column is not None:
-        complete_expr = complete_expr & (
+        observation_complete = observation_complete & (
             anchor._sequence_observed_until.isnull()
             | (
                 anchor._sequence_observed_until
                 >= anchor._sequence_t0 + ibis.interval(seconds=window_end)
             )
         )
-    complete = anchor.mutate(_sequence_complete=complete_expr)
+    complete_expr = coverage_complete & observation_complete
+    complete = anchor.mutate(
+        _sequence_coverage_complete=coverage_complete,
+        _sequence_complete=complete_expr,
+    )
     counts = complete.left_join(
         counts,
         predicates=[
@@ -152,6 +156,7 @@ def event_sequence(
         _sequence_unit=complete._sequence_unit,
         _sequence_anchor=complete._sequence_anchor,
         _sequence_t0=complete._sequence_t0,
+        _sequence_coverage_complete=complete._sequence_coverage_complete,
         _sequence_complete=complete._sequence_complete,
         event_count=ibis.ifelse(
             complete._sequence_complete,
@@ -170,17 +175,21 @@ def event_sequence(
     if representation == "arrays":
         struct_values = ibis.struct(
             {
-                field: (
-                    ibis.ifelse(
-                        complete_children[name].isnull(),
-                        "known_null",
-                        ibis.literal(None, type="string"),
+                "event_id": complete_children[event_id_column],
+                "event_time": complete_children[timestamp_column],
+                **{
+                    field: (
+                        ibis.ifelse(
+                            complete_children[name].isnull(),
+                            "known_null",
+                            ibis.literal(None, type="string"),
+                        )
+                        if is_reason
+                        else complete_children[name]
                     )
-                    if is_reason
-                    else complete_children[name]
-                )
-                for name in properties
-                for field, is_reason in ((name, False), (f"{name}_reason", True))
+                    for name in properties
+                    for field, is_reason in ((name, False), (f"{name}_reason", True))
+                },
             }
         )
         arrays = complete_children.group_by(
@@ -207,7 +216,11 @@ def event_sequence(
             event_count=counts.event_count,
             sequence_complete=counts._sequence_complete,
             sequence_reason=ibis.ifelse(
-                counts._sequence_complete, ibis.literal(None, type="string"), "source_coverage"
+                counts._sequence_complete,
+                ibis.literal(None, type="string"),
+                ibis.ifelse(
+                    counts._sequence_coverage_complete, "unit_observation", "source_coverage"
+                ),
             ),
             event_values=ibis.ifelse(
                 counts._sequence_complete,
@@ -231,7 +244,11 @@ def event_sequence(
             event_count=counts.event_count,
             sequence_complete=counts._sequence_complete,
             sequence_reason=ibis.ifelse(
-                counts._sequence_complete, ibis.literal(None, type="string"), "source_coverage"
+                counts._sequence_complete,
+                ibis.literal(None, type="string"),
+                ibis.ifelse(
+                    counts._sequence_coverage_complete, "unit_observation", "source_coverage"
+                ),
             ),
             **{
                 output: expression
