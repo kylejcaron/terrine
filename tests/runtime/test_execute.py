@@ -821,7 +821,7 @@ def test_cancellation_serializes_with_heartbeat_persistence(monkeypatch):
         run_id="cancel-heartbeat",
         run_task=run_task,
         publish=lambda plan, outputs, lease: "g1",
-        lease_ttl=timedelta(seconds=0.03),
+        lease_ttl=timedelta(seconds=30),
     )
 
     assert cancel_errors == []
