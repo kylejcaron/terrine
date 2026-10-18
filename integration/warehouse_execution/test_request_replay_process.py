@@ -2,8 +2,21 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import sys
+from pathlib import Path
+
+import threading
+
+import duckdb
+import pyarrow as pa
+
+from terrine.runtime.control import ControlClient, ControlEndpoint, ControlServer
+from terrine.runtime.graph import dependency_graph
+from terrine.runtime.planner import plan_refresh
+from terrine.runtime.recipe import DestinationRef
+from terrine.runtime.state import RuntimeStore
 
 
 def test_response_loss_then_fresh_process_lookup_returns_same_run(tmp_path):
@@ -50,3 +63,55 @@ print(json.dumps(None if receipt is None else {'run_id':receipt.run_id,'state':r
         "state": "succeeded",
         "generation": "g1",
     }
+
+
+def test_lost_response_lookup_routes_through_owner_holding_duckdb(tmp_path):
+    con = duckdb.connect(str(tmp_path / "runtime.duckdb"))
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
+    endpoint = ControlEndpoint(Path(f"/tmp/terrine-lost-{os.getpid()}.sock"))
+    published = threading.Event()
+
+    class Executor:
+        def run_task(self, task, dependencies):
+            return pa.table({"id": [1]})
+
+        def publish(self, plan, outputs, lease, run_id):
+            published.set()
+            return "generation-1"
+
+    server = ControlServer(store, namespace="owner", endpoint=endpoint, executor=Executor())
+    server.start()
+    plan = plan_refresh(
+        namespace="owner", dataset="orders", definition_hash="definition",
+        snapshot_id="snapshot",
+        graph=dependency_graph(sources=("events",), definition_hash="definition", partitions=("p1",)),
+    )
+    destination = DestinationRef("out.duckdb", "analytics", "orders")
+    try:
+        request = {
+            "namespace": "owner",
+            "operation": "run",
+            "serialized": plan.serialize().decode(),
+            "request_key": "lost-key",
+            "destination": {
+                "database": destination.database,
+                "schema": destination.schema,
+                "dataset": destination.dataset,
+            },
+        }
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.connect(str(endpoint.path))
+            client.sendall(json.dumps(request).encode() + b"\n")
+            # Drop the response channel immediately after submission.
+        assert published.wait(timeout=20)
+        receipt = ControlClient(endpoint, namespace="owner").find_run_by_request_key(
+            "lost-key", destination=destination
+        )
+        assert receipt is not None
+        assert receipt.state == "succeeded"
+        assert receipt.published_generation == "generation-1"
+        assert con.execute("SELECT state FROM owner.runtime_runs").fetchone() == ("succeeded",)
+    finally:
+        server.close()
+        con.close()
