@@ -153,17 +153,73 @@ def test_public_request_replay_refuses_a_different_plan_without_executor():
     assert error.value.code == "terrine.runtime.request_key_conflict"
 
 
-def test_empty_refresh_plan_reuses_existing_result_selection():
+def test_empty_refresh_plan_reuses_current_generation_result_selection():
+    from terrine.runtime.backends.base import StagedGeneration
+    from terrine.runtime.backends.duckdb import DuckDBBackend
     from terrine.runtime.changes import ChangeSet
 
     con = duckdb.connect(":memory:")
-    executor = _Executor()
     destination = DestinationRef("out.duckdb", "analytics", "orders")
+
+    class Publisher(_Executor):
+        def __init__(self):
+            super().__init__()
+            self.generation = 0
+
+        def publish(self, plan, outputs, lease, run_id):
+            backend = DuckDBBackend(con, namespace="owner")
+            if not outputs:
+                row = con.execute(
+                    'SELECT generation,version FROM "owner".runtime_manifests WHERE dataset=?',
+                    [plan.dataset],
+                ).fetchone()
+                assert row is not None
+                generation, version = row
+                con.execute(
+                    'INSERT INTO "owner".runtime_run_publications VALUES (?, ?, ?, ?)',
+                    [run_id, plan.dataset, generation, version],
+                )
+                return generation
+            self.generation += 1
+            generation = f"g{self.generation}"
+            return backend.publish_generation(
+                StagedGeneration(
+                    plan.dataset,
+                    generation,
+                    outputs,
+                    run_id=run_id,
+                    snapshot_id=plan.snapshot_id,
+                ),
+                expected_manifest="g1" if generation == "g2" else None,
+                lease=lease,
+            )
+
+    executor = Publisher()
+    first_plan = _plan()
     first = runtime.run_plan(
-        _plan(),
+        first_plan,
         con=con,
         namespace="owner",
         request_key="initial",
+        destination=destination,
+        executor=executor,
+    )
+    changed_graph = dependency_graph(
+        sources=("events", "exports"), definition_hash="definition", partitions=("p1",)
+    )
+    changed = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="definition",
+        snapshot_id="snapshot",
+        graph=changed_graph,
+    )
+    before_changed = executor.calls
+    second = runtime.run_plan(
+        changed,
+        con=con,
+        namespace="owner",
+        request_key="include-exports",
         destination=destination,
         executor=executor,
     )
@@ -172,12 +228,9 @@ def test_empty_refresh_plan_reuses_existing_result_selection():
         dataset="orders",
         definition_hash="definition",
         snapshot_id="snapshot",
-        graph=dependency_graph(
-            sources=("events",), definition_hash="definition", partitions=("p1",)
-        ),
+        graph=changed_graph,
         changes=ChangeSet((), "revision"),
     )
-
     receipt = runtime.run_plan(
         no_op,
         con=con,
@@ -186,15 +239,27 @@ def test_empty_refresh_plan_reuses_existing_result_selection():
         destination=destination,
         executor=executor,
     )
+    dependencies = {dependency for task in changed.tasks for dependency in task.dependencies}
+    sink_indexes = [
+        index + 1 for index, task in enumerate(changed.tasks) if task.task_id not in dependencies
+    ]
+    expected_second = [{"id": before_changed + index} for index in sink_indexes]
 
     assert receipt.state == "succeeded"
-    schema = '"owner"'
-    previous = con.execute(
-        f"SELECT partition FROM {schema}.runtime_run_results WHERE run_id=?",
-        [first.run_id],
-    ).fetchall()
-    retained = con.execute(
-        f"SELECT partition FROM {schema}.runtime_run_results WHERE run_id=?",
-        [receipt.run_id],
-    ).fetchall()
-    assert retained == previous
+    assert receipt.published_generation == second.published_generation == "g2"
+    assert executor.calls == before_changed + len(changed.tasks)
+    assert runtime.open_published_generation(first, con=con, namespace="owner").execute().to_dict(
+        orient="records"
+    ) == [{"id": len(first_plan.tasks)}]
+    assert sorted(
+        runtime.open_published_generation(second, con=con, namespace="owner")
+        .execute()
+        .to_dict(orient="records"),
+        key=lambda row: row["id"],
+    ) == sorted(expected_second, key=lambda row: row["id"])
+    assert sorted(
+        runtime.open_published_generation(receipt, con=con, namespace="owner")
+        .execute()
+        .to_dict(orient="records"),
+        key=lambda row: row["id"],
+    ) == sorted(expected_second, key=lambda row: row["id"])

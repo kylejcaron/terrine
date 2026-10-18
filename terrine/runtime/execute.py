@@ -162,19 +162,6 @@ def execute_plan(
                     "ON CONFLICT DO NOTHING",
                     [run_id, partition],
                 )
-        else:
-            previous = con.execute(
-                f"SELECT p.partition FROM {schema}.runtime_run_results p "
-                f"JOIN {schema}.runtime_runs r ON r.run_id=p.run_id "
-                "WHERE r.dataset=? AND r.state='succeeded' ORDER BY p.partition",
-                [plan.dataset],
-            ).fetchall()
-            for (partition,) in previous:
-                con.execute(
-                    f"INSERT INTO {schema}.runtime_run_results VALUES (?, ?) "
-                    "ON CONFLICT DO NOTHING",
-                    [run_id, partition],
-                )
     if run is not None and run[2] in {"succeeded", "cancelled"}:
         _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
         return RunReceipt(run_id, run[2], run[3])
@@ -534,6 +521,28 @@ def _finish_run(
             plan.dataset, generation_text, plan.snapshot_id, lease=lease
         )
     with event_transaction(con, namespace=runtime_store.namespace):
+        dependencies = {dependency for task in plan.tasks for dependency in task.dependencies}
+        has_results = any(task.task_id not in dependencies for task in plan.tasks)
+        if not has_results:
+            publication = con.execute(
+                f"SELECT dataset,generation FROM {schema}.runtime_run_publications WHERE run_id=?",
+                [run_id],
+            ).fetchone()
+            if publication is not None:
+                previous = con.execute(
+                    f"SELECT DISTINCT result.partition FROM {schema}.runtime_run_results result "
+                    f"JOIN {schema}.runtime_run_publications prior "
+                    "ON prior.run_id=result.run_id "
+                    "WHERE prior.dataset=? AND prior.generation=? AND result.run_id<>? "
+                    "ORDER BY result.partition",
+                    [publication[0], publication[1], run_id],
+                ).fetchall()
+                for (partition,) in previous:
+                    con.execute(
+                        f"INSERT INTO {schema}.runtime_run_results VALUES (?, ?) "
+                        "ON CONFLICT DO NOTHING",
+                        [run_id, partition],
+                    )
         terminal = con.execute(
             f"UPDATE {schema}.runtime_runs SET state='succeeded', published_generation=? "
             "WHERE run_id=? AND state='running' AND attempt_fence=? RETURNING run_id",

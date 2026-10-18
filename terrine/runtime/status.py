@@ -116,28 +116,38 @@ def cancel_run(run_id: str, *, con: Any, namespace: str) -> CancelReceipt:
     if row is None:
         raise _UNAVAILABLE.error()
     with run_publication_lock(namespace, row[0]):
-        status = get_run(run_id, con=con, namespace=namespace)
-        if status.durable_state in {"succeeded", "failed", "cancelled"}:
-            return CancelReceipt(run_id, "already_terminal", status)
-        if status.durable_state == "cancel_requested":
-            return CancelReceipt(run_id, "already_requested", status)
-        terminal = status.durable_state == "queued"
-        next_state = "cancelled" if terminal else "cancel_requested"
         with event_transaction(con, namespace=namespace):
-            transitioned = con.execute(
-                f"UPDATE {store._schema}.runtime_runs SET state=? "
-                "WHERE run_id=? AND state=? RETURNING run_id",
-                [next_state, run_id, status.durable_state],
+            current = con.execute(
+                f"SELECT state FROM {store._schema}.runtime_runs WHERE run_id=?",
+                [run_id],
             ).fetchone()
-            if transitioned is not None:
-                record_run_event(
-                    run_id,
-                    "lifecycle",
-                    {"state": next_state},
-                    con=con,
-                    namespace=namespace,
-                    _in_transaction=True,
-                )
+            if current is None:
+                raise _UNAVAILABLE.error()
+            current_state = current[0]
+            if current_state in {"succeeded", "failed", "cancelled"}:
+                disposition = "already_terminal"
+            elif current_state == "cancel_requested":
+                disposition = "already_requested"
+            elif current_state in {"queued", "running"}:
+                next_state = "cancelled" if current_state == "queued" else "cancel_requested"
+                transitioned = con.execute(
+                    f"UPDATE {store._schema}.runtime_runs SET state=? "
+                    "WHERE run_id=? AND state=? RETURNING run_id",
+                    [next_state, run_id, current_state],
+                ).fetchone()
+                if transitioned is not None:
+                    record_run_event(
+                        run_id,
+                        "lifecycle",
+                        {"state": next_state},
+                        con=con,
+                        namespace=namespace,
+                        _in_transaction=True,
+                    )
+                    disposition = "requested"
+                else:
+                    disposition = "already_terminal"
+            else:
+                disposition = "already_terminal"
         updated = get_run(run_id, con=con, namespace=namespace)
-        disposition = "requested" if transitioned is not None else "already_terminal"
         return CancelReceipt(run_id, disposition, updated)
