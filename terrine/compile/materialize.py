@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 
 import ibis
@@ -7,8 +8,15 @@ import ibis
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.compile.layers import LayerKey
 from terrine.data import Budget
+from terrine.errors import RefusalSpec
 from terrine.model import Model
 from terrine.spec.design import Design
+
+_STRICT_SCAN_UNKNOWN = RefusalSpec(
+    "terrine.budget.scan_unknown",
+    "A strict scan-byte budget requires a verified scan bound; this backend has none. "
+    "Explicitly choose non-strict scan policy after reviewing upstream work.",
+)
 
 
 def compose_materialized_frame(
@@ -24,8 +32,11 @@ def compose_materialized_frame(
     caller is responsible for verifying the physical record and translating it to a
     logical key before entering this compiler-owned API.
     """
-    del budget  # output budgets are enforced at collection/staging, not query composition.
-    definition_hash = design.spec_hash
+    if budget is not None and not isinstance(budget, Budget):
+        raise TypeError("budget must be Budget or None")
+    if budget is not None and budget.max_scan_bytes is not None and budget.strict_scan:
+        raise _STRICT_SCAN_UNKNOWN.error()
+    definition_hash = hashlib.sha256(f"{design.spec_hash}:{model.model_hash}".encode()).hexdigest()
     snapshot_ids = {key.snapshot_id for key in persisted}
     if len(snapshot_ids) > 1 or (snapshot_ids and not next(iter(snapshot_ids))):
         raise ValueError("persisted layers must belong to one non-empty snapshot")

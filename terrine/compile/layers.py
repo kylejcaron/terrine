@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Literal
 
@@ -83,7 +84,7 @@ def plan_layers(design: Design, model) -> LayerPlan:
         *design.eligibility.values(),
     ):
         expression(node)
-    definition_hash = design.spec_hash
+    definition_hash = hashlib.sha256(f"{design.spec_hash}:{model.model_hash}".encode()).hexdigest()
     return LayerPlan(
         tuple(
             LayerKey(
