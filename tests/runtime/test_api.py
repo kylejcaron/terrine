@@ -169,6 +169,33 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
             resolver=Resolver(),
             snapshot_authority=authority,
         )
+    assert (
+        runtime.find_run_by_request_key(
+            "saved-run",
+            destination=DestinationRef("output.duckdb", "analytics", "orders"),
+            con=con.con,
+            namespace="runtime",
+        )
+        is not None
+    )
+    conflicting_plan = plan
+    conflicting_recipe = SavedPlanRecipe.create(
+        plan_json=conflicting_plan.serialize(),
+        design=design,
+        model=ModelReference.from_model(model, owner_key="model"),
+        destination=DestinationRef("output.duckdb", "analytics", "orders"),
+        namespace="runtime",
+        expected_base_manifest="different-base",
+    )
+    with pytest.raises(TerrineError) as error:
+        runtime.run_serialized_plan(
+            conflicting_recipe.to_json(),
+            con=con.con,
+            namespace="runtime",
+            request_key="saved-run",
+        )
+    assert error.value.code == "terrine.runtime.request_key_conflict"
+
     result = runtime.run_serialized_plan(
         recipe.to_json(),
         con=con.con,

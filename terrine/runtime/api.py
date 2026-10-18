@@ -135,6 +135,18 @@ def run_serialized_plan(
             existing = find_run_by_request_key(
                 request_key, destination=destination, con=con, namespace=namespace
             )
+            if existing is not None:
+                store = RuntimeStore(con, namespace=namespace)
+                store.initialize()
+                fingerprint = con.execute(
+                    f"SELECT fingerprint FROM {store._schema}.runtime_runs WHERE run_id=?",
+                    [existing.run_id],
+                ).fetchone()
+                if fingerprint is None or fingerprint[0] != embedded_plan.recipe.fingerprint:
+                    raise RefusalSpec(
+                        "terrine.runtime.request_key_conflict",
+                        "Request key is already bound to a different plan.",
+                    ).error()
             if existing is not None and existing.state in {
                 "running",
                 "cancel_requested",
