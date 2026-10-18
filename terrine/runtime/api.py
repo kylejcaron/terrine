@@ -11,7 +11,14 @@ from terrine.runtime.backends.base import PublicationReceipt
 from terrine.runtime.events import read_run_events
 from terrine.runtime.execute import RunReceipt, execute_plan
 from terrine.runtime.planner import RefreshPlan, plan_refresh
-from terrine.runtime.recipe import DestinationRef
+from terrine.runtime.recipe import (
+    DestinationRef,
+    ModelResolver,
+    SavedPlanRecipe,
+    _bind_recipe_plan,
+    resolve_plan,
+)
+from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.runtime.status import cancel_run, get_run
 
@@ -112,9 +119,66 @@ def run_serialized_plan(
     request_key: str | None = None,
     destination: DestinationRef | None = None,
     executor: Executor | None = None,
+    resolver: ModelResolver | None = None,
+    snapshot_authority: SnapshotAuthority | None = None,
 ) -> RunReceipt:
-    """Verify and execute a versioned plan using the same request-key replay path."""
-    plan = RefreshPlan.deserialize(serialized)
+    """Verify and execute a plan, reopening owner-retained inputs for saved recipes."""
+    document = json.loads(serialized)
+    if isinstance(document, dict) and "plan_json" in document:
+        recipe = SavedPlanRecipe.from_json(serialized)
+        embedded_plan = _bind_recipe_plan(recipe, namespace=namespace)
+        recipe_destination = recipe.destination
+        if destination is not None and destination != recipe_destination:
+            raise ValueError("destination differs from saved recipe")
+        if request_key is not None:
+            destination = recipe_destination
+            existing = find_run_by_request_key(
+                request_key, destination=destination, con=con, namespace=namespace
+            )
+            if existing is not None:
+                store = RuntimeStore(con, namespace=namespace)
+                store.initialize()
+                fingerprint = con.execute(
+                    f"SELECT fingerprint FROM {store._schema}.runtime_runs WHERE run_id=?",
+                    [existing.run_id],
+                ).fetchone()
+                if fingerprint is None or fingerprint[0] != embedded_plan.recipe.fingerprint:
+                    raise RefusalSpec(
+                        "terrine.runtime.request_key_conflict",
+                        "Request key is already bound to a different plan.",
+                    ).error()
+            if existing is not None and existing.state in {
+                "running",
+                "cancel_requested",
+                "succeeded",
+                "cancelled",
+            }:
+                return run_plan(
+                    embedded_plan,
+                    con=con,
+                    namespace=namespace,
+                    request_key=request_key,
+                    destination=destination,
+                )
+        elif destination is not None:
+            raise ValueError("destination is only used with a request_key")
+        if resolver is None or snapshot_authority is None:
+            raise ValueError("saved recipes require an owner resolver and snapshot authority")
+        if executor is None or not callable(getattr(executor, "run_snapshot_task", None)):
+            raise ValueError("saved recipes require an executor with run_snapshot_task")
+        plan, model, _design, recipe_destination = resolve_plan(
+            recipe, resolver=resolver, namespace=namespace
+        )
+        receipt = snapshot_authority.find_retained(plan.snapshot_id, namespace=namespace)
+        if receipt.model_hash != model.model_hash:
+            raise RefusalSpec(
+                "terrine.runtime.plan_recipe_mismatch",
+                "Saved plan reconstruction failed verification "
+                "(retained snapshot Model declaration differs).",
+            ).error()
+        executor = _SnapshotBoundExecutor(executor, snapshot_authority, receipt, con, namespace)
+    else:
+        plan = RefreshPlan.deserialize(serialized)
     return run_plan(
         plan,
         con=con,
@@ -123,6 +187,27 @@ def run_serialized_plan(
         destination=destination,
         executor=executor,
     )
+
+
+class _SnapshotBoundExecutor:
+    def __init__(
+        self, executor: Any, authority: SnapshotAuthority, receipt: Any, con: Any, namespace: str
+    ) -> None:
+        self.executor = executor
+        self.authority = authority
+        self.receipt = receipt
+        self.con = con
+        self.namespace = namespace
+
+    def run_task(self, task: Any, dependencies: Any) -> Any:
+        context = self.authority.reopen(self.receipt, con=self.con, namespace=self.namespace)
+        try:
+            return self.executor.run_snapshot_task(context, task, dependencies)
+        finally:
+            context.close()
+
+    def publish(self, plan: RefreshPlan, outputs: Any, lease: Any, run_id: str) -> Any:
+        return self.executor.publish(plan, outputs, lease, run_id)
 
 
 def find_run_by_request_key(

@@ -82,6 +82,26 @@ def test_snapshot_receipt_reopens_same_inputs_after_fresh_owner_connection(tmp_p
         reopened_con.disconnect()
 
 
+def test_snapshot_authority_finds_retained_receipt_by_id(tmp_path):
+    state_path = tmp_path / "owner.duckdb"
+    owner = RuntimeOwner(state_path=state_path, snapshot_root=tmp_path / "snapshots")
+    con = ibis.duckdb.connect(str(state_path))
+    con.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+    model = Model.from_catalog(
+        _catalog(), con=con, readiness={"events": Coverage("2025-01-01", "2025-02-01")}
+    )
+    authority = SnapshotAuthority(owner)
+    receipt = authority.capture(
+        model, design=_design(), con=con, namespace="runtime", run_id="run-1", budget=Budget()
+    )
+    try:
+        assert authority.find_retained(receipt.snapshot_id, namespace="runtime").to_json() == (
+            receipt.to_json()
+        )
+    finally:
+        con.disconnect()
+
+
 def test_snapshot_receipt_rejects_null_checksum_with_coded_refusal():
     receipt = {
         "schema_version": 1,

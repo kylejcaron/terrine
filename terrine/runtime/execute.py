@@ -144,8 +144,15 @@ def execute_plan(
             con.execute(
                 f"INSERT INTO {schema}.runtime_runs "
                 "(run_id, dataset, fingerprint, state, published_generation, request_key, "
-                "destination_json) VALUES (?, ?, ?, 'queued', NULL, ?, ?)",
-                [run_id, plan.dataset, plan.recipe.fingerprint, request_key, destination_json],
+                "destination_json, updated_at) VALUES (?, ?, ?, 'queued', NULL, ?, ?, ?)",
+                [
+                    run_id,
+                    plan.dataset,
+                    plan.recipe.fingerprint,
+                    request_key,
+                    destination_json,
+                    datetime.now(UTC).replace(tzinfo=None),
+                ],
             )
             record_run_event(
                 run_id,
@@ -167,6 +174,14 @@ def execute_plan(
         return RunReceipt(run_id, run[2], run[3])
     leases.initialize()
     lease = leases.acquire(f"dataset:{plan.dataset}", run_id, ttl=lease_ttl, now=datetime.now(UTC))
+    current = con.execute(
+        f"SELECT state, published_generation FROM {schema}.runtime_runs WHERE run_id=?",
+        [run_id],
+    ).fetchone()
+    if current is not None and current[0] in {"succeeded", "cancelled"}:
+        leases.release(lease)
+        _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
+        return RunReceipt(run_id, current[0], current[1])
     if run is not None and run[2] == "cancel_requested":
         current = con.execute(
             f"SELECT state, published_generation FROM {schema}.runtime_runs WHERE run_id=?",
@@ -175,9 +190,10 @@ def execute_plan(
         if current is not None and current[0] == "cancel_requested" and current[1] is None:
             with event_transaction(con, namespace=namespace):
                 con.execute(
-                    f"UPDATE {schema}.runtime_runs SET state='cancelled', attempt_fence=? "
-                    "WHERE run_id=? AND state='cancel_requested' AND published_generation IS NULL",
-                    [lease.fence, run_id],
+                    f"UPDATE {schema}.runtime_runs SET state='cancelled', attempt_fence=?, "
+                    "updated_at=? WHERE run_id=? AND state='cancel_requested' "
+                    "AND published_generation IS NULL",
+                    [lease.fence, datetime.now(UTC).replace(tzinfo=None), run_id],
                 )
                 record_run_event(
                     run_id,
@@ -195,15 +211,56 @@ def execute_plan(
             raise RuntimeError("run disappeared while recovering cancellation")
         return RunReceipt(run_id, current[0], current[1])
     try:
+        _check_expected_base_manifest(plan, con=con, namespace=namespace)
+    except Exception:
+        try:
+            reconciled = _reconcile_committed_publication(
+                plan,
+                run_id=run_id,
+                lease=lease,
+                runtime_store=runtime_store,
+                con=con,
+                schema=schema,
+                namespace=namespace,
+            )
+            if reconciled is not None:
+                _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
+                return reconciled
+            with event_transaction(con, namespace=namespace):
+                rejected = con.execute(
+                    f"UPDATE {schema}.runtime_runs SET state='failed', attempt_fence=?, "
+                    "updated_at=? WHERE run_id=? AND state IN ('queued','running') "
+                    "AND (attempt_fence IS NULL OR attempt_fence<?) RETURNING run_id",
+                    [
+                        lease.fence,
+                        datetime.now(UTC).replace(tzinfo=None),
+                        run_id,
+                        lease.fence,
+                    ],
+                ).fetchone()
+                if rejected is not None:
+                    record_run_event(
+                        run_id,
+                        "lifecycle",
+                        {"state": "failed"},
+                        con=con,
+                        namespace=namespace,
+                        _in_transaction=True,
+                    )
+        finally:
+            leases.release(lease)
+        raise
+    try:
         with event_transaction(con, namespace=namespace):
             transition = con.execute(
-                f"UPDATE {schema}.runtime_runs SET state='running', attempt_fence=? "
-                "WHERE run_id=? AND state IN ('queued','running','failed') "
+                f"UPDATE {schema}.runtime_runs SET state='running', attempt_fence=?, "
+                "updated_at=? WHERE run_id=? AND state IN ('queued','running','failed') "
                 "AND (attempt_fence IS NULL OR attempt_fence<?) AND EXISTS ("
                 f"SELECT 1 FROM {schema}.runtime_leases WHERE resource=? AND owner=? "
                 "AND fence=? AND expires_at>?) RETURNING run_id",
                 [
                     lease.fence,
+                    datetime.now(UTC).replace(tzinfo=None),
                     run_id,
                     lease.fence,
                     lease.resource,
@@ -239,9 +296,11 @@ def execute_plan(
     except Exception:
         with event_transaction(con, namespace=namespace):
             failed = con.execute(
-                f"UPDATE {schema}.runtime_runs SET state='failed' "
-                "WHERE run_id=? AND state='running' AND attempt_fence=? RETURNING state",
-                [run_id, lease.fence],
+                f"UPDATE {schema}.runtime_runs SET state=CASE "
+                "WHEN state='cancel_requested' THEN 'cancelled' ELSE 'failed' END, "
+                "updated_at=? WHERE run_id=? AND state IN ('running','cancel_requested') "
+                "AND attempt_fence=? RETURNING state",
+                [datetime.now(UTC).replace(tzinfo=None), run_id, lease.fence],
             ).fetchone()
             if failed is not None:
                 record_run_event(
@@ -265,7 +324,18 @@ def execute_plan(
         current = lease
         while not stop_heartbeat.wait(interval):
             try:
-                current = heartbeat_store.renew(current, ttl=lease_ttl, now=datetime.now(UTC))
+                now = datetime.now(UTC)
+                with event_transaction(heartbeat_con, namespace=namespace):
+                    current = heartbeat_store.renew(current, ttl=lease_ttl, now=now)
+                    timestamp = now.replace(tzinfo=None)
+                    recorded = heartbeat_con.execute(
+                        f"UPDATE {schema}.runtime_runs SET heartbeat_at=?, updated_at=? "
+                        "WHERE run_id=? AND state IN ('running','cancel_requested') "
+                        "AND attempt_fence=? RETURNING run_id",
+                        [timestamp, timestamp, run_id, lease.fence],
+                    ).fetchone()
+                    if recorded is None:
+                        raise ValueError("run attempt was fenced before heartbeat persistence")
             except Exception as error:
                 heartbeat_error.append(error)
                 stop_heartbeat.set()
@@ -281,6 +351,8 @@ def execute_plan(
         task_failure: Exception | None = None
         with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
             while (pending and task_failure is None) or inflight:
+                if heartbeat_error:
+                    raise heartbeat_error[0]
                 made_progress = False
                 for task_id in task_order:
                     if task_failure is not None:
@@ -371,6 +443,8 @@ def execute_plan(
                     if completed is None:
                         raise ValueError("lease attempt was fenced before task completion")
                     outputs[task.task_id] = output
+        if heartbeat_error:
+            raise heartbeat_error[0]
         if task_failure is not None:
             raise task_failure
         with run_publication_lock(namespace, plan.dataset):
@@ -387,13 +461,61 @@ def execute_plan(
                 leases=leases,
             )
     except Exception:
+        publication_table = con.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE lower(table_schema)=lower(?) AND table_name='runtime_run_publications'",
+            [namespace],
+        ).fetchone()
+        publication = (
+            con.execute(
+                f"SELECT generation FROM {schema}.runtime_run_publications WHERE run_id=?",
+                [run_id],
+            ).fetchone()
+            if publication_table is not None
+            else None
+        )
+        if publication is not None:
+            generation = publication[0]
+            runtime_store.replace_published_snapshot(
+                plan.dataset, generation, plan.snapshot_id, lease=lease
+            )
+            with event_transaction(con, namespace=namespace):
+                dependencies = {
+                    dependency for task in plan.tasks for dependency in task.dependencies
+                }
+                has_results = any(task.task_id not in dependencies for task in plan.tasks)
+                if not has_results:
+                    _copy_result_partitions(
+                        con,
+                        schema=schema,
+                        run_id=run_id,
+                        dataset=plan.dataset,
+                        generation=generation,
+                    )
+                reconciled = con.execute(
+                    f"UPDATE {schema}.runtime_runs SET state='succeeded', "
+                    "published_generation=?, updated_at=? WHERE run_id=? "
+                    "AND state IN ('running','cancel_requested') AND attempt_fence=? "
+                    "RETURNING run_id",
+                    [generation, datetime.now(UTC).replace(tzinfo=None), run_id, lease.fence],
+                ).fetchone()
+                if reconciled is not None:
+                    record_run_event(
+                        run_id,
+                        "lifecycle",
+                        {"state": "succeeded"},
+                        con=con,
+                        namespace=namespace,
+                        _in_transaction=True,
+                    )
+                    return RunReceipt(run_id, "succeeded", generation)
         with event_transaction(con, namespace=namespace):
             terminal = con.execute(
                 f"UPDATE {schema}.runtime_runs SET state=CASE "
-                "WHEN state='cancel_requested' THEN 'cancelled' ELSE 'failed' END "
-                "WHERE run_id=? AND state IN ('running','cancel_requested') "
+                "WHEN state='cancel_requested' THEN 'cancelled' ELSE 'failed' END, "
+                "updated_at=? WHERE run_id=? AND state IN ('running','cancel_requested') "
                 "AND published_generation IS NULL AND attempt_fence=? RETURNING state",
-                [run_id, lease.fence],
+                [datetime.now(UTC).replace(tzinfo=None), run_id, lease.fence],
             ).fetchone()
             if terminal is not None:
                 record_run_event(
@@ -417,6 +539,123 @@ def execute_plan(
                 _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
         finally:
             leases.release(lease)
+
+
+def _reconcile_committed_publication(
+    plan: RefreshPlan,
+    *,
+    run_id: str,
+    lease: Lease,
+    runtime_store: RuntimeStore,
+    con: Any,
+    schema: str,
+    namespace: str,
+) -> RunReceipt | None:
+    table = con.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE lower(table_schema)=lower(?) AND table_name='runtime_run_publications'",
+        [namespace],
+    ).fetchone()
+    if table is None:
+        return None
+    publication = con.execute(
+        f"SELECT generation FROM {schema}.runtime_run_publications WHERE run_id=?", [run_id]
+    ).fetchone()
+    if publication is None:
+        return None
+    manifest = con.execute(
+        f"SELECT generation FROM {schema}.runtime_manifests WHERE dataset=?", [plan.dataset]
+    ).fetchone()
+    generation = publication[0]
+    if manifest is not None and manifest[0] == generation:
+        runtime_store.replace_published_snapshot(
+            plan.dataset, generation, plan.snapshot_id, lease=lease
+        )
+    with event_transaction(con, namespace=namespace):
+        dependencies = {dependency for task in plan.tasks for dependency in task.dependencies}
+        if not any(task.task_id not in dependencies for task in plan.tasks):
+            _copy_result_partitions(
+                con,
+                schema=schema,
+                run_id=run_id,
+                dataset=plan.dataset,
+                generation=generation,
+            )
+        reconciled = con.execute(
+            f"UPDATE {schema}.runtime_runs SET state='succeeded', published_generation=?, "
+            "attempt_fence=?, updated_at=? WHERE run_id=? AND state IN "
+            "('queued','running','cancel_requested') AND "
+            "(attempt_fence IS NULL OR attempt_fence<?) RETURNING run_id",
+            [generation, lease.fence, datetime.now(UTC).replace(tzinfo=None), run_id, lease.fence],
+        ).fetchone()
+        if reconciled is None:
+            return None
+        record_run_event(
+            run_id,
+            "lifecycle",
+            {"state": "succeeded"},
+            con=con,
+            namespace=namespace,
+            _in_transaction=True,
+        )
+    return RunReceipt(run_id, "succeeded", generation)
+
+
+def _check_expected_base_manifest(plan: RefreshPlan, *, con: Any, namespace: str) -> None:
+    if not plan.expected_base_manifest_bound:
+        return
+    exists = con.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE lower(table_schema)=lower(?) AND table_name='runtime_manifests'",
+        [namespace],
+    ).fetchone()
+    current = (
+        con.execute(
+            f'SELECT generation FROM "{namespace}".runtime_manifests WHERE dataset=?',
+            [plan.dataset],
+        ).fetchone()
+        if exists is not None
+        else None
+    )
+    actual = current[0] if current is not None else None
+    if actual != plan.expected_base_manifest:
+        raise ValueError("expected base manifest does not match current publication")
+
+
+def _copy_result_partitions(
+    con: Any, *, schema: str, run_id: str, dataset: str, generation: str
+) -> None:
+    previous = con.execute(
+        f"SELECT DISTINCT result.partition FROM {schema}.runtime_run_results result "
+        f"JOIN {schema}.runtime_run_publications prior ON prior.run_id=result.run_id "
+        "WHERE prior.dataset=? AND prior.generation=? AND prior.run_id<>? "
+        "ORDER BY result.partition",
+        [dataset, generation, run_id],
+    ).fetchall()
+    if not previous:
+        version = con.execute(
+            f"SELECT version FROM {schema}.runtime_run_publications WHERE run_id=?",
+            [run_id],
+        ).fetchone()
+        if version is not None:
+            prior_generation = con.execute(
+                f"SELECT generation FROM {schema}.runtime_publications "
+                "WHERE dataset=? AND version<? ORDER BY version DESC LIMIT 1",
+                [dataset, version[0]],
+            ).fetchone()
+            if prior_generation is not None:
+                previous = con.execute(
+                    f"SELECT DISTINCT result.partition FROM {schema}.runtime_run_results result "
+                    f"JOIN {schema}.runtime_run_publications prior ON prior.run_id=result.run_id "
+                    "WHERE prior.dataset=? AND prior.generation=? AND prior.run_id<>? "
+                    "ORDER BY result.partition",
+                    [dataset, prior_generation[0], run_id],
+                ).fetchall()
+    for (partition,) in previous:
+        con.execute(
+            f"INSERT INTO {schema}.runtime_run_results VALUES (?, ?) ON CONFLICT DO NOTHING",
+            [run_id, partition],
+        )
 
 
 def _encode(table: pa.Table) -> bytes:
@@ -496,10 +735,10 @@ def _finish_run(
     if cancel_requested or (cancelled is not None and cancelled()):
         with event_transaction(con, namespace=runtime_store.namespace):
             terminal = con.execute(
-                f"UPDATE {schema}.runtime_runs SET state='cancelled' "
+                f"UPDATE {schema}.runtime_runs SET state='cancelled', updated_at=? "
                 "WHERE run_id=? AND state IN ('running','cancel_requested') "
                 "AND attempt_fence=? RETURNING run_id",
-                [run_id, lease.fence],
+                [datetime.now(UTC).replace(tzinfo=None), run_id, lease.fence],
             ).fetchone()
             if terminal is None:
                 raise ValueError("lease attempt was fenced before cancellation")
@@ -539,24 +778,18 @@ def _finish_run(
                 else None
             )
             if publication is not None:
-                previous = con.execute(
-                    f"SELECT DISTINCT result.partition FROM {schema}.runtime_run_results result "
-                    f"JOIN {schema}.runtime_run_publications prior "
-                    "ON prior.run_id=result.run_id "
-                    "WHERE prior.dataset=? AND prior.generation=? AND result.run_id<>? "
-                    "ORDER BY result.partition",
-                    [publication[0], publication[1], run_id],
-                ).fetchall()
-                for (partition,) in previous:
-                    con.execute(
-                        f"INSERT INTO {schema}.runtime_run_results VALUES (?, ?) "
-                        "ON CONFLICT DO NOTHING",
-                        [run_id, partition],
-                    )
+                _copy_result_partitions(
+                    con,
+                    schema=schema,
+                    run_id=run_id,
+                    dataset=publication[0],
+                    generation=publication[1],
+                )
         terminal = con.execute(
-            f"UPDATE {schema}.runtime_runs SET state='succeeded', published_generation=? "
-            "WHERE run_id=? AND state='running' AND attempt_fence=? RETURNING run_id",
-            [generation_text, run_id, lease.fence],
+            f"UPDATE {schema}.runtime_runs SET state='succeeded', published_generation=?, "
+            "updated_at=? WHERE run_id=? AND state='running' AND attempt_fence=? "
+            "RETURNING run_id",
+            [generation_text, datetime.now(UTC).replace(tzinfo=None), run_id, lease.fence],
         ).fetchone()
         if terminal is None:
             raise ValueError("lease attempt was fenced before recording success")

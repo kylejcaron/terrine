@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from terrine.errors import RefusalSpec
@@ -250,6 +250,46 @@ class SavedPlanRecipe:
         return recipe
 
 
+def _bind_recipe_plan(recipe: SavedPlanRecipe, *, namespace: str) -> RefreshPlan:
+    restored = SavedPlanRecipe.from_json(recipe.to_json())
+    if namespace != restored.namespace:
+        raise _INVALID.error(reason="owner namespace mismatch")
+    plan = RefreshPlan.deserialize(restored.plan_json)
+    if (
+        plan.namespace != restored.namespace
+        or plan.definition_hash != restored.design_hash
+        or plan.dataset != restored.destination.dataset
+        or not plan.snapshot_id
+    ):
+        raise _INVALID.error(reason="plan identity differs from owner-bound references")
+    bound_payload = {
+        "namespace": plan.namespace,
+        "dataset": plan.dataset,
+        "definition_hash": plan.definition_hash,
+        "snapshot_id": plan.snapshot_id,
+        "tasks": plan.recipe.tasks,
+        "change_evidence": plan.recipe.change_evidence,
+        "budget": plan.recipe.budget,
+        "expected_base_manifest": restored.expected_base_manifest,
+        "expected_base_manifest_bound": True,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(bound_payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    plan_recipe = replace(
+        plan.recipe,
+        fingerprint=fingerprint,
+        expected_base_manifest=restored.expected_base_manifest,
+        expected_base_manifest_bound=True,
+    )
+    return replace(
+        plan,
+        recipe=plan_recipe,
+        expected_base_manifest=restored.expected_base_manifest,
+        expected_base_manifest_bound=True,
+    )
+
+
 def resolve_plan(
     recipe: SavedPlanRecipe, *, resolver: ModelResolver, namespace: str
 ) -> tuple[RefreshPlan, Model, Design, DestinationRef]:
@@ -262,13 +302,6 @@ def resolve_plan(
         or ModelReference.from_model(model, owner_key=restored.model.owner_key) != restored.model
     ):
         raise _INVALID.error(reason="owner Model declaration does not match reference")
-    plan = RefreshPlan.deserialize(restored.plan_json)
-    if (
-        plan.namespace != restored.namespace
-        or plan.definition_hash != restored.design_hash
-        or plan.dataset != restored.destination.dataset
-        or not plan.snapshot_id
-    ):
-        raise _INVALID.error(reason="plan identity differs from owner-bound references")
+    plan = _bind_recipe_plan(restored, namespace=namespace)
     design = from_json(restored.design_json)
     return plan, model, design, restored.destination
