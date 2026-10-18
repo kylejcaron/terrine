@@ -13,9 +13,8 @@ import pyarrow as pa
 
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
+from terrine.temporal.sessionize import sessionize
 from terrine.windows import Window
-
-__all__ = ["SequenceResult", "event_sequence"]
 
 _MAX_EVENTS_EXCEEDED = RefusalSpec(
     "terrine.sequence.max_events_exceeded",
@@ -68,6 +67,7 @@ def event_sequence(
     observed_until_column: str | None,
     complete_from: datetime,
     complete_until: datetime,
+    session_gap_seconds: int | None = None,
 ) -> SequenceResult:
     """Select complete, ordered source events in each anchor's exact half-open window."""
     if window_start >= window_end or max_events <= 0:
@@ -171,6 +171,16 @@ def event_sequence(
             present._sequence_anchor == complete._sequence_anchor,
         ],
     ).filter(complete._sequence_complete)
+    if session_gap_seconds is not None:
+        complete_children = sessionize(
+            complete_children,
+            unit_column="_sequence_unit",
+            anchor_id_column="_sequence_anchor",
+            timestamp_column=timestamp_column,
+            event_id_column=event_id_column,
+            gap_seconds=session_gap_seconds,
+            max_events=max_events,
+        )
 
     if representation == "arrays":
         struct_values = ibis.struct(
@@ -190,6 +200,16 @@ def event_sequence(
                     for name in properties
                     for field, is_reason in ((name, False), (f"{name}_reason", True))
                 },
+                **(
+                    {
+                        "session_index": complete_children.session_index,
+                        "previous_event_id": complete_children.previous_event_id,
+                        "previous_event_time": complete_children.previous_event_time,
+                        "transition_reason": complete_children.transition_reason,
+                    }
+                    if session_gap_seconds is not None
+                    else {}
+                ),
             }
         )
         arrays = complete_children.group_by(
@@ -258,6 +278,18 @@ def event_sequence(
                     (f"{name}_reason", ibis.literal(None, type="string")),
                 )
             },
+            **(
+                {
+                    "session_index": ibis.literal(None, type="int64"),
+                    "previous_event_id": ibis.literal(None, type=events.schema()[event_id_column]),
+                    "previous_event_time": ibis.literal(
+                        None, type=events.schema()[timestamp_column]
+                    ),
+                    "transition_reason": ibis.literal(None, type="string"),
+                }
+                if session_gap_seconds is not None
+                else {}
+            ),
         )
         children = complete_children.select(
             unit=complete_children._sequence_unit,
@@ -285,12 +317,26 @@ def event_sequence(
                     ),
                 )
             },
+            **(
+                {
+                    "session_index": complete_children.session_index,
+                    "previous_event_id": complete_children.previous_event_id,
+                    "previous_event_time": complete_children.previous_event_time,
+                    "transition_reason": complete_children.transition_reason,
+                }
+                if session_gap_seconds is not None
+                else {}
+            ),
         )
         table = header.union(children, distinct=False).order_by(
             ["unit", "anchor_id", "is_event", "sequence_position"]
         )
         feature_names = tuple(properties)
-
+        feature_names = tuple(properties) + (
+            ("session_index", "previous_event_id", "previous_event_time", "transition_reason")
+            if session_gap_seconds is not None
+            else ()
+        )
     roles = Roles("unit", "anchor_id", "t0", None, feature_names, ())
     columns = {
         name: ColumnMeta(Window(window_start, window_end), "event_property", None, None, None, None)

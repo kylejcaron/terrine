@@ -74,7 +74,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
     if not isinstance(sequence, EventSequence):
         raise TypeError("design shape must be EventSequence")
     design.validate(model)
-    if sequence.sessions is not None or sequence.funnel is not None:
+    if sequence.funnel is not None:
         raise _UNSUPPORTED_SHAPE.error()
     if design.features or design.outcomes:
         raise _UNSUPPORTED_SHAPE.error()
@@ -162,6 +162,9 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         observed_until_column="_observed_until" if "_observed_until" in anchors.columns else None,
         complete_from=readiness.start,
         complete_until=readiness.end_exclusive,
+        session_gap_seconds=(
+            sequence.sessions.gap_seconds if sequence.sessions is not None else None
+        ),
     )
     integrity_checks = list(base._anchors._checks)
     if timestamp_check is not None:

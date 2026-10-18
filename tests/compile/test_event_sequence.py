@@ -132,19 +132,22 @@ def test_sequence_arrays_support_default_empty_property_list(sequence_model):
     ]
 
 
-def test_sequence_refuses_unimplemented_session_output(sequence_model):
-    from terrine.errors import TerrineError
+def test_sequence_sessions_are_compiled_per_anchor(sequence_model):
     from terrine.spec import Design, EventAnchor, EventSequence, SessionSpec
     from terrine.windows import Window
 
     design = Design(
         "user",
-        EventAnchor("signup"),
+        EventAnchor("signup", "each"),
         shape=EventSequence("signup", Window("0s", "2h"), max_events=5, sessions=SessionSpec("1h")),
     )
-    with pytest.raises(TerrineError) as error:
-        design.build(sequence_model)
-    assert error.value.code == "terrine.sequence.unsupported_shape"
+    rows = design.build(sequence_model)._compiled.table.to_pyarrow().to_pylist()
+    events = [row for row in rows if row["is_event"]]
+    assert events
+    assert {row["session_index"] for row in events} == {0}
+    assert sum(row["transition_reason"] == "missing_predecessor" for row in events) == len(
+        {row["anchor_id"] for row in events}
+    )
 
 
 @pytest.mark.parametrize(
