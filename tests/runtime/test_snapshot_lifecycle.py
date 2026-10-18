@@ -288,9 +288,10 @@ def test_cancel_during_snapshot_pin_failure_does_not_emit_false_failure(monkeypa
 
     status = get_run("cancel-at-pin", con=con, namespace="owner")
     events = read_run_events("cancel-at-pin", con=con, namespace="owner").events
-    assert status.durable_state == "cancel_requested"
+    assert status.durable_state == "cancelled"
     assert [event.payload["state"] for event in events if event.kind == "lifecycle"] == [
         "queued",
         "running",
         "cancel_requested",
+        "cancelled",
     ]

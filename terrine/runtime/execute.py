@@ -239,8 +239,10 @@ def execute_plan(
     except Exception:
         with event_transaction(con, namespace=namespace):
             failed = con.execute(
-                f"UPDATE {schema}.runtime_runs SET state='failed' "
-                "WHERE run_id=? AND state='running' AND attempt_fence=? RETURNING state",
+                f"UPDATE {schema}.runtime_runs SET state=CASE "
+                "WHEN state='cancel_requested' THEN 'cancelled' ELSE 'failed' END "
+                "WHERE run_id=? AND state IN ('running','cancel_requested') "
+                "AND attempt_fence=? RETURNING state",
                 [run_id, lease.fence],
             ).fetchone()
             if failed is not None:

@@ -65,9 +65,10 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
     with event_transaction(con, namespace=namespace):
         stale = con.execute(
             f"SELECT r.run_id,r.state,r.attempt_fence FROM {schema}.runtime_runs r "
-            f"JOIN {schema}.runtime_leases l ON l.resource='dataset:' || r.dataset "
+            f"LEFT JOIN {schema}.runtime_leases l ON l.resource='dataset:' || r.dataset "
             "AND l.owner=r.run_id AND l.fence=r.attempt_fence "
-            "WHERE r.state IN ('running','cancel_requested') AND l.expires_at<=current_timestamp "
+            "WHERE r.state IN ('running','cancel_requested') "
+            "AND (l.resource IS NULL OR l.expires_at<=current_timestamp) "
             "ORDER BY r.run_id"
         ).fetchall()
         for run_id, old_state, fence in stale:
@@ -110,11 +111,11 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
             transitioned = con.execute(
                 f"UPDATE {schema}.runtime_runs SET state=?, "
                 "published_generation=COALESCE(?,published_generation) "
-                "WHERE run_id=? AND state=? AND attempt_fence=? AND EXISTS ("
+                "WHERE run_id=? AND state=? AND attempt_fence=? AND NOT EXISTS ("
                 f"SELECT 1 FROM {schema}.runtime_leases l "
                 "WHERE l.resource='dataset:' || runtime_runs.dataset "
                 "AND l.owner=runtime_runs.run_id "
-                "AND l.fence=runtime_runs.attempt_fence AND l.expires_at<=current_timestamp) "
+                "AND l.fence=runtime_runs.attempt_fence AND l.expires_at>current_timestamp) "
                 "RETURNING state",
                 [state, generation, run_id, old_state, fence],
             ).fetchone()
