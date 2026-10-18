@@ -43,8 +43,14 @@ def sessionize(
         .lag()
         .over(group_by=groups, order_by=order),
     }
+    previous_label_column = None
     if label_column is not None:
-        predecessor_fields["previous_event_label"] = (
+        previous_label_column = "__terrine_previous_event_label"
+        suffix = 0
+        while previous_label_column in ordered.columns:
+            suffix += 1
+            previous_label_column = f"__terrine_previous_event_label_{suffix}"
+        predecessor_fields[previous_label_column] = (
             ordered[label_column].lag().over(group_by=groups, order_by=order)
         )
     prior = ordered.mutate(**predecessor_fields)
@@ -115,7 +121,8 @@ def sessionize(
         )
     }
     if label_column is not None:
-        transition_fields["transition_from"] = left.previous_event_label
+        assert previous_label_column is not None
+        transition_fields["transition_from"] = left[previous_label_column]
         transition_fields["transition_to"] = left[label_column]
     enriched = enriched.mutate(**transition_fields)
     return enriched.drop(session_start_column).order_by(

@@ -150,6 +150,68 @@ def test_sequence_compiler_excludes_known_false_eligibility_anchors(sequence_mod
     assert all(row["__terrine_eligible"] is not True for row in audit)
 
 
+def test_transition_header_uses_resolved_label_column_type(sequence_model):
+    from terrine.semantic.models import Property, TableRef
+    from terrine.spec import SessionSpec
+
+    sequence_model.con.create_table(
+        "typed_events",
+        pa.table(
+            {
+                "user_id": pa.array([1, 1], type=pa.int64()),
+                "ts": pa.array(
+                    [
+                        datetime(2025, 1, 1, 12, tzinfo=UTC),
+                        datetime(2025, 1, 1, 13, tzinfo=UTC),
+                    ],
+                    type=pa.timestamp("us", tz="UTC"),
+                ),
+                "event_id": ["a", "b"],
+                "kind": ["first", "second"],
+            }
+        ),
+    )
+    source = sequence_model.catalog.sources["events"].model_copy(
+        update={
+            "relation": TableRef(kind="table", name="typed_events"),
+            "properties": ("kind", "user_id"),
+        }
+    )
+    catalog = sequence_model.catalog.model_copy(
+        update={
+            "sources": {"events": source},
+            "properties": {
+                **sequence_model.catalog.properties,
+                "user_id": Property(
+                    source="events", column="kind", dtype="string", as_of="event_time"
+                ),
+            },
+        }
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=sequence_model.con,
+        readiness=sequence_model.readiness,
+        event_ids=sequence_model.event_ids,
+    )
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence(
+            "signup",
+            Window("0s", "2h"),
+            max_events=5,
+            label_property="user_id",
+            sessions=SessionSpec("1h"),
+        ),
+    )
+    rows = model.con.to_pyarrow(design.build(model)._compiled.table).to_pylist()
+    header = next(row for row in rows if not row["is_event"])
+    children = [row for row in rows if row["is_event"]]
+    assert header["transition_from"] is None
+    assert [row["transition_to"] for row in children] == ["first", "second"]
+
+
 def test_sequence_excludes_rows_without_selected_fact_before_event_cap():
     con = ibis.duckdb.connect()
     con.create_table(

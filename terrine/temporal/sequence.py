@@ -538,10 +538,10 @@ def event_sequence(
             ),
             **(
                 {
-                    "transition_from": ibis.literal(None, type=events.schema()[label_property]),
-                    "transition_to": ibis.literal(None, type=events.schema()[label_property]),
+                    "transition_from": ibis.literal(None, type=events.schema()[label_column]),
+                    "transition_to": ibis.literal(None, type=events.schema()[label_column]),
                 }
-                if session_gap_seconds is not None and label_property is not None
+                if session_gap_seconds is not None and label_column is not None
                 else {}
             ),
         )

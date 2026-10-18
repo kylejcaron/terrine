@@ -114,6 +114,55 @@ def test_sequence_metadata_round_trips_arrow_as_typed_provenance():
     assert restored.provenance.sequence_meta == provenance.sequence_meta
 
 
+def test_array_sequence_transition_references_survive_arrow_roundtrip():
+    from terrine.data import SequenceMeta
+    from terrine.windows import Window
+
+    sequence_meta = SequenceMeta(
+        fact="signup",
+        window=Window(0, 3600),
+        max_events=10,
+        representation="arrays",
+        event_fields=("event_values",),
+        event_id_column=None,
+        event_time_column=None,
+        position_column=None,
+        event_count_column="event_count",
+        complete_column="sequence_complete",
+        reason_column="sequence_reason",
+        property_reason_columns={},
+        label_property="kind",
+        session_gap_seconds=1800,
+        session_fields=("sessions",),
+        sessions_column="sessions",
+        sessions_complete_column="sessions_complete",
+        sessions_reason_column="sessions_reason",
+        transition_from_column="event_values.transition_from",
+        transition_to_column="event_values.transition_to",
+    )
+    provenance = replace(
+        _provenance(),
+        shape="event_sequence",
+        sequence_meta=sequence_meta,
+    )
+    frame = MaterializedFrame(
+        pa.table(
+            {
+                "unit": ["a"],
+                "event_values": [[{"transition_from": None, "transition_to": "signup"}]],
+            }
+        ),
+        Roles("unit", "anchor_id", "t0", None, (), ()),
+        {},
+        provenance,
+    )
+    restored = MaterializedFrame.from_arrow(frame.to_arrow())
+    restored_meta = restored.provenance.sequence_meta
+    assert restored_meta is not None
+    assert restored_meta.transition_from_column == "event_values.transition_from"
+    assert restored_meta.transition_to_column == "event_values.transition_to"
+
+
 def test_data_exports_feature_cutoff():
     import terrine.data as data
 

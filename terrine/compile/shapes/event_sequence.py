@@ -351,7 +351,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
     )
     checks = (*base._checks, *history_checks, _SequencePreflight(result))
     output = result.table
-    if base.roles.features or base.roles.outcomes:
+    if any(name not in output.columns for name in base.table.columns):
         base_columns = tuple(name for name in base.table.columns if name not in output.columns)
         output = output.left_join(
             base.table,
@@ -418,10 +418,10 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
                     "session_end_time",
                     "sessions",
                     "sessions_complete",
-                    "sessions_reason",
                     *(
                         ("transition_from", "transition_to")
                         if sequence.label_property is not None
+                        and sequence.representation == "positions"
                         else ()
                     ),
                 )
@@ -434,12 +434,20 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
             ),
             sessions_reason_column="sessions_reason" if sequence.sessions is not None else None,
             transition_from_column=(
-                "transition_from"
+                (
+                    "event_values.transition_from"
+                    if sequence.representation == "arrays"
+                    else "transition_from"
+                )
                 if sequence.sessions is not None and sequence.label_property
                 else None
             ),
             transition_to_column=(
-                "transition_to"
+                (
+                    "event_values.transition_to"
+                    if sequence.representation == "arrays"
+                    else "transition_to"
+                )
                 if sequence.sessions is not None and sequence.label_property
                 else None
             ),

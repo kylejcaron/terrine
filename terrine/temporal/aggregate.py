@@ -521,7 +521,8 @@ def aggregate_window(
     if calendars or resolution == "day":
         invalid = builder.put(
             "unaligned",
-            ~(_aligned(builder.col(start), minutes) & _aligned(builder.col(end), minutes)),
+            builder.table.t0.notnull()
+            & ~(_aligned(builder.col(start), minutes) & _aligned(builder.col(end), minutes)),
         )
         refusal = UNALIGNED_CALENDAR_AVERAGE if calendars else _DAY_ALIGNMENT
         context = {**domain_context, "measure": calendars[0].fact} if calendars else domain_context

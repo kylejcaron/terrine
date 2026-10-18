@@ -145,6 +145,38 @@ def test_sessions_expose_summary_and_transition_schemas():
     assert result[2]["transition"] == {"from_event_id": "b", "to_event_id": "c"}
 
 
+def test_session_label_temporary_preserves_previous_event_label_property():
+    events = ibis.memtable(
+        {
+            "unit": ["u", "u"],
+            "anchor": [1, 1],
+            "time": [
+                datetime(2025, 1, 1, tzinfo=UTC),
+                datetime(2025, 1, 1, 0, 0, 1, tzinfo=UTC),
+            ],
+            "id": ["a", "b"],
+            "previous_event_label": ["current-a", "current-b"],
+            "label": ["first", "second"],
+        }
+    )
+    rows = (
+        sessionize(
+            events,
+            unit_column="unit",
+            anchor_id_column="anchor",
+            timestamp_column="time",
+            event_id_column="id",
+            gap_seconds=2,
+            max_events=2,
+            label_column="label",
+        )
+        .to_pyarrow()
+        .to_pylist()
+    )
+    assert [row["previous_event_label"] for row in rows] == ["current-a", "current-b"]
+    assert rows[1]["transition_from"] == "first"
+
+
 def test_session_summaries_override_colliding_physical_columns():
     events = ibis.memtable(
         {
