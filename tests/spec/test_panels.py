@@ -160,3 +160,13 @@ def test_direct_design_construction_cannot_conflict_with_sequential_treatment():
         )
 
     assert getattr(error.value, "code", None) == "terrine.design.conflicting_treatment"
+
+
+def test_design_json_without_optional_anchor_range_loads_with_sample_defaults():
+    restored = from_json(
+        '{\"schema_version\":1,\"design\":{\"unit\":\"user\",\"anchor\":'
+        '{\"type\":\"FixedDate\",\"date\":{\"type\":\"date\",\"value\":\"2025-01-01\"}}}}'
+    )
+
+    assert restored.anchor_range is None
+    assert restored.sample is None

@@ -418,6 +418,7 @@ def _design(value: Any) -> Design:
         "treatment": None,
         "gap": 0,
         "shape": "cross_section",
+        "anchor_range": None,
         "sample": None,
         **item,
     }
