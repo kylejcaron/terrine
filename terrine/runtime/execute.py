@@ -524,10 +524,20 @@ def _finish_run(
         dependencies = {dependency for task in plan.tasks for dependency in task.dependencies}
         has_results = any(task.task_id not in dependencies for task in plan.tasks)
         if not has_results:
-            publication = con.execute(
-                f"SELECT dataset,generation FROM {schema}.runtime_run_publications WHERE run_id=?",
-                [run_id],
+            publication_table = con.execute(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE lower(table_schema)=lower(?) AND table_name='runtime_run_publications'",
+                [runtime_store.namespace],
             ).fetchone()
+            publication = (
+                con.execute(
+                    f"SELECT dataset,generation FROM {schema}.runtime_run_publications "
+                    "WHERE run_id=?",
+                    [run_id],
+                ).fetchone()
+                if publication_table is not None
+                else None
+            )
             if publication is not None:
                 previous = con.execute(
                     f"SELECT DISTINCT result.partition FROM {schema}.runtime_run_results result "

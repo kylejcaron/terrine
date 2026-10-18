@@ -70,7 +70,8 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
         for run_id, old_state, fence in stale:
             publication = (
                 con.execute(
-                    f"SELECT generation FROM {schema}.runtime_run_publications WHERE run_id=?",
+                    f"SELECT dataset,generation FROM {schema}.runtime_run_publications "
+                    "WHERE run_id=?",
                     [run_id],
                 ).fetchone()
                 if publications is not None
@@ -83,7 +84,26 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
                 if old_state == "cancel_requested"
                 else "failed"
             )
-            generation = publication[0] if publication is not None else None
+            generation = publication[1] if publication is not None else None
+            if publication is not None:
+                con.execute(
+                    f"CREATE TABLE IF NOT EXISTS {schema}.runtime_run_results "
+                    "(run_id VARCHAR NOT NULL, partition VARCHAR NOT NULL, "
+                    "PRIMARY KEY(run_id,partition))"
+                )
+                previous = con.execute(
+                    f"SELECT DISTINCT result.partition FROM {schema}.runtime_run_results result "
+                    f"JOIN {schema}.runtime_run_publications prior ON prior.run_id=result.run_id "
+                    "WHERE prior.dataset=? AND prior.generation=? AND result.run_id<>? "
+                    "ORDER BY result.partition",
+                    [publication[0], publication[1], run_id],
+                ).fetchall()
+                for (partition,) in previous:
+                    con.execute(
+                        f"INSERT INTO {schema}.runtime_run_results VALUES (?, ?) "
+                        "ON CONFLICT DO NOTHING",
+                        [run_id, partition],
+                    )
             transitioned = con.execute(
                 f"UPDATE {schema}.runtime_runs SET state=?, "
                 "published_generation=COALESCE(?,published_generation) "

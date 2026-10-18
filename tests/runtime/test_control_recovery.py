@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import duckdb
@@ -132,3 +133,58 @@ def test_cancel_rechecks_state_when_queued_run_starts_before_cancellation(
     receipt = status_module.cancel_run("racing-run", con=con, namespace="owner")
 
     assert receipt.status.durable_state == "cancel_requested"
+
+
+def test_restart_restores_no_op_selection_before_recovered_success():
+    con = duckdb.connect(":memory:")
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
+    schema = store._schema
+    con.execute(
+        f"CREATE TABLE {schema}.runtime_runs "
+        "(run_id VARCHAR PRIMARY KEY,dataset VARCHAR,fingerprint VARCHAR,state VARCHAR,"
+        "published_generation VARCHAR,attempt_fence BIGINT)"
+    )
+    con.execute(
+        f"INSERT INTO {schema}.runtime_runs VALUES "
+        "('prior','orders','fp','succeeded','g2',NULL),"
+        "('noop','orders','fp','running',NULL,1)"
+    )
+    con.execute(
+        f"CREATE TABLE {schema}.runtime_leases "
+        "(resource VARCHAR PRIMARY KEY,owner VARCHAR,fence BIGINT,expires_at TIMESTAMP)"
+    )
+    con.execute(
+        f"INSERT INTO {schema}.runtime_leases VALUES "
+        "('dataset:orders','noop',1,TIMESTAMP '2000-01-01')"
+    )
+    con.execute(
+        f"CREATE TABLE {schema}.runtime_run_publications "
+        "(run_id VARCHAR PRIMARY KEY,dataset VARCHAR,generation VARCHAR,version BIGINT)"
+    )
+    con.execute(
+        f"INSERT INTO {schema}.runtime_run_publications VALUES "
+        "('prior','orders','g2',2),('noop','orders','g2',2)"
+    )
+    con.execute(
+        f"CREATE TABLE {schema}.runtime_run_results "
+        "(run_id VARCHAR NOT NULL,partition VARCHAR NOT NULL,PRIMARY KEY(run_id,partition))"
+    )
+    con.execute(f"INSERT INTO {schema}.runtime_run_results VALUES ('prior','frame-new')")
+    server = ControlServer(
+        store,
+        namespace="owner",
+        endpoint=ControlEndpoint(Path(f"/tmp/terrine-recovery-copy-{os.getpid()}.sock")),
+    )
+    server.start()
+    try:
+        state = con.execute(
+            f"SELECT state FROM {schema}.runtime_runs WHERE run_id='noop'"
+        ).fetchone()
+        selection = con.execute(
+            f"SELECT partition FROM {schema}.runtime_run_results WHERE run_id='noop'"
+        ).fetchall()
+        assert state == ("succeeded",)
+        assert selection == [("frame-new",)]
+    finally:
+        server.close()

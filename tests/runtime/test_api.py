@@ -263,3 +263,32 @@ def test_empty_refresh_plan_reuses_current_generation_result_selection():
         .to_dict(orient="records"),
         key=lambda row: row["id"],
     ) == sorted(expected_second, key=lambda row: row["id"])
+
+
+def test_empty_plan_with_string_publisher_remains_successful():
+    from terrine.runtime.changes import ChangeSet
+
+    con = duckdb.connect(":memory:")
+    no_op = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="definition",
+        snapshot_id="snapshot",
+        graph=dependency_graph(
+            sources=("events",), definition_hash="definition", partitions=("p1",)
+        ),
+        changes=ChangeSet((), "revision"),
+    )
+
+    class NoOpExecutor:
+        def run_task(self, task, dependencies):
+            raise AssertionError("empty plan must not execute tasks")
+
+        def publish(self, plan, outputs, lease, run_id):
+            assert not outputs
+            return "g0"
+
+    receipt = runtime.run_plan(no_op, con=con, namespace="owner", executor=NoOpExecutor())
+
+    assert receipt.state == "succeeded"
+    assert receipt.published_generation == "g0"
