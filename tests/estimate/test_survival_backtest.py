@@ -103,6 +103,52 @@ def test_backtest_masks_future_event_time_and_recensors_censor_time():
     ]
 
 
+def test_wide_duration_precision_ignores_all_null_nanosecond_event_time():
+    source = _frame()
+    table = source.table.drop(["censor_time"])
+    table = table.set_column(
+        table.schema.get_field_index("t0"),
+        "t0",
+        pa.array(
+            [datetime(2499, 1, 1, tzinfo=UTC), datetime(2499, 1, 2, tzinfo=UTC)],
+            type=pa.timestamp("us", tz="UTC"),
+        ),
+    )
+    table = table.set_column(
+        table.schema.get_field_index("entry"),
+        "entry",
+        pa.array(
+            [datetime(2500, 1, 1, tzinfo=UTC), datetime(2500, 1, 2, tzinfo=UTC)],
+            type=pa.timestamp("us", tz="UTC"),
+        ),
+    )
+    table = table.set_column(
+        table.schema.get_field_index("duration"),
+        "duration",
+        pa.array(
+            [datetime(2500, 1, 3, tzinfo=UTC), datetime(2500, 1, 4, tzinfo=UTC)],
+            type=pa.timestamp("us", tz="UTC"),
+        ),
+    )
+    table = table.set_column(
+        table.schema.get_field_index("event_time"),
+        "event_time",
+        pa.array([None, None], type=pa.timestamp("ns", tz="UTC")),
+    )
+    source = MaterializedFrame(table, source.roles, source.columns, source.provenance)
+    captured = []
+    backtest_survival(
+        source,
+        duration="duration",
+        event="event",
+        entry="entry",
+        prediction_cutoffs=[datetime(2501, 1, 1, tzinfo=UTC)],
+        fitter=lambda data: captured.append(data.table),
+    )
+    assert captured[0].schema.field("duration").type == pa.timestamp("us", tz="UTC")
+    assert captured[0]["duration"][0].as_py() == datetime(2500, 1, 3, tzinfo=UTC)
+
+
 @pytest.mark.parametrize(
     "cutoff",
     [

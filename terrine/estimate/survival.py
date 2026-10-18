@@ -288,16 +288,8 @@ def backtest_survival(
     for optional_time in ("event_time", "censor_time"):
         if optional_time in table.column_names:
             _utc_timestamp_type(table, optional_time)
-    timestamp_types = [
-        table.schema.field(name).type
-        for name in (duration, entry, data.roles.t0, "event_time", "censor_time")
-        if name in table.column_names
-    ]
     precision = {"s": 0, "ms": 1, "us": 2, "ns": 3}
-    base_output_unit = max(
-        (dtype.unit for dtype in timestamp_types),
-        key=precision.__getitem__,
-    )
+    base_output_unit = table.schema.field(duration).type.unit
     censor_input_type = (
         table.schema.field("censor_time").type if "censor_time" in table.column_names else None
     )
@@ -371,7 +363,7 @@ def backtest_survival(
                     < cutoff_elapsed
                 ):
                     updated_event_time.append(
-                        event_scalar.cast(output_duration_type).cast(pa.int64()).as_py()
+                        event_scalar.cast(event_time_array.type).cast(pa.int64()).as_py()
                     )
                 else:
                     updated_event_time.append(None)
@@ -407,7 +399,7 @@ def backtest_survival(
             sample = sample.set_column(
                 sample.schema.get_field_index("event_time"),
                 "event_time",
-                pa.array(updated_event_time, type=output_duration_type),
+                pa.array(updated_event_time, type=event_time_array.type),
             )
         if censor_time_array is not None:
             sample = sample.set_column(
