@@ -20,6 +20,16 @@ def _column(frame: MaterializedFrame, name: str):
     return frame.table[name].to_pylist()
 
 
+def _mean(values: list[float]) -> float | None:
+    scale = max(map(abs, values), default=0.0)
+    if not math.isfinite(scale):
+        return None
+    if scale == 0:
+        return 0.0
+    value = scale * (math.fsum(item / scale for item in values) / len(values))
+    return value if math.isfinite(value) else None
+
+
 def _cluster_contrast(frame: MaterializedFrame, outcome: str, selected: list[bool]):
     treatment_name = frame.roles.treatment
     if treatment_name is None:
@@ -33,26 +43,68 @@ def _cluster_contrast(frame: MaterializedFrame, outcome: str, selected: list[boo
     for value, arm, unit, keep in zip(values, treated, units, selected, strict=True):
         if not keep:
             continue
-        if value is None or not isinstance(arm, bool) or unit is None:
+        if value is None or unit is None or isinstance(value, bool):
             return None
-        groups[arm].setdefault(unit, []).append(float(value))
+        if not isinstance(arm, (bool, int, float)) or arm not in (0, 1):
+            return None
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not math.isfinite(numeric):
+            return None
+        groups[bool(arm)].setdefault(unit, []).append(numeric)
     if not groups[True] or not groups[False]:
         return None
-    means = {}
-    influence = {}
+    means: dict[bool, float] = {}
+    unit_means: dict[bool, dict[object, float]] = {}
     for arm in (True, False):
-        per_unit = {unit: math.fsum(rows) / len(rows) for unit, rows in groups[arm].items()}
-        means[arm] = math.fsum(per_unit.values()) / len(per_unit)
-        count = len(per_unit)
-        influence.update(
-            {
-                unit: (1.0 if arm else -1.0) * (value - means[arm]) / count
-                for unit, value in per_unit.items()
-            }
+        unit_means[arm] = {}
+        for unit, observations in groups[arm].items():
+            mean = _mean(observations)
+            if mean is None:
+                return None
+            unit_means[arm][unit] = mean
+        mean = _mean(list(unit_means[arm].values()))
+        if mean is None:
+            return None
+        means[arm] = mean
+    mean_scale = max(abs(means[True]), abs(means[False]))
+    effect = (
+        0.0
+        if mean_scale == 0
+        else mean_scale * (means[True] / mean_scale - means[False] / mean_scale)
+    )
+    if not math.isfinite(effect):
+        return None
+    influence: dict[object, float] = {}
+    for arm, sign in ((True, 1.0), (False, -1.0)):
+        count = len(unit_means[arm])
+        scale = max((abs(value) for value in unit_means[arm].values()), default=0.0)
+        scale = max(scale, abs(means[arm]))
+        for unit, value in unit_means[arm].items():
+            residual = 0.0 if scale == 0 else value / scale - means[arm] / scale
+            contribution = 0.0 if scale == 0 else sign * scale * (residual / count)
+            total = influence.get(unit, 0.0) + contribution
+            if not math.isfinite(total):
+                return None
+            influence[unit] = total
+    score_scale = max(map(abs, influence.values()), default=0.0)
+    if score_scale == 0:
+        standard_error = 0.0
+    else:
+        standard_error = score_scale * math.sqrt(
+            math.fsum((value / score_scale) ** 2 for value in influence.values())
         )
-    effect = means[True] - means[False]
-    variance = math.fsum(value * value for value in influence.values())
-    return effect, math.sqrt(max(variance, 0.0)), len(groups[True]) + len(groups[False])
+    if not math.isfinite(standard_error):
+        return None
+    return effect, standard_error, len(set(unit_means[True]) | set(unit_means[False]))
+
+
+def _pvalue(effect: float, standard_error: float) -> float:
+    if standard_error == 0:
+        return 1.0 if effect == 0 else 0.0
+    return float(chi2.sf((abs(effect) / standard_error) ** 2, 1))
 
 
 def placebo_test(
@@ -80,7 +132,7 @@ def placebo_test(
             {"alpha": float(alpha)},
             {"reason": "missing_event_period", "interpretation": _INTERPRETATION},
         )
-    effects, rejects, counts = [], [], []
+    effects, p_values, counts = [], [], []
     for period in placebo_periods:
         contrast = _cluster_contrast(frame, outcome, [value == period for value in values])
         if contrast is None:
@@ -97,7 +149,7 @@ def placebo_test(
             )
         effect, se, n_units = contrast
         effects.append(effect)
-        rejects.append(abs(effect / se) > 1.959963984540054 if se > 0 else effect != 0)
+        p_values.append(_pvalue(effect, se))
         counts.append(n_units)
     return Diagnostic(
         "placebo",
@@ -105,11 +157,12 @@ def placebo_test(
         {
             "n_periods": len(placebo_periods),
             "max_abs_effect": max(map(abs, effects)),
-            "any_reject": any(rejects),
+            "any_reject": any(p_value < alpha for p_value in p_values),
             "n_units": min(counts),
         },
         {"alpha": float(alpha)},
         {
+            "p_values": tuple(p_values),
             "effects": tuple(effects),
             "event_periods": tuple(placebo_periods),
             "reason": "low_power" if min(counts) < 20 else "placebo_checked",
@@ -167,7 +220,7 @@ def negative_control_test(
             },
         )
     effect, se, n_units = contrast
-    p_value = float(chi2.sf((effect / se) ** 2, 1)) if se > 0 else float(effect == 0)
+    p_value = _pvalue(effect, se)
     return Diagnostic(
         "negative_control",
         "warn",

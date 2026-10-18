@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -54,6 +55,41 @@ def test_insignificant_low_power_pretrend_is_not_pass_or_proof():
     p_value = result.metrics["p_value"]
     assert isinstance(p_value, float) and p_value > 0.05
     assert result.context["reason"] == "low_power"
+
+
+def test_well_powered_null_pretrend_remains_warning_not_pass():
+    base = _study(effects=(0.0,) * 15)
+    result = pretrend_test(
+        replace(
+            base,
+            cohorts=tuple(datetime(2025, month, 1, tzinfo=UTC) for month in range(1, 6)),
+            covariance=tuple(tuple(0.04 if i == j else 0.0 for j in range(15)) for i in range(15)),
+            standard_errors=(0.2,) * 15,
+            n_clusters=80,
+        )
+    )
+    assert result.status == "warn"
+    assert result.context["reason"] == "not_rejected"
+
+
+def test_rank_deficient_joint_covariance_is_unavailable():
+    base = _study(effects=(0.0,) * 15)
+    covariance = tuple(
+        tuple(0.04 if i % 3 == j % 3 and i % 3 < 2 else 0.0 for j in range(15)) for i in range(15)
+    )
+    effects = (1.0, 0.0, 0.0, -1.0) + (0.0,) * 11
+    result = pretrend_test(
+        replace(
+            base,
+            cohorts=tuple(datetime(2025, month, 1, tzinfo=UTC) for month in range(1, 6)),
+            effects=effects,
+            covariance=covariance,
+            standard_errors=(0.2,) * 15,
+            n_clusters=80,
+        )
+    )
+    assert result.status == "unavailable"
+    assert result.context["reason"] == "singular_joint_covariance"
 
 
 def test_pretrend_refuses_invalid_alpha():

@@ -2,9 +2,9 @@
 
 ## Predeclared design
 
-The panel calibration is a 16-cell factorial design (2 × 2 × 2 × 2), with 400 fixed seeds (`0..399`) and `n_units=2000` in every cell. Factors are: zero versus heterogeneous cohort effects; equal versus unequal trial aggregation masses; disjoint versus overlapping repeated-trial units; and two trial-varying assignment-rate/baseline profiles. Each cell has a paired contamination/anticipation refusal case. Refusal cases are expected to produce their predeclared stable Terrine refusal code; they are not dropped into the estimation denominator.
+The panel calibration is a 16-cell factorial design (2 × 2 × 2 × 2), with 400 fixed seeds (`0..399`) and `n_units=2000` in every cell. Factors are: zero versus heterogeneous cohort effects; equal versus unequal trial aggregation masses; disjoint versus overlapping repeated-trial units; and two trial-varying assignment-rate/baseline profiles. Each replication also runs a fixed contaminated-reference case whose expected result is the stable `terrine.estimate.stacked_input` refusal with reason `outcome_window_contaminates_reference`, not an estimate.
 
-Every clean cell requires all 400 replications to complete successfully. Evidence records attempted, completed and refused counts, refusal codes/seeds, bias, empirical standard deviation, mean standard error, RMSE, coverage count, median interval width, diagnostic statuses, runtime/environment and exact seed list. A failure remains in the cell accounting. No calibration output is inferred from a planted-effect smoke test.
+Every clean cell requires all 400 replications to complete successfully; any unexpected refusal fails the cell and stays in the denominator. Evidence records attempted, completed/refused counts, refusal codes/seeds, bias, empirical standard deviation, mean standard error, RMSE, exact interval-coverage count, median interval width, diagnostic statuses, runtime/environment and exact seed list. At family alpha `0.01`, bias, exact-binomial 0.95 coverage and chi-square studentization tests each receive `0.01/(3*16)`. The two-sided bias test uses a log-tail normal critical value; coverage uses the exact binomial test; studentization compares the sum of squared error/SE ratios to its chi-square range. All cutoffs are frozen in the harness before results are observed.
 
 ## Gates and execution
 

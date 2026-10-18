@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pyarrow as pa
@@ -58,3 +59,57 @@ def test_missing_negative_control_is_unavailable_not_pass():
     )
     assert result.status == "unavailable"
     assert result.context["reason"] == "missing_negative_control"
+
+
+def test_integer_binary_treatment_is_accepted():
+    frame = _frame()
+    rows = frame.table.to_pylist()
+    for row in rows:
+        row["treatment"] = int(row["treatment"])
+    result = placebo_test(
+        replace(frame, table=pa.Table.from_pylist(rows)), outcome="y", placebo_periods=(-2,)
+    )
+    assert result.status == "warn"
+    assert result.context["reason"] != "incomplete_or_missing_treatment_outcome"
+
+
+def test_negative_control_counts_a_cluster_once_across_treatment_roles():
+    frame = _frame()
+    rows = frame.table.to_pylist()
+    for row in rows:
+        if row["event_period"] == -1:
+            row["treatment"] = not row["treatment"]
+            row["negative"] = float(row["treatment"])
+    result = negative_control_test(
+        replace(frame, table=pa.Table.from_pylist(rows)), outcome="y", negative_control="negative"
+    )
+    assert result.metrics["n_units"] == 40
+
+
+def test_placebo_uses_requested_alpha():
+    frame = _frame()
+    rows = frame.table.to_pylist()
+    for row in rows:
+        if row["event_period"] == -2:
+            arm_sign = 1 if row["unit"] % 2 else -1
+            row["y"] = (0.63 + arm_sign) if row["treatment"] else float(arm_sign)
+    result = placebo_test(
+        replace(frame, table=pa.Table.from_pylist(rows)),
+        outcome="y",
+        placebo_periods=(-2,),
+        alpha=0.01,
+    )
+    assert result.metrics["any_reject"] is False
+
+
+def test_large_finite_repeated_outcomes_have_finite_cluster_summary():
+    frame = _frame()
+    rows = frame.table.to_pylist()
+    for row in rows:
+        row["negative"] = 1e308
+    result = negative_control_test(
+        replace(frame, table=pa.Table.from_pylist(rows)), outcome="y", negative_control="negative"
+    )
+    assert result.metrics["effect"] == 0.0
+    assert result.metrics["standard_error"] == 0.0
+    assert result.metrics["n_units"] == 40

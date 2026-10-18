@@ -72,7 +72,7 @@ def pretrend_test(result: StackedEventStudy, *, alpha: float = 0.05) -> Diagnost
             },
         )
     rank = int(np.linalg.matrix_rank(covariance))
-    if rank == 0:
+    if rank != covariance.shape[0]:
         return Diagnostic(
             "joint_pretrend",
             "unavailable",
@@ -94,7 +94,8 @@ def pretrend_test(result: StackedEventStudy, *, alpha: float = 0.05) -> Diagnost
     statistic = max(0.0, statistic)
     p_value = float(chi2.sf(statistic, rank))
     low_power = cohorts < 5 or result.n_clusters < 20
-    status = "warn" if low_power else ("fail" if p_value < alpha else "pass")
+    rejected = p_value < alpha
+    status = "warn" if low_power or not rejected else "fail"
     return Diagnostic(
         "joint_pretrend",
         status,
@@ -111,7 +112,7 @@ def pretrend_test(result: StackedEventStudy, *, alpha: float = 0.05) -> Diagnost
         {
             "reason": "low_power"
             if low_power
-            else ("pretrend_detected" if p_value < alpha else "not_rejected"),
+            else ("pretrend_detected" if rejected else "not_rejected"),
             "tested_event_periods": tuple(periods[index] for index in leads),
             "interpretation": "failure_to_reject_is_not_evidence_of_parallel_trends",
             "power_context": {
