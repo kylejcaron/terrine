@@ -5,7 +5,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from terrine.errors import RefusalSpec
-from terrine.runtime.events import event_transaction, record_run_event
+from terrine.runtime.events import (
+    _latest_event_cursor,
+    event_transaction,
+    record_run_event,
+)
 from terrine.runtime.leases import LeaseStore
 from terrine.runtime.state import RuntimeStore
 from terrine.runtime.synchronization import run_publication_lock
@@ -90,6 +94,7 @@ def get_run(run_id: str, *, con: Any, namespace: str) -> RunStatus:
         _utc(row[3]),
         _utc(lease[0]) if lease else None,
         pinned_result_ref=row[4],
+        latest_event_cursor=_latest_event_cursor(run_id, con=con, namespace=namespace),
     )
 
 

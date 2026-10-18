@@ -131,6 +131,7 @@ def read_run_events(
         store.initialize()
         schema = store._schema
         _ensure_events(con, schema)
+
     after_sequence = 0
     cursor_gap = False
     if after is not None:
@@ -160,6 +161,18 @@ def read_run_events(
     )
     next_cursor = _cursor(run_id, events[-1].sequence) if events else after
     return EventPage(events, next_cursor, len(rows) > len(selected), cursor_gap)
+
+
+def _latest_event_cursor(run_id: str, *, con: Any, namespace: str) -> str | None:
+    store = RuntimeStore(con, namespace=namespace)
+    with _EVENT_WRITE_LOCK:
+        store.initialize()
+        _ensure_events(con, store._schema)
+        sequence = con.execute(
+            f"SELECT max(sequence) FROM {store._schema}.runtime_run_events WHERE run_id=?",
+            [run_id],
+        ).fetchone()[0]
+    return _cursor(run_id, sequence) if sequence is not None else None
 
 
 def _cursor(run_id: str, sequence: int) -> str:

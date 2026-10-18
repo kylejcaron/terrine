@@ -64,3 +64,24 @@ def test_repeated_cancel_returns_already_requested():
 
     assert first.disposition == "requested"
     assert second.disposition == "already_requested"
+
+
+def test_status_reports_latest_event_cursor_for_resume():
+    from terrine.runtime.events import read_run_events, record_run_event
+
+    con = duckdb.connect(":memory:")
+    con.execute("CREATE SCHEMA owner")
+    con.execute(
+        "CREATE TABLE owner.runtime_runs (run_id VARCHAR, dataset VARCHAR, fingerprint VARCHAR, "
+        "state VARCHAR, published_generation VARCHAR, attempt_fence BIGINT)"
+    )
+    con.execute("INSERT INTO owner.runtime_runs VALUES ('r1','d','f','running',NULL,1)")
+    record_run_event("r1", "lifecycle", {"state": "running"}, con=con, namespace="owner")
+
+    status = get_run("r1", con=con, namespace="owner")
+    page = read_run_events("r1", con=con, namespace="owner", after=status.latest_event_cursor)
+
+    assert (
+        status.latest_event_cursor == read_run_events("r1", con=con, namespace="owner").next_cursor
+    )
+    assert page.events == ()
