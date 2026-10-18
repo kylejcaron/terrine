@@ -92,7 +92,7 @@ def stacked_event_study(
 ) -> StackedEventStudy:
     """Estimate weighted CATTs and their joint unit-cluster covariance."""
     z = critical_value(alpha)
-    if frame.provenance.sampling is not None:
+    if frame.provenance.sampling is not None or frame.provenance.weight_kind == "sampled_control":
         raise _SAMPLED.error()
     meta = frame.provenance.calendar_comparison
     if frame.provenance.shape != "calendar_comparison" or meta is None:

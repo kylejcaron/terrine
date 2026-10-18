@@ -105,6 +105,22 @@ def test_stacked_catt_refuses_sampled_analysis_populations():
     assert error.value.code == "terrine.estimate.sampled_analysis_population"
 
 
+def test_stacked_catt_refuses_legacy_sampled_control_weight_kind():
+    from dataclasses import replace
+
+    frame = _frame()
+    provenance = replace(frame.provenance, weight_kind="sampled_control")
+    with pytest.raises(TerrineError) as error:
+        stacked_event_study(
+            replace(frame, provenance=provenance),
+            outcome="y",
+            treatment="treatment",
+            cohort="cohort",
+            period="period",
+        )
+    assert error.value.code == "terrine.estimate.sampled_analysis_population"
+
+
 def test_cohort_weights_define_effect_aggregation():
     result = stacked_event_study(
         _frame(),
