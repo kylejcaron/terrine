@@ -421,6 +421,21 @@ def test_submicrosecond_event_timestamp_refuses_during_explicit_validation():
         model.con.disconnect()
 
 
+def test_persisted_anchor_validation_preserves_source_precision_refusal():
+    design = Design(unit="user", anchor=EventAnchor("occurred"))
+    model = _submicro_model(1_700_000_000_000_000_123)
+    try:
+        ordinary = compile_anchors(design, model)
+        persisted = ibis.memtable(model.con.to_pyarrow(ordinary.table))
+        reused = compile_anchors(design, model, persisted=persisted)
+        with pytest.raises(TerrineError) as error:
+            reused.validate(execute=lambda query: query.to_pyarrow())
+        assert error.value.code == "terrine.compile.anchor_timestamp_precision"
+        assert error.value.context["column"] == "ts"
+    finally:
+        model.con.disconnect()
+
+
 @pytest.mark.parametrize(
     ("anchor_range", "included"),
     [

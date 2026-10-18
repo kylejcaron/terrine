@@ -48,9 +48,7 @@ def _persisted_prefixes(design, model):
     return result
 
 
-def test_persisted_daily_prefix_anchor_reuse_matches_ordinary_frame_compiler(
-    column_model, monkeypatch
-):
+def test_persisted_daily_prefix_anchor_reuse_matches_ordinary_frame_compiler(column_model):
     design = Design(
         "user",
         FixedDate("2025-01-03T00:00:00+00:00"),
@@ -63,14 +61,10 @@ def test_persisted_daily_prefix_anchor_reuse_matches_ordinary_frame_compiler(
     )
     anchor_table = compile_anchors(design, column_model).table
     anchor_arrow = column_model.con.to_pyarrow(anchor_table)
-    persisted[replace(anchor_key, snapshot_id="same-snapshot")] = ibis.memtable(anchor_arrow)
-
-    def forbidden_anchor_recompile(*args, **kwargs):
-        raise AssertionError("persisted anchor substitution must not recompile candidates")
-
-    monkeypatch.setattr("terrine.compile.anchors._roster_anchors", forbidden_anchor_recompile)
-    monkeypatch.setattr("terrine.compile.anchors._event_anchors", forbidden_anchor_recompile)
+    persisted_anchor = ibis.memtable(anchor_arrow)
+    persisted[replace(anchor_key, snapshot_id="same-snapshot")] = persisted_anchor
     reused = compose_materialized_frame(design, column_model, persisted=persisted)
+    assert reused._anchors.table is persisted_anchor
     ordinary.validate(execute=column_model.con.to_pyarrow)
     reused.validate(execute=column_model.con.to_pyarrow)
     assert column_model.con.to_pyarrow(ordinary.audit_table.order_by("unit")).equals(
