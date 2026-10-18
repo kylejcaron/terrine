@@ -1,0 +1,76 @@
+from datetime import UTC, date, datetime
+from typing import Any, cast
+
+import pytest
+
+from terrine.errors import TerrineError
+from terrine.spec.anchors import Schedule
+from terrine.spec.design import Design
+from terrine.spec.io import from_json, to_json
+from terrine.spec.panels import (
+    CalendarComparisonPanel,
+    CalendarComparisonSpec,
+    Initiation,
+    MatchedT0Sample,
+)
+
+
+def base_design():
+    return Design("unit_id", Schedule("30d", date(2025, 1, 1), date(2025, 3, 1)))
+
+
+def test_comparison_control_modes_round_trip_with_distinct_hashes():
+    cohort = Initiation(
+        "treatment",
+        "started",
+        history_start=datetime(2024, 1, 1, tzinfo=UTC),
+        knowledge="recorded_at",
+    )
+    never = Design(
+        "unit_id",
+        base_design().anchor,
+        shape=CalendarComparisonSpec(cohort, "never_treated", -2, (0, 1), (-1,)),
+    )
+    not_yet = Design(
+        "unit_id",
+        base_design().anchor,
+        shape=CalendarComparisonSpec(cohort, "not_yet_treated", -2, (0, 1), (-1,)),
+    )
+    assert never.spec_hash != not_yet.spec_hash
+    assert from_json(to_json(never)) == never
+    assert from_json(to_json(not_yet)) == not_yet
+    assert isinstance(never.shape, CalendarComparisonSpec)
+
+
+def test_comparison_reference_conflict_refuses_without_shifting():
+    cohort = Initiation(
+        "treatment",
+        "started",
+        history_start=datetime(2024, 1, 1, tzinfo=UTC),
+        knowledge="recorded_at",
+    )
+    with pytest.raises(ValueError):
+        CalendarComparisonSpec(cohort, "never_treated", -1, (0,), (-1,))
+
+
+def test_calendar_comparison_producer_refuses_sampled_population():
+    cohort = Initiation(
+        "treatment",
+        "started",
+        history_start=datetime(2024, 1, 1, tzinfo=UTC),
+        knowledge="recorded_at",
+    )
+    base = Design(
+        "unit_id",
+        base_design().anchor,
+        sample=MatchedT0Sample(("stratum",), controls_per_treated=1, seed=4),
+    )
+    with pytest.raises(TerrineError):
+        CalendarComparisonPanel(
+            base,
+            cast(Any, None),
+            cohort=cohort,
+            control="never_treated",
+            reference_period=-2,
+            comparison_periods=(0,),
+        )

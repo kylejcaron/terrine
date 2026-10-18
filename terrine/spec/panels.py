@@ -27,9 +27,11 @@ __all__ = [
     "MatchedT0Sample",
     "SequentialSpec",
     "EventPanelSpec",
+    "CalendarComparisonSpec",
     "Sequential",
     "CalendarPanel",
     "EventPanel",
+    "CalendarComparisonPanel",
     "matched_t0",
 ]
 
@@ -41,6 +43,10 @@ _CONFLICT = RefusalSpec(
 )
 _INVALID_SAMPLE = RefusalSpec(
     "terrine.design.invalid_matched_t0_sample", "Matched-t0 sample policy is invalid: {reason}."
+)
+_INVALID_COMPARISON = RefusalSpec(
+    "terrine.design.invalid_calendar_comparison",
+    "Calendar comparison specification is invalid: {reason}.",
 )
 
 
@@ -205,7 +211,53 @@ class EventPanelSpec:
         object.__setattr__(self, "periods", periods)
 
 
-def _copy_design(base: Design, shape: str | StatePanel | SequentialSpec | EventPanelSpec) -> Design:
+@dataclass(frozen=True, slots=True)
+class CalendarComparisonSpec:
+    cohort: Initiation
+    control: Literal["never_treated", "not_yet_treated"]
+    reference_period: int
+    comparison_periods: tuple[int, ...]
+    anticipation_periods: tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.cohort, Initiation):
+            raise TypeError("cohort must be Initiation")
+        if self.control not in ("never_treated", "not_yet_treated"):
+            raise ValueError("control must be never_treated or not_yet_treated")
+        values = (self.reference_period, *self.comparison_periods, *self.anticipation_periods)
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+            raise TypeError("calendar periods must be integers")
+        comparisons = tuple(self.comparison_periods)
+        anticipations = tuple(self.anticipation_periods)
+        if not comparisons or any(value < 0 for value in comparisons):
+            raise _INVALID_COMPARISON.error(
+                reason="comparison periods must be nonnegative and nonempty"
+            )
+        if len(set(comparisons)) != len(comparisons):
+            raise _INVALID_COMPARISON.error(reason="comparison periods must be unique")
+        if any(value >= 0 for value in anticipations) or len(set(anticipations)) != len(
+            anticipations
+        ):
+            raise _INVALID_COMPARISON.error(
+                reason="anticipation periods must be unique negative leads"
+            )
+        boundary = min(anticipations) if anticipations else 0
+        if self.reference_period >= boundary:
+            raise _INVALID_COMPARISON.error(
+                reason="reference period must precede the anticipation window"
+            )
+        if self.reference_period in comparisons:
+            raise _INVALID_COMPARISON.error(
+                reason="reference period conflicts with a comparison period"
+            )
+        object.__setattr__(self, "comparison_periods", comparisons)
+        object.__setattr__(self, "anticipation_periods", anticipations)
+
+
+def _copy_design(
+    base: Design,
+    shape: str | StatePanel | SequentialSpec | EventPanelSpec | CalendarComparisonSpec,
+) -> Design:
     return Design(
         base.unit,
         base.anchor,
@@ -241,6 +293,29 @@ def CalendarPanel(sequential: Design) -> Design:
     if not isinstance(sequential, Design) or not isinstance(sequential.shape, SequentialSpec):
         raise TypeError("CalendarPanel requires a Sequential Design")
     return sequential
+
+
+def CalendarComparisonPanel(
+    base: Design,
+    model: Model,
+    *,
+    cohort: Initiation,
+    control: Literal["never_treated", "not_yet_treated"],
+    reference_period: int,
+    comparison_periods: tuple[int, ...],
+    anticipation_periods: tuple[int, ...] = (),
+) -> Frame:
+    """Build a canonical roster-backed calendar comparison Frame."""
+    if not isinstance(base, Design):
+        raise TypeError("base must be Design")
+    if base.sample is not None:
+        raise _INVALID_SAMPLE.error(reason="calendar comparisons refuse sampled populations")
+    spec = CalendarComparisonSpec(
+        cohort, control, reference_period, comparison_periods, anticipation_periods
+    )
+    if base.treatment is not None:
+        raise _CONFLICT.error()
+    return _copy_design(base, spec).build(model)
 
 
 def EventPanel(

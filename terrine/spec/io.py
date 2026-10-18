@@ -15,6 +15,7 @@ from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import And, AttributeAsOf, Eq, Gt, IsNull, MetricAgg
 from terrine.spec.panels import (
+    CalendarComparisonSpec,
     EventPanelSpec,
     Initiation,
     MatchedT0Sample,
@@ -167,6 +168,15 @@ def _encode(value: Any) -> Any:
             "periods": list(value.periods),
             "period_seconds": value.period_seconds,
             "reference_period": value.reference_period,
+        }
+    if isinstance(value, CalendarComparisonSpec):
+        return {
+            "type": "CalendarComparisonSpec",
+            "cohort": _encode(value.cohort),
+            "control": value.control,
+            "reference_period": value.reference_period,
+            "comparison_periods": list(value.comparison_periods),
+            "anticipation_periods": list(value.anticipation_periods),
         }
     if isinstance(value, Window):
         return {"type": "Window", "start": value.start, "end": value.end}
@@ -362,6 +372,25 @@ def _node(value: Any) -> Any:
         item = _object(value, {"type", "periods", "period_seconds", "reference_period"})
         return EventPanelSpec(
             tuple(item["periods"]), item["period_seconds"], item["reference_period"]
+        )
+    if tag == "CalendarComparisonSpec":
+        item = _object(
+            value,
+            {
+                "type",
+                "cohort",
+                "control",
+                "reference_period",
+                "comparison_periods",
+                "anticipation_periods",
+            },
+        )
+        return CalendarComparisonSpec(
+            _node(item["cohort"]),
+            item["control"],
+            item["reference_period"],
+            tuple(item["comparison_periods"]),
+            tuple(item["anticipation_periods"]),
         )
     if tag == "Window":
         item = _object(value, {"type", "start", "end"})

@@ -20,6 +20,8 @@ from terrine.spec.expressions import (
 )
 from terrine.spec.io import from_json, from_yaml, to_json, to_yaml
 from terrine.spec.panels import (
+    CalendarComparisonPanel,
+    CalendarComparisonSpec,
     CalendarPanel,
     EventPanel,
     EventPanelSpec,
@@ -67,6 +69,8 @@ __all__ = [
     "MatchedT0Sample",
     "SequentialSpec",
     "EventPanelSpec",
+    "CalendarComparisonSpec",
+    "CalendarComparisonPanel",
     "Sequential",
     "CalendarPanel",
     "EventPanel",

@@ -254,7 +254,12 @@ def _range_bound(value: date | datetime | None, model: Model) -> datetime | None
 
 
 def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
-    from terrine.spec.panels import EventPanelSpec, PersistentAdoption, SequentialSpec
+    from terrine.spec.panels import (
+        CalendarComparisonSpec,
+        EventPanelSpec,
+        PersistentAdoption,
+        SequentialSpec,
+    )
     from terrine.spec.state_panel import StatePanel, validate_state_panel
 
     if design.sample is not None and not isinstance(design.shape, SequentialSpec):
@@ -308,6 +313,24 @@ def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
     elif isinstance(design.shape, EventPanelSpec):
         if not isinstance(design.anchor, EventAnchor):
             raise _INVALID.error(reason="EventPanel requires an EventAnchor")
+    elif isinstance(design.shape, CalendarComparisonSpec):
+        if not isinstance(design.anchor, Schedule):
+            raise _INVALID.error(reason="CalendarComparison requires a Schedule anchor")
+        if design.sample is not None:
+            raise _INVALID.error(reason="calendar comparisons refuse sampled populations")
+        source = model.sources.get(design.shape.cohort.source)
+        if source is None:
+            raise _MISSING.error(kind="cohort source", name=design.shape.cohort.source)
+        declared = set(source.properties) | set(source.facts)
+        if design.shape.cohort.property not in declared:
+            raise _MISSING.error(kind="cohort property", name=design.shape.cohort.property)
+        coverage = model.readiness.for_fact(source.name)
+        if coverage.start > design.shape.cohort.history_start:
+            raise _INCOMPLETE_TREATMENT_HISTORY.error(
+                source=source.name,
+                boundary=design.shape.cohort.history_start.isoformat(),
+            )
+        _required(model, source.name, required)
     elif design.shape != "cross_section":
         raise _INVALID.error(reason="unsupported design shape")
 
