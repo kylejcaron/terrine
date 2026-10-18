@@ -17,6 +17,7 @@ from terrine.compile._predicates import CompiledValue, compile_predicate
 from terrine.compile.anchors import (
     AnchorTable,
     _integrity_check,
+    _null_check,
     _precision_check,
     _unique_checks,
     _utc_column,
@@ -243,6 +244,12 @@ def compile_columns(
         identity = selector_identity_columns.get(source.name)
         if source.name not in checked_selector_sources:
             checked_selector_sources.add(source.name)
+            selector_identity_checks.extend(
+                (
+                    _null_check(events, "_unit", "null_event_unit"),
+                    _null_check(events, "_timestamp", "null_event_timestamp"),
+                )
+            )
             if identity is not None:
                 selector_identity_checks.extend(
                     _unique_checks(events, identity, "event", scope=("_unit",))
@@ -694,24 +701,30 @@ def compile_columns(
             result_reason = result_table[reason_column]
             combined_complete = f"{output}_relative_complete"
             combined_reason = f"{output}_relative_reason"
-            result_table = result_table.mutate(
-                **{
-                    output: ibis.ifelse(
-                        origin_complete & has_origin,
-                        result_table[output],
-                        ibis.null().cast(result_table[output].type()),
-                    ),
-                    combined_complete: (origin_complete & has_origin & result_complete).fill_null(
-                        False
-                    ),
-                    combined_reason: ibis.cases(
-                        (~origin_complete, result_table[origin_reason_name]),
-                        (~has_origin, "missing_selector_origin"),
-                        (~result_complete, result_reason),
-                        else_=ibis.null().cast("string"),
-                    ),
-                }
-            )
+            relative_values = {
+                output: ibis.ifelse(
+                    origin_complete & has_origin,
+                    result_table[output],
+                    ibis.null().cast(result_table[output].type()),
+                ),
+                combined_complete: (origin_complete & has_origin & result_complete).fill_null(
+                    False
+                ),
+                combined_reason: ibis.cases(
+                    (~origin_complete, result_table[origin_reason_name]),
+                    (~has_origin, "missing_selector_origin"),
+                    (~result_complete, result_reason),
+                    else_=ibis.null().cast("string"),
+                ),
+            }
+            if meta.absolute_error_column is not None:
+                error_column = meta.absolute_error_column
+                relative_values[error_column] = ibis.ifelse(
+                    origin_complete & has_origin,
+                    result_table[error_column],
+                    ibis.null().cast(result_table[error_column].type()),
+                )
+            result_table = result_table.mutate(**relative_values)
             meta = replace(meta, complete_column=combined_complete, reason_column=combined_reason)
         # Each value derives from the candidates independently, then joins back by
         # null-safe anchor identity, so query nesting does not grow with column count.

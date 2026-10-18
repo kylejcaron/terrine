@@ -389,6 +389,9 @@ def _validate_sequence_shape(design: Design, model: Model, required: set[str]) -
     if sequence.label_property is not None:
         requested_properties.append(sequence.label_property)
     if sequence.funnel is not None:
+        funnel_dtype = _event_property(model, source.name, sequence.funnel.event_property)
+        if funnel_dtype != "string":
+            raise _SEQUENCE_INVALID.error(reason="funnel event properties must have string dtype")
         requested_properties.append(sequence.funnel.event_property)
     for property_name in requested_properties:
         _event_property(model, source.name, property_name)

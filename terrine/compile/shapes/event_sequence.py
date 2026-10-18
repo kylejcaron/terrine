@@ -143,8 +143,12 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
     source = model.sources[fact.source]
     physical_unit = source.entities[design.unit]
     configured_id = model.event_ids.get(source.name)
-    identity_alias = "__terrine_sequence_event_id"
     raw = model._relation(source.relation)
+    identity_alias = "__terrine_sequence_event_id"
+    suffix = 0
+    while identity_alias in raw.columns:
+        suffix += 1
+        identity_alias = f"__terrine_sequence_event_id_{suffix}"
     normalized = normalize_events(
         raw,
         source,
@@ -200,6 +204,14 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         "transition",
         "transition_from",
         "transition_to",
+        "_sequence_unit",
+        "_sequence_anchor",
+        "_sequence_t0",
+        "_sequence_event_id",
+        "_sequence_event_time",
+        "_funnel_has_missing_history",
+        "_funnel_sequence_end",
+        "__terrine_funnel_event_property",
     }
     reserved_property_names = (
         set(normalized.columns) | set(sequence.properties) | set(internal_properties)

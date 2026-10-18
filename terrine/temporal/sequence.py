@@ -729,13 +729,20 @@ def event_sequence(
                 table.anchor_id == attempts_by_anchor.anchor_id,
             ],
         )
+        funnel_missing_history_column = "_terrine_funnel_missing_history"
+        suffix = 0
+        while funnel_missing_history_column in joined_table.columns:
+            suffix += 1
+            funnel_missing_history_column = f"_terrine_funnel_missing_history_{suffix}"
         if funnel_event_property_found_column is not None:
             unknown_by_anchor = complete_children.group_by(
                 [complete_children._sequence_unit, complete_children._sequence_anchor]
             ).aggregate(
-                _funnel_has_missing_history=(
-                    ~complete_children[funnel_event_property_found_column]
-                ).any()
+                **{
+                    funnel_missing_history_column: (
+                        ~complete_children[funnel_event_property_found_column]
+                    ).any()
+                }
             )
             joined_table = joined_table.left_join(
                 unknown_by_anchor,
@@ -747,8 +754,8 @@ def event_sequence(
         funnel_type = attempts_by_anchor.schema()["funnel_attempts"]
         funnel_missing_history = cast(
             ir.BooleanValue,
-            joined_table._funnel_has_missing_history.fill_null(False)
-            if "_funnel_has_missing_history" in joined_table.columns
+            joined_table[funnel_missing_history_column].fill_null(False)
+            if funnel_missing_history_column in joined_table.columns
             else ibis.literal(False, type="boolean"),
         )
         funnel_complete = joined_table.sequence_complete & ~funnel_missing_history

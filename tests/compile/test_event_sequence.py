@@ -370,6 +370,64 @@ def test_funnel_dependency_generated_name_does_not_overwrite_event_values(
         assert child[selected_property] == "view"
 
 
+def test_funnel_rejects_non_string_event_property(sequence_model):
+    from terrine.errors import TerrineError
+    from terrine.semantic.models import Property, TableRef
+    from terrine.spec import FunnelSpec
+
+    sequence_model.con.create_table(
+        "numeric_events",
+        ibis.memtable(
+            {
+                "user_id": ["u", "u"],
+                "ts": [
+                    datetime(2025, 1, 1, 12, tzinfo=UTC),
+                    datetime(2025, 1, 1, 13, tzinfo=UTC),
+                ],
+                "event_id": ["a", "b"],
+                "kind": ["view", "purchase"],
+                "amount": [1, 2],
+            }
+        ).to_pyarrow(),
+    )
+    source = sequence_model.catalog.sources["events"].model_copy(
+        update={
+            "relation": TableRef(kind="table", name="numeric_events"),
+            "properties": ("kind", "amount"),
+        }
+    )
+    catalog = sequence_model.catalog.model_copy(
+        update={
+            "sources": {"events": source},
+            "properties": {
+                **sequence_model.catalog.properties,
+                "amount": Property(
+                    source="events", column="amount", dtype="int", as_of="event_time"
+                ),
+            },
+        }
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=sequence_model.con,
+        readiness=sequence_model.readiness,
+        event_ids=sequence_model.event_ids,
+    )
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence(
+            "signup",
+            Window("0s", "2h"),
+            max_events=5,
+            funnel=FunnelSpec("amount", ("1", "2")),
+        ),
+    )
+    with pytest.raises(TerrineError) as error:
+        design.validate(model)
+    assert error.value.code == "terrine.sequence.invalid_spec"
+
+
 def test_timestamp_identity_refuses_ties_without_configured_id(sequence_model):
     from terrine.errors import TerrineError
     from terrine.spec import Design, EventAnchor, EventSequence
@@ -857,6 +915,7 @@ def test_sequence_timestamp_temporary_alias_avoids_physical_property(sequence_mo
                 "ts": [datetime(2025, 1, 1, 12, tzinfo=UTC)],
                 "event_id": ["one"],
                 "_sequence_raw_timestamp": ["preserve-me"],
+                "__terrine_sequence_event_id": ["collision"],
             }
         ),
     )
