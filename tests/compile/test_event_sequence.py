@@ -324,6 +324,8 @@ def test_sequence_compiler_publishes_funnel_attempt_schema(sequence_model):
         ("previous_event_id", True, None),
         ("unit", False, "__terrine_funnel_event_property"),
         ("previous_event_id", False, "previous_event_id"),
+        ("kind", False, "_sequence_unit"),
+        ("kind", False, "_funnel_has_missing_history"),
     ],
 )
 def test_funnel_dependency_generated_name_does_not_overwrite_event_values(

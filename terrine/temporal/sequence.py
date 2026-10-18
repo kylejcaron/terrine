@@ -278,6 +278,18 @@ def event_sequence(
         properties
     ):
         raise ValueError("invalid property output or availability mapping")
+    helper_columns = {"_sequence_unit", "_sequence_anchor", "_sequence_t0"}
+    property_output_columns = {name: name for name in properties}
+    occupied_outputs = set(events.columns) | set(anchors.columns) | set(properties)
+    for index, name in enumerate(properties):
+        if name in helper_columns:
+            alias = f"__terrine_sequence_output_property_{index}"
+            suffix = 0
+            while alias in occupied_outputs:
+                suffix += 1
+                alias = f"__terrine_sequence_output_property_{index}_{suffix}"
+            occupied_outputs.add(alias)
+            property_output_columns[name] = alias
     label_column = label_property_column or label_property
     required = (
         unit_column,
@@ -506,7 +518,10 @@ def event_sequence(
                 output: expression
                 for name in properties
                 for output, expression in (
-                    (name, ibis.literal(None, type=events.schema()[property_columns[name]])),
+                    (
+                        property_output_columns[name],
+                        ibis.literal(None, type=events.schema()[property_columns[name]]),
+                    ),
                     (f"{name}_reason", ibis.literal(None, type="string")),
                 )
             },
@@ -560,7 +575,7 @@ def event_sequence(
                 output: expression
                 for name in properties
                 for output, expression in (
-                    (name, complete_children[property_columns[name]]),
+                    (property_output_columns[name], complete_children[property_columns[name]]),
                     (
                         f"{name}_reason",
                         (
@@ -609,6 +624,13 @@ def event_sequence(
         table = header.union(children, distinct=False).order_by(
             ["unit", "anchor_id", "is_event", "sequence_position"]
         )
+        output_renames = {
+            alias: name for name, alias in property_output_columns.items() if alias != name
+        }
+        if output_renames:
+            table = table.select(
+                **{output_renames.get(name, name): table[name] for name in table.columns}
+            )
         feature_names = tuple(properties) + (
             (
                 "session_index",
@@ -790,9 +812,7 @@ def event_sequence(
                     "unit_right",
                     "anchor_id_right",
                     "funnel_attempts",
-                    "_sequence_unit",
-                    "_sequence_anchor",
-                    "_funnel_has_missing_history",
+                    funnel_missing_history_column,
                 }
             },
             funnel_attempts=payload,
