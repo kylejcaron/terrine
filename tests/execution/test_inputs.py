@@ -457,6 +457,29 @@ def test_sql_roots_with_trailing_syntax_capture_natively(query):
         con.close()
 
 
+def test_sql_capture_preserves_function_spelling_when_rendering_query():
+    con = duckdb.connect()
+    try:
+        con.execute("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        con.execute("INSERT INTO events VALUES ('2025-01-01', 1, 3)")
+        con.execute("CREATE SEQUENCE seq START 1")
+        con.execute("CREATE MACRO power(x, y) AS nextval('seq')")
+        definition = _catalog().model_dump(mode="python")
+        definition["sources"]["events"]["relation"] = {
+            "kind": "sql",
+            "sql": "SELECT ts, user_id, pow(value, 2) AS value FROM events",
+        }
+        catalog = Catalog.model_validate(definition)
+        with publish_native_inputs(catalog, con=con) as published:
+            table = published.con.table("input_0")
+            rows = published.con.to_pyarrow(table).to_pylist()
+            assert rows[0]["value"] == 9
+        row = con.execute("SELECT nextval('seq')").fetchone()
+        assert row is not None and row[0] == 1
+    finally:
+        con.close()
+
+
 def test_published_sql_result_replaces_its_original_dependency():
     con = duckdb.connect()
     try:

@@ -10,7 +10,7 @@ from typing import Any
 
 import duckdb
 import ibis
-from sqlglot import parse
+from sqlglot import tokenize
 
 from terrine.data import Budget
 from terrine.errors import RefusalSpec, TerrineError
@@ -60,10 +60,12 @@ def _root_sql(relation: Any, raw: Any, catalog: Catalog) -> str:
         return "SELECT * FROM " + ".".join(
             _quote_ident(component) for component in (obj.catalog, obj.schema, obj.name)
         )
-    statement = parse(relation.sql, read=catalog.dialect)[0]
-    if statement is None:
-        raise _SNAPSHOT_UNAVAILABLE.error(reason="SQL root did not parse to one query")
-    return statement.sql(dialect=catalog.dialect)
+    source_sql = relation.sql
+    tokens = tokenize(source_sql, read=catalog.dialect)
+    if tokens and tokens[-1].token_type.name == "SEMICOLON":
+        token = tokens[-1]
+        source_sql = source_sql[: token.start] + source_sql[token.end + 1 :]
+    return source_sql
 
 
 def _identity(relation: Any, catalog: Catalog, raw: Any) -> PhysicalRelationId:
@@ -172,7 +174,7 @@ def _publish_locked(
                 artifact_dir.name, f"capture_{len(staged_identities)}.parquet"
             )
             escaped_path = capture_path.replace("'", "''")
-            origin.execute(f"COPY ({sql}) TO '{escaped_path}' (FORMAT PARQUET)")
+            origin.execute(f"COPY ({sql}\n) TO '{escaped_path}' (FORMAT PARQUET)")
             writer.execute(
                 f"CREATE TABLE {_quote_ident(storage_name)} "
                 f"AS SELECT * FROM read_parquet('{escaped_path}')"
