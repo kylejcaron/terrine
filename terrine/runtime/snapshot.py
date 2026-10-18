@@ -147,6 +147,7 @@ class SnapshotAuthority:
         if store.namespace != namespace:
             raise ValueError("snapshot namespace does not match runtime store")
         _assert_owner_connection(self.owner, store.con)
+        store.release_terminal_run_snapshot_references()
         if retain < timedelta(0):
             raise ValueError("snapshot retention must not be negative")
         root = self.owner.snapshot_root / namespace

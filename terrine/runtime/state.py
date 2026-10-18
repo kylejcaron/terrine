@@ -385,6 +385,40 @@ class RuntimeStore:
         ).fetchall()
         return tuple((kind, reference) for kind, reference in rows)
 
+    def release_terminal_run_snapshot_references(self) -> None:
+        """Reconcile active-run pins left by terminal cleanup conflicts."""
+        table = self.con.execute(
+            "SELECT 1 FROM information_schema.tables WHERE lower(table_schema)=lower(?) "
+            "AND table_name='runtime_runs'",
+            [self.namespace],
+        ).fetchone()
+        if table is None:
+            return
+        terminal = {
+            run_id
+            for (run_id,) in self.con.execute(
+                f"SELECT run_id FROM {self._schema}.runtime_runs "
+                "WHERE state IN ('succeeded', 'cancelled')"
+            ).fetchall()
+        }
+        if not terminal:
+            return
+        references = self.con.execute(
+            f"SELECT snapshot_id, reference FROM {self._schema}.runtime_snapshot_references "
+            "WHERE kind='active_run'"
+        ).fetchall()
+        for snapshot_id, reference in references:
+            try:
+                run_id, _fence = json.loads(reference)
+            except (TypeError, ValueError):
+                run_id = reference
+            if run_id in terminal:
+                try:
+                    self.unpin_snapshot(snapshot_id, kind="active_run", reference=reference)
+                except Exception as exc:
+                    if type(exc).__name__ != "TransactionException":
+                        raise
+
     def replace_published_snapshot(
         self,
         dataset: str,
