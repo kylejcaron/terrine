@@ -50,6 +50,20 @@ def test_time_split_purges_overlapping_labels_and_respects_point_vs_interval_equ
     assert result["point"].reason == "label_overlap"
 
 
+def test_time_split_purges_fifty_six_day_label_horizon_without_reassignment() -> None:
+    policy = TimeSplit(train_until="2025-03-01", validation_until="2025-05-01")
+    row = {
+        "id": "overlap",
+        "origin": datetime(2025, 1, 4, tzinfo=UTC),
+        "label_end": datetime(2025, 3, 1, tzinfo=UTC),
+    }
+    assert assign_splits([row], policy, catalog_timezone=UTC)["overlap"].split == "train"
+    overlap = dict(row, label_end=datetime(2025, 3, 2, tzinfo=UTC))
+    assignment = assign_splits([overlap], policy, catalog_timezone=UTC)["overlap"]
+    assert assignment.split == "unassigned"
+    assert assignment.reason == "label_overlap"
+
+
 def test_time_split_embargo_exclusions_have_reason_counts() -> None:
     policy = TimeSplit(train_until="2025-02-01", validation_until="2025-03-01", embargo="2d")
     rows = [{"id": "gap", "origin": datetime(2025, 2, 2, tzinfo=UTC), "label_end": None}]
@@ -134,3 +148,15 @@ def test_submicrosecond_split_timestamps_are_rejected() -> None:
     }
     with pytest.raises(ValueError):
         assign_splits([row], policy)
+
+
+def test_mixed_calendar_and_instant_boundaries_order_after_catalog_binding() -> None:
+    policy = TimeSplit(train_until="2025-02-01T02:00:00Z", validation_until="2025-02-01")
+    bound = policy.bind(ZoneInfo("America/New_York"))
+    assert bound.validation_until == datetime(2025, 2, 1, 5, tzinfo=UTC)
+    row = {
+        "id": "mixed",
+        "origin": datetime(2025, 2, 1, 3, tzinfo=UTC),
+        "label_end": datetime(2025, 2, 1, 4, tzinfo=UTC),
+    }
+    assert assign_splits([row], bound)["mixed"].split == "validation"

@@ -96,8 +96,11 @@ class TimeSplit:
     ) -> None:
         train = _boundary(train_until)
         validation = None if validation_until is None else _boundary(validation_until)
-        if validation is not None and _order_instant(validation) <= _order_instant(train):
-            raise ValueError("validation_until must follow train_until")
+        if validation is not None and isinstance(validation, datetime) == isinstance(
+            train, datetime
+        ):
+            if _order_instant(validation) <= _order_instant(train):
+                raise ValueError("validation_until must follow train_until")
         if groups is not None and not isinstance(groups, GroupSplit):
             raise TypeError("groups must be GroupSplit or None")
         object.__setattr__(self, "train_until", train)
