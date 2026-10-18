@@ -13,6 +13,47 @@ from terrine.spec import (
 )
 
 
+def test_calendar_cohorts_normalize_naive_source_timestamps_to_utc(native_inputs):
+    catalog, con = native_inputs
+    con.insert("users", pa.table({"user_id": ["c", "d"]}))
+    con.insert(
+        "events",
+        pa.table(
+            {
+                "user_id": ["c", "d"],
+                "ts": [
+                    datetime(2025, 1, 4, 4, tzinfo=UTC),
+                    datetime(2025, 1, 8, 4, tzinfo=UTC),
+                ],
+                "event_id": ["c1", "d1"],
+                "alternate_event_id": ["c2", "d2"],
+            }
+        ),
+    )
+    con.raw_sql("ALTER TABLE events ALTER COLUMN ts TYPE TIMESTAMP")
+    con.raw_sql("SET TimeZone='America/Los_Angeles'")
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={"events": Coverage("2025-01-01", "2025-01-12")},
+        units={"user": UnitSource("users", "user_id")},
+        event_ids={"events": "event_id"},
+    )
+    frame = CalendarComparisonPanel(
+        Design("user", Schedule("1d", "2025-01-01", "2025-01-12")),
+        model,
+        cohort=Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+        control="not_yet_treated",
+        reference_period=-1,
+        comparison_periods=(0,),
+    ).materialize(Budget(max_rows=200, max_output_bytes=1_000_000))
+
+    initiation_times = {
+        row["__terrine_treatment_initiation_time"] for row in frame.table.to_pylist()
+    }
+    assert datetime(2025, 1, 4, 4, tzinfo=UTC) in initiation_times
+
+
 def test_calendar_comparison_materializes_roster_controls_for_both_modes(native_inputs):
     catalog, con = native_inputs
     con.insert("users", pa.table({"user_id": ["c", "d", "e"], "alt_id": ["cc", "dd", "ee"]}))

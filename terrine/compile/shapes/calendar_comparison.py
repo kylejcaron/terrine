@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast
 import ibis
 from ibis.expr import types as ir
 
-from terrine.compile.anchors import AnchorTable
+from terrine.compile.anchors import AnchorTable, _utc_column
 from terrine.compile.columns import CompiledStudy, _validate_names, compile_columns
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
@@ -16,6 +16,7 @@ from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
 from terrine.spec.expressions import MetricAgg
 from terrine.spec.panels import CalendarComparisonSpec
+from terrine.temporal._timestamps import compare_timestamps
 from terrine.temporal.aggregate import _Check, _Failure
 
 if TYPE_CHECKING:
@@ -114,23 +115,32 @@ def _cohort_units(design: Design, model: Model, anchors: AnchorTable):
     events = normalize_events(
         model._relation(source.relation), source, source.entities[design.unit]
     )
+    events = _utc_column(model, events, "_timestamp", "_timestamp_utc")
+    timestamp = events._timestamp_utc
     if selector.property in source.facts:
-        observed = events._timestamp.notnull()
+        observed = timestamp.notnull()
     else:
         prop = source.properties[selector.property]
         if prop.dimension_name is not None:
             raise _UNSUPPORTED.error(reason="cohort properties bound to dimensions are unsupported")
         observed = events[prop.column].notnull()
     initiation = (
-        events.filter(observed & (events._timestamp >= ibis.literal(selector.history_start)))
+        events.filter(
+            observed
+            & compare_timestamps(
+                timestamp,
+                cast(ir.TimestampScalar, ibis.literal(selector.history_start)),
+                "ge",
+            )
+        )
         .group_by("_unit")
-        .aggregate(__terrine_initiation_time=events._timestamp.min())
+        .aggregate(__terrine_initiation_time=timestamp.min())
     )
     candidates = anchors.table.join(
         initiation,
         [
             anchors.table.unit == initiation._unit,
-            anchors.table.t0 >= initiation.__terrine_initiation_time,
+            compare_timestamps(anchors.table.t0, initiation.__terrine_initiation_time, "ge"),
         ],
     )
     cohorts = candidates.group_by("unit").aggregate(cohort_time=candidates.t0.min())

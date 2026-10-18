@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, timedelta
 from typing import cast
 
 import ibis
@@ -140,16 +140,24 @@ def _persistent_contradictions(design: Design, model):
     events = normalize_events(
         model._relation(source.relation), source, source.entities[design.unit]
     )
-    end = ibis.literal(model.day_boundary(design.anchor.end))
+    end = ibis.literal(model.day_boundary(design.anchor.end).astimezone(UTC))
     value = events[prop.column]
     adopted = events.filter(
-        (events._timestamp >= ibis.literal(selector.history_start))
-        & (events._timestamp < end)
+        compare_timestamps(
+            events._timestamp,
+            ibis.literal(selector.history_start),
+            "ge",
+        )
+        & compare_timestamps(events._timestamp, end, "lt")
         & (value == selector.adopted_value)
     ).select(_unit=events._unit, adopted_at=events._timestamp)
     reversed_state = events.filter(
-        (events._timestamp >= ibis.literal(selector.history_start))
-        & (events._timestamp < end)
+        compare_timestamps(
+            events._timestamp,
+            ibis.literal(selector.history_start),
+            "ge",
+        )
+        & compare_timestamps(events._timestamp, end, "lt")
         & value.notnull()
         & (value != selector.adopted_value)
     ).select(_unit=events._unit, reversed_at=events._timestamp)
@@ -158,7 +166,7 @@ def _persistent_contradictions(design: Design, model):
             reversed_state,
             [
                 adopted._unit == reversed_state._unit,
-                reversed_state.reversed_at > adopted.adopted_at,
+                compare_timestamps(reversed_state.reversed_at, adopted.adopted_at, "gt"),
             ],
         )
         .select(unit=adopted._unit)
