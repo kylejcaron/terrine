@@ -8,7 +8,7 @@ import socketserver
 import stat
 import threading
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +50,7 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
     ).fetchone()
     if exists is None:
         return
+    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP")
     lease_table = con.execute(
         "SELECT 1 FROM information_schema.tables "
         "WHERE lower(table_schema)=lower(?) AND table_name='runtime_leases'",
@@ -110,14 +111,21 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
                     )
             transitioned = con.execute(
                 f"UPDATE {schema}.runtime_runs SET state=?, "
-                "published_generation=COALESCE(?,published_generation) "
+                "published_generation=COALESCE(?,published_generation), updated_at=? "
                 "WHERE run_id=? AND state=? AND attempt_fence=? AND NOT EXISTS ("
                 f"SELECT 1 FROM {schema}.runtime_leases l "
                 "WHERE l.resource='dataset:' || runtime_runs.dataset "
                 "AND l.owner=runtime_runs.run_id "
                 "AND l.fence=runtime_runs.attempt_fence AND l.expires_at>current_timestamp) "
                 "RETURNING state",
-                [state, generation, run_id, old_state, fence],
+                [
+                    state,
+                    generation,
+                    datetime.now(UTC).replace(tzinfo=None),
+                    run_id,
+                    old_state,
+                    fence,
+                ],
             ).fetchone()
             if transitioned is not None:
                 record_run_event(

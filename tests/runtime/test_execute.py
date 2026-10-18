@@ -745,6 +745,14 @@ def test_lease_heartbeat_keeps_long_task_alive(monkeypatch):
         lease_ttl=timedelta(seconds=30),
     )
     assert result.state == "succeeded"
+    timestamps = con.execute(
+        "SELECT updated_at, heartbeat_at FROM owner.runtime_runs WHERE run_id='long-task'"
+    ).fetchone()
+    assert timestamps is not None
+    updated_at, heartbeat_at = timestamps
+    assert updated_at is not None
+    assert heartbeat_at is not None
+    assert heartbeat_at <= updated_at
 
 
 def test_delayed_lease_claim_cannot_overwrite_successful_retry(monkeypatch):
