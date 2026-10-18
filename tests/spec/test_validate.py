@@ -10,7 +10,7 @@ from terrine.errors import TerrineError
 from terrine.semantic.models import BoundMeasure, BoundMetric
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
-from terrine.spec.expressions import agg, asof, gt
+from terrine.spec.expressions import EventTime, agg, asof, gt
 from terrine.spec.sequence import EventSequence
 from terrine.temporal.readiness import Readiness
 
@@ -148,6 +148,42 @@ def test_event_sequence_validation_rejects_unknown_event_property_without_query(
     with pytest.raises(TerrineError) as error:
         validate_design(design, bound)
     assert error.value.code == "terrine.design.missing_reference"
+    assert bound.con.calls == []
+
+
+def test_future_selector_dependency_refuses_safe_looking_preanchor_metric():
+    from terrine.spec.validate import validate_design
+    from terrine.windows import Window
+
+    origin = EventTime("session", Window("-2d", "-1d"))
+    selector = EventTime("session", Window("1d", "2d"), relative_to=origin)
+    design = Design(
+        "user",
+        EventAnchor("session"),
+        features={"x": agg("sessions", window=("-2d", "-1d"), relative_to=selector)},
+    )
+    bound = model()
+    with pytest.raises(TerrineError) as error:
+        validate_design(design, bound)
+    assert error.value.code == "terrine.sequence.reanchor_leak"
+    assert bound.con.calls == []
+
+
+def test_asof_before_offsets_relative_support_for_feature_cutoff():
+    from terrine.spec.validate import validate_design
+    from terrine.windows import Window
+
+    origin = EventTime("session", Window("-2d", "-1d"))
+    attribute = SimpleNamespace(dtype="string", dimension_name=None, as_of="effective_time")
+    design = Design(
+        "user",
+        EventAnchor("session"),
+        features={"status": asof("state", before="2d", relative_to=origin)},
+    )
+    bound = model(properties={"state": attribute})
+    with pytest.raises(TerrineError) as error:
+        validate_design(design, bound)
+    assert error.value.code == "terrine.sequence.reanchor_leak"
     assert bound.con.calls == []
 def test_event_sequence_validation_accepts_dimension_backed_event_property():
     from terrine.spec.anchors import EventAnchor

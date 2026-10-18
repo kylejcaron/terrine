@@ -152,14 +152,24 @@ def _require_expr(value: object) -> None:
         raise TypeError("expected a supported expression node")
 
 
-def agg(metric: str, *, window: tuple[str | int, str | int]) -> MetricAgg:
+def agg(
+    metric: str,
+    *,
+    window: tuple[str | int, str | int],
+    relative_to: EventTime | None = None,
+) -> MetricAgg:
     if not isinstance(window, (tuple, list)) or len(window) != 2:
         raise ValueError("window must contain a start and exclusive end")
-    return MetricAgg(metric, Window(window[0], window[1]))
+    return MetricAgg(metric, Window(window[0], window[1]), relative_to)
 
 
-def asof(attribute: str, *, before: str | int) -> AttributeAsOf:
-    return AttributeAsOf(attribute, seconds(before))
+def asof(
+    attribute: str,
+    *,
+    before: str | int,
+    relative_to: EventTime | None = None,
+) -> AttributeAsOf:
+    return AttributeAsOf(attribute, seconds(before), relative_to)
 
 
 def event_time(

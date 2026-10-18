@@ -144,7 +144,7 @@ def _resolve_property(
     required: set[str],
     obligations: list[str],
 ) -> None:
-    if role != "treatment" and expr.before > -design.gap:
+    if expr.relative_to is None and role != "treatment" and expr.before > -design.gap:
         raise _GAP.error(role=role, gap=design.gap)
     declaration = model.catalog.properties.get(expr.attribute)
     owner = declaration.source if declaration is not None else None
@@ -218,14 +218,58 @@ def _requires_event_resolution(win: Window, design: Design, model: Model) -> boo
     return False
 
 
+def _selector_timing(selector: EventTime) -> tuple[tuple[int, int], tuple[tuple[int, int], ...]]:
+    if selector.relative_to is None:
+        origin = (0, 0)
+        dependencies: tuple[tuple[int, int], ...] = ()
+    else:
+        origin, dependencies = _selector_timing(selector.relative_to)
+    support = (
+        origin[0] + selector.window.start,
+        origin[1] + selector.window.end,
+    )
+    return support, (*dependencies, support)
+
+
+def _expression_timing(expr: Expr) -> tuple[tuple[int, int], tuple[tuple[int, int], ...]]:
+    if isinstance(expr, EventTime):
+        return _selector_timing(expr)
+    if expr.relative_to is None:
+        if isinstance(expr, AttributeAsOf):
+            return (expr.before, expr.before), ()
+        return (expr.window.start, expr.window.end), ()
+    origin, dependencies = _selector_timing(expr.relative_to)
+    if isinstance(expr, AttributeAsOf):
+        support = (origin[0] + expr.before, origin[1] + expr.before)
+    else:
+        support = (origin[0] + expr.window.start, origin[1] + expr.window.end)
+    return support, dependencies
+
+
+def _check_expression_timing(
+    expr: Expr, role: str, design: Design
+) -> None:
+    support, dependencies = _expression_timing(expr)
+    if role in {"feature", "eligibility"} and (
+        support[1] > -design.gap
+        or any(dependency[1] > -design.gap for dependency in dependencies)
+    ):
+        if getattr(expr, "relative_to", None) is not None or isinstance(expr, EventTime):
+            raise _REANCHOR_LEAK.error(role=role, gap=design.gap)
+        if isinstance(expr, AttributeAsOf):
+            raise _GAP.error(role=role, gap=design.gap)
+    if role == "outcome" and support[0] < 0:
+        raise _GAP.error(role=role, gap=design.gap)
+
+
 def _expression(
     expr: Expr, role: str, design: Design, model: Model, required: set[str], obligations: list[str]
 ) -> None:
-    if isinstance(expr, EventTime) and expr.relative_to is not None:
-        raise _UNSUPPORTED_SHAPE.error()
-    if isinstance(expr, (MetricAgg, AttributeAsOf)) and expr.relative_to is not None:
-        raise _UNSUPPORTED_SHAPE.error()
+    relative_to = getattr(expr, "relative_to", None)
+    if relative_to is not None:
+        _expression(relative_to, role, design, model, required, obligations)
     if isinstance(expr, AttributeAsOf):
+        _check_expression_timing(expr, role, design)
         _resolve_property(expr, role, design, model, required, obligations)
         return
     if isinstance(expr, EventTime):
@@ -241,12 +285,10 @@ def _expression(
             _check_event_scalar(model, source.name, expr.label_property, expr.equals)
         _required(model, source.name, required)
         obligations.append("coverage_completeness")
-        lower, upper = expr.window.start, expr.window.end
-        if role in {"feature", "eligibility"} and upper > -design.gap:
-            raise _REANCHOR_LEAK.error(role=role, gap=design.gap)
-        if role == "outcome" and lower < 0:
-            raise _GAP.error(role=role, gap=design.gap)
+        _check_expression_timing(expr, role, design)
         return
+    if isinstance(expr, MetricAgg):
+        _check_expression_timing(expr, role, design)
     metric = _metric(model, expr.metric)
     if metric.entity != design.unit:
         raise _UNIT.error(unit=design.unit, name=expr.metric)
@@ -261,9 +303,9 @@ def _expression(
             source = model.sources[source_name]
             if not supports_event_resolution(source.dialect):
                 raise UNSUPPORTED_EVENT_RESOLUTION.error(dialect=source.dialect)
-    if role in {"feature", "eligibility"} and win.end > -design.gap:
+    if expr.relative_to is None and role in {"feature", "eligibility"} and win.end > -design.gap:
         raise _GAP.error(role=role, gap=design.gap)
-    if role == "outcome" and win.start < 0:
+    if expr.relative_to is None and role == "outcome" and win.start < 0:
         raise _GAP.error(role=role, gap=design.gap)
     if metric.kind not in {"mean", "conversion", "ratio"}:
         raise UNSUPPORTED_TEMPORAL_KIND.error(kind=metric.kind)
