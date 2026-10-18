@@ -4,6 +4,17 @@
 
 The panel calibration is a 16-cell factorial design (2 × 2 × 2 × 2), with 400 fixed seeds (`0..399`) and `n_units=2000` in every cell. Factors are: zero versus heterogeneous cohort effects; equal versus unequal trial aggregation masses; disjoint versus overlapping repeated-trial units; and two trial-varying assignment-rate/baseline profiles. Each replication also runs a fixed contaminated-reference case whose expected result is the stable `terrine.estimate.stacked_input` refusal with reason `outcome_window_contaminates_reference`, not an estimate.
 
+The calibration harness also predeclares eight stochastic stacked cohort-time
+(CATT) recovery cells: heterogeneous cohort effects `(1.0, 2.0)` crossed with
+equal/unequal cohort aggregation weights, disjoint/overlapping unit populations,
+and two outcome trend/noise profiles. Each CATT cell uses the same 400 seeds
+(`0..399`) and `n_units=2000`; every seed must recover both cohort-specific
+effects and the normalized aggregate target. CATT bias, 95% exact-binomial
+coverage, and studentization gates are Bonferroni allocated across both
+contrasts in all eight cells. Full-run evidence is one `stacked-<cell>.json`
+record per CATT cell.
+The CATT per-gate alpha is `0.01/(3*8*2)`.
+
 Every clean cell requires all 400 replications to complete successfully; any unexpected refusal fails the cell and stays in the denominator. Evidence records attempted, completed/refused counts, refusal codes/seeds, bias, empirical standard deviation, mean standard error, RMSE, exact interval-coverage count, median interval width, diagnostic statuses, runtime/environment and exact seed list. At family alpha `0.01`, bias, exact-binomial 0.95 coverage and chi-square studentization tests each receive `0.01/(3*16)`. The two-sided bias test uses a log-tail normal critical value; coverage uses the exact binomial test; studentization compares the sum of squared error/SE ratios to its chi-square range. All cutoffs are frozen in the harness before results are observed.
 
 ## Gates and execution
@@ -14,17 +25,28 @@ Full-grid command:
 uv run pytest tests/parameter_recovery/test_panel_calibration.py -m 'slow and parameter_recovery' -q
 ```
 
-The ordinary suite contains only a deterministic three-seed, `n_units=120` recovery smoke. For an explicit calibration-harness wiring check that writes a clearly marked smoke-only record to a temporary directory, run:
+The ordinary suite retains a deterministic three-seed, `n_units=120` repeated-trial AIPW smoke and a three-seed CATT smoke over all eight cells at `n_units=240`. The CATT smoke command exercised here is:
 
 ```sh
-TERRINE_CALIBRATION_SMOKE=1 \
-TERRINE_CALIBRATION_DIR=/tmp/terrine-panel-calibration-smoke \
-uv run pytest tests/parameter_recovery/test_panel_calibration.py \
-  -m 'slow and parameter_recovery' \
-  -k 'heterogeneous-unequal-overlap-profile_a' -q
+uv run pytest tests/parameter_recovery/test_panel_calibration.py::test_stacked_catt_heterogeneity_recovers_in_fast_smoke -q
 ```
 
-Smoke mode uses fixed seeds `(1, 2, 7)`, `n_units=120`, skips only the statistical calibration gates, still requires every requested estimate and paired refusal to complete, and writes `run_mode: smoke_only`. If no output directory is supplied, its default `docs/validation/generated/panel_calibration_smoke/` is separate from the full-calibration evidence directory. Do not treat smoke JSON as a full-cell calibration record.
+The per-cell JSON writer was also exercised for one marked CATT cell without
+running the full grid:
+
+```sh
+TERRINE_CALIBRATION_SMOKE=1 TERRINE_CALIBRATION_DIR=/tmp/terrine-catt-smoke \
+uv run pytest tests/parameter_recovery/test_panel_calibration.py \
+  -m 'slow and parameter_recovery' -k 'stacked-equal-overlap-profile_a' -q
+```
+
+This smoke completed 3/3 seeds and wrote
+`/tmp/terrine-catt-smoke/stacked-equal-overlap-profile_a.json`; it is smoke-only
+evidence and is not committed as a full-calibration result.
+
+The marked full calibration emits separate CATT JSON records alongside the 16 AIPW records. Based on the 24-replication, eight-cell CATT smoke and the previously executed eight-worker AIPW grid, the exact full-grid command is estimated to take roughly 30–45 minutes serially; this is an estimate, not an execution result. The full grid was not run for this change.
+
+The existing executed-results table below covers only the original 16-cell repeated-trial AIPW grid. It does not constitute CATT calibration evidence. No CATT full-cell results or JSON evidence are claimed until that grid is actually run.
 
 The full grid is intentionally not run as part of ordinary pytest. Per-cell JSON from full calibration runs is written beneath `docs/validation/generated/panel_calibration/`.
 

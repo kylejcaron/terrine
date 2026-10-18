@@ -64,3 +64,4 @@
 - Allow explicitly declared pre-treatment comparison periods before the anticipation window, making compiled stacked results usable by the joint pretrend diagnostic.
 - Extend the independent simulator with repeated-trial potential outcomes, trial-specific assignment and baseline profiles, overlap regimes, heterogeneous cohort-time effects, and population/cohort truth; use it directly in the calibration harness.
 - Expand independent pandas panel-row references for canonical sequential/calendar rows, event-relative windows and cutoffs, and exact matched-t0 inclusion probabilities; add a temporary-output, smoke-only calibration-harness mode.
+- Predeclare eight stochastic heterogeneous stacked CATT recovery cells with per-cohort recovery, inference gates, per-cell JSON, and a deterministic fast smoke.

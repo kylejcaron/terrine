@@ -1,4 +1,4 @@
-"""Predeclared repeated-trial AIPW recovery grid; run only in calibration tier."""
+"""Predeclared repeated-trial AIPW and stacked CATT recovery grids."""
 
 from __future__ import annotations
 
@@ -11,15 +11,18 @@ import statistics
 import sys
 import time
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, cast
 
 import numpy as np
+import pyarrow as pa
 import pytest
 from scipy.stats import binomtest, chi2, norm
 
 from terrine.data import ColumnMeta, TrialWeightMeta
 from terrine.errors import TerrineError
+from terrine.estimate.inference import critical_value
 from terrine.estimate.panel import panel_aipw
 from terrine.estimate.stacked import stacked_event_study
 from terrine.simulate import PanelWorldConfig, simulate_panel
@@ -244,3 +247,214 @@ def test_panel_calibration_cell(cell):
             <= evidence["studentization_chi_square"]
             <= STUDENTIZATION_LIMITS[1]
         )
+
+
+CATT_CELLS = tuple(
+    itertools.product(
+        ("equal", "unequal"),
+        ("disjoint", "overlap"),
+        ("profile_a", "profile_b"),
+    )
+)
+CATT_PER_GATE_ALPHA = FAMILY_ALPHA / (3 * len(CATT_CELLS) * 2)
+CATT_STUDENTIZATION_LIMITS = (
+    float(chi2.ppf(CATT_PER_GATE_ALPHA / 2, len(SEEDS))),
+    float(chi2.ppf(1 - CATT_PER_GATE_ALPHA / 2, len(SEEDS))),
+)
+
+
+def _stacked_calibration_frame(seed: int, cell: tuple[str, str, str], n_units: int):
+
+    mass_kind, overlap_kind, profile = cell
+    base = _stacked_frame()
+    rng = np.random.default_rng(seed)
+    origin = datetime(2025, 1, 1, tzinfo=UTC)
+    cohorts = (origin + timedelta(days=3), origin + timedelta(days=6))
+    control_count = n_units // 2 if overlap_kind == "overlap" else n_units // 4
+    treatment_count = n_units // 4
+    unit_values: dict[str, tuple[float, float]] = {}
+    rows = []
+    error_scale, trend_scale = (1.0, 0.25) if profile == "profile_a" else (1.5, 0.75)
+
+    for cohort_index, cohort_time in enumerate(cohorts):
+        if overlap_kind == "overlap":
+            controls = [f"control:{index}" for index in range(control_count)]
+            treated = [f"treated:{cohort_index}:{index}" for index in range(treatment_count)]
+        else:
+            start = cohort_index * (n_units // 2)
+            controls = [f"unit:{index}" for index in range(start, start + n_units // 4)]
+            treated = [
+                f"unit:{index}" for index in range(start + n_units // 4, start + n_units // 2)
+            ]
+        for unit, is_treated in [
+            *((unit, True) for unit in treated),
+            *((unit, False) for unit in controls),
+        ]:
+            baseline, trend = unit_values.setdefault(
+                unit,
+                (float(rng.normal(10.0, 2.0)), float(rng.normal(0.2, trend_scale))),
+            )
+            for event_period in (-1, 0):
+                period_time = cohort_time + timedelta(days=event_period)
+                effect = (1.0 + cohort_index) if is_treated and event_period == 0 else 0.0
+                rows.append(
+                    {
+                        "unit": unit,
+                        "anchor_id": f"{cohort_time.isoformat()}:{period_time.isoformat()}:{unit}",
+                        "t0": period_time,
+                        "treatment": is_treated,
+                        "cohort": cohort_time,
+                        "period": period_time,
+                        "event_period": event_period,
+                        "control_eligible": not is_treated,
+                        "__terrine_treatment_initiation_time": cohort_time if is_treated else None,
+                        "y": baseline
+                        + trend * event_period
+                        + effect
+                        + rng.normal(0.0, error_scale),
+                        "q": 1.0,
+                    }
+                )
+
+    weights = (
+        {cohort.isoformat(): weight for cohort, weight in zip(cohorts, (1.0, 1.0), strict=True)}
+        if mass_kind == "equal"
+        else {
+            cohort.isoformat(): weight for cohort, weight in zip(cohorts, (1.0, 3.0), strict=True)
+        }
+    )
+    return replace(base, table=pa.Table.from_pylist(rows)), weights
+
+
+@pytest.mark.parametrize("cell", CATT_CELLS, ids=lambda cell: "-".join(cell))
+def test_stacked_catt_heterogeneity_recovers_in_fast_smoke(cell):
+    for seed in SMOKE_SEEDS:
+        frame, weights = _stacked_calibration_frame(seed, cell, n_units=240)
+        result = stacked_event_study(
+            frame,
+            outcome="y",
+            treatment="treatment",
+            cohort="cohort",
+            period="period",
+            cohort_weights=weights,
+        )
+        assert result.effects == pytest.approx((1.0, 2.0), abs=0.8)
+        assert result.aggregate_effects[0] == pytest.approx(
+            1.5 if cell[0] == "equal" else 1.75, abs=0.8
+        )
+
+
+def _catt_evidence_path(cell: tuple[str, str, str]) -> Path:
+    directory = Path(
+        os.environ.get(
+            "TERRINE_CALIBRATION_DIR",
+            "docs/validation/generated/panel_calibration_smoke"
+            if SMOKE_ONLY
+            else "docs/validation/generated/panel_calibration",
+        )
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / ("stacked-" + "-".join(cell) + ".json")
+
+
+@pytest.mark.slow
+@pytest.mark.parameter_recovery
+@pytest.mark.parametrize("cell", CATT_CELLS, ids=lambda cell: "stacked-" + "-".join(cell))
+def test_stacked_catt_calibration_cell(cell):
+    effects = [[], []]
+    standard_errors = [[], []]
+    covered = [[], []]
+    started = time.perf_counter()
+    refusals, errors = [], []
+    for seed in SEEDS:
+        try:
+            frame, weights = _stacked_calibration_frame(seed, cell, n_units=N_UNITS)
+            result = stacked_event_study(
+                frame,
+                outcome="y",
+                treatment="treatment",
+                cohort="cohort",
+                period="period",
+                cohort_weights=weights,
+            )
+            for index, truth in enumerate((1.0, 2.0)):
+                estimate = result.effects[index]
+                se = result.standard_errors[index]
+                effects[index].append(estimate)
+                standard_errors[index].append(se)
+                critical = critical_value(0.05)
+                covered[index].append(estimate - critical * se <= truth <= estimate + critical * se)
+        except TerrineError as error:
+            refusals.append({"seed": seed, "code": error.code})
+        except Exception as error:
+            errors.append({"seed": seed, "type": type(error).__name__, "detail": str(error)})
+
+    contrast_evidence = []
+    for index, truth in enumerate((1.0, 2.0)):
+        values = np.asarray(effects[index], dtype=np.float64)
+        ses = np.asarray(standard_errors[index], dtype=np.float64)
+        if len(values) < 2:
+            contrast_evidence.append({"cohort_effect": truth, "completed": len(values)})
+            continue
+        errors_from_truth = values - truth
+        bias = float(errors_from_truth.mean())
+        empirical_sd = float(errors_from_truth.std(ddof=1))
+        bias_z = abs(bias) / (empirical_sd / math.sqrt(len(values)))
+        bias_log_p = math.log(2.0) + float(norm.logsf(bias_z))
+        studentization = float(np.sum((errors_from_truth / ses) ** 2))
+        coverage_count = int(sum(covered[index]))
+        coverage_p = float(binomtest(coverage_count, len(values), 0.95).pvalue)
+        contrast_evidence.append(
+            {
+                "cohort_effect": truth,
+                "bias": bias,
+                "empirical_sd": empirical_sd,
+                "mean_se": float(np.mean(ses)),
+                "rmse": float(np.sqrt(np.mean(errors_from_truth * errors_from_truth))),
+                "coverage_count": coverage_count,
+                "coverage_exact_binomial_p": coverage_p,
+                "bias_log_p": bias_log_p,
+                "studentization_chi_square": studentization,
+            }
+        )
+    evidence = {
+        "estimator": "stacked_cohort_time",
+        "cell": {
+            "trial_masses": cell[0],
+            "unit_overlap": cell[1],
+            "profile": cell[2],
+            "cohort_effects": [1.0, 2.0],
+        },
+        "seeds": list(SEEDS),
+        "n_units": N_UNITS,
+        "run_mode": "smoke_only" if SMOKE_ONLY else "full_calibration",
+        "family_alpha": FAMILY_ALPHA,
+        "per_gate_alpha": CATT_PER_GATE_ALPHA,
+        "attempted": len(SEEDS),
+        "completed": len(SEEDS) - len(refusals) - len(errors),
+        "refused": len(refusals),
+        "refusals": refusals,
+        "errors": errors,
+        "contrasts": contrast_evidence,
+        "studentization_chi_square_limits": list(CATT_STUDENTIZATION_LIMITS),
+        "runtime_seconds": time.perf_counter() - started,
+        "environment": {
+            "python": sys.version,
+            "platform": platform.platform(),
+            "numpy": np.__version__,
+            "scipy": __import__("scipy").__version__,
+        },
+    }
+    _catt_evidence_path(cell).write_text(
+        json.dumps(evidence, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    )
+    assert evidence["completed"] == len(SEEDS), evidence
+    if not SMOKE_ONLY:
+        for contrast in contrast_evidence:
+            assert contrast["bias_log_p"] >= math.log(CATT_PER_GATE_ALPHA), evidence
+            assert contrast["coverage_exact_binomial_p"] >= CATT_PER_GATE_ALPHA, evidence
+            assert (
+                CATT_STUDENTIZATION_LIMITS[0]
+                <= contrast["studentization_chi_square"]
+                <= CATT_STUDENTIZATION_LIMITS[1]
+            ), evidence
