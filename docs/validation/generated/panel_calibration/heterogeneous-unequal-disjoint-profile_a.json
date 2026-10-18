@@ -1,0 +1,2447 @@
+{
+  "alpha": 0.05,
+  "attempted": 400,
+  "bias": 0.0030169212666642507,
+  "bias_log_p": -0.8215086681766549,
+  "bias_log_two_sided_critical": 3.7086911779087086,
+  "cell": {
+    "effect": "heterogeneous",
+    "profile": "profile_a",
+    "trial_masses": "unequal",
+    "unit_overlap": "disjoint"
+  },
+  "completed": 400,
+  "coverage_count": 386,
+  "coverage_exact_binomial_p": 0.20544871776569765,
+  "diagnostic_statuses": {},
+  "empirical_sd": 0.0780993434128802,
+  "environment": {
+    "numpy": "2.5.4",
+    "platform": "macOS-15.7.4-arm64-arm-64bit-Mach-O",
+    "python": "3.13.5 (main, Jun 12 2025, 12:22:43) [Clang 20.1.4 ]",
+    "scipy": "1.18.1"
+  },
+  "errors": [],
+  "family_alpha": 0.01,
+  "mean_se": 0.08069530646129197,
+  "median_interval_width": 0.31526383282246817,
+  "n_units_per_trial": 2000,
+  "paired_refusal_attempted": 400,
+  "paired_refusal_codes": [
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "0"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "1"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "2"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "3"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "4"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "5"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "6"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "7"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "8"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "9"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "10"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "11"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "12"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "13"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "14"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "15"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "16"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "17"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "18"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "19"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "20"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "21"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "22"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "23"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "24"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "25"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "26"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "27"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "28"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "29"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "30"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "31"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "32"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "33"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "34"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "35"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "36"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "37"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "38"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "39"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "40"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "41"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "42"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "43"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "44"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "45"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "46"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "47"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "48"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "49"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "50"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "51"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "52"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "53"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "54"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "55"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "56"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "57"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "58"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "59"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "60"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "61"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "62"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "63"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "64"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "65"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "66"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "67"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "68"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "69"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "70"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "71"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "72"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "73"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "74"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "75"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "76"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "77"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "78"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "79"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "80"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "81"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "82"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "83"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "84"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "85"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "86"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "87"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "88"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "89"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "90"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "91"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "92"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "93"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "94"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "95"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "96"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "97"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "98"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "99"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "100"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "101"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "102"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "103"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "104"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "105"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "106"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "107"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "108"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "109"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "110"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "111"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "112"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "113"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "114"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "115"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "116"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "117"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "118"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "119"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "120"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "121"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "122"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "123"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "124"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "125"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "126"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "127"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "128"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "129"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "130"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "131"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "132"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "133"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "134"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "135"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "136"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "137"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "138"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "139"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "140"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "141"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "142"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "143"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "144"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "145"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "146"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "147"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "148"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "149"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "150"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "151"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "152"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "153"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "154"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "155"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "156"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "157"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "158"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "159"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "160"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "161"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "162"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "163"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "164"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "165"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "166"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "167"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "168"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "169"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "170"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "171"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "172"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "173"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "174"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "175"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "176"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "177"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "178"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "179"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "180"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "181"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "182"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "183"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "184"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "185"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "186"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "187"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "188"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "189"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "190"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "191"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "192"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "193"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "194"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "195"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "196"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "197"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "198"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "199"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "200"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "201"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "202"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "203"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "204"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "205"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "206"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "207"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "208"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "209"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "210"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "211"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "212"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "213"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "214"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "215"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "216"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "217"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "218"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "219"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "220"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "221"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "222"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "223"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "224"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "225"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "226"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "227"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "228"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "229"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "230"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "231"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "232"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "233"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "234"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "235"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "236"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "237"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "238"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "239"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "240"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "241"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "242"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "243"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "244"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "245"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "246"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "247"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "248"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "249"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "250"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "251"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "252"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "253"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "254"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "255"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "256"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "257"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "258"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "259"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "260"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "261"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "262"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "263"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "264"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "265"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "266"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "267"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "268"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "269"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "270"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "271"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "272"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "273"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "274"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "275"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "276"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "277"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "278"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "279"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "280"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "281"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "282"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "283"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "284"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "285"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "286"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "287"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "288"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "289"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "290"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "291"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "292"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "293"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "294"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "295"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "296"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "297"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "298"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "299"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "300"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "301"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "302"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "303"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "304"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "305"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "306"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "307"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "308"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "309"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "310"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "311"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "312"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "313"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "314"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "315"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "316"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "317"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "318"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "319"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "320"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "321"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "322"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "323"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "324"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "325"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "326"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "327"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "328"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "329"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "330"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "331"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "332"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "333"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "334"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "335"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "336"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "337"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "338"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "339"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "340"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "341"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "342"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "343"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "344"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "345"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "346"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "347"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "348"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "349"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "350"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "351"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "352"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "353"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "354"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "355"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "356"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "357"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "358"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "359"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "360"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "361"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "362"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "363"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "364"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "365"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "366"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "367"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "368"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "369"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "370"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "371"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "372"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "373"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "374"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "375"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "376"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "377"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "378"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "379"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "380"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "381"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "382"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "383"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "384"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "385"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "386"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "387"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "388"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "389"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "390"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "391"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "392"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "393"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "394"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "395"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "396"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "397"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "398"
+    },
+    {
+      "code": "terrine.estimate.stacked_input",
+      "reason": "outcome_window_contaminates_reference",
+      "seed": "399"
+    }
+  ],
+  "paired_refusal_completed": 400,
+  "refusals": [],
+  "refused": 0,
+  "rmse": 0.07805998005923674,
+  "run_mode": "full_calibration",
+  "runtime_seconds": 52.35449495795183,
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    78,
+    79,
+    80,
+    81,
+    82,
+    83,
+    84,
+    85,
+    86,
+    87,
+    88,
+    89,
+    90,
+    91,
+    92,
+    93,
+    94,
+    95,
+    96,
+    97,
+    98,
+    99,
+    100,
+    101,
+    102,
+    103,
+    104,
+    105,
+    106,
+    107,
+    108,
+    109,
+    110,
+    111,
+    112,
+    113,
+    114,
+    115,
+    116,
+    117,
+    118,
+    119,
+    120,
+    121,
+    122,
+    123,
+    124,
+    125,
+    126,
+    127,
+    128,
+    129,
+    130,
+    131,
+    132,
+    133,
+    134,
+    135,
+    136,
+    137,
+    138,
+    139,
+    140,
+    141,
+    142,
+    143,
+    144,
+    145,
+    146,
+    147,
+    148,
+    149,
+    150,
+    151,
+    152,
+    153,
+    154,
+    155,
+    156,
+    157,
+    158,
+    159,
+    160,
+    161,
+    162,
+    163,
+    164,
+    165,
+    166,
+    167,
+    168,
+    169,
+    170,
+    171,
+    172,
+    173,
+    174,
+    175,
+    176,
+    177,
+    178,
+    179,
+    180,
+    181,
+    182,
+    183,
+    184,
+    185,
+    186,
+    187,
+    188,
+    189,
+    190,
+    191,
+    192,
+    193,
+    194,
+    195,
+    196,
+    197,
+    198,
+    199,
+    200,
+    201,
+    202,
+    203,
+    204,
+    205,
+    206,
+    207,
+    208,
+    209,
+    210,
+    211,
+    212,
+    213,
+    214,
+    215,
+    216,
+    217,
+    218,
+    219,
+    220,
+    221,
+    222,
+    223,
+    224,
+    225,
+    226,
+    227,
+    228,
+    229,
+    230,
+    231,
+    232,
+    233,
+    234,
+    235,
+    236,
+    237,
+    238,
+    239,
+    240,
+    241,
+    242,
+    243,
+    244,
+    245,
+    246,
+    247,
+    248,
+    249,
+    250,
+    251,
+    252,
+    253,
+    254,
+    255,
+    256,
+    257,
+    258,
+    259,
+    260,
+    261,
+    262,
+    263,
+    264,
+    265,
+    266,
+    267,
+    268,
+    269,
+    270,
+    271,
+    272,
+    273,
+    274,
+    275,
+    276,
+    277,
+    278,
+    279,
+    280,
+    281,
+    282,
+    283,
+    284,
+    285,
+    286,
+    287,
+    288,
+    289,
+    290,
+    291,
+    292,
+    293,
+    294,
+    295,
+    296,
+    297,
+    298,
+    299,
+    300,
+    301,
+    302,
+    303,
+    304,
+    305,
+    306,
+    307,
+    308,
+    309,
+    310,
+    311,
+    312,
+    313,
+    314,
+    315,
+    316,
+    317,
+    318,
+    319,
+    320,
+    321,
+    322,
+    323,
+    324,
+    325,
+    326,
+    327,
+    328,
+    329,
+    330,
+    331,
+    332,
+    333,
+    334,
+    335,
+    336,
+    337,
+    338,
+    339,
+    340,
+    341,
+    342,
+    343,
+    344,
+    345,
+    346,
+    347,
+    348,
+    349,
+    350,
+    351,
+    352,
+    353,
+    354,
+    355,
+    356,
+    357,
+    358,
+    359,
+    360,
+    361,
+    362,
+    363,
+    364,
+    365,
+    366,
+    367,
+    368,
+    369,
+    370,
+    371,
+    372,
+    373,
+    374,
+    375,
+    376,
+    377,
+    378,
+    379,
+    380,
+    381,
+    382,
+    383,
+    384,
+    385,
+    386,
+    387,
+    388,
+    389,
+    390,
+    391,
+    392,
+    393,
+    394,
+    395,
+    396,
+    397,
+    398,
+    399
+  ],
+  "studentization_chi_square": 376.15327461163054,
+  "studentization_chi_square_limits": [
+    303.49856734816984,
+    513.4912779534604
+  ],
+  "studentization_log_p": -0.9095219570738032,
+  "truth": 3.75
+}
