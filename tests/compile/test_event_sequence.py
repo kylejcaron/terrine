@@ -117,6 +117,8 @@ def test_sequence_compiler_publishes_funnel_attempt_schema(sequence_model):
 
     children = [row for row in rows if row["is_event"]]
     assert all(row["funnel_attempts"] is None for row in children)
+
+
 @pytest.mark.parametrize(
     ("property_name", "with_sessions", "selected_property"),
     [
@@ -313,6 +315,7 @@ def test_sequence_compiler_projects_dimension_backed_property(sequence_model):
     rows = model.con.to_pyarrow(compiled.table).to_pylist()
     assert [row["region"] for row in rows if row["is_event"]] == ["west", "west", "west"]
 
+
 def test_funnel_dependency_preserves_entity_key_for_dimension_enrichment(sequence_model):
     from terrine.semantic.models import Dimension, Property, TableRef
     from terrine.spec import FunnelSpec
@@ -372,6 +375,7 @@ def test_funnel_dependency_preserves_entity_key_for_dimension_enrichment(sequenc
     children = [row for row in rows if row["is_event"]]
     assert header["funnel_attempts"][0]["status"] == "complete"
     assert [row["region"] for row in children] == ["west", "west", "west"]
+
 
 def test_sequence_compiler_publishes_naive_source_times_as_utc(sequence_model):
     from terrine.semantic.models import TableRef

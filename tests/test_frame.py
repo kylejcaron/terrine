@@ -2,12 +2,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from terrine.data import Budget, BoundCoverage, Coverage, UnitSource
+from terrine.data import BoundCoverage, Budget, Coverage, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.spec import Design, EventAnchor, EventSequence, agg
 from terrine.windows import Window
-
 
 
 def test_unused_label_source_readiness_is_not_a_model_requirement(native_inputs):

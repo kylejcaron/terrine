@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -62,6 +63,39 @@ def _provenance():
             )
         },
     )
+
+
+def test_sequence_metadata_round_trips_arrow_as_typed_provenance():
+    from terrine.data import SequenceMeta
+    from terrine.windows import Window
+
+    provenance = replace(
+        _provenance(),
+        shape="event_sequence",
+        sequence_meta=SequenceMeta(
+            fact="signup",
+            window=Window(0, 3600),
+            max_events=10,
+            representation="positions",
+            event_fields=("kind", "amount"),
+            event_id_column="event_id",
+            event_time_column="event_time",
+            position_column="sequence_position",
+            event_count_column="event_count",
+            complete_column="sequence_complete",
+            reason_column="sequence_reason",
+            property_reason_columns={"kind": "kind_reason", "amount": "amount_reason"},
+        ),
+    )
+    frame = MaterializedFrame(
+        pa.table({"unit": ["a"], "nested": [[{"event_id": "e1", "amount": 3}]]}),
+        Roles("unit", "anchor_id", "t0", None, (), ()),
+        {},
+        provenance,
+    )
+    restored = MaterializedFrame.from_arrow(frame.to_arrow())
+    assert restored.table.to_pylist() == frame.table.to_pylist()
+    assert restored.provenance.sequence_meta == provenance.sequence_meta
 
 
 def test_data_exports_feature_cutoff():

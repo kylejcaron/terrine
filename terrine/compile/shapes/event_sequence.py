@@ -17,7 +17,7 @@ from terrine.compile.anchors import (
     _utc_column,
 )
 from terrine.compile.columns import CompiledStudy, compile_columns
-from terrine.data import Roles
+from terrine.data import Roles, SequenceMeta
 from terrine.semantic.bind import normalize_events
 from terrine.spec.design import Design
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE, EventSequence
@@ -98,6 +98,8 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         physical_unit,
         extra_columns={identity_alias: configured_id} if configured_id is not None else None,
     )
+    if fact.column is not None:
+        normalized = normalized.filter(normalized[fact.column].notnull())
     timestamp_check = _precision_check(
         model, normalized, "_timestamp", source_column=source.timestamp_column
     )
@@ -112,14 +114,12 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
     internal_names = (sequence.label_property,) + (
         (sequence.funnel.event_property,) if sequence.funnel is not None else ()
     )
-    internal_properties = tuple(
+    internal_properties: tuple[str, ...] = tuple(
         name
         for name in dict.fromkeys(internal_names)
         if name is not None and name not in sequence.properties
     )
-    funnel_event_property = (
-        sequence.funnel.event_property if sequence.funnel is not None else None
-    )
+    funnel_event_property = sequence.funnel.event_property if sequence.funnel is not None else None
     funnel_event_property_column = None
     if funnel_event_property is not None:
         reserved = set(normalized.columns) | set(sequence.properties) | set(internal_properties)
@@ -128,20 +128,30 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         while funnel_event_property_column in reserved:
             suffix += 1
             funnel_event_property_column = f"__terrine_funnel_event_property_{suffix}"
-    internal_property_columns = tuple(
-        funnel_event_property_column if name == funnel_event_property else name
-        for name in internal_properties
-    )
+    internal_property_columns_list: list[str] = []
+    for name in internal_properties:
+        if name == funnel_event_property:
+            if funnel_event_property_column is None:
+                raise _UNSUPPORTED_SHAPE.error()
+            internal_property_columns_list.append(funnel_event_property_column)
+        else:
+            internal_property_columns_list.append(name)
+    internal_property_columns = tuple(internal_property_columns_list)
     direct = {}
     for property_name in (*sequence.properties, *internal_properties):
         prop = _property_binding(source, property_name)
         if prop.dimension_name is None:
+            if prop.column is None:
+                raise _UNSUPPORTED_SHAPE.error()
             targets = (
                 []
-                if property_name == funnel_event_property and property_name not in sequence.properties
+                if property_name == funnel_event_property
+                and property_name not in sequence.properties
                 else [property_name]
             )
             if property_name == funnel_event_property:
+                if funnel_event_property_column is None:
+                    raise _UNSUPPORTED_SHAPE.error()
                 targets.append(funnel_event_property_column)
             for target in dict.fromkeys(targets):
                 direct[target] = normalized[prop.column]
@@ -165,6 +175,8 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
                     else [property_name]
                 )
                 if property_name == funnel_event_property:
+                    if funnel_event_property_column is None:
+                        raise _UNSUPPORTED_SHAPE.error()
                     targets.append(funnel_event_property_column)
                 for target in dict.fromkeys(targets):
                     derived[target] = normalized[value_alias]
@@ -227,4 +239,27 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         {**base.strategy, **{name: "bounded_event_sequence" for name in result.roles.features}},
         anchor_table,
         tuple(checks),
+        sequence_meta=SequenceMeta(
+            fact=sequence.fact,
+            window=sequence.window,
+            max_events=sequence.max_events,
+            representation=sequence.representation,
+            event_fields=(
+                ("event_values",) if sequence.representation == "arrays" else sequence.properties
+            ),
+            event_id_column="event_id" if sequence.representation == "positions" else None,
+            event_time_column="event_time" if sequence.representation == "positions" else None,
+            position_column="sequence_position" if sequence.representation == "positions" else None,
+            event_count_column="event_count",
+            complete_column="sequence_complete",
+            reason_column="sequence_reason",
+            property_reason_columns={
+                name: (
+                    f"{name}_reason"
+                    if sequence.representation == "positions"
+                    else f"event_values.{name}_reason"
+                )
+                for name in sequence.properties
+            },
+        ),
     )

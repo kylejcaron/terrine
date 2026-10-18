@@ -23,6 +23,7 @@ __all__ = [
     "ColumnMeta",
     "FeatureCutoff",
     "ExpressionTiming",
+    "SequenceMeta",
     "EligibilitySummary",
     "StatePanelMeta",
     "ExecutionSnapshot",
@@ -372,6 +373,64 @@ class StatePanelMeta:
 
 
 @dataclass(frozen=True, slots=True)
+class SequenceMeta:
+    """Portable event-sequence schema and stable references to status fields."""
+
+    fact: str
+    window: Window
+    max_events: int
+    representation: Literal["positions", "arrays"]
+    event_fields: tuple[str, ...]
+    event_id_column: str | None
+    event_time_column: str | None
+    position_column: str | None
+    event_count_column: str
+    complete_column: str
+    reason_column: str
+    property_reason_columns: Mapping[str, str]
+
+    def __post_init__(self) -> None:
+        _nonempty(self.fact, "fact")
+        if not isinstance(self.window, Window):
+            raise TypeError("window must be a Window")
+        if (
+            isinstance(self.max_events, bool)
+            or not isinstance(self.max_events, int)
+            or self.max_events <= 0
+        ):
+            raise ValueError("max_events must be positive")
+        if self.representation not in ("positions", "arrays"):
+            raise ValueError("unsupported sequence representation")
+        fields = tuple(self.event_fields)
+        if any(not isinstance(name, str) or not name for name in fields) or len(set(fields)) != len(
+            fields
+        ):
+            raise ValueError("event_fields must contain distinct non-empty names")
+        object.__setattr__(self, "event_fields", fields)
+        for name in (
+            "event_id_column",
+            "event_time_column",
+            "position_column",
+            "event_count_column",
+            "complete_column",
+            "reason_column",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                _nonempty(value, name)
+        if any(
+            not isinstance(value, str) or not value
+            for value in self.property_reason_columns.values()
+        ):
+            raise TypeError("property_reason_columns must map names to non-empty names")
+        object.__setattr__(
+            self,
+            "property_reason_columns",
+            _mapping(self.property_reason_columns, "property_reason_columns"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class EligibilitySummary:
     candidate: int
     excluded_false: int
@@ -444,6 +503,7 @@ class Provenance:
 
     state_panel: StatePanelMeta | None = None
     expression_timings: Mapping[str, ExpressionTiming] = field(default_factory=dict)
+    sequence_meta: SequenceMeta | None = None
 
     def __post_init__(self) -> None:
         for name in ("design_hash", "model_hash", "shape"):
@@ -493,6 +553,8 @@ class Provenance:
             raise TypeError("execution_snapshot must be ExecutionSnapshot")
         if self.state_panel is not None and not isinstance(self.state_panel, StatePanelMeta):
             raise TypeError("state_panel must be StatePanelMeta or None")
+        if self.sequence_meta is not None and not isinstance(self.sequence_meta, SequenceMeta):
+            raise TypeError("sequence_meta must be SequenceMeta or None")
 
 
 @dataclass(frozen=True, slots=True)
@@ -630,6 +692,8 @@ def _decode(value: Any, cls: type) -> Any:
             kwargs[metadata_field.name] = _decode(item, FeatureCutoff)
         elif metadata_field.name == "state_panel" and item is not None:
             kwargs[metadata_field.name] = _decode(item, StatePanelMeta)
+        elif metadata_field.name == "sequence_meta" and item is not None:
+            kwargs[metadata_field.name] = _decode(item, SequenceMeta)
         elif metadata_field.name in ("panel_start", "administrative_end") and isinstance(
             item, dict
         ):
