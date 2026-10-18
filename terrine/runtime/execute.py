@@ -41,7 +41,7 @@ def execute_plan(
     max_concurrency: int = 4,
     lease_ttl: timedelta = timedelta(minutes=5),
 ) -> RunReceipt:
-    """Execute one bounded task DAG, durably caching completed Arrow partitions."""
+    """Execute a task DAG with bounded, disjoint-partition concurrency and durable outputs."""
     if plan.namespace != namespace:
         raise ValueError("plan namespace does not match runtime namespace")
     if not run_id:
