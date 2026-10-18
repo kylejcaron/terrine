@@ -80,6 +80,7 @@ depends_on = ["terrine.data", "terrine.errors", "terrine.semantic"]
 path = "terrine.frame"
 depends_on = ["terrine.compile", "terrine.compile.cost", "terrine.compile.dispatch", "terrine.data", "terrine.errors", "terrine.execution", "terrine.spec"]
 
+# Dependency direction: runtime may consume compiler APIs; compiler never imports runtime.
 [[modules]]
 
 path = "terrine.runtime"

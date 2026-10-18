@@ -18,6 +18,10 @@ _STRICT_SCAN_UNKNOWN = RefusalSpec(
     "A strict scan-byte budget requires a verified scan bound; this backend has none. "
     "Explicitly choose non-strict scan policy after reviewing upstream work.",
 )
+_STATE_PANEL_UNSUPPORTED = RefusalSpec(
+    "terrine.compile.persisted_state_panel_unsupported",
+    "Persisted-layer composition does not support StatePanel designs; use Design.build(model).",
+)
 
 
 def compose_materialized_frame(
@@ -38,7 +42,7 @@ def compose_materialized_frame(
     if budget is not None and budget.max_scan_bytes is not None and budget.strict_scan:
         raise _STRICT_SCAN_UNKNOWN.error()
     if isinstance(design.shape, StatePanel):
-        raise ValueError("persisted-layer composition does not support StatePanel designs")
+        raise _STATE_PANEL_UNSUPPORTED.error()
     definition_hash = hashlib.sha256(f"{design.spec_hash}:{model.model_hash}".encode()).hexdigest()
     snapshot_ids = {key.snapshot_id for key in persisted}
     if len(snapshot_ids) > 1 or (snapshot_ids and not next(iter(snapshot_ids))):
