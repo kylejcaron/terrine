@@ -501,3 +501,43 @@ def test_large_zero_float_cohort_mean_remains_available():
         assert row["complete"] is True
     finally:
         con.disconnect()
+
+
+def test_float_cohort_total_refuses_nonfinite_sum_and_certificate():
+    import pytest
+
+    from terrine.errors import TerrineError
+
+    con, model = _trajectory_model()
+    try:
+        con.raw_sql(
+            "UPDATE events SET float_amount = 1e308 "
+            "WHERE user_id = 'u1' AND ts = TIMESTAMPTZ '2025-01-03 00:00:00+00'"
+        )
+        con.raw_sql(
+            "UPDATE events SET float_amount = 0 "
+            "WHERE user_id = 'u1' AND ts = TIMESTAMPTZ '2025-01-10 00:00:00+00'"
+        )
+        con.raw_sql(
+            "INSERT INTO events (user_id, ts, kind, amount, decimal_amount, float_amount) VALUES "
+            "('u2', TIMESTAMPTZ '2025-01-03 00:00:00+00', 'revenue', 0, 0, 1e308)"
+        )
+        frame = Design(
+            "user",
+            EventAnchor("purchase", which="first"),
+            shape=CohortSpec(
+                origin="purchase",
+                trajectory=Trajectory("float_revenue", "7d", periods=1, cumulative=False),
+            ),
+        ).build(model)
+        cohorts = frame.cohorts(
+            grouping=CohortGrouping(
+                bucket="7d", bucket_origin=datetime(2025, 1, 1, tzinfo=UTC), statistic="total"
+            ),
+            value_column="period_value",
+        )
+        with pytest.raises(TerrineError) as error:
+            cohorts.materialize()
+        assert error.value.code == "terrine.temporal.float64_precision"
+    finally:
+        con.disconnect()

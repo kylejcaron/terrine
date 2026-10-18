@@ -15,6 +15,7 @@ from terrine.temporal._timestamps import timestamp_order_key
 from terrine.temporal.aggregate import _Check, _Failure
 from terrine.temporal.prefix import (
     FLOAT64_PRECISION,
+    _isfinite,
     float64_rounding_radius,
     float64_tolerance,
     outward_add,
@@ -107,9 +108,18 @@ def compile_cohorts(
         normalized = reduction_table._value / reduction_table._scale
         observed_value = normalized.mean() * reduction_table._scale.first()
     if checked_float and grouping.statistic == "total":
-        absolute_error = outward_add(
-            per_unit._absolute_error.sum(),
+        error_count = per_unit._value.notnull().cast("float64").sum()
+        inherited_error = per_unit._absolute_error.sum()
+        inherited_rounding = outward_multiply(
+            float64_rounding_radius(per_unit._absolute_error.abs().sum()),
+            outward_multiply(error_count, 2.0),
+        )
+        value_rounding = outward_multiply(
             float64_rounding_radius(per_unit._value.abs().sum()),
+            outward_multiply(error_count, 2.0),
+        )
+        absolute_error = outward_add(
+            outward_add(inherited_error, inherited_rounding), value_rounding
         )
     elif checked_float:
         input_error = per_unit._absolute_error.mean()
@@ -180,7 +190,11 @@ def compile_cohorts(
     checks = list(study._checks)
     if checked_float:
         failed = result.value.notnull() & (
-            result.value_absolute_error > float64_tolerance(result.value)
+            result.value_absolute_error.isnull()
+            | (result.value_absolute_error < 0.0)
+            | ~_isfinite(result.value)
+            | ~_isfinite(result.value_absolute_error)
+            | (result.value_absolute_error > float64_tolerance(result.value))
         )
         failure_column = "failed_cohort_tolerance"
         checks.append(
