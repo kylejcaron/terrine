@@ -322,6 +322,65 @@ def test_overlapping_saved_base_replay_returns_terminal_receipt(monkeypatch):
     assert calls == []
 
 
+def test_retry_reconciles_publication_before_rejecting_its_own_manifest():
+    from dataclasses import replace
+    from datetime import UTC, datetime, timedelta
+
+    from terrine.runtime.backends.base import StagedGeneration
+    from terrine.runtime.backends.duckdb import DuckDBBackend
+    from terrine.runtime.leases import LeaseStore
+
+    con = duckdb.connect(":memory:")
+    plan = replace(
+        _plan(), expected_base_manifest="generation-1", expected_base_manifest_bound=True
+    )
+    backend = DuckDBBackend(con, namespace="owner")
+    backend.initialize()
+    con.execute(
+        "CREATE TABLE owner.runtime_runs (run_id VARCHAR PRIMARY KEY,dataset VARCHAR,"
+        "fingerprint VARCHAR,state VARCHAR,published_generation VARCHAR,attempt_fence BIGINT)"
+    )
+    con.execute(
+        "INSERT INTO owner.runtime_manifests "
+        "(dataset,generation,version,snapshot_id) VALUES ('orders','generation-1',1,NULL)"
+    )
+    con.execute("INSERT INTO owner.runtime_publications VALUES ('orders','generation-1',1)")
+    con.execute(
+        "INSERT INTO owner.runtime_runs VALUES ('ambiguous','orders',?,'running',NULL,1)",
+        [plan.recipe.fingerprint],
+    )
+    leases = LeaseStore(con, namespace="owner")
+    lease = leases.acquire(
+        "dataset:orders", "ambiguous", ttl=timedelta(seconds=30), now=datetime.now(UTC)
+    )
+    backend.publish_generation(
+        StagedGeneration(
+            "orders",
+            "generation-2",
+            {"all": pa.table({"id": [1]})},
+            run_id="ambiguous",
+        ),
+        expected_manifest="generation-1",
+        lease=lease,
+    )
+    leases.release(lease)
+
+    result = execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="ambiguous",
+        run_task=lambda task, dependencies: pa.table({"id": [2]}),
+        publish=lambda plan, outputs, lease: "wrong-generation",
+    )
+
+    assert result.state == "succeeded"
+    assert result.published_generation == "generation-2"
+    assert con.execute(
+        "SELECT state FROM owner.runtime_runs WHERE run_id='ambiguous'"
+    ).fetchone() == ("succeeded",)
+
+
 def test_plan_task_bound_is_checked_before_running_work():
     con = duckdb.connect(":memory:")
     calls = []

@@ -205,6 +205,19 @@ def execute_plan(
     try:
         _check_expected_base_manifest(plan, con=con, namespace=namespace)
     except Exception:
+        reconciled = _reconcile_committed_publication(
+            plan,
+            run_id=run_id,
+            lease=lease,
+            runtime_store=runtime_store,
+            con=con,
+            schema=schema,
+            namespace=namespace,
+        )
+        if reconciled is not None:
+            leases.release(lease)
+            _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
+            return reconciled
         with event_transaction(con, namespace=namespace):
             rejected = con.execute(
                 f"UPDATE {schema}.runtime_runs SET state='failed', attempt_fence=? "
@@ -496,6 +509,62 @@ def execute_plan(
                 _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
         finally:
             leases.release(lease)
+
+
+def _reconcile_committed_publication(
+    plan: RefreshPlan,
+    *,
+    run_id: str,
+    lease: Lease,
+    runtime_store: RuntimeStore,
+    con: Any,
+    schema: str,
+    namespace: str,
+) -> RunReceipt | None:
+    table = con.execute(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE lower(table_schema)=lower(?) AND table_name='runtime_run_publications'",
+        [namespace],
+    ).fetchone()
+    if table is None:
+        return None
+    publication = con.execute(
+        f"SELECT generation FROM {schema}.runtime_run_publications WHERE run_id=?", [run_id]
+    ).fetchone()
+    if publication is None:
+        return None
+    generation = publication[0]
+    runtime_store.replace_published_snapshot(
+        plan.dataset, generation, plan.snapshot_id, lease=lease
+    )
+    with event_transaction(con, namespace=namespace):
+        dependencies = {dependency for task in plan.tasks for dependency in task.dependencies}
+        if not any(task.task_id not in dependencies for task in plan.tasks):
+            _copy_result_partitions(
+                con,
+                schema=schema,
+                run_id=run_id,
+                dataset=plan.dataset,
+                generation=generation,
+            )
+        reconciled = con.execute(
+            f"UPDATE {schema}.runtime_runs SET state='succeeded', published_generation=?, "
+            "attempt_fence=? WHERE run_id=? AND state IN "
+            "('queued','running','cancel_requested') AND "
+            "(attempt_fence IS NULL OR attempt_fence<?) RETURNING run_id",
+            [generation, lease.fence, run_id, lease.fence],
+        ).fetchone()
+        if reconciled is None:
+            return None
+        record_run_event(
+            run_id,
+            "lifecycle",
+            {"state": "succeeded"},
+            con=con,
+            namespace=namespace,
+            _in_transaction=True,
+        )
+    return RunReceipt(run_id, "succeeded", generation)
 
 
 def _check_expected_base_manifest(plan: RefreshPlan, *, con: Any, namespace: str) -> None:
