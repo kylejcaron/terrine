@@ -83,3 +83,27 @@ Outcome windows are part of the treatment-risk horizon: not-yet-treated controls
 Identification requires parallel *unconditional* untreated outcome trends between the actual weighted treated and control populations. Conditional parallel trends alone do not justify the unadjusted estimator when covariate distributions differ. The estimator does not claim to test that assumption. Use `naive_staggered_twfe_warning()` when documenting why a naive staggered TWFE estimate is not a substitute for these cohort-time effects.
 
 Run `python examples/stacked_event_study.py` for an executable DuckDB example that materializes both control modes, estimates their effects and prints the TWFE warning diagnostic.
+
+## Pretrend, placebo, and negative-control evidence
+
+`pretrend_test(stacked_result)` jointly tests every declared negative event-time
+contrast using the corresponding full unit-cluster covariance submatrix.
+`placebo_test(frame, outcome=..., placebo_periods=...)` checks treatment-group
+differences at declared pre-treatment event periods; `negative_control_test`
+uses the declared negative-control outcome. Each returns the shared immutable
+`Diagnostic` with cohort/unit counts, test metrics, and a reason when evidence
+is unavailable or power is limited. A missing negative-control column is
+`unavailable`, never a pass.
+
+These are falsification and model-checking diagnostics, not identification
+tests. A nonsignificant pretrend or placebo result can reflect low power and
+does not establish parallel trends, validate untreated counterfactuals, or
+authorize causal interpretation. Conversely, a detected placebo association
+is a warning that design assumptions may be violated. The diagnostics cannot
+repair contaminated controls, anticipation, missing histories, or inadequate
+overlap; those remain coded refusals at construction/estimation boundaries.
+
+The full 16-cell panel calibration is predeclared in
+[`panel-calibration.md`](../validation/panel-calibration.md). No calibration
+results are claimed here until the marked calibration command has actually
+run and emitted per-cell evidence.

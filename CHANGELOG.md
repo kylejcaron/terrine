@@ -58,3 +58,4 @@
 - Distinguish late-known treatment initiation from never-treated controls, require per-unit treatment-history bounds, and refuse requested comparison periods absent from the schedule.
 - Add weighted stacked cohort-time effects with target/cohort aggregation weights, joint unit-cluster covariance, sampled-population refusal, and an explicit naive staggered-TWFE warning.
 - Validate actual initiation timing and exclusive outcome-window coverage; refuse incomplete treated/admissible-control pairs, preserve numeric precision and finite-value refusals, safely scale large weights and means, and use tail-stable confidence quantiles.
+- Add evidence-only joint pretrend, placebo, and negative-control diagnostics with explicit low-power/unavailable status and non-identification caveats.
