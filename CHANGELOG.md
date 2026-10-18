@@ -56,3 +56,4 @@
 - Mask post-cutoff failure timestamps, preserve subsecond censor cutoffs, retain structural survival axes and projected typed metadata, and reserve internal timestamp aliases while supporting wide coverage bounds.
 
 - Preserve native-precision coverage bounds for wide timestamp histories, avoid Python datetime conversion when recensoring Arrow timestamps, and retain support metadata for automatically included outcomes.
+- Compare backtest cutoffs at exact microsecond precision per cutoff; preserve mixed-resolution censor values and avoid out-of-range nanosecond casts for wide cutoffs.

@@ -464,3 +464,77 @@ def test_backtest_wide_cutoff_emits_microsecond_censor_time():
     assert seen[0].schema.field("duration").type == pa.timestamp("ns", tz="UTC")
     assert seen[0].schema.field("censor_time").type == pa.timestamp("us", tz="UTC")
     assert seen[0]["censor_time"].to_pylist() == [cutoff, cutoff]
+
+
+def test_backtest_mixed_resolution_cutoff_preserves_millisecond_censor_values():
+    source = _frame()
+    table = source.table.set_column(
+        source.table.schema.get_field_index("censor_time"),
+        "censor_time",
+        source.table["censor_time"].cast(pa.timestamp("ms", tz="UTC")),
+    )
+    source = MaterializedFrame(table, source.roles, source.columns, source.provenance)
+    cutoff = datetime(2025, 1, 4, 0, 0, 0, 500001, tzinfo=UTC)
+    seen = []
+    backtest_survival(
+        source,
+        duration="duration",
+        event="event",
+        entry="entry",
+        prediction_cutoffs=[cutoff],
+        fitter=lambda data: seen.append(data.table),
+    )
+    assert seen[0].schema.field("duration").type == pa.timestamp("ns", tz="UTC")
+    assert seen[0].schema.field("censor_time").type == pa.timestamp("us", tz="UTC")
+    assert seen[0]["censor_time"][0].as_py() == cutoff
+
+
+def test_backtest_earlier_cutoff_is_independent_of_later_wide_cutoff():
+    source = _frame()
+    table = source.table.set_column(
+        source.table.schema.get_field_index("censor_time"),
+        "censor_time",
+        pa.array([None, 1735862400000000001], type=pa.timestamp("ns", tz="UTC")),
+    )
+    source = MaterializedFrame(table, source.roles, source.columns, source.provenance)
+    early = datetime(2025, 1, 4, tzinfo=UTC)
+    seen = []
+    backtest_survival(
+        source,
+        duration="duration",
+        event="event",
+        entry="entry",
+        prediction_cutoffs=[early, datetime(2500, 1, 1, tzinfo=UTC)],
+        fitter=lambda data: seen.append(data.table),
+    )
+    first_alone = []
+    backtest_survival(
+        source,
+        duration="duration",
+        event="event",
+        entry="entry",
+        prediction_cutoffs=[early],
+        fitter=lambda data: first_alone.append(data.table),
+    )
+    assert seen[0]["censor_time"].to_pylist() == first_alone[0]["censor_time"].to_pylist()
+
+
+def test_backtest_cutoff_beyond_nanosecond_maximum_within_year_2262():
+    source = _frame()
+    table = source.table.set_column(
+        source.table.schema.get_field_index("censor_time"),
+        "censor_time",
+        pa.nulls(source.table.num_rows, type=pa.timestamp("ns", tz="UTC")),
+    )
+    source = MaterializedFrame(table, source.roles, source.columns, source.provenance)
+    cutoff = datetime(2262, 12, 31, tzinfo=UTC)
+    seen = []
+    backtest_survival(
+        source,
+        duration="duration",
+        event="event",
+        entry="entry",
+        prediction_cutoffs=[cutoff],
+        fitter=lambda data: seen.append(data.table),
+    )
+    assert seen[0]["censor_time"].to_pylist() == [cutoff, cutoff]

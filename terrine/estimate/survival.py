@@ -294,27 +294,18 @@ def backtest_survival(
         if name in table.column_names
     ]
     precision = {"s": 0, "ms": 1, "us": 2, "ns": 3}
-    output_unit = max(
+    base_output_unit = max(
         (dtype.unit for dtype in timestamp_types),
         key=precision.__getitem__,
     )
-    if output_unit != "ns" and any(cutoff.microsecond for cutoff in normalized):
-        output_unit = max((output_unit, "us"), key=precision.__getitem__)
-    output_duration_type = pa.timestamp(output_unit, tz="UTC")
-    censor_output_type = (
-        table.schema.field("censor_time").type
-        if "censor_time" in table.column_names
-        else output_duration_type
+    censor_input_type = (
+        table.schema.field("censor_time").type if "censor_time" in table.column_names else None
     )
-    wide_ns_cutoff = output_unit == "ns" and any(
-        cutoff.year < 1678 or cutoff.year > 2262 for cutoff in normalized
+    censor_ns_values = (
+        table["censor_time"].combine_chunks().cast(pa.int64()).to_pylist()
+        if censor_input_type is not None and censor_input_type.unit == "ns"
+        else ()
     )
-    if wide_ns_cutoff and "censor_time" in table.column_names:
-        censor_values = table["censor_time"].combine_chunks().cast(pa.int64()).to_pylist()
-        if all(value is None or value % 1_000 == 0 for value in censor_values):
-            censor_output_type = pa.timestamp("us", tz="UTC")
-    elif "censor_time" in table.column_names and output_unit == "us":
-        censor_output_type = pa.timestamp("us", tz="UTC")
     results: list[object] = []
     event_time_array = (
         table["event_time"].combine_chunks() if "event_time" in table.column_names else None
@@ -327,6 +318,28 @@ def backtest_survival(
     origins = table[data.roles.t0].combine_chunks()
     events = table[event].to_pylist()
     for cutoff in normalized:
+        cutoff_scalar = pa.scalar(cutoff, type=pa.timestamp("us", tz="UTC"))
+        cutoff_ns = cutoff_scalar.value * 1_000
+        cutoff_fits_ns = -(2**63) <= cutoff_ns <= 2**63 - 1
+        output_unit = base_output_unit
+        if output_unit != "ns" and cutoff.microsecond:
+            output_unit = max((output_unit, "us"), key=precision.__getitem__)
+        output_duration_type = pa.timestamp(output_unit, tz="UTC")
+        censor_output_type = censor_input_type or output_duration_type
+        if censor_input_type is not None:
+            if (
+                censor_input_type.unit != "ns"
+                and cutoff.microsecond
+                and cutoff.microsecond % 1_000 != 0
+            ):
+                censor_output_type = pa.timestamp("us", tz="UTC")
+            elif (
+                censor_input_type.unit == "ns"
+                and not cutoff_fits_ns
+                and all(value is None or value % 1_000 == 0 for value in censor_ns_values)
+            ):
+                censor_output_type = pa.timestamp("us", tz="UTC")
+        wide_ns_cutoff = not cutoff_fits_ns and censor_output_type.unit == "ns"
         kept: list[int] = []
         observed_duration: list[int] = []
         observed_event: list[bool] = []
@@ -338,7 +351,6 @@ def backtest_survival(
             ended = durations[index]
             if not origin.is_valid or not entered.is_valid or not ended.is_valid:
                 raise _INVALID.error(reason=f"null_survival_time_at_row_{index}")
-            cutoff_scalar = pa.scalar(cutoff, type=pa.timestamp("us", tz="UTC"))
             cutoff_elapsed = _timestamp_elapsed(cutoff_scalar, origin, row=index, name="cutoff")
             entry_elapsed = _timestamp_elapsed(entered, origin, row=index, name=entry)
             if entry_elapsed >= cutoff_elapsed:
