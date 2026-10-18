@@ -220,3 +220,22 @@ def test_owner_plan_refuses_unsupported_runtime_shape_before_resolving_sources()
 
     assert error.value.code == "terrine.compile.runtime_shape_unsupported"
     assert not resolver.resolved
+
+
+def test_roster_only_dependency_graph_contains_no_fact_source_work():
+    from types import SimpleNamespace
+
+    request = _request()
+    graph = dependency_graph(
+        SimpleNamespace(units={"user": object()}),
+        request.design,
+        sources=(),
+        definition_hash=request.design.spec_hash,
+    )
+
+    assert [node.layer for node in graph.nodes] == ["roster", "anchor", "frame"]
+    assert [node.source for node in graph.nodes] == ["user", "user", "user"]
+    assert [(source.layer, target.layer) for source, target in graph.edges] == [
+        ("roster", "anchor"),
+        ("anchor", "frame"),
+    ]
