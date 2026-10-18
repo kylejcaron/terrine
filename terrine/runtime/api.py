@@ -124,21 +124,40 @@ def run_serialized_plan(
     """Verify and execute a plan, reopening owner-retained inputs for saved recipes."""
     document = json.loads(serialized)
     if isinstance(document, dict) and "plan_json" in document:
-        if resolver is None or snapshot_authority is None:
-            raise ValueError("saved recipes require an owner resolver and snapshot authority")
-        if executor is None or not callable(getattr(executor, "run_snapshot_task", None)):
-            raise ValueError("saved recipes require an executor with run_snapshot_task")
         recipe = SavedPlanRecipe.from_json(serialized)
-        plan, _model, _design, recipe_destination = resolve_plan(
-            recipe, resolver=resolver, namespace=namespace
-        )
+        embedded_plan = RefreshPlan.deserialize(recipe.plan_json)
+        recipe_destination = recipe.destination
         if destination is not None and destination != recipe_destination:
             raise ValueError("destination differs from saved recipe")
         if request_key is not None:
             destination = recipe_destination
+            existing = find_run_by_request_key(
+                request_key, destination=destination, con=con, namespace=namespace
+            )
+            if existing is not None:
+                return run_plan(
+                    embedded_plan,
+                    con=con,
+                    namespace=namespace,
+                    request_key=request_key,
+                    destination=destination,
+                )
         elif destination is not None:
             raise ValueError("destination is only used with a request_key")
+        if resolver is None or snapshot_authority is None:
+            raise ValueError("saved recipes require an owner resolver and snapshot authority")
+        if executor is None or not callable(getattr(executor, "run_snapshot_task", None)):
+            raise ValueError("saved recipes require an executor with run_snapshot_task")
+        plan, model, _design, recipe_destination = resolve_plan(
+            recipe, resolver=resolver, namespace=namespace
+        )
         receipt = snapshot_authority.find_retained(plan.snapshot_id, namespace=namespace)
+        if receipt.model_hash != model.model_hash:
+            raise RefusalSpec(
+                "terrine.runtime.plan_recipe_mismatch",
+                "Saved plan reconstruction failed verification "
+                "(retained snapshot Model declaration differs).",
+            ).error()
         executor = _SnapshotBoundExecutor(executor, snapshot_authority, receipt, con, namespace)
     else:
         plan = RefreshPlan.deserialize(serialized)
