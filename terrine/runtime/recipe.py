@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.model import Model
 from terrine.runtime.planner import RefreshPlan
 from terrine.runtime.state import RuntimeStore
@@ -243,6 +243,8 @@ class SavedPlanRecipe:
         try:
             RefreshPlan.deserialize(recipe.plan_json)
             design = from_json(recipe.design_json)
+        except TerrineError:
+            raise
         except (ValueError, TypeError) as exc:
             raise _INVALID.error(reason="plan or Design payload is invalid") from exc
         if hashlib.sha256(canonical_json(design)).hexdigest() != recipe.design_hash:
