@@ -31,6 +31,9 @@ def test_event_sequence_validates_positive_max_events_and_window():
     "property_name",
     [
         "session_index",
+        "session_event_count",
+        "session_start_time",
+        "session_end_time",
         "previous_event_id",
         "previous_event_time",
         "transition_reason",

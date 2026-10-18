@@ -138,3 +138,28 @@ def test_sessions_expose_summary_and_transition_schemas():
     assert result[0]["transition"] is None
     assert result[1]["transition"] == {"from_event_id": "a", "to_event_id": "b"}
     assert result[2]["transition"] == {"from_event_id": "b", "to_event_id": "c"}
+
+
+def test_session_summaries_override_colliding_physical_columns():
+    events = ibis.memtable(
+        {
+            "unit": ["u", "u"],
+            "anchor": [1, 1],
+            "time": [datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 1, 0, 0, 1, tzinfo=UTC)],
+            "id": ["a", "b"],
+            "session_event_count": [99, 99],
+            "session_start_time": [datetime(2020, 1, 1, tzinfo=UTC)] * 2,
+            "session_end_time": [datetime(2020, 1, 2, tzinfo=UTC)] * 2,
+        }
+    )
+    result = sessionize(
+        events,
+        unit_column="unit",
+        anchor_id_column="anchor",
+        timestamp_column="time",
+        event_id_column="id",
+        gap_seconds=1,
+        max_events=2,
+    ).to_pyarrow().to_pylist()
+    assert [row["session_event_count"] for row in result] == [2, 2]
+    assert [row["session_start_time"] for row in result] == [datetime(2025, 1, 1, tzinfo=UTC)] * 2

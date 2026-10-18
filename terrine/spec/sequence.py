@@ -123,9 +123,13 @@ class EventSequence:
             generated.update(
                 {
                     "session_index",
+                    "session_event_count",
+                    "session_start_time",
+                    "session_end_time",
                     "previous_event_id",
                     "previous_event_time",
                     "transition_reason",
+                    "transition",
                 }
             )
         reason_names = {f"{name}_reason" for name in properties}

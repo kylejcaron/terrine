@@ -71,7 +71,17 @@ def sessionize(
         session_start_time=annotated[timestamp_column].min(),
         session_end_time=annotated[timestamp_column].max(),
     )
-    left = annotated.view()
+    collisions = {
+        "session_event_count",
+        "session_start_time",
+        "session_end_time",
+    }.intersection(annotated.columns) - {
+        unit_column,
+        anchor_id_column,
+        timestamp_column,
+        event_id_column,
+    }
+    left = annotated.drop(*collisions).view()
     right = summaries.view()
     enriched = left.left_join(
         right,
