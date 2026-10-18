@@ -99,6 +99,8 @@ class RuntimeStore:
         self._check_ref(ref)
         if supersedes is not None:
             self._check_ref(supersedes)
+            if supersedes == ref:
+                raise ValueError("a generation cannot supersede itself")
             if supersedes.dataset != ref.dataset:
                 raise ValueError("superseded generation must belong to the same dataset")
         now = datetime.now().astimezone()
@@ -112,6 +114,8 @@ class RuntimeStore:
             separators=(",", ":"),
         )
         snapshot_json = json.dumps(_snapshot_json(snapshot), sort_keys=True, separators=(",", ":"))
+        self.con.execute("BEGIN TRANSACTION")
+        inserted = False
         try:
             self.con.execute(
                 f"INSERT INTO {self._schema}.runtime_generations VALUES (?, ?, ?, ?, ?, ?, NULL)",
@@ -124,23 +128,26 @@ class RuntimeStore:
                     supersedes.generation if supersedes else None,
                 ],
             )
+            inserted = True
+            if supersedes is not None:
+                result = self.con.execute(
+                    f"UPDATE {self._schema}.runtime_generations SET superseded_by=? "
+                    "WHERE dataset=? AND generation=? AND superseded_by IS NULL "
+                    "RETURNING generation",
+                    [ref.generation, ref.dataset, supersedes.generation],
+                ).fetchone()
+                if result is None:
+                    raise ValueError(
+                        "superseded generation does not exist or is already superseded"
+                    )
+            self.con.execute("COMMIT")
         except Exception as exc:
-            raise ValueError(
-                "generation identity already exists or supersession is invalid"
-            ) from exc
-        if supersedes is not None:
-            result = self.con.execute(
-                f"UPDATE {self._schema}.runtime_generations SET superseded_by=? "
-                "WHERE dataset=? AND generation=? AND superseded_by IS NULL RETURNING generation",
-                [ref.generation, ref.dataset, supersedes.generation],
-            ).fetchone()
-            if result is None:
-                self.con.execute(
-                    f"DELETE FROM {self._schema}.runtime_generations "
-                    "WHERE dataset=? AND generation=?",
-                    [ref.dataset, ref.generation],
-                )
-                raise ValueError("superseded generation does not exist or is already superseded")
+            self.con.execute("ROLLBACK")
+            if not inserted and not isinstance(exc, ValueError):
+                raise ValueError(
+                    "generation identity already exists or supersession is invalid"
+                ) from exc
+            raise
         record = self.read_generation(ref)
         if record is None:
             raise RuntimeError("inserted generation is not readable")

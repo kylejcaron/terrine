@@ -49,10 +49,11 @@ def dependency_graph(
     if not source_names:
         raise ValueError("at least one source is required")
     fingerprint = definition_hash or getattr(design, "spec_hash", None) or "unbound"
+    partition_names = tuple(partitions)
     nodes: list[LayerNode] = []
     edges: list[tuple[LayerNode, LayerNode]] = []
     for source in sorted(set(source_names)):
-        for partition in partitions:
+        for partition in partition_names:
             daily, prefix, anchor, frame = (
                 LayerNode(layer, source, partition, fingerprint, "pending")
                 for layer in ("daily", "prefix", "anchor", "frame")
