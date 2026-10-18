@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from terrine.errors import RefusalSpec
+from terrine.runtime.events import event_transaction, record_run_event
 from terrine.runtime.leases import LeaseStore
 from terrine.runtime.state import RuntimeStore
 from terrine.runtime.synchronization import run_publication_lock
@@ -112,25 +113,23 @@ def cancel_run(run_id: str, *, con: Any, namespace: str) -> CancelReceipt:
         status = get_run(run_id, con=con, namespace=namespace)
         if status.durable_state in {"succeeded", "failed", "cancelled"}:
             return CancelReceipt(run_id, "already_terminal", status)
-        if status.durable_state == "cancel_requested":
-            return CancelReceipt(run_id, "already_requested", status)
-        con.execute(
-            f"UPDATE {store._schema}.runtime_runs SET state='cancel_requested' "
-            "WHERE run_id=? AND state IN ('queued','running')",
-            [run_id],
-        )
+        with event_transaction(con, namespace=namespace):
+            transitioned = con.execute(
+                f"UPDATE {store._schema}.runtime_runs SET state='cancel_requested' "
+                "WHERE run_id=? AND state IN ('queued','running') RETURNING run_id",
+                [run_id],
+            ).fetchone()
+            if transitioned is not None:
+                record_run_event(
+                    run_id,
+                    "lifecycle",
+                    {"state": "cancel_requested"},
+                    con=con,
+                    namespace=namespace,
+                    _in_transaction=True,
+                )
         updated = get_run(run_id, con=con, namespace=namespace)
         disposition = (
             "requested" if updated.durable_state == "cancel_requested" else "already_terminal"
         )
-        if updated.durable_state == "cancel_requested":
-            from terrine.runtime.events import record_run_event
-
-            record_run_event(
-                run_id,
-                "lifecycle",
-                {"state": "cancel_requested"},
-                con=con,
-                namespace=namespace,
-            )
         return CancelReceipt(run_id, disposition, updated)

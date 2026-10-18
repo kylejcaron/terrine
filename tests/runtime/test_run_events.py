@@ -99,3 +99,33 @@ def test_event_retention_reports_cursor_gap(monkeypatch):
     page = read_run_events("r1", con=con, namespace="owner", after=cursors[0])
     assert page.cursor_gap
     assert [event.sequence for event in page.events] == [3, 4, 5]
+
+
+def test_concurrent_lifecycle_emission_allocates_unique_sequences():
+    from concurrent.futures import ThreadPoolExecutor
+    from datetime import UTC, datetime, timedelta
+    from threading import Barrier
+
+    con = duckdb.connect(":memory:")
+    start = Barrier(8)
+
+    def emit(sequence):
+        connection = con.cursor()
+        try:
+            start.wait(timeout=5)
+            record_run_event(
+                "r1",
+                "lifecycle",
+                {"state": "running"},
+                con=connection,
+                namespace="owner",
+                at=datetime(2026, 10, 18, tzinfo=UTC) + timedelta(seconds=sequence),
+            )
+        finally:
+            connection.close()
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        tuple(executor.map(emit, range(8)))
+
+    events = read_run_events("r1", con=con, namespace="owner").events
+    assert [event.sequence for event in events] == list(range(1, 9))

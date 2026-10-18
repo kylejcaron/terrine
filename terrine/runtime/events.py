@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -9,9 +11,9 @@ from typing import Any
 from terrine.runtime.state import RuntimeStore
 
 __all__ = ["RunEvent", "EventPage", "read_run_events", "record_run_event"]
-
 _MAX_LIMIT = 1000
 _RETENTION = 10000
+_EVENT_WRITE_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +41,23 @@ def _ensure_events(con: Any, schema: str) -> None:
     )
 
 
+@contextmanager
+def event_transaction(con: Any, *, namespace: str):
+    """Serialize owner event writes with the state changes they describe."""
+    store = RuntimeStore(con, namespace=namespace)
+    with _EVENT_WRITE_LOCK:
+        store.initialize()
+        _ensure_events(con, store._schema)
+        con.execute("BEGIN TRANSACTION")
+        try:
+            yield
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+        else:
+            con.execute("COMMIT")
+
+
 def record_run_event(
     run_id: str,
     kind: str,
@@ -47,6 +66,7 @@ def record_run_event(
     con: Any,
     namespace: str,
     at: datetime | None = None,
+    _in_transaction: bool = False,
 ) -> None:
     valid = (
         kind == "phase"
@@ -61,11 +81,21 @@ def record_run_event(
     )
     if not run_id or not valid:
         raise ValueError("event fields are invalid or contain forbidden data")
-    event_at = (at or datetime.now(UTC)).astimezone(UTC)
-    store = RuntimeStore(con, namespace=namespace)
-    store.initialize()
-    schema = store._schema
-    _ensure_events(con, schema)
+    event_at = at or datetime.now(UTC)
+    event_at = event_at.replace(tzinfo=UTC) if event_at.tzinfo is None else event_at.astimezone(UTC)
+    schema = RuntimeStore(con, namespace=namespace)._schema
+    if not _in_transaction:
+        with event_transaction(con, namespace=namespace):
+            record_run_event(
+                run_id,
+                kind,
+                payload,
+                con=con,
+                namespace=namespace,
+                at=event_at,
+                _in_transaction=True,
+            )
+        return
     if kind == "phase":
         previous = con.execute(
             f"SELECT event_at FROM {schema}.runtime_run_events "
@@ -97,9 +127,10 @@ def read_run_events(
     if not run_id or isinstance(limit, bool) or limit < 1:
         raise ValueError("run_id and positive event limit are required")
     store = RuntimeStore(con, namespace=namespace)
-    store.initialize()
-    schema = store._schema
-    _ensure_events(con, schema)
+    with _EVENT_WRITE_LOCK:
+        store.initialize()
+        schema = store._schema
+        _ensure_events(con, schema)
     after_sequence = 0
     cursor_gap = False
     if after is not None:

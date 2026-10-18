@@ -244,3 +244,10 @@ def test_collected_snapshot_pin_failure_records_run_and_releases_lease():
     ).fetchone()
     assert run is not None and run[0] == "failed"
     assert con.execute('SELECT resource FROM "owner".runtime_leases').fetchall() == []
+    from terrine.runtime.events import read_run_events
+
+    lifecycle = read_run_events("collected-run", con=con, namespace="owner").events
+    assert [event.payload["state"] for event in lifecycle if event.kind == "lifecycle"] == [
+        "running",
+        "failed",
+    ]
