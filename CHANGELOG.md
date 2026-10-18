@@ -87,3 +87,4 @@
 - Add `terrine plan|run|status|events|cancel` commands over owner IPC with destination-scoped request-key replay.
 - Document Model/Design materialization plans, owner CLI workflows, exact-generation reads, and backend consistency limits.
 - Add an opt-in OpenTelemetry lifecycle projection with redacted attributes and bounded nonblocking export.
+- Demonstrate real Model/Design saved-recipe execution from retained DuckDB inputs, exact-generation reads, and an operator-declared correction; cover partition retries and owner-held lost-response lookup in warehouse integration tests.
