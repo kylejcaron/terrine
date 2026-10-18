@@ -16,7 +16,7 @@ from terrine.compile.anchors import (
     _unique_checks,
     _utc_column,
 )
-from terrine.compile.columns import CompiledStudy, compile_columns
+from terrine.compile.columns import CompiledStudy, _HistoryValidation, compile_columns
 from terrine.data import Roles, SequenceMeta
 from terrine.semantic.bind import normalize_events
 from terrine.spec.design import Design
@@ -74,18 +74,19 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
     if not isinstance(sequence, EventSequence):
         raise TypeError("design shape must be EventSequence")
     design.validate(model)
-    if design.features or design.outcomes:
-        raise _UNSUPPORTED_SHAPE.error()
-    # Existing cross-section machinery retains candidate identity, eligibility, and audit roles.
+    # Column expressions remain anchor-grain values; event payloads are joined to them
+    # only after sequence selection, using the same compiled anchor relation.
     base_design = Design(
         design.unit,
         design.anchor,
+        features=design.features,
+        outcomes=design.outcomes,
         eligibility=design.eligibility,
         gap=design.gap,
         anchor_range=design.anchor_range,
     )
     base = compile_columns(base_design, model)
-    anchors = base.table.select(*base._anchors.table.columns)
+    anchors = base._anchors.table.select(*base._anchors.table.columns)
     fact = model.catalog.facts[sequence.fact]
     source = model.sources[fact.source]
     physical_unit = source.entities[design.unit]
@@ -119,6 +120,24 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         for name in dict.fromkeys(internal_names)
         if name is not None and name not in sequence.properties
     )
+    reserved_property_names = (
+        set(normalized.columns) | set(sequence.properties) | set(internal_properties)
+    )
+    property_aliases = {}
+    for index, name in enumerate(dict.fromkeys((*sequence.properties, *internal_properties))):
+        alias = name
+        if name in normalized.columns:
+            alias = f"__terrine_sequence_property_{index}"
+            suffix = 0
+            while alias in reserved_property_names:
+                suffix += 1
+                alias = f"__terrine_sequence_property_{index}_{suffix}"
+            reserved_property_names.add(alias)
+        property_aliases[name] = alias
+    property_columns = {name: property_aliases[name] for name in sequence.properties}
+    label_property_column = (
+        property_aliases[sequence.label_property] if sequence.label_property is not None else None
+    )
     funnel_event_property = sequence.funnel.event_property if sequence.funnel is not None else None
     funnel_event_property_column = None
     if funnel_event_property is not None:
@@ -135,7 +154,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
                 raise _UNSUPPORTED_SHAPE.error()
             internal_property_columns_list.append(funnel_event_property_column)
         else:
-            internal_property_columns_list.append(name)
+            internal_property_columns_list.append(property_aliases[name])
     internal_property_columns = tuple(internal_property_columns_list)
     direct = {}
     for property_name in (*sequence.properties, *internal_properties):
@@ -147,7 +166,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
                 []
                 if property_name == funnel_event_property
                 and property_name not in sequence.properties
-                else [property_name]
+                else [property_aliases[property_name]]
             )
             if property_name == funnel_event_property:
                 if funnel_event_property_column is None:
@@ -172,7 +191,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
                     []
                     if property_name == funnel_event_property
                     and property_name not in sequence.properties
-                    else [property_name]
+                    else [property_aliases[property_name]]
                 )
                 if property_name == funnel_event_property:
                     if funnel_event_property_column is None:
@@ -183,6 +202,18 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         if derived:
             normalized = normalized.mutate(**derived)
     normalized = normalized.mutate(unit=normalized["_unit"])
+    property_found_columns = {
+        name: aliases[(binding.dimension_name, name)][1]
+        for name in sequence.properties
+        if (binding := _property_binding(source, name)).dimension_name is not None
+    }
+    funnel_event_property_found_column = None
+    if funnel_event_property is not None:
+        funnel_binding = _property_binding(source, funnel_event_property)
+        if funnel_binding.dimension_name is not None:
+            funnel_event_property_found_column = aliases[
+                (funnel_binding.dimension_name, funnel_event_property)
+            ][1]
 
     if configured_id is None:
         event_id_column = "_timestamp"
@@ -215,6 +246,10 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         funnel_within_seconds=(
             sequence.funnel.within_seconds if sequence.funnel is not None else None
         ),
+        property_found_columns=property_found_columns,
+        funnel_event_property_found_column=funnel_event_property_found_column,
+        property_columns=property_columns,
+        label_property_column=label_property_column,
     )
     integrity_checks = list(base._anchors._checks)
     if timestamp_check is not None:
@@ -228,17 +263,44 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         )
     )
     anchor_table = AnchorTable(base._anchors.table, tuple(integrity_checks))
-    checks = (*base._checks, _SequencePreflight(result))
+    history_checks = tuple(
+        _HistoryValidation(dimensions[dimension.name], dimension) for dimension in source.dimensions
+    )
+    checks = (*base._checks, *history_checks, _SequencePreflight(result))
+    output = result.table
+    if base.roles.features or base.roles.outcomes:
+        base_columns = tuple(name for name in base.table.columns if name not in output.columns)
+        output = output.left_join(
+            base.table,
+            predicates=[
+                output.unit == base.table.unit,
+                output.anchor_id == base.table.anchor_id,
+            ],
+        ).select(
+            **{name: output[name] for name in output.columns},
+            **{name: base.table[name] for name in base_columns},
+        )
     return CompiledStudy(
-        result.table,
+        output,
         base.audit_table,
-        Roles("unit", "anchor_id", "t0", None, result.roles.features, tuple(design.outcomes)),
-        result.columns,
+        Roles(
+            "unit",
+            "anchor_id",
+            "t0",
+            None,
+            (*result.roles.features, *base.roles.features),
+            tuple(base.roles.outcomes),
+        ),
+        {**result.columns, **base.columns},
         base.feature_cutoffs,
-        {},
-        {**base.strategy, **{name: "bounded_event_sequence" for name in result.roles.features}},
+        base.eligibility_cutoffs,
+        {
+            **base.strategy,
+            **{name: "bounded_event_sequence" for name in result.roles.features},
+        },
         anchor_table,
         tuple(checks),
+        base.expression_timings,
         sequence_meta=SequenceMeta(
             fact=sequence.fact,
             window=sequence.window,
@@ -261,5 +323,46 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
                 )
                 for name in sequence.properties
             },
+            label_property=sequence.label_property,
+            session_gap_seconds=(
+                sequence.sessions.gap_seconds if sequence.sessions is not None else None
+            ),
+            session_fields=(
+                (
+                    "session_index",
+                    "session_event_count",
+                    "session_start_time",
+                    "session_end_time",
+                    "sessions",
+                    "sessions_complete",
+                    "sessions_reason",
+                )
+                if sequence.sessions is not None
+                else ()
+            ),
+            sessions_column="sessions" if sequence.sessions is not None else None,
+            sessions_complete_column=(
+                "sessions_complete" if sequence.sessions is not None else None
+            ),
+            sessions_reason_column="sessions_reason" if sequence.sessions is not None else None,
+            transition_from_column=(
+                "transition_from"
+                if sequence.sessions is not None and sequence.label_property
+                else None
+            ),
+            transition_to_column=(
+                "transition_to"
+                if sequence.sessions is not None and sequence.label_property
+                else None
+            ),
+            funnel_event_property=(
+                sequence.funnel.event_property if sequence.funnel is not None else None
+            ),
+            funnel_steps=sequence.funnel.steps if sequence.funnel is not None else (),
+            funnel_within_seconds=(
+                sequence.funnel.within_seconds if sequence.funnel is not None else None
+            ),
+            funnel_attempts_column="funnel_attempts" if sequence.funnel is not None else None,
+            identity_kind="configured" if configured_id is not None else "timestamp",
         ),
     )

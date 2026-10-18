@@ -88,9 +88,12 @@ def funnel_progress(
         _f_unit=events[unit_column],
         _f_anchor=events[anchor_id_column],
         _f_start_id=events[event_id_column],
+        _f_start_time=events[timestamp_column],
         _f_last_id=events[event_id_column],
         _f_last_time=events[timestamp_column],
         _f_last_position=events[position_column],
+        _f_event_ids=ibis.array([events[event_id_column]]),
+        _f_event_times=ibis.array([events[timestamp_column]]),
         _f_progress=ibis.literal(1, type="int64"),
         _f_deadline=deadline,
         _f_sequence_end=events[sequence_end_column],
@@ -139,9 +142,20 @@ def funnel_progress(
             _f_unit=left._f_unit,
             _f_anchor=left._f_anchor,
             _f_start_id=left._f_start_id,
+            _f_start_time=left._f_start_time,
             _f_last_id=ibis.coalesce(right._next_id, left._f_last_id),
             _f_last_time=ibis.coalesce(right._next_time, left._f_last_time),
             _f_last_position=ibis.coalesce(right._next_position, left._f_last_position),
+            _f_event_ids=ibis.ifelse(
+                right._next_position.isnull(),
+                left._f_event_ids,
+                left._f_event_ids.concat(ibis.array([right._next_id])),
+            ),
+            _f_event_times=ibis.ifelse(
+                right._next_position.isnull(),
+                left._f_event_times,
+                left._f_event_times.concat(ibis.array([right._next_time])),
+            ),
             _f_progress=ibis.ifelse(
                 right._next_position.isnull(),
                 left._f_progress,
@@ -156,6 +170,9 @@ def funnel_progress(
         unit=attempts._f_unit,
         anchor_id=attempts._f_anchor,
         step0_event_id=attempts._f_start_id,
+        start_time=attempts._f_start_time,
+        matched_event_ids=attempts._f_event_ids,
+        matched_event_times=attempts._f_event_times,
         deadline=attempts._f_deadline,
         progress=attempts._f_progress,
         status=ibis.ifelse(
@@ -198,6 +215,10 @@ def event_sequence(
     funnel_event_property: str | None = None,
     funnel_steps: tuple[str, ...] | None = None,
     funnel_within_seconds: int | None = None,
+    property_columns: Mapping[str, str] | None = None,
+    label_property_column: str | None = None,
+    property_found_columns: Mapping[str, str] | None = None,
+    funnel_event_property_found_column: str | None = None,
 ) -> SequenceResult:
     """Select complete, ordered source events in each anchor's exact half-open window."""
     if window_start >= window_end or max_events <= 0:
@@ -211,7 +232,23 @@ def event_sequence(
     for name in (unit_column, anchor_id_column, "t0"):
         if name not in anchors.columns:
             raise ValueError(f"anchor relation is missing {name!r}")
-    required = (unit_column, timestamp_column, event_id_column, *properties, *internal_properties)
+    property_columns = dict(property_columns or {name: name for name in properties})
+    property_found_columns = dict(property_found_columns or {})
+    if set(property_columns) != set(properties) or not set(property_found_columns) <= set(
+        properties
+    ):
+        raise ValueError("invalid property output or availability mapping")
+    label_column = label_property_column or label_property
+    required = (
+        unit_column,
+        timestamp_column,
+        event_id_column,
+        *property_columns.values(),
+        *property_found_columns.values(),
+        *internal_properties,
+        *((label_column,) if label_column is not None else ()),
+        *((funnel_event_property_found_column,) if funnel_event_property_found_column else ()),
+    )
     if any(name not in events.columns for name in required):
         raise ValueError("event relation is missing a requested column")
 
@@ -310,6 +347,7 @@ def event_sequence(
             event_id_column=event_id_column,
             gap_seconds=session_gap_seconds,
             max_events=max_events,
+            label_column=label_column,
         )
 
     if representation == "arrays":
@@ -319,13 +357,25 @@ def event_sequence(
                 "event_time": complete_children[timestamp_column],
                 **{
                     field: (
-                        ibis.ifelse(
-                            complete_children[name].isnull(),
-                            "known_null",
-                            ibis.literal(None, type="string"),
+                        (
+                            ibis.ifelse(
+                                complete_children[property_found_columns[name]],
+                                ibis.ifelse(
+                                    complete_children[property_columns[name]].isnull(),
+                                    "known_null",
+                                    ibis.literal(None, type="string"),
+                                ),
+                                "missing_history",
+                            )
+                            if name in property_found_columns
+                            else ibis.ifelse(
+                                complete_children[property_columns[name]].isnull(),
+                                "known_null",
+                                ibis.literal(None, type="string"),
+                            )
                         )
                         if is_reason
-                        else complete_children[name]
+                        else complete_children[property_columns[name]]
                     )
                     for name in properties
                     for field, is_reason in ((name, False), (f"{name}_reason", True))
@@ -342,6 +392,14 @@ def event_sequence(
                         "transition": complete_children.transition,
                     }
                     if session_gap_seconds is not None
+                    else {}
+                ),
+                **(
+                    {
+                        "transition_from": complete_children.transition_from,
+                        "transition_to": complete_children.transition_to,
+                    }
+                    if session_gap_seconds is not None and label_property is not None
                     else {}
                 ),
             }
@@ -408,7 +466,7 @@ def event_sequence(
                 output: expression
                 for name in properties
                 for output, expression in (
-                    (name, ibis.literal(None, type=events.schema()[name])),
+                    (name, ibis.literal(None, type=events.schema()[property_columns[name]])),
                     (f"{name}_reason", ibis.literal(None, type="string")),
                 )
             },
@@ -438,6 +496,14 @@ def event_sequence(
                 if session_gap_seconds is not None
                 else {}
             ),
+            **(
+                {
+                    "transition_from": ibis.literal(None, type=events.schema()[label_property]),
+                    "transition_to": ibis.literal(None, type=events.schema()[label_property]),
+                }
+                if session_gap_seconds is not None and label_property is not None
+                else {}
+            ),
         )
         children = complete_children.select(
             unit=complete_children._sequence_unit,
@@ -454,13 +520,25 @@ def event_sequence(
                 output: expression
                 for name in properties
                 for output, expression in (
-                    (name, complete_children[name]),
+                    (name, complete_children[property_columns[name]]),
                     (
                         f"{name}_reason",
-                        ibis.ifelse(
-                            complete_children[name].isnull(),
-                            "known_null",
-                            ibis.literal(None, type="string"),
+                        (
+                            ibis.ifelse(
+                                complete_children[property_found_columns[name]],
+                                ibis.ifelse(
+                                    complete_children[property_columns[name]].isnull(),
+                                    "known_null",
+                                    ibis.literal(None, type="string"),
+                                ),
+                                "missing_history",
+                            )
+                            if name in property_found_columns
+                            else ibis.ifelse(
+                                complete_children[property_columns[name]].isnull(),
+                                "known_null",
+                                ibis.literal(None, type="string"),
+                            )
                         ),
                     ),
                 )
@@ -477,6 +555,14 @@ def event_sequence(
                     "transition": complete_children.transition,
                 }
                 if session_gap_seconds is not None
+                else {}
+            ),
+            **(
+                {
+                    "transition_from": complete_children.transition_from,
+                    "transition_to": complete_children.transition_to,
+                }
+                if session_gap_seconds is not None and label_property is not None
                 else {}
             ),
         )
@@ -497,6 +583,67 @@ def event_sequence(
             if session_gap_seconds is not None
             else ()
         )
+        if session_gap_seconds is not None and label_property is not None:
+            feature_names = (*feature_names, "transition_from", "transition_to")
+    if session_gap_seconds is not None:
+        session_rows = complete_children.group_by(
+            [
+                complete_children._sequence_unit,
+                complete_children._sequence_anchor,
+                complete_children.session_index,
+            ]
+        ).aggregate(
+            session_event_count=complete_children[event_id_column].count(),
+            session_start_time=complete_children[timestamp_column].min(),
+            session_end_time=complete_children[timestamp_column].max(),
+        )
+        session_values = ibis.struct(
+            {
+                "session_index": session_rows.session_index,
+                "session_event_count": session_rows.session_event_count,
+                "session_start_time": session_rows.session_start_time,
+                "session_end_time": session_rows.session_end_time,
+            }
+        )
+        sessions = session_rows.group_by(
+            [session_rows._sequence_unit, session_rows._sequence_anchor]
+        ).aggregate(_sessions=session_values.collect(order_by=session_rows.session_index))
+        session_type = sessions.schema()["_sessions"]
+        joined = table.left_join(
+            sessions,
+            [
+                table.unit == sessions._sequence_unit,
+                table.anchor_id == sessions._sequence_anchor,
+            ],
+        )
+        session_payload = ibis.ifelse(
+            joined.is_event,
+            ibis.literal(None, type=session_type),
+            ibis.ifelse(
+                joined.sequence_complete,
+                ibis.coalesce(joined._sessions, ibis.literal([], type=session_type)),
+                ibis.literal(None, type=session_type),
+            ),
+        )
+        table = joined.select(
+            **{
+                name: joined[name]
+                for name in joined.columns
+                if name not in {"_sequence_unit", "_sequence_anchor", "_sessions"}
+            },
+            sessions=session_payload,
+            sessions_complete=ibis.ifelse(
+                joined.is_event,
+                ibis.literal(None, type="boolean"),
+                joined.sequence_complete,
+            ),
+            sessions_reason=ibis.ifelse(
+                joined.is_event,
+                ibis.literal(None, type="string"),
+                joined.sequence_reason,
+            ),
+        )
+        feature_names = (*feature_names, "sessions", "sessions_complete", "sessions_reason")
     if funnel_event_property is not None:
         if (
             not funnel_steps
@@ -521,6 +668,9 @@ def event_sequence(
         )
         attempt_values = ibis.struct(
             {
+                "start_time": attempts.start_time,
+                "matched_event_ids": attempts.matched_event_ids,
+                "matched_event_times": attempts.matched_event_times,
                 "step0_event_id": attempts.step0_event_id,
                 "deadline": attempts.deadline,
                 "progress": attempts.progress,
@@ -568,8 +718,23 @@ def event_sequence(
                 if name not in {"unit_right", "anchor_id_right", "funnel_attempts"}
             },
             funnel_attempts=payload,
+            funnel_attempts_complete=ibis.ifelse(
+                joined_table.is_event,
+                ibis.literal(None, type="boolean"),
+                joined_table.sequence_complete,
+            ),
+            funnel_attempts_reason=ibis.ifelse(
+                joined_table.is_event,
+                ibis.literal(None, type="string"),
+                joined_table.sequence_reason,
+            ),
         )
-        feature_names = (*feature_names, "funnel_attempts")
+        feature_names = (
+            *feature_names,
+            "funnel_attempts",
+            "funnel_attempts_complete",
+            "funnel_attempts_reason",
+        )
     roles = Roles("unit", "anchor_id", "t0", None, feature_names, ())
     columns = {
         name: ColumnMeta(Window(window_start, window_end), "event_property", None, None, None, None)

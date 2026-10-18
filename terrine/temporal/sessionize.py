@@ -16,6 +16,7 @@ def sessionize(
     event_id_column: str,
     gap_seconds: int,
     max_events: int,
+    label_column: str | None = None,
 ) -> ibis.Table:
     """Annotate each bounded anchor event with session and predecessor fields."""
     if gap_seconds < 0 or max_events <= 0:
@@ -23,6 +24,8 @@ def sessionize(
     required = (unit_column, anchor_id_column, timestamp_column, event_id_column)
     if any(name not in events.columns for name in required):
         raise ValueError("event relation is missing a session key")
+    if label_column is not None and label_column not in events.columns:
+        raise ValueError("event relation is missing the transition label")
 
     ordered = events.order_by(
         [
@@ -34,10 +37,17 @@ def sessionize(
     )
     groups = [ordered[unit_column], ordered[anchor_id_column]]
     order = [ordered[timestamp_column], ordered[event_id_column]]
-    prior = ordered.mutate(
-        previous_event_id=ordered[event_id_column].lag().over(group_by=groups, order_by=order),
-        previous_event_time=ordered[timestamp_column].lag().over(group_by=groups, order_by=order),
-    )
+    predecessor_fields = {
+        "previous_event_id": ordered[event_id_column].lag().over(group_by=groups, order_by=order),
+        "previous_event_time": ordered[timestamp_column]
+        .lag()
+        .over(group_by=groups, order_by=order),
+    }
+    if label_column is not None:
+        predecessor_fields["previous_event_label"] = (
+            ordered[label_column].lag().over(group_by=groups, order_by=order)
+        )
+    prior = ordered.mutate(**predecessor_fields)
     session_start_column = "_new_session"
     suffix = 0
     while session_start_column in ordered.columns:
@@ -97,13 +107,17 @@ def sessionize(
             "to_event_id": left[event_id_column],
         }
     )
-    enriched = enriched.mutate(
-        transition=ibis.ifelse(
+    transition_fields = {
+        "transition": ibis.ifelse(
             left.previous_event_id.isnull(),
             ibis.literal(None, type=transition.type()),
             transition,
         )
-    )
+    }
+    if label_column is not None:
+        transition_fields["transition_from"] = left.previous_event_label
+        transition_fields["transition_to"] = left[label_column]
+    enriched = enriched.mutate(**transition_fields)
     return enriched.drop(session_start_column).order_by(
         [
             enriched[unit_column],

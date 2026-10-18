@@ -388,6 +388,19 @@ class SequenceMeta:
     complete_column: str
     reason_column: str
     property_reason_columns: Mapping[str, str]
+    label_property: str | None = None
+    session_gap_seconds: int | None = None
+    session_fields: tuple[str, ...] = ()
+    sessions_column: str | None = None
+    sessions_complete_column: str | None = None
+    sessions_reason_column: str | None = None
+    transition_from_column: str | None = None
+    transition_to_column: str | None = None
+    funnel_event_property: str | None = None
+    funnel_steps: tuple[str, ...] = ()
+    funnel_within_seconds: int | None = None
+    funnel_attempts_column: str | None = None
+    identity_kind: Literal["configured", "timestamp"] = "timestamp"
 
     def __post_init__(self) -> None:
         _nonempty(self.fact, "fact")
@@ -414,10 +427,37 @@ class SequenceMeta:
             "event_count_column",
             "complete_column",
             "reason_column",
+            "label_property",
+            "sessions_column",
+            "sessions_complete_column",
+            "sessions_reason_column",
+            "transition_from_column",
+            "transition_to_column",
+            "funnel_event_property",
+            "funnel_attempts_column",
         ):
             value = getattr(self, name)
             if value is not None:
                 _nonempty(value, name)
+        if self.session_gap_seconds is not None and (
+            isinstance(self.session_gap_seconds, bool)
+            or not isinstance(self.session_gap_seconds, int)
+            or self.session_gap_seconds < 0
+        ):
+            raise ValueError("session_gap_seconds must be non-negative or None")
+        if self.funnel_within_seconds is not None and (
+            isinstance(self.funnel_within_seconds, bool)
+            or not isinstance(self.funnel_within_seconds, int)
+            or self.funnel_within_seconds <= 0
+        ):
+            raise ValueError("funnel_within_seconds must be positive or None")
+        if self.identity_kind not in ("configured", "timestamp"):
+            raise ValueError("unsupported identity kind")
+        for field_name in ("session_fields", "funnel_steps"):
+            values = tuple(getattr(self, field_name))
+            if any(not isinstance(value, str) or not value for value in values):
+                raise ValueError(f"{field_name} must contain non-empty strings")
+            object.__setattr__(self, field_name, values)
         if any(
             not isinstance(value, str) or not value
             for value in self.property_reason_columns.values()

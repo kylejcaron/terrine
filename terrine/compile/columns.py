@@ -263,6 +263,15 @@ def compile_columns(
         if selector.label_property is not None:
             binding = source.properties.get(selector.label_property)
             if binding is None:
+                binding = next(
+                    (
+                        dimension.properties[selector.label_property]
+                        for dimension in source.dimensions
+                        if selector.label_property in dimension.properties
+                    ),
+                    None,
+                )
+            if binding is None:
                 raise _UNSUPPORTED_SHAPE.error()
             if binding.dimension_name is None:
                 if binding.column is None:

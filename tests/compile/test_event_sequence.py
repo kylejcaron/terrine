@@ -88,6 +88,51 @@ def test_sequence_compiler_uses_configured_event_id_and_preserves_tied_order(seq
     assert [row["event_id"] for row in children] == ["a", "z", "end"]
 
 
+def test_event_sequence_composes_dimension_label_selector(sequence_model):
+    con = sequence_model.con
+    con.raw_sql("""
+        CREATE TABLE tier_history AS SELECT 'u' AS user_id, 'gold' AS tier,
+            TIMESTAMPTZ '2025-01-01' AS starts, TIMESTAMPTZ '2025-01-02' AS ends
+    """)
+    definition = sequence_model.catalog.model_dump(mode="python")
+    definition["sources"]["events"]["dimensions"] = ("history",)
+    definition["properties"]["tier"] = {
+        "source": "events",
+        "column": "tier",
+        "dtype": "string",
+        "as_of": "event_time",
+        "dimension": "history",
+    }
+    definition["dimensions"]["history"] = {
+        "relation": {"kind": "table", "name": "tier_history"},
+        "source_entity": "user",
+        "entity_column": "user_id",
+        "validity": {"valid_from": "starts", "valid_to": "ends"},
+        "properties": ("tier",),
+    }
+    catalog = type(sequence_model.catalog).model_validate(definition)
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={"events": Coverage("2025-01-01", "2025-01-02")},
+        event_ids={"events": "event_id"},
+    )
+    from terrine.compile.dispatch import compile_design
+    from terrine.spec import EventTime
+
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        outcomes={"selected": EventTime("signup", Window("0s", "2h"), "tier", "gold")},
+        shape=EventSequence("signup", Window("0s", "2h"), max_events=5),
+    )
+    compiled = compile_design(design, model)
+    rows = con.to_pyarrow(compiled.table).to_pylist()
+    assert next(row for row in rows if not row["is_event"])["selected"] == datetime(
+        2025, 1, 1, 12, tzinfo=UTC
+    )
+
+
 def test_sequence_excludes_rows_without_selected_fact_before_event_cap():
     con = ibis.duckdb.connect()
     con.create_table(
@@ -175,6 +220,12 @@ def test_sequence_compiler_publishes_funnel_attempt_schema(sequence_model):
     header = next(row for row in rows if not row["is_event"])
     assert header["funnel_attempts"] == [
         {
+            "start_time": datetime(2025, 1, 1, 12, tzinfo=UTC),
+            "matched_event_ids": ["a", "end"],
+            "matched_event_times": [
+                datetime(2025, 1, 1, 12, tzinfo=UTC),
+                datetime(2025, 1, 1, 13, tzinfo=UTC),
+            ],
             "step0_event_id": "a",
             "deadline": datetime(2025, 1, 1, 14, tzinfo=UTC),
             "progress": 2,
@@ -301,6 +352,26 @@ def test_sequence_sessions_are_compiled_per_anchor(sequence_model):
     assert sum(row["transition_reason"] == "missing_predecessor" for row in events) == len(
         {row["anchor_id"] for row in events}
     )
+
+
+def test_sequence_sessions_emit_requested_label_transitions(sequence_model):
+    from terrine.spec import Design, EventAnchor, EventSequence, SessionSpec
+
+    design = Design(
+        "user",
+        EventAnchor("signup", "each"),
+        shape=EventSequence(
+            "signup",
+            Window("0s", "2h"),
+            max_events=5,
+            label_property="kind",
+            sessions=SessionSpec("1h"),
+        ),
+    )
+    rows = design.build(sequence_model)._compiled.table.to_pyarrow().to_pylist()
+    events = [row for row in rows if row["is_event"]]
+    assert next(row for row in events if row["event_id"] == "end")["transition_from"] == "click"
+    assert next(row for row in events if row["event_id"] == "end")["transition_to"] == "purchase"
 
 
 @pytest.mark.parametrize(

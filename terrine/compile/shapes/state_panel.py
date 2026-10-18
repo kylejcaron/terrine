@@ -333,6 +333,17 @@ def _binned(design: Design, model: Model, panel: StatePanel) -> CompiledStudy:
         ):
             if name is not None and name not in required_columns:
                 required_columns.append(name)
+    for timing in (
+        *compiled.expression_timings.values(),
+        *(baseline_compiled.expression_timings.values() if baseline_compiled is not None else ()),
+    ):
+        for name in (
+            timing.point_time_column,
+            timing.start_bound_column,
+            timing.end_bound_column,
+        ):
+            if name is not None and name not in required_columns:
+                required_columns.append(name)
     panel_start = ibis.literal(model.day_boundary(schedule.start))
     retained = retained.mutate(__terrine_panel_start=panel_start)
     audit = audit.mutate(__terrine_panel_start=panel_start)
@@ -371,7 +382,11 @@ def _binned(design: Design, model: Model, panel: StatePanel) -> CompiledStudy:
         {
             **(
                 {
-                    name: replace(timing, point_time_column="__terrine_panel_start")
+                    name: (
+                        replace(timing, point_time_column="__terrine_panel_start")
+                        if timing.kind == "fixed_t0"
+                        else timing
+                    )
                     for name, timing in baseline_compiled.expression_timings.items()
                 }
                 if baseline_compiled is not None
