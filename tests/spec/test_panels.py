@@ -98,6 +98,20 @@ def test_explicit_trial_weight_round_trips_in_design_hash():
     assert from_json(to_json(design)).spec_hash == design.spec_hash
 
 
+def test_explicit_trial_weights_round_trip_without_mass_drift():
+    base = Design("user", Schedule("1d", "2025-01-01", "2025-01-03"))
+    design = Sequential(
+        base,
+        treatment=Initiation("events", "started", datetime(2024, 1, 1, tzinfo=UTC)),
+        trial_weight=TrialWeight("explicit", {"a": 1, "b": 5, "c": 7}),
+    )
+
+    restored = from_json(to_json(design))
+
+    assert restored == design
+    assert restored.spec_hash == design.spec_hash
+
+
 def test_explicit_trial_weights_refuse_nonfinite_values():
     with pytest.raises(ValueError):
         TrialWeight("explicit", {"a": float("nan")})

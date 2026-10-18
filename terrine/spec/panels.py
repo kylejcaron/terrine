@@ -116,9 +116,14 @@ class TrialWeight:
             ):
                 raise ValueError("trial weights must be finite positive numbers")
             maximum = max(copied.values())
-            scaled = {key: value / maximum for key, value in copied.items()}
-            total = sum(scaled.values())
-            normalized = {key: value / total for key, value in scaled.items()}
+            if maximum <= 1 and math.isclose(
+                math.fsum(copied.values()), 1.0, rel_tol=1e-15, abs_tol=1e-15
+            ):
+                normalized = {key: float(value) for key, value in copied.items()}
+            else:
+                scaled = {key: value / maximum for key, value in copied.items()}
+                total = math.fsum(scaled.values())
+                normalized = {key: value / total for key, value in scaled.items()}
             if any(not math.isfinite(value) or value <= 0 for value in normalized.values()):
                 raise ValueError("normalized trial weights must remain finite and positive")
             values = MappingProxyType(normalized)
