@@ -21,6 +21,7 @@ from terrine.semantic.rules import (
 from terrine.spec.anchors import EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.expressions import (
+    _SKETCH_UNAVAILABLE,
     And,
     ApproxMetricQuantile,
     AttributeAsOf,
@@ -308,7 +309,11 @@ def _expression(
         obligations.append("coverage_completeness")
         _check_expression_timing(expr, role, design)
         return
-    if isinstance(expr, (MetricQuantile, ApproxMetricQuantile)):
+    if isinstance(expr, ApproxMetricQuantile):
+        raise _SKETCH_UNAVAILABLE.error(
+            algorithm=expr.sketch.algorithm, version=expr.sketch.version
+        )
+    if isinstance(expr, MetricQuantile):
         raise _QUANTILE_UNAVAILABLE.error()
     if isinstance(expr, MetricAgg):
         _check_expression_timing(expr, role, design)

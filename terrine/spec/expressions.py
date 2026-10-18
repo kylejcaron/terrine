@@ -48,7 +48,16 @@ def _probability(value: Decimal | str) -> Decimal:
         raise ValueError("probability must be a finite decimal") from exc
     if not result.is_finite() or result < 0 or result > 1:
         raise ValueError("probability must be finite and in [0, 1]")
-    return result.normalize() if result else Decimal(0)
+    if not result:
+        return Decimal(0)
+    sign, digits, exponent = result.as_tuple()
+    if not isinstance(exponent, int):
+        raise ValueError("probability must be finite")
+    canonical = list(digits)
+    while canonical[-1] == 0:
+        canonical.pop()
+        exponent += 1
+    return Decimal((sign, tuple(canonical), exponent))
 
 
 @dataclass(frozen=True, slots=True)

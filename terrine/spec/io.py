@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Any
 
 import yaml
@@ -368,6 +369,12 @@ def _read_date(value: Any) -> date | datetime:
     raise ValueError("unknown temporal value type")
 
 
+def _decimal_string(value: Any) -> Decimal:
+    if not isinstance(value, str):
+        raise ValueError("decimal specification values must be serialized as strings")
+    return Decimal(value)
+
+
 def _node(value: Any) -> Any:
     if not isinstance(value, dict) or not isinstance(value.get("type"), str):
         raise ValueError("expected a tagged specification node")
@@ -544,27 +551,23 @@ def _node(value: Any) -> Any:
         item = _object(value, {"type", "start", "end"})
         return Window(item["start"], item["end"])
     if tag == "SketchRequest":
-        from decimal import Decimal
-
         item = _object(value, {"type", "algorithm", "version", "rank_error"})
-        return SketchRequest(item["algorithm"], item["version"], Decimal(item["rank_error"]))
+        return SketchRequest(
+            item["algorithm"], item["version"], _decimal_string(item["rank_error"])
+        )
     if tag == "MetricQuantile":
-        from decimal import Decimal
-
         item = _object(value, {"type", "metric", "probability", "window", "interpolation"})
         return MetricQuantile(
             item["metric"],
-            Decimal(item["probability"]),
+            _decimal_string(item["probability"]),
             _node(item["window"]),
             item["interpolation"],
         )
     if tag == "ApproxMetricQuantile":
-        from decimal import Decimal
-
         item = _object(value, {"type", "metric", "probability", "window", "sketch"})
         return ApproxMetricQuantile(
             item["metric"],
-            Decimal(item["probability"]),
+            _decimal_string(item["probability"]),
             _node(item["window"]),
             _node(item["sketch"]),
         )
