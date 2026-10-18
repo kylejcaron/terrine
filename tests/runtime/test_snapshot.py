@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import ibis
 import pytest
 
@@ -57,9 +59,37 @@ def test_snapshot_receipt_reopens_same_inputs_after_fresh_owner_connection(tmp_p
         execution = SnapshotAuthority(owner).reopen(restored, con=reopened_con, namespace="runtime")
         relation = execution.resolve(model.catalog.sources["events"].relation)
         assert execution.execute(relation).to_pylist()[0]["value"] == 3
+        source_generations = execution.snapshot.source_generations
         execution.close()
+        reopened_again = SnapshotAuthority(owner).reopen(
+            restored, con=reopened_con, namespace="runtime"
+        )
+        assert reopened_again.snapshot.source_generations == source_generations
+        reopened_again.close()
     finally:
         reopened_con.disconnect()
+
+
+def test_snapshot_receipt_rejects_null_checksum_with_coded_refusal():
+    receipt = {
+        "schema_version": 1,
+        "snapshot_id": "snapshot",
+        "namespace": "runtime",
+        "run_id": "run",
+        "owner_reference": "owner",
+        "artifact_path": "/tmp/inputs.duckdb",
+        "receipt_path": "/tmp/receipt.json",
+        "catalog_json": "{}",
+        "units_json": "{}",
+        "event_ids_json": "{}",
+        "model_hash": "hash",
+        "roots": [],
+        "artifact_hash": "hash",
+        "receipt_hash": None,
+    }
+    with pytest.raises(TerrineError) as error:
+        ReopenableSnapshot.from_json(json.dumps(receipt))
+    assert error.value.code == "terrine.runtime.snapshot_invalid"
 
 
 def test_capture_budget_refuses_unknown_scan_before_creating_snapshot(tmp_path):

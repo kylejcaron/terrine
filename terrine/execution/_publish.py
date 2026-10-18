@@ -177,11 +177,11 @@ def _publish_locked(
         staged: dict[tuple[str, str], str] = {}
         staged_identities: dict[PhysicalRelationId, str] = {}
         staged_facts: dict[PhysicalRelationId, tuple[str, ...]] = {}
+        root_identities: dict[tuple[str, str], PhysicalRelationId] = {}
         for _namespace, _name, relation in roots:
             key = (relation.kind, relation.name if isinstance(relation, TableRef) else relation.sql)
-            if key in staged:
-                continue
             identity = _identity(relation, catalog, origin)
+            root_identities[key] = identity
             if identity in staged_identities:
                 staged[key] = staged_identities[identity]
                 continue
@@ -237,11 +237,9 @@ def _publish_locked(
             issuer.facts[identity] = _BackingFact(
                 obj.catalog, obj.schema, obj.name, columns, obj.oid
             )
-        for _namespace, _name, relation in roots:
-            key = (relation.kind, relation.name if isinstance(relation, TableRef) else relation.sql)
-            storage_name = staged[key]
-            issuer.root_names[key] = storage_name
-            issuer.root_identities[key] = _identity(relation, catalog, origin)
+        for key, identity in root_identities.items():
+            issuer.root_names[key] = staged[key]
+            issuer.root_identities[key] = identity
         issuer.cleanup = lambda: _remove_artifact(raw, artifact_dir)
         return PublishedInputs(managed, handles, issuer)
     except Exception:

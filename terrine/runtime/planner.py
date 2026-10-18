@@ -40,6 +40,7 @@ class PlanRecipe:
     snapshot_id: str
     tasks: tuple[dict[str, Any], ...]
     budget: dict[str, int | bool | None] | None
+    change_evidence: dict[str, Any] | None
     fingerprint: str
 
     def to_json(self) -> str:
@@ -52,6 +53,7 @@ class PlanRecipe:
                 "snapshot_id": self.snapshot_id,
                 "tasks": self.tasks,
                 "budget": self.budget,
+                "change_evidence": self.change_evidence,
                 "fingerprint": self.fingerprint,
             },
             sort_keys=True,
@@ -93,6 +95,68 @@ class RefreshPlan:
     recipe: PlanRecipe
     budget: Budget | None = None
     scan_bytes: int | None = None
+
+    @classmethod
+    def deserialize(cls, serialized: bytes | str) -> RefreshPlan:
+        """Reconstruct a plan only after verifying its versioned fingerprint."""
+        try:
+            data = json.loads(serialized)
+            schema_version = data["schema_version"]
+            namespace = data["namespace"]
+            dataset = data["dataset"]
+            definition_hash = data["definition_hash"]
+            snapshot_id = data["snapshot_id"]
+            raw_tasks = data["tasks"]
+            budget_record = data["budget"]
+            change_evidence = data.get("change_evidence")
+            fingerprint = data["fingerprint"]
+            if schema_version != 1 or not isinstance(raw_tasks, list):
+                raise ValueError("unsupported serialized plan")
+            tasks = tuple(
+                TaskSpec(
+                    item["task_id"],
+                    item["layer"],
+                    item["source"],
+                    item["partition"],
+                    tuple(item["dependencies"]),
+                    item["estimated_scan_bytes"],
+                    item["estimated_output_bytes"],
+                    item["estimated_rows"],
+                )
+                for item in raw_tasks
+            )
+            bodies = tuple(task.to_dict() for task in tasks)
+            if bodies != tuple(raw_tasks):
+                raise ValueError("serialized plan task fields are not canonical")
+            budget = Budget(**budget_record) if budget_record is not None else None
+            payload = {
+                "namespace": namespace,
+                "dataset": dataset,
+                "definition_hash": definition_hash,
+                "snapshot_id": snapshot_id,
+                "tasks": bodies,
+                "change_evidence": change_evidence,
+                "budget": budget_record,
+            }
+            expected = hashlib.sha256(
+                json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            if not isinstance(fingerprint, str) or fingerprint != expected:
+                raise ValueError("serialized plan fingerprint does not match")
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ValueError("serialized plan is malformed or unverifiable") from exc
+        plan_recipe = PlanRecipe(
+            schema_version,
+            namespace,
+            dataset,
+            definition_hash,
+            snapshot_id,
+            bodies,
+            budget_record,
+            change_evidence,
+            fingerprint,
+        )
+        return cls(namespace, dataset, definition_hash, snapshot_id, tasks, plan_recipe, budget)
 
     def serialize(self) -> bytes:
         return self.recipe.to_json().encode("utf-8")
@@ -190,7 +254,15 @@ def plan_refresh(
         json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     recipe = PlanRecipe(
-        1, namespace, dataset, definition_hash, snapshot_id, bodies, budget_record, fingerprint
+        1,
+        namespace,
+        dataset,
+        definition_hash,
+        snapshot_id,
+        bodies,
+        budget_record,
+        change_evidence,
+        fingerprint,
     )
     return RefreshPlan(
         namespace, dataset, definition_hash, snapshot_id, tuple(tasks), recipe, budget

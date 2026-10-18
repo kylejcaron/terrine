@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from terrine.errors import RefusalSpec
 from terrine.model import Model
+from terrine.runtime.planner import RefreshPlan
 from terrine.spec.design import Design
 from terrine.spec.io import canonical_json, from_json, to_json
 
@@ -204,10 +205,12 @@ class SavedPlanRecipe:
         if recipe.schema_version != 1:
             raise _INVALID.error(reason="unsupported schema version")
         expected = hashlib.sha256(_canonical(recipe._data(include_hash=False))).hexdigest()
-        if not hmac.compare_digest(recipe.recipe_hash, expected):
+        if not isinstance(recipe.recipe_hash, str) or not hmac.compare_digest(
+            recipe.recipe_hash, expected
+        ):
             raise _INVALID.error(reason="recipe checksum mismatch")
         try:
-            json.loads(recipe.plan_json)
+            RefreshPlan.deserialize(recipe.plan_json)
             design = from_json(recipe.design_json)
         except (ValueError, TypeError) as exc:
             raise _INVALID.error(reason="plan or Design payload is invalid") from exc
@@ -218,7 +221,7 @@ class SavedPlanRecipe:
 
 def resolve_plan(
     recipe: SavedPlanRecipe, *, resolver: ModelResolver, namespace: str
-) -> tuple[Model, Design, DestinationRef]:
+) -> tuple[RefreshPlan, Model, Design, DestinationRef]:
     restored = SavedPlanRecipe.from_json(recipe.to_json())
     if namespace != restored.namespace:
         raise _INVALID.error(reason="owner namespace mismatch")
@@ -228,5 +231,12 @@ def resolve_plan(
         or ModelReference.from_model(model, owner_key=restored.model.owner_key) != restored.model
     ):
         raise _INVALID.error(reason="owner Model declaration does not match reference")
+    plan = RefreshPlan.deserialize(restored.plan_json)
+    if (
+        plan.namespace != restored.namespace
+        or plan.dataset != restored.destination.dataset
+        or not plan.snapshot_id
+    ):
+        raise _INVALID.error(reason="plan identity differs from owner-bound references")
     design = from_json(restored.design_json)
-    return model, design, restored.destination
+    return plan, model, design, restored.destination

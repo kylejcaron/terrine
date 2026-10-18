@@ -53,7 +53,9 @@ def _file_hash(path: Path) -> str:
 
 def _assert_owner_connection(owner: RuntimeOwner, con: Any) -> None:
     try:
-        rows = _native.raw_connection(con).execute("PRAGMA database_list").fetchall()
+        raw = _native.raw_connection(con)
+        with _native.connection_lock(raw):
+            rows = raw.execute("PRAGMA database_list").fetchall()
         database_path = next(
             location
             for _sequence, _name, location in rows
@@ -116,7 +118,9 @@ class ReopenableSnapshot:
         if snapshot.schema_version != 1 or not snapshot.snapshot_id or not snapshot.namespace:
             raise _INVALID.error(reason="receipt version or identity is invalid")
         expected = hashlib.sha256(_canonical(snapshot._data(include_hash=False))).hexdigest()
-        if not hmac.compare_digest(snapshot.receipt_hash, expected):
+        if not isinstance(snapshot.receipt_hash, str) or not hmac.compare_digest(
+            snapshot.receipt_hash, expected
+        ):
             raise _INVALID.error(reason="receipt checksum does not match")
         return snapshot
 
@@ -221,7 +225,6 @@ class SnapshotAuthority:
         if not isinstance(snapshot, ReopenableSnapshot):
             raise TypeError("snapshot must be ReopenableSnapshot")
         restored = ReopenableSnapshot.from_json(snapshot.to_json())
-        _assert_owner_connection(self.owner, con)
         if namespace != restored.namespace or self.owner.reference != restored.owner_reference:
             raise _INVALID.error(reason="owner namespace or identity changed")
         receipt_path = Path(restored.receipt_path).resolve()
@@ -275,6 +278,10 @@ class SnapshotAuthority:
             context.snapshot,
             snapshot_id=restored.snapshot_id,
             input_binding_id=restored.snapshot_id,
+            source_generations={
+                key: hashlib.sha256(f"{restored.artifact_hash}:{key}".encode()).hexdigest()
+                for key in context.snapshot.source_generations
+            },
             replay_equivalence="verified",
         )
         return _SnapshotContext(context, manager, published)

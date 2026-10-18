@@ -7,8 +7,13 @@ import sys
 
 import ibis
 
+import pyarrow as pa
+
 from terrine.data import Budget, Coverage
 from terrine.model import Model
+from terrine.runtime.execute import execute_plan
+from terrine.runtime.graph import dependency_graph
+from terrine.runtime.planner import plan_refresh
 from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
 from terrine.semantic.models import Catalog
 from terrine.spec import Design, FixedDate
@@ -52,14 +57,24 @@ def test_saved_plan_resolves_in_fresh_process_from_owner_config(tmp_path):
     catalog = _catalog()
     model = _model(con, catalog)
     design = Design("user", FixedDate("2025-01-15"))
+    plan = plan_refresh(
+        namespace="runtime",
+        dataset="study",
+        definition_hash=design.spec_hash,
+        snapshot_id="snapshot-1",
+        graph=dependency_graph(
+            design=design, sources=("events",), definition_hash=design.spec_hash
+        ),
+    )
     recipe = SavedPlanRecipe.create(
-        plan_json=b'{"schema_version":1,"tasks":[]}',
+        plan_json=plan.serialize(),
         design=design,
         model=ModelReference.from_model(model, owner_key="workspace/model"),
         destination=DestinationRef(str(state_path), "analytics", "study"),
         namespace="runtime",
         expected_base_manifest=None,
     )
+
     recipe_path = tmp_path / "plan.json"
     catalog_path = tmp_path / "catalog.json"
     recipe_path.write_text(recipe.to_json(), encoding="utf-8")
@@ -67,12 +82,13 @@ def test_saved_plan_resolves_in_fresh_process_from_owner_config(tmp_path):
         json.dumps(catalog.model_dump(mode="json"), sort_keys=True), encoding="utf-8"
     )
     con.disconnect()
-
     script = r"""
 import json, sys
 import ibis
+import pyarrow as pa
 from terrine.data import Coverage
 from terrine.model import Model
+from terrine.runtime.execute import execute_plan
 from terrine.runtime.recipe import SavedPlanRecipe, resolve_plan
 from terrine.semantic.models import Catalog
 
@@ -80,15 +96,23 @@ state_path, recipe_path, catalog_path = sys.argv[1:]
 class OwnerResolver:
     def resolve(self, reference):
         assert reference.owner_key == 'workspace/model'
-        connection = ibis.duckdb.connect(state_path)
+        self.connection = ibis.duckdb.connect(state_path)
         catalog = Catalog.model_validate(json.loads(open(catalog_path).read()))
-        return Model.from_catalog(catalog, con=connection,
+        return Model.from_catalog(catalog, con=self.connection,
             readiness={'events': Coverage('2025-01-01', '2025-02-01')})
 recipe = SavedPlanRecipe.from_json(open(recipe_path).read())
-model, design, destination = resolve_plan(recipe, resolver=OwnerResolver(), namespace='runtime')
+resolver = OwnerResolver()
+plan, model, design, destination = resolve_plan(
+    recipe, resolver=resolver, namespace='runtime')
 assert model.model_hash == recipe.model.model_hash
 assert design.spec_hash == recipe.design_hash
 assert destination.database == state_path
+receipt = execute_plan(plan, con=resolver.connection.con, namespace='runtime',
+    run_id='fresh-process', run_task=lambda task, dependencies:
+        pa.table({'layer': [task.layer]}),
+    publish=lambda plan, outputs, lease: 'generation-1')
+assert receipt.state == 'succeeded'
+resolver.connection.disconnect()
 """
     subprocess.run(
         [sys.executable, "-c", script, str(state_path), str(recipe_path), str(catalog_path)],

@@ -65,6 +65,9 @@ def test_plan_fingerprint_includes_change_evidence():
         changes=ChangeSet((Change("insert", "events", revision="r2"),), "change_feed"),
     )
     assert initial.recipe.fingerprint != changed.recipe.fingerprint
+    from terrine.runtime.planner import RefreshPlan
+
+    assert RefreshPlan.deserialize(changed.serialize()) == changed
 
 
 def test_plan_fingerprint_includes_change_support_not_only_revision():

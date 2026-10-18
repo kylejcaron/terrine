@@ -14,7 +14,6 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
-import duckdb
 import ibis
 import pyarrow as pa
 
@@ -650,6 +649,8 @@ def _reopen_native_inputs(
     path: Path,
     roots: tuple[dict[str, Any], ...],
 ) -> PublishedInputs:
+    import duckdb
+
     raw = duckdb.connect(str(path), read_only=True)
     managed = ibis.duckdb.from_connection(raw)
     issuer = _Issuer(managed, raw)
