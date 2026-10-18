@@ -1,16 +1,29 @@
-"""Kaplan–Meier estimation over materialized Arrow rows only."""
+"""Arrow-only survival estimation, earlier-only backtests and surrogate export."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+import json
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Literal
 
 from terrine.errors import RefusalSpec
 
 if TYPE_CHECKING:
+    import pyarrow as pa
+
     from terrine.data import MaterializedFrame
 
-__all__ = ["ElapsedTime", "SurvivalCurve", "kaplan_meier"]
+__all__ = [
+    "ArrowSurrogate",
+    "ElapsedTime",
+    "SurvivalCurve",
+    "backtest_survival",
+    "kaplan_meier",
+    "to_surrogate_arrow",
+]
 
 _INVALID = RefusalSpec(
     "terrine.estimate.invalid_survival_data",
@@ -179,3 +192,195 @@ def _timestamp_elapsed(value, origin, *, row: int, name: str) -> ElapsedTime:
     delta = value.value * factors[value.type.unit] - origin.value * factors[origin.type.unit]
     seconds, nanos = divmod(delta, 1_000_000_000)
     return ElapsedTime(seconds, nanos)
+
+
+_SURROGATE_METADATA_KEY = b"terrine.surrogate_arrow.v1"
+
+
+@dataclass(frozen=True, slots=True)
+class ArrowSurrogate:
+    """Versioned Arrow surrogate projection and portable metadata."""
+
+    data: pa.Table
+    metadata: Mapping[str, object]
+
+    def __post_init__(self) -> None:
+        import pyarrow as pa
+
+        if not isinstance(self.data, pa.Table):
+            raise TypeError("data must be a pyarrow.Table")
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+
+    @classmethod
+    def from_arrow(cls, table: pa.Table) -> ArrowSurrogate:
+
+        raw = (table.schema.metadata or {}).get(_SURROGATE_METADATA_KEY)
+        if raw is None:
+            raise ValueError("Arrow schema has no Terrine surrogate metadata")
+        metadata = json.loads(raw.decode("utf-8"))
+        if metadata.get("schema_version") != 1:
+            raise ValueError("unsupported Terrine surrogate metadata version")
+        clean = dict(table.schema.metadata or {})
+        del clean[_SURROGATE_METADATA_KEY]
+        return cls(table.replace_schema_metadata(clean or None), metadata)
+
+    def to_arrow(self) -> pa.Table:
+        metadata = json.dumps(
+            dict(self.metadata), sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+        schema_metadata = dict(self.data.schema.metadata or {})
+        schema_metadata[_SURROGATE_METADATA_KEY] = metadata
+        return self.data.replace_schema_metadata(schema_metadata)
+
+
+def _utc_timestamp_type(table, name: str):
+    import pyarrow as pa
+
+    if name not in table.column_names:
+        raise _INVALID.error(reason=f"missing_column_{name}")
+    dtype = table.schema.field(name).type
+    if not pa.types.is_timestamp(dtype) or dtype.tz != "UTC":
+        raise _INVALID.error(reason=f"{name}_must_be_utc_timestamp")
+    return dtype
+
+
+def backtest_survival(
+    data: MaterializedFrame,
+    *,
+    duration: str,
+    event: str,
+    entry: str,
+    prediction_cutoffs: Sequence[datetime],
+    fitter: Callable[[MaterializedFrame], object],
+    knowledge: Literal["measurement_time", "recorded_at"] = "measurement_time",
+) -> tuple[object, ...]:
+    """Refit on pre-cutoff entrants with follow-up censored at each cutoff."""
+    import pyarrow as pa
+
+    from terrine.data import MaterializedFrame
+
+    if not isinstance(data, MaterializedFrame):
+        raise _INVALID.error(reason="materialized_frame_required")
+    if knowledge not in ("measurement_time", "recorded_at"):
+        raise _INVALID.error(reason="unsupported_knowledge_mode")
+    if knowledge == "recorded_at":
+        # Effective-time cutoffs and feature declarations are not source history.
+        raise _INVALID.error(reason="recorded_at_availability_not_proven")
+    if not callable(fitter):
+        raise _INVALID.error(reason="fitter_must_be_callable")
+    table = data.table
+    duration_type = _utc_timestamp_type(table, duration)
+    _utc_timestamp_type(table, entry)
+    origin_type = _utc_timestamp_type(table, data.roles.t0)
+    if event not in table.column_names:
+        raise _INVALID.error(reason=f"missing_column_{event}")
+    if table.schema.field(event).type != pa.bool_():
+        raise _INVALID.error(reason="event_must_be_boolean")
+    cutoffs = tuple(prediction_cutoffs)
+    if any(
+        not isinstance(cutoff, datetime) or cutoff.tzinfo is None or cutoff.utcoffset() is None
+        for cutoff in cutoffs
+    ):
+        raise _INVALID.error(reason="cutoffs_must_be_aware")
+    normalized = tuple(cutoff.astimezone(UTC) for cutoff in cutoffs)
+    if any(left >= right for left, right in zip(normalized, normalized[1:], strict=False)):
+        raise _INVALID.error(reason="cutoffs_must_be_strictly_increasing")
+    results: list[object] = []
+    durations = table[duration].combine_chunks()
+    entries = table[entry].combine_chunks()
+    origins = table[data.roles.t0].combine_chunks()
+    events = table[event].to_pylist()
+    for cutoff in normalized:
+        kept: list[int] = []
+        observed_duration: list[int] = []
+        observed_event: list[bool] = []
+        for index in range(table.num_rows):
+            origin = origins[index]
+            entered = entries[index]
+            ended = durations[index]
+            if not origin.is_valid or not entered.is_valid or not ended.is_valid:
+                raise _INVALID.error(reason=f"null_survival_time_at_row_{index}")
+            cutoff_scalar = pa.scalar(cutoff, type=origin_type)
+            cutoff_elapsed = _timestamp_elapsed(cutoff_scalar, origin, row=index, name="cutoff")
+            entry_elapsed = _timestamp_elapsed(entered, origin, row=index, name=entry)
+            if entry_elapsed >= cutoff_elapsed:
+                continue
+            if not isinstance(events[index], bool):
+                raise _INVALID.error(reason=f"event_must_be_boolean_at_row_{index}")
+            end_elapsed = _timestamp_elapsed(ended, origin, row=index, name=duration)
+            kept.append(index)
+            if end_elapsed < cutoff_elapsed:
+                observed_duration.append(ended.cast(pa.int64()).as_py())
+                observed_event.append(events[index] is True)
+            else:
+                observed_duration.append(cutoff_scalar.cast(duration_type).cast(pa.int64()).as_py())
+                observed_event.append(False)
+        sample = table.take(pa.array(kept, type=pa.int64()))
+        sample = sample.set_column(
+            sample.schema.get_field_index(duration),
+            duration,
+            pa.array(observed_duration, type=duration_type),
+        )
+        sample = sample.set_column(
+            sample.schema.get_field_index(event),
+            event,
+            pa.array(observed_event, type=pa.bool_()),
+        )
+        provenance = replace(data.provenance, measurement_knowledge="retrospective_effective_time")
+        results.append(fitter(MaterializedFrame(sample, data.roles, data.columns, provenance)))
+    return tuple(results)
+
+
+def to_surrogate_arrow(
+    data: MaterializedFrame, *, features: tuple[str, ...], outcomes: tuple[str, ...]
+) -> ArrowSurrogate:
+    """Project Arrow training data with identity, missingness and provenance."""
+    from terrine.data import MaterializedFrame
+
+    if not isinstance(data, MaterializedFrame):
+        raise _INVALID.error(reason="materialized_frame_required")
+    requested = (*features, *outcomes)
+    if len(set(requested)) != len(requested):
+        raise _INVALID.error(reason="duplicate_surrogate_column")
+    if any(name not in data.table.column_names for name in requested):
+        raise _INVALID.error(reason="missing_surrogate_column")
+    identity = (data.roles.unit, data.roles.t0)
+    support = []
+    for name in requested:
+        meta = data.columns.get(name)
+        if meta is not None:
+            support.extend(
+                column
+                for column in (
+                    meta.observed_from_column,
+                    meta.observed_until_column,
+                    meta.complete_column,
+                    meta.reason_column,
+                    meta.absolute_error_column,
+                )
+                if column is not None
+            )
+    retained = tuple(dict.fromkeys((*identity, *requested, *data.roles.outcomes, *support)))
+    missing = [name for name in retained if name not in data.table.column_names]
+    if missing:
+        raise _INVALID.error(reason=f"missing_surrogate_support_{missing[0]}")
+    projected = data.table.select(retained)
+    metadata = {
+        "schema_version": 1,
+        "design_hash": data.provenance.design_hash,
+        "model_hash": data.provenance.model_hash,
+        "source_generations": dict(data.provenance.source_generations),
+        "execution_snapshot": data.to_metadata()["provenance"]["execution_snapshot"],
+        "provenance": data.to_metadata()["provenance"],
+        "roles": data.to_metadata()["roles"],
+        "feature_columns": list(features),
+        "outcome_columns": list(outcomes),
+        "support_columns": list(support),
+        "administrative_cutoff": (
+            data.provenance.administrative_cutoff.isoformat()
+            if data.provenance.administrative_cutoff is not None
+            else None
+        ),
+        "cohort_operation": data.to_metadata()["provenance"].get("cohort_operation"),
+    }
+    return ArrowSurrogate(projected, metadata)

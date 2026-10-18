@@ -402,10 +402,12 @@ class Provenance:
     weight_cutoff: FeatureCutoff | None = None
     weight_depends_on_treatment: bool | None = None
     treatment_known_at_t0: bool = False
-
     state_panel: StatePanelMeta | None = None
     cohort_operation: CohortOperationMeta | None = None
     administrative_cutoff: datetime | None = None
+    measurement_knowledge: (
+        Literal["measurement_time", "retrospective_effective_time", "recorded_at"] | None
+    ) = None
 
     def __post_init__(self) -> None:
         for name in ("design_hash", "model_hash", "shape"):
@@ -454,6 +456,13 @@ class Provenance:
             self.cohort_operation, CohortOperationMeta
         ):
             raise TypeError("cohort_operation must be CohortOperationMeta or None")
+        if self.measurement_knowledge not in (
+            None,
+            "measurement_time",
+            "retrospective_effective_time",
+            "recorded_at",
+        ):
+            raise ValueError("invalid measurement knowledge provenance")
         if self.administrative_cutoff is not None:
             _aware(self.administrative_cutoff, "administrative_cutoff")
             object.__setattr__(

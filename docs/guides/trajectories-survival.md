@@ -73,3 +73,36 @@ product-limit curve; it is unavailable when survival reaches zero.
 Changing `Design.administrative_cutoff` changes follow-up and event selection
 without changing declared readiness. No survival-times-value identity is
 implied.
+
+## Earlier-only backtests and surrogate Arrow
+
+`backtest_survival(...)` accepts absolute aware UTC cutoffs in strictly
+increasing order. For a cutoff `c`, it retains only units whose entry instant is
+strictly before `c`, then censors every retained row at the earlier of its
+observed end and `c`. An event exactly at the cutoff is censored; an event after
+the cutoff is hidden from the fitter. Entry, event, censor and cutoff are
+compared on the exact timestamp axis relative to each row's own `t0`, so
+different anchor times do not share an incorrect global elapsed duration.
+
+This v1 backtest is a measurement-time selection over retrospective
+effective-time measurements. It labels fitted data
+`retrospective_effective_time`; it does not establish what a warehouse had
+recorded at an earlier date. In particular, a value effective before a
+prediction cutoff but corrected later can appear in a historical refit. Such a
+late correction is not silently treated as historically available:
+`knowledge="recorded_at"` refuses because effective-time metadata and
+`FeatureCutoff.knowledge` do not prove recorded-at history. Stronger historical
+availability claims require explicit recorded-at source evidence, which this
+workflow does not implement.
+
+`to_surrogate_arrow(frame, features=..., outcomes=...)` returns an
+`ArrowSurrogate` with a typed Arrow projection and a versioned schema metadata
+envelope. The export retains unit identity, row `t0`, requested feature and
+outcome columns, survival roles, and referenced completeness/reason,
+observation-bound and numeric-certificate support columns. Its metadata carries
+design/model hashes, source generations, execution snapshot, cutoff declarations
+and cohort-operation provenance when present. `ArrowSurrogate.to_arrow()` and
+`ArrowSurrogate.from_arrow()` round-trip the versioned metadata with the Arrow
+schema. Decimal/null/time types stay in Arrow; metadata contains no row
+payloads. There is no runtime import of increment and no survival-times-value
+product is implied.

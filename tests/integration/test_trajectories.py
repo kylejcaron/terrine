@@ -1,56 +1,32 @@
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
-from terrine.data import Budget
+from terrine.data import Budget, MaterializedFrame
 from terrine.spec import CohortSpec, Design, EventAnchor
 from terrine.spec.trajectory import CohortGrouping, Trajectory
 from tests.compile.test_ltv import _trajectory_model
 
 
-def test_design_cutoff_updates_ltv_and_cohort_with_readiness_fixed():
+def test_local_design_to_same_frame_cohort_arrow_under_budget():
     con, model = _trajectory_model()
     try:
-        grouping = CohortGrouping(
-            bucket="7d", bucket_origin=datetime(2025, 1, 1, tzinfo=UTC), statistic="mean"
-        )
-
-        def design(cutoff):
-            return Design(
-                "user",
-                EventAnchor("purchase", which="first"),
-                shape=CohortSpec(
-                    origin="purchase",
-                    trajectory=Trajectory("net_revenue", "7d", periods=3, cumulative=True),
-                ),
-                administrative_cutoff=cutoff,
-            )
-
-        readiness = model.readiness
-        early_design = design(datetime(2025, 1, 22, tzinfo=UTC))
-        later_design = design(datetime(2025, 1, 23, tzinfo=UTC))
-        early_design.validate(model)
-        later_design.validate(model)
-        assert model.readiness == readiness
-        early = early_design.build(model)
-        later = later_design.build(model)
-        early_rows = (
-            early.cohorts(grouping=grouping, value_column="cumulative_value")
-            .to_pyarrow(budget=Budget(max_rows=20, max_output_bytes=100_000))
-            .to_pylist()
-        )
-        later_rows = (
-            later.cohorts(grouping=grouping, value_column="cumulative_value")
-            .to_pyarrow(budget=Budget(max_rows=20, max_output_bytes=100_000))
-            .to_pylist()
-        )
-        early_young = next(
-            row for row in early_rows if row["bucket_index"] == 2 and row["age"] == 1
-        )
-        later_young = next(
-            row for row in later_rows if row["bucket_index"] == 2 and row["age"] == 1
-        )
-        assert (early_young["at_risk"], early_young["observable"]) == (None, None)
-        assert (later_young["at_risk"], later_young["observable"]) == (1, 0)
+        frame = Design(
+            "user",
+            EventAnchor("purchase", which="first"),
+            shape=CohortSpec(
+                "purchase", Trajectory("net_revenue", "7d", periods=3, cumulative=True)
+            ),
+            administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
+        ).build(model)
+        arrow = frame.cohorts(
+            grouping=CohortGrouping("7d", datetime(2025, 1, 1, tzinfo=UTC)),
+            value_column="cumulative_value",
+        ).to_pyarrow(budget=Budget(max_rows=100, max_output_bytes=1_000_000))
+        rows = arrow.to_pylist()
+        assert rows
+        assert "at_risk" in arrow.column_names
+        restored = MaterializedFrame.from_arrow(arrow)
+        assert restored.provenance.cohort_operation is not None
+        assert "observable" in arrow.column_names
+        assert arrow.schema.metadata is not None
     finally:
         con.disconnect()

@@ -51,3 +51,4 @@
 - Select exact first eligible event occurrences with stable tie ordering, candidate retention and deferred event-ID integrity checks.
 - Compile bounded additive LTV age trajectories with null-preserving cumulative values and recipe-backed cohort summaries under the verified execution snapshot, with explicit cutoff completeness, denominators, operation provenance and output budgets.
 - Compile bounded time-to-event histories with prevalent-event exclusion, explicit observation/censor bounds, optional delayed entry and independent administrative cutoffs; compute Arrow-only Kaplan–Meier curves with tied-time ordering, Greenwood variance and exact nanosecond elapsed-time support.
+- Refit earlier-only measurement-time survival backtests with exact per-row cutoff recensoring and explicit retrospective-effective-time labeling; refuse unsupported recorded-at claims and export versioned Arrow surrogate projections with provenance.
