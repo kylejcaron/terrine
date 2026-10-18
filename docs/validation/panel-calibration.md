@@ -43,26 +43,28 @@ This smoke completed 3/3 seeds and wrote
 `/tmp/terrine-catt-smoke/stacked-equal-overlap-profile_a.json`; it is smoke-only
 evidence and is not committed as a full-calibration result.
 
-The marked full calibration emits separate CATT JSON records alongside the 16 AIPW records. Based on the 24-replication, eight-cell CATT smoke and the previously executed eight-worker AIPW grid, the exact full-grid command is estimated to take roughly 30–45 minutes serially; this is an estimate, not an execution result. The full grid was not run for this change.
-
-The existing executed-results table below covers only the original 16-cell repeated-trial AIPW grid. It does not constitute CATT calibration evidence. No CATT full-cell results or JSON evidence are claimed until that grid is actually run.
+The marked full calibration emits separate CATT JSON records alongside the 16 AIPW records.
 
 The full grid is intentionally not run as part of ordinary pytest. Per-cell JSON from full calibration runs is written beneath `docs/validation/generated/panel_calibration/`.
 
 ## Executed results
 
 Command: `uv run pytest -n 8 tests/parameter_recovery/test_panel_calibration.py -m 'slow and parameter_recovery'`
-(the full-grid command above, parallelized over 8 xdist workers). Outcome:
-**16 passed** in 103 s wall time. There were no reruns, seed changes or gate
-changes. The environment was Python 3.13.5, NumPy 2.5.4, SciPy 1.18.1 and
-macOS 15.7.4 arm64. Committed per-cell JSON evidence is in
+(the full-grid command above, parallelized over 8 xdist workers), run after the
+final stacked-estimator fixes. Outcome: **24 passed** (16 repeated-trial AIPW
+cells and 8 stacked CATT cells) in 820 s wall time. There were no reruns, seed
+changes or gate changes. The environment was Python 3.13.5, NumPy 2.5.4,
+SciPy 1.18.1 and macOS 15.7.4 arm64. Committed per-cell JSON evidence is in
 `docs/validation/generated/panel_calibration/`.
+
+### Repeated-trial AIPW cells
 
 Every cell completed 400 of 400 estimates. Every paired contaminated-reference
 case raised the expected `terrine.estimate.stacked_input` refusal with reason
 `outcome_window_contaminates_reference`. Bias, exact-binomial coverage and
 chi-square studentization gates all passed at the predeclared family level of
-0.01.
+0.01. An earlier run of the same 16 cells, before the stacked fixes, produced
+identical values.
 
 | Cell | Attempted / completed / paired refusals | Mean error | Empirical SD | Mean SE | 95% CI coverage (exact binomial p) | Median CI width |
 |---|---|---|---|---|---|---|
@@ -84,6 +86,47 @@ chi-square studentization gates all passed at the predeclared family level of
 | `zero-unequal-overlap-profile_b` | 400/400/400 | −0.0016 | 0.0761 | 0.0765 | 386/400 (p=0.205) | 0.299 |
 
 Matching heterogeneous and zero-effect cells use the same seeds and noise, so their estimation errors are nearly identical. The smallest coverage p-value, 0.021 (390/400), reflects conservative intervals. It remains above the cell's Bonferroni-allocated threshold.
+
+### Stacked CATT cells (targets: cohort 1, cohort 2, normalized aggregate)
+
+Every cell completed 400 of 400 replications with no refusals. All bias,
+coverage and studentization gates passed at per-gate alpha
+`0.01/(3·8·3) ≈ 1.39e-4`; the chi-square acceptance range is
+`[301.1, 516.9]`.
+
+| Cell | Target | Truth | Attempted / completed / refused | Mean error | Empirical SD | Mean SE | 95% CI coverage (exact binomial p) | Σ studentized² |
+|---|---|---|---|---|---|---|---|---|
+| `stacked-equal-disjoint-profile_a` | cohort 1 | 1.0 | 400/400/0 | +0.0042 | 0.0925 | 0.0907 | 376/400 (p=0.357) | 415.9 |
+| `stacked-equal-disjoint-profile_a` | cohort 2 | 2.0 | 400/400/0 | −0.0034 | 0.0915 | 0.0906 | 381/400 (p=0.909) | 408.4 |
+| `stacked-equal-disjoint-profile_a` | aggregate | 1.5 | 400/400/0 | +0.0004 | 0.0635 | 0.0641 | 379/400 (p=0.818) | 391.1 |
+| `stacked-equal-disjoint-profile_b` | cohort 1 | 1.0 | 400/400/0 | +0.0086 | 0.1453 | 0.1420 | 376/400 (p=0.357) | 418.6 |
+| `stacked-equal-disjoint-profile_b` | cohort 2 | 2.0 | 400/400/0 | −0.0061 | 0.1450 | 0.1420 | 382/400 (p=0.731) | 417.9 |
+| `stacked-equal-disjoint-profile_b` | aggregate | 1.5 | 400/400/0 | +0.0013 | 0.1009 | 0.1004 | 377/400 (p=0.490) | 402.0 |
+| `stacked-equal-overlap-profile_a` | cohort 1 | 1.0 | 400/400/0 | +0.0056 | 0.0791 | 0.0785 | 377/400 (p=0.490) | 407.6 |
+| `stacked-equal-overlap-profile_a` | cohort 2 | 2.0 | 400/400/0 | −0.0000 | 0.0821 | 0.0786 | 375/400 (p=0.250) | 435.1 |
+| `stacked-equal-overlap-profile_a` | aggregate | 1.5 | 400/400/0 | +0.0028 | 0.0598 | 0.0558 | 368/400 (p=0.011) | 457.9 |
+| `stacked-equal-overlap-profile_b` | cohort 1 | 1.0 | 400/400/0 | +0.0111 | 0.1239 | 0.1228 | 379/400 (p=0.818) | 409.3 |
+| `stacked-equal-overlap-profile_b` | cohort 2 | 2.0 | 400/400/0 | +0.0007 | 0.1292 | 0.1231 | 373/400 (p=0.108) | 439.0 |
+| `stacked-equal-overlap-profile_b` | aggregate | 1.5 | 400/400/0 | +0.0059 | 0.0948 | 0.0886 | 373/400 (p=0.108) | 456.8 |
+| `stacked-unequal-disjoint-profile_a` | cohort 1 | 1.0 | 400/400/0 | +0.0042 | 0.0925 | 0.0907 | 376/400 (p=0.357) | 415.9 |
+| `stacked-unequal-disjoint-profile_a` | cohort 2 | 2.0 | 400/400/0 | −0.0034 | 0.0915 | 0.0906 | 381/400 (p=0.909) | 408.4 |
+| `stacked-unequal-disjoint-profile_a` | aggregate | 1.75 | 400/400/0 | −0.0015 | 0.0714 | 0.0717 | 383/400 (p=0.567) | 397.2 |
+| `stacked-unequal-disjoint-profile_b` | cohort 1 | 1.0 | 400/400/0 | +0.0086 | 0.1453 | 0.1420 | 376/400 (p=0.357) | 418.6 |
+| `stacked-unequal-disjoint-profile_b` | cohort 2 | 2.0 | 400/400/0 | −0.0061 | 0.1450 | 0.1420 | 382/400 (p=0.731) | 417.9 |
+| `stacked-unequal-disjoint-profile_b` | aggregate | 1.75 | 400/400/0 | −0.0024 | 0.1135 | 0.1123 | 377/400 (p=0.490) | 408.8 |
+| `stacked-unequal-overlap-profile_a` | cohort 1 | 1.0 | 400/400/0 | +0.0056 | 0.0791 | 0.0785 | 377/400 (p=0.490) | 407.6 |
+| `stacked-unequal-overlap-profile_a` | cohort 2 | 2.0 | 400/400/0 | −0.0000 | 0.0821 | 0.0786 | 375/400 (p=0.250) | 435.1 |
+| `stacked-unequal-overlap-profile_a` | aggregate | 1.75 | 400/400/0 | +0.0014 | 0.0666 | 0.0623 | 373/400 (p=0.108) | 454.0 |
+| `stacked-unequal-overlap-profile_b` | cohort 1 | 1.0 | 400/400/0 | +0.0111 | 0.1239 | 0.1228 | 379/400 (p=0.818) | 409.3 |
+| `stacked-unequal-overlap-profile_b` | cohort 2 | 2.0 | 400/400/0 | +0.0007 | 0.1292 | 0.1231 | 373/400 (p=0.108) | 439.0 |
+| `stacked-unequal-overlap-profile_b` | aggregate | 1.75 | 400/400/0 | +0.0033 | 0.1052 | 0.0984 | 371/400 (p=0.050) | 455.6 |
+
+Equal- and unequal-mass cells share seeds, so their cohort-specific rows are
+identical and only the aggregate target changes. In the overlapping-population
+cells, aggregate standard errors run about 6–7% below the empirical SD, with
+studentized sums near 455 and the lowest coverage at 368/400. These cells pass
+the predeclared gates, but intervals for overlapping-unit aggregates are
+modestly anti-conservative in this finite design.
 
 ## Interpretation limits
 

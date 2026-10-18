@@ -2034,7 +2034,7 @@
   "refused": 0,
   "rmse": 0.0702996300184213,
   "run_mode": "full_calibration",
-  "runtime_seconds": 50.32959025003947,
+  "runtime_seconds": 86.61402887501754,
   "seeds": [
     0,
     1,
