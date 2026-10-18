@@ -54,4 +54,4 @@ Tasks 3–5 remain incomplete: panel AIPW, stacked DiD, diagnostics, and calibra
 - Review remediation commits: `6c4c5a3` and `74991ef`; 8500 closed after dispositions recorded. Review 8502 was a pass and already closed.
 - Follow-up review 8511 caught incorrect schedule endpoint handling and missing roster-bound test coverage; endpoint semantics were corrected and added exact-boundary, earlier-bound, and eligibility-exclusion materialization regressions.
 - Focused verification: `uv run pytest tests/compile/test_panels.py tests/compile/test_matched_t0.py tests/integration/test_sequential_panels.py -q` — 21 passed; ruff, ty, tach, and `uv run python examples/sequential_trials.py` passed.
-- Review 8520 follow-up remains pending; its only finding requested regression coverage, now added and verified. Tasks 3–5 remain incomplete.
+- Review 8520's regression-coverage finding was fixed in `9eb34c3` and closed. Tasks 3–5 remain incomplete.
