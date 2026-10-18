@@ -61,7 +61,7 @@ def _frame(seed: int, cell: tuple[str, str, str, str], n_units: int = N_UNITS):
         x = shared_x if overlap_kind == "overlap" else rng.uniform(-1.0, 1.0, n_units)
         probability = 1.0 / (1.0 + np.exp(-(propensity_intercept + propensity_slope * x)))
         treatment = rng.binomial(1, probability)
-        effect = (1.5, 4.5)[trial_index] + (0.6 * x if effect_kind == "heterogeneous" else 0.0)
+        effect = 0.0 if effect_kind == "zero" else (1.5, 4.5)[trial_index] + 0.6 * x
         baseline = intercept + 1.3 * x
         y = baseline + treatment * effect + rng.normal(0.0, 2.0, n_units)
         unit_ids = (
@@ -110,8 +110,14 @@ def _paired_refusal(seed: int) -> dict[str, str]:
 
 
 def _truth(cell: tuple[str, str, str, str]) -> float:
+    if cell[0] == "zero":
+        return 0.0
     masses = (0.5, 0.5) if cell[1] == "equal" else (0.25, 0.75)
     return math.fsum(mass * effect for mass, effect in zip(masses, (1.5, 4.5), strict=True))
+
+
+def test_zero_effect_calibration_truth_is_zero():
+    assert _truth(("zero", "equal", "disjoint", "profile_a")) == 0.0
 
 
 def _manifest(cell: tuple[str, str, str, str]) -> dict:

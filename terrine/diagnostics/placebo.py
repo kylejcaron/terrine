@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from scipy.stats import chi2
+from scipy.stats import norm
 
 from terrine.data import MaterializedFrame
 from terrine.results import Diagnostic
@@ -21,12 +21,12 @@ def _column(frame: MaterializedFrame, name: str):
 
 
 def _mean(values: list[float]) -> float | None:
-    scale = max(map(abs, values), default=0.0)
-    if not math.isfinite(scale):
-        return None
-    if scale == 0:
+    if not values:
         return 0.0
-    value = scale * (math.fsum(item / scale for item in values) / len(values))
+    try:
+        value = math.fsum(item / len(values) for item in values)
+    except OverflowError:
+        return None
     return value if math.isfinite(value) else None
 
 
@@ -43,7 +43,7 @@ def _cluster_contrast(frame: MaterializedFrame, outcome: str, selected: list[boo
     for value, arm, unit, keep in zip(values, treated, units, selected, strict=True):
         if not keep:
             continue
-        if value is None or unit is None or isinstance(value, bool):
+        if value is None or unit is None:
             return None
         if not isinstance(arm, (bool, int, float)) or arm not in (0, 1):
             return None
@@ -69,23 +69,22 @@ def _cluster_contrast(frame: MaterializedFrame, outcome: str, selected: list[boo
         if mean is None:
             return None
         means[arm] = mean
-    mean_scale = max(abs(means[True]), abs(means[False]))
-    effect = (
-        0.0
-        if mean_scale == 0
-        else mean_scale * (means[True] / mean_scale - means[False] / mean_scale)
-    )
+    try:
+        effect = math.fsum((means[True], -means[False]))
+    except OverflowError:
+        return None
     if not math.isfinite(effect):
         return None
     influence: dict[object, float] = {}
     for arm, sign in ((True, 1.0), (False, -1.0)):
         count = len(unit_means[arm])
-        scale = max((abs(value) for value in unit_means[arm].values()), default=0.0)
-        scale = max(scale, abs(means[arm]))
         for unit, value in unit_means[arm].items():
-            residual = 0.0 if scale == 0 else value / scale - means[arm] / scale
-            contribution = 0.0 if scale == 0 else sign * scale * (residual / count)
-            total = influence.get(unit, 0.0) + contribution
+            try:
+                residual = math.fsum((value, -means[arm]))
+                contribution = sign * (residual / count)
+                total = math.fsum((influence.get(unit, 0.0), contribution))
+            except OverflowError:
+                return None
             if not math.isfinite(total):
                 return None
             influence[unit] = total
@@ -104,7 +103,7 @@ def _cluster_contrast(frame: MaterializedFrame, outcome: str, selected: list[boo
 def _pvalue(effect: float, standard_error: float) -> float:
     if standard_error == 0:
         return 1.0 if effect == 0 else 0.0
-    return float(chi2.sf((abs(effect) / standard_error) ** 2, 1))
+    return float(norm.sf(abs(effect) / standard_error))
 
 
 def placebo_test(

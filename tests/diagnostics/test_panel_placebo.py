@@ -113,3 +113,53 @@ def test_large_finite_repeated_outcomes_have_finite_cluster_summary():
     assert result.metrics["effect"] == 0.0
     assert result.metrics["standard_error"] == 0.0
     assert result.metrics["n_units"] == 40
+
+
+def test_boolean_outcome_matches_numeric_binary_outcome():
+    frame = _frame()
+    rows = frame.table.to_pylist()
+    for row in rows:
+        row["negative"] = row["treatment"]
+    boolean = replace(frame, table=pa.Table.from_pylist(rows))
+    numeric_rows = [{**row, "negative": int(row["negative"])} for row in rows]
+    numeric = replace(frame, table=pa.Table.from_pylist(numeric_rows))
+    boolean_result = negative_control_test(boolean, outcome="y", negative_control="negative")
+    numeric_result = negative_control_test(numeric, outcome="y", negative_control="negative")
+    assert boolean_result.status == numeric_result.status == "warn"
+    assert boolean_result.metrics["effect"] == numeric_result.metrics["effect"] == 1.0
+
+
+def test_negative_control_mean_preserves_small_term_through_cancellation():
+    frame = _frame()
+    rows = frame.table.to_pylist()
+    for row in rows:
+        if row["treatment"]:
+            row["negative"] = {-2: 1e308, -1: 1e-16, 0: -1e308}[row["event_period"]]
+        else:
+            row["negative"] = 0.0
+    result = negative_control_test(
+        replace(frame, table=pa.Table.from_pylist(rows)), outcome="y", negative_control="negative"
+    )
+    assert result.metrics["effect"] == pytest.approx(1e-16 / 3, rel=1e-12, abs=0.0)
+
+
+def test_negative_control_preserves_small_difference_at_large_offset():
+    frame = _frame()
+    rows = frame.table.to_pylist()
+    for row in rows:
+        row["negative"] = 1e16 + 2 if row["treatment"] else 1e16
+    result = negative_control_test(
+        replace(frame, table=pa.Table.from_pylist(rows)), outcome="y", negative_control="negative"
+    )
+    assert result.metrics["effect"] == 2.0
+
+
+def test_placebo_pvalue_does_not_square_extreme_finite_statistic():
+    frame = _frame()
+    rows = frame.table.to_pylist()
+    for row in rows:
+        row["y"] = 1e200 if row["treatment"] and row["event_period"] == -2 else 0.0
+    result = placebo_test(
+        replace(frame, table=pa.Table.from_pylist(rows)), outcome="y", placebo_periods=(-2,)
+    )
+    assert result.metrics["any_reject"] is True
