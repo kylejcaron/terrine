@@ -47,25 +47,31 @@ def _deferred_refusal(query):
     )
 
 
-def _history_check(design: Design, model: Model, anchors: AnchorTable):
+def _history_check(design: Design, rows):
     spec = design.shape
     assert isinstance(spec, CalendarComparisonSpec)
     anchor = design.anchor
     assert isinstance(anchor, Schedule)
     selector = spec.cohort
-    units = anchors.table.select("unit", "_observed_from", "_observed_until").distinct()
+    participants = rows
+    if "__terrine_eligible" in rows.columns:
+        participants = participants.filter(rows.__terrine_eligible)
+    reference_t0 = participants.cohort + ibis.interval(seconds=spec.reference_period * anchor.every)
+    anticipation = max((abs(value) for value in spec.anticipation_periods), default=0)
+    latest = cast(ir.TimestampValue, ibis.greatest(participants.t0, reference_t0)) + ibis.interval(
+        seconds=anticipation * anchor.every
+    )
     missing = cast(ir.BooleanValue, ibis.literal(False))
-    if "_observed_from" in units.columns:
+    if "_observed_from" in participants.columns:
         missing = missing | (
-            units._observed_from.notnull()
-            & (units._observed_from > ibis.literal(selector.history_start))
+            participants._observed_from.notnull()
+            & (participants._observed_from > ibis.literal(selector.history_start))
         )
-    if "_observed_until" in units.columns:
+    if "_observed_until" in participants.columns:
         missing = missing | (
-            units._observed_until.notnull()
-            & (units._observed_until < ibis.literal(model.day_boundary(anchor.end)))
+            participants._observed_until.notnull() & (participants._observed_until <= latest)
         )
-    query = units.filter(missing).select("unit")
+    query = participants.filter(missing).select("unit").distinct()
     return _Check(
         query.aggregate(failed_0=query.count().cast("string")),
         (_Failure("failed_0", _INCOMPLETE_HISTORY, {}),),
@@ -106,13 +112,13 @@ def _cohort_units(design: Design, model: Model, anchors: AnchorTable):
     initiation = (
         events.filter(observed & (events._timestamp >= ibis.literal(selector.history_start)))
         .group_by("_unit")
-        .aggregate(initiation_time=events._timestamp.min())
+        .aggregate(__terrine_initiation_time=events._timestamp.min())
     )
     candidates = anchors.table.join(
         initiation,
         [
             anchors.table.unit == initiation._unit,
-            anchors.table.t0 >= initiation.initiation_time,
+            anchors.table.t0 >= initiation.__terrine_initiation_time,
         ],
     )
     cohorts = candidates.group_by("unit").aggregate(cohort_time=candidates.t0.min())
@@ -146,7 +152,7 @@ def _stack(table, *, anchors, cohorts, initiations, spec: CalendarComparisonSpec
     cohort_map = cohorts.select(unit_key=cohorts.unit, unit_cohort=cohorts.cohort_time)
     initiation_map = initiations.select(
         initiation_unit=initiations._unit,
-        initiation_time=initiations.initiation_time,
+        __terrine_initiation_time=initiations.__terrine_initiation_time,
     )
     joined_cohorts = scaffold.join(cohort_map, scaffold.unit == cohort_map.unit_key, how="left")
     joined_initiations = joined_cohorts.join(
@@ -158,7 +164,7 @@ def _stack(table, *, anchors, cohorts, initiations, spec: CalendarComparisonSpec
         t0=scaffold.t0,
         period=scaffold.period,
         unit_cohort=cohort_map.unit_cohort,
-        initiation_time=initiation_map.initiation_time,
+        __terrine_initiation_time=initiation_map.__terrine_initiation_time,
     )
     source_values = table.select(
         value_unit=table.unit,
@@ -178,9 +184,11 @@ def _stack(table, *, anchors, cohorts, initiations, spec: CalendarComparisonSpec
     )
     treated = (with_values.unit_cohort == with_values.focal_cohort).fill_null(False)
     if spec.control == "never_treated":
-        control = with_values.initiation_time.isnull()
+        control = with_values.__terrine_initiation_time.isnull()
     else:
-        control = with_values.initiation_time.isnull() | (with_values.initiation_time > latest)
+        control = with_values.__terrine_initiation_time.isnull() | (
+            with_values.__terrine_initiation_time > latest
+        )
     eligible = treated | control
     filtered = with_values.filter(eligible)
     columns = {
@@ -271,7 +279,7 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
         anchors,
         (
             *compiled._checks,
-            _history_check(design, model, anchors),
+            _history_check(design, audit),
             _period_check(
                 cohort_units,
                 anchors,
