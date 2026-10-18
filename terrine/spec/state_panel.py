@@ -177,12 +177,16 @@ def decode_cutpoint(value: object) -> int | float | Decimal:
     raise ValueError("unknown or malformed cutpoint encoding")
 
 
-def validate_state_panel(design: Design, model: Model, required: set[str]) -> None:
+def validate_state_panel(
+    design: Design, model: Model, required: set[str], obligations: list[str]
+) -> None:
     """Validate schedule shape and state-source references without reading rows."""
     from datetime import UTC
 
     from terrine.spec.anchors import Schedule
-    from terrine.spec.validate import _required
+    from terrine.spec.expressions import MetricAgg
+    from terrine.spec.validate import _expression, _required
+    from terrine.windows import Window
 
     panel = design.shape
     assert isinstance(panel, StatePanel)
@@ -222,6 +226,14 @@ def validate_state_panel(design: Design, model: Model, required: set[str]) -> No
             raise _INVALID_SOURCE.error(reason="state source lacks the requested unit mapping")
         _required(model, source.name, required)
     else:
+        _expression(
+            MetricAgg(panel.state.metric, Window(-schedule.every, 0)),
+            "state",
+            design,
+            model,
+            required,
+            obligations,
+        )
         metric = model.metrics.get(panel.state.metric)
         if metric is None:
             raise _INVALID_SOURCE.error(reason="unknown metric")
@@ -232,5 +244,3 @@ def validate_state_panel(design: Design, model: Model, required: set[str]) -> No
                     "numeric metric or declared observations"
                 )
             )
-        for source_name in metric.source_names:
-            _required(model, source_name, required)

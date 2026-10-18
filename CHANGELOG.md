@@ -36,6 +36,7 @@
 - Preserve legal event key names and identities despite helper-column case collisions, handle wide calendar ranges on nanosecond sources, and reject event facts absent from their bound source with the shared validation refusal.
 - Scope configured event IDs to their analysis unit and align missing-unit refusals between validation and anchor compilation.
 - Add strict native and coherent union/window prefix lookups, including independent repeated cutoffs and null-preserving state.
+- Admit implicit binned state-period metrics through shared unit, aggregation, transform, and window validation before compilation.
 - Compute named half-open windows with per-source/unit completeness, exact scale-preserving output and certified Float64 sums, averages and ratios; refuse unknown filters or unrepresentable required results before export.
 - Apply numerical tolerance in the final average/ratio units while retaining constituent validity checks; refuse overflowing outward input intervals even when division would hide them.
 - Build lazy study Frames with named features, outcomes, descriptive treatment and three-valued eligibility; retain exact observation/null reasons and candidate audit totals.

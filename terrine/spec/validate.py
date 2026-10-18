@@ -397,11 +397,13 @@ def _validate_sequence_shape(design: Design, model: Model, required: set[str]) -
         _event_property(model, source.name, property_name)
 
 
-def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
+def _validate_shape(
+    design: Design, model: Model, required: set[str], obligations: list[str]
+) -> None:
     from terrine.spec.state_panel import StatePanel, validate_state_panel
 
     if isinstance(design.shape, StatePanel):
-        validate_state_panel(design, model, required)
+        validate_state_panel(design, model, required, obligations)
     elif isinstance(design.shape, EventSequence):
         _validate_sequence_shape(design, model, required)
     elif design.shape != "cross_section":
@@ -411,7 +413,7 @@ def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
 def validate_design(design: Design, model: Model) -> ValidationReport:
     required: set[str] = set()
     obligations: list[str] = []
-    _validate_shape(design, model, required)
+    _validate_shape(design, model, required, obligations)
     anchor = design.anchor
     if isinstance(anchor, EventAnchor):
         fact = model.catalog.facts.get(anchor.fact)

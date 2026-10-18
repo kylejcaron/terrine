@@ -94,6 +94,38 @@ def model(
     )()
 
 
+def test_binned_state_metric_uses_ordinary_metric_admission():
+    from terrine.errors import TerrineError
+    from terrine.spec.anchors import Schedule
+    from terrine.spec.state_panel import BinnedMetricState, StatePanel
+
+    cases = (
+        (
+            {"entities": {"user": "user_id", "workspace": "workspace_id"}},
+            "terrine.design.incompatible_unit",
+        ),
+        ({"aggregation": "median"}, "terrine.metric.unsupported_aggregation"),
+        ({"transforms": (object(),)}, "terrine.metric.unsupported_transform"),
+        ({"window_days": 2}, "terrine.design.metric_window_conflict"),
+    )
+    for options, code in cases:
+        bound = model(**options)
+
+        unit = "workspace" if "entities" in options else "user"
+        design = Design(
+            unit,
+            Schedule("1d", date(2025, 1, 1), date(2025, 1, 3)),
+            shape=StatePanel(
+                BinnedMetricState("sessions", (0,), ("none", "some")),
+                max_periods=2,
+            ),
+        )
+        with pytest.raises(TerrineError) as error:
+            design.validate(bound)
+        assert error.value.code == code
+        assert bound.con.calls == []
+
+
 def test_window_extending_beyond_declared_coverage_is_runtime_incomplete_not_refused():
     design = Design(
         "user", EventAnchor("session"), features={"x": agg("sessions", window=("-7d", "0d"))}
