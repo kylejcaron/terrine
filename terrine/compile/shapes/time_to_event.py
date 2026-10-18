@@ -6,11 +6,11 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import ibis
+import ibis.expr.datatypes as dt
 
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
-from terrine.semantic.bind import normalize_events
 from terrine.spec.design import Design
 from terrine.spec.trajectory import TimeToEvent
 from terrine.temporal.first import first_occurrence
@@ -35,12 +35,14 @@ def _source(model: Model, unit: str, fact_name: str):
 
 def _events(model: Model, source, unit_column: str):
     raw = model._relation(source.relation)
-    normalized = normalize_events(raw, source, unit_column)
-    columns = {"unit": normalized._unit, "_timestamp": normalized._timestamp}
+    columns = {
+        "unit": raw[unit_column],
+        "_timestamp": raw[source.timestamp_column],
+    }
     event_id = model.event_ids.get(source.name)
     if event_id is not None:
         columns["_event_id"] = raw[event_id]
-    return normalized.select(**columns), event_id
+    return raw.select(**columns), event_id
 
 
 def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
@@ -49,6 +51,21 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         raise TypeError("compile_time_to_event requires a TimeToEvent design")
     if design.shape.exit is not None and design.shape.exit == design.shape.event:
         raise _INVALID.error(reason="event_and_exit_facts_must_be_distinct")
+    generated = {
+        "unit",
+        "anchor_id",
+        "t0",
+        "event_time",
+        "censor_time",
+        "duration",
+        "event",
+        "entry_time",
+        "complete",
+        "reason",
+    }
+    for name in (*design.features, *design.eligibility):
+        if name.casefold() in generated:
+            raise _INVALID.error(reason=f"generated_column_collision_{name}")
     design.validate(model)
     shape = design.shape
     base_design = Design(
@@ -68,6 +85,25 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
     if event_unit is None:
         raise _INVALID.error(reason="event_source_missing_unit")
     event_relation, event_id = _events(model, event_source, event_unit)
+    source_names = [
+        shape.event,
+        *([shape.entry] if shape.entry else []),
+        *([shape.exit] if shape.exit else []),
+    ]
+    timestamp_types = [
+        model._relation(model.sources[model.catalog.facts[name].source].relation).schema()[
+            model.sources[model.catalog.facts[name].source].timestamp_column
+        ]
+        for name in source_names
+    ]
+    zones = {dtype.timezone for dtype in timestamp_types}
+    if len(zones) != 1:
+        raise _INVALID.error(reason="event_entry_exit_timestamp_zones_must_match")
+    time_type = dt.Timestamp(
+        timezone=timestamp_types[0].timezone,
+        scale=max(dtype.scale or 6 for dtype in timestamp_types),
+    )
+    event_relation = event_relation.mutate(_timestamp=event_relation._timestamp.cast(time_type))
     coverage = model.readiness.sources.get(event_source.name)
     if coverage is None:
         raise _INVALID.error(reason="event_source_coverage_required")
@@ -89,11 +125,12 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         if entry_unit is None:
             raise _INVALID.error(reason="entry_source_missing_unit")
         entry_events, entry_event_id = _events(model, entry_source, entry_unit)
+        entry_events = entry_events.mutate(_timestamp=entry_events._timestamp.cast(time_type))
         entry_candidates = candidates.select(
             unit=candidates.unit,
             anchor_id=candidates.anchor_id,
-            lower=ibis.literal(model.readiness.sources[entry_source.name].start),
-            upper=supported_end,
+            lower=ibis.literal(model.readiness.sources[entry_source.name].start).cast(time_type),
+            upper=supported_end.cast(time_type),
         )
         entered = first_occurrence(
             entry_events,
@@ -130,11 +167,12 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         supported_start = ibis.greatest(supported_start, exit_start)
         supported_end = ibis.least(supported_end, ibis.literal(exit_coverage.end_exclusive))
         exit_events, exit_event_id = _events(model, exit_source, exit_unit)
+        exit_events = exit_events.mutate(_timestamp=exit_events._timestamp.cast(time_type))
         exit_candidates = candidates.select(
             unit=candidates.unit,
             anchor_id=candidates.anchor_id,
-            lower=exit_start,
-            upper=supported_end,
+            lower=exit_start.cast(time_type),
+            upper=supported_end.cast(time_type),
         )
         exited = first_occurrence(
             exit_events,
@@ -156,14 +194,17 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         checks.append(exited)
         supported_end = ibis.least(supported_end, candidates._exit_time)
     candidates = candidates.mutate(
-        _followup_start=supported_start,
-        _followup_end=supported_end,
+        _followup_start=supported_start.cast(time_type),
+        _followup_end=supported_end.cast(time_type),
     )
+    earliest_event = event_relation._timestamp.min()
     prior_candidates = candidates.select(
         unit=candidates.unit,
         anchor_id=candidates.anchor_id,
-        lower=start,
-        upper=candidates._followup_start,
+        lower=earliest_event,
+        upper=(
+            candidates._followup_start if shape.delayed_entry else candidates.t0.cast(time_type)
+        ),
     )
     prior = first_occurrence(
         event_relation,
@@ -211,24 +252,33 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
     initial_gap = candidates.t0 < history_start
     if shape.delayed_entry:
         initial_gap = ibis.literal(False)
-    if "_observed_from" in candidates.columns:
+    if "_observed_from" in candidates.columns and not shape.delayed_entry:
         initial_gap = initial_gap | (candidates._observed_from > candidates.t0).fill_null(False)
     entry_missing = candidates._entry_time.isnull() if shape.delayed_entry else ibis.literal(False)
+    no_followup = candidates._followup_end <= candidates._followup_start
     complete = ibis.ifelse(
-        initial_gap,
+        initial_gap | no_followup,
         ibis.literal(False),
         ibis.ifelse(entry_missing, ibis.literal(False), ibis.literal(True)),
     )
     reason = ibis.ifelse(
         initial_gap,
         _INCOMPLETE_HISTORY,
-        ibis.ifelse(entry_missing, "missing_delayed_entry", ibis.null().cast("string")),
+        ibis.ifelse(
+            entry_missing,
+            "missing_delayed_entry",
+            ibis.ifelse(no_followup, "no_eligible_followup", ibis.null().cast("string")),
+        ),
     )
     prevalent = result._prior_event_time.notnull()
     retained = result.filter(~prevalent)
     output_projection = {
         name: retained[name]
-        for name in (*design.features, *((base.roles.treatment,) if base.roles.treatment else ()))
+        for name in (
+            *design.features,
+            *((base.roles.treatment,) if base.roles.treatment else ()),
+            *(name for name in base.table.columns if name.startswith("_observed_")),
+        )
     }
     output_projection.update(
         unit=retained.unit,
@@ -244,10 +294,13 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
     )
     output = retained.select(**output_projection)
     audit = base.audit_table
-    columns = {
-        name: ColumnMeta(None, "outcome", None, None, "complete", "reason")
-        for name in ("event", "event_time", "duration")
-    }
+    columns = {name: meta for name, meta in base.columns.items() if name in output_projection}
+    columns.update(
+        {
+            name: ColumnMeta(None, "outcome", None, None, "complete", "reason")
+            for name in ("event", "event_time", "duration")
+        }
+    )
     roles = Roles(
         "unit",
         "anchor_id",

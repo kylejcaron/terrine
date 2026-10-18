@@ -1,15 +1,18 @@
 from datetime import UTC, datetime
 
 import ibis
+import pytest
 
 from terrine.data import Coverage
+from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.models import Catalog
-from terrine.spec import Design, EventAnchor
+from terrine.spec import Design, EventAnchor, agg
 from terrine.spec.trajectory import TimeToEvent
 
 
 def _model(*, outcome_start="2024-12-30"):
+
     con = ibis.duckdb.connect()
     con.raw_sql("""
         CREATE TABLE anchors AS SELECT * FROM (VALUES
@@ -23,7 +26,7 @@ def _model(*, outcome_start="2024-12-30"):
           ('u1', TIMESTAMPTZ '2025-01-01 00:00:00+00'),
           ('u1', TIMESTAMPTZ '2025-01-03 00:00:00+00'),
           ('u2', TIMESTAMPTZ '2025-01-04 00:00:00+00'),
-          ('u3', TIMESTAMPTZ '2025-01-02 00:00:00+00')
+          ('u3', TIMESTAMPTZ '2025-01-01 00:00:00+00')
         ) AS e(user_id, ts)
     """)
     con.raw_sql("""
@@ -124,7 +127,7 @@ def test_unobserved_initial_history_is_explained_and_excluded_from_km():
 
 
 def test_event_before_declared_delayed_entry_is_prevalent():
-    con, model = _model()
+    con, model = _model(outcome_start="2025-01-02")
     try:
         design = Design(
             "user",
@@ -162,5 +165,40 @@ def test_administrative_cutoff_changes_followup_without_changing_readiness():
         assert late_rows["u2"]["event"] is True
         assert early_rows["u2"]["duration"] == datetime(2025, 1, 4, tzinfo=UTC)
         assert late_rows["u2"]["duration"] == datetime(2025, 1, 4, tzinfo=UTC)
+    finally:
+        con.disconnect()
+
+
+def test_cutoff_before_anchor_is_not_emitted_as_complete_followup():
+    from terrine.estimate.survival import kaplan_meier
+
+    con, model = _model()
+    try:
+        design = Design(
+            "user",
+            EventAnchor("signup", which="first"),
+            shape=TimeToEvent("churn"),
+            administrative_cutoff=datetime(2024, 12, 31, tzinfo=UTC),
+        )
+        result = design.build(model).materialize()
+        assert all(row["complete"] is False for row in result.table.to_pylist())
+        curve = kaplan_meier(result, duration="duration", event="event", entry="entry_time")
+        assert curve.time == ()
+    finally:
+        con.disconnect()
+
+
+def test_survival_generated_columns_cannot_overwrite_features():
+    con, model = _model()
+    try:
+        design = Design(
+            "user",
+            EventAnchor("signup", which="first"),
+            features={"duration": agg("missing", window=("-1d", "0d"))},
+            shape=TimeToEvent("churn"),
+        )
+        with pytest.raises(TerrineError) as error:
+            design.build(model)
+        assert error.value.code == "terrine.survival.invalid_compilation"
     finally:
         con.disconnect()

@@ -108,3 +108,14 @@ def test_km_timestamp_inputs_preserve_nanoseconds_relative_to_each_t0():
         entry="entry",
     )
     assert result.time == (ElapsedTime(0, 2), ElapsedTime(0, 3))
+
+
+def test_greenwood_variance_stays_unavailable_after_survival_reaches_zero():
+    source = frame(
+        [(1, 0), (3, 0)],
+        [True, False],
+        [(0, 0), (2, 0)],
+    )
+    result = kaplan_meier(source, duration="duration", event="event", entry="entry")
+    assert result.survival == (0.0, 0.0)
+    assert result.variance == (None, None)
