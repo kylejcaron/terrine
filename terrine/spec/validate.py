@@ -350,7 +350,7 @@ def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
             horizon = max(horizon, model.day_boundary(schedule.end))
         incomplete_coverage = (
             coverage.end_exclusive < horizon
-            if outcome_window_end > 0 or design.shape.control == "never_treated"
+            if outcome_window_end > 0
             else coverage.end_exclusive <= horizon
         )
         if incomplete_coverage:

@@ -64,6 +64,7 @@
 - Add evidence-only joint pretrend, placebo, and negative-control diagnostics with explicit low-power/unavailable status and non-identification caveats.
 - Allow explicitly declared pre-treatment comparison periods before the anticipation window, making compiled stacked results usable by the joint pretrend diagnostic.
 - Refuse negative stacked comparison windows whose outcome endpoints reach actual treated initiation/anticipation; require full-schedule treatment history for never-treated controls.
+- Preserve the inclusive-history refusal at an exact no-outcome anticipation cutoff, alongside full schedule-end coverage for never-treated panels.
 - Extend the independent simulator with repeated-trial potential outcomes, trial-specific assignment and baseline profiles, overlap regimes, heterogeneous cohort-time effects, and population/cohort truth; use it directly in the calibration harness.
 - Expand independent pandas panel-row references for canonical sequential/calendar rows, event-relative windows and cutoffs, and exact matched-t0 inclusion probabilities; add a temporary-output, smoke-only calibration-harness mode.
 - Predeclare eight stochastic heterogeneous stacked CATT recovery cells with per-cohort recovery, inference gates, per-cell JSON, and a deterministic fast smoke.

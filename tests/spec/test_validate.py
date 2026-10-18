@@ -168,6 +168,34 @@ def test_never_treated_negative_comparisons_still_require_full_schedule_history(
     assert error.value.code == "terrine.design.incomplete_treatment_history"
 
 
+def test_never_treated_coverage_rejects_equality_at_anticipation_cutoff():
+    from terrine.spec.panels import CalendarComparisonSpec, Initiation
+    from terrine.spec.validate import validate_design
+
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-01", "2025-01-10"),
+        shape=CalendarComparisonSpec(
+            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            "never_treated",
+            -2,
+            (0,),
+            (-1,),
+        ),
+    )
+    bound = model()
+    bound.readiness = Readiness(
+        {
+            "events": BoundCoverage(
+                datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 10, tzinfo=UTC)
+            )
+        }
+    )
+    with pytest.raises(TerrineError) as error:
+        validate_design(design, bound)
+    assert error.value.code == "terrine.design.incomplete_treatment_history"
+
+
 def test_window_extending_beyond_declared_coverage_is_runtime_incomplete_not_refused():
     design = Design(
         "user", EventAnchor("session"), features={"x": agg("sessions", window=("-7d", "0d"))}
