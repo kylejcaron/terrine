@@ -412,3 +412,56 @@ def test_float_cohort_mean_avoids_overflow_and_retains_certificate():
         assert error_column is not None and row[error_column] > 0
     finally:
         con.disconnect()
+
+
+def test_float_mean_certificate_covers_many_member_rounding():
+    from decimal import Decimal
+
+    con, model = _trajectory_model()
+    try:
+        count = 256
+        con.raw_sql(
+            "UPDATE events SET float_amount = 1.0 "
+            "WHERE user_id = 'u1' AND kind = 'revenue' AND ts = "
+            "TIMESTAMPTZ '2025-01-03 00:00:00+00'"
+        )
+        con.raw_sql(
+            "UPDATE events SET float_amount = 0.0 "
+            "WHERE user_id = 'u1' AND kind = 'revenue' AND ts = "
+            "TIMESTAMPTZ '2025-01-10 00:00:00+00'"
+        )
+        users = ", ".join(f"('small-{index}')" for index in range(count))
+        events = ", ".join(
+            f"('small-{index}', TIMESTAMPTZ '2025-01-01 00:00:00+00', 'purchase', 0, 0, 0), "
+            f"('small-{index}', TIMESTAMPTZ '2025-01-03 00:00:00+00', 'revenue', 0, 0, "
+            "5.551115123125783e-17)"
+            for index in range(count)
+        )
+        con.raw_sql(f"INSERT INTO users VALUES {users}")
+        con.raw_sql(
+            "INSERT INTO events (user_id, ts, kind, amount, decimal_amount, float_amount) "
+            f"VALUES {events}"
+        )
+        frame = Design(
+            "user",
+            EventAnchor("purchase", which="first"),
+            shape=CohortSpec(
+                origin="purchase",
+                trajectory=Trajectory("float_revenue", "7d", periods=1, cumulative=False),
+            ),
+        ).build(model)
+        result = frame.cohorts(
+            grouping=CohortGrouping(
+                bucket="7d", bucket_origin=datetime(2025, 1, 1, tzinfo=UTC), statistic="mean"
+            ),
+            value_column="period_value",
+        ).materialize()
+        row = next(row for row in result.table.to_pylist() if row["bucket_index"] == 0)
+        expected = (Decimal(1) + count * Decimal.from_float(2**-54)) / Decimal(count + 2)
+        error_column = result.columns["value"].absolute_error_column
+        assert error_column is not None
+        assert abs(Decimal.from_float(row["value"]) - expected) <= Decimal.from_float(
+            row[error_column]
+        )
+    finally:
+        con.disconnect()

@@ -112,10 +112,11 @@ def compile_cohorts(
         )
     elif checked_float:
         input_error = per_unit._absolute_error.mean()
-        mean_magnitude = (
-            reduction_table._value.abs() / reduction_table._scale
-        ).mean() * reduction_table._scale.first()
-        reduction_error = outward_multiply(float64_rounding_radius(mean_magnitude), 2.0)
+        error_count = per_unit._value.notnull().cast("float64").sum()
+        reduction_error = outward_multiply(
+            float64_rounding_radius(reduction_table._scale.first()),
+            outward_multiply(error_count, 4.0),
+        )
         absolute_error = outward_add(input_error, reduction_error)
     else:
         absolute_error = ibis.null().cast("float64")
