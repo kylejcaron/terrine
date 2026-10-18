@@ -51,3 +51,4 @@
 - Add durable runtime run status, bounded resumable event pages, cancellation state and owner-local IPC status/cancel/request-key lookup.
 - Persist destination-scoped request keys for response-loss replay, expose the explicit runtime Python facade, and reconcile expired owner runs on restart.
 - Add `terrine plan|run|status|events|cancel` commands over owner IPC with destination-scoped request-key replay.
+- Document Model/Design materialization plans, owner CLI workflows, exact-generation reads, and backend consistency limits.
