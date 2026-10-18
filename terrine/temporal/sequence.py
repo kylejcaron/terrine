@@ -48,6 +48,137 @@ class SequenceResult:
             raise _MAX_EVENTS_EXCEEDED.error(limit=self._max_events)
 
 
+def funnel_progress(
+    events: ibis.Table,
+    *,
+    event_property: str,
+    steps: tuple[str, ...],
+    within_seconds: int | None,
+    sequence_end_column: str,
+    unit_column: str,
+    anchor_id_column: str,
+    timestamp_column: str,
+    event_id_column: str,
+    position_column: str,
+) -> ibis.Table:
+    """Return one bounded attempt row per step-zero event."""
+    required = (
+        event_property,
+        sequence_end_column,
+        unit_column,
+        anchor_id_column,
+        timestamp_column,
+        event_id_column,
+        position_column,
+    )
+    if (
+        len(steps) < 2
+        or any(not isinstance(step, str) or not step for step in steps)
+        or len(set(steps)) != len(steps)
+        or any(name not in events.columns for name in required)
+        or (
+            within_seconds is not None
+            and (isinstance(within_seconds, bool) or within_seconds < 0)
+        )
+    ):
+        raise ValueError("invalid funnel parameters or event relation")
+    deadline = (
+        events[sequence_end_column]
+        if within_seconds is None
+        else events[timestamp_column] + ibis.interval(seconds=within_seconds)
+    )
+    attempts = events.filter(events[event_property] == steps[0]).select(
+        _f_unit=events[unit_column],
+        _f_anchor=events[anchor_id_column],
+        _f_start_id=events[event_id_column],
+        _f_last_id=events[event_id_column],
+        _f_last_time=events[timestamp_column],
+        _f_last_position=events[position_column],
+        _f_progress=ibis.literal(1, type="int64"),
+        _f_deadline=deadline,
+        _f_sequence_end=events[sequence_end_column],
+    )
+    keys = ("_f_unit", "_f_anchor", "_f_start_id")
+    attempt_columns = tuple(attempts.columns)
+    for progress, step in enumerate(steps[1:], start=2):
+        attempt = attempts.view()
+        candidate = events.view()
+        matches = attempt.join(
+            candidate,
+            [
+                attempt._f_unit == candidate[unit_column],
+                attempt._f_anchor == candidate[anchor_id_column],
+                candidate[event_property] == step,
+                candidate[timestamp_column] >= attempt._f_last_time,
+                candidate[timestamp_column] < attempt._f_deadline,
+                candidate[position_column] > attempt._f_last_position,
+            ],
+        ).select(
+            **{name: attempt[name] for name in attempt_columns},
+            _candidate_id=candidate[event_id_column],
+            _candidate_time=candidate[timestamp_column],
+            _candidate_position=candidate[position_column],
+        )
+        earliest = matches.group_by(list(keys)).aggregate(
+            _next_position=matches._candidate_position.min()
+        )
+        matches_left = matches.view()
+        earliest_right = earliest.view()
+        matched = matches_left.join(
+            earliest_right,
+            [matches_left[key] == earliest_right[key] for key in keys]
+            + [matches_left._candidate_position == earliest_right._next_position],
+        ).select(
+            **{name: matches_left[name] for name in attempt_columns},
+            _next_id=matches_left._candidate_id,
+            _next_time=matches_left._candidate_time,
+            _next_position=matches_left._candidate_position,
+        )
+        left = attempts.view()
+        right = matched.view()
+        joined = left.left_join(right, [left[key] == right[key] for key in keys])
+        attempts = joined.select(
+            _f_unit=left._f_unit,
+            _f_anchor=left._f_anchor,
+            _f_start_id=left._f_start_id,
+            _f_last_id=ibis.coalesce(right._next_id, left._f_last_id),
+            _f_last_time=ibis.coalesce(right._next_time, left._f_last_time),
+            _f_last_position=ibis.coalesce(
+                right._next_position, left._f_last_position
+            ),
+            _f_progress=ibis.ifelse(
+                right._next_position.isnull(),
+                left._f_progress,
+                ibis.literal(progress, type="int64"),
+            ),
+            _f_deadline=left._f_deadline,
+            _f_sequence_end=left._f_sequence_end,
+        )
+    complete = attempts._f_progress == len(steps)
+    failed = attempts._f_deadline <= attempts._f_sequence_end
+    return attempts.select(
+        unit=attempts._f_unit,
+        anchor_id=attempts._f_anchor,
+        step0_event_id=attempts._f_start_id,
+        deadline=attempts._f_deadline,
+        progress=attempts._f_progress,
+        status=ibis.ifelse(
+            complete,
+            "complete",
+            ibis.ifelse(failed, "failed", "unavailable"),
+        ),
+        reason=ibis.ifelse(
+            complete,
+            ibis.literal(None, type="string"),
+            ibis.ifelse(
+                failed,
+                "deadline_elapsed",
+                "sequence_window_end_before_deadline",
+            ),
+        ),
+    )
+
+
 def event_sequence(
     events: ibis.Table,
     anchors: ibis.Table,
