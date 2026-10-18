@@ -53,7 +53,6 @@ def test_comparison_reference_conflict_refuses_without_shifting():
         CalendarComparisonSpec(cohort, "never_treated", -1, (0,), (-1,))
 
 
-
 def test_pre_treatment_comparisons_must_precede_anticipation():
     cohort = Initiation(
         "treatment",
@@ -64,6 +63,7 @@ def test_pre_treatment_comparisons_must_precede_anticipation():
     assert spec.comparison_periods == (-3, 0)
     with pytest.raises(TerrineError):
         CalendarComparisonSpec(cohort, "never_treated", -2, (-1, 0), (-1,))
+
 
 def test_calendar_comparison_producer_refuses_sampled_population():
     cohort = Initiation(
