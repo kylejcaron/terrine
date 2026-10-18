@@ -291,12 +291,13 @@ def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
             for expression in design.outcomes.values()
             if isinstance(expression, MetricAgg)
         ]
+        anticipation = design.shape.anticipation_seconds
         if outcome_horizons:
             followup_end = model.day_boundary(design.anchor.start) + timedelta(
-                seconds=last_offset + max(outcome_horizons)
+                seconds=last_offset + max(outcome_horizons) + anticipation
             )
         else:
-            followup_end = model.day_boundary(design.anchor.end)
+            followup_end = model.day_boundary(design.anchor.end) + timedelta(seconds=anticipation)
         if (
             coverage.start > design.shape.treatment.history_start
             or coverage.end_exclusive < followup_end
@@ -342,12 +343,14 @@ def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
         outcome_window_end = max(outcome_horizons, default=0)
         horizon = model.day_boundary(schedule.start) + timedelta(
             seconds=last_offset
-            + (max(design.shape.comparison_periods) + anticipation) * schedule.every
+            + (max(0, max(design.shape.comparison_periods)) + anticipation) * schedule.every
             + outcome_window_end
         )
+        if design.shape.control == "never_treated":
+            horizon = max(horizon, model.day_boundary(schedule.end))
         incomplete_coverage = (
             coverage.end_exclusive < horizon
-            if outcome_window_end > 0
+            if outcome_window_end > 0 or design.shape.control == "never_treated"
             else coverage.end_exclusive <= horizon
         )
         if incomplete_coverage:

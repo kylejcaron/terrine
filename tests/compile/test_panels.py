@@ -421,9 +421,7 @@ def test_sequential_anticipation_extends_control_risk_horizon(native_inputs):
             Schedule("1d", "2025-01-03", "2025-01-04"),
             outcomes={"sessions_after_t0": agg("sessions", window=("0d", "7d"))},
         ),
-        treatment=Initiation(
-            "events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)
-        ),
+        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
         anticipation="2d",
     )
 
@@ -435,7 +433,46 @@ def test_sequential_anticipation_extends_control_risk_horizon(native_inputs):
         "UPDATE events SET ts = TIMESTAMPTZ '2025-01-12 00:00:00+00' WHERE user_id = 'b'"
     )
     frame = design.build(model).materialize()
-    assert frame.provenance.panel.anticipation_seconds == 2 * 86_400
-    assert type(frame).from_arrow(frame.to_arrow()).provenance.panel.anticipation_seconds == (
-        2 * 86_400
+    panel = frame.provenance.panel
+    assert panel is not None
+    assert panel.anticipation_seconds == 2 * 86_400
+    restored_panel = type(frame).from_arrow(frame.to_arrow()).provenance.panel
+    assert restored_panel is not None
+    assert restored_panel.anticipation_seconds == 2 * 86_400
+
+
+def test_sequential_anticipation_requires_source_coverage_through_buffer(native_inputs):
+    from terrine.errors import TerrineError
+
+    model = _event_model(native_inputs, Coverage("2025-01-01", "2025-01-10"))
+    design = Sequential(
+        Design(
+            "user",
+            Schedule("1d", "2025-01-03", "2025-01-04"),
+            outcomes={"sessions_after_t0": agg("sessions", window=("0d", "7d"))},
+        ),
+        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        anticipation="2d",
     )
+
+    with pytest.raises(TerrineError) as error:
+        design.build(model)
+    assert error.value.code == "terrine.design.incomplete_treatment_history"
+
+
+def test_sequential_anticipation_preserves_schedule_fallback_without_outcomes(native_inputs):
+    from terrine.errors import TerrineError
+
+    model = _event_model(native_inputs)
+    model.con.raw_sql(
+        "UPDATE events SET ts = TIMESTAMPTZ '2025-01-06 00:00:00+00' WHERE user_id = 'b'"
+    )
+    design = Sequential(
+        Design("user", Schedule("7d", "2025-01-03", "2025-01-10")),
+        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        anticipation="2d",
+    )
+
+    with pytest.raises(TerrineError) as error:
+        design.build(model).materialize()
+    assert error.value.code == "terrine.compile.later_control_initiation"

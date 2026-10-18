@@ -42,8 +42,11 @@ Sequential treatment is classified at each schedule's exact `t0` from the declar
 
 The sequential `anticipation` interval extends the control no-initiation risk
 horizon and the corresponding treatment-source and roster-history coverage
-checks, beyond the declared outcome window. Its elapsed seconds are preserved
-in typed Arrow provenance so downstream users can inspect the applied policy.
+checks beyond the outcome window. Readiness validation and runtime risk checks
+use the same extended endpoint. With no outcome aggregate, the declared
+schedule-end horizon remains the base and anticipation extends it rather than
+replacing it. Its elapsed seconds are preserved in typed Arrow provenance so
+downstream users can inspect the applied policy.
 
 A matched-t0 policy belongs on the canonical `Design`, not on a transient compiler option:
 
@@ -102,6 +105,12 @@ Declare uncontaminated negative comparison periods in `comparison_periods`
 to expose pre-treatment contrasts through the compiled pipeline. Every negative
 comparison must precede the declared anticipation window, and the reference
 period remains distinct; `pretrend_test` then jointly tests those compiled leads.
+
+For each negative comparison, the estimator also refuses if its complete
+outcome window reaches an actual treated unit's initiation/anticipation boundary.
+Never-treated control declarations require treatment-source history through at
+least the complete declared schedule, including when all comparisons are leads.
+
 `placebo_test(frame, outcome=..., placebo_periods=...)` checks treatment-group
 differences at declared pre-treatment event periods; `negative_control_test`
 uses the declared negative-control outcome. Each returns the shared immutable

@@ -215,6 +215,12 @@ def stacked_event_study(
                     )
                     if reference_time + timedelta(seconds=window.end) > earliest_uncontaminated:
                         raise _INPUT.error(reason="outcome_window_contaminates_reference")
+                    if (
+                        event_period < 0
+                        and comparison_time + timedelta(seconds=window.end)
+                        > earliest_uncontaminated
+                    ):
+                        raise _INPUT.error(reason="outcome_window_contaminates_reference")
                 delta = followup - baseline
                 if not math.isfinite(delta):
                     raise NONFINITE_RESULT.error(stage="outcome_difference")

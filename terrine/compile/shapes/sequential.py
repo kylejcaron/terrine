@@ -32,21 +32,25 @@ _CONTRADICTORY_ADOPTION = RefusalSpec(
 
 
 def _followup_horizon(design: Design) -> int | None:
+    assert isinstance(design.shape, SequentialSpec)
     horizons = [
         expression.window.end
         for expression in design.outcomes.values()
         if isinstance(expression, MetricAgg)
     ]
-    if not horizons and design.shape.anticipation_seconds == 0:
+    if not horizons:
         return None
-    return max(horizons, default=0) + design.shape.anticipation_seconds
+    return max(horizons) + design.shape.anticipation_seconds
 
 
 def _followup_end(design: Design, model):
+    assert isinstance(design.shape, SequentialSpec)
     assert isinstance(design.anchor, Schedule)
     horizon = _followup_horizon(design)
     if horizon is None:
-        return model.day_boundary(design.anchor.end)
+        return model.day_boundary(design.anchor.end) + timedelta(
+            seconds=design.shape.anticipation_seconds
+        )
     elapsed = (design.anchor.end - design.anchor.start).days * 86_400
     last_offset = ((elapsed - 1) // design.anchor.every) * design.anchor.every
     last_t0 = model.day_boundary(design.anchor.start) + timedelta(seconds=last_offset)

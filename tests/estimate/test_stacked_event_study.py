@@ -167,6 +167,51 @@ def test_stacked_estimator_refuses_outcome_windows_crossing_treatment():
     assert error.value.context["reason"] == "outcome_window_contaminates_reference"
 
 
+def test_stacked_estimator_refuses_pretrend_window_crossing_intraday_initiation():
+    from dataclasses import replace
+
+    frame = _frame()
+    rows = frame.table.to_pylist()
+    lead_rows = [row for row in rows if row["event_period"] == -1]
+    reference_rows = []
+    for row in lead_rows:
+        reference = dict(row)
+        reference_rows.append(reference)
+        reference["event_period"] = -2
+        reference["period"] = reference["cohort"] - timedelta(days=2)
+        reference["t0"] = reference["period"]
+        reference["anchor_id"] = f"{reference['cohort'].isoformat()}:-2:{reference['unit']}"
+        if row["treatment"]:
+            initiation = row["cohort"] - timedelta(days=1) + timedelta(hours=12)
+            reference["__terrine_treatment_initiation_time"] = initiation
+            row["__terrine_treatment_initiation_time"] = initiation
+    rows.extend(reference_rows)
+    metadata = replace(
+        frame.provenance.calendar_comparison,
+        reference_period=-2,
+        comparison_periods=(-1, 0),
+    )
+    provenance = replace(frame.provenance, calendar_comparison=metadata)
+    columns = dict(frame.columns)
+    columns["y"] = ColumnMeta(Window("0d", "1d"), "outcome", None, None, None, None)
+    contaminated = replace(
+        frame,
+        table=pa.Table.from_pylist(rows),
+        columns=columns,
+        provenance=provenance,
+    )
+
+    with pytest.raises(TerrineError) as error:
+        stacked_event_study(
+            contaminated,
+            outcome="y",
+            treatment="treatment",
+            cohort="cohort",
+            period="period",
+        )
+    assert error.value.context["reason"] == "outcome_window_contaminates_reference"
+
+
 def test_stacked_estimator_refuses_incomplete_treated_pairs():
     from dataclasses import replace
 
