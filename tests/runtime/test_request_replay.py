@@ -1,9 +1,12 @@
+from datetime import UTC, datetime, timedelta
+
 import duckdb
 import pyarrow as pa
 import pytest
 
 from terrine.runtime.execute import execute_plan
 from terrine.runtime.graph import dependency_graph
+from terrine.runtime.leases import LeaseStore
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.recipe import DestinationRef
 
@@ -35,6 +38,13 @@ def test_request_key_replays_same_fingerprint_for_same_destination():
         run_task=lambda task, dependencies: pa.table({"id": [1]}),
         publish=lambda plan, outputs, lease: published.append("g1") or "g1",
     )
+    leases = LeaseStore(con, namespace="owner")
+    active_lease = leases.acquire(
+        "dataset:orders",
+        "other-run",
+        ttl=timedelta(minutes=1),
+        now=datetime.now(UTC),
+    )
     replay = execute_plan(
         _plan(),
         con=con,
@@ -45,6 +55,7 @@ def test_request_key_replays_same_fingerprint_for_same_destination():
         run_task=lambda task, dependencies: pa.table({"id": [2]}),
         publish=lambda plan, outputs, lease: published.append("unexpected"),
     )
+    leases.release(active_lease)
 
     assert replay == first
     assert published == ["g1"]
@@ -99,3 +110,44 @@ def test_request_key_is_scoped_to_destination():
         )
 
     assert [receipt.run_id for receipt in receipts] == ["run-1", "run-2"]
+
+
+def test_new_request_waiting_on_dataset_lease_is_retryable():
+    con = duckdb.connect(":memory:")
+    leases = LeaseStore(con, namespace="owner")
+    leases.initialize()
+    active = leases.acquire(
+        "dataset:orders",
+        "active-run",
+        ttl=timedelta(minutes=1),
+        now=datetime.now(UTC),
+    )
+    destination = DestinationRef("out.duckdb", "analytics", "orders")
+    with pytest.raises(ValueError, match="leased"):
+        execute_plan(
+            _plan(),
+            con=con,
+            namespace="owner",
+            run_id="new-run",
+            request_key="waiting-request",
+            destination=destination,
+            run_task=lambda task, dependencies: pa.table({"id": [1]}),
+            publish=lambda plan, outputs, lease: "g1",
+        )
+    row = con.execute(
+        'SELECT state FROM "owner".runtime_runs WHERE run_id=?', ["new-run"]
+    ).fetchone()
+    assert row is not None and row[0] == "queued"
+    leases.release(active)
+    receipt = execute_plan(
+        _plan(),
+        con=con,
+        namespace="owner",
+        run_id="new-run",
+        request_key="waiting-request",
+        destination=destination,
+        run_task=lambda task, dependencies: pa.table({"id": [1]}),
+        publish=lambda plan, outputs, lease: "g1",
+    )
+
+    assert receipt.state == "succeeded"

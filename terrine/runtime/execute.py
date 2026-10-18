@@ -118,7 +118,10 @@ def execute_plan(
             ):
                 raise _REQUEST_KEY_CONFLICT.error()
             if existing_request[0] != run_id:
-                return RunReceipt(existing_request[0], existing_request[3], existing_request[4])
+                receipt = RunReceipt(existing_request[0], existing_request[3], existing_request[4])
+                if receipt.state in {"succeeded", "cancelled"}:
+                    _release_run_snapshot_refs(runtime_store, plan.snapshot_id, receipt.run_id)
+                return receipt
         run = con.execute(
             f"SELECT dataset, fingerprint, state, published_generation, request_key, "
             f"destination_json FROM {schema}.runtime_runs WHERE run_id=?",
@@ -133,9 +136,20 @@ def execute_plan(
             con.execute(
                 f"INSERT INTO {schema}.runtime_runs "
                 "(run_id, dataset, fingerprint, state, published_generation, request_key, "
-                "destination_json) VALUES (?, ?, ?, 'running', NULL, ?, ?)",
+                "destination_json) VALUES (?, ?, ?, 'queued', NULL, ?, ?)",
                 [run_id, plan.dataset, plan.recipe.fingerprint, request_key, destination_json],
             )
+            record_run_event(
+                run_id,
+                "lifecycle",
+                {"state": "queued"},
+                con=con,
+                namespace=namespace,
+                _in_transaction=True,
+            )
+    if run is not None and run[2] in {"succeeded", "cancelled"}:
+        _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
+        return RunReceipt(run_id, run[2], run[3])
     leases.initialize()
     lease = leases.acquire(f"dataset:{plan.dataset}", run_id, ttl=lease_ttl, now=datetime.now(UTC))
     if run is not None and run[2] == "cancel_requested":
@@ -169,7 +183,7 @@ def execute_plan(
         with event_transaction(con, namespace=namespace):
             transition = con.execute(
                 f"UPDATE {schema}.runtime_runs SET state='running', attempt_fence=? "
-                "WHERE run_id=? AND state IN ('running', 'failed') "
+                "WHERE run_id=? AND state IN ('queued','running','failed') "
                 "AND (attempt_fence IS NULL OR attempt_fence<?) AND EXISTS ("
                 f"SELECT 1 FROM {schema}.runtime_leases WHERE resource=? AND owner=? "
                 "AND fence=? AND expires_at>?) RETURNING run_id",

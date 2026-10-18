@@ -54,49 +54,56 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
     ).fetchone()
     if lease_table is None:
         return
-    stale = con.execute(
-        f"SELECT r.run_id,r.state FROM {schema}.runtime_runs r "
-        f"JOIN {schema}.runtime_leases l ON l.resource='dataset:' || r.dataset "
-        "AND l.owner=r.run_id AND l.fence=r.attempt_fence "
-        "WHERE r.state IN ('running','cancel_requested') AND l.expires_at<=current_timestamp "
-        "ORDER BY r.run_id"
-    ).fetchall()
-    if not stale:
-        return
     publications = con.execute(
         "SELECT 1 FROM information_schema.tables "
         "WHERE lower(table_schema)=lower(?) AND table_name='runtime_run_publications'",
         [namespace],
     ).fetchone()
-    recovered = {}
-    if publications is not None:
-        recovered = {
-            run_id: ("succeeded", generation)
-            for run_id, generation in con.execute(
-                f"SELECT p.run_id,p.generation FROM {schema}.runtime_run_publications p "
-                f"JOIN {schema}.runtime_runs r ON r.run_id=p.run_id "
-                "WHERE r.state IN ('running','cancel_requested')"
-            ).fetchall()
-        }
     with event_transaction(con, namespace=namespace):
-        for run_id, old_state in stale:
-            state, generation = recovered.get(
-                run_id, ("cancelled" if old_state == "cancel_requested" else "failed", None)
+        stale = con.execute(
+            f"SELECT r.run_id,r.state,r.attempt_fence FROM {schema}.runtime_runs r "
+            f"JOIN {schema}.runtime_leases l ON l.resource='dataset:' || r.dataset "
+            "AND l.owner=r.run_id AND l.fence=r.attempt_fence "
+            "WHERE r.state IN ('running','cancel_requested') AND l.expires_at<=current_timestamp "
+            "ORDER BY r.run_id"
+        ).fetchall()
+        for run_id, old_state, fence in stale:
+            publication = (
+                con.execute(
+                    f"SELECT generation FROM {schema}.runtime_run_publications WHERE run_id=?",
+                    [run_id],
+                ).fetchone()
+                if publications is not None
+                else None
             )
-            con.execute(
+            state = (
+                "succeeded"
+                if publication is not None
+                else "cancelled"
+                if old_state == "cancel_requested"
+                else "failed"
+            )
+            generation = publication[0] if publication is not None else None
+            transitioned = con.execute(
                 f"UPDATE {schema}.runtime_runs SET state=?, "
                 "published_generation=COALESCE(?,published_generation) "
-                "WHERE run_id=? AND state IN ('running','cancel_requested')",
-                [state, generation, run_id],
-            )
-            record_run_event(
-                run_id,
-                "lifecycle",
-                {"state": state},
-                con=con,
-                namespace=namespace,
-                _in_transaction=True,
-            )
+                "WHERE run_id=? AND state=? AND attempt_fence=? AND EXISTS ("
+                f"SELECT 1 FROM {schema}.runtime_leases l "
+                "WHERE l.resource='dataset:' || runtime_runs.dataset "
+                "AND l.owner=runtime_runs.run_id "
+                "AND l.fence=runtime_runs.attempt_fence AND l.expires_at<=current_timestamp) "
+                "RETURNING state",
+                [state, generation, run_id, old_state, fence],
+            ).fetchone()
+            if transitioned is not None:
+                record_run_event(
+                    run_id,
+                    "lifecycle",
+                    {"state": transitioned[0]},
+                    con=con,
+                    namespace=namespace,
+                    _in_transaction=True,
+                )
 
 
 class ControlServer:
@@ -191,6 +198,7 @@ class ControlServer:
     def _dispatch(self, request: dict[str, Any], *, con: Any) -> Any:
         if request.get("namespace") != self.namespace:
             raise ValueError("control namespace mismatch")
+        _recover_interrupted_runs(con, namespace=self.namespace)
         operation = request.get("operation")
         run_id = request.get("run_id")
 

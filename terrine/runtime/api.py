@@ -59,7 +59,25 @@ def run_plan(
             request_key, destination=destination, con=con, namespace=namespace
         )
         if existing is not None:
-            if existing.state != "failed":
+            store = RuntimeStore(con, namespace=namespace)
+            store.initialize()
+            fingerprint = con.execute(
+                f"SELECT fingerprint FROM {store._schema}.runtime_runs WHERE run_id=?",
+                [existing.run_id],
+            ).fetchone()
+            if fingerprint is None or fingerprint[0] != plan.recipe.fingerprint:
+                from terrine.errors import RefusalSpec
+
+                raise RefusalSpec(
+                    "terrine.runtime.request_key_conflict",
+                    "Request key is already bound to a different plan.",
+                ).error()
+            if existing.state in {"running", "cancel_requested", "succeeded", "cancelled"}:
+                if existing.state in {"succeeded", "cancelled"}:
+                    from terrine.runtime.execute import _release_run_snapshot_refs
+
+                    _release_run_snapshot_refs(store, plan.snapshot_id, existing.run_id)
+                _record_result_partitions(plan, existing, con=con, namespace=namespace)
                 return existing
             run_id = existing.run_id
         else:
@@ -70,7 +88,7 @@ def run_plan(
         run_id = str(uuid.uuid4())
     if executor is None:
         raise _EXECUTOR_UNAVAILABLE.error()
-    return execute_plan(
+    receipt = execute_plan(
         plan,
         con=con,
         namespace=namespace,
@@ -82,6 +100,8 @@ def run_plan(
             current_plan, outputs, lease, run_id
         ),
     )
+    _record_result_partitions(plan, receipt, con=con, namespace=namespace)
+    return receipt
 
 
 def run_serialized_plan(
@@ -139,6 +159,29 @@ def find_run_by_request_key(
     return RunReceipt(*row) if row is not None else None
 
 
+def _record_result_partitions(
+    plan: RefreshPlan, receipt: RunReceipt, *, con: Any, namespace: str
+) -> None:
+    if receipt.state != "succeeded":
+        return
+    store = RuntimeStore(con, namespace=namespace)
+    store.initialize()
+    schema = store._schema
+    con.execute(
+        f"CREATE TABLE IF NOT EXISTS {schema}.runtime_run_results "
+        "(run_id VARCHAR NOT NULL, partition VARCHAR NOT NULL, PRIMARY KEY(run_id,partition))"
+    )
+    dependencies = {dependency for task in plan.tasks for dependency in task.dependencies}
+    results = sorted(task.task_id for task in plan.tasks if task.task_id not in dependencies)
+    if not results:
+        raise ValueError("published plan has no final result task")
+    for partition in results:
+        con.execute(
+            f"INSERT INTO {schema}.runtime_run_results VALUES (?, ?) ON CONFLICT DO NOTHING",
+            [receipt.run_id, partition],
+        )
+
+
 def open_published_generation(receipt: RunReceipt, *, con: Any, namespace: str) -> ibis.Table:
     """Open only partitions recorded for the exact run publication receipt."""
     if not isinstance(receipt, RunReceipt) or receipt.state != "succeeded":
@@ -168,9 +211,10 @@ def open_published_generation(receipt: RunReceipt, *, con: Any, namespace: str) 
     ):
         raise ValueError("run has no matching durable publication receipt")
     partitions = con.execute(
-        f"SELECT partition FROM {schema}.runtime_partitions "
-        "WHERE dataset=? AND generation=? ORDER BY partition",
-        [publication[0], publication[1]],
+        f"SELECT p.partition FROM {schema}.runtime_run_results p "
+        f"JOIN {schema}.runtime_partitions r ON r.partition=p.partition "
+        "WHERE p.run_id=? AND r.dataset=? AND r.generation=? ORDER BY p.partition",
+        [receipt.run_id, publication[0], publication[1]],
     ).fetchall()
     if not partitions:
         raise ValueError("published generation has no retained partitions")

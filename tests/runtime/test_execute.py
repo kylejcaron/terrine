@@ -53,6 +53,7 @@ def test_execution_persists_lifecycle_events_for_terminal_replay():
 
     events = read_run_events("evented-run", con=con, namespace="owner").events
     assert [event.payload["state"] for event in events if event.kind == "lifecycle"] == [
+        "queued",
         "running",
         "succeeded",
     ]

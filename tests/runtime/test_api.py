@@ -91,9 +91,7 @@ def test_published_generation_uses_receipt_generation_not_current_manifest():
     exact = runtime.open_published_generation(first, con=con, namespace="owner")
 
     assert isinstance(exact, ibis.Table)
-    assert sorted(exact.execute().to_dict(orient="records"), key=lambda row: row["id"]) == [
-        {"id": index} for index in range(1, len(_plan().tasks) + 1)
-    ]
+    assert exact.execute().to_dict(orient="records") == [{"id": len(_plan().tasks)}]
     assert second.published_generation == "g2"
 
 
@@ -120,3 +118,36 @@ def test_request_key_replay_is_available_without_executor():
 
     assert replay == first
     assert executor.calls == len(_plan().tasks)
+
+
+def test_public_request_replay_refuses_a_different_plan_without_executor():
+    con = duckdb.connect(":memory:")
+    destination = DestinationRef("out.duckdb", "analytics", "orders")
+    runtime.run_plan(
+        _plan(),
+        con=con,
+        namespace="owner",
+        request_key="same-key",
+        destination=destination,
+        executor=_Executor(),
+    )
+    changed = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="other-definition",
+        snapshot_id="snapshot",
+        graph=dependency_graph(
+            sources=("events",), definition_hash="other-definition", partitions=("p1",)
+        ),
+    )
+
+    with pytest.raises(TerrineError) as error:
+        runtime.run_plan(
+            changed,
+            con=con,
+            namespace="owner",
+            request_key="same-key",
+            destination=destination,
+        )
+
+    assert error.value.code == "terrine.runtime.request_key_conflict"
