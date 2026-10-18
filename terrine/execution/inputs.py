@@ -16,7 +16,7 @@ from typing import Any, Literal
 import ibis
 import pyarrow as pa
 
-from terrine.data import ExecutionSnapshot
+from terrine.data import Budget, ExecutionSnapshot
 from terrine.errors import RefusalSpec
 from terrine.execution import _native
 from terrine.semantic.models import Catalog, RelationSpec, TableRef
@@ -614,8 +614,13 @@ def open_execution(
 
 
 def publish_native_inputs(
-    catalog: Catalog, *, con: Any, units: Mapping[str, Any] | None = None
+    catalog: Catalog,
+    *,
+    con: Any,
+    units: Mapping[str, Any] | None = None,
+    budget: Budget | None = None,
 ) -> PublishedInputs:
+    """Capture native roots, optionally refusing unknown/over-budget scans before reading."""
     from terrine.execution._publish import publish
 
-    return publish(catalog, con=con, units=units)
+    return publish(catalog, con=con, units=units, budget=budget)

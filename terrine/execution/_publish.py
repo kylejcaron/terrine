@@ -11,7 +11,8 @@ from typing import Any
 import duckdb
 import ibis
 
-from terrine.errors import TerrineError
+from terrine.data import Budget
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.execution import _native
 from terrine.execution.inputs import (
     _SNAPSHOT_UNAVAILABLE,
@@ -23,6 +24,12 @@ from terrine.execution.inputs import (
     _register_published_backend,
 )
 from terrine.semantic.models import Catalog, SqlQuery, TableRef
+
+_CAPTURE_SCAN_UNKNOWN = RefusalSpec(
+    "terrine.budget.scan_unknown",
+    "A strict scan-byte budget requires a verified scan bound; this backend has none. "
+    "Explicitly choose non-strict scan policy after reviewing upstream work.",
+)
 
 
 def _quote_ident(value: str) -> str:
@@ -102,17 +109,30 @@ def _admit_roots(
 
 
 def publish(
-    catalog: Catalog, *, con: Any, units: Mapping[str, Any] | None = None
+    catalog: Catalog,
+    *,
+    con: Any,
+    units: Mapping[str, Any] | None = None,
+    budget: Budget | None = None,
 ) -> PublishedInputs:
     with _native.connection_lock(_native.raw_connection(con)):
-        return _publish_locked(catalog, con=con, units=units)
+        return _publish_locked(catalog, con=con, units=units, budget=budget)
 
 
 def _publish_locked(
-    catalog: Catalog, *, con: Any, units: Mapping[str, Any] | None
+    catalog: Catalog,
+    *,
+    con: Any,
+    units: Mapping[str, Any] | None,
+    budget: Budget | None,
 ) -> PublishedInputs:
     origin = _native.raw_connection(con)
     _native.verify_native_backend(origin)
+    if budget is not None:
+        if not isinstance(budget, Budget):
+            raise TypeError("budget must be Budget or None")
+        if budget.max_scan_bytes is not None and budget.strict_scan:
+            raise _CAPTURE_SCAN_UNKNOWN.error()
     roots = _root_spec(catalog, units)
     if not roots:
         raise _SNAPSHOT_UNAVAILABLE.error(reason="empty Catalog has no publishable roots")
@@ -143,16 +163,22 @@ def _publish_locked(
                 staged[key] = staged_identities[identity]
                 continue
             sql = _root_sql(relation, origin)
-            arrow = origin.execute(sql).fetch_arrow_table()
             storage_name = f"input_{len(staged_identities)}"
-            writer.register("__terrine_arrow", arrow)
-            writer.execute(
-                f"CREATE TABLE {_quote_ident(storage_name)} AS SELECT * FROM __terrine_arrow"
+            capture_path = os.path.join(
+                artifact_dir.name, f"capture_{len(staged_identities)}.parquet"
             )
-            writer.unregister("__terrine_arrow")
+            escaped_path = capture_path.replace("'", "''")
+            origin.execute(f"COPY ({sql}) TO '{escaped_path}' (FORMAT PARQUET)")
+            writer.execute(
+                f"CREATE TABLE {_quote_ident(storage_name)} "
+                f"AS SELECT * FROM read_parquet('{escaped_path}')"
+            )
             staged[key] = storage_name
             staged_identities[identity] = storage_name
-            staged_facts[identity] = tuple(arrow.schema.names)
+            columns = writer.execute(
+                f"SELECT * FROM {_quote_ident(storage_name)} LIMIT 0"
+            ).description
+            staged_facts[identity] = tuple(column[0] for column in columns)
             if identity not in handles:
                 handle = RelationHandle(issuer, identity)
                 handles[identity] = handle

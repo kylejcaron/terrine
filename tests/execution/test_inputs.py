@@ -3,7 +3,7 @@ from __future__ import annotations
 import duckdb
 import pytest
 
-from terrine.data import UnitSource
+from terrine.data import Budget, UnitSource
 from terrine.errors import TerrineError
 from terrine.execution.inputs import (
     bind_resolver,
@@ -13,6 +13,21 @@ from terrine.execution.inputs import (
     verify_immutable_inputs,
 )
 from terrine.semantic.models import Catalog
+
+
+def test_strict_capture_budget_refuses_unknown_scan_before_reading_sources():
+    con = duckdb.connect()
+    try:
+        con.execute("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        with pytest.raises(TerrineError) as error:
+            publish_native_inputs(
+                _catalog(), con=con, budget=Budget(max_scan_bytes=1, strict_scan=True)
+            )
+        assert error.value.code == "terrine.budget.scan_unknown"
+        row = con.execute("SELECT count(*) FROM events").fetchone()
+        assert row is not None and row[0] == 0
+    finally:
+        con.close()
 
 
 def test_published_execution_uses_private_session_and_sealed_root():
