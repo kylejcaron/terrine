@@ -58,6 +58,23 @@ def event_transaction(con: Any, *, namespace: str):
             con.execute("COMMIT")
 
 
+@contextmanager
+def event_read_transaction(con: Any, *, namespace: str):
+    """Read run state and event cursors from one owner-consistent snapshot."""
+    store = RuntimeStore(con, namespace=namespace)
+    with _EVENT_WRITE_LOCK:
+        store.initialize()
+        _ensure_events(con, store._schema)
+        con.execute("BEGIN TRANSACTION")
+        try:
+            yield
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+        else:
+            con.execute("COMMIT")
+
+
 def record_run_event(
     run_id: str,
     kind: str,

@@ -85,3 +85,57 @@ def test_status_reports_latest_event_cursor_for_resume():
         status.latest_event_cursor == read_run_events("r1", con=con, namespace="owner").next_cursor
     )
     assert page.events == ()
+
+
+def test_status_cursor_and_state_share_a_consistent_snapshot(monkeypatch):
+    import threading
+
+    import terrine.runtime.status as status_module
+    from terrine.runtime.events import event_transaction, read_run_events, record_run_event
+
+    con = duckdb.connect(":memory:")
+    con.execute("CREATE SCHEMA owner")
+    con.execute(
+        "CREATE TABLE owner.runtime_runs (run_id VARCHAR, dataset VARCHAR, fingerprint VARCHAR, "
+        "state VARCHAR, published_generation VARCHAR, attempt_fence BIGINT)"
+    )
+    con.execute("INSERT INTO owner.runtime_runs VALUES ('r1','d','f','running',NULL,1)")
+    record_run_event("r1", "lifecycle", {"state": "running"}, con=con, namespace="owner")
+    writer_started = threading.Event()
+    writer_done = threading.Event()
+
+    def publish_terminal_event():
+        connection = con.cursor()
+        try:
+            writer_started.set()
+            with event_transaction(connection, namespace="owner"):
+                connection.execute(
+                    "UPDATE owner.runtime_runs SET state='succeeded' WHERE run_id='r1'"
+                )
+                record_run_event(
+                    "r1",
+                    "lifecycle",
+                    {"state": "succeeded"},
+                    con=connection,
+                    namespace="owner",
+                    _in_transaction=True,
+                )
+        finally:
+            connection.close()
+            writer_done.set()
+
+    original_cursor = status_module._latest_event_cursor
+
+    def interleaved_cursor(run_id, *, con, namespace):
+        writer = threading.Thread(target=publish_terminal_event)
+        writer.start()
+        assert writer_started.wait(timeout=5)
+        return original_cursor(run_id, con=con, namespace=namespace)
+
+    monkeypatch.setattr(status_module, "_latest_event_cursor", interleaved_cursor)
+    status = get_run("r1", con=con, namespace="owner")
+    assert writer_done.wait(timeout=5)
+    resumed = read_run_events("r1", con=con, namespace="owner", after=status.latest_event_cursor)
+
+    assert status.durable_state == "running"
+    assert [event.payload["state"] for event in resumed.events] == ["succeeded"]

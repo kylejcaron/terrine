@@ -7,6 +7,7 @@ from typing import Any
 from terrine.errors import RefusalSpec
 from terrine.runtime.events import (
     _latest_event_cursor,
+    event_read_transaction,
     event_transaction,
     record_run_event,
 )
@@ -62,40 +63,40 @@ def get_run(run_id: str, *, con: Any, namespace: str) -> RunStatus:
     )
     leases = LeaseStore(con, namespace=namespace)
     leases.initialize()
-    schema = store._schema
-    columns = {
-        item[0]
-        for item in con.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE lower(table_schema)=lower(?) AND table_name='runtime_runs'",
-            [namespace],
-        ).fetchall()
-    }
-    updated_at = "updated_at" if "updated_at" in columns else "NULL"
-    heartbeat_at = "heartbeat_at" if "heartbeat_at" in columns else "NULL"
-    row = con.execute(
-        f"SELECT state, attempt_fence, {updated_at}, {heartbeat_at}, published_generation "
-        f"FROM {schema}.runtime_runs WHERE run_id=?",
-        [run_id],
-    ).fetchone()
-    if row is None:
-        raise _UNAVAILABLE.error()
-    lease = con.execute(
-        f"SELECT l.expires_at FROM {schema}.runtime_leases l "
-        f"JOIN {schema}.runtime_runs r ON l.resource='dataset:' || r.dataset "
-        "AND l.owner=r.run_id AND l.fence=r.attempt_fence WHERE r.run_id=?",
-        [run_id],
-    ).fetchone()
-    return RunStatus(
-        run_id,
-        row[0],
-        row[1],
-        _utc(row[2]),
-        _utc(row[3]),
-        _utc(lease[0]) if lease else None,
-        pinned_result_ref=row[4],
-        latest_event_cursor=_latest_event_cursor(run_id, con=con, namespace=namespace),
-    )
+    with event_read_transaction(con, namespace=namespace):
+        columns = {
+            item[0]
+            for item in con.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE lower(table_schema)=lower(?) AND table_name='runtime_runs'",
+                [namespace],
+            ).fetchall()
+        }
+        updated_at = "updated_at" if "updated_at" in columns else "NULL"
+        heartbeat_at = "heartbeat_at" if "heartbeat_at" in columns else "NULL"
+        row = con.execute(
+            f"SELECT state, attempt_fence, {updated_at}, {heartbeat_at}, published_generation "
+            f"FROM {schema}.runtime_runs WHERE run_id=?",
+            [run_id],
+        ).fetchone()
+        if row is None:
+            raise _UNAVAILABLE.error()
+        lease = con.execute(
+            f"SELECT l.expires_at FROM {schema}.runtime_leases l "
+            f"JOIN {schema}.runtime_runs r ON l.resource='dataset:' || r.dataset "
+            "AND l.owner=r.run_id AND l.fence=r.attempt_fence WHERE r.run_id=?",
+            [run_id],
+        ).fetchone()
+        return RunStatus(
+            run_id,
+            row[0],
+            row[1],
+            _utc(row[2]),
+            _utc(row[3]),
+            _utc(lease[0]) if lease else None,
+            pinned_result_ref=row[4],
+            latest_event_cursor=_latest_event_cursor(run_id, con=con, namespace=namespace),
+        )
 
 
 def _utc(value: datetime | None) -> datetime | None:
