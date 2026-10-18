@@ -11,7 +11,7 @@ from terrine.spec import Design, EventAnchor, agg
 from terrine.spec.trajectory import TimeToEvent
 
 
-def _model(*, outcome_start="2024-12-30"):
+def _model(*, outcome_start="2024-12-30", naive_outcomes=False):
 
     con = ibis.duckdb.connect()
     con.raw_sql("""
@@ -21,14 +21,24 @@ def _model(*, outcome_start="2024-12-30"):
           ('u3', TIMESTAMPTZ '2025-01-03 00:00:00+00')
         ) AS a(user_id, ts)
     """)
-    con.raw_sql("""
-        CREATE TABLE outcomes AS SELECT * FROM (VALUES
-          ('u1', TIMESTAMPTZ '2025-01-01 00:00:00+00'),
-          ('u1', TIMESTAMPTZ '2025-01-03 00:00:00+00'),
-          ('u2', TIMESTAMPTZ '2025-01-04 00:00:00+00'),
-          ('u3', TIMESTAMPTZ '2025-01-01 00:00:00+00')
-        ) AS e(user_id, ts)
-    """)
+    if naive_outcomes:
+        con.raw_sql("""
+            CREATE TABLE outcomes AS SELECT * FROM (VALUES
+              ('u1', TIMESTAMP '2025-01-01 00:00:00'),
+              ('u1', TIMESTAMP '2025-01-03 00:00:00'),
+              ('u2', TIMESTAMP '2025-01-04 00:00:00'),
+              ('u3', TIMESTAMP '2025-01-01 00:00:00')
+            ) AS e(user_id, ts)
+        """)
+    else:
+        con.raw_sql("""
+            CREATE TABLE outcomes AS SELECT * FROM (VALUES
+              ('u1', TIMESTAMPTZ '2025-01-01 00:00:00+00'),
+              ('u1', TIMESTAMPTZ '2025-01-03 00:00:00+00'),
+              ('u2', TIMESTAMPTZ '2025-01-04 00:00:00+00'),
+              ('u3', TIMESTAMPTZ '2025-01-01 00:00:00+00')
+            ) AS e(user_id, ts)
+        """)
     con.raw_sql("""
         CREATE TABLE entries AS SELECT * FROM (VALUES
           ('u1', TIMESTAMPTZ '2025-01-02 00:00:00+00'),
@@ -184,6 +194,60 @@ def test_cutoff_before_anchor_is_not_emitted_as_complete_followup():
         assert all(row["complete"] is False for row in result.table.to_pylist())
         curve = kaplan_meier(result, duration="duration", event="event", entry="entry_time")
         assert curve.time == ()
+    finally:
+        con.disconnect()
+
+
+def test_naive_event_timestamps_are_normalized_for_kaplan_meier():
+    from terrine.estimate.survival import kaplan_meier
+
+    con, model = _model(naive_outcomes=True)
+    try:
+        result = (
+            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
+            .build(model)
+            .materialize()
+        )
+        assert result.table.schema.field("duration").type.tz == "UTC"
+        assert kaplan_meier(result, duration="duration", event="event").events
+    finally:
+        con.disconnect()
+
+
+def test_failure_before_non_delayed_entry_is_not_discarded():
+    con, model = _model()
+    try:
+        con.raw_sql("""
+            INSERT INTO outcomes VALUES
+              ('u2', TIMESTAMPTZ '2025-01-03 00:00:00+00')
+        """)
+        con.raw_sql("""
+            UPDATE entries SET ts = TIMESTAMPTZ '2025-01-04 00:00:00+00'
+            WHERE user_id = 'u2'
+        """)
+        design = Design(
+            "user",
+            EventAnchor("signup", which="first"),
+            shape=TimeToEvent("churn", entry="enrolled", delayed_entry=False),
+        )
+        rows = {row["unit"]: row for row in design.build(model).materialize().table.to_pylist()}
+        assert "u2" not in rows
+    finally:
+        con.disconnect()
+
+
+def test_internal_survival_columns_cannot_overwrite_features():
+    con, model = _model()
+    try:
+        design = Design(
+            "user",
+            EventAnchor("signup", which="first"),
+            features={"_followup_start": agg("missing", window=("-1d", "0d"))},
+            shape=TimeToEvent("churn"),
+        )
+        with pytest.raises(TerrineError) as error:
+            design.build(model)
+        assert error.value.code == "terrine.survival.invalid_compilation"
     finally:
         con.disconnect()
 

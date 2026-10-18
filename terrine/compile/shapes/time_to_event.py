@@ -62,6 +62,12 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         "entry_time",
         "complete",
         "reason",
+        "_entry_time",
+        "_exit_time",
+        "_followup_start",
+        "_followup_end",
+        "_event_time",
+        "_prior_event_time",
     }
     for name in (*design.features, *design.eligibility):
         if name.casefold() in generated:
@@ -100,7 +106,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
     if len(zones) != 1:
         raise _INVALID.error(reason="event_entry_exit_timestamp_zones_must_match")
     time_type = dt.Timestamp(
-        timezone=timestamp_types[0].timezone,
+        timezone="UTC",
         scale=max(dtype.scale or 6 for dtype in timestamp_types),
     )
     event_relation = event_relation.mutate(_timestamp=event_relation._timestamp.cast(time_type))
@@ -203,7 +209,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         anchor_id=candidates.anchor_id,
         lower=earliest_event,
         upper=(
-            candidates._followup_start if shape.delayed_entry else candidates.t0.cast(time_type)
+            candidates._followup_start if shape.entry is not None else candidates.t0.cast(time_type)
         ),
     )
     prior = first_occurrence(
@@ -272,12 +278,25 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
     )
     prevalent = result._prior_event_time.notnull()
     retained = result.filter(~prevalent)
+    support_columns = {
+        column
+        for name in (*design.features, *((base.roles.treatment,) if base.roles.treatment else ()))
+        for column in (
+            base.columns[name].observed_from_column,
+            base.columns[name].observed_until_column,
+            base.columns[name].complete_column,
+            base.columns[name].reason_column,
+            base.columns[name].absolute_error_column,
+        )
+        if column is not None
+    }
     output_projection = {
         name: retained[name]
         for name in (
             *design.features,
             *((base.roles.treatment,) if base.roles.treatment else ()),
             *(name for name in base.table.columns if name.startswith("_observed_")),
+            *support_columns,
         )
     }
     output_projection.update(
