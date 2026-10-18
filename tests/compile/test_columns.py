@@ -492,7 +492,15 @@ def test_event_time_selector_resolves_dimension_backed_label_property(column_mod
         units=column_model.units,
     )
     selector = event_time("amount", window=("0s", "2s"), label_property="tier", equals="gold")
-    compiled = _compile(model, outcomes={"selected_at": selector})
+    nth_two = event_time(
+        "amount",
+        window=("0s", "2s"),
+        label_property="tier",
+        equals="gold",
+        occurrence="nth",
+        n=2,
+    )
+    compiled = _compile(model, outcomes={"selected_at": selector, "nth_two": nth_two})
     compiled.validate(execute=con.to_pyarrow)
     rows = con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
     assert rows[0]["selected_at"] == datetime(2025, 1, 2, 12, tzinfo=UTC)
@@ -501,6 +509,11 @@ def test_event_time_selector_resolves_dimension_backed_label_property(column_mod
     assert label_meta.complete_column is not None and label_meta.reason_column is not None
     assert rows[1][label_meta.complete_column] is False
     assert rows[1][label_meta.reason_column] == "incomplete_label_history"
+    nth_meta = compiled.columns["nth_two"]
+    assert rows[1]["nth_two"] is None
+    assert nth_meta.complete_column is not None and nth_meta.reason_column is not None
+    assert rows[1][nth_meta.complete_column] is True
+    assert rows[1][nth_meta.reason_column] is None
 
 
 def test_event_time_selector_metadata_distinguishes_known_absence_and_missing_origin(

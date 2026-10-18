@@ -381,22 +381,57 @@ def compile_columns(
                 unknown_precedes |= (
                     unknown_selected._unknown_time == unknown_selected.__selector_time
                 ) & (unknown_selected._unknown_event_id <= unknown_selected.__selector_event_id)
-            uncertainty_name = f"__terrine_selector_unknown_label_{index}"
-            uncertain = (
-                unknown_selected.filter(
-                    unknown_selected.__selector_time.isnull() | unknown_precedes
+            unknown_count_name = f"__terrine_selector_unknown_count_{index}"
+            known_count_name = f"__terrine_selector_known_count_{index}"
+            preceding_count_name = f"__terrine_selector_preceding_count_{index}"
+            unknown_counts = unknown_events.group_by(
+                _u_unit=unknown_events._unknown_unit,
+                _u_anchor=unknown_events._unknown_anchor,
+            ).aggregate(**{unknown_count_name: ibis._.count()})
+            known_counts = joined.group_by(
+                _k_unit=joined.unit,
+                _k_anchor=joined.anchor_id,
+            ).aggregate(**{known_count_name: ibis._.count()})
+            preceding_counts = (
+                unknown_selected.filter(unknown_precedes)
+                .group_by(
+                    _p_unit=unknown_selected._unknown_unit,
+                    _p_anchor=unknown_selected._unknown_anchor,
                 )
-                .group_by("_unknown_unit", "_unknown_anchor")
-                .aggregate(**{uncertainty_name: ibis._.count() > 0})
+                .aggregate(**{preceding_count_name: ibis._.count()})
             )
             candidates_with_uncertainty = candidates.left_join(
-                uncertain,
+                unknown_counts,
                 [
-                    candidates.unit == uncertain._unknown_unit,
-                    candidates.anchor_id == uncertain._unknown_anchor,
+                    candidates.unit == unknown_counts._u_unit,
+                    candidates.anchor_id == unknown_counts._u_anchor,
                 ],
             )
-            unknown_label = candidates_with_uncertainty[uncertainty_name].fill_null(False)
+            candidates_with_uncertainty = candidates_with_uncertainty.left_join(
+                known_counts,
+                [
+                    candidates_with_uncertainty.unit == known_counts._k_unit,
+                    candidates_with_uncertainty.anchor_id == known_counts._k_anchor,
+                ],
+            )
+            candidates_with_uncertainty = candidates_with_uncertainty.left_join(
+                preceding_counts,
+                [
+                    candidates_with_uncertainty.unit == preceding_counts._p_unit,
+                    candidates_with_uncertainty.anchor_id == preceding_counts._p_anchor,
+                ],
+            )
+            unknown_count = candidates_with_uncertainty[unknown_count_name].fill_null(0)
+            known_count = candidates_with_uncertainty[known_count_name].fill_null(0)
+            preceding_count = candidates_with_uncertainty[preceding_count_name].fill_null(0)
+            unknown_label = cast(
+                ir.BooleanValue,
+                ibis.ifelse(
+                    known_count >= occurrence,
+                    preceding_count > 0,
+                    known_count + unknown_count >= occurrence,
+                ),
+            )
             unresolved = candidates_with_uncertainty[metadata["complete"]] & unknown_label
             candidates = candidates_with_uncertainty.mutate(
                 **{
@@ -408,7 +443,17 @@ def compile_columns(
                         else_=candidates_with_uncertainty[metadata["reason"]],
                     ),
                 }
-            ).drop("_unknown_unit", "_unknown_anchor", uncertainty_name)
+            ).drop(
+                "_u_unit",
+                "_u_anchor",
+                "_k_unit",
+                "_k_anchor",
+                "_p_unit",
+                "_p_anchor",
+                unknown_count_name,
+                known_count_name,
+                preceding_count_name,
+            )
         left = candidates
         column = f"__terrine_selector_time_{index}"
         right = selected
