@@ -74,6 +74,45 @@ def test_calendar_comparison_materializes_roster_controls_for_both_modes(native_
     assert restored.table.equals(not_yet.table)
 
 
+def test_calendar_comparison_excludes_ineligible_units(native_inputs):
+    from terrine.spec import gt
+
+    catalog, con = native_inputs
+    con.insert("users", pa.table({"user_id": ["c"], "alt_id": ["cc"]}))
+    con.insert(
+        "events",
+        pa.table(
+            {
+                "user_id": ["a"],
+                "ts": [datetime(2025, 1, 1, tzinfo=UTC)],
+                "event_id": ["a0"],
+                "alternate_event_id": ["a0-alt"],
+            }
+        ),
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
+        units={"user": UnitSource("users", "user_id")},
+        event_ids={"events": "event_id"},
+    )
+    result = CalendarComparisonPanel(
+        Design(
+            "user",
+            Schedule("1d", "2025-01-03", "2025-01-04"),
+            gap="1d",
+            eligibility={"eligible": gt(agg("sessions", window=("-2d", "-1d")), 0)},
+        ),
+        model,
+        cohort=Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+        control="never_treated",
+        reference_period=-1,
+        comparison_periods=(0,),
+    ).materialize(Budget(max_rows=100, max_output_bytes=1_000_000))
+    assert {row["unit"] for row in result.table.to_pylist()} == {"a"}
+
+
 def test_calendar_comparison_controls_have_explicit_boolean_labels(native_inputs):
     catalog, con = native_inputs
     con.insert("users", pa.table({"user_id": ["c", "d"], "alt_id": ["cc", "dd"]}))
