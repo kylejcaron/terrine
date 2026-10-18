@@ -10,6 +10,7 @@ from typing import Any
 
 import duckdb
 import ibis
+from sqlglot import parse
 
 from terrine.data import Budget
 from terrine.errors import RefusalSpec, TerrineError
@@ -48,7 +49,7 @@ def _root_spec(catalog: Catalog, units: Mapping[str, Any] | None):
     return roots
 
 
-def _root_sql(relation: Any, raw: Any) -> str:
+def _root_sql(relation: Any, raw: Any, catalog: Catalog) -> str:
     if isinstance(relation, TableRef):
         obj = _native._match(
             relation,
@@ -59,7 +60,10 @@ def _root_sql(relation: Any, raw: Any) -> str:
         return "SELECT * FROM " + ".".join(
             _quote_ident(component) for component in (obj.catalog, obj.schema, obj.name)
         )
-    return relation.sql
+    statement = parse(relation.sql, read=catalog.dialect)[0]
+    if statement is None:
+        raise _SNAPSHOT_UNAVAILABLE.error(reason="SQL root did not parse to one query")
+    return statement.sql(dialect=catalog.dialect)
 
 
 def _identity(relation: Any, catalog: Catalog, raw: Any) -> PhysicalRelationId:
@@ -162,7 +166,7 @@ def _publish_locked(
             if identity in staged_identities:
                 staged[key] = staged_identities[identity]
                 continue
-            sql = _root_sql(relation, origin)
+            sql = _root_sql(relation, origin, catalog)
             storage_name = f"input_{len(staged_identities)}"
             capture_path = os.path.join(
                 artifact_dir.name, f"capture_{len(staged_identities)}.parquet"

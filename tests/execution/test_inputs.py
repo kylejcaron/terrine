@@ -439,6 +439,24 @@ def test_open_execution_refuses_but_does_not_finish_a_caller_transaction():
         con.close()
 
 
+@pytest.mark.parametrize(
+    "query",
+    ("SELECT * FROM events;", "SELECT * FROM events -- trailing comment"),
+)
+def test_sql_roots_with_trailing_syntax_capture_natively(query):
+    con = duckdb.connect()
+    try:
+        con.execute("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        con.execute("INSERT INTO events VALUES ('2025-01-01', 1, 3)")
+        definition = _catalog().model_dump(mode="python")
+        definition["sources"]["events"]["relation"] = {"kind": "sql", "sql": query}
+        catalog = Catalog.model_validate(definition)
+        with publish_native_inputs(catalog, con=con) as published:
+            assert published.con.table("input_0").count().execute() == 1
+    finally:
+        con.close()
+
+
 def test_published_sql_result_replaces_its_original_dependency():
     con = duckdb.connect()
     try:
