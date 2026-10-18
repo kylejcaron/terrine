@@ -15,7 +15,7 @@ from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
 from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
-from terrine.spec.expressions import MetricAgg
+from terrine.spec.expressions import MetricAgg, MetricQuantile
 from terrine.spec.panels import CalendarComparisonSpec
 from terrine.temporal._timestamps import compare_timestamps
 from terrine.temporal.aggregate import _Check, _Failure
@@ -279,7 +279,7 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
         (
             compiled.expression_timings[name].support_seconds[1]
             for name, expression in design.outcomes.items()
-            if isinstance(expression, MetricAgg)
+            if isinstance(expression, (MetricAgg, MetricQuantile))
         ),
         default=0,
     )

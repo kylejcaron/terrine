@@ -51,6 +51,10 @@ _QUANTILE_BACKEND = RefusalSpec(
         "use a verified supported backend."
     ),
 )
+_NONADDITIVE_KIND_UNSUPPORTED = RefusalSpec(
+    "terrine.metric.nonadditive_kind_unsupported",
+    "Nonadditive aggregation {aggregation!r} is unsupported for metric kind {kind!r}.",
+)
 _MISSING = RefusalSpec(
     "terrine.design.missing_reference", "Design references unknown {kind} {name!r}."
 )
@@ -326,7 +330,7 @@ def _expression(
     if isinstance(expr, MetricQuantile):
         for source_name in metric.source_names:
             dialect = model.sources[source_name].dialect
-            if dialect != "duckdb":
+            if dialect.casefold() != "duckdb":
                 raise _QUANTILE_BACKEND.error(dialect=dialect)
     for source_name in metric.source_names:
         _required(model, source_name, required)
@@ -349,6 +353,14 @@ def _expression(
             "terrine.metric.quantile_requires_single_measure",
             "Exact quantile requires metric {metric!r} to have exactly one measure.",
         ).error(metric=expr.metric)
+    nonadditive = {"min", "max", "count_distinct"}
+    if any(measure.aggregation in nonadditive for measure in metric.measures) and (
+        metric.kind != "mean" or len(metric.measures) != 1
+    ):
+        aggregation = next(
+            measure.aggregation for measure in metric.measures if measure.aggregation in nonadditive
+        )
+        raise _NONADDITIVE_KIND_UNSUPPORTED.error(aggregation=aggregation, kind=metric.kind)
     for measure in metric.measures:
         if not supports_temporal_aggregation(measure.aggregation) and measure.aggregation not in {
             "min",
@@ -475,7 +487,7 @@ def _validate_shape(
         outcome_horizons = [
             _expression_support_seconds(expression)[1]
             for expression in design.outcomes.values()
-            if isinstance(expression, MetricAgg)
+            if isinstance(expression, (MetricAgg, MetricQuantile))
         ]
         anticipation = design.shape.anticipation_seconds
         if outcome_horizons:
@@ -526,7 +538,7 @@ def _validate_shape(
         outcome_horizons = [
             _expression_support_seconds(expression)[1]
             for expression in design.outcomes.values()
-            if isinstance(expression, MetricAgg)
+            if isinstance(expression, (MetricAgg, MetricQuantile))
         ]
         outcome_window_end = max(outcome_horizons, default=0)
         horizon = model.day_boundary(schedule.start) + timedelta(

@@ -381,6 +381,26 @@ def test_exact_quantile_refuses_unverified_backend_before_query():
     assert error.value.code == "terrine.metric.exact_quantile_backend_unsupported"
 
 
+def test_exact_quantile_accepts_case_insensitive_duckdb_dialect():
+    design = Design(
+        "user",
+        FixedDate(date(2025, 1, 1)),
+        features={"p50": quantile("sessions", "0.5", window=("-7d", "0d"))},
+    )
+    assert design.validate(model(dialect="DuckDB")) is None
+
+
+@pytest.mark.parametrize("kind", ["conversion", "ratio"])
+def test_nonadditive_metric_aggregations_refuse_unsupported_metric_kinds(kind):
+    with pytest.raises(TerrineError) as error:
+        Design(
+            "user",
+            FixedDate(date(2025, 1, 1)),
+            features={"x": agg("sessions", window=("-1d", "0d"))},
+        ).validate(model(kind=kind, aggregation="min"))
+    assert error.value.code == "terrine.metric.nonadditive_kind_unsupported"
+
+
 def test_missing_referenced_source_readiness_refuses():
     with pytest.raises(TerrineError) as error:
         Design(
@@ -875,6 +895,27 @@ def test_panel_history_validation_covers_reanchored_outcome_support(shape_name):
     with pytest.raises(TerrineError) as error:
         design.validate(model())
 
+    assert error.value.code == "terrine.design.incomplete_treatment_history"
+
+
+@pytest.mark.parametrize("shape_name", ["sequential", "calendar"])
+def test_panel_history_validation_covers_exact_quantile_outcome(shape_name):
+    from terrine.spec.panels import CalendarComparisonSpec, Initiation, SequentialSpec
+
+    initiation = Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC))
+    shape = (
+        SequentialSpec(initiation)
+        if shape_name == "sequential"
+        else CalendarComparisonSpec(initiation, "not_yet_treated", -1, (0,))
+    )
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-01", "2025-01-02"),
+        outcomes={"y": quantile("sessions", "0.5", window=("0d", "7d"))},
+        shape=shape,
+    )
+    with pytest.raises(TerrineError) as error:
+        design.validate(model())
     assert error.value.code == "terrine.design.incomplete_treatment_history"
 
 

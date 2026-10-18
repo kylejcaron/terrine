@@ -633,7 +633,7 @@ def compile_columns(
             unresolved = metric.measures[0]
             source = model.sources[unresolved.source_name]
             events = events_for(source.name)
-            measure = resolve_measure(events, unresolved, source=source)
+            measure = resolve_measure(events, unresolved, source=source, allow_nonadditive=True)
             result = aggregate_nonadditive_window(
                 expression_anchors,
                 events,
@@ -673,7 +673,12 @@ def compile_columns(
                 operation=cast(Literal["min", "max", "count_distinct"], measure.aggregation),
             )
             meta = result.columns[output]
-            cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
+            cutoff_seconds = (
+                selector_timing(relative)[0][1] + node.window.end
+                if relative is not None
+                else node.window.end
+            )
+            cutoff = FeatureCutoff(cutoff_seconds, True, "retrospective_effective_time")
             strategy = "sparse_range_join/nonadditive"
             result_table = result.table
         elif not isinstance(node, EventTime):

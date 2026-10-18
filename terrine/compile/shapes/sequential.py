@@ -16,7 +16,7 @@ from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
 from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
-from terrine.spec.expressions import MetricAgg, _expression_support_seconds
+from terrine.spec.expressions import MetricAgg, MetricQuantile, _expression_support_seconds
 from terrine.spec.panels import Initiation, PersistentAdoption, SequentialSpec
 from terrine.temporal._timestamps import compare_timestamps
 from terrine.temporal.aggregate import _Check, _Failure
@@ -36,7 +36,7 @@ def _followup_horizon(design: Design) -> int | None:
     horizons = [
         _expression_support_seconds(expression)[1]
         for expression in design.outcomes.values()
-        if isinstance(expression, MetricAgg)
+        if isinstance(expression, (MetricAgg, MetricQuantile))
     ]
     if not horizons:
         return None

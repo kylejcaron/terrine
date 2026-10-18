@@ -15,6 +15,7 @@ from terrine.data import ColumnMeta
 from terrine.errors import RefusalSpec
 from terrine.semantic.models import BoundMeasure, BoundSource
 from terrine.semantic.rules import UNKNOWN_FILTER
+from terrine.temporal._timestamps import compare_timestamps
 from terrine.temporal.aggregate import TemporalResult, _Check, _Failure
 from terrine.temporal.daily import _predicate
 from terrine.temporal.readiness import Readiness
@@ -86,18 +87,29 @@ def _exact_numeric_dtype(value_type: str, operation: str, probability: Decimal |
         if dtype.is_integer() or dtype.is_decimal() or dtype.is_floating():
             return dtype
         raise _UNSUPPORTED_TYPE.error(operation=operation, value_type=value_type)
-    if not (dtype.is_integer() or dtype.is_decimal()):
+    if not (dtype.is_integer() or isinstance(dtype, dt.Decimal)):
         raise _UNSUPPORTED_TYPE.error(operation=operation, value_type=value_type)
-    scale = max(0, -int(probability.as_tuple().exponent)) if probability is not None else 0
+    probability_scale = (
+        max(0, -int(probability.as_tuple().exponent)) if probability is not None else 0
+    )
     if isinstance(dtype, dt.Decimal):
         source_scale = dtype.scale or 0
-        scale = max(scale, source_scale)
-        integer_digits = (dtype.precision or 38) - source_scale
+        source_precision = dtype.precision or 38
+        integer_digits = source_precision - source_scale
     else:
-        integer_digits = 19
-    if scale > 38 or integer_digits + scale > 38:
+        source_scale = 0
+        source_precision = len(str(cast(Any, dtype).bounds.upper))
+        integer_digits = source_precision
+    output_scale = source_scale + probability_scale
+    output_precision = integer_digits + output_scale
+    if (
+        output_scale > 38
+        or output_precision > 38
+        or source_precision + probability_scale + 1 > 38
+        or 21 + 2 * probability_scale > 38
+    ):
         raise _EXACT_PRECISION.error(operation=operation, value_type=value_type)
-    return dt.Decimal(38, scale)
+    return dt.Decimal(output_precision, output_scale)
 
 
 def aggregate_nonadditive_window(
@@ -134,16 +146,23 @@ def aggregate_nonadditive_window(
         raise ValueError("nonadditive window inputs lack unit or timestamp columns")
 
     predicate, *_ = _predicate(events, measure, source)
-    selected = events.filter(predicate.fill_null(False))
+    selected = events.filter(predicate.fill_null(False)).select(
+        __terrine_nonadditive_event_unit=events._unit,
+        __terrine_nonadditive_event_timestamp=events._timestamp,
+        __terrine_nonadditive_value=events[value_column],
+    )
     start = anchors.t0 + ibis.interval(seconds=window.start)
     end = anchors.t0 + ibis.interval(seconds=window.end)
+    event_unit = "__terrine_nonadditive_event_unit"
+    event_time = "__terrine_nonadditive_event_timestamp"
+    event_value = "__terrine_nonadditive_value"
     conditions = [
-        anchors[unit_column] == selected._unit,
-        selected._timestamp >= start,
-        selected._timestamp < end,
+        anchors[unit_column] == selected[event_unit],
+        compare_timestamps(selected[event_time], start, "ge"),
+        compare_timestamps(selected[event_time], end, "lt"),
     ]
     matched = anchors.inner_join(selected, conditions)
-    value = matched[value_column]
+    value = matched[event_value]
     groups = [matched[unit_column], matched.anchor_id]
     summary = matched.group_by(*groups).aggregate(
         __terrine_nonadditive_event_count=matched.count(),
@@ -159,19 +178,25 @@ def aggregate_nonadditive_window(
         assert probability is not None
         nonnull = matched.filter(value.notnull())
         ordered_groups = [nonnull[unit_column], nonnull.anchor_id]
-        ordering_window = ibis.window(
-            group_by=ordered_groups, order_by=nonnull[value_column].cast(output_type)
-        )
+        ordering_window = ibis.window(group_by=ordered_groups, order_by=nonnull[event_value])
         grouping_window = ibis.window(group_by=ordered_groups)
         ranked = nonnull.mutate(
             __terrine_nonadditive_rank=ibis.row_number().over(ordering_window),
-            __terrine_nonadditive_n=nonnull[value_column].count().over(grouping_window),
+            __terrine_nonadditive_n=nonnull[event_value].count().over(grouping_window),
         )
-        type7_rank = (ranked.__terrine_nonadditive_n - 1).cast(dt.Decimal(38, 0)) * ibis.literal(
-            probability
+        probability_scale = max(0, -int(probability.as_tuple().exponent))
+        probability_literal = ibis.literal(
+            probability,
+            type=dt.Decimal(probability_scale + 1, probability_scale),
         )
+        type7_rank = (
+            (ranked.__terrine_nonadditive_n - 1).cast(
+                dt.Decimal(19 + probability_scale, probability_scale)
+            )
+            * probability_literal
+        ).cast(dt.Decimal(19 + probability_scale, probability_scale))
         lower_rank = type7_rank.floor()
-        order_value = ranked[value_column].cast(output_type)
+        order_value = ranked[event_value].cast(output_type)
         lower = _max(
             cast(
                 ir.NumericValue,
@@ -192,7 +217,14 @@ def aggregate_nonadditive_window(
                 ),
             )
         )
-        fraction = _max(cast(ir.NumericValue, type7_rank - lower_rank))
+        fraction = _max(
+            cast(
+                ir.NumericValue,
+                (type7_rank - lower_rank).cast(
+                    dt.Decimal(probability_scale + 1, probability_scale)
+                ),
+            )
+        )
         quantiles = ranked.group_by(*ordered_groups).aggregate(
             **{output: (lower + (upper - lower) * fraction).cast(output_type)}
         )
@@ -294,8 +326,8 @@ def aggregate_nonadditive_window(
             unknown,
             [
                 anchors[unit_column] == unknown._unit,
-                unknown._timestamp >= start,
-                unknown._timestamp < end,
+                compare_timestamps(unknown._timestamp, start, "ge"),
+                compare_timestamps(unknown._timestamp, end, "lt"),
             ],
         ).filter(source_complete & observation_complete)
         failure_column = "failed_unknown_filter"
