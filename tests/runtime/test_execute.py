@@ -364,6 +364,18 @@ def test_retry_reconciles_publication_before_rejecting_its_own_manifest():
         lease=lease,
     )
     leases.release(lease)
+    con.execute(
+        "UPDATE owner.runtime_manifests SET generation='generation-3',version=3,"
+        "snapshot_id='snapshot-b' WHERE dataset='orders'"
+    )
+    con.execute("INSERT INTO owner.runtime_publications VALUES ('orders','generation-3',3)")
+    con.execute(
+        "INSERT INTO owner.runtime_snapshot_manifests VALUES ('orders','generation-3','snapshot-b')"
+    )
+    con.execute(
+        "INSERT INTO owner.runtime_snapshot_references "
+        "VALUES ('snapshot-b','published_manifest','[\"orders\",\"generation-3\"]')"
+    )
 
     result = execute_plan(
         plan,
@@ -373,6 +385,14 @@ def test_retry_reconciles_publication_before_rejecting_its_own_manifest():
         run_task=lambda task, dependencies: pa.table({"id": [2]}),
         publish=lambda plan, outputs, lease: "wrong-generation",
     )
+
+    assert con.execute(
+        "SELECT generation,snapshot_id FROM owner.runtime_snapshot_manifests WHERE dataset='orders'"
+    ).fetchone() == ("generation-3", "snapshot-b")
+    assert con.execute(
+        "SELECT snapshot_id FROM owner.runtime_snapshot_references "
+        "WHERE kind='published_manifest' AND reference='[\"orders\",\"generation-3\"]'"
+    ).fetchone() == ("snapshot-b",)
 
     assert result.state == "succeeded"
     assert result.published_generation == "generation-2"
@@ -753,6 +773,59 @@ def test_lease_heartbeat_keeps_long_task_alive(monkeypatch):
     assert updated_at is not None
     assert heartbeat_at is not None
     assert heartbeat_at <= updated_at
+
+
+def test_cancellation_serializes_with_heartbeat_persistence(monkeypatch):
+    import threading
+    from datetime import timedelta
+
+    from terrine.runtime.leases import LeaseStore
+    from terrine.runtime.status import cancel_run
+
+    con = duckdb.connect(":memory:")
+    renewing = threading.Event()
+    allow_renew = threading.Event()
+    cancel_started = threading.Event()
+    cancel_errors = []
+    original_renew = LeaseStore.renew
+
+    def renew(store, lease, *, ttl, now):
+        renewing.set()
+        assert allow_renew.wait(timeout=3)
+        return original_renew(store, lease, ttl=ttl, now=now)
+
+    monkeypatch.setattr(LeaseStore, "renew", renew)
+
+    def run_task(task, dependencies):
+        assert renewing.wait(timeout=3)
+
+        def cancel():
+            cancel_started.set()
+            try:
+                cancel_run("cancel-heartbeat", con=con.cursor(), namespace="owner")
+            except Exception as error:
+                cancel_errors.append(error)
+
+        cancellation = threading.Thread(target=cancel)
+        cancellation.start()
+        assert cancel_started.wait(timeout=3)
+        allow_renew.set()
+        cancellation.join(timeout=3)
+        assert not cancellation.is_alive()
+        return pa.table({"id": [1]})
+
+    receipt = execute_plan(
+        _plan(),
+        con=con,
+        namespace="owner",
+        run_id="cancel-heartbeat",
+        run_task=run_task,
+        publish=lambda plan, outputs, lease: "g1",
+        lease_ttl=timedelta(seconds=0.03),
+    )
+
+    assert cancel_errors == []
+    assert receipt.state == "cancelled"
 
 
 def test_delayed_lease_claim_cannot_overwrite_successful_retry(monkeypatch):

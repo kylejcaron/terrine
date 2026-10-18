@@ -213,36 +213,42 @@ def execute_plan(
     try:
         _check_expected_base_manifest(plan, con=con, namespace=namespace)
     except Exception:
-        reconciled = _reconcile_committed_publication(
-            plan,
-            run_id=run_id,
-            lease=lease,
-            runtime_store=runtime_store,
-            con=con,
-            schema=schema,
-            namespace=namespace,
-        )
-        if reconciled is not None:
+        try:
+            reconciled = _reconcile_committed_publication(
+                plan,
+                run_id=run_id,
+                lease=lease,
+                runtime_store=runtime_store,
+                con=con,
+                schema=schema,
+                namespace=namespace,
+            )
+            if reconciled is not None:
+                _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
+                return reconciled
+            with event_transaction(con, namespace=namespace):
+                rejected = con.execute(
+                    f"UPDATE {schema}.runtime_runs SET state='failed', attempt_fence=?, "
+                    "updated_at=? WHERE run_id=? AND state IN ('queued','running') "
+                    "AND (attempt_fence IS NULL OR attempt_fence<?) RETURNING run_id",
+                    [
+                        lease.fence,
+                        datetime.now(UTC).replace(tzinfo=None),
+                        run_id,
+                        lease.fence,
+                    ],
+                ).fetchone()
+                if rejected is not None:
+                    record_run_event(
+                        run_id,
+                        "lifecycle",
+                        {"state": "failed"},
+                        con=con,
+                        namespace=namespace,
+                        _in_transaction=True,
+                    )
+        finally:
             leases.release(lease)
-            _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
-            return reconciled
-        with event_transaction(con, namespace=namespace):
-            rejected = con.execute(
-                f"UPDATE {schema}.runtime_runs SET state='failed', attempt_fence=?, "
-                "updated_at=? WHERE run_id=? AND state IN ('queued','running') "
-                "AND (attempt_fence IS NULL OR attempt_fence<?) RETURNING run_id",
-                [lease.fence, datetime.now(UTC).replace(tzinfo=None), run_id, lease.fence],
-            ).fetchone()
-            if rejected is not None:
-                record_run_event(
-                    run_id,
-                    "lifecycle",
-                    {"state": "failed"},
-                    con=con,
-                    namespace=namespace,
-                    _in_transaction=True,
-                )
-        leases.release(lease)
         raise
     try:
         with event_transaction(con, namespace=namespace):
@@ -319,8 +325,7 @@ def execute_plan(
         while not stop_heartbeat.wait(interval):
             try:
                 now = datetime.now(UTC)
-                heartbeat_con.execute("BEGIN TRANSACTION")
-                try:
+                with event_transaction(heartbeat_con, namespace=namespace):
                     current = heartbeat_store.renew(current, ttl=lease_ttl, now=now)
                     timestamp = now.replace(tzinfo=None)
                     recorded = heartbeat_con.execute(
@@ -331,10 +336,6 @@ def execute_plan(
                     ).fetchone()
                     if recorded is None:
                         raise ValueError("run attempt was fenced before heartbeat persistence")
-                    heartbeat_con.execute("COMMIT")
-                except Exception:
-                    heartbeat_con.execute("ROLLBACK")
-                    raise
             except Exception as error:
                 heartbeat_error.append(error)
                 stop_heartbeat.set()
@@ -350,6 +351,8 @@ def execute_plan(
         task_failure: Exception | None = None
         with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
             while (pending and task_failure is None) or inflight:
+                if heartbeat_error:
+                    raise heartbeat_error[0]
                 made_progress = False
                 for task_id in task_order:
                     if task_failure is not None:
@@ -440,6 +443,8 @@ def execute_plan(
                     if completed is None:
                         raise ValueError("lease attempt was fenced before task completion")
                     outputs[task.task_id] = output
+        if heartbeat_error:
+            raise heartbeat_error[0]
         if task_failure is not None:
             raise task_failure
         with run_publication_lock(namespace, plan.dataset):
@@ -558,10 +563,14 @@ def _reconcile_committed_publication(
     ).fetchone()
     if publication is None:
         return None
+    manifest = con.execute(
+        f"SELECT generation FROM {schema}.runtime_manifests WHERE dataset=?", [plan.dataset]
+    ).fetchone()
     generation = publication[0]
-    runtime_store.replace_published_snapshot(
-        plan.dataset, generation, plan.snapshot_id, lease=lease
-    )
+    if manifest is not None and manifest[0] == generation:
+        runtime_store.replace_published_snapshot(
+            plan.dataset, generation, plan.snapshot_id, lease=lease
+        )
     with event_transaction(con, namespace=namespace):
         dependencies = {dependency for task in plan.tasks for dependency in task.dependencies}
         if not any(task.task_id not in dependencies for task in plan.tasks):
