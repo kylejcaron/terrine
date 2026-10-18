@@ -15,6 +15,7 @@ from terrine.compile.cost import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED
 from terrine.runtime.leases import Lease, LeaseStore
 from terrine.runtime.planner import RefreshPlan, TaskSpec
 from terrine.runtime.state import RuntimeStore
+from terrine.runtime.synchronization import run_publication_lock
 
 __all__ = ["RunReceipt", "execute_plan"]
 
@@ -197,39 +198,19 @@ def execute_plan(
                 if completed is None:
                     raise ValueError("lease attempt was fenced before task completion")
             outputs[task.task_id] = output
-        cancel_requested = (
-            con.execute(
-                f"SELECT state FROM {schema}.runtime_runs WHERE run_id=?",
-                [run_id],
-            ).fetchone()[0]
-            == "cancel_requested"
-        )
-        if cancel_requested or (cancelled is not None and cancelled()):
-            terminal = con.execute(
-                f"UPDATE {schema}.runtime_runs SET state='cancelled' "
-                "WHERE run_id=? AND state IN ('running','cancel_requested') "
-                "AND attempt_fence=? RETURNING run_id",
-                [run_id, lease.fence],
-            ).fetchone()
-            if terminal is None:
-                raise ValueError("lease attempt was fenced before cancellation")
-            return RunReceipt(run_id, "cancelled", None)
-        leases.assert_current(lease)
-        published = publish(plan, MappingProxyType(outputs), lease)
-        generation = getattr(published, "generation", published)
-        generation_text = str(generation) if generation is not None else None
-        if generation_text is not None:
-            runtime_store.replace_published_snapshot(
-                plan.dataset, generation_text, plan.snapshot_id, lease=lease
+        with run_publication_lock(namespace, plan.dataset):
+            return _finish_run(
+                plan=plan,
+                outputs=outputs,
+                run_id=run_id,
+                lease=lease,
+                publish=publish,
+                schema=schema,
+                cancelled=cancelled,
+                con=con,
+                runtime_store=runtime_store,
+                leases=leases,
             )
-        terminal = con.execute(
-            f"UPDATE {schema}.runtime_runs SET state='succeeded', published_generation=? "
-            "WHERE run_id=? AND state='running' AND attempt_fence=? RETURNING run_id",
-            [generation_text, run_id, lease.fence],
-        ).fetchone()
-        if terminal is None:
-            raise ValueError("lease attempt was fenced before recording success")
-        return RunReceipt(run_id, "succeeded", generation_text)
     except Exception:
         con.execute(
             f"UPDATE {schema}.runtime_runs SET state='failed' "
@@ -307,3 +288,48 @@ def _check_budget(
         raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
     if budget.max_output_bytes is not None and output_bytes > budget.max_output_bytes:
         raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
+
+
+def _finish_run(
+    *,
+    plan: RefreshPlan,
+    outputs: Mapping[str, pa.Table],
+    run_id: str,
+    lease: Lease,
+    cancelled: Callable[[], bool] | None,
+    publish: Callable[[RefreshPlan, Mapping[str, pa.Table], Lease], Any],
+    con: Any,
+    schema: str,
+    runtime_store: RuntimeStore,
+    leases: LeaseStore,
+) -> RunReceipt:
+    current = con.execute(
+        f"SELECT state FROM {schema}.runtime_runs WHERE run_id=?", [run_id]
+    ).fetchone()
+    cancel_requested = current is not None and current[0] == "cancel_requested"
+    if cancel_requested or (cancelled is not None and cancelled()):
+        terminal = con.execute(
+            f"UPDATE {schema}.runtime_runs SET state='cancelled' "
+            "WHERE run_id=? AND state IN ('running','cancel_requested') "
+            "AND attempt_fence=? RETURNING run_id",
+            [run_id, lease.fence],
+        ).fetchone()
+        if terminal is None:
+            raise ValueError("lease attempt was fenced before cancellation")
+        return RunReceipt(run_id, "cancelled", None)
+    leases.assert_current(lease)
+    published = publish(plan, MappingProxyType(dict(outputs)), lease)
+    generation = getattr(published, "generation", published)
+    generation_text = str(generation) if generation is not None else None
+    if generation_text is not None:
+        runtime_store.replace_published_snapshot(
+            plan.dataset, generation_text, plan.snapshot_id, lease=lease
+        )
+    terminal = con.execute(
+        f"UPDATE {schema}.runtime_runs SET state='succeeded', published_generation=? "
+        "WHERE run_id=? AND state='running' AND attempt_fence=? RETURNING run_id",
+        [generation_text, run_id, lease.fence],
+    ).fetchone()
+    if terminal is None:
+        raise ValueError("lease attempt was fenced before recording success")
+    return RunReceipt(run_id, "succeeded", generation_text)

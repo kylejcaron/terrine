@@ -7,6 +7,7 @@ from typing import Any
 from terrine.errors import RefusalSpec
 from terrine.runtime.leases import LeaseStore
 from terrine.runtime.state import RuntimeStore
+from terrine.runtime.synchronization import run_publication_lock
 
 __all__ = ["RunStatus", "CancelReceipt", "get_run", "cancel_run"]
 
@@ -84,17 +85,26 @@ def get_run(run_id: str, *, con: Any, namespace: str) -> RunStatus:
 
 
 def cancel_run(run_id: str, *, con: Any, namespace: str) -> CancelReceipt:
+    store = RuntimeStore(con, namespace=namespace)
     status = get_run(run_id, con=con, namespace=namespace)
-    if status.durable_state in {"succeeded", "failed", "cancelled"}:
-        return CancelReceipt(run_id, "already_terminal", status)
-    if status.durable_state == "cancel_requested":
-        return CancelReceipt(run_id, "already_requested", status)
-    schema = RuntimeStore(con, namespace=namespace)._schema
-    con.execute(
-        f"UPDATE {schema}.runtime_runs SET state='cancel_requested', "
-        "updated_at=current_timestamp WHERE run_id=? AND state IN ('queued','running')",
-        [run_id],
-    )
-    updated = get_run(run_id, con=con, namespace=namespace)
-    disposition = "requested" if updated.durable_state == "cancel_requested" else "already_terminal"
-    return CancelReceipt(run_id, disposition, updated)
+    row = con.execute(
+        f"SELECT dataset FROM {store._schema}.runtime_runs WHERE run_id=?", [run_id]
+    ).fetchone()
+    if row is None:
+        raise _UNAVAILABLE.error()
+    with run_publication_lock(namespace, row[0]):
+        status = get_run(run_id, con=con, namespace=namespace)
+        if status.durable_state in {"succeeded", "failed", "cancelled"}:
+            return CancelReceipt(run_id, "already_terminal", status)
+        if status.durable_state == "cancel_requested":
+            return CancelReceipt(run_id, "already_requested", status)
+        con.execute(
+            f"UPDATE {store._schema}.runtime_runs SET state='cancel_requested', "
+            "updated_at=current_timestamp WHERE run_id=? AND state IN ('queued','running')",
+            [run_id],
+        )
+        updated = get_run(run_id, con=con, namespace=namespace)
+        disposition = (
+            "requested" if updated.durable_state == "cancel_requested" else "already_terminal"
+        )
+        return CancelReceipt(run_id, disposition, updated)
