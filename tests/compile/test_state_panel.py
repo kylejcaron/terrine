@@ -171,6 +171,7 @@ def test_binned_state_panel_compiles_bounded_period_pairing(panel_model):
     design = Design(
         "user",
         Schedule("1d", "2025-01-03", "2025-01-05"),
+        features={"panel_metric": agg("sessions", window=("-1d", "0d"))},
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
             max_periods=2,
@@ -192,6 +193,7 @@ def test_binned_state_panel_compiles_bounded_period_pairing(panel_model):
         "period_index",
         "gap",
     )
+    assert compiled.expression_timings["panel_metric"].kind == "fixed_t0"
 
 
 def test_panel_baseline_and_per_origin_feature_cutoffs_are_distinct(panel_model):
@@ -210,6 +212,8 @@ def test_panel_baseline_and_per_origin_feature_cutoffs_are_distinct(panel_model)
     compiled = compile_design(design, panel_model)
     assert compiled.feature_cutoffs["per_origin"].reference == "row_t0"
     assert compiled.feature_cutoffs["baseline"].reference == "panel_start"
+    assert compiled.expression_timings["per_origin"].point_time_column == "t0"
+    assert compiled.expression_timings["baseline"].point_time_column == "panel_start"
 
 
 @pytest.mark.slow

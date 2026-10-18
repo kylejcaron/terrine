@@ -425,6 +425,10 @@ def compile_observed_state_panel(design: Design, model: Model, panel: StatePanel
         ):
             if name is not None and name not in projection_names:
                 projection_names.append(name)
+    panel_start = ibis.literal(model.day_boundary(schedule.start).astimezone(UTC))
+    retained = retained.mutate(panel_start=panel_start)
+    audit = audit.mutate(panel_start=panel_start)
+    projection_names.append("panel_start")
     retained = retained.select(**{name: retained[name] for name in projection_names})
     audit = audit.select(
         **{name: audit[name] for name in projection_names},
@@ -449,7 +453,14 @@ def compile_observed_state_panel(design: Design, model: Model, panel: StatePanel
         anchors,
         tuple(deferred),
         {
+            **(
+                {
+                    name: replace(timing, point_time_column="panel_start")
+                    for name, timing in baseline_compiled.expression_timings.items()
+                }
+                if baseline_compiled is not None
+                else {}
+            ),
             **compiled.expression_timings,
-            **(baseline_compiled.expression_timings if baseline_compiled is not None else {}),
         },
     )

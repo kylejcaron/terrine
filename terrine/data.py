@@ -23,6 +23,7 @@ __all__ = [
     "ColumnMeta",
     "FeatureCutoff",
     "ExpressionTiming",
+    "EligibilitySummary",
     "StatePanelMeta",
     "ExecutionSnapshot",
     "Provenance",
