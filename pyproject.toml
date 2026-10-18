@@ -46,7 +46,7 @@ packages = ["terrine"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --durations=10 -m 'not slow and not parameter_recovery'"
+addopts = "-ra --strict-markers --durations=10 --import-mode=importlib -m 'not slow and not parameter_recovery'"
 markers = [
     "slow: tests excluded from the ordinary suite",
     "parameter_recovery: simulation-based parameter-recovery checks",
