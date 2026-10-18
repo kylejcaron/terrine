@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-import threading
+import time
 
 import duckdb
 import pyarrow as pa
@@ -70,14 +70,12 @@ def test_lost_response_lookup_routes_through_owner_holding_duckdb(tmp_path):
     store = RuntimeStore(con, namespace="owner")
     store.initialize()
     endpoint = ControlEndpoint(Path(f"/tmp/terrine-lost-{os.getpid()}.sock"))
-    published = threading.Event()
 
     class Executor:
         def run_task(self, task, dependencies):
             return pa.table({"id": [1]})
 
         def publish(self, plan, outputs, lease, run_id):
-            published.set()
             return "generation-1"
 
     server = ControlServer(store, namespace="owner", endpoint=endpoint, executor=Executor())
@@ -104,10 +102,16 @@ def test_lost_response_lookup_routes_through_owner_holding_duckdb(tmp_path):
             client.connect(str(endpoint.path))
             client.sendall(json.dumps(request).encode() + b"\n")
             # Drop the response channel immediately after submission.
-        assert published.wait(timeout=20)
-        receipt = ControlClient(endpoint, namespace="owner").find_run_by_request_key(
-            "lost-key", destination=destination
-        )
+        client = ControlClient(endpoint, namespace="owner")
+        deadline = time.monotonic() + 20
+        receipt = None
+        while receipt is None or receipt.state != "succeeded":
+            receipt = client.find_run_by_request_key("lost-key", destination=destination)
+            if receipt is not None and receipt.state == "succeeded":
+                break
+            if time.monotonic() >= deadline:
+                raise AssertionError("owner did not durably complete the lost-response request")
+            time.sleep(0.01)
         assert receipt is not None
         assert receipt.state == "succeeded"
         assert receipt.published_generation == "generation-1"
