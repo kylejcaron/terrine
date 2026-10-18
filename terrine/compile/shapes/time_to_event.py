@@ -298,10 +298,14 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
     initial_gap = candidates._t0_naive < history_start
     if shape.delayed_entry:
         initial_gap = ibis.literal(False)
-    if "_observed_from" in candidates.columns and not shape.delayed_entry:
-        initial_gap = initial_gap | (
-            candidates._observed_from_naive > candidates._t0_naive
-        ).fill_null(False)
+    if not shape.delayed_entry:
+        if "_observed_from" in candidates.columns:
+            initial_gap = initial_gap | (
+                candidates._observed_from_naive > candidates._t0_naive
+            ).fill_null(False)
+        initial_gap = initial_gap | (candidates._followup_start > candidates._t0_naive).fill_null(
+            False
+        )
     entry_missing = candidates._entry_time.isnull() if shape.delayed_entry else ibis.literal(False)
     no_followup = candidates._followup_end <= candidates._followup_start
     complete = ibis.ifelse(

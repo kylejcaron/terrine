@@ -145,6 +145,26 @@ def test_unobserved_initial_history_is_explained_and_excluded_from_km():
         con.disconnect()
 
 
+def test_non_delayed_entry_advance_without_prior_event_is_incomplete():
+    con, model = _model()
+    try:
+        con.raw_sql("DELETE FROM outcomes WHERE user_id = 'u1'")
+        con.raw_sql("INSERT INTO outcomes VALUES ('u1', TIMESTAMPTZ '2025-01-04 00:00:00+00')")
+        con.raw_sql(
+            "UPDATE entries SET ts = TIMESTAMPTZ '2025-01-03 00:00:00+00' WHERE user_id = 'u1'"
+        )
+        design = Design(
+            "user",
+            EventAnchor("signup", which="first"),
+            shape=TimeToEvent("churn", entry="enrolled"),
+        )
+        rows = {row["unit"]: row for row in design.build(model).materialize().table.to_pylist()}
+        assert rows["u1"]["complete"] is False
+        assert rows["u1"]["reason"] == "incomplete_initial_history"
+    finally:
+        con.disconnect()
+
+
 def test_event_before_declared_delayed_entry_is_prevalent():
     con, model = _model(outcome_start="2025-01-02")
     try:
