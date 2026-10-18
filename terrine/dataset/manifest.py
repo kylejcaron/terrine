@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from terrine.errors import freeze, thaw
-from terrine.spec.dataset import DatasetRecipe
+from terrine.spec.dataset import INVALID_RECIPE, DatasetRecipe
 
 __all__ = ["DatasetManifest", "ManifestColumn", "ManifestGeneration"]
 
@@ -142,7 +142,7 @@ class DatasetManifest:
             raise ValueError("invalid dataset manifest")
         recipe = DatasetRecipe.from_json(_canonical(payload["recipe"]))
         if recipe.digest != payload["recipe_hash"]:
-            raise ValueError("dataset recipe digest mismatch")
+            raise INVALID_RECIPE.error(reason="recipe digest mismatch")
         gen = payload["generation"]
         if set(gen) != {"dataset_id", "generation_id", "output_refs", "checksums", "row_count"}:
             raise ValueError("invalid generation record")

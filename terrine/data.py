@@ -1052,6 +1052,7 @@ def _decode(value: Any, cls: type) -> Any:
             "panel_start",
             "administrative_end",
             "bucket_origin",
+            "resolved_as_of",
             "administrative_cutoff",
         ) and isinstance(item, dict):
             kwargs[field.name] = datetime.fromisoformat(item["$datetime"])
