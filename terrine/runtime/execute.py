@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -257,19 +258,29 @@ def _decode(payload: bytes) -> pa.Table:
 
 
 def _release_run_snapshot_refs(store: RuntimeStore, snapshot_id: str, run_id: str) -> None:
-    for kind, reference in store.snapshot_references(snapshot_id):
-        if kind != "active_run":
-            continue
+    for attempt in range(5):
         try:
-            owner, _fence = json.loads(reference)
-        except (TypeError, ValueError):
-            if reference == run_id:
-                store.unpin_snapshot(snapshot_id, kind=kind, reference=reference)
-            continue
-        if owner == run_id:
-            store.unpin_snapshot(snapshot_id, kind=kind, reference=reference)
+            for kind, reference in store.snapshot_references(snapshot_id):
+                if kind != "active_run":
+                    continue
+                try:
+                    owner, _fence = json.loads(reference)
+                except (TypeError, ValueError):
+                    if reference == run_id:
+                        store.unpin_snapshot(snapshot_id, kind=kind, reference=reference)
+                    continue
+                if owner == run_id:
+                    store.unpin_snapshot(snapshot_id, kind=kind, reference=reference)
+            return
+        except Exception as exc:
+            if type(exc).__name__ != "TransactionException":
+                raise
+            if attempt == 4:
+                return
+            time.sleep(0.01 * (2**attempt))
 
 
+# A terminal replay retries cleanup; transient conflicts must not erase its receipt.
 def _check_budget(
     task: TaskSpec,
     table: pa.Table,

@@ -91,6 +91,41 @@ def test_execution_pins_snapshot_for_active_run_and_published_manifest():
     assert store.snapshot_references("snapshot") == (("published_manifest", '["orders","g1"]'),)
 
 
+def test_terminal_snapshot_cleanup_retries_transaction_conflict(monkeypatch):
+    con = duckdb.connect(":memory:")
+    store = RuntimeStore(con, namespace="owner")
+    graph = dependency_graph(sources=("events",), definition_hash="def", partitions=("p1",))
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="def",
+        snapshot_id="snapshot",
+        graph=graph,
+    )
+    original = RuntimeStore.unpin_snapshot
+    attempts = 0
+
+    def conflict_once(self, snapshot_id, *, kind, reference):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise duckdb.TransactionException("concurrent snapshot guard update")
+        return original(self, snapshot_id, kind=kind, reference=reference)
+
+    monkeypatch.setattr(RuntimeStore, "unpin_snapshot", conflict_once)
+    result = execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="run-1",
+        run_task=lambda task, dependencies: pa.table({"task": [task.task_id]}),
+        publish=lambda plan, outputs, lease: "g1",
+    )
+    assert result.state == "succeeded"
+    assert attempts == 2
+    assert store.snapshot_references("snapshot") == (("published_manifest", '["orders","g1"]'),)
+
+
 def test_retryable_failed_run_keeps_snapshot_until_successful_retry():
     con = duckdb.connect(":memory:")
     store = RuntimeStore(con, namespace="owner")
