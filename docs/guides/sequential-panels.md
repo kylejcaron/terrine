@@ -40,6 +40,11 @@ Build and materialize either design through the ordinary `Design.build(model)` a
 
 Sequential treatment is classified at each schedule's exact `t0` from the declared source history. The source must declare complete coverage from `history_start` through the final trial boundary; a latest observed event timestamp is not a completeness guarantee. `Initiation` means that the selected fact/property has been observed by t0. `PersistentAdoption` is a distinct state selector with an explicit adopted value and absorbing-history declaration.
 
+The sequential `anticipation` interval extends the control no-initiation risk
+horizon and the corresponding treatment-source and roster-history coverage
+checks, beyond the declared outcome window. Its elapsed seconds are preserved
+in typed Arrow provenance so downstream users can inspect the applied policy.
+
 A matched-t0 policy belongs on the canonical `Design`, not on a transient compiler option:
 
 ```python

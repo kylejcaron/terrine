@@ -403,6 +403,7 @@ class PanelMeta:
     period_seconds: int | None = None
     reference_period: int | None = None
     trials: tuple[str, ...] = ()
+    anticipation_seconds: int = 0
 
     def __post_init__(self) -> None:
         if self.shape not in ("sequential", "event_panel"):
@@ -427,6 +428,12 @@ class PanelMeta:
         if len(set(trials)) != len(trials):
             raise ValueError("panel trial identities must be unique")
         object.__setattr__(self, "trials", trials)
+        if (
+            isinstance(self.anticipation_seconds, bool)
+            or not isinstance(self.anticipation_seconds, int)
+            or self.anticipation_seconds < 0
+        ):
+            raise ValueError("anticipation_seconds must be nonnegative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -727,6 +734,7 @@ def _decode(value: Any, cls: type) -> Any:
                 item.get("period_seconds"),
                 item.get("reference_period"),
                 tuple(item.get("trials", ())),
+                item.get("anticipation_seconds", 0),
             )
         elif field.name == "calendar_comparison" and item is not None:
             kwargs[field.name] = CalendarComparisonMeta(

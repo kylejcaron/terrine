@@ -126,7 +126,13 @@ def _panel_metadata(design: Design) -> PanelMeta | None:
         span = (design.anchor.end - design.anchor.start).days * 86_400
         count = (span - 1) // design.anchor.every + 1
         trials = tuple(f"schedule:{index}" for index in range(count))
-        return PanelMeta("sequential", history, trial_weight, trials=trials)
+        return PanelMeta(
+            "sequential",
+            history,
+            trial_weight,
+            trials=trials,
+            anticipation_seconds=design.shape.anticipation_seconds,
+        )
     if isinstance(design.shape, EventPanelSpec):
         return PanelMeta(
             "event_panel",

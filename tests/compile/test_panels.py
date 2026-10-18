@@ -406,3 +406,36 @@ def test_sequential_roster_history_ignores_ineligible_anchor_rows(native_inputs)
     rows = design.build(model).materialize().table.to_pylist()
 
     assert [row["unit"] for row in rows] == ["a"]
+
+
+def test_sequential_anticipation_extends_control_risk_horizon(native_inputs):
+    from terrine.errors import TerrineError
+
+    model = _event_model(native_inputs)
+    model.con.raw_sql(
+        "UPDATE events SET ts = TIMESTAMPTZ '2025-01-11 00:00:00+00' WHERE user_id = 'b'"
+    )
+    design = Sequential(
+        Design(
+            "user",
+            Schedule("1d", "2025-01-03", "2025-01-04"),
+            outcomes={"sessions_after_t0": agg("sessions", window=("0d", "7d"))},
+        ),
+        treatment=Initiation(
+            "events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)
+        ),
+        anticipation="2d",
+    )
+
+    with pytest.raises(TerrineError) as error:
+        design.build(model).materialize()
+    assert error.value.code == "terrine.compile.later_control_initiation"
+
+    model.con.raw_sql(
+        "UPDATE events SET ts = TIMESTAMPTZ '2025-01-12 00:00:00+00' WHERE user_id = 'b'"
+    )
+    frame = design.build(model).materialize()
+    assert frame.provenance.panel.anticipation_seconds == 2 * 86_400
+    assert type(frame).from_arrow(frame.to_arrow()).provenance.panel.anticipation_seconds == (
+        2 * 86_400
+    )

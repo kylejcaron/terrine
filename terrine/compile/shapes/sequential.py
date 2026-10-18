@@ -37,7 +37,9 @@ def _followup_horizon(design: Design) -> int | None:
         for expression in design.outcomes.values()
         if isinstance(expression, MetricAgg)
     ]
-    return max(horizons) if horizons else None
+    if not horizons and design.shape.anticipation_seconds == 0:
+        return None
+    return max(horizons, default=0) + design.shape.anticipation_seconds
 
 
 def _followup_end(design: Design, model):
