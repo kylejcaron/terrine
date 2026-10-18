@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 from dataclasses import replace
 
 import ibis
@@ -15,8 +16,7 @@ from terrine.semantic.models import Catalog
 from terrine.spec import Design, FixedDate, agg
 from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
 from terrine.temporal.prefix import sparse_prefix
-
-pytest_plugins = ("tests.compile.test_columns",)
+from tests.compile.test_columns import column_model  # noqa: F401,F811
 
 
 def _persisted_prefixes(design, model):
@@ -191,7 +191,8 @@ def test_layer_definition_identity_binds_catalog_and_design(column_model):
     )
 
 
-def test_layer_composition_refuses_state_panel_with_stable_code(column_model):
+def test_state_panel_uses_shape_dispatch_for_runtime_full_rebuild(column_model):
+    from terrine.compile.dispatch import compile_design
     from terrine.spec import BinnedMetricState, Schedule, StatePanel
 
     design = Design(
@@ -202,9 +203,20 @@ def test_layer_composition_refuses_state_panel_with_stable_code(column_model):
             max_periods=2,
         ),
     )
+    ordinary = compile_design(design, column_model)
+    materialized = compose_materialized_frame(design, column_model, persisted={})
+    assert column_model.con.to_pyarrow(ordinary.audit_table.order_by("unit")).equals(
+        column_model.con.to_pyarrow(materialized.audit_table.order_by("unit"))
+    )
+
+
+def test_unsupported_runtime_shape_refusal_names_shape_and_route(column_model):
+    design = Design("user", FixedDate("2025-01-03T00:00:00+00:00"), shape="custom_shape")
     with pytest.raises(TerrineError) as error:
         compose_materialized_frame(design, column_model, persisted={})
-    assert error.value.code == "terrine.compile.persisted_state_panel_unsupported"
+    assert error.value.code == "terrine.compile.runtime_shape_unsupported"
+    assert error.value.context["shape"] == "custom_shape"
+    assert error.value.context["route"] == "ordinary Frame materialization or a full rebuild"
 
 
 def test_same_fact_measures_keep_filter_and_aggregation_identity(column_model):

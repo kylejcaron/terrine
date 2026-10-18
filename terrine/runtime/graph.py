@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, fields, is_dataclass
 
 from terrine.runtime.state import LayerNode
 
@@ -43,11 +43,14 @@ def dependency_graph(
     definition_hash: str | None = None,
     partitions: Iterable[str] = ("all",),
     include_exports: bool = False,
+    expression_timings: Mapping[str, object] | None = None,
 ) -> DependencyGraph:
     """Build stable logical layer dependencies; no runtime execution occurs."""
     source_names = tuple(sources) if sources is not None else _model_sources(model)
     if not source_names:
         raise ValueError("at least one source is required")
+    selector_nodes = _selector_nodes(model, design, expression_timings)
+    source_names = tuple(sorted(set(source_names) | set(selector_nodes)))
     fingerprint = definition_hash or getattr(design, "spec_hash", None) or "unbound"
     partition_names = tuple(partitions)
     nodes: list[LayerNode] = []
@@ -93,7 +96,66 @@ def dependency_graph(
                 export = LayerNode("export", source, partition, fingerprint, "pending")
                 nodes.append(export)
                 edges.append((frame, export))
-    return DependencyGraph(tuple(nodes), tuple(edges))
+            for selector_source in selector_nodes:
+                selector = LayerNode("selector", selector_source, partition, fingerprint, "pending")
+                if selector not in nodes:
+                    nodes.append(selector)
+                edges.append((selector, frame))
+    return DependencyGraph(tuple(nodes), tuple(dict.fromkeys(edges)))
+
+
+def _selector_nodes(
+    model: object | None,
+    design: object | None,
+    expression_timings: Mapping[str, object] | None,
+) -> set[str]:
+    if model is None or design is None:
+        return set()
+    from terrine.spec.expressions import EventTime
+
+    selectors: dict[str, EventTime] = {}
+
+    def visit(value: object) -> None:
+        if isinstance(value, EventTime):
+            selectors[repr(value)] = value
+            if value.relative_to is not None:
+                visit(value.relative_to)
+        elif isinstance(value, Mapping):
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, (tuple, list)):
+            for child in value:
+                visit(child)
+        elif is_dataclass(value) and not isinstance(value, type):
+            for item in fields(value):
+                visit(getattr(value, item.name))
+
+    for role in ("features", "outcomes", "eligibility"):
+        visit(getattr(design, role, {}))
+    sources: set[str] = set()
+    unknown_reference = False
+    timings = expression_timings or {}
+    for timing in timings.values():
+        references = (
+            getattr(timing, "selector_ref", None),
+            *getattr(timing, "selector_dependencies", ()),
+        )
+        for reference in references:
+            if reference is None:
+                continue
+            if reference not in selectors:
+                unknown_reference = True
+                continue
+            selectors.setdefault(reference, selectors[reference])
+    for selector in selectors.values():
+        fact = model.catalog.facts.get(selector.fact)
+        if fact is None:
+            unknown_reference = True
+        else:
+            sources.add(fact.source)
+    if unknown_reference:
+        return set(_model_sources(model))
+    return sources
 
 
 def _model_sources(model: object | None) -> tuple[str, ...]:

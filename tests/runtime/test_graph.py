@@ -38,6 +38,55 @@ def test_state_panel_graph_tracks_point_period_and_frame_dependencies():
         assert period in graph.dependencies(frame)
 
 
+def test_nested_event_selector_dependencies_invalidate_frame_outside_window():
+    from types import SimpleNamespace
+
+    from terrine.data import ExpressionTiming
+    from terrine.spec.expressions import EventTime
+    from terrine.windows import Window
+
+    first = EventTime("amount", Window("-1d", "0s"))
+    nested = EventTime("status_time", Window("-1h", "1h"), relative_to=first)
+    design = SimpleNamespace(
+        spec_hash="definition",
+        shape="cross_section",
+        features={"nested": nested},
+        outcomes={},
+        eligibility={},
+    )
+    model = SimpleNamespace(
+        catalog=SimpleNamespace(
+            sources={"events": object(), "statuses": object()},
+            facts={
+                "amount": SimpleNamespace(source="events"),
+                "status_time": SimpleNamespace(source="statuses"),
+            },
+        )
+    )
+    timing = ExpressionTiming(
+        kind="event_time",
+        selector_ref=repr(nested),
+        relative_offsets=(-3600, 3600),
+        support_seconds=(-90000, 3600),
+        selector_dependencies=(repr(first), repr(nested)),
+        selector_support_seconds={repr(first): (-86400, 0), repr(nested): (-90000, 3600)},
+        point_time_column="nested",
+        start_bound_column="start",
+        end_bound_column="end",
+    )
+    graph = dependency_graph(
+        model,
+        design,
+        partitions=("p1",),
+        expression_timings={"nested": timing},
+    )
+    frame = next(node for node in graph.nodes if node.layer == "frame")
+    selector_sources = {
+        node.source for node in graph.dependencies(frame) if node.layer == "selector"
+    }
+    assert selector_sources == {"events", "statuses"}
+
+
 def test_partition_iterator_is_reused_for_every_source():
     graph = dependency_graph(
         sources=("events", "payments"),

@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 from dataclasses import replace
 from datetime import UTC, datetime
 
@@ -11,11 +12,10 @@ from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import Catalog
-from terrine.spec import Design, EventAnchor, FixedDate, agg, asof, gt
+from terrine.spec import Design, EventAnchor, FixedDate, agg, asof, event_time, gt
 from terrine.temporal.daily import _sparse_group, resolve_measure
 from terrine.temporal.prefix import sparse_prefix
-
-pytest_plugins = ("tests.compile.test_columns",)
+from tests.compile.test_columns import column_model  # noqa: F401,F811
 
 
 def _same_snapshot_prefixes(design, model):
@@ -402,3 +402,79 @@ def test_event_anchor_identity_corrections_match_clean_compilation(
         else datetime(2025, 1, 2, 12, tzinfo=UTC)
     )
     assert anchor_rows[0]["t0"] == expected_t0
+
+
+def test_nested_selector_correction_outside_t0_window_matches_clean_frame(column_model):
+    from terrine.runtime.changes import Change, ChangeSet
+    from terrine.runtime.graph import dependency_graph
+    from terrine.runtime.planner import plan_refresh
+
+    con = column_model.con
+    con.raw_sql("INSERT INTO events VALUES ('a', TIMESTAMPTZ '2025-01-01 11:00:00+00', 1, 'old')")
+    con.raw_sql(
+        "CREATE TABLE statuses (user_id VARCHAR, ts TIMESTAMPTZ, score BIGINT); "
+        "INSERT INTO statuses VALUES ('a', TIMESTAMPTZ '2025-01-01 10:30:00+00', 1)"
+    )
+    definition = column_model.catalog.model_dump(mode="python")
+    definition["sources"]["statuses"] = {
+        "relation": {"kind": "table", "name": "statuses"},
+        "timestamp": "ts",
+        "entities": {"user": "user_id"},
+        "facts": ["score"],
+        "properties": [],
+        "dimensions": [],
+    }
+    definition["facts"]["score"] = {"source": "statuses", "column": "score"}
+    model = Model.from_catalog(
+        Catalog.model_validate(definition),
+        con=con,
+        readiness={
+            "events": Coverage("2024-12-31", "2025-01-03"),
+            "statuses": Coverage("2024-12-31", "2025-01-03"),
+        },
+        units=column_model.units,
+    )
+    origin = event_time("amount", window=("-2d", "-1d"))
+    nested = event_time("score", window=("-2h", "0s"), relative_to=origin)
+    design = Design(
+        "user",
+        FixedDate("2025-01-02T12:00:00+00:00"),
+        features={"nested_time": nested},
+        outcomes={"exact_total": agg("total", window=("0s", "1d"))},
+    )
+
+    con.raw_sql("UPDATE statuses SET ts=TIMESTAMPTZ '2025-01-01 09:30:00+00' WHERE score=1")
+    changed_at = datetime(2025, 1, 1, 9, 30, tzinfo=UTC)
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="nested",
+        definition_hash=design.spec_hash,
+        snapshot_id="same-snapshot",
+        graph=dependency_graph(model, design, partitions=("all",)),
+        changes=ChangeSet(
+            (
+                Change(
+                    "update",
+                    "statuses",
+                    before_time_range=(changed_at, changed_at.replace(hour=11)),
+                    after_time_range=(changed_at, changed_at.replace(hour=10)),
+                ),
+            ),
+            "change_feed",
+        ),
+    )
+    assert any(task.layer == "frame" for task in plan.tasks)
+    clean = compile_columns(design, model)
+    incremental = compose_materialized_frame(
+        design, model, persisted=_same_snapshot_prefixes(design, model)
+    )
+    clean.validate(execute=con.to_pyarrow)
+    incremental.validate(execute=con.to_pyarrow)
+    clean_rows = con.to_pyarrow(clean.table.order_by("unit")).to_pylist()
+    incremental_rows = con.to_pyarrow(incremental.table.order_by("unit")).to_pylist()
+    assert clean_rows == incremental_rows
+    row = next(row for row in clean_rows if row["unit"] == "a")
+    assert (row["nested_time"], row["exact_total"]) == (
+        datetime(2025, 1, 1, 9, 30, tzinfo=UTC),
+        7,
+    )

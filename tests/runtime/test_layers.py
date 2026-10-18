@@ -1,3 +1,4 @@
+# ruff: noqa: F811
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
@@ -11,8 +12,7 @@ from terrine.runtime.layers import translate_persisted_layers
 from terrine.runtime.leases import LeaseStore
 from terrine.runtime.state import DefinitionVersion, GenerationRef, RuntimeStore, SourceSnapshot
 from terrine.spec import Design, FixedDate, agg
-
-pytest_plugins = ("tests.compile.test_columns",)
+from tests.compile.test_columns import column_model  # noqa: F401,F811
 
 
 def _lease(con):

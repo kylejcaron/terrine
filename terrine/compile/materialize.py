@@ -4,7 +4,7 @@ from collections.abc import Mapping
 
 import ibis
 
-from terrine.compile.columns import CompiledStudy, compile_columns
+from terrine.compile.columns import CompiledStudy
 from terrine.compile.layers import LayerKey, plan_layers
 from terrine.data import Budget
 from terrine.errors import RefusalSpec
@@ -17,9 +17,10 @@ _STRICT_SCAN_UNKNOWN = RefusalSpec(
     "A strict scan-byte budget requires a verified scan bound; this backend has none. "
     "Explicitly choose non-strict scan policy after reviewing upstream work.",
 )
-_STATE_PANEL_UNSUPPORTED = RefusalSpec(
-    "terrine.compile.persisted_state_panel_unsupported",
-    "Persisted-layer composition does not support StatePanel designs; use Design.build(model).",
+_RUNTIME_SHAPE_UNSUPPORTED = RefusalSpec(
+    "terrine.compile.runtime_shape_unsupported",
+    "Persisted-layer runtime does not support shape {shape!r}; use ordinary Frame "
+    "materialization or a full rebuild.",
 )
 _ANCHOR_LAYER_INVALID = RefusalSpec(
     "terrine.compile.persisted_anchor_invalid",
@@ -43,8 +44,15 @@ def compose_materialized_frame(
         raise TypeError("budget must be Budget or None")
     if budget is not None and budget.max_scan_bytes is not None and budget.strict_scan:
         raise _STRICT_SCAN_UNKNOWN.error()
+    from terrine.compile.dispatch import compile_design
+
     if isinstance(design.shape, StatePanel):
-        raise _STATE_PANEL_UNSUPPORTED.error()
+        return compile_design(design, model)
+    if design.shape != "cross_section":
+        shape = design.shape if isinstance(design.shape, str) else type(design.shape).__name__
+        raise _RUNTIME_SHAPE_UNSUPPORTED.error(
+            shape=shape, route="ordinary Frame materialization or a full rebuild"
+        )
     definition_hash = plan_layers(design, model).keys[0].definition_hash
     snapshot_ids = {key.snapshot_id for key in persisted}
     if len(snapshot_ids) > 1 or (snapshot_ids and not next(iter(snapshot_ids))):
@@ -82,7 +90,7 @@ def compose_materialized_frame(
         if identity in substitutions:
             raise ValueError("duplicate persisted logical layer key")
         substitutions[identity] = relation
-    return compile_columns(
+    return compile_design(
         design,
         model,
         persisted_prefixes=substitutions,

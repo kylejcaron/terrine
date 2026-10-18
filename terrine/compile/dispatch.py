@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
+
+import ibis
 
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.spec.design import Design
@@ -16,8 +19,14 @@ if TYPE_CHECKING:
 __all__ = ["compile_design"]
 
 
-def compile_design(design: Design, model: Model) -> CompiledStudy:
-    """Compile a supported Design through its single shape dispatcher."""
+def compile_design(
+    design: Design,
+    model: Model,
+    *,
+    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None = None,
+    persisted_anchors: ibis.Table | None = None,
+) -> CompiledStudy:
+    """Compile through the dispatcher, substituting verified cross-section inputs."""
     if isinstance(design.shape, EventSequence):
         from terrine.compile.shapes.event_sequence import compile_event_sequence
 
@@ -51,7 +60,12 @@ def compile_design(design: Design, model: Model) -> CompiledStudy:
         from terrine.compile.shapes.time_to_event import compile_time_to_event
 
         return compile_time_to_event(design, model)
-    return compile_columns(design, model)
+    return compile_columns(
+        design,
+        model,
+        persisted_prefixes=persisted_prefixes,
+        persisted_anchors=persisted_anchors,
+    )
 
 
 def compile_cohort_summary(study: CompiledStudy, *, grouping, value_column: str) -> CompiledStudy:

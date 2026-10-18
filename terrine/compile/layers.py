@@ -52,7 +52,7 @@ def plan_layers(design: Design, model) -> LayerPlan:
     """Describe compiler input layers for a design, without consulting runtime state."""
     from terrine.semantic.rules import calendar_average_alignment
     from terrine.spec.anchors import FixedDate, Schedule
-    from terrine.spec.expressions import And, AttributeAsOf, Eq, Gt, IsNull, MetricAgg
+    from terrine.spec.expressions import And, AttributeAsOf, Eq, EventTime, Gt, IsNull, MetricAgg
     from terrine.spec.validate import _fixed_anchors
 
     measures: dict[tuple[str, str, str, LayerResolution], None] = {}
@@ -65,7 +65,7 @@ def plan_layers(design: Design, model) -> LayerPlan:
             expression(node.left if isinstance(node, Eq) else node.expr)
         elif isinstance(node, IsNull):
             expression(node.expr)
-        elif isinstance(node, AttributeAsOf):
+        elif isinstance(node, (AttributeAsOf, EventTime)):
             return
         elif isinstance(node, MetricAgg):
             metric = model.metrics[node.metric]
