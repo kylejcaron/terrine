@@ -403,13 +403,43 @@ def execute_plan(
             else None
         )
         if publication is not None:
+            generation = publication[0]
+            runtime_store.replace_published_snapshot(
+                plan.dataset, generation, plan.snapshot_id, lease=lease
+            )
             with event_transaction(con, namespace=namespace):
+                dependencies = {
+                    dependency for task in plan.tasks for dependency in task.dependencies
+                }
+                has_results = any(task.task_id not in dependencies for task in plan.tasks)
+                if not has_results:
+                    current_version = con.execute(
+                        f"SELECT version FROM {schema}.runtime_run_publications WHERE run_id=?",
+                        [run_id],
+                    ).fetchone()[0]
+                    previous = con.execute(
+                        "SELECT DISTINCT result.partition FROM "
+                        f"{schema}.runtime_run_results result "
+                        f"JOIN {schema}.runtime_run_publications prior "
+                        "ON prior.run_id=result.run_id "
+                        "WHERE prior.dataset=? AND prior.version=("
+                        f"SELECT max(version) FROM {schema}.runtime_publications "
+                        "WHERE dataset=? AND version<?) AND result.run_id<>? "
+                        "ORDER BY result.partition",
+                        [plan.dataset, plan.dataset, current_version, run_id],
+                    ).fetchall()
+                    for (partition,) in previous:
+                        con.execute(
+                            f"INSERT INTO {schema}.runtime_run_results VALUES (?, ?) "
+                            "ON CONFLICT DO NOTHING",
+                            [run_id, partition],
+                        )
                 reconciled = con.execute(
                     f"UPDATE {schema}.runtime_runs SET state='succeeded', "
                     "published_generation=? WHERE run_id=? "
                     "AND state IN ('running','cancel_requested') AND attempt_fence=? "
                     "RETURNING run_id",
-                    [publication[0], run_id, lease.fence],
+                    [generation, run_id, lease.fence],
                 ).fetchone()
                 if reconciled is not None:
                     record_run_event(
@@ -420,7 +450,7 @@ def execute_plan(
                         namespace=namespace,
                         _in_transaction=True,
                     )
-                    return RunReceipt(run_id, "succeeded", publication[0])
+                    return RunReceipt(run_id, "succeeded", generation)
         with event_transaction(con, namespace=namespace):
             terminal = con.execute(
                 f"UPDATE {schema}.runtime_runs SET state=CASE "
@@ -575,11 +605,20 @@ def _finish_run(
             if publication is not None:
                 previous = con.execute(
                     f"SELECT DISTINCT result.partition FROM {schema}.runtime_run_results result "
-                    f"JOIN {schema}.runtime_run_publications prior "
-                    "ON prior.run_id=result.run_id "
-                    "WHERE prior.dataset=? AND prior.generation=? AND result.run_id<>? "
+                    f"JOIN {schema}.runtime_run_publications prior ON prior.run_id=result.run_id "
+                    "WHERE prior.dataset=? AND prior.version=("
+                    f"SELECT max(version) FROM {schema}.runtime_publications "
+                    "WHERE dataset=? AND version<?) AND result.run_id<>? "
                     "ORDER BY result.partition",
-                    [publication[0], publication[1], run_id],
+                    [
+                        publication[0],
+                        publication[0],
+                        con.execute(
+                            f"SELECT version FROM {schema}.runtime_run_publications WHERE run_id=?",
+                            [run_id],
+                        ).fetchone()[0],
+                        run_id,
+                    ],
                 ).fetchall()
                 for (partition,) in previous:
                     con.execute(

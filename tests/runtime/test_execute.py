@@ -109,11 +109,14 @@ def test_cancel_before_publish_never_exposes_generation():
     assert published == []
 
 
-def test_post_commit_publish_error_reconciles_run_as_succeeded():
+def test_post_commit_publish_error_reconciles_run_and_retains_snapshot():
     from terrine.runtime.backends.base import StagedGeneration
     from terrine.runtime.backends.duckdb import DuckDBBackend
+    from terrine.runtime.state import RuntimeStore
 
     con = duckdb.connect(":memory:")
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
     backend = DuckDBBackend(con, namespace="owner")
 
     def publish(plan, outputs, lease):
@@ -127,6 +130,7 @@ def test_post_commit_publish_error_reconciles_run_as_succeeded():
                 plan.dataset,
                 "generation-1",
                 {"all": next(iter(outputs.values()))},
+                snapshot_id=plan.snapshot_id,
                 run_id="ambiguous-run",
             ),
             expected_manifest=None,
@@ -143,6 +147,83 @@ def test_post_commit_publish_error_reconciles_run_as_succeeded():
     )
     assert result.state == "succeeded"
     assert result.published_generation == "generation-1"
+    assert store.snapshot_references("s") == (("published_manifest", '["orders","generation-1"]'),)
+
+
+def test_post_commit_empty_refresh_restores_previous_result_partitions():
+    from terrine.runtime.backends.base import StagedGeneration
+    from terrine.runtime.backends.duckdb import DuckDBBackend
+    from terrine.runtime.changes import ChangeSet
+
+    con = duckdb.connect(":memory:")
+    backend = DuckDBBackend(con, namespace="owner")
+    first = execute_plan(
+        _plan(),
+        con=con,
+        namespace="owner",
+        run_id="prior-run",
+        run_task=lambda task, dependencies: pa.table({"id": [7]}),
+        publish=lambda plan, outputs, lease: backend.publish_generation(
+            StagedGeneration(
+                plan.dataset,
+                "generation-old",
+                {"all": next(iter(outputs.values()))},
+                snapshot_id=plan.snapshot_id,
+                run_id="prior-run",
+            ),
+            expected_manifest=None,
+            lease=lease,
+        ),
+    )
+    assert first.state == "succeeded"
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS owner.runtime_run_results "
+        "(run_id VARCHAR NOT NULL, partition VARCHAR NOT NULL, "
+        "PRIMARY KEY(run_id,partition))"
+    )
+    con.execute("INSERT INTO owner.runtime_run_results VALUES ('prior-run','all')")
+    assert con.execute(
+        "SELECT dataset,generation FROM owner.runtime_run_publications WHERE run_id='prior-run'"
+    ).fetchone() == ("orders", "generation-old")
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="def",
+        snapshot_id="s",
+        graph=dependency_graph(sources=("events",), definition_hash="def", partitions=("p1",)),
+        changes=ChangeSet((), "revision"),
+    )
+
+    def publish_empty(plan, outputs, lease):
+        backend.fault_injector = lambda boundary: (
+            (_ for _ in ()).throw(RuntimeError("lost response"))
+            if boundary == "after_commit"
+            else None
+        )
+        return backend.publish_generation(
+            StagedGeneration(
+                "orders",
+                "generation-empty",
+                {"all": pa.table({"id": [7]})},
+                snapshot_id="s",
+                run_id="empty-run",
+            ),
+            expected_manifest="generation-old",
+            lease=lease,
+        )
+
+    result = execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="empty-run",
+        run_task=lambda task, dependencies: pa.table({"id": []}),
+        publish=publish_empty,
+    )
+    assert result.state == "succeeded"
+    assert ("all",) in con.execute(
+        "SELECT partition FROM owner.runtime_run_results WHERE run_id='empty-run'"
+    ).fetchall()
 
 
 def test_plan_task_bound_is_checked_before_running_work():
