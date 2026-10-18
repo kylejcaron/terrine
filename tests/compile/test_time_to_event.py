@@ -1,0 +1,166 @@
+from datetime import UTC, datetime
+
+import ibis
+
+from terrine.data import Coverage
+from terrine.model import Model
+from terrine.semantic.models import Catalog
+from terrine.spec import Design, EventAnchor
+from terrine.spec.trajectory import TimeToEvent
+
+
+def _model(*, outcome_start="2024-12-30"):
+    con = ibis.duckdb.connect()
+    con.raw_sql("""
+        CREATE TABLE anchors AS SELECT * FROM (VALUES
+          ('u1', TIMESTAMPTZ '2025-01-01 00:00:00+00'),
+          ('u2', TIMESTAMPTZ '2025-01-02 00:00:00+00'),
+          ('u3', TIMESTAMPTZ '2025-01-03 00:00:00+00')
+        ) AS a(user_id, ts)
+    """)
+    con.raw_sql("""
+        CREATE TABLE outcomes AS SELECT * FROM (VALUES
+          ('u1', TIMESTAMPTZ '2025-01-01 00:00:00+00'),
+          ('u1', TIMESTAMPTZ '2025-01-03 00:00:00+00'),
+          ('u2', TIMESTAMPTZ '2025-01-04 00:00:00+00'),
+          ('u3', TIMESTAMPTZ '2025-01-02 00:00:00+00')
+        ) AS e(user_id, ts)
+    """)
+    con.raw_sql("""
+        CREATE TABLE entries AS SELECT * FROM (VALUES
+          ('u1', TIMESTAMPTZ '2025-01-02 00:00:00+00'),
+          ('u2', TIMESTAMPTZ '2025-01-02 00:00:00+00'),
+          ('u3', TIMESTAMPTZ '2025-01-03 00:00:00+00')
+        ) AS x(user_id, ts)
+    """)
+    catalog = Catalog.model_validate(
+        {
+            "schema_version": 1,
+            "day_boundary": "UTC",
+            "dialect": "duckdb",
+            "sources": {
+                "anchors": {
+                    "relation": {"kind": "table", "name": "anchors"},
+                    "timestamp": "ts",
+                    "entities": {"user": "user_id"},
+                    "facts": ["signup"],
+                    "properties": [],
+                    "dimensions": [],
+                },
+                "outcomes": {
+                    "relation": {"kind": "table", "name": "outcomes"},
+                    "timestamp": "ts",
+                    "entities": {"user": "user_id"},
+                    "facts": ["churn"],
+                    "properties": [],
+                    "dimensions": [],
+                },
+                "entries": {
+                    "relation": {"kind": "table", "name": "entries"},
+                    "timestamp": "ts",
+                    "entities": {"user": "user_id"},
+                    "facts": ["enrolled"],
+                    "properties": [],
+                    "dimensions": [],
+                },
+            },
+            "facts": {
+                "signup": {"source": "anchors", "column": None},
+                "churn": {"source": "outcomes", "column": None},
+                "enrolled": {"source": "entries", "column": None},
+            },
+            "properties": {},
+            "dimensions": {},
+            "measures": {},
+            "metrics": {},
+        }
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={
+            "anchors": Coverage("2025-01-01", "2025-01-11"),
+            "outcomes": Coverage(outcome_start, "2025-01-11"),
+            "entries": Coverage("2025-01-01", "2025-01-11"),
+        },
+    )
+    return con, model
+
+
+def test_prevalent_events_are_excluded_and_cutoff_equality_is_censored():
+    con, model = _model()
+    try:
+        design = Design(
+            "user",
+            EventAnchor("signup", which="first"),
+            shape=TimeToEvent("churn"),
+            administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
+        )
+        rows = design.build(model).materialize().table.to_pylist()
+        assert sorted((row["unit"], row["event_time"], row["event"]) for row in rows) == [
+            ("u1", datetime(2025, 1, 1, tzinfo=UTC), True),
+            ("u2", None, False),
+        ]
+        assert all(row["duration"] is not None for row in rows)
+    finally:
+        con.disconnect()
+
+
+def test_unobserved_initial_history_is_explained_and_excluded_from_km():
+    from terrine.estimate.survival import kaplan_meier
+
+    con, model = _model(outcome_start="2025-01-02")
+    try:
+        design = Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
+        result = design.build(model).materialize()
+        rows = {row["unit"]: row for row in result.table.to_pylist()}
+        assert rows["u1"]["complete"] is False
+        assert rows["u1"]["reason"] == "incomplete_initial_history"
+        curve = kaplan_meier(result, duration="duration", event="event", entry="entry_time")
+        assert curve.at_risk == (1,)
+        assert curve.events == (1,)
+    finally:
+        con.disconnect()
+
+
+def test_event_before_declared_delayed_entry_is_prevalent():
+    con, model = _model()
+    try:
+        design = Design(
+            "user",
+            EventAnchor("signup", which="first"),
+            shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
+        )
+        rows = {row["unit"]: row for row in design.build(model).materialize().table.to_pylist()}
+        assert "u1" not in rows
+        assert rows["u2"]["entry_time"] == datetime(2025, 1, 2, tzinfo=UTC)
+        assert rows["u2"]["event"] is True
+        assert "u3" not in rows
+    finally:
+        con.disconnect()
+
+
+def test_administrative_cutoff_changes_followup_without_changing_readiness():
+    con, model = _model()
+    try:
+        base = Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
+        early = base.__class__(
+            "user",
+            base.anchor,
+            shape=base.shape,
+            administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
+        )
+        late = base.__class__(
+            "user",
+            base.anchor,
+            shape=base.shape,
+            administrative_cutoff=datetime(2025, 1, 5, tzinfo=UTC),
+        )
+        early_rows = {r["unit"]: r for r in early.build(model).materialize().table.to_pylist()}
+        late_rows = {r["unit"]: r for r in late.build(model).materialize().table.to_pylist()}
+        assert early_rows["u2"]["event"] is False
+        assert late_rows["u2"]["event"] is True
+        assert early_rows["u2"]["duration"] == datetime(2025, 1, 4, tzinfo=UTC)
+        assert late_rows["u2"]["duration"] == datetime(2025, 1, 4, tzinfo=UTC)
+    finally:
+        con.disconnect()

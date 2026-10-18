@@ -8,7 +8,7 @@ from typing import Literal
 
 from terrine.windows import seconds
 
-__all__ = ["Trajectory", "CohortSpec", "CohortGrouping"]
+__all__ = ["Trajectory", "CohortSpec", "CohortGrouping", "TimeToEvent"]
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -74,3 +74,23 @@ class CohortGrouping:
         object.__setattr__(self, "bucket", duration)
         object.__setattr__(self, "bucket_origin", bucket_origin.astimezone(UTC))
         object.__setattr__(self, "statistic", statistic)
+
+
+@dataclass(frozen=True, slots=True)
+class TimeToEvent:
+    event: str
+    exit: str | None = None
+    entry: str | None = None
+    delayed_entry: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.event, str) or not self.event.strip():
+            raise ValueError("event must be a non-empty fact name")
+        for name in ("exit", "entry"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"{name} must be a non-empty fact name or None")
+        if not isinstance(self.delayed_entry, bool):
+            raise TypeError("delayed_entry must be bool")
+        if self.delayed_entry and self.entry is None:
+            raise ValueError("delayed_entry requires an entry fact")

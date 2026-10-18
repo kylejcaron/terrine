@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.expressions import And, AttributeAsOf, Eq, Expr, Gt, IsNull, MetricAgg, Predicate
 from terrine.spec.state_panel import StatePanel
-from terrine.spec.trajectory import CohortSpec
+from terrine.spec.trajectory import CohortSpec, TimeToEvent
 from terrine.windows import seconds
 
 __all__ = ["Treatment", "Design"]
@@ -64,7 +64,7 @@ class Design:
     eligibility: Mapping[str, Predicate]
     treatment: Treatment | None
     gap: int
-    shape: str | StatePanel | CohortSpec
+    shape: str | StatePanel | CohortSpec | TimeToEvent
     anchor_range: AnchorRange | None
     administrative_cutoff: datetime | None
 
@@ -78,7 +78,7 @@ class Design:
         eligibility: Mapping[str, Predicate] | None = None,
         treatment: Treatment | None = None,
         gap: str | int = "0d",
-        shape: str | StatePanel | CohortSpec = "cross_section",
+        shape: str | StatePanel | CohortSpec | TimeToEvent = "cross_section",
         anchor_range: AnchorRange | None = None,
         administrative_cutoff: datetime | None = None,
     ) -> None:
@@ -90,10 +90,12 @@ class Design:
             raise TypeError("treatment must be Treatment or None")
         if anchor_range is not None and not isinstance(anchor_range, AnchorRange):
             raise TypeError("anchor_range must be AnchorRange or None")
-        if not isinstance(shape, (str, StatePanel, CohortSpec)) or (
+        if not isinstance(shape, (str, StatePanel, CohortSpec, TimeToEvent)) or (
             isinstance(shape, str) and not shape.strip()
         ):
-            raise ValueError("shape must be 'cross_section', StatePanel, or CohortSpec")
+            raise ValueError(
+                "shape must be 'cross_section', StatePanel, CohortSpec, or TimeToEvent"
+            )
         gap_seconds = seconds(gap)
         if gap_seconds < 0:
             raise ValueError("gap must be non-negative")
@@ -128,6 +130,15 @@ class Design:
             raise ValueError("CohortSpec requires its matching first-event anchor")
         if isinstance(shape, CohortSpec) and outcomes:
             raise ValueError("CohortSpec generates outcomes; explicit outcomes are not allowed")
+        if isinstance(shape, TimeToEvent) and (
+            isinstance(anchor, Schedule)
+            or (isinstance(anchor, EventAnchor) and anchor.which == "each")
+        ):
+            raise ValueError("TimeToEvent requires one analysis entry per unit")
+        if isinstance(shape, TimeToEvent) and outcomes:
+            raise ValueError(
+                "TimeToEvent has generated outcomes; explicit outcomes are not allowed"
+            )
         object.__setattr__(self, "administrative_cutoff", administrative_cutoff)
 
     def validate(self, model: Model) -> None:

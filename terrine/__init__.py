@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         Schedule,
         StateObservations,
         StatePanel,
+        TimeToEvent,
         Trajectory,
         Treatment,
         agg,
@@ -63,6 +64,7 @@ __all__ = [
     "CohortSpec",
     "CohortTable",
     "Trajectory",
+    "TimeToEvent",
     "to_yaml",
 ]
 

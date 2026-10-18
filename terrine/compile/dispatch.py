@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.spec.design import Design
 from terrine.spec.state_panel import StatePanel
+from terrine.spec.trajectory import CohortSpec, TimeToEvent
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -20,12 +21,14 @@ def compile_design(design: Design, model: Model) -> CompiledStudy:
         from terrine.compile.shapes.state_panel import compile_state_panel
 
         return compile_state_panel(design, model)
-    from terrine.spec.trajectory import CohortSpec
+    if isinstance(design.shape, (CohortSpec, TimeToEvent)):
+        if isinstance(design.shape, CohortSpec):
+            from terrine.compile.shapes.ltv import compile_ltv
 
-    if isinstance(design.shape, CohortSpec):
-        from terrine.compile.shapes.ltv import compile_ltv
+            return compile_ltv(design, model)
+        from terrine.compile.shapes.time_to_event import compile_time_to_event
 
-        return compile_ltv(design, model)
+        return compile_time_to_event(design, model)
     return compile_columns(design, model)
 
 

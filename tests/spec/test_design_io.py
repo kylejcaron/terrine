@@ -99,9 +99,7 @@ def test_anchor_range_preserves_date_and_aware_instant_tags():
     spec = Design(
         unit="user",
         anchor=FixedDate("2025-03-01"),
-        anchor_range=AnchorRange(
-            start=datetime(2025, 3, 1, 1, tzinfo=UTC), end=date(2025, 3, 1)
-        ),
+        anchor_range=AnchorRange(start=datetime(2025, 3, 1, 1, tzinfo=UTC), end=date(2025, 3, 1)),
     )
     loaded = from_yaml(to_yaml(spec))
     assert loaded == spec
@@ -198,3 +196,21 @@ def test_trajectory_and_administrative_cutoff_round_trip_with_canonical_hash():
     )
     assert from_yaml(to_yaml(design)) == design
     assert from_json(to_json(design)).spec_hash == design.spec_hash
+
+
+def test_time_to_event_design_round_trips_and_requires_matching_occurrence_anchor():
+    from terrine.spec.trajectory import TimeToEvent
+
+    design = Design(
+        unit="user",
+        anchor=EventAnchor("signup", which="first"),
+        shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
+        administrative_cutoff=datetime(2025, 4, 1, tzinfo=UTC),
+    )
+    assert from_json(to_json(design)).spec_hash == design.spec_hash
+    with pytest.raises(ValueError):
+        Design(
+            unit="user",
+            anchor=Schedule("1d", "2025-03-01", "2025-03-04"),
+            shape=TimeToEvent("churn"),
+        )

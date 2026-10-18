@@ -28,7 +28,7 @@ from terrine.data import (
 from terrine.errors import RefusalSpec
 from terrine.spec.anchors import FixedDate
 from terrine.spec.state_panel import BinnedMetricState, StatePanel, encode_cutpoint
-from terrine.spec.trajectory import CohortGrouping, CohortSpec
+from terrine.spec.trajectory import CohortGrouping, CohortSpec, TimeToEvent
 
 _STATE_PANEL_BUDGET = RefusalSpec(
     "terrine.state_panel.budget_required",
@@ -231,6 +231,8 @@ class Frame:
                 shape_name = "state_panel"
             elif isinstance(self._design.shape, CohortSpec):
                 shape_name = "ltv"
+            elif isinstance(self._design.shape, TimeToEvent):
+                shape_name = "time_to_event"
             else:
                 shape_name = self._design.shape
             provenance = Provenance(

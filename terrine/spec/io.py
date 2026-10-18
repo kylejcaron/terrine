@@ -21,7 +21,7 @@ from terrine.spec.state_panel import (
     decode_cutpoint,
     encode_cutpoint,
 )
-from terrine.spec.trajectory import CohortSpec, Trajectory
+from terrine.spec.trajectory import CohortSpec, TimeToEvent, Trajectory
 from terrine.windows import Window
 
 __all__ = ["SCHEMA_VERSION", "canonical_json", "to_json", "from_json", "to_yaml", "from_yaml"]
@@ -124,6 +124,14 @@ def _encode(value: Any) -> Any:
             "type": "CohortSpec",
             "origin": value.origin,
             "trajectory": _encode(value.trajectory),
+        }
+    if isinstance(value, TimeToEvent):
+        return {
+            "type": "TimeToEvent",
+            "event": value.event,
+            "exit": value.exit,
+            "entry": value.entry,
+            "delayed_entry": value.delayed_entry,
         }
     if isinstance(value, Trajectory):
         return {
@@ -276,6 +284,14 @@ def _node(value: Any) -> Any:
     if tag == "CohortSpec":
         item = _object(value, {"type", "origin", "trajectory"})
         return CohortSpec(item["origin"], _node(item["trajectory"]))
+    if tag == "TimeToEvent":
+        item = _object(value, {"type", "event", "exit", "entry", "delayed_entry"})
+        return TimeToEvent(
+            item["event"],
+            exit=item["exit"],
+            entry=item["entry"],
+            delayed_entry=item["delayed_entry"],
+        )
     if tag == "Window":
         item = _object(value, {"type", "start", "end"})
         return Window(item["start"], item["end"])
