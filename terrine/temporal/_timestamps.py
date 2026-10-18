@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import operator
 from typing import Literal, cast
 
 import ibis
@@ -87,8 +86,26 @@ def compare_timestamps(
     right: ir.TimestampValue,
     op: Literal["lt", "le", "gt", "ge", "eq"],
 ) -> ir.BooleanValue:
-    """Compare the same exact ordering representation on both sides."""
-    return cast(
-        ir.BooleanValue,
-        getattr(operator, op)(timestamp_order_key(left), timestamp_order_key(right)),
+    left_key = timestamp_order_key(left)
+    right_key = timestamp_order_key(right)
+    left_rank, right_rank = left_key["rank"], right_key["rank"]
+    left_seconds, right_seconds = left_key["seconds"], right_key["seconds"]
+    left_nanos, right_nanos = left_key["nanos"], right_key["nanos"]
+    equal_rank = left_rank == right_rank
+    equal_seconds = left_seconds == right_seconds
+    equal = equal_rank & equal_seconds & (left_nanos == right_nanos)
+    greater = (left_rank > right_rank) | (
+        equal_rank & ((left_seconds > right_seconds) | (equal_seconds & (left_nanos > right_nanos)))
     )
+    less = (left_rank < right_rank) | (
+        equal_rank & ((left_seconds < right_seconds) | (equal_seconds & (left_nanos < right_nanos)))
+    )
+    if op == "eq":
+        return cast(ir.BooleanValue, equal)
+    if op == "gt":
+        return cast(ir.BooleanValue, greater)
+    if op == "ge":
+        return cast(ir.BooleanValue, greater | equal)
+    if op == "lt":
+        return cast(ir.BooleanValue, less)
+    return cast(ir.BooleanValue, less | equal)

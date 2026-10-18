@@ -140,12 +140,15 @@ def _persistent_contradictions(design: Design, model):
     events = normalize_events(
         model._relation(source.relation), source, source.entities[design.unit]
     )
-    end = ibis.literal(model.day_boundary(design.anchor.end).astimezone(UTC))
+    end = cast(
+        ir.TimestampScalar,
+        ibis.literal(model.day_boundary(design.anchor.end).astimezone(UTC)),
+    )
     value = events[prop.column]
     adopted = events.filter(
         compare_timestamps(
             events._timestamp,
-            ibis.literal(selector.history_start),
+            cast(ir.TimestampScalar, ibis.literal(selector.history_start)),
             "ge",
         )
         & compare_timestamps(events._timestamp, end, "lt")
@@ -154,7 +157,7 @@ def _persistent_contradictions(design: Design, model):
     reversed_state = events.filter(
         compare_timestamps(
             events._timestamp,
-            ibis.literal(selector.history_start),
+            cast(ir.TimestampScalar, ibis.literal(selector.history_start)),
             "ge",
         )
         & compare_timestamps(events._timestamp, end, "lt")
@@ -164,11 +167,9 @@ def _persistent_contradictions(design: Design, model):
     return (
         adopted.join(
             reversed_state,
-            [
-                adopted._unit == reversed_state._unit,
-                compare_timestamps(reversed_state.reversed_at, adopted.adopted_at, "gt"),
-            ],
+            [adopted._unit == reversed_state._unit],
         )
+        .filter(compare_timestamps(reversed_state.reversed_at, adopted.adopted_at, "gt"))
         .select(unit=adopted._unit)
         .distinct()
     )

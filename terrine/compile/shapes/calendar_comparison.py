@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
 import ibis
 from ibis.expr import types as ir
 
-from terrine.compile.anchors import AnchorTable, _utc_column
+from terrine.compile.anchors import AnchorTable, _precision_check, _utc_column
 from terrine.compile.columns import CompiledStudy, _validate_names, compile_columns
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
@@ -115,6 +116,7 @@ def _cohort_units(design: Design, model: Model, anchors: AnchorTable):
     events = normalize_events(
         model._relation(source.relation), source, source.entities[design.unit]
     )
+    precision = _precision_check(model, events, "_timestamp", source_column=source.timestamp_column)
     events = _utc_column(model, events, "_timestamp", "_timestamp_utc")
     timestamp = events._timestamp_utc
     if selector.property in source.facts:
@@ -144,7 +146,7 @@ def _cohort_units(design: Design, model: Model, anchors: AnchorTable):
         ],
     )
     cohorts = candidates.group_by("unit").aggregate(cohort_time=candidates.t0.min())
-    return cohorts, initiation
+    return cohorts, initiation, precision
 
 
 def _stack(
@@ -270,7 +272,9 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
     )
     compiled = compile_columns(base, model)
     anchors = compiled._anchors
-    cohort_units, initiation_times = _cohort_units(design, model, anchors)
+    cohort_units, initiation_times, cohort_precision = _cohort_units(design, model, anchors)
+    if cohort_precision is not None:
+        anchors = replace(anchors, _checks=(*anchors._checks, cohort_precision))
     outcome_window_end = max(
         (node.window.end for node in design.outcomes.values() if isinstance(node, MetricAgg)),
         default=0,

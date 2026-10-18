@@ -54,6 +54,38 @@ def test_calendar_cohorts_normalize_naive_source_timestamps_to_utc(native_inputs
     assert datetime(2025, 1, 4, 4, tzinfo=UTC) in initiation_times
 
 
+def test_calendar_cohort_refuses_submicrosecond_initiation_timestamps(native_inputs):
+    import pytest
+
+    from terrine.errors import TerrineError
+
+    catalog, con = native_inputs
+    con.raw_sql("ALTER TABLE events ALTER COLUMN ts TYPE TIMESTAMP_NS")
+    con.raw_sql(
+        "UPDATE events SET ts = TIMESTAMP_NS '2025-01-04 00:00:00.000000001' WHERE user_id = 'a'"
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={"events": Coverage("2025-01-01", "2025-01-12")},
+        units={"user": UnitSource("users", "user_id")},
+        event_ids={"events": "event_id"},
+    )
+    frame = CalendarComparisonPanel(
+        Design("user", Schedule("1d", "2025-01-01", "2025-01-12")),
+        model,
+        cohort=Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+        control="not_yet_treated",
+        reference_period=-1,
+        comparison_periods=(0,),
+    )
+
+    with pytest.raises(TerrineError) as error:
+        frame.materialize(Budget(max_rows=200, max_output_bytes=1_000_000))
+
+    assert error.value.code == "terrine.compile.anchor_timestamp_precision"
+
+
 def test_calendar_comparison_materializes_roster_controls_for_both_modes(native_inputs):
     catalog, con = native_inputs
     con.insert("users", pa.table({"user_id": ["c", "d", "e"], "alt_id": ["cc", "dd", "ee"]}))
