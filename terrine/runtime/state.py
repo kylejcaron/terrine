@@ -87,6 +87,11 @@ class RuntimeStore:
             "created_at VARCHAR NOT NULL, supersedes VARCHAR, "
             "superseded_by VARCHAR, PRIMARY KEY(dataset, generation))"
         )
+        self.con.execute(
+            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_generation_pins ("
+            "dataset VARCHAR NOT NULL, generation VARCHAR NOT NULL, reader VARCHAR NOT NULL, "
+            "PRIMARY KEY(dataset, generation, reader))"
+        )
 
     def write_generation(
         self,
@@ -173,6 +178,83 @@ class RuntimeStore:
             GenerationRef(self.namespace, ref.dataset, supersedes) if supersedes else None,
             GenerationRef(self.namespace, ref.dataset, superseded_by) if superseded_by else None,
         )
+
+    def generations(self) -> tuple[GenerationRecord, ...]:
+        rows = self.con.execute(
+            f"SELECT dataset, generation FROM {self._schema}.runtime_generations "
+            "ORDER BY dataset, generation"
+        ).fetchall()
+        records = tuple(
+            self.read_generation(GenerationRef(self.namespace, dataset, generation))
+            for dataset, generation in rows
+        )
+        return tuple(record for record in records if record is not None)
+
+    def pin_generation(self, ref: GenerationRef, reader: str) -> None:
+        self._check_ref(ref)
+        if not reader:
+            raise ValueError("reader must not be empty")
+        if self.read_generation(ref) is None:
+            raise ValueError("cannot pin an absent generation")
+        self.con.execute(
+            f"INSERT INTO {self._schema}.runtime_generation_pins VALUES (?, ?, ?) "
+            "ON CONFLICT DO NOTHING",
+            [ref.dataset, ref.generation, reader],
+        )
+
+    def unpin_generation(self, ref: GenerationRef, reader: str) -> None:
+        self._check_ref(ref)
+        self.con.execute(
+            f"DELETE FROM {self._schema}.runtime_generation_pins "
+            "WHERE dataset=? AND generation=? AND reader=?",
+            [ref.dataset, ref.generation, reader],
+        )
+
+    def delete_generation(self, ref: GenerationRef) -> None:
+        self._check_ref(ref)
+        row = self.con.execute(
+            f"SELECT superseded_by FROM {self._schema}.runtime_generations "
+            "WHERE dataset=? AND generation=?",
+            [ref.dataset, ref.generation],
+        ).fetchone()
+        if row is None or row[0] is None:
+            raise ValueError("only explicitly superseded generations can be collected")
+        pin = self.con.execute(
+            f"SELECT 1 FROM {self._schema}.runtime_generation_pins "
+            "WHERE dataset=? AND generation=? LIMIT 1",
+            [ref.dataset, ref.generation],
+        ).fetchone()
+        if pin is not None:
+            raise ValueError("pinned generations cannot be collected")
+        self.con.execute("BEGIN TRANSACTION")
+        try:
+            partition_catalog = self.con.execute(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema=? AND table_name='runtime_partitions'",
+                [self.namespace],
+            ).fetchone()
+            if partition_catalog is not None:
+                partitions = self.con.execute(
+                    f"SELECT table_name FROM {self._schema}.runtime_partitions "
+                    "WHERE dataset=? AND generation=?",
+                    [ref.dataset, ref.generation],
+                ).fetchall()
+                for (table_name,) in partitions:
+                    quoted_table = '"' + table_name.replace('"', '""') + '"'
+                    self.con.execute(f"DROP TABLE IF EXISTS {self._schema}.{quoted_table}")
+                self.con.execute(
+                    f"DELETE FROM {self._schema}.runtime_partitions "
+                    "WHERE dataset=? AND generation=?",
+                    [ref.dataset, ref.generation],
+                )
+            self.con.execute(
+                f"DELETE FROM {self._schema}.runtime_generations WHERE dataset=? AND generation=?",
+                [ref.dataset, ref.generation],
+            )
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
 
     def _check_ref(self, ref: GenerationRef) -> None:
         if ref.namespace != self.namespace:
