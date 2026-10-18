@@ -173,6 +173,50 @@ def test_readiness_only_noop_plan_satisfies_strict_scan_budget():
     assert plan.tasks == ()
 
 
+def test_definition_change_starts_new_fingerprint():
+    first_graph = dependency_graph(sources=("events",), definition_hash="v1")
+    next_graph = dependency_graph(sources=("events",), definition_hash="v2")
+    first = plan_refresh(
+        namespace="owner",
+        dataset="study",
+        definition_hash="v1",
+        snapshot_id="snap",
+        graph=first_graph,
+    )
+    next_plan = plan_refresh(
+        namespace="owner",
+        dataset="study",
+        definition_hash="v2",
+        snapshot_id="snap",
+        graph=next_graph,
+        changes=ChangeSet((Change("definition", "events"),), "revision"),
+    )
+    assert first.recipe.fingerprint != next_plan.recipe.fingerprint
+
+
+def test_event_anchor_identity_change_rebuilds_all_source_partitions():
+    graph = dependency_graph(
+        sources=("events",),
+        definition_hash="d",
+        partitions=("2025-01", "2025-02"),
+    )
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="study",
+        definition_hash="d",
+        snapshot_id="snap",
+        graph=graph,
+        changes=ChangeSet(
+            (Change("insert", "events", after_key_range=("earlier-event", "earlier-event")),),
+            "change_feed",
+        ),
+    )
+    assert {task.partition for task in plan.tasks if task.layer == "frame"} == {
+        "2025-01",
+        "2025-02",
+    }
+
+
 def test_delimiter_fields_do_not_collide_in_task_identities():
     graph_a = dependency_graph(sources=("a:b",), definition_hash="def", partitions=("c",))
     graph_b = dependency_graph(sources=("a",), definition_hash="def", partitions=("b:c",))
