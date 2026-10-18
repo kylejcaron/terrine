@@ -22,9 +22,11 @@ def _trajectory_model():
             ('u3', TIMESTAMPTZ '2025-01-15 00:00:00+00', 'purchase', 0::BIGINT)
         ) AS e(user_id, ts, kind, amount)
     """)
+    con.raw_sql("ALTER TABLE events ADD COLUMN decimal_amount DECIMAL(18, 2)")
+    con.raw_sql("UPDATE events SET decimal_amount = amount::DECIMAL(18, 2) / 100")
     con.raw_sql("ALTER TABLE events ADD COLUMN float_amount DOUBLE")
-    con.raw_sql("UPDATE events SET float_amount = amount::DOUBLE")
     con.raw_sql("CREATE TABLE users AS SELECT * FROM (VALUES ('u1'), ('u2'), ('u3')) AS u(id)")
+    con.raw_sql("UPDATE events SET float_amount = amount::DOUBLE / 100")
     catalog = Catalog.model_validate(
         {
             "schema_version": 1,
@@ -35,7 +37,7 @@ def _trajectory_model():
                     "relation": {"kind": "table", "name": "events"},
                     "timestamp": "ts",
                     "entities": {"user": "user_id"},
-                    "facts": ["purchase", "revenue", "float_revenue"],
+                    "facts": ["purchase", "revenue", "decimal_revenue", "float_revenue"],
                     "properties": ["kind"],
                     "dimensions": [],
                 }
@@ -43,6 +45,7 @@ def _trajectory_model():
             "facts": {
                 "purchase": {"source": "events", "column": None},
                 "revenue": {"source": "events", "column": "amount"},
+                "decimal_revenue": {"source": "events", "column": "decimal_amount"},
                 "float_revenue": {"source": "events", "column": "float_amount"},
             },
             "properties": {
@@ -56,10 +59,16 @@ def _trajectory_model():
             "dimensions": {},
             "measures": {
                 "net_revenue_sum": {"fact": "revenue", "aggregation": "sum"},
+                "decimal_revenue_sum": {"fact": "decimal_revenue", "aggregation": "sum"},
                 "float_revenue_sum": {"fact": "float_revenue", "aggregation": "sum"},
             },
             "metrics": {
                 "net_revenue": {"kind": "mean", "entity": "user", "measure": "net_revenue_sum"},
+                "decimal_revenue": {
+                    "kind": "mean",
+                    "entity": "user",
+                    "measure": "decimal_revenue_sum",
+                },
                 "float_revenue": {
                     "kind": "mean",
                     "entity": "user",

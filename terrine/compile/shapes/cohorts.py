@@ -62,15 +62,27 @@ def compile_cohorts(
         if f"{value_column}_reason" in table.columns
         else ibis.null().cast("string"),
     )
+    numeric_type = per_unit._value.type()
+    if grouping.statistic == "total":
+        observed_value = per_unit._value.sum()
+    elif numeric_type.is_integer():
+        observed_value = (
+            per_unit._value.cast("decimal(38, 0)").sum()
+            / per_unit._value.notnull().cast("int64").sum()
+        )
+    elif numeric_type.is_decimal():
+        observed_value = (
+            per_unit._value.cast(f"decimal(38, {numeric_type.scale})").sum()
+            / per_unit._value.notnull().cast("int64").sum()
+        )
+    else:
+        observed_value = (
+            per_unit._value.sum() / per_unit._value.notnull().cast("int64").sum()
+        )
     groups = per_unit.group_by("bucket_index", "age").aggregate(
         observable=per_unit._complete.cast("int64").sum(),
         _value_count=per_unit._value.notnull().cast("int64").sum(),
-        _observed_value=(
-            per_unit._value.sum()
-            if grouping.statistic == "total"
-            else per_unit._value.cast("decimal(38, 0)").sum()
-            / per_unit._value.notnull().cast("int64").sum()
-        ),
+        _observed_value=observed_value,
         _mature=per_unit._mature.max(),
         _reason=per_unit._reason.first(),
     )

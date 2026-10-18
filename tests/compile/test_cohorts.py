@@ -277,3 +277,35 @@ def test_exact_integer_values_are_summed_before_cohort_mean_conversion():
         assert group["value"] == 0.5
     finally:
         con.disconnect()
+def test_cohort_mean_preserves_fractional_decimal_and_float_values():
+    con, model = _trajectory_model()
+    try:
+        con.raw_sql(
+            "UPDATE events SET decimal_amount = 0.25, float_amount = 0.25 "
+            "WHERE kind = 'revenue'"
+        )
+        con.raw_sql(
+            "INSERT INTO events (user_id, ts, kind, amount, decimal_amount, float_amount) VALUES "
+            "('u2', TIMESTAMPTZ '2025-01-03 00:00:00+00', 'revenue', 0, 0.25, 0.25)"
+        )
+        grouping = CohortGrouping(
+            bucket="7d", bucket_origin=datetime(2025, 1, 1, tzinfo=UTC), statistic="mean"
+        )
+        for metric in ("decimal_revenue", "float_revenue"):
+            frame = Design(
+                "user",
+                EventAnchor("purchase", which="first"),
+                shape=CohortSpec(
+                    origin="purchase",
+                    trajectory=Trajectory(metric, "7d", periods=1, cumulative=False),
+                ),
+            ).build(model)
+            rows = (
+                frame.cohorts(grouping=grouping, value_column="period_value")
+                .to_pyarrow()
+                .to_pylist()
+            )
+            group = next(row for row in rows if row["bucket_index"] == 0 and row["age"] == 0)
+            assert group["value"] == 0.25
+    finally:
+        con.disconnect()
