@@ -393,6 +393,33 @@ def test_event_time_selector_and_relative_metric_execute(column_model):
     assert timing.relative_offsets == (0, 1)
     assert timing.support_seconds == (0, 2)
     assert timing.selector_support_seconds[timing.selector_ref] == (0, 1)
+    assert timing.point_time_column in rows[0]
+    assert timing.start_bound_column in rows[0]
+    assert timing.end_bound_column in rows[0]
+    assert rows[0][timing.point_time_column] == datetime(2025, 1, 2, 12, tzinfo=UTC)
+    assert rows[0][timing.start_bound_column] == datetime(2025, 1, 2, 12, tzinfo=UTC)
+    assert rows[0][timing.end_bound_column] == datetime(2025, 1, 2, 12, 0, 1, tzinfo=UTC)
+    assert compiled.feature_cutoffs == {}
+
+
+def test_relative_feature_cutoff_uses_absolute_support_and_selector_refs(column_model):
+    first = event_time("amount", window=("-2d", "-1d"))
+    second = event_time("amount", window=("0s", "1h"), relative_to=first)
+    compiled = _compile(
+        column_model,
+        features={"relative_metric": agg("total", window=("0s", "1h"), relative_to=second)},
+    )
+    timing = compiled.expression_timings["relative_metric"]
+    cutoff = compiled.feature_cutoffs["relative_metric"]
+    assert timing.support_seconds == (-172800, -79200)
+    assert len(timing.selector_dependencies) == 2
+    assert len(timing.selector_support_seconds) == 2
+    assert timing.selector_ref == repr(second)
+    assert cutoff.latest_seconds == -79200
+    row = column_model.con.to_pyarrow(compiled.table).to_pylist()[0]
+    assert timing.point_time_column in row
+    assert timing.start_bound_column in row
+    assert timing.end_bound_column in row
 
 
 def test_relative_attribute_asof_uses_selected_event_time(column_model):
@@ -409,6 +436,77 @@ def test_relative_attribute_asof_uses_selected_event_time(column_model):
     assert timing.support_seconds == (0, 1)
 
 
+def test_event_time_selector_requires_source_readiness_for_its_full_search_window(column_model):
+    selector = event_time("amount", window=("2d", "3d"))
+    compiled = _compile(column_model, outcomes={"selected_at": selector})
+    compiled.validate(execute=column_model.con.to_pyarrow)
+    rows = column_model.con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
+    meta = compiled.columns["selected_at"]
+    assert meta.complete_column is not None
+    assert meta.reason_column is not None
+    assert all(row[meta.complete_column] is False for row in rows)
+    assert all(row[meta.reason_column] == "incomplete_coverage" for row in rows)
+
+
+def test_event_time_selector_resolves_dimension_backed_label_property(column_model):
+    con = column_model.con
+    con.raw_sql("""
+        CREATE TABLE tier_history AS SELECT 'a' AS id, 'gold' AS tier,
+            TIMESTAMPTZ '2024-12-01' AS starts, TIMESTAMPTZ '2025-02-01' AS ends
+    """)
+    definition = column_model.catalog.model_dump(mode="python")
+    definition["sources"]["events"]["dimensions"] = ("history",)
+    definition["properties"]["tier"]["dimension"] = "history"
+    definition["dimensions"]["history"] = {
+        "relation": {"kind": "table", "name": "tier_history"},
+        "source_entity": "user",
+        "entity_column": "id",
+        "properties": ("tier",),
+        "validity": {"valid_from": "starts", "valid_to": "ends"},
+    }
+    model = Model.from_catalog(
+        Catalog.model_validate(definition),
+        con=con,
+        readiness=column_model.readiness,
+        units=column_model.units,
+    )
+    selector = event_time("amount", window=("0s", "1s"), label_property="tier", equals="gold")
+    compiled = _compile(model, outcomes={"selected_at": selector})
+    compiled.validate(execute=con.to_pyarrow)
+    rows = con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
+    assert rows[0]["selected_at"] == datetime(2025, 1, 2, 12, tzinfo=UTC)
+    assert rows[1]["selected_at"] is None
+
+
+def test_event_time_selector_metadata_distinguishes_known_absence_and_missing_origin(
+    column_model,
+):
+    known_absent = event_time("amount", window=("-2s", "-1s"))
+    selected = event_time("amount", window=("0s", "1s"))
+    compiled = _compile(
+        column_model,
+        eligibility={"known_absent": is_null(known_absent)},
+        outcomes={
+            "selected_at": selected,
+            "selected_amount": agg("total", window=("0s", "1s"), relative_to=selected),
+        },
+    )
+    compiled.validate(execute=column_model.con.to_pyarrow)
+    rows = column_model.con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
+    assert [row["known_absent"] for row in rows] == [True, True]
+    selector_meta = compiled.columns["selected_at"]
+    assert selector_meta.complete_column is not None
+    assert selector_meta.reason_column is not None
+    assert rows[1]["selected_at"] is None
+    assert rows[1][selector_meta.complete_column] is True
+    amount_meta = compiled.columns["selected_amount"]
+    assert amount_meta.complete_column is not None
+    assert amount_meta.reason_column is not None
+    assert rows[1]["selected_amount"] is None
+    assert rows[1][amount_meta.complete_column] is False
+    assert rows[1][amount_meta.reason_column] == "missing_selector_origin"
+
+
 def test_event_time_selector_refuses_ambiguous_timestamp_ties(column_model):
     column_model.con.raw_sql("""
         INSERT INTO events VALUES
@@ -422,3 +520,94 @@ def test_event_time_selector_refuses_ambiguous_timestamp_ties(column_model):
         compiled.validate(execute=column_model.con.to_pyarrow)
     assert error.value.code == "terrine.compile.anchor_integrity"
     assert error.value.context["check_key"] == "tied_event_timestamps"
+
+
+def test_event_time_selector_respects_unit_observation_interval(column_model):
+    con = column_model.con
+    con.create_table(
+        "observed_users",
+        ibis.memtable(
+            {
+                "id": ["a", "b"],
+                "observed_from": [
+                    datetime(2025, 1, 1, tzinfo=UTC),
+                    datetime(2025, 1, 1, tzinfo=UTC),
+                ],
+                "observed_until": [
+                    datetime(2025, 1, 3, tzinfo=UTC),
+                    datetime(2025, 1, 2, 11, 59, 59, tzinfo=UTC),
+                ],
+            }
+        ),
+    )
+    model = Model.from_catalog(
+        column_model.catalog,
+        con=con,
+        units={
+            "user": UnitSource(
+                "observed_users",
+                "id",
+                observed_from="observed_from",
+                observed_until="observed_until",
+            )
+        },
+        readiness=column_model.readiness,
+    )
+    compiled = _compile(model, outcomes={"selected_at": event_time("amount", window=("0s", "1s"))})
+    compiled.validate(execute=con.to_pyarrow)
+    rows = con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
+    meta = compiled.columns["selected_at"]
+    assert meta.complete_column is not None and meta.reason_column is not None
+    assert rows[0][meta.complete_column] is True
+    assert rows[1][meta.complete_column] is False
+    assert rows[1][meta.reason_column] == "incomplete_observation"
+
+
+def test_event_time_selector_normalizes_naive_source_timestamps_to_utc(column_model):
+    con = column_model.con
+    con.raw_sql("""
+        CREATE TABLE naive_events AS
+        SELECT user_id, TIMESTAMP '2025-01-02 12:00:00' AS ts, amount, tier
+        FROM events
+        WHERE user_id = 'a' AND ts = TIMESTAMPTZ '2025-01-02 12:00:00+00'
+    """)
+    definition = column_model.catalog.model_dump(mode="python")
+    definition["sources"]["events"]["relation"] = {"kind": "table", "name": "naive_events"}
+    model = Model.from_catalog(
+        Catalog.model_validate(definition),
+        con=con,
+        readiness=column_model.readiness,
+        units=column_model.units,
+    )
+    compiled = _compile(model, outcomes={"selected_at": event_time("amount", window=("0s", "1s"))})
+    compiled.validate(execute=con.to_pyarrow)
+    row = con.to_pyarrow(compiled.table).to_pylist()[0]
+    assert row["selected_at"] == datetime(2025, 1, 2, 12, tzinfo=UTC)
+
+
+def test_event_time_selector_treats_value_less_fact_as_row_occurrence(column_model):
+    con = column_model.con
+    con.raw_sql("""
+        CREATE TABLE row_events AS
+        SELECT user_id, ts, amount, tier,
+            row_number() OVER (PARTITION BY user_id ORDER BY ts) AS event_id
+        FROM events
+    """)
+    definition = column_model.catalog.model_dump(mode="python")
+    definition["sources"]["events"]["relation"] = {"kind": "table", "name": "row_events"}
+    definition["sources"]["events"]["facts"] = ("amount", "presence")
+    definition["facts"]["presence"] = {"source": "events", "column": None}
+    model = Model.from_catalog(
+        Catalog.model_validate(definition),
+        con=con,
+        readiness=column_model.readiness,
+        units=column_model.units,
+        event_ids={"events": "event_id"},
+    )
+    compiled = _compile(
+        model, outcomes={"selected_at": event_time("presence", window=("0s", "1s"))}
+    )
+    compiled.validate(execute=con.to_pyarrow)
+    rows = con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
+    assert rows[0]["selected_at"] == datetime(2025, 1, 2, 12, tzinfo=UTC)
+    assert rows[1]["selected_at"] is None

@@ -6,14 +6,22 @@ import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 import ibis
+import ibis.expr.types as ir
 import pyarrow as pa
 
 from terrine.compile._asof import compile_asof
 from terrine.compile._predicates import CompiledValue, compile_predicate
-from terrine.compile.anchors import AnchorTable, _integrity_check, _unique_checks, compile_anchors
+from terrine.compile.anchors import (
+    AnchorTable,
+    _integrity_check,
+    _precision_check,
+    _unique_checks,
+    _utc_column,
+    compile_anchors,
+)
 from terrine.data import ColumnMeta, ExpressionTiming, FeatureCutoff, Roles, SequenceMeta
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
@@ -25,7 +33,11 @@ from terrine.spec.expressions import And, AttributeAsOf, Eq, EventTime, Expr
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE
 from terrine.spec.validate import _fixed_anchors
 from terrine.temporal.aggregate import aggregate_window
-from terrine.temporal.attributes import enrich_events, validate_history
+from terrine.temporal.attributes import (
+    _enriched_property_columns,
+    enrich_events,
+    validate_history,
+)
 from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
 from terrine.temporal.prefix import sparse_prefix
 
@@ -153,6 +165,7 @@ def compile_columns(
     columns, feature_cutoffs, eligibility_cutoffs, strategies = {}, {}, {}, {}
     public: dict[str, str] = {}
     selector_identity_columns: dict[str, str] = {}
+    source_property_columns = {}
     fixed = (
         _fixed_anchors(design, model) if isinstance(design.anchor, (FixedDate, Schedule)) else None
     )
@@ -174,15 +187,31 @@ def compile_columns(
             events = normalize_events(
                 raw, source, source.entities[design.unit], extra_columns=extra_columns
             )
+            precision = _precision_check(
+                model, events, "_timestamp", source_column=source.timestamp_column
+            )
+            if precision is not None:
+                selector_identity_checks.append(precision)
+            timestamp_alias = "__terrine_selector_timestamp"
+            suffix = 0
+            while timestamp_alias in events.columns:
+                suffix += 1
+                timestamp_alias = f"__terrine_selector_timestamp_{suffix}"
+            utc_events = _utc_column(model, events, "_timestamp", timestamp_alias)
+            events = utc_events.drop("_timestamp").rename(_timestamp=timestamp_alias)
             histories = {}
             for dimension in source.dimensions:
                 history = model._relation(dimension.relation)
                 histories[dimension.name] = history
                 checks.append(_HistoryValidation(history, dimension))
+            source_property_columns[source_name] = _enriched_property_columns(
+                source.dimensions, events.columns
+            )
             sources[source_name] = enrich_events(events, source, histories)
         return sources[source_name]
 
     selector_columns: dict[EventTime, str] = {}
+    selector_metadata = {}
 
     def resolve_selector(selector: EventTime, source_anchors: ibis.Table) -> tuple[ibis.Table, str]:
         origin = source_anchors
@@ -192,14 +221,13 @@ def compile_columns(
         source = model.sources[fact.source]
         events = events_for(source.name)
         fact_column = source.facts[selector.fact]
-        if fact_column is None:
-            raise _UNSUPPORTED_SHAPE.error()
         predicates = [
             origin.unit == events["_unit"],
             events["_timestamp"] >= origin.t0 + ibis.interval(seconds=selector.window.start),
             events["_timestamp"] < origin.t0 + ibis.interval(seconds=selector.window.end),
-            events[fact_column].notnull(),
         ]
+        if fact_column is not None:
+            predicates.append(events[fact_column].notnull())
         identity = selector_identity_columns.get(source.name)
         if source.name not in checked_selector_sources:
             checked_selector_sources.add(source.name)
@@ -221,10 +249,80 @@ def compile_columns(
                 selector_identity_checks.append(_integrity_check("tied_event_timestamps", ties))
         if selector.label_property is not None:
             binding = source.properties.get(selector.label_property)
-            if binding is None or binding.dimension_name is not None or binding.column is None:
+            if binding is None:
                 raise _UNSUPPORTED_SHAPE.error()
-            predicates.append(events[binding.column] == selector.equals)
-        joined = origin.join(events, predicates=predicates)
+            if binding.dimension_name is None:
+                if binding.column is None:
+                    raise _UNSUPPORTED_SHAPE.error()
+                property_column = binding.column
+                predicates.append(events[property_column] == selector.equals)
+            else:
+                property_value, property_found = source_property_columns[source.name][
+                    (binding.dimension_name, selector.label_property)
+                ]
+                predicates.extend(
+                    [events[property_found], events[property_value] == selector.equals]
+                )
+
+        index = len(selector_columns)
+        column = f"__terrine_selector_time_{index}"
+        metadata = {
+            "complete": f"__terrine_selector_complete_{index}",
+            "reason": f"__terrine_selector_reason_{index}",
+            "observed_from": f"__terrine_selector_observed_from_{index}",
+            "observed_until": f"__terrine_selector_observed_until_{index}",
+            "start_bound": f"__terrine_selector_start_{index}",
+            "end_bound": f"__terrine_selector_end_{index}",
+        }
+        start_bound = origin.t0 + ibis.interval(seconds=selector.window.start)
+        end_bound = origin.t0 + ibis.interval(seconds=selector.window.end)
+        coverage = model.readiness.for_fact(source.name)
+        source_ready = (start_bound >= ibis.literal(coverage.start)) & (
+            end_bound <= ibis.literal(coverage.end_exclusive)
+        )
+        unit_observed = cast(ir.BooleanValue, ibis.literal(True))
+        if "_observed_from" in origin.columns:
+            unit_observed &= origin._observed_from.isnull() | (origin._observed_from <= start_bound)
+        if "_observed_until" in origin.columns:
+            unit_observed &= origin._observed_until.isnull() | (origin._observed_until >= end_bound)
+        parent_complete = cast(ir.BooleanValue, ibis.literal(True))
+        parent_reason = cast(ir.StringValue, ibis.literal(None, type="string"))
+        if selector.relative_to is not None:
+            parent = selector_metadata[selector.relative_to]
+            parent_complete = origin[parent["complete"]]
+            parent_reason = origin[parent["reason"]]
+        origin_present = origin.t0.notnull()
+        complete = (origin_present & source_ready & unit_observed & parent_complete).fill_null(
+            False
+        )
+        reason = ibis.cases(
+            (~origin_present, "missing_selector_origin"),
+            (~source_ready, "incomplete_coverage"),
+            (~unit_observed, "incomplete_observation"),
+            (~parent_complete, parent_reason.fill_null(ibis.literal("incomplete_selector"))),
+            else_=ibis.null().cast("string"),
+        )
+        observed_from = ibis.literal(coverage.start)
+        observed_until = ibis.literal(coverage.end_exclusive)
+        if "_observed_from" in origin.columns:
+            observed_from = ibis.greatest(
+                observed_from, origin._observed_from.fill_null(coverage.start)
+            )
+        if "_observed_until" in origin.columns:
+            observed_until = ibis.least(
+                observed_until, origin._observed_until.fill_null(coverage.end_exclusive)
+            )
+        candidates = origin.mutate(
+            **{
+                metadata["complete"]: complete,
+                metadata["reason"]: reason,
+                metadata["observed_from"]: observed_from,
+                metadata["observed_until"]: observed_until,
+                metadata["start_bound"]: start_bound,
+                metadata["end_bound"]: end_bound,
+            }
+        )
+        joined = candidates.join(events, predicates=predicates)
         order = [joined["_timestamp"]]
         if identity is not None:
             order.append(joined[identity])
@@ -236,25 +334,58 @@ def compile_columns(
         occurrence = selector.n if selector.occurrence == "nth" else 1
         if occurrence is None:
             raise _UNSUPPORTED_SHAPE.error()
-        occurrence -= 1
-        selected = ranked.filter(ranked.__terrine_selector_rank == occurrence).select(
+        selected = ranked.filter(ranked.__terrine_selector_rank == occurrence - 1).select(
             __selector_unit=ranked.unit,
             __selector_anchor=ranked.anchor_id,
             __selector_time=ranked["_timestamp"],
         )
-        column = f"__terrine_selector_time_{len(selector_columns)}"
-        left = source_anchors
+        left = candidates
         right = selected
         joined_anchors = left.left_join(
             right,
             [left.unit == right.__selector_unit, left.anchor_id == right.__selector_anchor],
         ).select(
-            **{name: left[name] for name in left.columns if name != "t0"},
-            t0=right.__selector_time,
-            **{column: right.__selector_time},
+            **{name: left[name] for name in left.columns if name not in {"t0", *metadata.values()}},
+            t0=ibis.ifelse(left[metadata["complete"]], right.__selector_time, ibis.null()),
+            **{column: ibis.ifelse(left[metadata["complete"]], right.__selector_time, ibis.null())},
+            **{name: left[name] for name in metadata.values()},
         )
         selector_columns[selector] = column
+        selector_metadata[selector] = metadata
         return joined_anchors, column
+
+    def selector_timing(selector: EventTime):
+        if selector.relative_to is None:
+            origin_support = (0, 0)
+            dependencies = {}
+        else:
+            origin_support, dependencies = selector_timing(selector.relative_to)
+        support = (
+            origin_support[0] + selector.window.start,
+            origin_support[1] + selector.window.end,
+        )
+        reference = repr(selector)
+        return support, {**dependencies, reference: support}
+
+    def attach_anchor_fields(
+        result_table: ibis.Table,
+        anchor_source: ibis.Table,
+        fields: Mapping[str, ir.Value],
+    ) -> ibis.Table:
+        if not fields:
+            return result_table
+        anchor_fields = anchor_source.select(
+            **{key: anchor_source[key] for key in _ANCHOR_KEY}, **fields
+        )
+        joined = result_table.left_join(
+            anchor_fields, [result_table[key] == anchor_fields[key] for key in _ANCHOR_KEY]
+        )
+        return joined.select(
+            **{name: result_table[name] for name in result_table.columns},
+            **{name: anchor_fields[name] for name in fields},
+        )
+
+    timing_column_refs = {}
 
     def expression(node: Expr) -> CompiledValue:
         nonlocal table
@@ -266,12 +397,30 @@ def compile_columns(
         selector_point_column: str | None = None
         if isinstance(node, EventTime):
             expression_anchors, selector_point_column = resolve_selector(node, expression_anchors)
+            selector_meta = selector_metadata[node]
             result_table = expression_anchors.select(
                 **{key: expression_anchors[key] for key in _ANCHOR_KEY},
                 **{output: expression_anchors[selector_point_column]},
+                **{
+                    selector_meta[field]: expression_anchors[selector_meta[field]]
+                    for field in ("observed_from", "observed_until", "complete", "reason")
+                },
             )
-            meta = ColumnMeta(None, "event_time", None, None, None, None)
-            cutoff = FeatureCutoff(0, True, "retrospective_effective_time")
+            meta = ColumnMeta(
+                None,
+                "event_time",
+                selector_meta["observed_from"],
+                selector_meta["observed_until"],
+                selector_meta["complete"],
+                selector_meta["reason"],
+            )
+            selector_support, _ = selector_timing(node)
+            cutoff = FeatureCutoff(selector_support[1], True, "retrospective_effective_time")
+            timing_column_refs[node] = (
+                output,
+                selector_meta["start_bound"],
+                selector_meta["end_bound"],
+            )
             strategy = "event_time_selector"
             result = None
         else:
@@ -295,7 +444,12 @@ def compile_columns(
                 role="feature",
             )
             meta = result.meta
-            cutoff = FeatureCutoff(node.before, True, "retrospective_effective_time")
+            cutoff_seconds = (
+                selector_timing(relative)[0][1] + node.before
+                if relative is not None
+                else node.before
+            )
+            cutoff = FeatureCutoff(cutoff_seconds, True, "retrospective_effective_time")
             strategy = "strict_history"
             result_table = result.table
         elif not isinstance(node, EventTime):
@@ -349,9 +503,93 @@ def compile_columns(
                 resolution=resolution,
             )
             meta = result.columns[output]
-            cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
+            cutoff_seconds = (
+                selector_timing(relative)[0][1] + node.window.end
+                if relative is not None
+                else node.window.end
+            )
+            cutoff = FeatureCutoff(cutoff_seconds, True, "retrospective_effective_time")
             strategy = f"sparse_{resolution}_prefix/native"
             result_table = result.table
+
+        if relative is not None and selector_point_column is None:
+            raise _UNSUPPORTED_SHAPE.error()
+        relative_point_column = selector_point_column or "t0"
+        anchor_fields = {}
+        if isinstance(node, EventTime):
+            selector_meta = selector_metadata[node]
+            timing_refs = (
+                output,
+                selector_meta["start_bound"],
+                selector_meta["end_bound"],
+            )
+            anchor_fields[selector_meta["start_bound"]] = expression_anchors[
+                selector_meta["start_bound"]
+            ]
+            anchor_fields[selector_meta["end_bound"]] = expression_anchors[
+                selector_meta["end_bound"]
+            ]
+        else:
+            relative_point_column = selector_point_column or "t0"
+            offsets = (
+                (node.before, node.before)
+                if isinstance(node, AttributeAsOf)
+                else (node.window.start, node.window.end)
+            )
+            point_name = f"{output}_point_time"
+            start_name = f"{output}_start_bound"
+            end_name = f"{output}_end_bound"
+            point = (
+                expression_anchors[relative_point_column]
+                if relative is not None
+                else expression_anchors.t0
+            )
+            anchor_fields[point_name] = point
+            anchor_fields[start_name] = point + ibis.interval(seconds=offsets[0])
+            anchor_fields[end_name] = point + ibis.interval(seconds=offsets[1])
+            timing_refs = (point_name, start_name, end_name)
+            timing_column_refs[node] = timing_refs
+
+        if relative is not None and not isinstance(node, EventTime):
+            selector_meta = selector_metadata[relative]
+            origin_complete_name = f"{output}_selector_complete"
+            origin_reason_name = f"{output}_selector_reason"
+            origin_point_name = f"{output}_selector_point"
+            anchor_fields[origin_complete_name] = expression_anchors[selector_meta["complete"]]
+            anchor_fields[origin_reason_name] = expression_anchors[selector_meta["reason"]]
+            anchor_fields[origin_point_name] = expression_anchors[relative_point_column]
+
+        result_table = attach_anchor_fields(result_table, expression_anchors, anchor_fields)
+        if relative is not None and not isinstance(node, EventTime):
+            complete_column = meta.complete_column
+            reason_column = meta.reason_column
+            if complete_column is None or reason_column is None:
+                raise _UNSUPPORTED_SHAPE.error()
+            origin_complete = result_table[origin_complete_name]
+            has_origin = result_table[origin_point_name].notnull()
+            result_complete = result_table[complete_column]
+            result_reason = result_table[reason_column]
+            combined_complete = f"{output}_relative_complete"
+            combined_reason = f"{output}_relative_reason"
+            result_table = result_table.mutate(
+                **{
+                    output: ibis.ifelse(
+                        origin_complete & has_origin,
+                        result_table[output],
+                        ibis.null().cast(result_table[output].type()),
+                    ),
+                    combined_complete: (origin_complete & has_origin & result_complete).fill_null(
+                        False
+                    ),
+                    combined_reason: ibis.cases(
+                        (~origin_complete, result_table[origin_reason_name]),
+                        (~has_origin, "missing_selector_origin"),
+                        (~result_complete, result_reason),
+                        else_=ibis.null().cast("string"),
+                    ),
+                }
+            )
+            meta = replace(meta, complete_column=combined_complete, reason_column=combined_reason)
         # Each value derives from the candidates independently, then joins back by
         # null-safe anchor identity, so query nesting does not grow with column count.
         # Internal support names are only unique within one result; rename them here.
@@ -360,10 +598,16 @@ def compile_columns(
             for field in _META_COLUMNS
             if getattr(meta, field) is not None
         }
+        timing_support = {
+            name: result_table[name]
+            for name in dict.fromkeys(timing_refs)
+            if name != output and name not in renamed.values()
+        }
         right = result_table.select(
             **{f"{output}_key_{key}": result_table[key] for key in _ANCHOR_KEY},
             **{output: result_table[output]},
             **{name: result_table[getattr(meta, field)] for field, name in renamed.items()},
+            **timing_support,
         )
         assert cutoff is not None
         meta = replace(meta, **renamed)
@@ -385,19 +629,6 @@ def compile_columns(
         else:
             expression(node.left if isinstance(node, Eq) else node.expr)
 
-    def selector_timing(selector: EventTime):
-        if selector.relative_to is None:
-            origin_support = (0, 0)
-            dependencies = {}
-        else:
-            origin_support, dependencies = selector_timing(selector.relative_to)
-        support = (
-            origin_support[0] + selector.window.start,
-            origin_support[1] + selector.window.end,
-        )
-        reference = f"{selector.fact}:{selector.occurrence}:{selector.n or 1}"
-        return support, {**dependencies, reference: support}
-
     expression_timings = {}
     for role, named in (("feature", design.features), ("outcome", design.outcomes)):
         for name, node in named.items():
@@ -407,20 +638,20 @@ def compile_columns(
             relative = getattr(node, "relative_to", None)
             if isinstance(node, EventTime):
                 support, dependency_supports = selector_timing(node)
-                selector_ref = f"{node.fact}:{node.occurrence}:{node.n or 1}"
+                selector_ref = repr(node)
                 offsets = None
-                point_column = value.name
+                point_column = name
                 kind = "event_time"
             elif relative is not None:
                 origin, dependency_supports = selector_timing(relative)
-                selector_ref = f"{relative.fact}:{relative.occurrence}:{relative.n or 1}"
+                selector_ref = repr(relative)
                 offsets = (
                     (node.before, node.before)
                     if isinstance(node, AttributeAsOf)
                     else (node.window.start, node.window.end)
                 )
                 support = (origin[0] + offsets[0], origin[1] + offsets[1])
-                point_column = selector_columns.get(relative)
+                point_column = timing_column_refs[node][0]
                 kind = "event_time"
             else:
                 support = (
@@ -431,8 +662,9 @@ def compile_columns(
                 dependency_supports = {}
                 selector_ref = None
                 offsets = None
-                point_column = "t0"
+                point_column = timing_column_refs[node][0]
                 kind = "fixed_t0"
+            _, start_ref, end_ref = timing_column_refs[node]
             expression_timings[name] = ExpressionTiming(
                 kind=kind,
                 selector_ref=selector_ref,
@@ -441,8 +673,8 @@ def compile_columns(
                 selector_dependencies=tuple(dependency_supports),
                 selector_support_seconds=dependency_supports,
                 point_time_column=point_column,
-                start_bound_column=None,
-                end_bound_column=None,
+                start_bound_column=start_ref,
+                end_bound_column=end_ref,
             )
             strategies[name] = strategies[value.name]
             if role == "feature" and value.cutoff is not None:
@@ -488,6 +720,14 @@ def compile_columns(
             meta.absolute_error_column,
         ):
             if name is not None and name not in support:
+                support.append(name)
+    for timing in expression_timings.values():
+        for name in (
+            timing.point_time_column,
+            timing.start_bound_column,
+            timing.end_bound_column,
+        ):
+            if name is not None and name in table.columns and name not in support:
                 support.append(name)
     projection = {name: table[name] for name in support}
     projection.update({name: table[value] for name, value in public.items()})
