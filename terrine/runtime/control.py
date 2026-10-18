@@ -311,25 +311,15 @@ class ControlServer:
             if not isinstance(destination, dict):
                 raise ValueError("destination reference is required")
             target = DestinationRef(**destination)
-            schema = self.store._schema
-            con.execute(
-                f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS request_key VARCHAR"
+            from terrine.runtime.api import find_run_by_request_key
+
+            receipt = find_run_by_request_key(
+                request["request_key"],
+                destination=target,
+                con=con,
+                namespace=self.namespace,
             )
-            con.execute(
-                f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS "
-                "destination_json VARCHAR"
-            )
-            row = con.execute(
-                f"SELECT run_id,state,published_generation FROM {schema}.runtime_runs "
-                "WHERE request_key=? AND destination_json=?",
-                [
-                    request["request_key"],
-                    json.dumps(asdict(target), sort_keys=True, separators=(",", ":")),
-                ],
-            ).fetchone()
-            return (
-                {"run_id": row[0], "state": row[1], "published_generation": row[2]} if row else None
-            )
+            return asdict(receipt) if receipt is not None else None
         raise ValueError("unsupported control operation")
 
 

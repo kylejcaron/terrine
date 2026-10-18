@@ -11,10 +11,11 @@ import duckdb
 import pyarrow as pa
 import pytest
 
-from terrine.runtime.control import ControlEndpoint, ControlServer
+from terrine.runtime.control import ControlClient, ControlEndpoint, ControlServer
 from terrine.runtime.events import record_run_event
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
+from terrine.runtime.recipe import DestinationRef
 from terrine.runtime.state import RuntimeStore
 
 
@@ -24,6 +25,21 @@ class _Executor:
 
     def publish(self, plan, outputs, lease, run_id):
         return f"g-{run_id}"
+
+
+def test_request_key_lookup_on_fresh_owner_returns_none():
+    con = duckdb.connect(":memory:")
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
+    endpoint = ControlEndpoint(Path(f"/tmp/tcli-fresh-{os.getpid()}.sock"))
+    server = ControlServer(store, namespace="owner", endpoint=endpoint)
+    server.start()
+    try:
+        client = ControlClient(endpoint, namespace="owner")
+        destination = DestinationRef("out.duckdb", "analytics", "orders")
+        assert client.find_run_by_request_key("missing", destination=destination) is None
+    finally:
+        server.close()
 
 
 def test_cli_status_events_and_cancel_use_owner_ipc():
