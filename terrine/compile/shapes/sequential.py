@@ -31,17 +31,24 @@ _CONTRADICTORY_ADOPTION = RefusalSpec(
 )
 
 
+def _followup_horizon(design: Design) -> int | None:
+    horizons = [
+        expression.window.end
+        for expression in design.outcomes.values()
+        if isinstance(expression, MetricAgg)
+    ]
+    return max(horizons) if horizons else None
+
+
 def _followup_end(design: Design, model):
     assert isinstance(design.anchor, Schedule)
-    horizon = max(
-        (
-            expression.window.end
-            for expression in design.outcomes.values()
-            if isinstance(expression, MetricAgg)
-        ),
-        default=0,
-    )
-    return model.day_boundary(design.anchor.end) + timedelta(seconds=horizon)
+    horizon = _followup_horizon(design)
+    if horizon is None:
+        return model.day_boundary(design.anchor.end)
+    elapsed = (design.anchor.end - design.anchor.start).days * 86_400
+    last_offset = ((elapsed - 1) // design.anchor.every) * design.anchor.every
+    last_t0 = model.day_boundary(design.anchor.start) + timedelta(seconds=last_offset)
+    return last_t0 + timedelta(seconds=horizon)
 
 
 def _trial_columns(table, design: Design):
@@ -77,23 +84,43 @@ _INCOMPLETE_UNIT_HISTORY = RefusalSpec(
 )
 
 
-def _unit_history_gaps(design: Design, model, anchors):
+def _unit_history_gaps(design: Design, model, anchors, eligible_table):
     assert isinstance(design.shape, SequentialSpec)
     assert isinstance(design.anchor, Schedule)
     selector = design.shape.treatment
-    table = anchors.table
-    history_start = cast(ir.TimestampScalar, ibis.literal(selector.history_start))
-    boundary = (
-        _followup_end(design, model)
-        if isinstance(selector, Initiation)
-        else model.day_boundary(design.anchor.end)
+    source = anchors.table
+    eligible = eligible_table.select("unit", "anchor_id").distinct()
+    table = source.join(
+        eligible,
+        [
+            source.unit == eligible.unit,
+            source.anchor_id.identical_to(eligible.anchor_id),
+        ],
+    ).select(
+        unit=source.unit,
+        t0=source.t0,
+        _observed_from=source._observed_from,
+        _observed_until=source._observed_until,
     )
-    end = cast(ir.TimestampScalar, ibis.literal(boundary))
+    history_start = cast(ir.TimestampScalar, ibis.literal(selector.history_start))
+    horizon = _followup_horizon(design) if isinstance(selector, Initiation) else None
+    end = (
+        table.t0 + ibis.interval(seconds=horizon)
+        if horizon is not None
+        else cast(
+            ir.TimestampScalar,
+            ibis.literal(
+                _followup_end(design, model)
+                if isinstance(selector, Initiation)
+                else model.day_boundary(design.anchor.end)
+            ),
+        )
+    )
     missing = ibis.literal(False)
-    if "_observed_from" in table.columns:
+    if "_observed_from" in source.columns:
         missing |= table._observed_from.notnull() & (table._observed_from > history_start)
-    if "_observed_until" in table.columns:
-        missing |= table._observed_until.notnull() & (table._observed_until <= end)
+    if "_observed_until" in source.columns:
+        missing |= table._observed_until.notnull() & (table._observed_until < end)
     return table.filter(missing).select("unit").distinct()
 
 
@@ -196,7 +223,12 @@ def _later_initiations(design: Design, model, eligible_table, treatment_rows):
             eligible_table.anchor_id.identical_to(treatment_rows.anchor_id),
         ],
     ).filter(~treatment_rows.treatment.fill_null(False))
-    followup_end = cast(ir.TimestampScalar, ibis.literal(_followup_end(design, model)))
+    horizon = _followup_horizon(design)
+    followup_end = (
+        control.t0 + ibis.interval(seconds=horizon)
+        if horizon is not None
+        else cast(ir.TimestampScalar, ibis.literal(_followup_end(design, model)))
+    )
     return (
         control.join(
             events,
@@ -237,7 +269,8 @@ def compile_sequential(design: Design, model) -> CompiledStudy:
     checks = list(compiled._checks)
     checks.append(
         _deferred_refusal(
-            _unit_history_gaps(design, model, compiled._anchors), _INCOMPLETE_UNIT_HISTORY
+            _unit_history_gaps(design, model, compiled._anchors, compiled.table),
+            _INCOMPLETE_UNIT_HISTORY,
         )
     )
     if isinstance(design.shape.treatment, Initiation):

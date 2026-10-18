@@ -279,16 +279,19 @@ def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
                 reason="PersistentAdoption requires a value-bearing property selector"
             )
         coverage = model.readiness.for_fact(source.name)
-        followup_end = model.day_boundary(design.anchor.end) + timedelta(
-            seconds=max(
-                (
-                    expression.window.end
-                    for expression in design.outcomes.values()
-                    if isinstance(expression, MetricAgg)
-                ),
-                default=0,
+        span_seconds = (design.anchor.end - design.anchor.start).days * 86_400
+        last_offset = ((span_seconds - 1) // design.anchor.every) * design.anchor.every
+        outcome_horizons = [
+            expression.window.end
+            for expression in design.outcomes.values()
+            if isinstance(expression, MetricAgg)
+        ]
+        if outcome_horizons:
+            followup_end = model.day_boundary(design.anchor.start) + timedelta(
+                seconds=last_offset + max(outcome_horizons)
             )
-        )
+        else:
+            followup_end = model.day_boundary(design.anchor.end)
         if (
             coverage.start > design.shape.treatment.history_start
             or coverage.end_exclusive < followup_end

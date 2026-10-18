@@ -263,3 +263,20 @@ def test_sequential_names_explicit_target_weight_column(native_inputs):
 
     assert frame.roles.target_weight == "target_weight"
     assert "target_weight" in frame._compiled.table.columns
+
+
+def test_later_initiation_at_trial_specific_exclusive_horizon_is_not_refused(native_inputs):
+    model = _event_model(native_inputs)
+    model.con.raw_sql(
+        "UPDATE events SET ts = TIMESTAMPTZ '2025-01-10 12:00:00+00' WHERE user_id = 'b'"
+    )
+    design = Sequential(
+        Design(
+            "user",
+            Schedule("1d", "2025-01-03", "2025-01-04"),
+            outcomes={"sessions_after_t0": agg("sessions", window=("0d", "7d"))},
+        ),
+        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+    )
+
+    design.build(model).materialize()
