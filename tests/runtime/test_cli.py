@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -25,6 +26,69 @@ class _Executor:
 
     def publish(self, plan, outputs, lease, run_id):
         return f"g-{run_id}"
+
+
+def test_cli_plan_refuses_unknown_scan_under_strict_budget(tmp_path):
+    con = duckdb.connect(":memory:")
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
+    endpoint = ControlEndpoint(Path(f"/tmp/tcli-strict-{os.getpid()}.sock"))
+    server = ControlServer(store, namespace="owner", endpoint=endpoint)
+    server.start()
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="definition",
+        snapshot_id="snapshot",
+        graph=dependency_graph(
+            sources=("orders",), definition_hash="definition", partitions=("all",)
+        ),
+    )
+    payload = json.loads(plan.serialize())
+    payload["budget"] = {
+        "max_output_bytes": None,
+        "max_scan_bytes": 1,
+        "max_rows": None,
+        "strict_scan": True,
+    }
+    fingerprint_payload = {
+        key: payload[key]
+        for key in (
+            "namespace",
+            "dataset",
+            "definition_hash",
+            "snapshot_id",
+            "tasks",
+            "change_evidence",
+            "budget",
+            "expected_base_manifest",
+            "expected_base_manifest_bound",
+        )
+    }
+    payload["fingerprint"] = hashlib.sha256(
+        json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    plan_file = tmp_path / "strict-plan.json"
+    plan_file.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+    env = {
+        **os.environ,
+        "TERRINE_RUNTIME_SOCKET": str(endpoint.path),
+        "TERRINE_RUNTIME_NAMESPACE": "owner",
+    }
+    script = str(Path(sys.executable).with_name("terrine"))
+    try:
+        result = subprocess.run(
+            [script, "plan", str(plan_file)],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.returncode == 2
+        assert json.loads(result.stderr)["code"] == "terrine.budget.scan_unknown"
+        assert result.stdout == ""
+    finally:
+        server.close()
 
 
 def test_request_key_lookup_on_fresh_owner_returns_none():
