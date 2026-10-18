@@ -192,6 +192,34 @@ def test_cutoff_nulls_period_error_certificate_with_its_value():
         con.disconnect()
 
 
+def test_cumulative_float_results_enforce_final_tolerance():
+    con, model = _trajectory_model()
+    try:
+        con.raw_sql(
+            "UPDATE events SET float_amount = 1e12 "
+            "WHERE user_id = 'u1' AND kind = 'revenue' AND ts = "
+            "TIMESTAMPTZ '2025-01-03 00:00:00+00'"
+        )
+        con.raw_sql(
+            "UPDATE events SET float_amount = -1e12 "
+            "WHERE user_id = 'u1' AND kind = 'revenue' AND ts = "
+            "TIMESTAMPTZ '2025-01-10 00:00:00+00'"
+        )
+        frame = Design(
+            "user",
+            EventAnchor("purchase", which="first"),
+            shape=CohortSpec(
+                origin="purchase",
+                trajectory=Trajectory("float_revenue", "7d", periods=3, cumulative=True),
+            ),
+        ).build(model)
+        with pytest.raises(TerrineError) as error:
+            frame.materialize()
+        assert error.value.code == "terrine.temporal.float64_precision"
+    finally:
+        con.disconnect()
+
+
 def test_trajectory_generated_names_are_reserved_from_features():
     con, model = _trajectory_model()
     try:

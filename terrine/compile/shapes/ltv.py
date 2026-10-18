@@ -13,6 +13,14 @@ from terrine.errors import RefusalSpec
 from terrine.spec.design import Design
 from terrine.spec.expressions import MetricAgg
 from terrine.spec.trajectory import CohortSpec
+from terrine.temporal.aggregate import _Check, _Failure
+from terrine.temporal.prefix import (
+    FLOAT64_PRECISION,
+    float64_rounding_radius,
+    float64_tolerance,
+    outward_add,
+    outward_multiply,
+)
 from terrine.windows import Window
 
 _INVALID = RefusalSpec(
@@ -169,6 +177,7 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         ),
     )
     outcome_names = ["period_value"]
+    checks = list(compiled._checks)
     if trajectory.cumulative:
         frame = ibis.window(
             group_by=[table.unit, table.anchor_id, table.cohort_time],
@@ -200,7 +209,31 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
             cumulative_error = missing.ifelse(
                 ibis.null().cast(cumulative_error.type()), cumulative_error
             )
+            reduction_magnitude = table.period_value.abs().sum().over(frame)
+            reduction_error = outward_multiply(
+                float64_rounding_radius(reduction_magnitude), trajectory.periods
+            )
+            cumulative_error = outward_add(cumulative_error, reduction_error)
             table = table.mutate(cumulative_value_absolute_error=cumulative_error)
+            failed = table.cumulative_value.notnull() & (
+                table.cumulative_value_absolute_error > float64_tolerance(table.cumulative_value)
+            )
+            failure_column = "failed_cumulative_tolerance"
+            check_table = table.filter(failed).aggregate(
+                ibis._.count().cast("string").name(failure_column)
+            )
+            checks.append(
+                _Check(
+                    check_table,
+                    (
+                        _Failure(
+                            failure_column,
+                            FLOAT64_PRECISION,
+                            {"failure": "tolerance", "output": "cumulative_value"},
+                        ),
+                    ),
+                )
+            )
         output_columns["cumulative_value"] = replace(
             output_columns["period_value"],
             complete_column="cumulative_value_complete",
@@ -229,5 +262,5 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         eligibility_cutoffs=compiled.eligibility_cutoffs,
         strategy=compiled.strategy,
         _anchors=compiled._anchors,
-        _checks=compiled._checks,
+        _checks=tuple(checks),
     )
