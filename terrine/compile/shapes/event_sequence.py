@@ -132,6 +132,14 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         "event_count",
         "sequence_complete",
         "sequence_reason",
+        "session_index",
+        "session_event_count",
+        "session_start_time",
+        "session_end_time",
+        "previous_event_id",
+        "previous_event_time",
+        "transition_reason",
+        "transition",
     }:
         funnel_event_property_column = "__terrine_funnel_event_property"
         suffix = 0

@@ -117,12 +117,18 @@ def test_sequence_compiler_publishes_funnel_attempt_schema(sequence_model):
 
     children = [row for row in rows if row["is_event"]]
     assert all(row["funnel_attempts"] is None for row in children)
-def test_funnel_dependency_named_unit_does_not_overwrite_its_event_values(sequence_model):
-    from terrine.spec import FunnelSpec
+@pytest.mark.parametrize(
+    ("property_name", "with_sessions"),
+    [("unit", False), ("previous_event_id", True)],
+)
+def test_funnel_dependency_generated_name_does_not_overwrite_event_values(
+    sequence_model, property_name, with_sessions
+):
+    from terrine.spec import FunnelSpec, SessionSpec
 
     definition = sequence_model.catalog.model_dump(mode="python")
-    definition["sources"]["events"]["properties"] = ("kind", "unit")
-    definition["properties"]["unit"] = {
+    definition["sources"]["events"]["properties"] = ("kind", property_name)
+    definition["properties"][property_name] = {
         "source": "events",
         "column": "kind",
         "dtype": "string",
@@ -141,7 +147,8 @@ def test_funnel_dependency_named_unit_does_not_overwrite_its_event_values(sequen
             "signup",
             Window("0s", "2h"),
             max_events=5,
-            funnel=FunnelSpec("unit", ("view", "purchase")),
+            sessions=SessionSpec(3600) if with_sessions else None,
+            funnel=FunnelSpec(property_name, ("view", "purchase")),
         ),
     )
     rows = model.con.to_pyarrow(design.build(model)._compiled.table).to_pylist()
