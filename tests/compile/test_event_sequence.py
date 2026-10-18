@@ -740,6 +740,71 @@ def test_sequence_compiler_projects_dimension_backed_property(sequence_model, ha
     )
 
 
+def test_overlapping_dimension_history_refuses_before_event_identity_check(sequence_model):
+    from terrine.errors import TerrineError
+    from terrine.semantic.models import Dimension, Property, TableRef
+
+    sequence_model.con.create_table(
+        "overlapping_regions",
+        ibis.memtable(
+            {
+                "user_id": ["u", "u"],
+                "region": ["west", "east"],
+                "starts": [
+                    datetime(2025, 1, 1, tzinfo=UTC),
+                    datetime(2025, 1, 1, tzinfo=UTC),
+                ],
+                "ends": [
+                    datetime(2025, 1, 2, tzinfo=UTC),
+                    datetime(2025, 1, 2, tzinfo=UTC),
+                ],
+            }
+        ),
+    )
+    source = sequence_model.catalog.sources["events"].model_copy(
+        update={"properties": (), "dimensions": ("regions",)}
+    )
+    dimension = Dimension.model_validate(
+        {
+            "relation": TableRef(kind="table", name="overlapping_regions"),
+            "source_entity": "user",
+            "entity_column": "user_id",
+            "validity": {"valid_from": "starts", "valid_to": "ends"},
+            "properties": ("region",),
+        }
+    )
+    catalog = sequence_model.catalog.model_copy(
+        update={
+            "sources": {"events": source},
+            "dimensions": {"regions": dimension},
+            "properties": {
+                "region": Property(
+                    source="events",
+                    column="region",
+                    dtype="string",
+                    as_of="event_time",
+                    dimension="regions",
+                )
+            },
+        }
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=sequence_model.con,
+        readiness=sequence_model.readiness,
+        event_ids=sequence_model.event_ids,
+    )
+    design = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence("signup", Window("0s", "2h"), max_events=5, properties=("region",)),
+    )
+    compiled = design.build(model)._compiled
+    with pytest.raises(TerrineError) as error:
+        compiled.validate(execute=model.con.to_pyarrow)
+    assert error.value.code == "terrine.temporal.duplicate_history"
+
+
 def test_selected_property_named_normalized_unit_preserves_event_identity(sequence_model):
     from terrine.semantic.models import Property
 

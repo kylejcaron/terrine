@@ -270,6 +270,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
                 direct[target] = normalized[prop.column]
     if direct:
         normalized = normalized.mutate(**direct)
+    identity_events = normalized
     aliases = _enriched_property_columns(source.dimensions, normalized.columns)
     dimensions = {
         dimension.name: model._relation(dimension.relation) for dimension in source.dimensions
@@ -351,7 +352,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         integrity_checks.append(timestamp_check)
     integrity_checks.extend(
         _identity_checks(
-            normalized,
+            identity_events,
             "_unit",
             event_id_column,
             configured=configured_id is not None,
