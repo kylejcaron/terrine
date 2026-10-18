@@ -65,3 +65,44 @@ def test_plan_fingerprint_includes_change_evidence():
         changes=ChangeSet((Change("insert", "events", revision="r2"),), "change_feed"),
     )
     assert initial.recipe.fingerprint != changed.recipe.fingerprint
+
+
+def test_delimiter_fields_do_not_collide_in_task_identities():
+    graph_a = dependency_graph(sources=("a:b",), definition_hash="def", partitions=("c",))
+    graph_b = dependency_graph(sources=("a",), definition_hash="def", partitions=("b:c",))
+    task_a = plan_refresh(
+        namespace="owner", dataset="study", definition_hash="def", snapshot_id="s", graph=graph_a
+    ).tasks[0]
+    task_b = plan_refresh(
+        namespace="owner", dataset="study", definition_hash="def", snapshot_id="s", graph=graph_b
+    ).tasks[0]
+    assert task_a.task_id != task_b.task_id
+
+
+def test_plan_serialization_preserves_execution_budgets():
+    graph = dependency_graph(sources=("events",), definition_hash="definition")
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="study",
+        definition_hash="definition",
+        snapshot_id="snap",
+        graph=graph,
+        budget=Budget(max_rows=7, max_output_bytes=701),
+    )
+    recipe = json.loads(plan.serialize())
+    assert recipe["budget"] == {
+        "max_rows": 7,
+        "max_output_bytes": 701,
+        "max_scan_bytes": None,
+        "strict_scan": True,
+    }
+    assert (
+        plan.recipe.fingerprint
+        != plan_refresh(
+            namespace="owner",
+            dataset="study",
+            definition_hash="definition",
+            snapshot_id="snap",
+            graph=graph,
+        ).recipe.fingerprint
+    )

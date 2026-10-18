@@ -39,6 +39,7 @@ class PlanRecipe:
     definition_hash: str
     snapshot_id: str
     tasks: tuple[dict[str, Any], ...]
+    budget: dict[str, int | bool | None] | None
     fingerprint: str
 
     def to_json(self) -> str:
@@ -50,6 +51,7 @@ class PlanRecipe:
                 "definition_hash": self.definition_hash,
                 "snapshot_id": self.snapshot_id,
                 "tasks": self.tasks,
+                "budget": self.budget,
                 "fingerprint": self.fingerprint,
             },
             sort_keys=True,
@@ -89,6 +91,7 @@ class RefreshPlan:
     snapshot_id: str
     tasks: tuple[TaskSpec, ...]
     recipe: PlanRecipe
+    budget: Budget | None = None
     scan_bytes: int | None = None
 
     def serialize(self) -> bytes:
@@ -122,14 +125,25 @@ def plan_refresh(
     tasks: list[TaskSpec] = []
     ids: dict[LayerNode, str] = {}
     for node in ordered:
-        key = (
-            f"{node.layer}:{node.source}:{node.partition}:{node.definition_hash}:{node.generation}"
+        key = json.dumps(
+            [node.layer, node.source, node.partition, node.definition_hash, node.generation],
+            separators=(",", ":"),
         )
         task_id = hashlib.sha256(key.encode()).hexdigest()[:24]
         ids[node] = task_id
         dependencies = tuple(ids[parent] for parent in graph.dependencies(node))
         tasks.append(TaskSpec(task_id, node.layer, node.source, node.partition, dependencies))
     bodies = tuple(task.to_dict() for task in tasks)
+    budget_record = (
+        {
+            "max_rows": budget.max_rows,
+            "max_output_bytes": budget.max_output_bytes,
+            "max_scan_bytes": budget.max_scan_bytes,
+            "strict_scan": budget.strict_scan,
+        }
+        if budget is not None
+        else None
+    )
     fingerprint_payload = {
         "namespace": namespace,
         "dataset": dataset,
@@ -137,9 +151,14 @@ def plan_refresh(
         "snapshot_id": snapshot_id,
         "tasks": bodies,
         "revisions": source_revisions,
+        "budget": budget_record,
     }
     fingerprint = hashlib.sha256(
         json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    recipe = PlanRecipe(1, namespace, dataset, definition_hash, snapshot_id, bodies, fingerprint)
-    return RefreshPlan(namespace, dataset, definition_hash, snapshot_id, tuple(tasks), recipe)
+    recipe = PlanRecipe(
+        1, namespace, dataset, definition_hash, snapshot_id, bodies, budget_record, fingerprint
+    )
+    return RefreshPlan(
+        namespace, dataset, definition_hash, snapshot_id, tuple(tasks), recipe, budget
+    )

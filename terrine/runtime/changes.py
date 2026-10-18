@@ -71,9 +71,9 @@ def affected_by_change(change: Change, window: TimeRange) -> bool:
     if any(support is None for support in supports if change.kind == "update"):
         return True
     if change.kind == "delete":
-        return change.before_time_range is not None and window_intersects(
-            change.before_time_range, window
-        )
+        if change.before_time_range is None:
+            return True
+        return window_intersects(change.before_time_range, window)
     exact = tuple(support for support in supports if support is not None)
     if not exact:
         return True

@@ -30,3 +30,10 @@ def test_delete_uses_previous_support():
     t0 = datetime(2025, 1, 1, tzinfo=UTC)
     change = Change("delete", "events", before_time_range=(t0, t0 + timedelta(days=1)))
     assert affected_by_change(change, (t0, t0 + timedelta(days=1)))
+
+
+def test_key_only_delete_conservatively_invalidates_unknown_time_support():
+    change = Change("delete", "events", before_key_range=("unit-a", "unit-a"))
+    assert affected_by_change(
+        change, (datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 2, tzinfo=UTC))
+    )
