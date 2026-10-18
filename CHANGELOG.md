@@ -87,3 +87,4 @@
 - Add `terrine plan|run|status|events|cancel` commands over owner IPC with destination-scoped request-key replay.
 - Document Model/Design materialization plans, owner CLI workflows, exact-generation reads, and backend consistency limits.
 - Add an opt-in OpenTelemetry lifecycle projection with redacted attributes and bounded nonblocking export.
+- Add owner-planned Airflow and Dagster orchestration triggers with durable invocation replay, partition-scoped snapshots, and recipe-routed execution.

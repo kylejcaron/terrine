@@ -343,9 +343,12 @@ class RuntimeStore:
             [snapshot_id],
         )
 
-    def pin_snapshot(self, snapshot_id: str, *, kind: str, reference: str) -> None:
+    def pin_snapshot(
+        self, snapshot_id: str, *, kind: str, reference: str, _in_transaction: bool = False
+    ) -> None:
         _check_snapshot_reference(snapshot_id, kind, reference)
-        self.con.execute("BEGIN TRANSACTION")
+        if not _in_transaction:
+            self.con.execute("BEGIN TRANSACTION")
         try:
             self.advance_snapshot_guard(snapshot_id)
             if self.snapshot_marked_for_gc(snapshot_id):
@@ -355,9 +358,11 @@ class RuntimeStore:
                 "ON CONFLICT DO NOTHING",
                 [snapshot_id, kind, reference],
             )
-            self.con.execute("COMMIT")
+            if not _in_transaction:
+                self.con.execute("COMMIT")
         except Exception:
-            self.con.execute("ROLLBACK")
+            if not _in_transaction:
+                self.con.execute("ROLLBACK")
             raise
 
     def unpin_snapshot(self, snapshot_id: str, *, kind: str, reference: str) -> None:

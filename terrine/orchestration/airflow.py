@@ -43,7 +43,7 @@ class _MaterializationOperator(BaseOperator):
             raise AirflowException("Airflow task context has no task instance")
         task_instance.xcom_push(key="terrine_plan_invocation", value=invocation.to_dict())
         receipt = client.run(
-            invocation.serialized_plan,
+            invocation.recipe_json,
             request_key=invocation.request_key,
             destination=invocation.destination,
         )

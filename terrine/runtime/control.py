@@ -8,7 +8,7 @@ import socketserver
 import stat
 import threading
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, overload
 
@@ -53,6 +53,7 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
     ).fetchone()
     if exists is None:
         return
+    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP")
     lease_table = con.execute(
         "SELECT 1 FROM information_schema.tables "
         "WHERE lower(table_schema)=lower(?) AND table_name='runtime_leases'",
@@ -68,9 +69,10 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
     with event_transaction(con, namespace=namespace):
         stale = con.execute(
             f"SELECT r.run_id,r.state,r.attempt_fence FROM {schema}.runtime_runs r "
-            f"JOIN {schema}.runtime_leases l ON l.resource='dataset:' || r.dataset "
+            f"LEFT JOIN {schema}.runtime_leases l ON l.resource='dataset:' || r.dataset "
             "AND l.owner=r.run_id AND l.fence=r.attempt_fence "
-            "WHERE r.state IN ('running','cancel_requested') AND l.expires_at<=current_timestamp "
+            "WHERE r.state IN ('running','cancel_requested') "
+            "AND (l.resource IS NULL OR l.expires_at<=current_timestamp) "
             "ORDER BY r.run_id"
         ).fetchall()
         for run_id, old_state, fence in stale:
@@ -112,14 +114,21 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
                     )
             transitioned = con.execute(
                 f"UPDATE {schema}.runtime_runs SET state=?, "
-                "published_generation=COALESCE(?,published_generation) "
-                "WHERE run_id=? AND state=? AND attempt_fence=? AND EXISTS ("
+                "published_generation=COALESCE(?,published_generation), updated_at=? "
+                "WHERE run_id=? AND state=? AND attempt_fence=? AND NOT EXISTS ("
                 f"SELECT 1 FROM {schema}.runtime_leases l "
                 "WHERE l.resource='dataset:' || runtime_runs.dataset "
                 "AND l.owner=runtime_runs.run_id "
-                "AND l.fence=runtime_runs.attempt_fence AND l.expires_at<=current_timestamp) "
+                "AND l.fence=runtime_runs.attempt_fence AND l.expires_at>current_timestamp) "
                 "RETURNING state",
-                [state, generation, run_id, old_state, fence],
+                [
+                    state,
+                    generation,
+                    datetime.now(UTC).replace(tzinfo=None),
+                    run_id,
+                    old_state,
+                    fence,
+                ],
             ).fetchone()
             if transitioned is not None:
                 record_run_event(
@@ -143,6 +152,8 @@ class ControlServer:
         endpoint: ControlEndpoint,
         executor: Any | None = None,
         plan_planner: Any | None = None,
+        resolver: Any | None = None,
+        snapshot_authority: Any | None = None,
     ) -> None:
         if store.namespace != namespace:
             raise ValueError("control namespace does not match runtime store")
@@ -151,6 +162,8 @@ class ControlServer:
         self.endpoint = endpoint
         self.executor = executor
         self.plan_planner = plan_planner
+        self.resolver = resolver
+        self.snapshot_authority = snapshot_authority
         self._server: socketserver.UnixStreamServer | None = None
         self._thread: threading.Thread | None = None
         self._endpoint_identity: tuple[int, int] | None = None
@@ -280,6 +293,8 @@ class ControlServer:
                 request_key=request.get("request_key"),
                 destination=destination,
                 executor=self.executor,
+                resolver=self.resolver,
+                snapshot_authority=self.snapshot_authority,
             )
             return asdict(receipt)
 
@@ -319,25 +334,15 @@ class ControlServer:
             if not isinstance(destination, dict):
                 raise ValueError("destination reference is required")
             target = DestinationRef(**destination)
-            schema = self.store._schema
-            con.execute(
-                f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS request_key VARCHAR"
+            from terrine.runtime.api import find_run_by_request_key
+
+            receipt = find_run_by_request_key(
+                request["request_key"],
+                destination=target,
+                con=con,
+                namespace=self.namespace,
             )
-            con.execute(
-                f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS "
-                "destination_json VARCHAR"
-            )
-            row = con.execute(
-                f"SELECT run_id,state,published_generation FROM {schema}.runtime_runs "
-                "WHERE request_key=? AND destination_json=?",
-                [
-                    request["request_key"],
-                    json.dumps(asdict(target), sort_keys=True, separators=(",", ":")),
-                ],
-            ).fetchone()
-            return (
-                {"run_id": row[0], "state": row[1], "published_generation": row[2]} if row else None
-            )
+            return asdict(receipt) if receipt is not None else None
         raise ValueError("unsupported control operation")
 
 

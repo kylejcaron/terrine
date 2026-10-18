@@ -263,7 +263,6 @@ class OwnerPlanner:
             namespace=namespace,
             expected_base_manifest=expected_manifest,
         )
-        recipe.pin_snapshot(store, reference=request.invocation_id)
         request_key = hashlib.sha256(
             _canonical([namespace, request.invocation_id, request.destination.to_dict()]).encode()
         ).hexdigest()
@@ -276,15 +275,22 @@ class OwnerPlanner:
             expected_manifest,
             recipe.to_json(),
         )
-        con.execute(
-            f"INSERT INTO {store._schema}.runtime_plan_invocations VALUES (?, ?, ?, ?)",
-            [
-                request.invocation_id,
-                request_hash,
-                invocation.snapshot_id,
-                _canonical(invocation.to_dict()),
-            ],
-        )
+        con.execute("BEGIN TRANSACTION")
+        try:
+            recipe.pin_snapshot(store, reference=request.invocation_id, _in_transaction=True)
+            con.execute(
+                f"INSERT INTO {store._schema}.runtime_plan_invocations VALUES (?, ?, ?, ?)",
+                [
+                    request.invocation_id,
+                    request_hash,
+                    invocation.snapshot_id,
+                    _canonical(invocation.to_dict()),
+                ],
+            )
+            con.execute("COMMIT")
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
         return invocation
 
 

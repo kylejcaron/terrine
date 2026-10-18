@@ -167,6 +167,19 @@ def test_owner_planner_persists_same_snapshot_and_manifest_by_invocation(tmp_pat
                 con=raw_connection,
                 namespace="runtime",
             )
+        raw_connection.execute("INSERT INTO events VALUES ('2025-01-10', 1, 1)")
+        fresh = planner.plan(
+            PlanRequest(
+                "materialize-2",
+                request.model,
+                request.design,
+                request.destination,
+            ),
+            con=raw_connection,
+            namespace="runtime",
+        )
+        assert fresh.snapshot_id != first.snapshot_id
+        assert fresh.request_key != first.request_key
         persisted = raw_connection.execute(
             "SELECT invocation_json FROM runtime.runtime_plan_invocations WHERE invocation_id=?",
             [request.invocation_id],
@@ -184,6 +197,71 @@ def test_owner_planner_persists_same_snapshot_and_manifest_by_invocation(tmp_pat
     assert second.snapshot_id == first.snapshot_id
     assert second.expected_base_manifest is None
     assert conflict.value.code == "terrine.runtime.plan_invocation_conflict"
+
+
+def test_owner_plan_rolls_back_snapshot_pin_when_invocation_persistence_fails(
+    tmp_path, monkeypatch
+):
+    from tests.runtime.test_recipe import _model
+
+    database = tmp_path / "catalog-atomic.duckdb"
+    connection = ibis.duckdb.connect(database=str(database))
+    connection.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+    connection.raw_sql("CREATE TABLE users (id INTEGER)")
+    base_model = _model(connection)
+    model = Model.from_catalog(
+        base_model.catalog,
+        con=connection,
+        units={"user": UnitSource("users", "id")},
+        readiness={"events": Coverage("2025-01-01", "2025-02-01")},
+    )
+    request = PlanRequest(
+        "materialize-atomic",
+        ModelReference.from_model(model, owner_key="owner-model"),
+        Design(
+            "user",
+            FixedDate("2025-01-15"),
+            features={"total": agg("total", window=("-1d", "0s"))},
+            outcomes={},
+        ),
+        DestinationRef(str(database), "published", "study"),
+    )
+
+    class Resolver:
+        def resolve(self, reference):
+            return model
+
+    planner = OwnerPlanner(
+        resolver=Resolver(),
+        snapshot_authority=SnapshotAuthority(RuntimeOwner(database, tmp_path / "snapshots")),
+    )
+    original_pin = SavedPlanRecipe.pin_snapshot
+
+    def fail_after_pin(recipe, store, *, reference=None, _in_transaction=False):
+        original_pin(
+            recipe,
+            store,
+            reference=reference,
+            _in_transaction=_in_transaction,
+        )
+        raise RuntimeError("invocation persistence interrupted")
+
+    monkeypatch.setattr(SavedPlanRecipe, "pin_snapshot", fail_after_pin)
+    try:
+        with pytest.raises(RuntimeError, match="invocation persistence interrupted"):
+            planner.plan(request, con=connection.con, namespace="runtime")
+        references = connection.con.execute(
+            "SELECT snapshot_id FROM runtime.runtime_snapshot_references "
+            "WHERE kind='saved_plan' AND reference=?",
+            [request.invocation_id],
+        ).fetchall()
+        assert references == []
+        invocations = connection.con.execute(
+            "SELECT invocation_id FROM runtime.runtime_plan_invocations"
+        ).fetchall()
+        assert invocations == []
+    finally:
+        connection.disconnect()
 
 
 def test_owner_plan_refuses_unsupported_runtime_shape_before_resolving_sources():
@@ -210,8 +288,19 @@ def test_owner_plan_refuses_unsupported_runtime_shape_before_resolving_sources()
             self.resolved = True
             raise AssertionError("unsupported shapes must be refused before source resolution")
 
+    class SnapshotSpy:
+        captured = False
+
+        def capture(self, *args, **kwargs):
+            self.captured = True
+            raise AssertionError("unsupported shapes must be refused before snapshot capture")
+
+    snapshot_authority = SnapshotSpy()
     resolver = Resolver()
-    planner = OwnerPlanner(resolver=resolver, snapshot_authority=cast(SnapshotAuthority, object()))
+    planner = OwnerPlanner(
+        resolver=resolver,
+        snapshot_authority=cast(SnapshotAuthority, snapshot_authority),
+    )
     try:
         with pytest.raises(TerrineError) as error:
             planner.plan(request, con=con, namespace="owner")
@@ -220,6 +309,7 @@ def test_owner_plan_refuses_unsupported_runtime_shape_before_resolving_sources()
 
     assert error.value.code == "terrine.compile.runtime_shape_unsupported"
     assert not resolver.resolved
+    assert not snapshot_authority.captured
 
 
 def test_roster_only_dependency_graph_contains_no_fact_source_work():

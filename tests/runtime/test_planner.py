@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 
 import pytest
 
@@ -125,6 +126,52 @@ def test_planner_limits_work_to_changed_sources_and_skips_readiness_only_advance
     )
     assert no_change.tasks == ()
 
+    readiness = plan_refresh(
+        namespace="owner",
+        dataset="ratio",
+        definition_hash="definition",
+        snapshot_id="snap",
+        graph=graph,
+        changes=ChangeSet.from_readiness_advance(
+            "events",
+            datetime(2025, 1, 2, tzinfo=UTC),
+            datetime(2025, 1, 3, tzinfo=UTC),
+        ),
+    )
+    assert any(task.layer == "frame" for task in readiness.tasks)
+
+
+def test_roster_and_dimension_corrections_select_dependent_outputs():
+    graph = dependency_graph(
+        sources=("events", "tier_history"),
+        definition_hash="definition",
+        partitions=("window-1", "window-2"),
+    )
+    roster = plan_refresh(
+        namespace="owner",
+        dataset="study",
+        definition_hash="definition",
+        snapshot_id="snap",
+        graph=graph,
+        changes=ChangeSet((Change("roster", "roster", revision="r2"),), "change_feed"),
+    )
+    dimension = plan_refresh(
+        namespace="owner",
+        dataset="study",
+        definition_hash="definition",
+        snapshot_id="snap",
+        graph=graph,
+        changes=ChangeSet((Change("update", "tier_history", revision="d2"),), "change_feed"),
+    )
+    assert {task.partition for task in roster.tasks if task.layer == "frame"} == {
+        "window-1",
+        "window-2",
+    }
+    assert {task.partition for task in dimension.tasks if task.layer == "frame"} == {
+        "window-1",
+        "window-2",
+    }
+
 
 def test_source_invalidation_includes_cross_source_dependents():
     from terrine.runtime.graph import DependencyGraph
@@ -171,6 +218,23 @@ def test_readiness_only_noop_plan_satisfies_strict_scan_budget():
         snapshot_id="snap",
         graph=graph,
         changes=ChangeSet((), "revision"),
+        budget=Budget(max_scan_bytes=1),
+    )
+    assert plan.tasks == ()
+
+
+def test_unchanged_readiness_produces_strict_budget_noop_plan():
+    from datetime import UTC, datetime
+
+    graph = dependency_graph(sources=("events",), definition_hash="definition")
+    unchanged = datetime(2025, 1, 2, tzinfo=UTC)
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="study",
+        definition_hash="definition",
+        snapshot_id="snap",
+        graph=graph,
+        changes=ChangeSet.from_readiness_advance("events", unchanged, unchanged),
         budget=Budget(max_scan_bytes=1),
     )
     assert plan.tasks == ()
