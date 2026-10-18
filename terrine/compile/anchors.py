@@ -441,11 +441,47 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
 
 
 def compile_anchors(
-    design: Design, model: Model, *, include_membership: bool = True
+    design: Design,
+    model: Model,
+    *,
+    include_membership: bool = True,
+    persisted: ibis.Table | None = None,
 ) -> AnchorTable:
-    """Build a lazy candidate relation without executing data-dependent checks."""
+    """Build or validate a lazy candidate relation without executing data-dependent checks."""
     if not isinstance(design, Design) or not isinstance(model, Model):
         raise TypeError("compile_anchors requires a Design and a bound Model")
+    if persisted is not None:
+        if isinstance(design.anchor, (FixedDate, Schedule)):
+            _, source_checks = _roster_anchors(model, design, include_membership=include_membership)
+        elif isinstance(design.anchor, EventAnchor):
+            _, source_checks = _event_anchors(model, design)
+        else:
+            raise _INVALID.error(reason="unsupported anchor variant")
+        if not isinstance(persisted, ibis.Table):
+            raise TypeError("persisted anchor relation must be an Ibis table")
+        required = {
+            "unit",
+            "anchor_id",
+            "t0",
+            "_observed_from",
+            "_observed_until",
+            "anchor_provenance",
+        }
+        missing = required.difference(persisted.columns)
+        if missing:
+            raise ValueError(f"persisted anchor relation is missing columns {sorted(missing)!r}")
+        timestamp_type = persisted.schema()["t0"]
+        if not isinstance(timestamp_type, dt.Timestamp) or timestamp_type.timezone != "UTC":
+            raise ValueError("persisted anchor timestamp must be UTC")
+        checks = list(source_checks)
+        checks.extend(_unique_checks(persisted, "anchor_id", "event", scope=("unit",)))
+        checks.extend(
+            (
+                _null_check(persisted, "unit", "null_unit"),
+                _null_check(persisted, "t0", "null_anchor_time"),
+            )
+        )
+        return AnchorTable(table=persisted, _checks=tuple(checks))
     if isinstance(design.anchor, (FixedDate, Schedule)):
         table, checks = _roster_anchors(model, design, include_membership=include_membership)
     elif isinstance(design.anchor, EventAnchor):

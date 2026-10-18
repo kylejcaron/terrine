@@ -1,0 +1,278 @@
+from dataclasses import replace
+
+import ibis
+import pytest
+
+from terrine.compile.anchors import compile_anchors
+from terrine.compile.columns import compile_columns
+from terrine.compile.layers import measure_identity, plan_layers
+from terrine.compile.materialize import compose_materialized_frame
+from terrine.data import Budget
+from terrine.errors import TerrineError
+from terrine.model import Model
+from terrine.semantic.bind import normalize_events
+from terrine.semantic.models import Catalog
+from terrine.spec import Design, FixedDate, agg
+from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
+from terrine.temporal.prefix import sparse_prefix
+
+pytest_plugins = ("tests.compile.test_columns",)
+
+
+def _persisted_prefixes(design, model):
+    measure_by_id = {
+        measure_identity(measure): measure
+        for metric in model.metrics.values()
+        for measure in metric.measures
+    }
+    result = {}
+    for key in plan_layers(design, model).keys:
+        if key.layer != "prefix":
+            continue
+        source = model.sources[key.source]
+        events = normalize_events(
+            model._relation(source.relation), source, source.entities[design.unit]
+        )
+        if key.measure is None or key.resolution not in {"day", "event"}:
+            raise AssertionError("planned temporal layer has an invalid measure or resolution")
+        measure = resolve_measure(events, measure_by_id[key.measure], source=source)
+        grouped = (
+            sparse_daily(events, measure, model.catalog.day_boundary, "_unit", source=source)
+            if key.resolution == "day"
+            else _sparse_group(
+                events, measure, {"_timestamp": events._timestamp}, "_unit", source=source
+            )
+        )
+        relation = sparse_prefix(grouped, measure, resolution=key.resolution)
+        result[replace(key, snapshot_id="same-snapshot")] = relation
+    return result
+
+
+def test_persisted_daily_prefix_anchor_reuse_matches_ordinary_frame_compiler(column_model):
+    design = Design(
+        "user",
+        FixedDate("2025-01-03T00:00:00+00:00"),
+        features={"total": agg("total", window=("-1d", "0s"))},
+    )
+    ordinary = compile_columns(design, column_model)
+    persisted = _persisted_prefixes(design, column_model)
+    anchor_key = next(
+        key for key in plan_layers(design, column_model).keys if key.layer == "anchor"
+    )
+    anchor_table = compile_anchors(design, column_model).table
+    anchor_arrow = column_model.con.to_pyarrow(anchor_table)
+    persisted_anchor = ibis.memtable(anchor_arrow)
+    persisted[replace(anchor_key, snapshot_id="same-snapshot")] = persisted_anchor
+    reused = compose_materialized_frame(design, column_model, persisted=persisted)
+    assert reused._anchors.table is persisted_anchor
+    ordinary.validate(execute=column_model.con.to_pyarrow)
+    reused.validate(execute=column_model.con.to_pyarrow)
+    assert column_model.con.to_pyarrow(ordinary.audit_table.order_by("unit")).equals(
+        column_model.con.to_pyarrow(reused.audit_table.order_by("unit"))
+    )
+    assert ordinary.columns == reused.columns
+
+
+@pytest.mark.parametrize(
+    ("invalid_anchor", "check_key"),
+    [
+        (lambda table: table.union(table, distinct=False), "duplicate_event_id"),
+        (
+            lambda table: table.mutate(anchor_id=ibis.literal(None, type="string")),
+            "null_event_id",
+        ),
+    ],
+)
+def test_persisted_anchor_validation_checks_candidate_identity(
+    column_model, invalid_anchor, check_key
+):
+    design = Design("user", FixedDate("2025-01-03T00:00:00+00:00"))
+    persisted = invalid_anchor(compile_anchors(design, column_model).table)
+    compiled = compile_anchors(design, column_model, persisted=persisted)
+    with pytest.raises(TerrineError) as error:
+        compiled.validate(execute=column_model.con.to_pyarrow)
+    assert error.value.code == "terrine.compile.anchor_integrity"
+    assert error.value.context["check_key"] == check_key
+
+
+def test_layer_substitution_checks_measure_unit_grain_and_resolution_identity(column_model):
+    design = Design(
+        "user",
+        FixedDate("2025-01-02T12:00:00+00:00"),
+        features={"total": agg("total", window=("-1d", "0s"))},
+    )
+    key = next(key for key in plan_layers(design, column_model).keys if key.layer == "prefix")
+    for bad in (replace(key, grain="event"), replace(key, unit="other")):
+        with pytest.raises(ValueError, match="identity"):
+            compose_materialized_frame(
+                design, column_model, persisted={bad: ibis.memtable({"x": []})}
+            )
+
+
+def test_layer_substitution_rejects_cross_snapshot_relations(column_model):
+    design = Design(
+        "user",
+        FixedDate("2025-01-02T12:00:00+00:00"),
+        features={"total": agg("total", window=("-1d", "0s"))},
+    )
+    key = next(key for key in plan_layers(design, column_model).keys if key.layer == "prefix")
+    a = replace(key, snapshot_id="snapshot-a")
+    b = replace(key, snapshot_id="snapshot-b", source="other")
+    empty = ibis.memtable({"_unit": [], "_timestamp": [], "_value": []})
+    with pytest.raises(ValueError, match="one non-empty snapshot"):
+        compose_materialized_frame(design, column_model, persisted={a: empty, b: empty})
+
+
+def test_layer_plan_retains_distinct_day_and_event_resolutions(column_model):
+    design = Design(
+        "user",
+        FixedDate("2025-01-03T00:00:00+00:00"),
+        features={
+            "daily": agg("total", window=("-1d", "0s")),
+            "hourly": agg("total", window=("-1h", "0s")),
+        },
+    )
+    keys = tuple(key for key in plan_layers(design, column_model).keys if key.layer == "prefix")
+    assert {key.resolution for key in keys} == {"day", "event"}
+
+
+def test_layer_composition_preserves_strict_scan_budget_refusal(column_model):
+    design = Design(
+        "user",
+        FixedDate("2025-01-02T12:00:00+00:00"),
+        features={"total": agg("total", window=("-1d", "0s"))},
+    )
+    ordinary = compose_materialized_frame(
+        design,
+        column_model,
+        persisted={},
+        budget=Budget(max_scan_bytes=1, strict_scan=False),
+    )
+    assert ordinary.roles.features == ("total",)
+    with pytest.raises(TerrineError) as error:
+        compose_materialized_frame(
+            design,
+            column_model,
+            persisted={},
+            budget=Budget(max_scan_bytes=1, strict_scan=True),
+        )
+    assert error.value.code == "terrine.budget.scan_unknown"
+
+
+def test_layer_definition_identity_binds_catalog_and_design(column_model):
+    design = Design(
+        "user",
+        FixedDate("2025-01-02T12:00:00+00:00"),
+        features={"total": agg("total", window=("-1d", "0s"))},
+    )
+    changed = column_model.catalog.model_dump(mode="json")
+    changed["measures"]["total"]["aggregation"] = "count"
+    other_model = Model.from_catalog(
+        Catalog.model_validate(changed),
+        con=column_model.con,
+        readiness=column_model.readiness,
+        units=column_model.units,
+    )
+    original = _persisted_prefixes(design, column_model)
+    other = _persisted_prefixes(design, other_model)
+    original_key, original_prefix = next(iter(original.items()))
+    other_key, other_prefix = next(iter(other.items()))
+    assert original_key.definition_hash != other_key.definition_hash
+    with pytest.raises(ValueError, match="identity"):
+        compose_materialized_frame(
+            design,
+            other_model,
+            persisted={replace(original_key, snapshot_id="same"): other_prefix},
+        )
+    actual = compose_materialized_frame(design, other_model, persisted=other)
+    expected = compile_columns(design, other_model)
+    assert column_model.con.to_pyarrow(expected.audit_table.order_by("unit")).equals(
+        column_model.con.to_pyarrow(actual.audit_table.order_by("unit"))
+    )
+
+
+def test_layer_composition_refuses_state_panel_with_stable_code(column_model):
+    from terrine.spec import BinnedMetricState, Schedule, StatePanel
+
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-02", "2025-01-03"),
+        shape=StatePanel(
+            BinnedMetricState("total", cutpoints=(0,), levels=("none", "some")),
+            max_periods=2,
+        ),
+    )
+    with pytest.raises(TerrineError) as error:
+        compose_materialized_frame(design, column_model, persisted={})
+    assert error.value.code == "terrine.compile.persisted_state_panel_unsupported"
+
+
+def test_same_fact_measures_keep_filter_and_aggregation_identity(column_model):
+    changed = column_model.catalog.model_dump(mode="json")
+    changed["measures"]["count_amount"] = {"fact": "amount", "aggregation": "count"}
+    changed["measures"]["new_amount"] = {
+        "fact": "amount",
+        "aggregation": "sum",
+        "filters": [{"property": "tier", "op": "equals", "values": ["new"]}],
+    }
+    changed["metrics"]["count_amount"] = {
+        "kind": "mean",
+        "entity": "user",
+        "measure": "count_amount",
+    }
+    changed["metrics"]["new_amount"] = {
+        "kind": "mean",
+        "entity": "user",
+        "measure": "new_amount",
+    }
+    model = Model.from_catalog(
+        Catalog.model_validate(changed),
+        con=column_model.con,
+        readiness=column_model.readiness,
+        units=column_model.units,
+    )
+    design = Design(
+        "user",
+        FixedDate("2025-01-02T12:00:00+00:00"),
+        features={
+            "sum": agg("total", window=("-1d", "0s")),
+            "count": agg("count_amount", window=("-1d", "0s")),
+            "filtered": agg("new_amount", window=("-1d", "0s")),
+        },
+    )
+    layers = tuple(key for key in plan_layers(design, model).keys if key.layer == "prefix")
+    assert len(layers) == 3
+    persisted = _persisted_prefixes(design, model)
+    expected = compile_columns(design, model)
+    actual = compose_materialized_frame(design, model, persisted=persisted)
+    assert column_model.con.to_pyarrow(expected.audit_table.order_by("unit")).equals(
+        column_model.con.to_pyarrow(actual.audit_table.order_by("unit"))
+    )
+
+
+def test_physical_source_type_change_invalidates_persisted_layer_identity(column_model):
+    design = Design(
+        "user",
+        FixedDate("2025-01-03T00:00:00+00:00"),
+        features={"total": agg("total", window=("-1d", "0s"))},
+    )
+    old_key = next(key for key in plan_layers(design, column_model).keys if key.layer == "prefix")
+    old_relation = ibis.memtable({"_unit": [], "_timestamp": [], "_prefix": []})
+
+    column_model.con.raw_sql("ALTER TABLE events ALTER amount TYPE DECIMAL(12, 4)")
+    changed_model = Model.from_catalog(
+        column_model.catalog,
+        con=column_model.con,
+        readiness=column_model.readiness,
+        units=column_model.units,
+        event_ids=column_model.event_ids,
+    )
+
+    new_key = next(key for key in plan_layers(design, changed_model).keys if key.layer == "prefix")
+    assert new_key.definition_hash != old_key.definition_hash
+    with pytest.raises(ValueError, match="identity"):
+        compose_materialized_frame(
+            design,
+            changed_model,
+            persisted={replace(old_key, snapshot_id="same-snapshot"): old_relation},
+        )

@@ -76,6 +76,39 @@ unknown; a strict `max_scan_bytes` therefore refuses before integrity reads.
 not example rows; capped results do not claim complete cohort totals. Its
 integrity checks can still scan upstream data.
 
+## Durable materialization runtime
+
+See the [materialization runtime guide](docs/guides/materialization-runtime.md)
+for saved-plan CLI commands, owner IPC, consistency guarantees, and correction workflow.
+
+The runtime accepts an immutable `RefreshPlan` and delegates task execution and
+publication to an owner-configured `Executor`. The executor owns physical source
+reads and publication; request keys are durable and scoped to an explicit
+`DestinationRef`. See `examples/materialization_runtime.py` for the DuckDB
+execution path. A `RunReceipt` pins the published generation for consumer reads:
+
+```python
+from terrine.runtime import open_published_generation, run_plan
+
+receipt = run_plan(
+    plan,
+    con=state_connection,
+    namespace="owner",
+    request_key="orders-correction-2026-06-17",
+    destination=destination,
+    executor=executor,
+)
+published = open_published_generation(receipt, con=state_connection, namespace="owner")
+result = published.execute()
+```
+
+Do not infer correction intent from source freshness: declare a correction,
+construct and save a new plan, and use a distinct request key. Query access is
+bound to the receipt's exact generation even after a newer generation becomes
+current. The durable DuckDB owner serializes publication and cancellation;
+separate processes must use owner IPC while that owner holds the database.
+Cancellation is a durable request, not proof that backend work stopped.
+
 ### Owned inputs for repeated builds
 
 Ordinary native builds use one private transaction without taking over a caller

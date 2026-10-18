@@ -78,8 +78,12 @@
 - Refit earlier-only measurement-time survival backtests with exact per-row cutoff recensoring and explicit retrospective-effective-time labeling; refuse unsupported recorded-at claims and export versioned Arrow surrogate projections with provenance.
 - Normalize survival timestamps independently of DuckDB session timezone while preserving nanosecond event ties through Arrow estimation.
 - Mask post-cutoff failure timestamps, preserve subsecond censor cutoffs, retain structural survival axes and projected typed metadata, and reserve internal timestamp aliases while supporting wide coverage bounds.
-
 - Preserve native-precision coverage bounds for wide timestamp histories, avoid Python datetime conversion when recensoring Arrow timestamps, and retain support metadata for automatically included outcomes.
 - Compare backtest cutoffs at exact microsecond precision per cutoff; preserve mixed-resolution censor values and avoid out-of-range nanosecond casts for wide cutoffs.
 - Preserve fractional cohort means and checked-float reduction certificates, widen second-resolution censor outputs for fractional cutoffs, bound wide compiler cutoffs before nanosecond casts, and retain age/denominator axes in cohort surrogate exports.
 - Preserve event-relative timing provenance and support columns through LTV and survival materialization and reject unsupported string shapes during validation.
+- Add durable runtime run status, bounded resumable event pages, cancellation state and owner-local IPC status/cancel/request-key lookup.
+- Persist destination-scoped request keys for response-loss replay, expose the explicit runtime Python facade, and reconcile expired owner runs on restart.
+- Add `terrine plan|run|status|events|cancel` commands over owner IPC with destination-scoped request-key replay.
+- Document Model/Design materialization plans, owner CLI workflows, exact-generation reads, and backend consistency limits.
+- Add an opt-in OpenTelemetry lifecycle projection with redacted attributes and bounded nonblocking export.
