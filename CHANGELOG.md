@@ -46,3 +46,4 @@
 - Apply interval-certain checked numeric eligibility and deferred endpoint-overflow checks even when another conjunct excludes the candidate.
 - Preserve UTC Arrow output under non-UTC SQL sessions and coordinate shared-origin metadata and capture across concurrent exports.
 - Add a focused optional-increment per-unit frame parity pilot with an explicit exposure-boundary comparison and shared-dataset evidence guide.
+- Add native end-to-end baseline recovery, population-target calibration, failure accounting, and uncertainty-validation guidance.

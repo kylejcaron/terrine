@@ -10,7 +10,7 @@ test-slow:
 	uv run pytest $(TESTS) -m "slow and not parameter_recovery"
 
 test-calibration:
-	uv run pytest $(TESTS) -m parameter_recovery
+	uv run pytest -n auto $(TESTS) -m parameter_recovery
 
 lint:
 	uv run ruff check terrine tests

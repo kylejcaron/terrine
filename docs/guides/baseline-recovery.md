@@ -1,0 +1,35 @@
+# Baseline recovery and uncertainty calibration
+
+Terrine's baseline-treatment estimators target a fixed-cohort, superpopulation ATE. A planted treatment effect is not an uncertainty check: point recovery alone says nothing about whether standard errors or confidence intervals have the claimed sampling behavior. The calibration suite compares estimates and intervals to analytical population truth over frozen independent simulations, while separately recording finite-cohort paired truth.
+
+## Native end-to-end example
+
+Install the DuckDB extra, then run:
+
+```sh
+uv run python examples/baseline_adoption.py
+```
+
+The example generates a world and its separate potential-outcome oracle, stages the emitted `world_roster`, `world_events`, and `world_attributes` Arrow tables as native DuckDB tables, loads `terrine.simulate/baseline.yaml` through `Model.from_catalog`, and builds/materializes a baseline design. Logical unit `user` maps to physical `world_roster.unit_id`; source entities map to `world_events.unit_id`; `world_attributes` supplies strict-left-limit values for `engagement_score` and `plan_tier`. `revenue_sum` filters the shared event relation to `kind='revenue'`, then `net_revenue` averages the unit sums over `[t0,t0+28d)`. Treatment is explicitly known at the common time zero. The printed effect, standard error, interval and diagnostic statuses are computed from the generated data, not copied from a reference number.
+
+This generator and native path do not import or require `increment`, and generation/truth evaluation does not need a semantic binder. The simulator emits versioned native Catalog YAML; actual input tables remain caller-owned. The native `Model` binds schema and readiness metadata, while `Frame.materialize` executes against real DuckDB tables and returns the row-level completeness and execution provenance required by estimation.
+
+## Population and cohort truth
+
+For the default world, the analytical population ATE is `2.15`. With baseline target weight `q(X)=1+sX`, the weighted population target is `2.15 + 0.25s`. It is an expectation under the declared DGP, not an estimate of the particular generated cohort. The oracle also carries both potential outcomes for every generated unit; its realized paired cohort ATE is the mean of those paired differences (or their normalized target-weighted mean). Report both quantities, but use population truth for population-coverage tests. A CI covering the realized-cohort mean is answering a different, conditional question.
+
+The observed event table includes only the assigned potential outcome. The oracle is segregated from the raw source tables and independent reference path. The observed outcome noise is shared across each unit's counterfactual pair; it cancels from the paired difference. `x` is continuous uniform on `[-1,1]`; `plan_tier` has basic, plus and enterprise levels. The baseline propensity has a linear `x` and tier predictor plus optional centered quadratic term. The control mean has a linear predictor plus optional centered quadratic term; treatment adds `2 + .75x + .5 I(plan_tier=plus)`. The declared `NuisanceSpec` terms, not a scenario label, determine whether a nuisance family contains the true generating terms. The default categorical encodings and linear terms are correctly specified; nonlinear configurations are used to assess one-sided nuisance omission, not to promise recovery when both families are wrong.
+
+## Completeness and eligibility are causal boundaries
+
+A source's readiness `Coverage` is an explicit assertion of whole-day source measurement bounds. Each output column also carries per-unit observation bounds, a `complete` flag and an exact null reason. An incomplete outcome remains null and the cohort row remains present; native estimators refuse `terrine.estimate.incomplete_followup` rather than dropping the row or treating missing revenue as zero. Ending source coverage early and ending an individual's observation early are distinct causes of incomplete labels. Observation exit does not alter membership, and membership exit does not itself end measurement for a unit still eligible at `t0`. The outcome's right endpoint is half-open: observation through the exact endpoint is complete.
+
+Eligibility is resolved before cohort materialization. Unknown candidates cannot be silently discarded by SQL filtering; the native compiler raises `terrine.study.eligibility_unknown` with candidate, known-false, unknown and retained counts and no row values. A conjunction already known false stays false even if another predicate is unknown. A resolved cohort summary audits declared predicates and retained rows; it does not prove that undeclared source units were never omitted.
+
+The recovery tests exercise these contracts before estimation, compare compiled columns and completeness metadata with an independent raw-row reference, and compare all three native estimators on direct versus compiled inputs at matched folds and seed. A hand-built event-anchored delayed-outcome example is descriptive only. Future initiation during a grace period remains selected on post-baseline survival/adherence even if the outcome window begins after grace; the native fixed-baseline ATE refuses that design. No grace-period Treatment AST is implied by the descriptive build.
+
+## Statistical experiment and limits
+
+The parameter-recovery suite fixes the ten scenario/method cells, seeds `0..399`, `n=2000`, and population truth before viewing results. It records every attempted, completed and refused fit, including refusal code and seed. It checks bias with its Monte Carlo standard error and a family-adjusted log-tail normal critical value, nominal interval coverage with an exact binomial rejection region, and the sum of squared studentized errors against a family-adjusted chi-square interval. It also records empirical spread, average and RMS estimated SE, interval width, diagnostics, runtime and environment. The size experiment compares MSE bounds at `n=500` and `n=8000` over 100 fixed seeds; it does not require noisy step-by-step monotonicity. The full-refit bootstrap resamples units, refits each nuisance, and compares bootstrap variance with the sandwich including a fourth-moment Monte Carlo allowance. These are finite-grid checks, not proofs of universal normality, identification, or double robustness.
+
+The implemented scope is a single observed row per independent unit, fixed baseline eligibility, treatment known at `t0`, pre-treatment features, complete fixed-horizon outcomes and ATE. There is no hidden missing-outcome/censoring model, automatic row reduction, propensity trimming, or fallback nuisance fit. ATT needs its own target distribution, score and variance. Repeated-trial inference needs a defined risk set, strategy and unit-cluster score. Sampled-control inclusion weights need a sampling-aware variance. External estimators are comparable only when their estimand, score/normalization, nuisance protocol, folds, weights and inference all match; otherwise they need their own target and recovery validation.

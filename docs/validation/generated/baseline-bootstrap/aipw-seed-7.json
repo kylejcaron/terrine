@@ -1,0 +1,48 @@
+{
+  "attempted": 400,
+  "bootstrap_variance": 0.0022392329877616505,
+  "bootstrap_variance_mcse": 0.00015455823326672316,
+  "completed": 400,
+  "configuration": {
+    "estimator_seed": 17,
+    "family_alpha": 0.01,
+    "folds": 5,
+    "measured_features": [
+      "x",
+      "plan_tier"
+    ],
+    "n_units": 8000,
+    "outcome_noise_sd": 2.0,
+    "outcome_quadratic": 0.0,
+    "outcome_terms": {
+      "interactions": [],
+      "main_effects": [
+        "x",
+        "plan_tier"
+      ],
+      "squares": []
+    },
+    "propensity_quadratic": 0.0,
+    "propensity_terms": {
+      "interactions": [],
+      "main_effects": [
+        "x",
+        "plan_tier"
+      ],
+      "squares": []
+    },
+    "resamples": 400,
+    "rng": "PCG64(SeedSequence([dataset_seed, 9127]))",
+    "target_weight_slope": 0.0,
+    "variance_log_tolerance": 0.2
+  },
+  "dataset_seed": 7,
+  "environment": {
+    "numpy": "2.5.4",
+    "python": "3.13.5"
+  },
+  "method": "aipw",
+  "refused": [],
+  "runtime_seconds": 75.65157754195388,
+  "sandwich_variance": 0.0022611444781296154
+}

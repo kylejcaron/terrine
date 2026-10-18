@@ -1,0 +1,80 @@
+{
+  "configuration": {
+    "b": 0.0,
+    "family_alpha": 0.01,
+    "features": [
+      "x",
+      "plan_tier"
+    ],
+    "folds": 5,
+    "gamma": 1.0,
+    "outcome_noise_sd": 2.0,
+    "outcome_terms": {
+      "interactions": [],
+      "main_effects": [
+        "x",
+        "plan_tier"
+      ],
+      "squares": []
+    },
+    "per_comparison_alpha": 0.002,
+    "propensity_terms": {
+      "interactions": [],
+      "main_effects": [
+        "x",
+        "plan_tier"
+      ],
+      "squares": []
+    },
+    "seed_count": 100,
+    "seeds": [
+      0,
+      99
+    ],
+    "sizes": [
+      500,
+      2000,
+      8000
+    ],
+    "target_weight_slope": 0.0
+  },
+  "environment": {
+    "numpy": "2.5.4",
+    "python": "3.13.5"
+  },
+  "method": "aipw",
+  "results": {
+    "500": {
+      "attempted": 100,
+      "bias": -0.023399227382983813,
+      "completed": 100,
+      "mean_estimated_se": 0.19716684778370522,
+      "mse": 0.03264570816793968,
+      "mse_mcse": 0.0034812941543084014,
+      "refused": [],
+      "rmse": 0.1806812335798593
+    },
+    "2000": {
+      "attempted": 100,
+      "bias": 0.00187623493941234,
+      "completed": 100,
+      "mean_estimated_se": 0.09486446596295978,
+      "mse": 0.009740705346359324,
+      "mse_mcse": 0.001284217094857713,
+      "refused": [],
+      "rmse": 0.09869501176026742
+    },
+    "8000": {
+      "attempted": 100,
+      "bias": -0.0020100113197336358,
+      "completed": 100,
+      "mean_estimated_se": 0.0470390970553114,
+      "mse": 0.001799197274934171,
+      "mse_mcse": 0.0002663920381058856,
+      "refused": [],
+      "rmse": 0.04241694561061853
+    }
+  },
+  "runtime_seconds": 1183.1854917081073,
+  "scenario": "aipw-outcome-correct-propensity-omitted"
+}

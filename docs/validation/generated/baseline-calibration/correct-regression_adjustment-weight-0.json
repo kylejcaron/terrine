@@ -1,0 +1,4059 @@
+{
+  "attempted": 400,
+  "cell": "correct-regression_adjustment-weight-0",
+  "completed": 400,
+  "config": {
+    "alpha": 0.05,
+    "calibration_family_alpha": 0.01,
+    "folds": 5,
+    "measured_features": [
+      "x",
+      "plan_tier"
+    ],
+    "n_units": 2000,
+    "outcome_quadratic": 0.0,
+    "outcome_terms": {
+      "interactions": [],
+      "main_effects": [
+        "x",
+        "plan_tier"
+      ],
+      "squares": []
+    },
+    "per_gate_alpha": 0.0003333333333333333,
+    "propensity_quadratic": 0.0,
+    "propensity_terms": {
+      "interactions": [],
+      "main_effects": [
+        "x",
+        "plan_tier"
+      ],
+      "squares": []
+    },
+    "seed_count": 400,
+    "seeds": [
+      0,
+      399
+    ],
+    "target_weight_slope": 0.0
+  },
+  "coverage_count": 380,
+  "diagnostic_statuses": [
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ],
+    [
+      {
+        "name": "overlap",
+        "status": "pass"
+      },
+      {
+        "name": "balance",
+        "status": "not_applicable"
+      }
+    ]
+  ],
+  "empirical_sd": 0.09170248381611322,
+  "environment": {
+    "numpy": "2.5.4",
+    "platform": "macOS-15.7.4-arm64-arm-64bit-Mach-O",
+    "python": "3.13.5",
+    "scipy": "1.18.1"
+  },
+  "mean_error": 0.006896163970128215,
+  "mean_estimated_se": 0.09339079287289294,
+  "median_interval_width": 0.3657500769589812,
+  "method": "regression_adjustment",
+  "population_truth": 2.15,
+  "refused": [],
+  "rms_estimated_se": 0.09340734148253768,
+  "runtime_seconds": 4058.183772959048,
+  "studentized_error_sum": 386.4012793767323
+}
