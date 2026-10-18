@@ -1,10 +1,12 @@
 from datetime import UTC, datetime
 
+import pandas as pd
 import pytest
 
 from terrine.data import Coverage, UnitSource
 from terrine.model import Model
 from terrine.spec import Design, Initiation, MatchedT0Sample, Schedule, Sequential
+from tests.reference.panels import matched_t0_probabilities
 
 
 def _model(native_inputs):
@@ -41,6 +43,19 @@ def test_matched_t0_samples_controls_without_replacement_and_records_probability
     assert [row["unit"] for row in treated] == ["a"]
     assert treated[0]["assignment_probability"] == 1
     assert all(row["assignment_probability"] == pytest.approx(2 / 3) for row in controls)
+    risk_set = pd.DataFrame(
+        [
+            {"unit": unit, "trial_id": "schedule:0", "treatment": unit == "a"}
+            for unit in ("a", "b", "c", "d")
+        ]
+    )
+    retained = pd.DataFrame(rows)[["unit", "trial_id", "treatment"]]
+    expected = matched_t0_probabilities(
+        risk_set, retained, treatment="treatment", strata=("trial_id",)
+    )
+    assert dict(zip(expected["unit"], expected["assignment_probability"], strict=True)) == {
+        row["unit"]: row["assignment_probability"] for row in rows
+    }
     assert roles.trial == "trial_id"
     assert roles.assignment_probability == "assignment_probability"
     assert roles.target_weight is None

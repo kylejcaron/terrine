@@ -5,8 +5,17 @@ import pytest
 
 from terrine.data import Coverage, UnitSource
 from terrine.model import Model
-from terrine.spec import Design, EventAnchor, EventPanel, Initiation, Schedule, Sequential, agg
-from tests.reference.panels import event_period_rows
+from terrine.spec import (
+    CalendarPanel,
+    Design,
+    EventAnchor,
+    EventPanel,
+    Initiation,
+    Schedule,
+    Sequential,
+    agg,
+)
+from tests.reference.panels import event_period_rows, sequential_rows
 
 
 def _event_model(native_inputs, coverage=None):
@@ -24,16 +33,36 @@ def _event_model(native_inputs, coverage=None):
 
 def test_sequential_schedule_emits_one_row_per_unit_trial(native_inputs):
     model = _event_model(native_inputs)
-    design = Sequential(
-        Design("user", Schedule("1d", "2025-01-03", "2025-01-05")),
+    base = Design("user", Schedule("1d", "2025-01-03", "2025-01-05"))
+    sequential = Sequential(
+        base,
         treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
     )
-
-    result = design.build(model)._compiled.table.to_pyarrow().to_pylist()
-
-    assert {(row["unit"], row["t0"]) for row in result} == {
-        (unit, datetime(2025, 1, day, tzinfo=UTC)) for unit in ("a", "b") for day in (3, 4)
-    }
+    calendar = CalendarPanel(sequential)
+    results = [
+        design.build(model)._compiled.table.to_pyarrow().to_pylist()
+        for design in (sequential, calendar)
+    ]
+    expected = sequential_rows(
+        units=("a", "b"),
+        trial_times=(
+            datetime(2025, 1, 3, tzinfo=UTC),
+            datetime(2025, 1, 4, tzinfo=UTC),
+        ),
+        treatment_times={
+            "a": datetime(2025, 1, 3, tzinfo=UTC),
+            "b": datetime(2025, 1, 3, tzinfo=UTC),
+        },
+    )
+    expected_rows = set(
+        expected[["unit", "trial_id", "t0", "treatment"]].itertuples(index=False, name=None)
+    )
+    for result in results:
+        actual_rows = {
+            (row["unit"], row["trial_id"], row["t0"], row["treatment"]) for row in result
+        }
+        assert actual_rows == expected_rows
+    assert results[0] == results[1]
 
 
 def test_initiation_is_classified_from_information_available_at_exact_t0(native_inputs):
@@ -94,7 +123,6 @@ def test_event_panel_emits_only_declared_relative_periods(native_inputs):
         (-1, 0, 2),
         86_400,
     )
-
     assert len(result) == 6
     assert {row["event_period"] for row in result} == {-1, 0, 2}
     assert {row["parent_t0"] for row in result} == {datetime(2025, 1, 3, tzinfo=UTC)}
@@ -115,6 +143,7 @@ def test_event_period_translates_nontrivial_outcome_window(native_inputs):
         Design(
             "user",
             EventAnchor("session", "first"),
+            features={"prior_sessions": agg("sessions", window=("-2d", "-1d"))},
             outcomes={"future_sessions": agg("sessions", window=("1d", "3d"))},
         ),
         periods=(-1, 0),
@@ -135,6 +164,35 @@ def test_event_period_translates_nontrivial_outcome_window(native_inputs):
     assert {(row["unit"], row["event_period"]) for row in rows} == {
         (unit, period) for unit in ("a", "b") for period in (-1, 0)
     }
+    expected = event_period_rows(
+        pd.DataFrame(
+            {
+                "unit": ["a", "b"],
+                "event_id": ["a1", "b1"],
+                "t0": [datetime(2025, 1, 3, tzinfo=UTC)] * 2,
+            }
+        ),
+        (-1, 0),
+        86_400,
+        windows={"future_sessions": (86_400, 259_200)},
+        cutoffs={"prior_sessions": -86_400},
+    )
+    expected_rows = expected.to_dict("records")
+    assert {row["windows"]["future_sessions"] for row in expected_rows} == {
+        (
+            datetime(2025, 1, 3, tzinfo=UTC),
+            datetime(2025, 1, 5, tzinfo=UTC),
+        ),
+        (
+            datetime(2025, 1, 4, tzinfo=UTC),
+            datetime(2025, 1, 6, tzinfo=UTC),
+        ),
+    }
+    assert {row["cutoffs"]["prior_sessions"] for row in expected_rows} == {
+        datetime(2025, 1, 1, tzinfo=UTC),
+        datetime(2025, 1, 2, tzinfo=UTC),
+    }
+    assert compiled.feature_cutoffs["prior_sessions"].latest_seconds == -86_400
 
 
 def test_sequential_requires_complete_source_history_from_declared_start(native_inputs):
