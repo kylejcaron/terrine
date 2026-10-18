@@ -6,7 +6,8 @@ import json
 import re
 import shutil
 import uuid
-from dataclasses import asdict, dataclass, replace
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, fields, is_dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,8 @@ from terrine.model import Model
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog
+from terrine.spec.design import Design
+from terrine.spec.expressions import AttributeAsOf, EventTime, MetricAgg
 
 __all__ = ["ReopenableSnapshot", "SnapshotAuthority"]
 
@@ -203,6 +206,7 @@ class SnapshotAuthority:
         self,
         model: Model,
         *,
+        design: Design,
         con: Any,
         namespace: str,
         run_id: str,
@@ -218,15 +222,21 @@ class SnapshotAuthority:
             raise TypeError("budget must be Budget")
         if budget.max_scan_bytes is not None and budget.strict_scan:
             raise _BUDGET_UNKNOWN.error()
+        if not isinstance(design, Design):
+            raise TypeError("design must be Design")
         _assert_owner_connection(self.owner, con)
         snapshot_id = uuid.uuid4().hex
         directory = self.owner.snapshot_root / namespace / f"{run_id}-{snapshot_id}"
+        source_names, dimension_names, unit_names = _design_root_names(model, design)
         published = _capture_native_inputs(
             model.catalog,
             con=con,
             units=model.units,
             budget=budget,
             retained_path=directory,
+            source_names=source_names,
+            dimension_names=dimension_names,
+            unit_names=unit_names,
         )
         try:
             entries = []
@@ -370,3 +380,63 @@ class _SnapshotContext(ExecutionContext):
         published, self._published = self._published, None
         if published is not None:
             published.close()
+
+
+def _design_root_names(
+    model: Model, design: Design
+) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
+    sources: set[str] = set()
+    properties: set[str] = set()
+
+    def visit(value: Any) -> None:
+        if isinstance(value, EventTime):
+            fact = model.catalog.facts.get(value.fact)
+            if fact is not None:
+                sources.add(fact.source)
+            if value.label_property is not None:
+                properties.add(value.label_property)
+            if value.relative_to is not None:
+                visit(value.relative_to)
+        elif isinstance(value, AttributeAsOf):
+            properties.add(value.attribute)
+            if value.relative_to is not None:
+                visit(value.relative_to)
+        elif isinstance(value, MetricAgg):
+            metric = model.catalog.metrics.get(value.metric)
+            if metric is not None:
+                for measure_name in (metric.measure, metric.numerator, metric.denominator):
+                    if measure_name is None:
+                        continue
+                    measure = model.catalog.measures.get(measure_name)
+                    if measure is not None:
+                        fact = model.catalog.facts.get(measure.fact)
+                        if fact is not None:
+                            sources.add(fact.source)
+        elif isinstance(value, Mapping):
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, (tuple, list)):
+            for child in value:
+                visit(child)
+        elif is_dataclass(value) and not isinstance(value, type):
+            for item in fields(value):
+                visit(getattr(value, item.name))
+
+    for role in ("features", "outcomes", "eligibility"):
+        visit(getattr(design, role, {}))
+    visit(design.anchor)
+    visit(design.treatment)
+    visit(design.shape)
+    dimension_names: set[str] = set()
+    for property_name in properties:
+        prop = model.catalog.properties.get(property_name)
+        if prop is None:
+            continue
+        sources.add(prop.source)
+        if prop.dimension is not None:
+            dimension_names.add(prop.dimension)
+    for source_name in sources:
+        source = model.catalog.sources.get(source_name)
+        if source is not None:
+            dimension_names.update(source.dimensions)
+    return frozenset(sources), frozenset(dimension_names), frozenset({design.unit})

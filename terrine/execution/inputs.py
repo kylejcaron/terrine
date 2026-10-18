@@ -636,10 +636,22 @@ def _capture_native_inputs(
     units: Mapping[str, Any] | None,
     budget: Budget,
     retained_path: Path,
+    source_names: frozenset[str] | None = None,
+    dimension_names: frozenset[str] | None = None,
+    unit_names: frozenset[str] | None = None,
 ) -> PublishedInputs:
     from terrine.execution._publish import publish
 
-    return publish(catalog, con=con, units=units, budget=budget, retained_path=retained_path)
+    return publish(
+        catalog,
+        con=con,
+        units=units,
+        budget=budget,
+        retained_path=retained_path,
+        source_names=source_names,
+        dimension_names=dimension_names,
+        unit_names=unit_names,
+    )
 
 
 def _reopen_native_inputs(

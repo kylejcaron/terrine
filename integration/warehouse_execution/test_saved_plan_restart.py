@@ -15,8 +15,7 @@ from terrine.runtime.execute import execute_plan
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
-from terrine.semantic.models import Catalog
-from terrine.spec import Design, FixedDate
+from terrine.spec import Design, FixedDate, agg
 
 
 def _catalog() -> Catalog:
@@ -135,8 +134,16 @@ def test_reopenable_snapshot_resumes_in_fresh_process_after_source_mutation(tmp_
     catalog = _catalog()
     model = _model(con, catalog)
     owner = RuntimeOwner(state_path=state_path, snapshot_root=snapshot_root)
+    design = Design(
+        "user", FixedDate("2025-01-15"), features={"total": agg("total", window=("-1d", "0s"))}
+    )
     receipt = SnapshotAuthority(owner).capture(
-        model, con=con, namespace="runtime", run_id="snapshot-run", budget=Budget()
+        model,
+        design=design,
+        con=con,
+        namespace="runtime",
+        run_id="snapshot-run",
+        budget=Budget(),
     )
     con.raw_sql("UPDATE events SET value=99")
     con.disconnect()

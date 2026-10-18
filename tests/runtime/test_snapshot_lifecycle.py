@@ -248,6 +248,7 @@ def test_collected_snapshot_pin_failure_records_run_and_releases_lease():
 
     lifecycle = read_run_events("collected-run", con=con, namespace="owner").events
     assert [event.payload["state"] for event in lifecycle if event.kind == "lifecycle"] == [
+        "queued",
         "running",
         "failed",
     ]
@@ -289,6 +290,7 @@ def test_cancel_during_snapshot_pin_failure_does_not_emit_false_failure(monkeypa
     events = read_run_events("cancel-at-pin", con=con, namespace="owner").events
     assert status.durable_state == "cancel_requested"
     assert [event.payload["state"] for event in events if event.kind == "lifecycle"] == [
+        "queued",
         "running",
         "cancel_requested",
     ]

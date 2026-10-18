@@ -14,6 +14,7 @@ from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.snapshot import ReopenableSnapshot, SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog
+from terrine.spec import Design, FixedDate, agg
 
 
 def _catalog() -> Catalog:
@@ -41,6 +42,14 @@ def _catalog() -> Catalog:
     )
 
 
+def _design():
+    return Design(
+        "user",
+        FixedDate("2025-01-02T00:00:00+00:00"),
+        features={"total": agg("total", window=("-1d", "0s"))},
+    )
+
+
 def test_snapshot_receipt_reopens_same_inputs_after_fresh_owner_connection(tmp_path):
     state_path = tmp_path / "owner.duckdb"
     owner = RuntimeOwner(state_path=state_path, snapshot_root=tmp_path / "snapshots")
@@ -51,7 +60,7 @@ def test_snapshot_receipt_reopens_same_inputs_after_fresh_owner_connection(tmp_p
         _catalog(), con=con, readiness={"events": Coverage("2025-01-01", "2025-02-01")}
     )
     receipt = SnapshotAuthority(owner).capture(
-        model, con=con, namespace="runtime", run_id="run-1", budget=Budget()
+        model, design=_design(), con=con, namespace="runtime", run_id="run-1", budget=Budget()
     )
     con.raw_sql("UPDATE events SET value=99")
     con.disconnect()
@@ -107,6 +116,7 @@ def test_capture_budget_refuses_unknown_scan_before_creating_snapshot(tmp_path):
         with pytest.raises(TerrineError) as error:
             SnapshotAuthority(owner).capture(
                 model,
+                design=_design(),
                 con=con,
                 namespace="runtime",
                 run_id="run-1",
@@ -130,7 +140,7 @@ def test_snapshot_reopen_refuses_modified_retained_inputs(tmp_path):
         _catalog(), con=con, readiness={"events": Coverage("2025-01-01", "2025-02-01")}
     )
     receipt = SnapshotAuthority(owner).capture(
-        model, con=con, namespace="runtime", run_id="run-1", budget=Budget()
+        model, design=_design(), con=con, namespace="runtime", run_id="run-1", budget=Budget()
     )
     con.disconnect()
 
@@ -161,7 +171,7 @@ def test_snapshot_gc_respects_pins_and_tombstones_collected_inputs(tmp_path):
     )
     authority = SnapshotAuthority(owner)
     receipt = authority.capture(
-        model, con=con, namespace="runtime", run_id="collect", budget=Budget()
+        model, design=_design(), con=con, namespace="runtime", run_id="collect", budget=Budget()
     )
     import duckdb
 
@@ -205,3 +215,46 @@ def test_snapshot_gc_rejects_attached_noncurrent_owner_database(tmp_path):
         )
     assert error.value.code == "terrine.runtime.snapshot_invalid"
     con.disconnect()
+
+
+def test_snapshot_captures_only_sources_in_design_dependency_closure(tmp_path):
+    state_path = tmp_path / "owner.duckdb"
+    owner = RuntimeOwner(state_path=state_path, snapshot_root=tmp_path / "snapshots")
+    con = ibis.duckdb.connect(str(state_path))
+    con.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+    con.raw_sql("INSERT INTO events VALUES ('2025-01-01', 1, 3)")
+    con.raw_sql("CREATE TABLE labels (ts TIMESTAMP, user_id INTEGER, label VARCHAR)")
+    con.raw_sql("INSERT INTO labels VALUES ('2025-01-01', 1, 'unused')")
+    definition = _catalog().model_dump(mode="python")
+    definition["sources"]["labels"] = {
+        "relation": {"kind": "table", "name": "labels"},
+        "timestamp": "ts",
+        "entities": {"user": "user_id"},
+        "facts": [],
+        "properties": ["label"],
+        "dimensions": [],
+    }
+    definition["properties"]["label"] = {
+        "source": "labels",
+        "column": "label",
+        "dtype": "string",
+        "as_of": "event_time",
+    }
+    catalog = Catalog.model_validate(definition)
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={
+            "events": Coverage("2025-01-01", "2025-02-01"),
+            "labels": Coverage("2025-01-01", "2025-02-01"),
+        },
+    )
+    try:
+        receipt = SnapshotAuthority(owner).capture(
+            model, design=_design(), con=con, namespace="runtime", run_id="closure", budget=Budget()
+        )
+        assert {entry["relation_key"] for entry in receipt.roots if entry["kind"] == "table"} == {
+            "events"
+        }
+    finally:
+        con.disconnect()

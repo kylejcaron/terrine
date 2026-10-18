@@ -39,14 +39,28 @@ def _quote_ident(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
 
 
-def _root_spec(catalog: Catalog, units: Mapping[str, Any] | None):
-    roots = [("source", name, source.relation) for name, source in catalog.sources.items()]
+def _root_spec(
+    catalog: Catalog,
+    units: Mapping[str, Any] | None,
+    *,
+    source_names: frozenset[str] | None = None,
+    dimension_names: frozenset[str] | None = None,
+    unit_names: frozenset[str] | None = None,
+):
+    roots = [
+        ("source", name, source.relation)
+        for name, source in catalog.sources.items()
+        if source_names is None or name in source_names
+    ]
     roots.extend(
-        ("dimension", name, dimension.relation) for name, dimension in catalog.dimensions.items()
+        ("dimension", name, dimension.relation)
+        for name, dimension in catalog.dimensions.items()
+        if dimension_names is None or name in dimension_names
     )
     roots.extend(
         ("roster", name, TableRef(kind="table", name=unit.table))
         for name, unit in (units or {}).items()
+        if unit_names is None or name in unit_names
     )
     return roots
 
@@ -123,6 +137,9 @@ def publish(
     units: Mapping[str, Any] | None = None,
     budget: Budget | None = None,
     retained_path: Path | None = None,
+    source_names: frozenset[str] | None = None,
+    dimension_names: frozenset[str] | None = None,
+    unit_names: frozenset[str] | None = None,
 ) -> PublishedInputs:
     with _native.connection_lock(_native.raw_connection(con)):
         return _publish_locked(
@@ -131,6 +148,9 @@ def publish(
             units=units,
             budget=budget,
             retained_path=retained_path,
+            source_names=source_names,
+            dimension_names=dimension_names,
+            unit_names=unit_names,
         )
 
 
@@ -141,6 +161,9 @@ def _publish_locked(
     units: Mapping[str, Any] | None,
     budget: Budget | None,
     retained_path: Path | None,
+    source_names: frozenset[str] | None = None,
+    dimension_names: frozenset[str] | None = None,
+    unit_names: frozenset[str] | None = None,
 ) -> PublishedInputs:
     origin = _native.raw_connection(con)
     _native.verify_native_backend(origin)
@@ -149,7 +172,13 @@ def _publish_locked(
             raise TypeError("budget must be Budget or None")
         if budget.max_scan_bytes is not None and budget.strict_scan:
             raise _CAPTURE_SCAN_UNKNOWN.error()
-    roots = _root_spec(catalog, units)
+    roots = _root_spec(
+        catalog,
+        units,
+        source_names=source_names,
+        dimension_names=dimension_names,
+        unit_names=unit_names,
+    )
     if not roots:
         raise _SNAPSHOT_UNAVAILABLE.error(reason="empty Catalog has no publishable roots")
     _admit_roots(catalog, origin, units, roots)
