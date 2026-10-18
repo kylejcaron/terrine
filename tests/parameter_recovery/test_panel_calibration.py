@@ -256,7 +256,7 @@ CATT_CELLS = tuple(
         ("profile_a", "profile_b"),
     )
 )
-CATT_PER_GATE_ALPHA = FAMILY_ALPHA / (3 * len(CATT_CELLS) * 2)
+CATT_PER_GATE_ALPHA = FAMILY_ALPHA / (3 * len(CATT_CELLS) * 3)
 CATT_STUDENTIZATION_LIMITS = (
     float(chi2.ppf(CATT_PER_GATE_ALPHA / 2, len(SEEDS))),
     float(chi2.ppf(1 - CATT_PER_GATE_ALPHA / 2, len(SEEDS))),
@@ -361,9 +361,12 @@ def _catt_evidence_path(cell: tuple[str, str, str]) -> Path:
 @pytest.mark.parameter_recovery
 @pytest.mark.parametrize("cell", CATT_CELLS, ids=lambda cell: "stacked-" + "-".join(cell))
 def test_stacked_catt_calibration_cell(cell):
-    effects = [[], []]
-    standard_errors = [[], []]
-    covered = [[], []]
+    aggregate_truth = 1.5 if cell[0] == "equal" else 1.75
+    truths = (1.0, 2.0, aggregate_truth)
+    effects = [[], [], []]
+    standard_errors = [[], [], []]
+    covered = [[], [], []]
+    critical = critical_value(0.05)
     started = time.perf_counter()
     refusals, errors = [], []
     for seed in SEEDS:
@@ -377,12 +380,16 @@ def test_stacked_catt_calibration_cell(cell):
                 period="period",
                 cohort_weights=weights,
             )
-            for index, truth in enumerate((1.0, 2.0)):
-                estimate = result.effects[index]
-                se = result.standard_errors[index]
+            estimates = (*result.effects, result.aggregate_effects[0])
+            standard_errors_for_targets = (
+                *result.standard_errors,
+                result.aggregate_standard_errors[0],
+            )
+            for index, (truth, estimate, se) in enumerate(
+                zip(truths, estimates, standard_errors_for_targets, strict=True)
+            ):
                 effects[index].append(estimate)
                 standard_errors[index].append(se)
-                critical = critical_value(0.05)
                 covered[index].append(estimate - critical * se <= truth <= estimate + critical * se)
         except TerrineError as error:
             refusals.append({"seed": seed, "code": error.code})
@@ -390,11 +397,11 @@ def test_stacked_catt_calibration_cell(cell):
             errors.append({"seed": seed, "type": type(error).__name__, "detail": str(error)})
 
     contrast_evidence = []
-    for index, truth in enumerate((1.0, 2.0)):
+    for index, truth in enumerate(truths):
         values = np.asarray(effects[index], dtype=np.float64)
         ses = np.asarray(standard_errors[index], dtype=np.float64)
         if len(values) < 2:
-            contrast_evidence.append({"cohort_effect": truth, "completed": len(values)})
+            contrast_evidence.append({"target": index, "truth": truth, "completed": len(values)})
             continue
         errors_from_truth = values - truth
         bias = float(errors_from_truth.mean())
@@ -406,7 +413,8 @@ def test_stacked_catt_calibration_cell(cell):
         coverage_p = float(binomtest(coverage_count, len(values), 0.95).pvalue)
         contrast_evidence.append(
             {
-                "cohort_effect": truth,
+                "target": index,
+                "truth": truth,
                 "bias": bias,
                 "empirical_sd": empirical_sd,
                 "mean_se": float(np.mean(ses)),
@@ -435,7 +443,7 @@ def test_stacked_catt_calibration_cell(cell):
         "refused": len(refusals),
         "refusals": refusals,
         "errors": errors,
-        "contrasts": contrast_evidence,
+        "targets": contrast_evidence,
         "studentization_chi_square_limits": list(CATT_STUDENTIZATION_LIMITS),
         "runtime_seconds": time.perf_counter() - started,
         "environment": {
@@ -450,11 +458,11 @@ def test_stacked_catt_calibration_cell(cell):
     )
     assert evidence["completed"] == len(SEEDS), evidence
     if not SMOKE_ONLY:
-        for contrast in contrast_evidence:
-            assert contrast["bias_log_p"] >= math.log(CATT_PER_GATE_ALPHA), evidence
-            assert contrast["coverage_exact_binomial_p"] >= CATT_PER_GATE_ALPHA, evidence
+        for target in contrast_evidence:
+            assert target["bias_log_p"] >= math.log(CATT_PER_GATE_ALPHA), evidence
+            assert target["coverage_exact_binomial_p"] >= CATT_PER_GATE_ALPHA, evidence
             assert (
                 CATT_STUDENTIZATION_LIMITS[0]
-                <= contrast["studentization_chi_square"]
+                <= target["studentization_chi_square"]
                 <= CATT_STUDENTIZATION_LIMITS[1]
             ), evidence

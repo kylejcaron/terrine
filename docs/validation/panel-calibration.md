@@ -9,11 +9,10 @@ The calibration harness also predeclares eight stochastic stacked cohort-time
 equal/unequal cohort aggregation weights, disjoint/overlapping unit populations,
 and two outcome trend/noise profiles. Each CATT cell uses the same 400 seeds
 (`0..399`) and `n_units=2000`; every seed must recover both cohort-specific
-effects and the normalized aggregate target. CATT bias, 95% exact-binomial
-coverage, and studentization gates are Bonferroni allocated across both
-contrasts in all eight cells. Full-run evidence is one `stacked-<cell>.json`
-record per CATT cell.
-The CATT per-gate alpha is `0.01/(3*8*2)`.
+effects and normalized aggregate target. CATT bias, 95% exact-binomial coverage,
+and studentization gates are Bonferroni allocated across all three targets in
+all eight cells. Full-run evidence is one `stacked-<cell>.json` record per CATT
+cell. The CATT per-gate alpha is `0.01/(3*8*3)`.
 
 Every clean cell requires all 400 replications to complete successfully; any unexpected refusal fails the cell and stays in the denominator. Evidence records attempted, completed/refused counts, refusal codes/seeds, bias, empirical standard deviation, mean standard error, RMSE, exact interval-coverage count, median interval width, diagnostic statuses, runtime/environment and exact seed list. At family alpha `0.01`, bias, exact-binomial 0.95 coverage and chi-square studentization tests each receive `0.01/(3*16)`. The two-sided bias test uses a log-tail normal critical value; coverage uses the exact binomial test; studentization compares the sum of squared error/SE ratios to its chi-square range. All cutoffs are frozen in the harness before results are observed.
 
