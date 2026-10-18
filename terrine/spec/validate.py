@@ -338,7 +338,7 @@ def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
             seconds=last_offset
             + (max(design.shape.comparison_periods) + anticipation) * schedule.every
         )
-        if coverage.end_exclusive < horizon:
+        if coverage.end_exclusive <= horizon:
             raise _INCOMPLETE_TREATMENT_HISTORY.error(
                 source=source.name,
                 boundary=horizon.isoformat(),
