@@ -74,3 +74,11 @@ estimate = panel_aipw(
 ```
 
 The returned `trial_weighted_ATE` reports trial rows in `n` and unique units in `n_clusters`. Its unit-cluster cross-fit sandwich sums each unit's influence contributions across all trials before computing uncertainty. This is not the fixed-cohort ATE, and trial weights, target weights, and matched-sample inclusion probabilities are distinct quantities.
+
+## Weighted stacked cohort-time effects
+
+`stacked_event_study` estimates one weighted CATT for every declared cohort and comparison period. The materialized comparison frame determines whether controls come from never-treated or not-yet-treated units. `unit_weight` supplies target-population weights within each cohort-time treated/control mean; `cohort_weights` determines target-cohort aggregation and is normalized to sum to one. Without explicit weights, both targets use equal cohort weights and unit weights. The returned joint covariance clusters influence contributions by unit across every stack and period, so shared controls and repeated cohort membership contribute jointly. Sampled populations are refused: these estimates do not silently treat sampled controls as the full risk set.
+
+Identification requires parallel *unconditional* untreated outcome trends between the actual weighted treated and control populations. Conditional parallel trends alone do not justify the unadjusted estimator when covariate distributions differ. The estimator does not claim to test that assumption. Use `naive_staggered_twfe_warning()` when documenting why a naive staggered TWFE estimate is not a substitute for these cohort-time effects.
+
+Run `python examples/stacked_event_study.py` for an executable DuckDB example that materializes both control modes, estimates their effects and prints the TWFE warning diagnostic.
