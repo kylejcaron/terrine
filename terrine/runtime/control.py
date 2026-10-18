@@ -140,6 +140,8 @@ class ControlServer:
         namespace: str,
         endpoint: ControlEndpoint,
         executor: Any | None = None,
+        resolver: Any | None = None,
+        snapshot_authority: Any | None = None,
     ) -> None:
         if store.namespace != namespace:
             raise ValueError("control namespace does not match runtime store")
@@ -147,6 +149,8 @@ class ControlServer:
         self.namespace = namespace
         self.endpoint = endpoint
         self.executor = executor
+        self.resolver = resolver
+        self.snapshot_authority = snapshot_authority
         self._server: socketserver.UnixStreamServer | None = None
         self._thread: threading.Thread | None = None
         self._endpoint_identity: tuple[int, int] | None = None
@@ -266,6 +270,8 @@ class ControlServer:
                 request_key=request.get("request_key"),
                 destination=destination,
                 executor=self.executor,
+                resolver=self.resolver,
+                snapshot_authority=self.snapshot_authority,
             )
             return asdict(receipt)
 
