@@ -87,6 +87,18 @@ class RuntimeStore:
             "created_at TIMESTAMP NOT NULL, supersedes VARCHAR, "
             "superseded_by VARCHAR, PRIMARY KEY(dataset, generation))"
         )
+        column_type = self.con.execute(
+            "SELECT data_type FROM information_schema.columns "
+            "WHERE table_schema=? AND table_name='runtime_generations' "
+            "AND column_name='created_at'",
+            [self.namespace],
+        ).fetchone()[0]
+        if column_type != "TIMESTAMP":
+            self.con.execute(
+                f"ALTER TABLE {self._schema}.runtime_generations "
+                "ALTER COLUMN created_at SET DATA TYPE TIMESTAMP USING "
+                "CAST(CAST(created_at AS TIMESTAMPTZ) AT TIME ZONE 'UTC' AS TIMESTAMP)"
+            )
         self.con.execute(
             f"ALTER TABLE {self._schema}.runtime_generations "
             "ADD COLUMN IF NOT EXISTS guard_version BIGINT DEFAULT 0"

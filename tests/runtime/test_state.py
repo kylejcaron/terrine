@@ -120,3 +120,36 @@ def test_generation_cannot_supersede_itself():
             supersedes=ref,
         )
     assert store.read_generation(ref) is None
+
+
+def test_initialize_migrates_existing_generation_timestamp_to_naive_utc():
+    con = duckdb.connect(":memory:")
+    con.execute("CREATE SCHEMA owner")
+    con.execute(
+        "CREATE TABLE owner.runtime_generations (dataset VARCHAR NOT NULL, "
+        "generation VARCHAR NOT NULL, definition_json VARCHAR NOT NULL, "
+        "snapshot_json VARCHAR NOT NULL, created_at VARCHAR NOT NULL, "
+        "supersedes VARCHAR, superseded_by VARCHAR, "
+        "PRIMARY KEY(dataset, generation))"
+    )
+    con.execute(
+        "INSERT INTO owner.runtime_generations VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            "orders",
+            "g1",
+            '{"definition_hash":"d","schema_hash":"s","codec_version":"1"}',
+            '{"snapshot_id":"snap","source_revisions":{},"readiness":{},'
+            '"captured_at":"2025-01-01T02:00:00.123456+02:00","owner_reference":"owner"}',
+            "2025-01-01T02:00:00.123456+02:00",
+            None,
+            None,
+        ],
+    )
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
+    record = store.read_generation(GenerationRef("owner", "orders", "g1"))
+    assert record is not None
+    assert record.created_at == datetime(2025, 1, 1, 0, 0, 0, 123456, tzinfo=UTC)
+    assert con.execute(
+        "SELECT typeof(created_at), created_at FROM owner.runtime_generations"
+    ).fetchone() == ("TIMESTAMP", datetime(2025, 1, 1, 0, 0, 0, 123456))
