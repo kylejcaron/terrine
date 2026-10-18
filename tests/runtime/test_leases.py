@@ -88,3 +88,21 @@ def test_lease_heartbeat_renewal_and_fencing():
     assert second.fence > first.fence
     with pytest.raises(ValueError):
         store.assert_current(first)
+
+
+def test_disjoint_dataset_scopes_can_be_leased_concurrently():
+    con = duckdb.connect(":memory:")
+    store = LeaseStore(con, namespace="owner")
+    store.initialize()
+    now = datetime.now(UTC)
+
+    orders = store.acquire(
+        "dataset:orders:[2025-01-01,2025-02-01)", "run-a", ttl=timedelta(minutes=1), now=now
+    )
+    users = store.acquire(
+        "dataset:users:[2025-01-01,2025-02-01)", "run-b", ttl=timedelta(minutes=1), now=now
+    )
+
+    assert orders.resource != users.resource
+    store.assert_current(orders)
+    store.assert_current(users)
