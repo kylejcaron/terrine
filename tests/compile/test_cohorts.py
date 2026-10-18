@@ -465,3 +465,39 @@ def test_float_mean_certificate_covers_many_member_rounding():
         )
     finally:
         con.disconnect()
+
+
+def test_large_zero_float_cohort_mean_remains_available():
+    con, model = _trajectory_model()
+    try:
+        con.raw_sql("UPDATE events SET float_amount = 0")
+        count = 2048
+        users = ", ".join(f"('zero-{index}')" for index in range(count))
+        events = ", ".join(
+            f"('zero-{index}', TIMESTAMPTZ '2025-01-01 00:00:00+00', 'purchase', 0, 0, 0)"
+            for index in range(count)
+        )
+        con.raw_sql(f"INSERT INTO users VALUES {users}")
+        con.raw_sql(
+            "INSERT INTO events (user_id, ts, kind, amount, decimal_amount, float_amount) "
+            f"VALUES {events}"
+        )
+        frame = Design(
+            "user",
+            EventAnchor("purchase", which="first"),
+            shape=CohortSpec(
+                origin="purchase",
+                trajectory=Trajectory("float_revenue", "7d", periods=1, cumulative=False),
+            ),
+        ).build(model)
+        result = frame.cohorts(
+            grouping=CohortGrouping(
+                bucket="7d", bucket_origin=datetime(2025, 1, 1, tzinfo=UTC), statistic="mean"
+            ),
+            value_column="period_value",
+        ).materialize()
+        row = next(row for row in result.table.to_pylist() if row["bucket_index"] == 0)
+        assert row["value"] == 0.0
+        assert row["complete"] is True
+    finally:
+        con.disconnect()

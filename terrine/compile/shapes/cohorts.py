@@ -101,7 +101,8 @@ def compile_cohorts(
         )
         scaled = per_unit.left_join(scales, ["bucket_index", "age"])
         reduction_table = scaled.mutate(
-            _scale=ibis.ifelse(scaled._scale == 0.0, 1.0, scaled._scale)
+            _magnitude=scaled._scale,
+            _scale=ibis.ifelse(scaled._scale == 0.0, 1.0, scaled._scale),
         )
         normalized = reduction_table._value / reduction_table._scale
         observed_value = normalized.mean() * reduction_table._scale.first()
@@ -114,7 +115,7 @@ def compile_cohorts(
         input_error = per_unit._absolute_error.mean()
         error_count = per_unit._value.notnull().cast("float64").sum()
         reduction_error = outward_multiply(
-            float64_rounding_radius(reduction_table._scale.first()),
+            float64_rounding_radius(reduction_table._magnitude.first()),
             outward_multiply(error_count, 4.0),
         )
         absolute_error = outward_add(input_error, reduction_error)
