@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from fractions import Fraction
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from fractions import Fraction
 
 import numpy as np
 
@@ -74,15 +74,10 @@ def _checked_mean(
     weight_scale = max(weight for _, _, weight in values)
     normalized = [(unit, delta, weight / weight_scale) for unit, delta, weight in values]
     numerator = sum(
-        (
-            Fraction.from_float(weight) * Fraction.from_float(delta)
-            for _, delta, weight in values
-        ),
+        (Fraction.from_float(weight) * Fraction.from_float(delta) for _, delta, weight in values),
         Fraction(),
     )
-    denominator_exact = sum(
-        (Fraction.from_float(weight) for _, _, weight in values), Fraction()
-    )
+    denominator_exact = sum((Fraction.from_float(weight) for _, _, weight in values), Fraction())
     mean = float(numerator / denominator_exact)
     if not math.isfinite(mean):
         raise NONFINITE_RESULT.error(stage=reason)

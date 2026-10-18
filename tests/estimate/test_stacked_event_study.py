@@ -451,6 +451,8 @@ def test_control_risk_horizon_ignores_feature_windows():
     )
 
     assert result.n > 0
+
+
 def test_stacked_estimator_accepts_control_removed_by_longer_declared_window():
     from dataclasses import replace
 
