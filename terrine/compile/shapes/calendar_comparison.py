@@ -47,7 +47,7 @@ def _deferred_refusal(query):
     )
 
 
-def _history_check(design: Design, rows):
+def _history_check(design: Design, model: Model, rows):
     spec = design.shape
     assert isinstance(spec, CalendarComparisonSpec)
     anchor = design.anchor
@@ -61,6 +61,13 @@ def _history_check(design: Design, rows):
     latest = cast(ir.TimestampValue, ibis.greatest(participants.t0, reference_t0)) + ibis.interval(
         seconds=anticipation * anchor.every
     )
+    if spec.control == "never_treated":
+        schedule_end = ibis.literal(model.day_boundary(anchor.end))
+        latest = ibis.ifelse(
+            participants.control_eligible & ~participants.treatment,
+            ibis.greatest(latest, schedule_end),
+            latest,
+        )
     missing = cast(ir.BooleanValue, ibis.literal(False))
     if "_observed_from" in participants.columns:
         missing = missing | (
@@ -279,7 +286,7 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
         anchors,
         (
             *compiled._checks,
-            _history_check(design, audit),
+            _history_check(design, model, audit),
             _period_check(
                 cohort_units,
                 anchors,

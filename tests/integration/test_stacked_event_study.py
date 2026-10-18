@@ -78,21 +78,23 @@ def test_calendar_comparison_excludes_ineligible_units(native_inputs):
     from terrine.spec import gt
 
     catalog, con = native_inputs
+    con.insert("users", pa.table({"user_id": ["c"], "alt_id": ["cc"]}))
     con.raw_sql("ALTER TABLE users ADD COLUMN observed_from TIMESTAMPTZ")
     con.raw_sql(
-        "UPDATE users SET observed_from = TIMESTAMPTZ '2025-01-02 00:00:00+00' WHERE user_id = 'c'"
+        "UPDATE users SET observed_from = TIMESTAMPTZ '2024-12-31 00:00:00+00' WHERE user_id = 'c'"
     )
     con.insert(
         "events",
         pa.table(
             {
-                "user_id": ["a", "a"],
+                "user_id": ["a", "a", "a"],
                 "ts": [
                     datetime(2024, 12, 31, tzinfo=UTC),
-                    datetime(2025, 1, 2, tzinfo=UTC),
+                    datetime(2025, 1, 1, tzinfo=UTC),
+                    datetime(2025, 1, 3, tzinfo=UTC),
                 ],
-                "event_id": ["a0", "a1"],
-                "alternate_event_id": ["a0-alt", "a1-alt"],
+                "event_id": ["a0", "a1", "a2"],
+                "alternate_event_id": ["a0-alt", "a1-alt", "a2-alt"],
             }
         ),
     )
@@ -106,12 +108,12 @@ def test_calendar_comparison_excludes_ineligible_units(native_inputs):
     result = CalendarComparisonPanel(
         Design(
             "user",
-            Schedule("1d", "2024-12-31", "2025-01-04"),
+            Schedule("1d", "2025-01-02", "2025-01-04"),
             gap="1d",
             eligibility={"eligible": gt(agg("sessions", window=("-2d", "-1d")), 0)},
         ),
         model,
-        cohort=Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+        cohort=Initiation("events", "session", datetime(2025, 1, 2, tzinfo=UTC)),
         control="never_treated",
         reference_period=-1,
         comparison_periods=(0,),
@@ -269,7 +271,7 @@ def test_calendar_comparison_preserves_feature_named_initiation_time(native_inpu
         reference_period=-1,
         comparison_periods=(0,),
     ).materialize(Budget(max_rows=100, max_output_bytes=1_000_000))
-    assert "initiation_time" in frame.table.column_names
+    assert sorted(row["initiation_time"] for row in frame.table.to_pylist()) == [0, 0, 1, 1]
 
 
 def test_not_yet_treated_history_must_extend_past_anticipation_cutoff(native_inputs):
@@ -298,6 +300,37 @@ def test_not_yet_treated_history_must_extend_past_anticipation_cutoff(native_inp
         reference_period=-2,
         comparison_periods=(0,),
         anticipation_periods=(-1,),
+    )
+    with pytest.raises(TerrineError) as error:
+        frame.materialize(Budget(max_rows=100, max_output_bytes=1_000_000))
+    assert error.value.code == "terrine.design.incomplete_unit_treatment_history"
+
+
+def test_never_treated_history_covers_full_schedule(native_inputs):
+    import pytest
+
+    from terrine.errors import TerrineError
+
+    catalog, con = native_inputs
+    con.insert("users", pa.table({"user_id": ["c"], "alt_id": ["cc"]}))
+    con.raw_sql("ALTER TABLE users ADD COLUMN observed_until TIMESTAMPTZ")
+    con.raw_sql(
+        "UPDATE users SET observed_until = TIMESTAMPTZ '2025-01-04 00:00:00+00' WHERE user_id = 'c'"
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
+        units={"user": UnitSource("users", "user_id", observed_until="observed_until")},
+        event_ids={"events": "event_id"},
+    )
+    frame = CalendarComparisonPanel(
+        Design("user", Schedule("1d", "2025-01-01", "2025-01-12")),
+        model,
+        cohort=Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+        control="never_treated",
+        reference_period=-1,
+        comparison_periods=(0,),
     )
     with pytest.raises(TerrineError) as error:
         frame.materialize(Budget(max_rows=100, max_output_bytes=1_000_000))
