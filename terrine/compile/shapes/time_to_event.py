@@ -13,8 +13,10 @@ import ibis.expr.types as ir
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
+from terrine.spec.anchors import FixedDate
 from terrine.spec.design import Design
 from terrine.spec.trajectory import TimeToEvent
+from terrine.temporal._timestamps import _UNSUPPORTED as _TIMESTAMP_ORDER_UNSUPPORTED
 from terrine.temporal._timestamps import compare_timestamps, timestamp_order_key
 from terrine.temporal.first import first_occurrence
 
@@ -28,6 +30,29 @@ _INVALID = RefusalSpec(
     "Time-to-event compilation failed ({reason}).",
 )
 _INCOMPLETE_HISTORY = "incomplete_initial_history"
+
+
+def _validate_nanosecond_axis(design: Design, timestamp_types) -> None:
+    if not any(dtype.scale == 9 for dtype in timestamp_types):
+        return
+    ns_min = datetime(1677, 9, 21, 0, 12, 43, 145225, tzinfo=UTC)
+    ns_max = datetime(2262, 4, 11, 23, 47, 16, 854775, tzinfo=UTC)
+    instants = []
+    if isinstance(design.anchor, FixedDate):
+        instants.append(design.anchor.date)
+    if design.anchor_range is not None:
+        instants.extend((design.anchor_range.start, design.anchor_range.end))
+    if design.administrative_cutoff is not None:
+        instants.append(design.administrative_cutoff)
+    for instant in instants:
+        if instant is None:
+            continue
+        if not isinstance(instant, datetime):
+            instant = datetime.combine(instant, datetime.min.time(), UTC)
+        if instant < ns_min or instant > ns_max:
+            raise _TIMESTAMP_ORDER_UNSUPPORTED.error(
+                dtype=f"nanosecond event axis with out-of-range instant {instant.isoformat()}"
+            )
 
 
 @ibis.udf.scalar.builtin(
@@ -159,6 +184,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         ]
         for name in source_names
     ]
+    _validate_nanosecond_axis(design, timestamp_types)
     time_type = dt.Timestamp(scale=max(dtype.scale or 6 for dtype in timestamp_types))
     event_timestamp = event_relation._timestamp
     if event_relation.schema()["_timestamp"].timezone is not None:

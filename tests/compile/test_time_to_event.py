@@ -7,7 +7,7 @@ from terrine.data import Coverage
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.models import Catalog
-from terrine.spec import Design, EventAnchor, agg
+from terrine.spec import Design, EventAnchor, FixedDate, agg
 from terrine.spec.trajectory import TimeToEvent
 
 
@@ -430,6 +430,35 @@ def test_wide_entry_source_timestamp_is_not_cast_to_nanoseconds():
             .materialize()
         )
         assert result.table.num_rows > 0
+    finally:
+        con.disconnect()
+
+
+def test_nanosecond_axis_refuses_wide_fixed_anchor_and_cutoff_before_execution():
+    from terrine.compile.shapes.time_to_event import compile_time_to_event
+    from terrine.data import UnitSource
+
+    con, model = _model(nanosecond_outcomes=True)
+    model = Model.from_catalog(
+        model.catalog,
+        con=con,
+        readiness=model.readiness.sources,
+        units={"user": UnitSource("anchors", "user_id")},
+    )
+    try:
+        designs = (
+            Design("user", FixedDate("1600-01-01"), shape=TimeToEvent("churn")),
+            Design(
+                "user",
+                FixedDate("2025-01-01"),
+                shape=TimeToEvent("churn"),
+                administrative_cutoff=datetime(2400, 1, 1, tzinfo=UTC),
+            ),
+        )
+        for design in designs:
+            with pytest.raises(TerrineError) as error:
+                compile_time_to_event(design, model)
+            assert error.value.code == "terrine.temporal.timestamp_order_unsupported"
     finally:
         con.disconnect()
 
