@@ -20,6 +20,7 @@ from terrine.spec.expressions import (
 )
 from terrine.spec.io import from_json, from_yaml, to_json, to_yaml
 from terrine.spec.state_panel import BinnedMetricState, StateObservations, StatePanel
+from terrine.spec.trajectory import CohortGrouping, CohortSpec, Trajectory
 
 __all__ = [
     "AnchorRange",
@@ -49,4 +50,7 @@ __all__ = [
     "BinnedMetricState",
     "StateObservations",
     "StatePanel",
+    "Trajectory",
+    "CohortSpec",
+    "CohortGrouping",
 ]

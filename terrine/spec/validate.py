@@ -21,6 +21,7 @@ from terrine.semantic.rules import (
 from terrine.spec.anchors import EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.expressions import And, AttributeAsOf, Eq, Expr, Gt, IsNull, MetricAgg, Predicate
+from terrine.spec.trajectory import CohortSpec
 from terrine.windows import Window
 
 if TYPE_CHECKING:
@@ -254,6 +255,17 @@ def _validate_shape(design: Design, model: Model, required: set[str]) -> None:
 
     if isinstance(design.shape, StatePanel):
         validate_state_panel(design, model, required)
+    elif isinstance(design.shape, CohortSpec):
+        metric = _metric(model, design.shape.trajectory.metric)
+        if metric.entity != design.unit:
+            raise _UNIT.error(unit=design.unit, name=design.shape.trajectory.metric)
+        if metric.kind != "mean" or len(metric.measures) != 1:
+            raise _INVALID.error(reason="trajectory_metric_must_be_additive")
+        measure = metric.measures[0]
+        if measure.aggregation != "sum" or metric.transforms:
+            raise _INVALID.error(reason="trajectory_metric_must_be_additive")
+        for source_name in metric.source_names:
+            _required(model, source_name, required)
     elif design.shape != "cross_section":
         raise _INVALID.error(reason="unsupported design shape")
 

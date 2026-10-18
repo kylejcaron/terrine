@@ -6,6 +6,7 @@ from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import agg, all_of, asof, eq, gt, is_null
 from terrine.spec.io import from_json, from_yaml, to_json, to_yaml
+from terrine.spec.trajectory import CohortSpec, Trajectory
 
 
 def test_subday_duration_forms_share_canonical_spec_hashes():
@@ -183,3 +184,17 @@ def test_yaml_and_json_reject_duplicates_unknown_schema_nodes_and_extra_fields()
         )
     with pytest.raises((TypeError, ValueError)):
         Design(unit="user", anchor=FixedDate("2025-03-01"), features={"bad": lambda: 1})  # ty: ignore[invalid-argument-type]
+
+
+def test_trajectory_and_administrative_cutoff_round_trip_with_canonical_hash():
+    design = Design(
+        unit="user",
+        anchor=EventAnchor("purchase", which="first"),
+        shape=CohortSpec(
+            origin="purchase",
+            trajectory=Trajectory("net_revenue", "7d", periods=3, cumulative=True),
+        ),
+        administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
+    )
+    assert from_yaml(to_yaml(design)) == design
+    assert from_json(to_json(design)).spec_hash == design.spec_hash

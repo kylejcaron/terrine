@@ -49,3 +49,4 @@
 - Add native end-to-end baseline recovery, population-target calibration, failure accounting, and uncertainty-validation guidance.
 - Add bounded state panels with canonical binned metrics, exact point-observation transitions, absorbing terminal suffix handling, baseline/per-origin timing, ordered metadata, and positive output-budget enforcement.
 - Select exact first eligible event occurrences with stable tie ordering, candidate retention and deferred event-ID integrity checks.
+- Compile bounded additive LTV age trajectories with null-preserving cumulative values and recipe-backed cohort summaries under the verified execution snapshot, with explicit cutoff completeness, denominators, operation provenance and output budgets.

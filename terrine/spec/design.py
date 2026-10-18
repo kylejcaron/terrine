@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.expressions import And, AttributeAsOf, Eq, Expr, Gt, IsNull, MetricAgg, Predicate
 from terrine.spec.state_panel import StatePanel
+from terrine.spec.trajectory import CohortSpec
 from terrine.windows import seconds
 
 __all__ = ["Treatment", "Design"]
@@ -62,8 +64,9 @@ class Design:
     eligibility: Mapping[str, Predicate]
     treatment: Treatment | None
     gap: int
-    shape: str | StatePanel
+    shape: str | StatePanel | CohortSpec
     anchor_range: AnchorRange | None
+    administrative_cutoff: datetime | None
 
     def __init__(
         self,
@@ -75,8 +78,9 @@ class Design:
         eligibility: Mapping[str, Predicate] | None = None,
         treatment: Treatment | None = None,
         gap: str | int = "0d",
-        shape: str | StatePanel = "cross_section",
+        shape: str | StatePanel | CohortSpec = "cross_section",
         anchor_range: AnchorRange | None = None,
+        administrative_cutoff: datetime | None = None,
     ) -> None:
         if not isinstance(unit, str) or not unit.strip():
             raise ValueError("unit must be a non-empty string")
@@ -86,10 +90,10 @@ class Design:
             raise TypeError("treatment must be Treatment or None")
         if anchor_range is not None and not isinstance(anchor_range, AnchorRange):
             raise TypeError("anchor_range must be AnchorRange or None")
-        if not isinstance(shape, (str, StatePanel)) or (
+        if not isinstance(shape, (str, StatePanel, CohortSpec)) or (
             isinstance(shape, str) and not shape.strip()
         ):
-            raise ValueError("shape must be 'cross_section' or StatePanel")
+            raise ValueError("shape must be 'cross_section', StatePanel, or CohortSpec")
         gap_seconds = seconds(gap)
         if gap_seconds < 0:
             raise ValueError("gap must be non-negative")
@@ -108,6 +112,23 @@ class Design:
         object.__setattr__(self, "gap", gap_seconds)
         object.__setattr__(self, "shape", shape)
         object.__setattr__(self, "anchor_range", anchor_range)
+        if administrative_cutoff is not None:
+            if (
+                not isinstance(administrative_cutoff, datetime)
+                or administrative_cutoff.tzinfo is None
+                or administrative_cutoff.utcoffset() is None
+            ):
+                raise ValueError("administrative_cutoff must be timezone-aware or None")
+            administrative_cutoff = administrative_cutoff.astimezone(UTC)
+        if isinstance(shape, CohortSpec) and (
+            not isinstance(anchor, EventAnchor)
+            or anchor.which != "first"
+            or anchor.fact != shape.origin
+        ):
+            raise ValueError("CohortSpec requires its matching first-event anchor")
+        if isinstance(shape, CohortSpec) and outcomes:
+            raise ValueError("CohortSpec generates outcomes; explicit outcomes are not allowed")
+        object.__setattr__(self, "administrative_cutoff", administrative_cutoff)
 
     def validate(self, model: Model) -> None:
         """Validate this design against bound model metadata without executing queries."""

@@ -7,18 +7,20 @@ from terrine.errors import TerrineError
 
 if TYPE_CHECKING:
     from terrine.compile.cost import preview
-    from terrine.data import Budget, Coverage, UnitSource
-    from terrine.frame import Frame
+    from terrine.frame import CohortTable, Frame
     from terrine.model import Model
     from terrine.spec import (
         AnchorRange,
         BinnedMetricState,
+        CohortGrouping,
+        CohortSpec,
         Design,
         EventAnchor,
         FixedDate,
         Schedule,
         StateObservations,
         StatePanel,
+        Trajectory,
         Treatment,
         agg,
         all_of,
@@ -56,6 +58,10 @@ __all__ = [
     "BinnedMetricState",
     "StateObservations",
     "StatePanel",
+    "CohortGrouping",
+    "CohortSpec",
+    "CohortTable",
+    "Trajectory",
     "to_yaml",
 ]
 
@@ -66,6 +72,7 @@ _LAZY_MODULES = {
     "Coverage": "terrine.data",
     "Model": "terrine.model",
     "UnitSource": "terrine.data",
+    "CohortTable": "terrine.frame",
 }
 
 

@@ -21,6 +21,7 @@ from terrine.spec.state_panel import (
     decode_cutpoint,
     encode_cutpoint,
 )
+from terrine.spec.trajectory import CohortSpec, Trajectory
 from terrine.windows import Window
 
 __all__ = ["SCHEMA_VERSION", "canonical_json", "to_json", "from_json", "to_yaml", "from_yaml"]
@@ -68,6 +69,11 @@ def _encode(value: Any) -> Any:
             "gap": value.gap,
             "shape": _encode(value.shape),
             "anchor_range": None if value.anchor_range is None else _encode(value.anchor_range),
+            "administrative_cutoff": (
+                None
+                if value.administrative_cutoff is None
+                else _date_value(value.administrative_cutoff)
+            ),
         }
     if isinstance(value, FixedDate):
         return {"type": "FixedDate", "date": _date_value(value.date)}
@@ -112,6 +118,20 @@ def _encode(value: Any) -> Any:
             "baseline_features": {
                 key: _encode(item) for key, item in value.baseline_features.items()
             },
+        }
+    if isinstance(value, CohortSpec):
+        return {
+            "type": "CohortSpec",
+            "origin": value.origin,
+            "trajectory": _encode(value.trajectory),
+        }
+    if isinstance(value, Trajectory):
+        return {
+            "type": "Trajectory",
+            "metric": value.metric,
+            "period": value.period,
+            "periods": value.periods,
+            "cumulative": value.cumulative,
         }
     if isinstance(value, Window):
         return {"type": "Window", "start": value.start, "end": value.end}
@@ -250,6 +270,12 @@ def _node(value: Any) -> Any:
         return StatePanel(
             _node(item["state"]), max_periods=item["max_periods"], baseline_features=baseline
         )
+    if tag == "Trajectory":
+        item = _object(value, {"type", "metric", "period", "periods", "cumulative"})
+        return Trajectory(item["metric"], item["period"], item["periods"], item["cumulative"])
+    if tag == "CohortSpec":
+        item = _object(value, {"type", "origin", "trajectory"})
+        return CohortSpec(item["origin"], _node(item["trajectory"]))
     if tag == "Window":
         item = _object(value, {"type", "start", "end"})
         return Window(item["start"], item["end"])
@@ -294,6 +320,7 @@ def _design(value: Any) -> Design:
             "gap",
             "shape",
             "anchor_range",
+            "administrative_cutoff",
         },
         {"unit", "anchor"},
     )
@@ -305,6 +332,7 @@ def _design(value: Any) -> Design:
         "gap": 0,
         "shape": "cross_section",
         "anchor_range": None,
+        "administrative_cutoff": None,
         **item,
     }
 
@@ -319,6 +347,11 @@ def _design(value: Any) -> Design:
     anchor = _node(item["anchor"])
     treatment = None if item["treatment"] is None else _node(item["treatment"])
     anchor_range = None if item["anchor_range"] is None else _node(item["anchor_range"])
+    cutoff = (
+        None if item["administrative_cutoff"] is None else _read_date(item["administrative_cutoff"])
+    )
+    if cutoff is not None and not isinstance(cutoff, datetime):
+        raise ValueError("administrative_cutoff requires a datetime")
     if not isinstance(anchor, (FixedDate, EventAnchor, Schedule)):
         raise ValueError("design anchor has invalid node type")
     if treatment is not None and not isinstance(treatment, Treatment):
@@ -338,6 +371,7 @@ def _design(value: Any) -> Design:
         gap=item["gap"],
         shape=item["shape"] if isinstance(item["shape"], str) else _node(item["shape"]),
         anchor_range=anchor_range,
+        administrative_cutoff=cutoff,
     )
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import warnings
 from dataclasses import dataclass
 from datetime import UTC
@@ -16,10 +18,17 @@ from terrine.compile.cost import (
     _eligibility_summary,
     _scan_policy,
 )
-from terrine.data import Budget, MaterializedFrame, Provenance, StatePanelMeta
+from terrine.data import (
+    Budget,
+    CohortOperationMeta,
+    MaterializedFrame,
+    Provenance,
+    StatePanelMeta,
+)
 from terrine.errors import RefusalSpec
 from terrine.spec.anchors import FixedDate
 from terrine.spec.state_panel import BinnedMetricState, StatePanel, encode_cutpoint
+from terrine.spec.trajectory import CohortGrouping, CohortSpec
 
 _STATE_PANEL_BUDGET = RefusalSpec(
     "terrine.state_panel.budget_required",
@@ -31,7 +40,7 @@ if TYPE_CHECKING:
     from terrine.model import Model
     from terrine.spec.design import Design
 
-__all__ = ["Frame"]
+__all__ = ["Frame", "CohortTable"]
 
 _ELIGIBILITY_UNKNOWN = RefusalSpec(
     "terrine.study.eligibility_unknown",
@@ -129,6 +138,16 @@ class Frame:
         return self._compiled.columns
 
     def materialize(self, budget: Budget | None = None) -> MaterializedFrame:
+        return self._materialize(budget)
+
+    def _materialize(
+        self,
+        budget: Budget | None = None,
+        *,
+        transform=None,
+        shape: str | None = None,
+        cohort_operation: CohortOperationMeta | None = None,
+    ) -> MaterializedFrame:
         """Verify, audit and consume one bounded Arrow output stream atomically.
 
         No partial output is returned on limits, invalid history or stream errors.
@@ -152,6 +171,8 @@ class Frame:
             model.catalog, model.con, units=model.units, input_binding=model.input_binding
         ) as context:
             compiled = compile_design(self._design, model._for_execution(context))
+            if transform is not None:
+                compiled = transform(compiled)
             compiled.validate(execute=context.execute)
             summary = _eligibility_summary(compiled.audit_table, context.execute)
             if summary.unknown:
@@ -205,6 +226,13 @@ class Frame:
                 and treatment.known_at_t0
                 and pa.types.is_boolean(table.schema.field(treatment_column).type)
             )
+
+            if isinstance(self._design.shape, StatePanel):
+                shape_name = "state_panel"
+            elif isinstance(self._design.shape, CohortSpec):
+                shape_name = "ltv"
+            else:
+                shape_name = self._design.shape
             provenance = Provenance(
                 feature_cutoffs=compiled.feature_cutoffs,
                 eligibility_cutoffs=compiled.eligibility_cutoffs,
@@ -212,9 +240,7 @@ class Frame:
                 model_hash=model.model_hash,
                 source_generations=context.snapshot.source_generations,
                 execution_snapshot=context.snapshot,
-                shape="state_panel"
-                if isinstance(self._design.shape, StatePanel)
-                else self._design.shape,
+                shape=shape or shape_name,
                 treatment_design="baseline_binary" if baseline_binary else None,
                 eligibility_summary=summary,
                 treatment_knowledge="retrospective_effective_time"
@@ -222,6 +248,8 @@ class Frame:
                 else None,
                 treatment_known_at_t0=treatment.known_at_t0 if treatment is not None else False,
                 state_panel=_state_panel_metadata(self._design, model),
+                administrative_cutoff=self._design.administrative_cutoff,
+                cohort_operation=cohort_operation,
             )
             return MaterializedFrame(table, compiled.roles, compiled.columns, provenance)
 
@@ -238,3 +266,58 @@ class Frame:
         """Convert using the optional native Polars Arrow conversion."""
         polars = _optional_dependency("polars")
         return polars.from_arrow(self.to_pyarrow(budget=budget))
+
+    def cohorts(self, *, grouping: CohortGrouping, value_column: str) -> CohortTable:
+        if not isinstance(self._design.shape, CohortSpec):
+            raise TypeError("cohorts requires a trajectory Frame")
+        if not isinstance(grouping, CohortGrouping):
+            raise TypeError("grouping must be CohortGrouping")
+        if not isinstance(value_column, str) or value_column not in {
+            "period_value",
+            "cumulative_value",
+        }:
+            raise ValueError("value_column must name a trajectory value")
+        if value_column == "cumulative_value" and not self._design.shape.trajectory.cumulative:
+            raise ValueError("the trajectory did not request cumulative values")
+        return CohortTable(self, grouping, value_column)
+
+
+@dataclass(frozen=True, slots=True)
+class CohortTable:
+    parent_frame: Frame
+    grouping: CohortGrouping
+    value_column: str
+
+    def materialize(self, *, budget: Budget | None = None) -> MaterializedFrame:
+        parent_design_hash = self.parent_frame._design.spec_hash
+        payload = {
+            "bucket_seconds": self.grouping.bucket,
+            "bucket_origin": self.grouping.bucket_origin.isoformat(),
+            "statistic": self.grouping.statistic,
+            "value_column": self.value_column,
+            "parent_design_hash": parent_design_hash,
+        }
+        operation_hash = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        operation = CohortOperationMeta(
+            self.grouping.bucket,
+            self.grouping.bucket_origin,
+            self.grouping.statistic,
+            self.value_column,
+            parent_design_hash,
+            operation_hash,
+        )
+        from terrine.compile.dispatch import compile_cohort_summary
+
+        return self.parent_frame._materialize(
+            budget,
+            transform=lambda study: compile_cohort_summary(
+                study, grouping=self.grouping, value_column=self.value_column
+            ),
+            shape="cohort_table",
+            cohort_operation=operation,
+        )
+
+    def to_pyarrow(self, *, budget: Budget | None = None) -> pa.Table:
+        return self.materialize(budget=budget).to_arrow()

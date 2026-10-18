@@ -20,4 +20,17 @@ def compile_design(design: Design, model: Model) -> CompiledStudy:
         from terrine.compile.shapes.state_panel import compile_state_panel
 
         return compile_state_panel(design, model)
+    from terrine.spec.trajectory import CohortSpec
+
+    if isinstance(design.shape, CohortSpec):
+        from terrine.compile.shapes.ltv import compile_ltv
+
+        return compile_ltv(design, model)
     return compile_columns(design, model)
+
+
+def compile_cohort_summary(study: CompiledStudy, *, grouping, value_column: str) -> CompiledStudy:
+    """Apply a cohort summary to a compiled trajectory relation."""
+    from terrine.compile.shapes.cohorts import compile_cohorts
+
+    return compile_cohorts(study, grouping=grouping, value_column=value_column)
