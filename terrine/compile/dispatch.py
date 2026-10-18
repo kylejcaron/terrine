@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.spec.design import Design
+from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import StatePanel
 
 if TYPE_CHECKING:
@@ -16,6 +17,10 @@ __all__ = ["compile_design"]
 
 def compile_design(design: Design, model: Model) -> CompiledStudy:
     """Compile a supported Design through its single shape dispatcher."""
+    if isinstance(design.shape, EventSequence):
+        from terrine.compile.shapes.event_sequence import compile_event_sequence
+
+        return compile_event_sequence(design, model)
     if isinstance(design.shape, StatePanel):
         from terrine.compile.shapes.state_panel import compile_state_panel
 
