@@ -138,6 +138,29 @@ class SnapshotAuthority:
             raise TypeError("owner must be RuntimeOwner")
         self.owner = owner
 
+    def find_retained(self, snapshot_id: str, *, namespace: str) -> ReopenableSnapshot:
+        if not snapshot_id or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", namespace):
+            raise ValueError("snapshot_id and a simple namespace are required")
+        root = self.owner.snapshot_root / namespace
+        if root.exists():
+            for directory in root.iterdir():
+                receipt_path = directory / "receipt.json"
+                if not directory.is_dir() or not receipt_path.is_file():
+                    continue
+                try:
+                    receipt = ReopenableSnapshot.from_json(receipt_path.read_bytes())
+                except (OSError, ValueError):
+                    continue
+                if (
+                    receipt.snapshot_id == snapshot_id
+                    and receipt.namespace == namespace
+                    and receipt.owner_reference == self.owner.reference
+                    and Path(receipt.receipt_path).resolve() == receipt_path.resolve()
+                    and Path(receipt.artifact_path).resolve().parent == directory.resolve()
+                ):
+                    return receipt
+        raise _INVALID.error(reason="retained receipt is absent or does not match owner")
+
     def collect_unreferenced(
         self,
         store: RuntimeStore,

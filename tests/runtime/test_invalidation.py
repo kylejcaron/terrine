@@ -5,8 +5,22 @@ from terrine.runtime.changes import Change, ChangeSet, affected_by_change, windo
 
 def test_watermark_advance_is_not_change_detection():
     before = datetime(2025, 1, 1, tzinfo=UTC)
-    after = datetime(2025, 2, 1, tzinfo=UTC)
-    assert ChangeSet.from_readiness_advance("events", before, after).changes == ()
+    after = datetime(2025, 1, 2, tzinfo=UTC)
+    change_set = ChangeSet.from_readiness_advance("events", before, after)
+    assert len(change_set.changes) == 1
+    change = change_set.changes[0]
+    assert change.kind == "readiness"
+    assert change.source == "events"
+    assert change.before_time_range is None
+    assert change.after_time_range == (before, after)
+
+
+def test_readiness_advance_emits_completeness_change_without_row_support():
+    before = datetime(2025, 1, 2, tzinfo=UTC)
+    after = datetime(2025, 1, 3, tzinfo=UTC)
+    change_set = ChangeSet.from_readiness_advance("events", before, after)
+    assert len(change_set.changes) == 1
+    assert change_set.changes[0].kind == "readiness"
 
 
 def test_window_boundary_equality_and_event_anchor_identity_invalidation():

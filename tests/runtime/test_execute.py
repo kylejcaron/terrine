@@ -109,6 +109,298 @@ def test_cancel_before_publish_never_exposes_generation():
     assert published == []
 
 
+def test_post_commit_publish_error_reconciles_run_and_retains_snapshot():
+    from terrine.runtime.backends.base import StagedGeneration
+    from terrine.runtime.backends.duckdb import DuckDBBackend
+    from terrine.runtime.state import RuntimeStore
+
+    con = duckdb.connect(":memory:")
+    store = RuntimeStore(con, namespace="owner")
+    store.initialize()
+    backend = DuckDBBackend(con, namespace="owner")
+
+    def publish(plan, outputs, lease):
+        backend.fault_injector = lambda boundary: (
+            (_ for _ in ()).throw(RuntimeError("lost response"))
+            if boundary == "after_commit"
+            else None
+        )
+        return backend.publish_generation(
+            StagedGeneration(
+                plan.dataset,
+                "generation-1",
+                {"all": next(iter(outputs.values()))},
+                run_id="ambiguous-run",
+            ),
+            expected_manifest=None,
+            lease=lease,
+        )
+
+    result = execute_plan(
+        _plan(),
+        con=con,
+        namespace="owner",
+        run_id="ambiguous-run",
+        run_task=lambda task, dependencies: pa.table({"id": [1]}),
+        publish=publish,
+    )
+    assert result.state == "succeeded"
+    assert result.published_generation == "generation-1"
+    assert store.snapshot_references("s") == (("published_manifest", '["orders","generation-1"]'),)
+
+
+def test_post_commit_empty_refresh_restores_previous_result_partitions():
+    from terrine.runtime.backends.base import StagedGeneration
+    from terrine.runtime.backends.duckdb import DuckDBBackend
+    from terrine.runtime.changes import ChangeSet
+
+    con = duckdb.connect(":memory:")
+    backend = DuckDBBackend(con, namespace="owner")
+    first = execute_plan(
+        _plan(),
+        con=con,
+        namespace="owner",
+        run_id="prior-run",
+        run_task=lambda task, dependencies: pa.table({"id": [7]}),
+        publish=lambda plan, outputs, lease: backend.publish_generation(
+            StagedGeneration(
+                plan.dataset,
+                "generation-old",
+                {"all": next(iter(outputs.values()))},
+                snapshot_id=plan.snapshot_id,
+                run_id="prior-run",
+            ),
+            expected_manifest=None,
+            lease=lease,
+        ),
+    )
+    assert first.state == "succeeded"
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS owner.runtime_run_results "
+        "(run_id VARCHAR NOT NULL, partition VARCHAR NOT NULL, "
+        "PRIMARY KEY(run_id,partition))"
+    )
+    con.execute("INSERT INTO owner.runtime_run_results VALUES ('prior-run','all')")
+    assert con.execute(
+        "SELECT dataset,generation FROM owner.runtime_run_publications WHERE run_id='prior-run'"
+    ).fetchone() == ("orders", "generation-old")
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="def",
+        snapshot_id="s",
+        graph=dependency_graph(sources=("events",), definition_hash="def", partitions=("p1",)),
+        changes=ChangeSet((), "revision"),
+    )
+
+    def publish_empty(plan, outputs, lease):
+        backend.fault_injector = lambda boundary: (
+            (_ for _ in ()).throw(RuntimeError("lost response"))
+            if boundary == "after_commit"
+            else None
+        )
+        return backend.publish_generation(
+            StagedGeneration(
+                "orders",
+                "generation-empty",
+                {"all": pa.table({"id": [7]})},
+                snapshot_id="s",
+                run_id="empty-run",
+            ),
+            expected_manifest="generation-old",
+            lease=lease,
+        )
+
+    result = execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="empty-run",
+        run_task=lambda task, dependencies: pa.table({"id": []}),
+        publish=publish_empty,
+    )
+    assert result.state == "succeeded"
+    assert ("all",) in con.execute(
+        "SELECT partition FROM owner.runtime_run_results WHERE run_id='empty-run'"
+    ).fetchall()
+
+    same_generation = execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="same-generation-run",
+        run_task=lambda task, dependencies: pa.table({"id": []}),
+        publish=lambda current_plan, outputs, lease: backend.publish_generation(
+            StagedGeneration(
+                "orders",
+                "generation-empty",
+                {"all": pa.table({"id": [7]})},
+                snapshot_id="s",
+                run_id="same-generation-run",
+            ),
+            expected_manifest="generation-empty",
+            lease=lease,
+        ),
+    )
+    assert same_generation.state == "succeeded"
+    assert ("all",) in con.execute(
+        "SELECT partition FROM owner.runtime_run_results WHERE run_id='same-generation-run'"
+    ).fetchall()
+
+
+def test_expected_base_manifest_mismatch_refuses_before_source_work():
+    from dataclasses import replace
+
+    con = duckdb.connect(":memory:")
+    plan = replace(
+        _plan(), expected_base_manifest="generation-1", expected_base_manifest_bound=True
+    )
+    con.execute(
+        "CREATE SCHEMA owner; CREATE TABLE owner.runtime_manifests "
+        "(dataset VARCHAR PRIMARY KEY,generation VARCHAR NOT NULL,version BIGINT NOT NULL)"
+    )
+    con.execute("INSERT INTO owner.runtime_manifests VALUES ('orders','generation-2',2)")
+    work = []
+    with pytest.raises(ValueError, match="expected base manifest"):
+        execute_plan(
+            plan,
+            con=con,
+            namespace="owner",
+            run_id="stale-base",
+            run_task=lambda task, dependencies: work.append(task.task_id),
+            publish=lambda plan, outputs, lease: "g3",
+        )
+    assert work == []
+
+    assert con.execute(
+        "SELECT state FROM owner.runtime_runs WHERE run_id='stale-base'"
+    ).fetchone() == ("failed",)
+
+
+def test_overlapping_saved_base_replay_returns_terminal_receipt(monkeypatch):
+    from dataclasses import replace
+
+    from terrine.runtime.leases import LeaseStore
+
+    con = duckdb.connect(":memory:")
+    plan = replace(
+        _plan(), expected_base_manifest="generation-1", expected_base_manifest_bound=True
+    )
+    con.execute(
+        "CREATE SCHEMA owner; CREATE TABLE owner.runtime_manifests "
+        "(dataset VARCHAR PRIMARY KEY,generation VARCHAR NOT NULL,version BIGINT NOT NULL)"
+    )
+    con.execute("INSERT INTO owner.runtime_manifests VALUES ('orders','generation-1',1)")
+    acquire = LeaseStore.acquire
+
+    def finish_before_lease(self, resource, owner, **kwargs):
+        con.execute(
+            "UPDATE owner.runtime_manifests SET generation='generation-2',version=2 "
+            "WHERE dataset='orders'"
+        )
+        con.execute(
+            "UPDATE owner.runtime_runs SET state='succeeded',published_generation='generation-2' "
+            "WHERE run_id='overlap'"
+        )
+        return acquire(self, resource, owner, **kwargs)
+
+    monkeypatch.setattr(LeaseStore, "acquire", finish_before_lease)
+    calls = []
+    receipt = execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="overlap",
+        run_task=lambda task, dependencies: (
+            calls.append("task"),
+            pa.table({"id": [task.task_id]}),
+        )[1],
+        publish=lambda plan, outputs, lease: (calls.append("publish"), "generation-3")[1],
+    )
+    assert receipt.state == "succeeded"
+    assert receipt.published_generation == "generation-2"
+    assert calls == []
+
+
+def test_retry_reconciles_publication_before_rejecting_its_own_manifest():
+    from dataclasses import replace
+    from datetime import UTC, datetime, timedelta
+
+    from terrine.runtime.backends.base import StagedGeneration
+    from terrine.runtime.backends.duckdb import DuckDBBackend
+    from terrine.runtime.leases import LeaseStore
+
+    con = duckdb.connect(":memory:")
+    plan = replace(
+        _plan(), expected_base_manifest="generation-1", expected_base_manifest_bound=True
+    )
+    backend = DuckDBBackend(con, namespace="owner")
+    backend.initialize()
+    con.execute(
+        "CREATE TABLE owner.runtime_runs (run_id VARCHAR PRIMARY KEY,dataset VARCHAR,"
+        "fingerprint VARCHAR,state VARCHAR,published_generation VARCHAR,attempt_fence BIGINT)"
+    )
+    con.execute(
+        "INSERT INTO owner.runtime_manifests "
+        "(dataset,generation,version,snapshot_id) VALUES ('orders','generation-1',1,NULL)"
+    )
+    con.execute("INSERT INTO owner.runtime_publications VALUES ('orders','generation-1',1)")
+    con.execute(
+        "INSERT INTO owner.runtime_runs VALUES ('ambiguous','orders',?,'running',NULL,1)",
+        [plan.recipe.fingerprint],
+    )
+    leases = LeaseStore(con, namespace="owner")
+    lease = leases.acquire(
+        "dataset:orders", "ambiguous", ttl=timedelta(seconds=30), now=datetime.now(UTC)
+    )
+    backend.publish_generation(
+        StagedGeneration(
+            "orders",
+            "generation-2",
+            {"all": pa.table({"id": [1]})},
+            run_id="ambiguous",
+        ),
+        expected_manifest="generation-1",
+        lease=lease,
+    )
+    leases.release(lease)
+    con.execute(
+        "UPDATE owner.runtime_manifests SET generation='generation-3',version=3,"
+        "snapshot_id='snapshot-b' WHERE dataset='orders'"
+    )
+    con.execute("INSERT INTO owner.runtime_publications VALUES ('orders','generation-3',3)")
+    con.execute(
+        "INSERT INTO owner.runtime_snapshot_manifests VALUES ('orders','generation-3','snapshot-b')"
+    )
+    con.execute(
+        "INSERT INTO owner.runtime_snapshot_references "
+        "VALUES ('snapshot-b','published_manifest','[\"orders\",\"generation-3\"]')"
+    )
+
+    result = execute_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        run_id="ambiguous",
+        run_task=lambda task, dependencies: pa.table({"id": [2]}),
+        publish=lambda plan, outputs, lease: "wrong-generation",
+    )
+
+    assert con.execute(
+        "SELECT generation,snapshot_id FROM owner.runtime_snapshot_manifests WHERE dataset='orders'"
+    ).fetchone() == ("generation-3", "snapshot-b")
+    assert con.execute(
+        "SELECT snapshot_id FROM owner.runtime_snapshot_references "
+        "WHERE kind='published_manifest' AND reference='[\"orders\",\"generation-3\"]'"
+    ).fetchone() == ("snapshot-b",)
+
+    assert result.state == "succeeded"
+    assert result.published_generation == "generation-2"
+    assert con.execute(
+        "SELECT state FROM owner.runtime_runs WHERE run_id='ambiguous'"
+    ).fetchone() == ("succeeded",)
+
+
 def test_plan_task_bound_is_checked_before_running_work():
     con = duckdb.connect(":memory:")
     calls = []
@@ -473,6 +765,67 @@ def test_lease_heartbeat_keeps_long_task_alive(monkeypatch):
         lease_ttl=timedelta(seconds=30),
     )
     assert result.state == "succeeded"
+    timestamps = con.execute(
+        "SELECT updated_at, heartbeat_at FROM owner.runtime_runs WHERE run_id='long-task'"
+    ).fetchone()
+    assert timestamps is not None
+    updated_at, heartbeat_at = timestamps
+    assert updated_at is not None
+    assert heartbeat_at is not None
+    assert heartbeat_at <= updated_at
+
+
+def test_cancellation_serializes_with_heartbeat_persistence(monkeypatch):
+    import threading
+    from datetime import timedelta
+
+    from terrine.runtime.leases import LeaseStore
+    from terrine.runtime.status import cancel_run
+
+    con = duckdb.connect(":memory:")
+    renewing = threading.Event()
+    allow_renew = threading.Event()
+    cancel_started = threading.Event()
+    cancel_errors = []
+    original_renew = LeaseStore.renew
+
+    def renew(store, lease, *, ttl, now):
+        renewing.set()
+        assert allow_renew.wait(timeout=3)
+        return original_renew(store, lease, ttl=ttl, now=now)
+
+    monkeypatch.setattr(LeaseStore, "renew", renew)
+
+    def run_task(task, dependencies):
+        assert renewing.wait(timeout=3)
+
+        def cancel():
+            cancel_started.set()
+            try:
+                cancel_run("cancel-heartbeat", con=con.cursor(), namespace="owner")
+            except Exception as error:
+                cancel_errors.append(error)
+
+        cancellation = threading.Thread(target=cancel)
+        cancellation.start()
+        assert cancel_started.wait(timeout=3)
+        allow_renew.set()
+        cancellation.join(timeout=3)
+        assert not cancellation.is_alive()
+        return pa.table({"id": [1]})
+
+    receipt = execute_plan(
+        _plan(),
+        con=con,
+        namespace="owner",
+        run_id="cancel-heartbeat",
+        run_task=run_task,
+        publish=lambda plan, outputs, lease: "g1",
+        lease_ttl=timedelta(seconds=30),
+    )
+
+    assert cancel_errors == []
+    assert receipt.state == "cancelled"
 
 
 def test_delayed_lease_claim_cannot_overwrite_successful_retry(monkeypatch):
