@@ -191,6 +191,14 @@ def _shard_path(root: Path, key: tuple[Any, ...], columns: tuple[str, ...], inde
     return directory / f"part-{index:08d}.parquet"
 
 
+def _sync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _write_state(root: Path, manifest: ExportManifest) -> None:
     temporary = root / ".export-state.tmp"
     with temporary.open("wb") as stream:
@@ -198,11 +206,7 @@ def _write_state(root: Path, manifest: ExportManifest) -> None:
         stream.flush()
         os.fsync(stream.fileno())
     temporary.replace(root / "export-state.json")
-    descriptor = os.open(root, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    _sync_directory(root)
 
 
 def _schema(dataset: Any) -> pa.Schema:
@@ -270,6 +274,7 @@ def _export_dataset_locked(
             budget=budget,
         )
         if existing is not None:
+            _sync_directory(destination_path.parent)
             return existing
         raise _CONFLICT.error()
     parent = destination_path.parent.resolve()
@@ -319,6 +324,7 @@ def _export_dataset_locked(
 
     if not records:
         try:
+            _sync_directory(parent)
             checkpoint()
         except Exception:
             import shutil
@@ -332,6 +338,14 @@ def _export_dataset_locked(
             return
         if writer is not None:
             writer.close()
+            with active_path.open("rb") as stream:
+                os.fsync(stream.fileno())
+            directory = active_path.parent
+            while True:
+                _sync_directory(directory)
+                if directory == partial:
+                    break
+                directory = directory.parent
             size = active_path.stat().st_size
             relative = str(active_path.relative_to(partial))
             record = ExportShard(relative, _hash_file(active_path), current_rows, size)
@@ -413,7 +427,9 @@ def _export_dataset_locked(
             stream.write(manifest.to_json())
             stream.flush()
             os.fsync(stream.fileno())
+        _sync_directory(partial)
         os.rename(partial, destination_path)
+        _sync_directory(parent)
         return manifest
     except Exception:
         if active_path is not None:

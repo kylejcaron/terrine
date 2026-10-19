@@ -122,3 +122,127 @@ def test_export_discards_unfinished_shard_and_rewrites_on_retry(
     assert sum(shard.row_count for shard in export.shards) == export.row_count
     assert all((destination / shard.path).is_file() for shard in export.shards)
     con.disconnect()
+
+
+def test_export_syncs_shards_and_directories_before_checkpoint_and_publication(
+    native_inputs, tmp_path, monkeypatch
+):
+    import os
+
+    from terrine.dataset import export as export_module
+
+    dataset, con = _staged_dataset(native_inputs, tmp_path)
+    destination = tmp_path / "durable"
+    events = []
+    synced = {}
+    original_fsync = os.fsync
+    original_state = export_module._write_state
+    original_rename = os.rename
+
+    def identity(path):
+        stat = path.stat()
+        return stat.st_dev, stat.st_ino
+
+    def sync(descriptor):
+        stat = os.fstat(descriptor)
+        original_fsync(descriptor)
+        synced[stat.st_dev, stat.st_ino] = len(events)
+        events.append("sync")
+
+    def state(root, manifest):
+        for shard in manifest.shards:
+            path = root / shard.path
+            position = synced.get(identity(path), -1)
+            assert position >= 0, "shard data must be durable before checkpoint"
+            for directory in path.parents:
+                if not directory.is_relative_to(root):
+                    break
+                assert synced.get(identity(directory), -1) > position
+        return original_state(root, manifest)
+
+    def rename(source, target):
+        manifest_position = synced[identity(source / "export-manifest.json")]
+        assert synced.get(identity(source), -1) > manifest_position
+        original_rename(source, target)
+        events.append("rename")
+
+    monkeypatch.setattr(export_module.os, "fsync", sync)
+    monkeypatch.setattr(export_module, "_write_state", state)
+    monkeypatch.setattr(export_module.os, "rename", rename)
+    result = dataset.export_parquet(
+        destination=str(destination), partition_by=("sessions", "churn"), target_file_bytes=1
+    )
+    assert result.row_count == 2
+    assert synced[identity(tmp_path)] > events.index("rename")
+    con.disconnect()
+
+
+def test_export_does_not_checkpoint_a_shard_when_fsync_fails(native_inputs, tmp_path, monkeypatch):
+    import os
+
+    from terrine.dataset import export as export_module
+
+    dataset, con = _staged_dataset(native_inputs, tmp_path)
+    destination = tmp_path / "sync-retry"
+    partial = tmp_path / ".sync-retry.partial"
+    original_fsync = os.fsync
+    failed = False
+
+    def sync(descriptor):
+        nonlocal failed
+        stat = os.fstat(descriptor)
+        for path in partial.glob("**/*.parquet"):
+            target = path.stat()
+            if not failed and (stat.st_dev, stat.st_ino) == (target.st_dev, target.st_ino):
+                failed = True
+                raise OSError("shard persistence interrupted")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(export_module.os, "fsync", sync)
+    with pytest.raises(OSError, match="shard persistence"):
+        dataset.export_parquet(destination=str(destination), target_file_bytes=1)
+    state = export_module.ExportManifest.from_json((partial / "export-state.json").read_bytes())
+    assert state.shards == ()
+    assert list(partial.glob("**/*.parquet")) == []
+    result = dataset.export_parquet(destination=str(destination), target_file_bytes=1)
+    assert result.row_count == 2
+    con.disconnect()
+
+
+def test_export_retry_resyncs_parent_after_interrupted_publication(
+    native_inputs, tmp_path, monkeypatch
+):
+    import os
+
+    from terrine.dataset import export as export_module
+
+    dataset, con = _staged_dataset(native_inputs, tmp_path)
+    destination = tmp_path / "rename-retry"
+    original_fsync, original_rename = os.fsync, os.rename
+    renamed = False
+    parent_syncs = 0
+    parent = tmp_path.stat()
+
+    def rename(source, target):
+        nonlocal renamed
+        original_rename(source, target)
+        renamed = True
+
+    def sync(descriptor):
+        nonlocal parent_syncs
+        stat = os.fstat(descriptor)
+        if renamed and (stat.st_dev, stat.st_ino) == (parent.st_dev, parent.st_ino):
+            parent_syncs += 1
+            if parent_syncs == 1:
+                raise OSError("publication directory persistence interrupted")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(export_module.os, "rename", rename)
+    monkeypatch.setattr(export_module.os, "fsync", sync)
+    with pytest.raises(OSError, match="publication directory"):
+        dataset.export_parquet(destination=str(destination))
+    assert destination.is_dir()
+    result = dataset.export_parquet(destination=str(destination))
+    assert result.row_count == 2
+    assert parent_syncs == 2
+    con.disconnect()
