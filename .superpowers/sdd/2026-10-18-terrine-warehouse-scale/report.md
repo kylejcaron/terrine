@@ -38,6 +38,9 @@
 - Focused precision regressions (`tests/temporal/test_nonadditive.py` and `tests/compile/test_nonadditive.py`) — 18 passed, including DECIMAL(29,25) refusal at probability 0.12345678.
 - Required quality gates on `f78ae9f` and `a663ab3`: `uv run ruff format terrine tests examples`, `uv run ruff check terrine tests examples`, `uv run ty check terrine tests`, and `uv run tach check` — passed.
 
+- Follow-up to review 8914: corrected the stale constructor refusal test, made sketch-adapter tests skip only when DataSketches is absent, added a CI sketches-extra job, capped extreme t-digest tolerances before unsafe conversion, and streamed both single-input and partitioned updates in bounded batches. Review 8915 passed for the verification record.
+- Step 1 gates after these changes: `uv run ruff format terrine tests examples`, `uv run ruff check terrine tests examples`, `uv run ty check terrine tests`, `uv run tach check`, and focused sketch/nonadditive tests — passed (12 tests).
+
 ## Commits and review dispositions
 
 - `57d1d85` — `Add exact quantile specification contracts`; roborev job `8773` found three medium findings.

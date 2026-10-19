@@ -53,14 +53,14 @@ def test_empty_and_all_null_quantiles_are_unavailable():
         exact_quantile([None, None], Decimal("0.5"))
 
 
-def test_approximate_quantile_refuses_without_owner_approved_sketch():
-    from terrine.spec.expressions import SketchRequest, approx_quantile
+def test_approximate_quantile_expression_is_explicit_and_constructor_is_data_only():
+    from terrine.spec.expressions import ApproxMetricQuantile, SketchRequest, approx_quantile
 
-    with pytest.raises(TerrineError) as error:
-        approx_quantile(
-            "revenue",
-            Decimal("0.5"),
-            window=("-7d", "0d"),
-            sketch=SketchRequest("tdigest", "1", Decimal("0.01")),
-        )
-    assert error.value.code == "terrine.metric.sketch_unavailable"
+    node = approx_quantile(
+        "revenue",
+        Decimal("0.5"),
+        window=("-7d", "0d"),
+        sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
+    )
+    assert isinstance(node, ApproxMetricQuantile)
+    assert node.sketch.algorithm == "tdigest"

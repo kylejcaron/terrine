@@ -3,6 +3,9 @@ import subprocess
 import sys
 from decimal import Decimal
 
+import pytest
+
+pytest.importorskip("datasketches")
 from terrine.spec.expressions import SketchRequest
 from terrine.temporal.nonadditive import exact_quantile
 from terrine.temporal.sketches import (
@@ -23,6 +26,12 @@ def test_tdigest_quantile_accuracy_and_empirical_metadata():
     assert estimate.metadata.error_bound is None
     assert estimate.metadata.error_basis == "empirical_no_guaranteed_bound"
     assert dict(estimate.metadata.parameters)["k"] >= 20
+
+
+def test_tdigest_caps_extremely_strict_empirical_tolerance_without_overflow():
+    request = SketchRequest("tdigest", "5.2.0", Decimal("1e-400"))
+    estimate = approximate_quantile([0, 1, 2], Decimal("0.5"), request)
+    assert dict(estimate.metadata.parameters)["k"] == 1000
 
 
 def test_tdigest_partition_merge_is_canonical_and_fresh_process_reproducible():

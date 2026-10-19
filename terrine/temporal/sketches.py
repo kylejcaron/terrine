@@ -89,8 +89,8 @@ def _hll_lg_k(datasketches, error: Decimal, request: SketchRequestLike, *, union
     raise _UNAVAILABLE.error(algorithm=request.algorithm, version=request.version)
 
 
-def _numeric_values(values: Iterable[int | float | Decimal | None]) -> list[float]:
-    result: list[float] = []
+def _numeric_batches(values: Iterable[int | float | Decimal | None], *, batch_size: int = 4096):
+    batch: list[float] = []
     for value in values:
         if value is None:
             continue
@@ -99,12 +99,15 @@ def _numeric_values(values: Iterable[int | float | Decimal | None]) -> list[floa
         converted = float(value)
         if not math.isfinite(converted):
             raise ValueError("t-digest sketch values must be finite")
-        result.append(converted)
-    return result
+        batch.append(converted)
+        if len(batch) == batch_size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
 
 
-def _distinct_values(values: Iterable[str | int | float | None]) -> list[str | int | float]:
-    result: list[str | int | float] = []
+def _distinct_values(values: Iterable[str | int | float | None]):
     for value in values:
         if value is None:
             continue
@@ -112,25 +115,26 @@ def _distinct_values(values: Iterable[str | int | float | None]) -> list[str | i
             raise TypeError("HLL sketches support string and numeric identifiers")
         if isinstance(value, float) and not math.isfinite(value):
             raise ValueError("HLL sketch values must be finite")
-        result.append(value)
-    return result
+        yield value
 
 
 def _tdigest_k(request: SketchRequestLike) -> int:
     # rank_error is a requested empirical tolerance, not a guaranteed bound.
     # Use it only to choose compression; metadata makes the absence of a bound explicit.
-    return max(200, min(1000, math.ceil(1 / float(request.rank_error))))
+    if request.rank_error <= Decimal("0.001"):
+        return 1000
+    requested = math.ceil(Decimal(1) / request.rank_error)
+    return max(200, min(1000, requested))
 
 
 def _tdigest(values: Iterable[int | float | Decimal | None], request: SketchRequestLike):
     datasketches, version = _package(request, "tdigest")
     k = _tdigest_k(request)
     sketch = datasketches.tdigest_double(k)
-    numeric = _numeric_values(values)
-    if numeric:
-        import numpy
+    import numpy
 
-        sketch.update(numpy.asarray(numeric, dtype=numpy.float64))
+    for batch in _numeric_batches(values):
+        sketch.update(numpy.asarray(batch, dtype=numpy.float64))
     return datasketches, sketch, version, k
 
 
@@ -187,12 +191,12 @@ def merge_quantile_partitions(
     k = _tdigest_k(request)
     merged = datasketches.tdigest_double(k)
     for partition_id in sorted(partitions):
-        values = _numeric_values(partitions[partition_id])
-        if values:
-            part = datasketches.tdigest_double(k)
-            import numpy
+        part = datasketches.tdigest_double(k)
+        import numpy
 
-            part.update(numpy.asarray(values, dtype=numpy.float64))
+        for batch in _numeric_batches(partitions[partition_id]):
+            part.update(numpy.asarray(batch, dtype=numpy.float64))
+        if not part.is_empty():
             merged.merge(part)
     if merged.is_empty():
         raise ValueError("approximate quantile is undefined for empty partitions")
