@@ -43,3 +43,27 @@ measured empty additive window is zero, while unavailable values retain null and
 their exact reason. The independent reference in
 `tests/reference/baseline.py` scans raw source rows with Python predicates and
 grouping; it does not use the production compiler or its temporal resolvers.
+
+## Bounded scale workloads
+
+`ScaleConfig` version 2 describes units, events per unit, retained batch rows,
+seed, sparse source span, scheduled anchor count and window width.
+`event_batches`, `anchor_batches`, `unit_batches` and `correction_batches`
+yield typed Arrow tables without constructing a whole event world.
+`unit_start`/`unit_stop` partition keyed streams independently of batch size
+and traversal order. Version 1 configurations are explicitly rejected.
+
+Physical event IDs are unique; occurrence IDs may repeat across dates.
+Timestamp ties, null values/labels and sparse days are intentional observations.
+Corrections identify existing physical events and declare updates/deletions.
+`oracle_batches` contains separate expected target counts, not hidden truth
+columns in source observations. Independent window references use integer
+histograms and exact Type-7 interpolation, checked against pandas on local
+fixtures.
+
+The opt-in [benchmark suite](../../benchmarks/README.md) executes real
+Model/Design Frames and retained runtime generations, including corrections.
+Its intermediate bounds come from input cardinalities, not elapsed-time
+thresholds. Traced Python memory, process peak RSS, output bytes and unknown
+scan bytes are separate measurements. No warehouse-scale capacity or universal
+overhead claim follows from a local calibration.

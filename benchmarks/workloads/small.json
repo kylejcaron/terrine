@@ -3,5 +3,8 @@
   "events_per_unit": 100,
   "batch_size": 1024,
   "seed": 20261018,
-  "version": 1
+  "version": 2,
+  "span_days": 30,
+  "anchor_periods": 4,
+  "window_days": 7
 }
