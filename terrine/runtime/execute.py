@@ -14,6 +14,7 @@ import pyarrow as pa
 
 from terrine.compile.cost import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED
 from terrine.errors import RefusalSpec, TerrineError
+from terrine.runtime.arrow import _PREFIX, ArrowOutput
 from terrine.runtime.events import event_transaction, record_run_event
 from terrine.runtime.leases import Lease, LeaseStore
 from terrine.runtime.planner import RefreshPlan, TaskSpec
@@ -49,8 +50,8 @@ def execute_plan(
     con: Any,
     namespace: str,
     run_id: str,
-    run_task: Callable[[TaskSpec, Mapping[str, pa.Table]], pa.Table],
-    publish: Callable[[RefreshPlan, Mapping[str, pa.Table], Lease], Any],
+    run_task: Callable[[TaskSpec, Mapping[str, pa.Table | ArrowOutput]], pa.Table | ArrowOutput],
+    publish: Callable[[RefreshPlan, Mapping[str, pa.Table | ArrowOutput], Lease], Any],
     request_key: str | None = None,
     destination: DestinationRef | None = None,
     cancelled: Callable[[], bool] | None = None,
@@ -331,7 +332,7 @@ def execute_plan(
         raise
     heartbeat_con = con.cursor()
     heartbeat_store = LeaseStore(heartbeat_con, namespace=namespace)
-    outputs: dict[str, pa.Table] = {}
+    outputs: dict[str, pa.Table | ArrowOutput] = {}
     stop_heartbeat = threading.Event()
     heartbeat_error: list[Exception] = []
 
@@ -362,7 +363,7 @@ def execute_plan(
     try:
         pending = {task.task_id: task for task in plan.tasks}
         task_order = tuple(task.task_id for task in plan.tasks)
-        inflight: dict[Future[pa.Table], TaskSpec] = {}
+        inflight: dict[Future[pa.Table | ArrowOutput], TaskSpec] = {}
         active_partitions: set[str] = set()
         task_failure: Exception | None = None
         with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
@@ -434,8 +435,8 @@ def execute_plan(
                         if task_failure is None:
                             task_failure = error
                         continue
-                    if not isinstance(output, pa.Table):
-                        raise TypeError("task runner must return a PyArrow Table")
+                    if not isinstance(output, (pa.Table, ArrowOutput)):
+                        raise TypeError("task runner must return Arrow data or a retained output")
                     if task.layer == "frame":
                         _check_budget(task, output, plan, outputs)
                     leases.assert_current(lease)
@@ -681,14 +682,18 @@ def _copy_result_partitions(
         )
 
 
-def _encode(table: pa.Table) -> bytes:
+def _encode(table: pa.Table | ArrowOutput) -> bytes:
+    if isinstance(table, ArrowOutput):
+        return table.to_bytes()
     sink = pa.BufferOutputStream()
     with pa.ipc.new_stream(sink, table.schema) as writer:
         writer.write_table(table)
     return sink.getvalue().to_pybytes()
 
 
-def _decode(payload: bytes) -> pa.Table:
+def _decode(payload: bytes) -> pa.Table | ArrowOutput:
+    if payload.startswith(_PREFIX):
+        return ArrowOutput.from_bytes(payload)
     return pa.ipc.open_stream(payload).read_all()
 
 
@@ -718,9 +723,9 @@ def _release_run_snapshot_refs(store: RuntimeStore, snapshot_id: str, run_id: st
 # A terminal replay retries cleanup; transient conflicts must not erase its receipt.
 def _check_budget(
     task: TaskSpec,
-    table: pa.Table,
+    table: pa.Table | ArrowOutput,
     plan: RefreshPlan,
-    outputs: Mapping[str, pa.Table],
+    outputs: Mapping[str, pa.Table | ArrowOutput],
 ) -> None:
     budget = plan.budget
     if budget is None:
@@ -741,11 +746,11 @@ def _check_budget(
 def _finish_run(
     *,
     plan: RefreshPlan,
-    outputs: Mapping[str, pa.Table],
+    outputs: Mapping[str, pa.Table | ArrowOutput],
     run_id: str,
     lease: Lease,
     cancelled: Callable[[], bool] | None,
-    publish: Callable[[RefreshPlan, Mapping[str, pa.Table], Lease], Any],
+    publish: Callable[[RefreshPlan, Mapping[str, pa.Table | ArrowOutput], Lease], Any],
     con: Any,
     schema: str,
     runtime_store: RuntimeStore,

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from typing import Any
 
 import ibis
+import numpy as np
 import pyarrow as pa
+import pyarrow.compute as pc
 from ibis.backends.duckdb import Backend as IbisDuckDBBackend
 
 from terrine.backends.capabilities import DUCKDB_CAPABILITIES
@@ -169,10 +172,9 @@ class DuckDBBackend:
             )
             version = (previous[0] if previous else 0) + 1
             stored = []
-            for partition, table in sorted(stage.partitions.items()):
-                if not isinstance(table, pa.Table):
-                    raise TypeError("partition data must be a PyArrow Table")
-                digest = _digest(table)
+            for partition, payload in sorted(stage.partitions.items()):
+                if not isinstance(payload, (pa.Table, pa.RecordBatchReader)):
+                    raise TypeError("partition data must be a PyArrow Table or RecordBatchReader")
                 table_name = _table_name(stage.dataset, stage.generation, partition)
                 existing = self.con.execute(
                     f"SELECT digest, table_name FROM {self._schema}.runtime_partitions "
@@ -180,21 +182,27 @@ class DuckDBBackend:
                     [stage.dataset, stage.generation, partition],
                 ).fetchone()
                 if existing is not None:
+                    digest = _digest_relation(
+                        self.con, self._schema, existing[1], version=_digest_version(existing[0])
+                    )
                     if existing[0] != digest:
                         raise ValueError("retry partition content does not match staged generation")
                     table_name = existing[1]
                 else:
-                    self.con.register("__terrine_partition", _storage_table(table))
-                    self.con.execute(
-                        f"CREATE TABLE {self._schema}.{_quote(table_name)} AS "
-                        "SELECT * FROM __terrine_partition"
-                    )
-                    self.con.unregister("__terrine_partition")
+                    self.con.register("__terrine_partition", _storage_payload(payload))
+                    try:
+                        self.con.execute(
+                            f"CREATE TABLE {self._schema}.{_quote(table_name)} AS "
+                            "SELECT * FROM __terrine_partition"
+                        )
+                    finally:
+                        self.con.unregister("__terrine_partition")
+                    digest = _digest_relation(self.con, self._schema, table_name)
                     self.con.execute(
                         f"INSERT INTO {self._schema}.runtime_partitions VALUES (?, ?, ?, ?, ?)",
                         [stage.dataset, stage.generation, partition, table_name, digest],
                     )
-                metadata = table.schema.serialize().to_pybytes()
+                metadata = payload.schema.serialize().to_pybytes()
                 saved_metadata = self.con.execute(
                     f"SELECT schema_metadata FROM {self._schema}.runtime_partition_metadata "
                     "WHERE dataset=? AND generation=? AND partition=?",
@@ -322,15 +330,30 @@ class DuckDBBackend:
 
     def _matching_receipt(self, stage: StagedGeneration) -> PublicationReceipt:
         rows = self.con.execute(
-            f"SELECT partition, digest FROM {self._schema}.runtime_partitions "
+            f"SELECT partition, digest, table_name FROM {self._schema}.runtime_partitions "
             "WHERE dataset=? AND generation=? ORDER BY partition",
             [stage.dataset, stage.generation],
         ).fetchall()
-        stored = {name: digest for name, digest in rows}
-        if set(stored) != set(stage.partitions) or any(
-            stored[name] != _digest(table) for name, table in stage.partitions.items()
-        ):
+        stored = {name: (digest, table_name) for name, digest, table_name in rows}
+        for partition, payload in stage.partitions.items():
+            schema = self._partition_schema(
+                PublicationReceipt(stage.dataset, stage.generation, 0, tuple(stored)), partition
+            )
+            if not payload.schema.equals(schema, check_metadata=True):
+                raise ValueError("retry partition Arrow schema does not match staged generation")
+        if set(stored) != set(stage.partitions):
             raise ValueError("retry generation content does not match published generation")
+        for name, (expected, table_name) in stored.items():
+            version = _digest_version(expected)
+            canonical = _digest_relation(self.con, self._schema, table_name)
+            if version == 2 and expected != canonical:
+                raise ValueError("retry generation content does not match published generation")
+            if canonical != _digest_payload(
+                self.con,
+                stage.partitions[name],
+                legacy_checksum=expected if version == 1 else None,
+            ):
+                raise ValueError("retry generation content does not match published generation")
         row = self.con.execute(
             f"SELECT version FROM {self._schema}.runtime_publications "
             "WHERE dataset=? AND generation=?",
@@ -356,6 +379,40 @@ class DuckDBBackend:
                     raise ValueError("published null column contains non-null values")
                 table = table.set_column(index, field, pa.nulls(table.num_rows))
         return table.cast(schema)
+
+    def read_batches(
+        self, receipt: PublicationReceipt, partition: str, *, batch_size: int = 65_536
+    ) -> Generator[pa.RecordBatch]:
+        """Stream exact-generation data with its retained logical schema and metadata."""
+        row = self.con.execute(
+            f"SELECT table_name FROM {self._schema}.runtime_partitions "
+            "WHERE dataset=? AND generation=? AND partition=?",
+            [receipt.dataset, receipt.generation, partition],
+        ).fetchone()
+        if row is None or partition not in receipt.partitions:
+            raise KeyError(partition)
+        schema = self._partition_schema(receipt, partition)
+
+        def batches():
+            cursor = self.con.cursor()
+            reader = None
+            try:
+                reader = cursor.execute(
+                    f"SELECT * FROM {self._schema}.{_quote(row[0])}"
+                ).to_arrow_reader(batch_size=batch_size)
+                for batch in reader:
+                    for index, field in enumerate(schema):
+                        if pa.types.is_null(field.type):
+                            if batch.column(index).null_count != batch.num_rows:
+                                raise ValueError("published null column contains non-null values")
+                            batch = batch.set_column(index, field, pa.nulls(batch.num_rows))
+                    yield batch.cast(schema)
+            finally:
+                if reader is not None:
+                    reader.close()
+                cursor.close()
+
+        return batches()
 
     def _partition_schema(self, receipt: PublicationReceipt, partition: str) -> pa.Schema:
         metadata = self.con.execute(
@@ -439,20 +496,140 @@ def _table_name(dataset: str, generation: str, partition: str) -> str:
     return "generation_" + hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
-def _digest(table: pa.Table) -> str:
-    sink = pa.BufferOutputStream()
-    with pa.ipc.new_stream(sink, table.schema) as writer:
-        writer.write_table(table)
-    return hashlib.sha256(sink.getvalue().to_pybytes()).hexdigest()
+def _digest_version(checksum: str) -> int:
+    if re.fullmatch(r"[0-9a-f]{64}", checksum):
+        return 1
+    if re.fullmatch(r"arrow-v2:[0-9a-f]{64}", checksum):
+        return 2
+    raise ValueError("unsupported partition checksum format")
 
 
-def _storage_table(table: pa.Table) -> pa.Table:
-    """Keep duration ticks exact instead of converting them to DuckDB calendar intervals."""
-    durations = [
-        index for index, field in enumerate(table.schema) if pa.types.is_duration(field.type)
-    ]
-    for index in durations:
-        table = table.set_column(
-            index, table.schema.field(index).name, table.column(index).cast(pa.int64())
+class _DigestSink(io.RawIOBase):
+    def __init__(self):
+        super().__init__()
+        self.digest = hashlib.sha256()
+        self.position = 0
+
+    def writable(self):
+        return True
+
+    def tell(self):
+        return self.position
+
+    def write(self, data):
+        self.digest.update(data)
+        self.position += len(data)
+        return len(data)
+
+
+def _digest_relation(con: Any, schema: str, table_name: str, *, version: int = 2) -> str:
+    """Hash canonical logical buffers; version one retains the original physical encoding."""
+    if version not in (1, 2):
+        raise ValueError("unsupported partition checksum version")
+    reader = con.execute(f"SELECT * FROM {schema}.{_quote(table_name)}").to_arrow_reader(
+        batch_size=65_536
+    )
+    if version == 1:
+        sink = _DigestSink()
+        try:
+            with pa.ipc.new_stream(sink, reader.schema) as writer:
+                for batch in reader:
+                    writer.write_batch(batch)
+        finally:
+            reader.close()
+        return sink.digest.hexdigest()
+    canonical_schema = pa.schema(
+        [field.with_type(_digest_type(field.type)) for field in reader.schema],
+        metadata=reader.schema.metadata,
+    )
+    digest = hashlib.sha256(canonical_schema.serialize().to_pybytes())
+    normalize = canonical_schema != reader.schema
+    indices = None
+    try:
+        for batch in reader:
+            if normalize:
+                batch = batch.cast(canonical_schema)
+            if indices is None or len(indices) < batch.num_rows:
+                indices = pa.array(np.arange(batch.num_rows, dtype=np.int32))
+            batch = pc.take(batch, indices.slice(0, batch.num_rows))
+            digest.update(batch.serialize().to_pybytes())
+    finally:
+        reader.close()
+    return "arrow-v2:" + digest.hexdigest()
+
+
+def _digest_type(dtype: pa.DataType) -> pa.DataType:
+    if pa.types.is_timestamp(dtype) and dtype.tz is not None:
+        return pa.timestamp(dtype.unit, tz="UTC")
+    if pa.types.is_struct(dtype):
+        return pa.struct([field.with_type(_digest_type(field.type)) for field in dtype])
+    if pa.types.is_list(dtype):
+        return pa.list_(dtype.value_field.with_type(_digest_type(dtype.value_type)))
+    if pa.types.is_large_list(dtype):
+        return pa.large_list(dtype.value_field.with_type(_digest_type(dtype.value_type)))
+    if pa.types.is_fixed_size_list(dtype):
+        return pa.list_(
+            dtype.value_field.with_type(_digest_type(dtype.value_type)), dtype.list_size
         )
-    return table
+    if pa.types.is_map(dtype):
+        return pa.map_(
+            dtype.key_field.with_type(_digest_type(dtype.key_type)),
+            dtype.item_field.with_type(_digest_type(dtype.item_type)),
+            keys_sorted=dtype.keys_sorted,
+        )
+    return dtype
+
+
+def _digest_payload(
+    con: Any, payload: pa.Table | pa.RecordBatchReader, *, legacy_checksum: str | None = None
+) -> str:
+    if legacy_checksum is None:
+        con.register("__terrine_retry", _storage_payload(payload))
+        try:
+            return _digest_relation(con, "temp", "__terrine_retry")
+        finally:
+            con.unregister("__terrine_retry")
+    sink = _DigestSink()
+    source = payload.to_reader() if isinstance(payload, pa.Table) else payload
+    with pa.ipc.new_stream(sink, source.schema) as writer:
+
+        def batches():
+            for batch in source:
+                writer.write_batch(batch)
+                yield batch
+
+        iterator = batches()
+        reader = pa.RecordBatchReader.from_batches(source.schema, iterator)
+        try:
+            con.register("__terrine_retry", _storage_payload(reader))
+            try:
+                canonical = _digest_relation(con, "temp", "__terrine_retry")
+            finally:
+                con.unregister("__terrine_retry")
+        finally:
+            iterator.close()
+            source.close()
+    if sink.digest.hexdigest() != legacy_checksum:
+        raise ValueError("retry generation content does not match published generation")
+    return canonical
+
+
+def _storage_payload(payload: pa.Table | pa.RecordBatchReader):
+    """Keep duration ticks exact instead of converting them to calendar intervals."""
+    schema = pa.schema(
+        [
+            pa.field(field.name, pa.int64() if pa.types.is_duration(field.type) else field.type)
+            for field in payload.schema
+        ]
+    )
+    if isinstance(payload, pa.Table):
+        return payload.cast(schema)
+
+    def batches():
+        try:
+            for batch in payload:
+                yield batch.cast(schema)
+        finally:
+            payload.close()
+
+    return pa.RecordBatchReader.from_batches(schema, batches())

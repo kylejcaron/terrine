@@ -109,7 +109,13 @@ def _admit_roots(
     roots: list[tuple[str, str, Any]],
 ) -> None:
     try:
-        _native.required_relations(catalog, raw, units=units, _include_temporary=True)
+        _native.required_relations(
+            catalog,
+            raw,
+            units=units,
+            _include_temporary=True,
+            _roots=tuple(relation for _, _, relation in roots),
+        )
     except TerrineError as exc:
         distinct_roots = {
             (

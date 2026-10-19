@@ -16,6 +16,24 @@
 
 ## 0.1.0
 
+- Define versioned canonical dataset recipes and manifests, including owner-scoped immutable content-addressed recipe references verified on reopening.
+- Add lazy Frame.training_set feature/label projections, metadata-derived completeness handling, exact incomplete-label reason counts, and train-only preprocessing acceptance coverage.
+- Add resumable, checksum-verified Parquet export checkpoints and partition-aware, budget-enforced export replay.
+- Add fixed roster-backed scoring snapshots with explicit eligibility, resolved `as_of`, feature-only source validation, and persisted scoring-view recipes.
+- Bind canonical dataset construction recipes into SavedPlanRecipe serialization for validated reconstruction.
+- Execute dataset staging through persisted saved Design recipes, renewable fenced leases, bounded durable Arrow task outputs, and metadata-preserving exact-generation reads.
+- Share ordinary Frame normalization with staged StatePanel outputs and keep long-stage leases renewable throughout snapshot-bound execution and publication.
+- Refresh pinned datasets from their saved training/scoring recipes, apply leakage-aware split assignments in bounded batches, and retain complete view provenance in manifests.
+- Include selector dependencies in label split support, distinguish StatePanel semantics from column names, retain complete as-of labels, and reopen version-1 manifests without optional frame metadata.
+- Add executable local training and batch-scoring examples covering pinned Arrow reads, exact Decimal Parquet export, manifest reopening, and refresh after source corrections.
+- Verify fresh-process refresh and local export recovery/cancellation, normalize publication timestamp digests across session timezones, and explicitly release export batch readers on failure.
+- Verify historical unprefixed publication checksums using their original complete Arrow IPC stream encoding, while authenticating retry data against the immutable physical generation.
+- Fingerprint as-of features with the resolved dimension relation, entity identity, validity, and selected property definition, using the same resolution rules as execution.
+- Fsync closed Parquet shards and their directory hierarchy before checkpointing; durably publish the final manifest and destination directory rename.
+- Retain the complete Arrow schema and provenance in a zero-row Parquet shard when training or scoring exports have no eligible rows, including partitioned exports.
+
+- Stage file-backed DuckDB Frames into immutable runtime-published generations through retained input snapshots, with bounded Arrow batch transfer and manifest-verified pinned reads.
+- Export pinned datasets to bounded Parquet shards with checksums, generation manifests, and verified completed-export replay.
 - Establish the standalone Python package and development quality gates.
 - Expose the implemented elapsed-time `Window` and coded `TerrineError` contracts.
 - Include inline type metadata so installed-package consumers receive type checking.

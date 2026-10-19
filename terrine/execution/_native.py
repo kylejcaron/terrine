@@ -387,12 +387,13 @@ def required_relations(
     *,
     units: Any = None,
     _include_temporary: bool = False,
+    _roots: tuple[Any, ...] | None = None,
 ) -> tuple[Any, ...]:
     raw = raw_connection(con)
     objects = native_objects(raw)
     namespace = _current_namespace(raw)
     seen: dict[tuple[str, str, str], NativeObject] = {}
-    for relation in roots(catalog, units):
+    for relation in roots(catalog, units) if _roots is None else _roots:
         if isinstance(relation, TableRef):
             root = _match(relation, objects, namespace, allow_temporary=_include_temporary)
             _closure(root, objects, raw, seen, set(), allow_temporary=_include_temporary)
