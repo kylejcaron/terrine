@@ -9,6 +9,7 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+from terrine.errors import RefusalSpec
 from terrine.temporal._timestamps import (
     _quotient,
     _remainder,
@@ -16,6 +17,13 @@ from terrine.temporal._timestamps import (
     timestamp_order_key,
 )
 from terrine.windows import Window
+
+_RANGE_BOUND = RefusalSpec(
+    "terrine.temporal.range_bound_unavailable",
+    "A bounded range strategy is unavailable for {expression}: {reason}. "
+    "The candidate multiplier limit is {limit}; {route}.",
+)
+_MAX_CANDIDATES = 128
 
 
 @dataclass(frozen=True, slots=True)

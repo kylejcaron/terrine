@@ -1,7 +1,8 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import ibis
 import pyarrow as pa
+import pytest
 
 from terrine.temporal.retention import retention_threshold_bands
 
@@ -234,3 +235,180 @@ def test_retention_rejects_unsupported_timestamp_dtype_with_coded_error():
         assert error.value.code == "terrine.temporal.retention_invalid"
     finally:
         con.disconnect()
+
+
+@pytest.mark.parametrize("finite", [True, False])
+def test_bounded_retention_matches_exact_path_and_independent_pandas(finite):
+    import pandas as pd
+
+    from terrine.temporal.ranges import RangePlan
+    from tests.reference.retention import retention_rows
+
+    con = ibis.duckdb.connect()
+    try:
+        origin = datetime(2025, 1, 1, tzinfo=UTC)
+        cutoff = origin + timedelta(days=5)
+        anchor_rows = [
+            {
+                "unit": unit,
+                "anchor_id": str(day),
+                "t0": origin + timedelta(days=day),
+                "observed_until": (
+                    None
+                    if unit == "u" and day == 2
+                    else origin + timedelta(days=1, hours=12)
+                    if unit == "u" and day == 1
+                    else cutoff
+                ),
+            }
+            for unit in ("u", "empty")
+            for day in range(-1, 4)
+        ]
+        event_rows = [
+            {
+                "unit": "u",
+                "event_id": identity,
+                "name": name,
+                "timestamp": origin + timedelta(days=day),
+            }
+            for day, identity, name in (
+                (0, "e1", "target"),
+                (0, "e1", "target"),
+                (1, "e1", "target"),
+                (2, "e2", "target"),
+                (3, "e3", "target"),
+                (5, "at_end", "target"),
+                (1, "wrong", "other"),
+            )
+        ]
+        anchors = con.create_table("band_anchors", pa.Table.from_pylist(anchor_rows))
+        events = con.create_table("band_events", pa.Table.from_pylist(event_rows))
+        horizon = 2 * 86_400 if finite else None
+
+        def build(range_plan=None, *, reverse=False):
+            return retention_threshold_bands(
+                events.order_by(ibis.desc("timestamp")) if reverse else events,
+                anchors,
+                unit="unit",
+                event_id="event_id",
+                event_name="name",
+                target_event="target",
+                timestamp="timestamp",
+                anchor_id="anchor_id",
+                anchor_timestamp="t0",
+                observed_until="observed_until",
+                count_thresholds=(1, 2, 3),
+                finite_horizon_seconds=horizon,
+                source_complete_from=origin,
+                source_complete_through=None if finite else cutoff,
+                range_plan=range_plan,
+            )
+
+        exact = build()
+        plan = RangePlan(
+            horizon if horizon is not None else (cutoff - origin).days * 86_400,
+            max(sum(row["unit"] == unit for row in anchor_rows) for unit in ("u", "empty")),
+            "declared_anchor_count",
+        )
+        bounded = build(plan, reverse=True)
+        expected = retention_rows(
+            pd.DataFrame(event_rows),
+            pd.DataFrame(anchor_rows),
+            thresholds=(1, 2, 3),
+            horizon=horizon,
+            coverage_start=origin,
+            cutoff=cutoff,
+        )
+
+        def key(row):
+            return row["unit"], row["anchor_id"]
+
+        assert sorted(con.to_pyarrow(exact).to_pylist(), key=key) == sorted(expected, key=key)
+        assert sorted(con.to_pyarrow(bounded).to_pylist(), key=key) == sorted(expected, key=key)
+    finally:
+        con.disconnect()
+
+
+@pytest.mark.parametrize("failure", ["missing_start", "wrong_width"])
+def test_bounded_open_retention_refuses_unknown_span_before_execution(failure):
+    from terrine.errors import TerrineError
+    from terrine.temporal.ranges import RangePlan
+
+    anchors = ibis.table(
+        {
+            "unit": "string",
+            "anchor_id": "string",
+            "t0": "timestamp('UTC')",
+            "observed_until": "timestamp('UTC')",
+        }
+    )
+    events = ibis.table(
+        {
+            "unit": "string",
+            "event_id": "string",
+            "name": "string",
+            "timestamp": "timestamp('UTC')",
+        }
+    )
+    with pytest.raises(TerrineError) as error:
+        retention_threshold_bands(
+            events,
+            anchors,
+            unit="unit",
+            event_id="event_id",
+            event_name="name",
+            target_event="target",
+            timestamp="timestamp",
+            anchor_id="anchor_id",
+            anchor_timestamp="t0",
+            observed_until="observed_until",
+            count_thresholds=(1,),
+            source_complete_through=datetime(2025, 1, 6, tzinfo=UTC),
+            source_complete_from=(
+                None if failure == "missing_start" else datetime(2025, 1, 2, tzinfo=UTC)
+            ),
+            range_plan=RangePlan(5 * 86_400, 1, "fixed"),
+        )
+    assert error.value.code == "terrine.temporal.range_bound_unavailable"
+    assert error.value.context["route"]
+
+
+def test_open_retention_bound_uses_elapsed_utc_span_across_clock_change():
+    from zoneinfo import ZoneInfo
+
+    from terrine.temporal.ranges import RangePlan
+
+    anchors = ibis.table(
+        {
+            "unit": "string",
+            "anchor_id": "string",
+            "t0": "timestamp('UTC')",
+            "observed_until": "timestamp('UTC')",
+        }
+    )
+    events = ibis.table(
+        {
+            "unit": "string",
+            "event_id": "string",
+            "name": "string",
+            "timestamp": "timestamp('UTC')",
+        }
+    )
+    zone = ZoneInfo("America/New_York")
+    result = retention_threshold_bands(
+        events,
+        anchors,
+        unit="unit",
+        event_id="event_id",
+        event_name="name",
+        target_event="target",
+        timestamp="timestamp",
+        anchor_id="anchor_id",
+        anchor_timestamp="t0",
+        observed_until="observed_until",
+        count_thresholds=(1,),
+        source_complete_from=datetime(2025, 3, 8, tzinfo=zone),
+        source_complete_through=datetime(2025, 3, 10, tzinfo=zone),
+        range_plan=RangePlan(47 * 3600, 1, "fixed"),
+    )
+    assert result.schema()["occurrence_count"].is_integer()

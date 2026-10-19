@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from terrine.errors import RefusalSpec
 from terrine.spec.anchors import EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.expressions import (
@@ -15,14 +14,8 @@ from terrine.spec.expressions import (
     MetricQuantile,
 )
 from terrine.spec.panels import EventPanelSpec
-from terrine.temporal.ranges import RangePlan
+from terrine.temporal.ranges import _MAX_CANDIDATES, _RANGE_BOUND, RangePlan
 
-_RANGE_BOUND = RefusalSpec(
-    "terrine.temporal.range_bound_unavailable",
-    "A bounded range strategy is unavailable for {expression}: {reason}. "
-    "The candidate multiplier limit is {limit}; {route}.",
-)
-_MAX_CANDIDATES = 128
 _ROUTE = (
     "use first/nth event anchors, fewer event periods or scheduled anchors, a coarser "
     "schedule/narrower window, or an additive metric using sparse prefix lookups"

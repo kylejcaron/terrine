@@ -155,6 +155,24 @@ narrower window, or an additive metric with sparse prefix lookups. Additive
 requests do not inherit this nonadditive overlap limit. This also applies to
 the raw values streamed by cross-section t-digest sidecars.
 
+The temporal retention primitive can consume that same derived range plan.
+It counts distinct identities of independently selected target-event
+occurrences across the full horizon, then applies the exact integer threshold
+bands; it never adds daily distinct counts. Finite horizons use their declared
+duration as the block width. For an open horizon bounded by an explicit source
+cutoff, bounded execution additionally requires a declared source completeness
+start; the block width is the coverage span rounded upward to integral seconds.
+Only anchors within that covered history contribute event matches. An unknown
+open span or a mismatched plan refuses with the same range-bound code, rather
+than silently reverting to the unbounded exact path.
+
+Retention preserves zero for a complete horizon with no target occurrences,
+null for incomplete observation, `horizon_unavailable` for a missing/invalid
+origin, and `incomplete_coverage` when the origin precedes declared source
+history. A null observation endpoint remains unavailable for finite follow-up;
+for an explicitly complete open horizon it means no narrower observation
+cutoff. Retention remains a temporal-engine primitive, not a named Design
+expression or a root-package API.
 
 Catalog records and bound Models are immutable, including nested definition maps.
 Create a new definition and bind a new Model when semantics change; an existing

@@ -76,3 +76,50 @@ def test_range_join_intermediate_bound_is_blocked(span, step):
             assert all(row[key] == expected[row["unit"], row["anchor_id"]][key] for key in row)
     finally:
         con.disconnect()
+
+
+def test_bucket_join_keeps_pre_epoch_nanosecond_edges():
+    from terrine.temporal.ranges import RangePlan, blocked_range_join
+
+    con = ibis.duckdb.connect()
+    try:
+        anchors = con.create_table(
+            "ns_anchors",
+            pa.table(
+                {
+                    "unit": ["u", "u"],
+                    "anchor_id": ["a", "b"],
+                    "t0": pa.array([0, 500_000], type=pa.timestamp("us", tz="UTC")),
+                }
+            ),
+        )
+        coefficients = [-1_000_000_001, -1_000_000_000, -999_999_999, -1, 0, 999_999_999]
+        events = con.create_table(
+            "ns_events",
+            pa.table(
+                {
+                    "event_unit": ["u"] * len(coefficients),
+                    "timestamp": pa.array(coefficients, type=pa.timestamp("ns")),
+                    "coefficient": coefficients,
+                }
+            ),
+        )
+        joined = blocked_range_join(
+            anchors,
+            events,
+            plan=RangePlan(1, 2, "declared_anchor_count"),
+            window=Window(-1, 0),
+            event_unit="event_unit",
+            event_timestamp="timestamp",
+        )
+        actual = con.to_pyarrow(joined.matched).to_pylist()
+        expected = {
+            (identity, value)
+            for identity, end in (("a", 0), ("b", 500_000_000))
+            for value in coefficients
+            if end - 1_000_000_000 <= value < end
+        }
+        assert {(row["anchor_id"], row["coefficient"]) for row in actual} == expected
+        assert con.to_pyarrow(joined.candidates).num_rows <= 2 * len(coefficients)
+    finally:
+        con.disconnect()

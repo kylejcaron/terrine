@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import cast
 
 import ibis
@@ -11,6 +11,13 @@ import ibis.expr.types as ir
 
 from terrine.errors import RefusalSpec
 from terrine.temporal._timestamps import compare_timestamps
+from terrine.temporal.ranges import (
+    _MAX_CANDIDATES,
+    _RANGE_BOUND,
+    RangePlan,
+    blocked_range_join,
+)
+from terrine.windows import Window
 
 _INVALID = RefusalSpec(
     "terrine.temporal.retention_invalid",
@@ -33,14 +40,18 @@ def retention_threshold_bands(
     count_thresholds: tuple[int, ...],
     finite_horizon_seconds: int | None = None,
     source_complete_through: datetime | None = None,
+    source_complete_from: datetime | None = None,
+    range_plan: RangePlan | None = None,
 ) -> ibis.Table:
     """Count distinct target-event occurrences after each anchor.
 
     Finite horizons require a non-null observation endpoint through the
     horizon end. Open-ended horizons require an explicit complete-through
     timestamp; a null ``observed_until`` means no narrower bound in that mode.
-    Incomplete results carry a null count/band and ``reason`` of
-    ``insufficient_followup`` or ``horizon_unavailable``.
+    Incomplete results carry a null count/band and an exact reason. A declared
+    source start also requires the anchor to be within covered history.
+    Bounded execution consumes the same range plan as nonadditive windows;
+    an open horizon additionally needs a source start to bound its span.
     """
     if not isinstance(events, ibis.Table) or not isinstance(anchors, ibis.Table):
         raise TypeError("events and anchors must be Ibis tables")
@@ -68,6 +79,34 @@ def retention_threshold_bands(
             raise _INVALID.error(reason="cutoff_with_finite_horizon")
     elif source_complete_through is None or source_complete_through.tzinfo is None:
         raise _INVALID.error(reason="missing_open_horizon_cutoff")
+    if source_complete_from is not None and (
+        not isinstance(source_complete_from, datetime) or source_complete_from.tzinfo is None
+    ):
+        raise _INVALID.error(reason="invalid_source_start")
+    bounded_width = finite_horizon_seconds
+    if range_plan is not None and finite_horizon_seconds is None:
+        if source_complete_from is None:
+            raise _RANGE_BOUND.error(
+                expression="retention",
+                reason="the open horizon has no declared lower source bound",
+                candidates_per_event=None,
+                limit=_MAX_CANDIDATES,
+                route="declare both source completeness endpoints or use a finite horizon",
+            )
+        assert source_complete_through is not None
+        span = source_complete_through.astimezone(UTC) - source_complete_from.astimezone(UTC)
+        bounded_width = span.days * 86_400 + span.seconds + bool(span.microseconds)
+    if range_plan is not None and (
+        bounded_width != range_plan.block_seconds
+        or range_plan.max_candidates_per_event > _MAX_CANDIDATES
+    ):
+        raise _RANGE_BOUND.error(
+            expression="retention",
+            reason="the range plan does not bound the declared horizon",
+            candidates_per_event=range_plan.max_candidates_per_event,
+            limit=_MAX_CANDIDATES,
+            route="derive a range plan for the declared horizon and anchor population",
+        )
 
     for table, name in (
         (events, timestamp),
@@ -82,6 +121,7 @@ def retention_threshold_bands(
         _ret_unit=anchors[unit],
         _ret_anchor_id=anchors[anchor_id],
         _ret_anchor_time=anchors[anchor_timestamp],
+        t0=anchors[anchor_timestamp],
         _ret_observed_until=anchors[observed_until],
     )
     source = (
@@ -107,6 +147,15 @@ def retention_threshold_bands(
     anchor_valid = anchor._ret_anchor_time.notnull() & compare_timestamps(
         anchor._ret_anchor_time, end, "lt"
     )
+    source_history = (
+        compare_timestamps(
+            anchor._ret_anchor_time,
+            cast(ir.TimestampScalar, ibis.literal(source_complete_from)),
+            "ge",
+        )
+        if source_complete_from is not None
+        else cast(ir.BooleanValue, ibis.literal(True))
+    )
     if finite_horizon_seconds is None:
         has_followup = anchor._ret_observed_until.isnull() | compare_timestamps(
             anchor._ret_observed_until, end, "ge"
@@ -115,35 +164,46 @@ def retention_threshold_bands(
         has_followup = anchor._ret_observed_until.notnull() & compare_timestamps(
             anchor._ret_observed_until, end, "ge"
         )
-    reason = ibis.ifelse(
-        ~anchor_valid,
-        ibis.literal("horizon_unavailable"),
-        ibis.ifelse(
-            ~has_followup,
-            ibis.literal("insufficient_followup"),
-            ibis.null().cast("string"),
-        ),
+    reason = ibis.cases(
+        (~anchor_valid, ibis.literal("horizon_unavailable")),
+        (~source_history, ibis.literal("incomplete_coverage")),
+        (~has_followup, ibis.literal("insufficient_followup")),
+        else_=ibis.null().cast("string"),
     )
     complete = reason.isnull()
-    matched = anchor.left_join(
-        source,
-        [
-            anchor._ret_unit == source._ret_unit,
-            compare_timestamps(source._ret_event_time, anchor._ret_anchor_time, "ge"),
-            compare_timestamps(source._ret_event_time, end, "lt"),
-        ],
-    )
+    if range_plan is None:
+        matched = anchor.left_join(
+            source,
+            [
+                anchor._ret_unit == source._ret_unit,
+                compare_timestamps(source._ret_event_time, anchor._ret_anchor_time, "ge"),
+                compare_timestamps(source._ret_event_time, end, "lt"),
+            ],
+        )
+    else:
+        bounded_source = source
+        if finite_horizon_seconds is None:
+            bounded_source = source.filter(compare_timestamps(source._ret_event_time, end, "lt"))
+        matched = blocked_range_join(
+            anchor.filter(complete),
+            bounded_source,
+            plan=range_plan,
+            window=Window(0, range_plan.block_seconds),
+            unit_column="_ret_unit",
+            event_unit="_ret_unit",
+            event_timestamp="_ret_event_time",
+        ).matched
     grouped = matched.group_by(matched._ret_unit, matched._ret_anchor_id).aggregate(
         _ret_count=matched._ret_event_id.nunique()
     )
-    joined = anchor.join(
+    joined = anchor.left_join(
         grouped,
         [
             anchor._ret_unit == grouped._ret_unit,
             anchor._ret_anchor_id == grouped._ret_anchor_id,
         ],
     )
-    count = complete.ifelse(joined._ret_count.cast("int64"), ibis.null().cast("int64"))
+    count = complete.ifelse(joined._ret_count.fill_null(0).cast("int64"), ibis.null().cast("int64"))
     band = ibis.literal(0).cast("int64")
     for index, threshold in enumerate(count_thresholds, start=1):
         band = ibis.ifelse(count >= ibis.literal(threshold), index, band)
