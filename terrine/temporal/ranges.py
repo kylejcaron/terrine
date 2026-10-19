@@ -64,6 +64,11 @@ def _bucket(timestamp: ir.TimestampValue, width: int) -> ir.NumericValue:
     return quotient - cast(ir.IntegerValue, (remainder < zero).cast(dt.int64))
 
 
+def _shift(timestamp: ir.TimestampValue, seconds: int) -> ir.TimestampValue:
+    # Even a zero interval can lower a backend timestamp's precision.
+    return timestamp if seconds == 0 else timestamp + ibis.interval(seconds=seconds)
+
+
 def blocked_range_join(
     anchors: ibis.Table,
     events: ibis.Table,
@@ -85,8 +90,8 @@ def blocked_range_join(
     bucket = "__terrine_range_bucket"
     while bucket in reserved:
         bucket += "_"
-    start = anchors.t0 + ibis.interval(seconds=window.start)
-    end = anchors.t0 + ibis.interval(seconds=window.end)
+    start = _shift(anchors.t0, window.start)
+    end = _shift(anchors.t0, window.end)
     first = anchors.mutate(**{bucket: _bucket(start, plan.block_seconds)})
     last = anchors.mutate(**{bucket: _bucket(end, plan.block_seconds)}).filter(
         _bucket(start, plan.block_seconds) != _bucket(end, plan.block_seconds)
@@ -103,11 +108,7 @@ def blocked_range_join(
     if event_time in anchors.columns:
         event_time += "_right"
     matched = candidates.filter(
-        compare_timestamps(
-            candidates[event_time], candidates.t0 + ibis.interval(seconds=window.start), "ge"
-        )
-        & compare_timestamps(
-            candidates[event_time], candidates.t0 + ibis.interval(seconds=window.end), "lt"
-        )
+        compare_timestamps(candidates[event_time], _shift(candidates.t0, window.start), "ge")
+        & compare_timestamps(candidates[event_time], _shift(candidates.t0, window.end), "lt")
     )
     return RangeJoin(requests, candidates, matched)

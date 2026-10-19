@@ -412,3 +412,62 @@ def test_open_retention_bound_uses_elapsed_utc_span_across_clock_change():
         range_plan=RangePlan(47 * 3600, 1, "fixed"),
     )
     assert result.schema()["occurrence_count"].is_integer()
+
+
+@pytest.mark.parametrize("finite", [True, False])
+def test_bounded_retention_preserves_submicrosecond_anchor_lower_bound(finite):
+    from terrine.temporal.ranges import RangePlan
+
+    con = ibis.duckdb.connect()
+    try:
+        anchors = con.create_table(
+            "precise_anchors",
+            pa.table(
+                {
+                    "unit": ["u"],
+                    "anchor_id": ["a"],
+                    "t0": pa.array([1], type=pa.timestamp("ns")),
+                    "observed_until": pa.array([2_000_000], type=pa.timestamp("us")),
+                }
+            ),
+        )
+        events = con.create_table(
+            "precise_events",
+            pa.table(
+                {
+                    "unit": ["u", "u"],
+                    "event_id": ["before", "at_start"],
+                    "name": ["target", "target"],
+                    "timestamp": pa.array([0, 1], type=pa.timestamp("ns")),
+                }
+            ),
+        )
+
+        def build(plan=None):
+            return retention_threshold_bands(
+                events,
+                anchors,
+                unit="unit",
+                event_id="event_id",
+                event_name="name",
+                target_event="target",
+                timestamp="timestamp",
+                anchor_id="anchor_id",
+                anchor_timestamp="t0",
+                observed_until="observed_until",
+                count_thresholds=(1, 2),
+                finite_horizon_seconds=1 if finite else None,
+                source_complete_through=None
+                if finite
+                else datetime(1970, 1, 1, 0, 0, 1, tzinfo=UTC),
+                source_complete_from=datetime(1970, 1, 1, tzinfo=UTC),
+                range_plan=plan,
+            )
+
+        exact = con.to_pyarrow(build()).to_pylist()
+        bounded = con.to_pyarrow(build(RangePlan(1, 1, "fixed"))).to_pylist()
+        assert exact[0]["occurrence_count"] == 1
+        assert exact[0]["retention_band"] == 1
+        assert bounded == exact
+    finally:
+        con.disconnect()
