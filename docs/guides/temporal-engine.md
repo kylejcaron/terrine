@@ -109,10 +109,11 @@ the same sparse range join; distinct values are counted once across the full
 window rather than by adding daily counts.
 
 Exact quantiles are capability-gated to DuckDB until other backend behavior is
-verified. Approximate quantiles are never selected implicitly:
-`approx_quantile` requires a named `SketchRequest`, but requests currently
-refuse with `terrine.metric.sketch_unavailable` pending owner approval of a
-sketch package and its accuracy/merge contract.
+verified. Approximate requests are never selected implicitly. The optional
+`terrine[sketches]` extra provides adapter-level t-digest and HLL operations;
+approximate Design expressions still refuse until the compiler integration is
+available. T-digest reports empirical accuracy without a guaranteed rank bound,
+while HLL reports its published relative-error bound.
 
 Catalog records and bound Models are immutable, including nested definition maps.
 Create a new definition and bind a new Model when semantics change; an existing
