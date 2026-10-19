@@ -33,6 +33,7 @@ diff-diff = ["diff-diff==3.13.0"]
 [dependency-groups]
 dev = [
     "pytest>=8,<9",
+    "jsonschema>=4,<5",
     "hypothesis>=6,<7",
     "pytest-xdist>=3,<4",
     "ruff>=0.11,<1",

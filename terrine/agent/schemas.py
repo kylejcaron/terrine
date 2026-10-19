@@ -26,7 +26,9 @@ __all__ = [
 
 
 class Record(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, validate_default=True)
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, strict=True, validate_default=True, serialize_by_alias=True
+    )
     schema_version: Literal[1] = 1
 
 

@@ -30,7 +30,7 @@ from terrine.errors import RefusalSpec, TerrineError
 from terrine.model import Model
 from terrine.runtime.api import Executor
 from terrine.runtime.recipe import ModelReference
-from terrine.spec.anchors import FixedDate
+from terrine.spec.anchors import EventAnchor, FixedDate
 from terrine.spec.design import Design
 from terrine.spec.io import from_json, from_yaml, to_json
 from terrine.spec.validate import ensure_runtime_shape_supported, validate_design
@@ -219,15 +219,21 @@ class DatasetTools:
                 for name, source in sorted(self.model.sources.items())
                 if name in self.policy.allowed_sources and source.entities
             ]
-            if not sources:
-                raise _INVALID.error(
-                    route="Ask the owner to allow a Catalog source with an entity."
-                )
-            name, source = sources[0]
-            coverage = self.model.readiness.sources.get(name)
-            anchor = coverage.start.date() if coverage else date(2000, 1, 1)
-            design = Design(sorted(source.entities)[0], FixedDate(anchor))
-            return self._design_output(to_json(design))
+            for name, source in sources:
+                for unit in sorted(source.entities):
+                    if unit in self.model.units:
+                        coverage = self.model.readiness.sources.get(name)
+                        anchor = coverage.start.date() if coverage else date(2000, 1, 1)
+                        return self._design_output(to_json(Design(unit, FixedDate(anchor))))
+            for name, source in sources:
+                if source.facts and name in self.model.readiness.sources:
+                    design = Design(
+                        sorted(source.entities)[0], EventAnchor(sorted(source.facts)[0])
+                    )
+                    return self._design_output(to_json(design))
+            raise _INVALID.error(
+                route="Configure a unit roster or allow an event fact with declared coverage."
+            )
 
         return self._call("validate", example)
 

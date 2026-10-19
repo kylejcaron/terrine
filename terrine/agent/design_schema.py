@@ -34,6 +34,19 @@ def design_schema() -> dict[str, Any]:
     scalar = {"type": ["string", "number", "boolean", "null"]}
     duration = {"type": ["integer", "string"]}
     definitions = {"Temporal": obj({"type": {"enum": ["date", "datetime"]}, "value": text})}
+    definitions["Cutpoint"] = {
+        "anyOf": [
+            obj({"type": {"enum": ["int", "float64"]}, "value": text}),
+            obj(
+                {
+                    "type": {"const": "decimal"},
+                    "sign": {"enum": [0, 1]},
+                    "digits": array({"type": "integer", "minimum": 0, "maximum": 9}),
+                    "exponent": integer,
+                }
+            ),
+        ]
+    }
     expression = union("MetricAgg", "AttributeAsOf", "EventTime")
     predicate = union("Gt", "Eq", "IsNull", "And")
     named = mapping(expression)
@@ -79,7 +92,7 @@ def design_schema() -> dict[str, Any]:
         },
         "BinnedMetricState": {
             "metric": text,
-            "cutpoints": array({"type": ["number", "string"]}),
+            "cutpoints": array(ref("Cutpoint")),
             "levels": array(scalar),
         },
         "StatePanel": {
@@ -106,7 +119,11 @@ def design_schema() -> dict[str, Any]:
             "group_by": array(text),
         },
         "SessionSpec": {"gap_seconds": number},
-        "FunnelSpec": {"event_property": text, "steps": array(scalar), "within_seconds": number},
+        "FunnelSpec": {
+            "event_property": text,
+            "steps": array(text),
+            "within_seconds": nullable(duration),
+        },
         "EventSequence": {
             "fact": text,
             "window": ref("Window"),
@@ -144,17 +161,27 @@ def design_schema() -> dict[str, Any]:
             "reference_period": integer,
         },
         "CalendarComparisonSpec": {
-            "cohort": ref("PersistentAdoption"),
+            "cohort": ref("Initiation"),
             "control": text,
             "reference_period": integer,
             "comparison_periods": array(integer),
-            "anticipation_periods": integer,
+            "anticipation_periods": array(integer),
         },
     }
-    optional = {"relative_to", "n", "negate", "at", "ordered", "absorbing"}
+    optional = {
+        "EventAnchor": {"n"},
+        "MetricAgg": {"relative_to"},
+        "AttributeAsOf": {"relative_to"},
+        "EventTime": {"relative_to"},
+        "IsNull": {"negate"},
+        "Treatment": {"at"},
+        "StateObservations": {"ordered", "absorbing"},
+    }
     for name, fields in nodes.items():
         properties = {"type": {"const": name}, **fields}
-        definitions[name] = obj(properties, [key for key in properties if key not in optional])
+        definitions[name] = obj(
+            properties, [key for key in properties if key not in optional.get(name, set())]
+        )
     definitions["Design"] = obj(
         {
             "unit": text,
@@ -169,7 +196,6 @@ def design_schema() -> dict[str, Any]:
                     text,
                     union(
                         "StatePanel",
-                        "Trajectory",
                         "CohortSpec",
                         "TimeToEvent",
                         "LifeTable",

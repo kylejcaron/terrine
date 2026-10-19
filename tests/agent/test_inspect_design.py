@@ -114,3 +114,27 @@ def test_design_save_load_is_confined_to_owner_root(tools, tmp_path):
     assert outside.read_text() == "unchanged"
     with pytest.raises(TypeError):
         tools.save_design("baseline", serialized, root=tmp_path)
+
+
+@pytest.mark.parametrize("roster", [False, True])
+def test_design_example_handles_event_only_and_multiple_entity_models(tools, roster):
+    source = tools.model.catalog.sources["events"]
+    source = source.model_copy(update={"entities": {"account": "user_id", "user": "user_id"}})
+    catalog = tools.model.catalog.model_copy(update={"sources": {"events": source}})
+    model = Model.from_catalog(
+        catalog,
+        con=tools.model.con,
+        readiness={"events": Coverage("2025-01-01", "2025-02-01")},
+        units={"user": UnitSource("users", "id")} if roster else {},
+    )
+    reference = ModelReference.from_model(model, owner_key="owner")
+    policy = replace(
+        tools.policy,
+        model_reference=reference,
+        allowed_catalogs=frozenset({reference.catalog_hash}),
+    )
+    result = DatasetTools(model, policy, namespace="agent").design_example()
+    assert result.status == "ok"
+    assert result.output is not None
+    design = from_json(result.output.serialized)
+    assert design.unit == ("user" if roster else "account")

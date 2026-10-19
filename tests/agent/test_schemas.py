@@ -74,3 +74,61 @@ def test_discovery_schema_accepts_canonical_temporal_nodes():
     ):
         design = Design("user", anchor, shape=shape)
         validator.validate(json.loads(to_json(design)))
+
+
+@pytest.mark.parametrize("variant", ["binned", "calendar", "funnel", "event_time"])
+def test_discovery_schema_matches_existing_tagged_codec(variant):
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    from jsonschema import Draft202012Validator
+
+    from terrine.agent.design_schema import design_schema
+    from terrine.spec import Design, FixedDate, Schedule
+    from terrine.spec.expressions import EventTime
+    from terrine.spec.io import from_json, to_json
+    from terrine.spec.panels import CalendarComparisonSpec, Initiation
+    from terrine.spec.sequence import EventSequence, FunnelSpec
+    from terrine.spec.state_panel import BinnedMetricState, StatePanel
+    from terrine.windows import Window
+
+    if variant == "binned":
+        design = Design(
+            "user",
+            Schedule("1d", "2025-01-01", "2025-01-05"),
+            shape=StatePanel(
+                BinnedMetricState("total", (1, Decimal("1.25"), 2.5), ("a", "b", "c", "d")),
+                max_periods=4,
+            ),
+        )
+    elif variant == "calendar":
+        design = Design(
+            "user",
+            Schedule("1d", "2025-01-01", "2025-01-05"),
+            shape=CalendarComparisonSpec(
+                Initiation("events", "active", datetime(2024, 1, 1, tzinfo=UTC)),
+                "never_treated",
+                -2,
+                (0, 1),
+                (-1,),
+            ),
+        )
+    elif variant == "funnel":
+        design = Design(
+            "user",
+            FixedDate("2025-01-01"),
+            shape=EventSequence(
+                "value", Window(-10, 0), max_events=5, funnel=FunnelSpec("action", ("a", "b"))
+            ),
+        )
+    else:
+        design = Design(
+            "user", FixedDate("2025-01-01"), features={"when": EventTime("value", Window(-10, 0))}
+        )
+    payload = json.loads(to_json(design))
+    validator = Draft202012Validator(design_schema())
+    validator.validate(payload)
+    assert from_json(json.dumps(payload)).spec_hash == design.spec_hash
+    if variant == "event_time":
+        del payload["design"]["features"]["when"]["n"]
+        assert not validator.is_valid(payload)

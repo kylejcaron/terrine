@@ -42,6 +42,7 @@ def test_operation_schemas_reject_executable_and_policy_fields():
     for cls, record in requests:
         restored = cls.model_validate_json(json.dumps(record))
         assert restored.schema_version == 1
+        assert cls.model_validate_json(restored.model_dump_json()) == restored
         assert cls.model_json_schema()["additionalProperties"] is False
         for key in ("sql", "callback", "executor", "policy", "snapshot_authority", "source"):
             with pytest.raises(ValidationError):
