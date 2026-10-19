@@ -101,3 +101,35 @@ def test_diff_diff_preflight_precedes_mapping_validation(panel):
     with pytest.raises(TerrineError) as error:
         exports.to_diff_diff(candidate, period_col="missing")
     assert error.value.code == "terrine.export.cluster_required"
+
+
+def test_nanosecond_periods_without_pandas_receive_coded_dependency_refusal(panel, tmp_path):
+    import subprocess
+    import sys
+
+    ticks = pa.array([3, 0, 1, 1, 3, 0], type=pa.timestamp("ns", tz="UTC"))
+    panel = replace(panel, table=panel.table.set_column(2, "t0", ticks))
+    path = tmp_path / "panel.json"
+    path.write_text(panel.to_json())
+    code = """
+import sys
+from importlib.abc import MetaPathFinder
+class NoPandas(MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] == 'pandas':
+            raise ModuleNotFoundError('pandas is absent', name=fullname)
+sys.meta_path.insert(0, NoPandas())
+from pathlib import Path
+from terrine.data import MaterializedFrame
+from terrine.errors import TerrineError
+from terrine.export import to_diff_diff
+data = MaterializedFrame.from_json(Path(sys.argv[1]).read_text())
+try:
+    to_diff_diff(data, period_col='t0', period_seconds=1)
+except TerrineError as error:
+    assert error.code == 'terrine.convert.missing_dependency'
+    assert error.context['extra'] == 'diff-diff'
+else:
+    raise AssertionError('missing pandas was accepted')
+"""
+    subprocess.run([sys.executable, "-c", code, str(path)], check=True, timeout=120)

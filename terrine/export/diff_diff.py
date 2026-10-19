@@ -100,6 +100,10 @@ def to_diff_diff(
     supplied explicitly or retained in panel metadata. No estimator is invoked.
     """
     checked = preflight_export(data, drop_incomplete=drop_incomplete)
+    try:
+        import_module("pandas")
+    except ImportError as exc:
+        raise _MISSING_DEPENDENCY.error(extra="diff-diff") from exc
     roles, original = data.roles, data.table
     treatment = roles.treatment
     if treatment is None or any(
@@ -167,10 +171,6 @@ def to_diff_diff(
             if adopted and first == 0:
                 first = code
         first_by_unit[unit] = first
-    try:
-        import_module("pandas")
-    except ImportError as exc:
-        raise _MISSING_DEPENDENCY.error(extra="diff-diff") from exc
     df = checked.table.to_pandas()
     df[_TIME] = [mapping[value] for value in checked.table[period_col].to_pylist()]
     df[_FIRST] = [first_by_unit[unit] for unit in checked.table[roles.unit].to_pylist()]

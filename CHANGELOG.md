@@ -5,6 +5,11 @@
 - Snapshot-scoped warehouse export checks and exact per-reason exclusion counts; DoWhy refuses repeated-unit and declared-weight datasets rather than forwarding ignored arguments.
 - Add distinct lifelines KM-array and feature-only Cox-dataframe hand-offs, preserving elapsed entry times, declared weights/clusters, and exact exclusions; risk-set conversion retains coarsened counts and refuses delayed entry or incomplete trajectories.
 - Add diff-diff first-treatment encoding for observed persistent-adoption panels, with never-treated zero, preserved calendar gaps, and treatment-history validation before outcome exclusions; exercise Callaway–Sant'Anna, Sun–Abraham and event studies.
+
+## Fixed
+- Refuse missing pandas with the coded optional-dependency error before decoding diff-diff timestamp periods, including nanosecond values.
+- Keep state-classification null assertions valid across the supported pandas 2.x and 3.x representations.
+
 ## Removed
 - Native treatment-effect estimators, inferential/propensity diagnostics, and simulation truth/calibration claims. Terrine now delivers datasets and descriptive summaries; downstream libraries own estimation.
 
