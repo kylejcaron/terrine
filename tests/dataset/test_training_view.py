@@ -76,7 +76,7 @@ def test_incomplete_labels_drop_rows_and_keep_null_reasons(native_inputs):
 
 def test_training_projection_preserves_baseline_treatment_role(native_inputs):
     from terrine.semantic.models import Catalog
-    from terrine.spec import FixedDate, Treatment
+    from terrine.spec import FixedDate, Treatment, asof
 
     catalog, con = native_inputs
     con.raw_sql("ALTER TABLE events ADD COLUMN enabled BOOLEAN")
@@ -98,11 +98,12 @@ def test_training_projection_preserves_baseline_treatment_role(native_inputs):
     frame = Design(
         "user",
         FixedDate("2025-01-04"),
+        features={"enabled": asof("enabled", before="0s")},
         outcomes={"future": agg("sessions", window=("0s", "1d"))},
         treatment=Treatment("enabled", known_at_t0=True),
     ).build(model)
 
-    materialized = frame.training_set(label="future", features=()).materialize()
+    materialized = frame.training_set(label="future", features=("enabled",)).materialize()
     assert materialized.roles.treatment == "treatment"
     assert "treatment" in materialized.table.column_names
 
@@ -129,6 +130,35 @@ def test_training_view_hashes_selected_feature_definition_and_parent_design(nati
     changed_view = changed.provenance.dataset_view
     assert first_view is not None and changed_view is not None
     assert first_view.view_hash != changed_view.view_hash
+
+
+def test_state_panel_training_view_hashes_baseline_and_prior_state(native_inputs):
+    from terrine.data import Budget
+    from terrine.spec import BinnedMetricState, Schedule, StatePanel
+
+    catalog, con = native_inputs
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        units={"user": UnitSource("users", "user_id")},
+        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
+    )
+    frame = Design(
+        "user",
+        Schedule("1d", "2025-01-03", "2025-01-05"),
+        shape=StatePanel(
+            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
+            max_periods=2,
+            baseline_features={"baseline": agg("sessions", window=("-1d", "0d"))},
+        ),
+    ).build(model)
+    result = frame.training_set(
+        label="to_state",
+        features=("baseline", "from_state"),
+        incomplete_labels="keep",
+    ).materialize(Budget(max_rows=100, max_output_bytes=100_000))
+    assert result.roles.features == ("baseline", "from_state")
+    assert result.provenance.dataset_view is not None
 
 
 def test_training_view_does_not_claim_unapplied_split(native_inputs):

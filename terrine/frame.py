@@ -111,6 +111,9 @@ def _definition_record(value: object) -> object:
     from datetime import date, datetime
     from enum import Enum
 
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        return _definition_record(model_dump(mode="json"))
     if is_dataclass(value):
         return {
             field.name: _definition_record(getattr(value, field.name)) for field in fields(value)
@@ -134,8 +137,21 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
 
     record = json.loads(canonical_json(design))["design"]
     semantic: dict[str, object] = {}
+    selected_records: dict[str, object] = {}
     for name in features:
-        expression = design.features[name]
+        expression = design.features.get(name)
+        if expression is not None:
+            selected_records[name] = record["features"][name]
+        elif isinstance(design.shape, StatePanel):
+            if name in design.shape.baseline_features:
+                selected_records[name] = record["shape"]["baseline_features"][name]
+                expression = design.shape.baseline_features[name]
+            elif name == "from_state":
+                selected_records[name] = {"prior_state": record["shape"]["state"]}
+            else:
+                raise ValueError(f"Unknown selected feature {name!r}")
+        else:
+            raise ValueError(f"Unknown selected feature {name!r}")
         resolved: dict[str, object] = {}
         if isinstance(expression, MetricAgg):
             metric = model.metrics.get(expression.metric)
@@ -168,10 +184,10 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
         semantic[name] = resolved
     payload = {
         "unit": record["unit"],
-        "unit_binding": _definition_record(model.units[design.unit]),
+        "unit_binding": _definition_record(model.units.get(design.unit)),
         "anchor": record["anchor"],
         "gap": record["gap"],
-        "features": {name: record["features"][name] for name in features},
+        "features": selected_records,
         "semantic": semantic,
     }
     return hashlib.sha256(
