@@ -89,7 +89,7 @@
 **Files:**
 - Modify: `terrine/agent/tools.py`
 - Modify: `terrine/agent/schemas.py`
-- Modify: `terrine/runtime/planning.py` (add typed `PlanRequest.dataset_recipe` while retaining the current Design field for base-design preflight)
+- Modify: `terrine/runtime/planning.py` (add typed `PlanRequest.dataset_recipe` while retaining the current Design field for base-design identity)
 - Modify: `terrine/runtime/recipe.py` (persist/verify typed DatasetRecipe view in existing SavedPlanRecipe)
 - Create: `tests/agent/test_plan_authorization.py`
 - Modify: `tests/runtime/test_planning.py`
@@ -112,8 +112,9 @@
 - [ ] Run `uv run pytest tests/runtime/test_planning.py::test_plan_request_round_trip_preserves_dataset_recipe_view -q`; expected: FAIL until `PlanRequest` serializes the optional recipe field.
 - [ ] Add `tests/runtime/test_recipe.py::test_saved_plan_recipe_round_trips_typed_dataset_view`: serialize/reopen owner-saved stage and refresh recipes; assert training split and scoring `as_of`, base Design, expected base generation and `ChangeSet` remain bound, and altered view/evidence fails the fingerprint.
 - [ ] Run `uv run pytest tests/runtime/test_recipe.py::test_saved_plan_recipe_round_trips_typed_dataset_view -q`; expected: FAIL until `SavedPlanRecipe` carries typed DatasetRecipe views.
-- [ ] Extend `PlanRequest` with optional `dataset_recipe: DatasetRecipe`; require its `base_design` to match the existing Design field. Have `OwnerPlanner.plan` build/retain the exact recipe view while using the base Design for required-source/preflight compilation; persist the complete DatasetRecipe/view and expected base generation in `SavedPlanRecipe`, together with typed `ChangeSet`. Keep existing Design-only orchestration callers behaviorally unchanged and run their focused planner tests.
+- [ ] Extend `PlanRequest` with optional `dataset_recipe: DatasetRecipe`; require its `base_design` to match the existing Design field. Have `OwnerPlanner.plan` resolve the exact recipe view before required-source discovery, preflight compilation, validation and snapshot capture. Use that view's effective Design and capture only its required inputs; feature-only scoring must not require readiness for, or read, an unused label source. Persist the complete DatasetRecipe/view, base Design identity and expected base generation in `SavedPlanRecipe`, together with typed `ChangeSet`. Keep existing Design-only orchestration callers behaviorally unchanged and run their focused planner tests.
 - [ ] Extend runtime tests to prove `PlanRequest` JSON round-trip and same invocation id idempotently retain the typed recipe; changed recipe view conflicts. Extend `SavedPlanRecipe` resolution to return the exact recipe view, not only its base Design.
+- [ ] Add a scoring preparation regression with no readiness for its unused label source; assert preparation succeeds, the source remains unread and absent from retained inputs, and the saved recipe still binds the complete base Design and resolved scoring view.
 - [ ] Run `uv run pytest tests/runtime/test_planning.py tests/runtime/test_recipe.py tests/adapters/test_airflow.py tests/adapters/test_dagster.py tests/adapters/test_dbt_core_recipe.py -q`; expected: PASS with Design-only orchestration requests unchanged and typed DatasetRecipe views preserved.
 - [ ] Store internal invocation/recipe material owner-side. Return only a versioned, opaque receipt reference and safe hashes through the agent envelope. Reauthorize source/destination/write/export grants before resolving that receipt.
 - [ ] Implement `execute_plan` by resolving the exact owner-persisted invocation and calling `run_serialized_plan`; its destination-scoped request-key replay/fingerprint check must happen before new freshness/reopen checks. Do not recompile or silently construct a new plan during execution, and never accept an agent-provided `Executor` or `SnapshotAuthority`.
