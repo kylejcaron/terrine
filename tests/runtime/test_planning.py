@@ -139,11 +139,27 @@ def test_owner_planner_persists_same_snapshot_and_manifest_by_invocation(tmp_pat
     database = tmp_path / "catalog.duckdb"
     ibis_connection = ibis.duckdb.connect(database=str(database))
     ibis_connection.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
-
     ibis_connection.raw_sql("CREATE TABLE users (id INTEGER)")
+
+    ibis_connection.raw_sql(
+        "CREATE TABLE unused_events AS SELECT ts, user_id, value FROM events WHERE false"
+    )
+    from terrine.semantic.models import TableRef
+
     base_model = _model(ibis_connection)
+    unused_source = base_model.catalog.sources["events"].model_copy(
+        update={
+            "relation": TableRef(kind="table", name="unused_events"),
+            "facts": (),
+            "properties": (),
+            "dimensions": (),
+        }
+    )
+    catalog = base_model.catalog.model_copy(
+        update={"sources": {**base_model.catalog.sources, "unused": unused_source}}
+    )
     model = Model.from_catalog(
-        base_model.catalog,
+        catalog,
         con=ibis_connection,
         units={"user": UnitSource("users", "id")},
         readiness={"events": Coverage("2025-01-01", "2025-02-01")},
@@ -208,6 +224,17 @@ def test_owner_planner_persists_same_snapshot_and_manifest_by_invocation(tmp_pat
             con=raw_connection,
             namespace="runtime",
         )
+        roster_only = planner.plan(
+            PlanRequest(
+                "materialize-roster-only",
+                request.model,
+                Design("user", FixedDate("2025-01-15"), features={}, outcomes={}),
+                request.destination,
+            ),
+            con=raw_connection,
+            namespace="RUNTIME",
+        )
+        assert roster_only.expected_base_manifest == "generation-current"
         assert fresh.snapshot_id != first.snapshot_id
         assert fresh.request_key != first.request_key
         persisted = raw_connection.execute(

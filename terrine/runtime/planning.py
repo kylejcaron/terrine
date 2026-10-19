@@ -242,14 +242,18 @@ class OwnerPlanner:
         )
         context = self.snapshot_authority.reopen(snapshot, con=con, namespace=namespace)
         try:
-            execution_model = model._for_execution(context)
+            execution_model = model._for_execution(
+                context,
+                source_names=set(source_names),
+                unit_name=request.design.unit,
+            )
             snapshot_compiled = compile_design(request.design, execution_model)
             validate_compiled_output(snapshot_compiled, execution_model.con.to_pyarrow)
         finally:
             context.close()
         manifest_table = con.execute(
             "SELECT 1 FROM information_schema.tables "
-            "WHERE table_schema=? AND table_name='runtime_manifests'",
+            "WHERE lower(table_schema)=lower(?) AND lower(table_name)='runtime_manifests'",
             [namespace],
         ).fetchone()
         expected = (
