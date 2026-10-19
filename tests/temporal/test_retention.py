@@ -18,7 +18,7 @@ def test_retention_band_uses_distinct_occurrences_and_finite_followup():
                     "anchor_id": ["a1", "a2"],
                     "anchor_time": pa.array([origin, origin], type=pa.timestamp("us", tz="UTC")),
                     "observed_until": pa.array(
-                        [datetime(2025, 1, 11, tzinfo=UTC), datetime(2025, 1, 5, tzinfo=UTC)],
+                        [datetime(2025, 1, 11, tzinfo=UTC), None],
                         type=pa.timestamp("us", tz="UTC"),
                     ),
                 }

@@ -107,9 +107,14 @@ def retention_threshold_bands(
     anchor_valid = anchor._ret_anchor_time.notnull() & compare_timestamps(
         anchor._ret_anchor_time, end, "lt"
     )
-    has_followup = anchor._ret_observed_until.isnull() | compare_timestamps(
-        anchor._ret_observed_until, end, "ge"
-    )
+    if finite_horizon_seconds is None:
+        has_followup = anchor._ret_observed_until.isnull() | compare_timestamps(
+            anchor._ret_observed_until, end, "ge"
+        )
+    else:
+        has_followup = anchor._ret_observed_until.notnull() & compare_timestamps(
+            anchor._ret_observed_until, end, "ge"
+        )
     reason = ibis.ifelse(
         ~anchor_valid,
         ibis.literal("horizon_unavailable"),
