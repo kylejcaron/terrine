@@ -4,6 +4,9 @@
 
 - Define versioned canonical dataset recipes and manifests, including owner-scoped immutable content-addressed recipe references verified on reopening.
 - Add lazy Frame.training_set feature/label projections, metadata-derived completeness handling, exact incomplete-label reason counts, and train-only preprocessing acceptance coverage.
+- Add resumable, checksum-verified Parquet export checkpoints and partition-aware, budget-enforced export replay.
+- Add fixed roster-backed scoring snapshots with explicit eligibility, resolved `as_of`, feature-only source validation, and persisted scoring-view recipes.
+- Bind canonical dataset construction recipes into SavedPlanRecipe serialization for validated reconstruction.
 
 - Stage file-backed DuckDB Frames into immutable runtime-published generations through retained input snapshots, with bounded Arrow batch transfer and manifest-verified pinned reads.
 - Export pinned datasets to bounded Parquet shards with checksums, generation manifests, and verified completed-export replay.
