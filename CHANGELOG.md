@@ -9,6 +9,8 @@
 ## Fixed
 - Refuse missing pandas with the coded optional-dependency error before decoding diff-diff timestamp periods, including nanosecond values.
 - Keep state-classification null assertions valid across the supported pandas 2.x and 3.x representations.
+- Retain separate fixed-baseline and scheduled prefix resolutions for subdaily state panels, including frozen-input reuse after raw-source changes.
+- Preserve sequential and event-panel shape provenance when publishing retained datasets from saved plans.
 
 ## Removed
 - Native treatment-effect estimators, inferential/propensity diagnostics, and simulation truth/calibration claims. Terrine now delivers datasets and descriptive summaries; downstream libraries own estimation.

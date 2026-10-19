@@ -502,12 +502,15 @@ class DesignExecutor:
                 table = table.set_column(
                     gap_index, "gap", table.column(gap_index).cast(pa.duration("us"))
                 )
+            panel = _provenance.panel_metadata(self.design)
             if isinstance(self.design.shape, StatePanel):
                 shape = "state_panel"
             elif isinstance(self.design.shape, EventSequence):
                 shape = "event_sequence"
             elif _provenance.calendar_comparison_metadata(self.design) is not None:
                 shape = "calendar_comparison"
+            elif panel is not None:
+                shape = panel.shape
             elif isinstance(self.design.shape, CohortSpec):
                 shape = "ltv"
             elif isinstance(self.design.shape, LifeTable):
@@ -549,7 +552,7 @@ class DesignExecutor:
                     treatment_known_at_t0=treatment.known_at_t0 if treatment is not None else False,
                     expression_timings=compiled.expression_timings,
                     sequence_meta=compiled.sequence_meta,
-                    panel=_provenance.panel_metadata(self.design),
+                    panel=panel,
                     sampling=(
                         SamplingMeta(
                             self.design.sample.strata,

@@ -510,7 +510,16 @@ def test_reanchored_layer_plan_uses_event_resolution(column_model):
 
 
 @pytest.mark.parametrize("state_kind", ["binned", "observed"])
-def test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors(column_model, state_kind):
+@pytest.mark.parametrize(
+    ("every", "totals", "fresh_totals"),
+    [
+        ("1d", [5, 10], [105, 210]),
+        ("12h", [5, 8, 10, 7], [105, 208, 210, 107]),
+    ],
+)
+def test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors(
+    column_model, state_kind, every, totals, fresh_totals
+):
     from terrine.compile.dispatch import compile_design
     from terrine.compile.layers import build_layer
     from terrine.data import Coverage
@@ -559,18 +568,18 @@ def test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors(column_model
     )
     design = Design(
         "user",
-        Schedule("1d", "2025-01-02", "2025-01-04"),
+        Schedule(every, "2025-01-02", "2025-01-04"),
         features={"total": agg("total", window=("-1d", "0s"))},
         shape=StatePanel(
             state,
-            max_periods=2,
+            max_periods=len(totals),
             baseline_features={"baseline_total": agg("total", window=("-1d", "0s"))},
         ),
     )
     ordinary = compile_design(design, model)
     expected = con.to_pyarrow(ordinary.table.filter(ordinary.table.unit == "a").order_by("t0"))
-    assert expected["total"].to_pylist() == [Decimal(5), Decimal(10)]
-    assert expected["baseline_total"].to_pylist() == [Decimal(5), Decimal(5)]
+    assert expected["total"].to_pylist() == [Decimal(value) for value in totals]
+    assert expected["baseline_total"].to_pylist() == [Decimal(5)] * len(totals)
     persisted = {
         replace(key, snapshot_id="frozen"): con.create_table(
             f"frozen_state_layer_{index}", obj=build_layer(design, model, key)
@@ -585,6 +594,9 @@ def test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors(column_model
     cached = compose_materialized_frame(design, model, persisted=persisted)
     actual = con.to_pyarrow(cached.table.order_by("t0"))
     assert actual.equals(expected)
+    assert {key.resolution for key in persisted if key.layer == "prefix"} == (
+        {"day"} if every == "1d" else {"day", "event"}
+    )
     assert cached._anchors.table is persisted[anchor_key]
     assert cached.roles == ordinary.roles
     assert cached.columns == ordinary.columns
@@ -592,4 +604,4 @@ def test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors(column_model
     fresh = compile_design(design, model)
     assert con.to_pyarrow(fresh.table.filter(fresh.table.unit == "a").order_by("t0"))[
         "total"
-    ].to_pylist() == [Decimal(105), Decimal(210)]
+    ].to_pylist() == [Decimal(value) for value in fresh_totals]
