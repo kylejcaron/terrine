@@ -4,10 +4,13 @@ from importlib import import_module
 from typing import TYPE_CHECKING
 
 from terrine.errors import TerrineError
+from terrine.windows import Window
 
 if TYPE_CHECKING:
     from terrine.compile.cost import preview
     from terrine.data import Budget, Coverage, UnitSource
+    from terrine.dataset.export import ExportManifest
+    from terrine.dataset.reference import Dataset
     from terrine.frame import CohortTable, Frame
     from terrine.model import Model
     from terrine.spec import (
@@ -39,9 +42,10 @@ if TYPE_CHECKING:
         is_null,
         to_yaml,
     )
-from terrine.windows import Window
 
 __all__ = [
+    "Dataset",
+    "ExportManifest",
     "DatasetRecipe",
     "AnchorRange",
     "Budget",
@@ -81,6 +85,8 @@ __all__ = [
 ]
 
 _LAZY_MODULES = {
+    "Dataset": "terrine.dataset.reference",
+    "ExportManifest": "terrine.dataset.export",
     "Budget": "terrine.data",
     "Frame": "terrine.frame",
     "preview": "terrine.compile.cost",

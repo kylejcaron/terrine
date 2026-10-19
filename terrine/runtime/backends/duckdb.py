@@ -158,10 +158,9 @@ class DuckDBBackend:
             )
             version = (previous[0] if previous else 0) + 1
             stored = []
-            for partition, table in sorted(stage.partitions.items()):
-                if not isinstance(table, pa.Table):
-                    raise TypeError("partition data must be a PyArrow Table")
-                digest = _digest(table)
+            for partition, payload in sorted(stage.partitions.items()):
+                if not isinstance(payload, (pa.Table, pa.RecordBatchReader)):
+                    raise TypeError("partition data must be a PyArrow Table or RecordBatchReader")
                 table_name = _table_name(stage.dataset, stage.generation, partition)
                 existing = self.con.execute(
                     f"SELECT digest, table_name FROM {self._schema}.runtime_partitions "
@@ -169,16 +168,20 @@ class DuckDBBackend:
                     [stage.dataset, stage.generation, partition],
                 ).fetchone()
                 if existing is not None:
+                    digest = _digest_relation(self.con, self._schema, existing[1])
                     if existing[0] != digest:
                         raise ValueError("retry partition content does not match staged generation")
                     table_name = existing[1]
                 else:
-                    self.con.register("__terrine_partition", table)
-                    self.con.execute(
-                        f"CREATE TABLE {self._schema}.{_quote(table_name)} AS "
-                        "SELECT * FROM __terrine_partition"
-                    )
-                    self.con.unregister("__terrine_partition")
+                    self.con.register("__terrine_partition", payload)
+                    try:
+                        self.con.execute(
+                            f"CREATE TABLE {self._schema}.{_quote(table_name)} AS "
+                            "SELECT * FROM __terrine_partition"
+                        )
+                    finally:
+                        self.con.unregister("__terrine_partition")
+                    digest = _digest_relation(self.con, self._schema, table_name)
                     self.con.execute(
                         f"INSERT INTO {self._schema}.runtime_partitions VALUES (?, ?, ?, ?, ?)",
                         [stage.dataset, stage.generation, partition, table_name, digest],
@@ -262,13 +265,15 @@ class DuckDBBackend:
 
     def _matching_receipt(self, stage: StagedGeneration) -> PublicationReceipt:
         rows = self.con.execute(
-            f"SELECT partition, digest FROM {self._schema}.runtime_partitions "
+            f"SELECT partition, digest, table_name FROM {self._schema}.runtime_partitions "
             "WHERE dataset=? AND generation=? ORDER BY partition",
             [stage.dataset, stage.generation],
         ).fetchall()
-        stored = {name: digest for name, digest in rows}
+        stored = {name: (digest, table_name) for name, digest, table_name in rows}
         if set(stored) != set(stage.partitions) or any(
-            stored[name] != _digest(table) for name, table in stage.partitions.items()
+            stored[name][0] != _digest_relation(self.con, self._schema, stored[name][1])
+            or stored[name][0] != _digest_payload(stage.partitions[name])
+            for name in stored
         ):
             raise ValueError("retry generation content does not match published generation")
         row = self.con.execute(
@@ -345,8 +350,30 @@ def _table_name(dataset: str, generation: str, partition: str) -> str:
     return "generation_" + hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
-def _digest(table: pa.Table) -> str:
-    sink = pa.BufferOutputStream()
-    with pa.ipc.new_stream(sink, table.schema) as writer:
-        writer.write_table(table)
-    return hashlib.sha256(sink.getvalue().to_pybytes()).hexdigest()
+def _digest_relation(con: Any, schema: str, table_name: str) -> str:
+    reader = con.execute(f"SELECT * FROM {schema}.{_quote(table_name)}").to_arrow_reader(
+        batch_size=65_536
+    )
+    digest = hashlib.sha256(reader.schema.serialize().to_pybytes())
+    try:
+        for batch in reader:
+            digest.update(batch.serialize().to_pybytes())
+    finally:
+        reader.close()
+    return digest.hexdigest()
+
+
+def _digest_payload(payload: pa.Table | pa.RecordBatchReader) -> str:
+    if isinstance(payload, pa.Table):
+        reader = pa.RecordBatchReader.from_batches(
+            payload.schema, payload.to_batches(max_chunksize=65_536)
+        )
+    else:
+        reader = payload
+    digest = hashlib.sha256(reader.schema.serialize().to_pybytes())
+    try:
+        for batch in reader:
+            digest.update(batch.serialize().to_pybytes())
+    finally:
+        reader.close()
+    return digest.hexdigest()

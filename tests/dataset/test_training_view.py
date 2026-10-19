@@ -74,6 +74,72 @@ def test_incomplete_labels_drop_rows_and_keep_null_reasons(native_inputs):
     assert dropped.provenance.dataset_view.counts_by_reason == {"incomplete_coverage": 2}
 
 
+def test_training_projection_preserves_baseline_treatment_role(native_inputs):
+    from terrine.semantic.models import Catalog
+    from terrine.spec import FixedDate, Treatment
+
+    catalog, con = native_inputs
+    con.raw_sql("ALTER TABLE events ADD COLUMN enabled BOOLEAN")
+    con.raw_sql("UPDATE events SET enabled = (user_id = 'a')")
+    definitions = catalog.model_dump(mode="json")
+    definitions["sources"]["events"]["properties"] = ["enabled"]
+    definitions["properties"]["enabled"] = {
+        "source": "events",
+        "column": "enabled",
+        "dtype": "bool",
+        "as_of": "event_time",
+    }
+    model = Model.from_catalog(
+        Catalog.model_validate(definitions),
+        con=con,
+        units={"user": UnitSource("users", "user_id")},
+        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
+    )
+    frame = Design(
+        "user",
+        FixedDate("2025-01-04"),
+        outcomes={"future": agg("sessions", window=("0s", "1d"))},
+        treatment=Treatment("enabled", known_at_t0=True),
+    ).build(model)
+
+    materialized = frame.training_set(label="future", features=()).materialize()
+    assert materialized.roles.treatment == "treatment"
+    assert "treatment" in materialized.table.column_names
+
+
+def test_training_view_hashes_selected_feature_definition_and_parent_design(native_inputs):
+    from terrine.spec import EventAnchor
+
+    frame = _frame(native_inputs)
+    first = frame.training_set(label="churn", features=("past_sessions",)).materialize()
+    second = frame.training_set(label="churn", features=("earlier_sessions",)).materialize()
+    assert (
+        first.provenance.dataset_view.feature_definition_hash
+        != second.provenance.dataset_view.feature_definition_hash
+    )
+
+    changed_design = Design(
+        "user",
+        EventAnchor("session"),
+        features={"past_sessions": agg("sessions", window=("-3d", "0d"))},
+        outcomes={"churn": agg("churned", window=("0d", "1d"))},
+    ).build(frame._model)
+    changed = changed_design.training_set(label="churn", features=("past_sessions",)).materialize()
+    first_view = first.provenance.dataset_view
+    changed_view = changed.provenance.dataset_view
+    assert first_view is not None and changed_view is not None
+    assert first_view.view_hash != changed_view.view_hash
+
+
+def test_training_view_does_not_claim_unapplied_split(native_inputs):
+    from terrine.dataset.splits import TimeSplit
+
+    frame = _frame(native_inputs)
+    with pytest.raises(TerrineError) as error:
+        frame.training_set(label="churn", split=TimeSplit(train_until="2025-01-05"))
+    assert error.value.code == "terrine.dataset.split_not_applied"
+
+
 def test_downstream_vocabulary_is_fitted_only_from_training_rows():
     from terrine.dataset.splits import TimeSplit, assign_splits
 

@@ -4,6 +4,9 @@
 
 - Define versioned canonical dataset recipes and manifests, including owner-scoped immutable content-addressed recipe references verified on reopening.
 - Add lazy Frame.training_set feature/label projections, metadata-derived completeness handling, exact incomplete-label reason counts, and train-only preprocessing acceptance coverage.
+
+- Stage file-backed DuckDB Frames into immutable runtime-published generations through retained input snapshots, with bounded Arrow batch transfer and manifest-verified pinned reads.
+- Export pinned datasets to bounded Parquet shards with checksums, generation manifests, and verified completed-export replay.
 - Establish the standalone Python package and development quality gates.
 - Expose the implemented elapsed-time `Window` and coded `TerrineError` contracts.
 - Include inline type metadata so installed-package consumers receive type checking.

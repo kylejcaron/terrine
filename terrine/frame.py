@@ -70,13 +70,28 @@ def _view_digest(
     labels: tuple[str, ...],
     policy: Literal["drop", "keep"],
     split: object | None,
+    design_hash: str,
 ) -> str:
     payload = {
         "kind": "training",
+        "design": design_hash,
         "features": features,
         "labels": labels,
         "incomplete_labels": policy,
         "split": None if split is None else cast(_SplitPolicy, split).to_record(),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _feature_definition_hash(design: Design, features: tuple[str, ...]) -> str:
+    from terrine.spec.io import canonical_json
+
+    record = json.loads(canonical_json(design))["design"]
+    payload = {
+        "unit": record["unit"],
+        "features": {name: record["features"][name] for name in features},
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -88,10 +103,46 @@ def _apply_training_view(compiled: CompiledStudy, view: _TrainingView) -> Compil
     roles = compiled.roles
     label_metadata = [compiled.columns[name] for name in view.labels]
     if view.incomplete_labels == "drop":
-        for metadata in label_metadata:
+        for name, metadata in zip(view.labels, label_metadata, strict=True):
             assert metadata.complete_column is not None
-            table = table.filter(table[metadata.complete_column].fill_null(False))
+            usable = table[metadata.complete_column].fill_null(False) & table[name].notnull()
+            table = table.filter(usable)
+    role_columns = (
+        roles.treatment,
+        roles.weight,
+        roles.cluster_unit,
+        roles.prior_state,
+        roles.trial,
+        roles.assignment_probability,
+        roles.target_weight,
+        roles.trial_weight,
+    )
+    structural = (
+        "period",
+        "from_time",
+        "to_time",
+        "scheduled_to",
+        "gap",
+        "terminal",
+    )
     names = list(dict.fromkeys((roles.unit, roles.anchor, roles.t0, *view.features, *view.labels)))
+    for name in (*role_columns, *structural):
+        if name is not None and name in compiled.table.columns and name not in names:
+            names.append(name)
+    timings = {
+        name: compiled.expression_timings[name]
+        for name in (*view.features, *view.labels)
+        if name in compiled.expression_timings
+    }
+    for timing in timings.values():
+        for support in (
+            timing.point_time_column,
+            timing.start_bound_column,
+            timing.end_bound_column,
+            *timing.selector_dependencies,
+        ):
+            if support is not None and support in compiled.table.columns and support not in names:
+                names.append(support)
     for name in (*view.features, *view.labels):
         metadata = compiled.columns[name]
         for support in (
@@ -105,11 +156,27 @@ def _apply_training_view(compiled: CompiledStudy, view: _TrainingView) -> Compil
                 names.append(support)
     table = table.select(*names)
     selected_columns = {name: compiled.columns[name] for name in names if name in compiled.columns}
+    selected_roles = replace(
+        roles,
+        features=view.features,
+        outcomes=view.labels,
+        treatment=roles.treatment if roles.treatment in names else None,
+        weight=roles.weight if roles.weight in names else None,
+        cluster_unit=roles.cluster_unit if roles.cluster_unit in names else None,
+        prior_state=roles.prior_state if roles.prior_state in names else None,
+        trial=roles.trial if roles.trial in names else None,
+        assignment_probability=(
+            roles.assignment_probability if roles.assignment_probability in names else None
+        ),
+        target_weight=roles.target_weight if roles.target_weight in names else None,
+        trial_weight=roles.trial_weight if roles.trial_weight in names else None,
+    )
     return replace(
         compiled,
         table=table,
-        roles=replace(roles, features=view.features, outcomes=view.labels),
+        roles=selected_roles,
         columns=selected_columns,
+        expression_timings=timings,
     )
 
 
@@ -118,10 +185,11 @@ def _excluded_label_counts(compiled: CompiledStudy, view: _TrainingView, execute
     for name in view.labels:
         metadata = compiled.columns[name]
         assert metadata.complete_column is not None and metadata.reason_column is not None
-        incomplete = compiled.table.filter(
+        excluded = compiled.table.filter(
             ~compiled.table[metadata.complete_column].fill_null(False)
+            | compiled.table[name].isnull()
         )
-        grouped = incomplete.group_by(metadata.reason_column).aggregate(rows=incomplete.count())
+        grouped = excluded.group_by(metadata.reason_column).aggregate(rows=excluded.count())
         for row in execute(grouped).to_pylist():
             reason = row[metadata.reason_column]
             key = "unknown" if reason is None else reason
@@ -188,9 +256,17 @@ def _panel_metadata(design: Design) -> PanelMeta | None:
             treatment.adopted_value if isinstance(treatment, PersistentAdoption) else None,
             treatment.persistence if isinstance(treatment, PersistentAdoption) else None,
         )
+        trial_weight = (
+            None
+            if design.shape.trial_weight is None
+            else TrialWeightMeta(
+                design.shape.trial_weight.kind,
+                None
+                if design.shape.trial_weight.values is None
+                else dict(design.shape.trial_weight.values),
+            )
+        )
         assert isinstance(design.anchor, Schedule)
-        weight = design.shape.trial_weight
-        trial_weight = None if weight is None else TrialWeightMeta(weight.kind, weight.values)
         span = (design.anchor.end - design.anchor.start).days * 86_400
         count = (span - 1) // design.anchor.every + 1
         trials = tuple(f"schedule:{index}" for index in range(count))
@@ -254,10 +330,11 @@ class Frame:
         object.__setattr__(self, "_compiled", compile_design(design, model))
         object.__setattr__(self, "_training_view", None)
 
-    def _active_compiled(self) -> CompiledStudy:
+    def _active_compiled(self, compiled: CompiledStudy | None = None) -> CompiledStudy:
+        active = self._compiled if compiled is None else compiled
         if self._training_view is None:
-            return self._compiled
-        return _apply_training_view(self._compiled, self._training_view)
+            return active
+        return _apply_training_view(active, self._training_view)
 
     @property
     def expr(self):
@@ -281,8 +358,12 @@ class Frame:
         split: object | None = None,
     ) -> Frame:
         """Return a lazy feature/label projection with explicit label completeness."""
-        if split is not None and not callable(getattr(split, "to_record", None)):
-            raise TypeError("split must be a supported serializable split policy")
+        if split is not None:
+            raise RefusalSpec(
+                "terrine.dataset.split_not_applied",
+                "Frame training views do not apply split assignments yet; omit split or apply "
+                "the policy with terrine.dataset.splits.assign_splits.",
+            ).error()
 
         labels = (label,) if isinstance(label, str) else tuple(label)
         if not labels or any(not isinstance(name, str) or not name for name in labels):
@@ -325,6 +406,11 @@ class Frame:
             _TrainingView(selected_features, labels, incomplete_labels, split),
         )
         return result
+
+    def stage(self, table: str, *, budget: Budget | None = None):
+        """Publish this Frame as a pinned, bounded-stream Dataset generation."""
+        stage_frame = import_module("terrine.dataset.reference").stage_frame
+        return stage_frame(self, table, budget=budget)
 
     def materialize(self, budget: Budget | None = None) -> MaterializedFrame:
         return self._materialize(budget)
@@ -487,9 +573,15 @@ class Frame:
                         selected_features=view.features,
                         selected_labels=view.labels,
                         view_hash=_view_digest(
-                            view.features, view.labels, view.incomplete_labels, view.split
+                            view.features,
+                            view.labels,
+                            view.incomplete_labels,
+                            view.split,
+                            self._design.spec_hash,
                         ),
-                        feature_definition_hash=self._design.spec_hash,
+                        feature_definition_hash=_feature_definition_hash(
+                            self._design, view.features
+                        ),
                         incomplete_labels=view.incomplete_labels,
                         split_policy=split_policy,
                         counts_by_reason=excluded_counts,
