@@ -80,6 +80,18 @@ unknown; a strict `max_scan_bytes` therefore refuses before integrity reads.
 not example rows; capped results do not claim complete cohort totals. Its
 integrity checks can still scan upstream data.
 
+## Restricted dataset tools
+
+`terrine.agent` exposes owner-configured dataset metadata and typed Design tools.
+Use `AgentPolicy` and `DatasetTools` to discover allowlisted semantic descriptors,
+retrieve a tagged Design schema and editable example, propose canonical changes,
+validate metadata contracts, and save/load named definitions under an owner root.
+Inspection and validation do not grant source preparation, dataset writes,
+exports, row preview, run reads or cancellation. Responses omit source rows,
+raw SQL and connection details; denied calls share the session request cap.
+See [dataset agent tools](docs/guides/dataset-agent-tools.md) for permissions,
+privacy boundaries and refusal routes. MCP transport is separately owner-gated.
+
 ## Durable materialization runtime
 
 See the [materialization runtime guide](docs/guides/materialization-runtime.md)

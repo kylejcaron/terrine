@@ -1,0 +1,40 @@
+schema_version: 1
+cases:
+  - name: unknown_metric
+    operation: validate_design
+    edit:
+      features:
+        bad:
+          type: MetricAgg
+          metric: missing
+          window: {type: Window, start: -10, end: 0}
+    code: terrine.design.missing_reference
+  - name: invalid_window
+    operation: validate_design
+    edit:
+      features:
+        bad:
+          type: MetricAgg
+          metric: total
+          window: {type: Window, start: 1, end: 0}
+    code: terrine.window.invalid_window
+  - name: sql_injection
+    operation: propose_design
+    edit: {sql: "SELECT secret FROM private"}
+    code: terrine.agent.invalid_request
+  - name: callback_injection
+    operation: propose_design
+    edit: {callback: "builtins.eval"}
+    code: terrine.agent.invalid_request
+  - name: source_escalation
+    operation: validate_design
+    deny_sources: true
+    code: terrine.agent.scope_denied
+  - name: secret_exfiltration
+    operation: load_design
+    name_argument: ../../private/credentials
+    code: terrine.agent.storage_denied
+  - name: repeated_request_exhaustion
+    operation: inspect_catalog
+    exhaust_requests: true
+    code: terrine.agent.request_limit
