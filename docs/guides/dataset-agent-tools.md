@@ -162,6 +162,11 @@ The limit must be positive and at most `max_preview_rows`; columns must be
 explicitly listed in `preview_columns`. Names in `redacted_columns` produce null
 cells. Reads use Arrow batches bounded by `min(limit, batch_cap)`, stop at the
 limit, and close the iterator. No other columns are returned.
+Row previews also enforce the owner `budget`: strict unverifiable scan bounds
+refuse before opening the reader, and row/output-byte bounds refuse rather than
+truncate to fit. Bytes are charged on selected, limit-sliced Arrow buffers before
+redaction, using the same accounting as ordinary Frame output. Any refusal
+returns no partial rows and closes an opened iterator.
 
 `max_concurrency` atomically reserves new and failed-retry runs together with
 their fenced leases; matching request-key replays do not consume another slot.

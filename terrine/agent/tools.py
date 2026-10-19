@@ -43,7 +43,7 @@ from terrine.agent.schemas import (
     ValidationOutput,
     refusal_response,
 )
-from terrine.data import Budget, Preview
+from terrine.data import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED, Budget, Preview
 from terrine.dataset.manifest import DatasetManifest
 from terrine.dataset.reference import Dataset, dataset_from_run
 from terrine.errors import RefusalSpec, TerrineError
@@ -875,6 +875,8 @@ class DatasetTools:
         self, reference: AgentDatasetReference, *, limit: int, columns: tuple[str, ...]
     ) -> Response[RowsOutput]:
         def preview():
+            from terrine.compile.cost import _scan_policy
+
             if (
                 isinstance(limit, bool)
                 or not isinstance(limit, int)
@@ -889,14 +891,30 @@ class DatasetTools:
                 or not set(columns) <= self.policy.preview_columns
             ):
                 raise _SCOPE.error(route="Request only unique owner-approved preview columns.")
+            budget = self.policy.budget
+            _scan_policy(budget)
             dataset, _ = self._resolve_dataset(reference, "preview")
             if not set(columns) <= {column.name for column in dataset.manifest.columns}:
                 raise _SCOPE.error()
+            if (
+                budget.max_rows is not None
+                and min(limit, dataset.manifest.generation.row_count) > budget.max_rows
+            ):
+                raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
             iterator = dataset.to_arrow_batches(batch_size=min(limit, self.policy.batch_cap))
             rows = []
+            byte_count = 0
             try:
                 for batch in iterator:
                     projected = batch.select(columns).slice(0, limit - len(rows))
+                    if (
+                        budget.max_rows is not None
+                        and len(rows) + projected.num_rows > budget.max_rows
+                    ):
+                        raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
+                    byte_count += projected.nbytes
+                    if budget.max_output_bytes is not None and byte_count > budget.max_output_bytes:
+                        raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
                     for row in projected.to_pylist():
                         rows.append(
                             tuple(

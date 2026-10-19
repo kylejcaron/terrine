@@ -281,3 +281,88 @@ def test_refresh_preparation_replays_before_live_inputs_or_current_base_checks(
     if advance:
         stale = owner_tools.prepare_refresh(reference, invocation_id="new-refresh", changes=changes)
         assert stale.code == "terrine.runtime.plan_request_invalid"
+
+
+@pytest.mark.parametrize(
+    ("kind", "code"),
+    [
+        ("scan", "terrine.budget.scan_unknown"),
+        ("rows", "terrine.budget.rows_exceeded"),
+        ("bytes", "terrine.budget.output_bytes_exceeded"),
+    ],
+)
+def test_row_preview_enforces_owner_budget_without_partial_output(
+    owner_tools, monkeypatch, kind, code
+):
+    from terrine.data import Budget
+    from terrine.dataset.reference import Dataset
+
+    reference = owner_tools.stage(_prepare(owner_tools), request_key="preview-budget").output
+    budget = {
+        "scan": Budget(max_scan_bytes=0, strict_scan=True),
+        "rows": Budget(max_rows=0, strict_scan=False),
+        "bytes": Budget(max_output_bytes=0, strict_scan=False),
+    }[kind]
+    owner_tools.policy = replace(
+        owner_tools.policy, preview=True, preview_columns=frozenset({"unit"}), budget=budget
+    )
+    calls, closed = [], []
+    real = Dataset.to_arrow_batches
+
+    def batches(self, *, batch_size):
+        calls.append(batch_size)
+        iterator = real(self, batch_size=batch_size)
+        try:
+            yield from iterator
+        finally:
+            iterator.close()
+            closed.append(True)
+
+    monkeypatch.setattr(Dataset, "to_arrow_batches", batches)
+    result = owner_tools.preview_rows(reference, limit=2, columns=("unit",))
+    assert result.status == "refused" and result.code == code
+    assert result.output is None and result.suggested_route
+    if kind in {"scan", "rows"}:
+        assert calls == [] and closed == []
+    else:
+        assert calls == [2] and closed == [True]
+
+
+def test_row_preview_byte_budget_counts_exact_projected_arrow_buffers(owner_tools, monkeypatch):
+    import pyarrow as pa
+
+    from terrine.data import Budget
+    from terrine.dataset.reference import Dataset
+
+    reference = owner_tools.stage(_prepare(owner_tools), request_key="projected-budget").output
+    batch = pa.record_batch(
+        {
+            "unit": pa.array([1, 2], type=pa.int32()),
+            "unapproved": ["private" * 1000, "private" * 1000],
+        }
+    )
+    projected_bytes = batch.select(("unit",)).nbytes
+    owner_tools.policy = replace(
+        owner_tools.policy,
+        preview=True,
+        preview_columns=frozenset({"unit"}),
+        budget=Budget(max_rows=2, max_output_bytes=projected_bytes, strict_scan=False),
+    )
+    closed = []
+
+    def batches(self, *, batch_size):
+        try:
+            yield batch
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(Dataset, "to_arrow_batches", batches)
+    exact = owner_tools.preview_rows(reference, limit=2, columns=("unit",))
+    assert exact.status == "ok" and exact.output.rows == ((1,), (2,))
+    owner_tools.policy = replace(
+        owner_tools.policy,
+        budget=Budget(max_rows=2, max_output_bytes=projected_bytes - 1, strict_scan=False),
+    )
+    refused = owner_tools.preview_rows(reference, limit=2, columns=("unit",))
+    assert refused.code == "terrine.budget.output_bytes_exceeded" and refused.output is None
+    assert closed == [True, True]
