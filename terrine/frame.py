@@ -263,10 +263,25 @@ class Frame:
                 from terrine.compile.shapes.life_table import aggregate_life_table
 
                 life_table = self._design.shape
+                group_support_columns = tuple(
+                    dict.fromkeys(
+                        column
+                        for name in life_table.group_by
+                        for column in (
+                            compiled.columns[name].observed_from_column,
+                            compiled.columns[name].observed_until_column,
+                            compiled.columns[name].complete_column,
+                            compiled.columns[name].reason_column,
+                            compiled.columns[name].absolute_error_column,
+                        )
+                        if column is not None
+                    )
+                )
                 table = aggregate_life_table(
                     table,
                     interval_seconds=life_table.interval,
                     group_by=life_table.group_by,
+                    group_supports=group_support_columns,
                     max_rows=None if budget is None else budget.max_rows,
                 )
                 if budget is not None:
@@ -293,8 +308,7 @@ class Frame:
                     ),
                 )
                 columns = {
-                    name: ColumnMeta(None, "feature", None, None, None, None)
-                    for name in life_table.group_by
+                    name: compiled.columns[name] for name in life_table.group_by
                 }
                 columns["time_bin"] = ColumnMeta(None, "feature", None, None, None, None)
                 columns.update(
@@ -349,8 +363,21 @@ class Frame:
                 shape_name = (
                     self._design.shape if isinstance(self._design.shape, str) else "cross_section"
                 )
+            feature_cutoffs = compiled.feature_cutoffs
+            expression_timings = compiled.expression_timings
+            if isinstance(self._design.shape, LifeTable):
+                feature_cutoffs = {
+                    name: cutoff
+                    for name, cutoff in compiled.feature_cutoffs.items()
+                    if name in self._design.shape.group_by
+                }
+                expression_timings = {
+                    name: timing
+                    for name, timing in compiled.expression_timings.items()
+                    if name in self._design.shape.group_by
+                }
             provenance = Provenance(
-                feature_cutoffs=compiled.feature_cutoffs,
+                feature_cutoffs=feature_cutoffs,
                 eligibility_cutoffs=compiled.eligibility_cutoffs,
                 design_hash=self._design.spec_hash,
                 model_hash=model.model_hash,
@@ -364,7 +391,7 @@ class Frame:
                 else None,
                 treatment_known_at_t0=treatment.known_at_t0 if treatment is not None else False,
                 state_panel=_state_panel_metadata(self._design, model),
-                expression_timings=compiled.expression_timings,
+                expression_timings=expression_timings,
                 sequence_meta=compiled.sequence_meta,
                 panel=panel,
                 sampling=(

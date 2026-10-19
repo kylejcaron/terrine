@@ -28,6 +28,7 @@ def aggregate_life_table(
     *,
     interval_seconds: int,
     group_by: Sequence[str],
+    group_supports: Sequence[str] = (),
     max_rows: int | None = None,
 ) -> pa.Table:
     """Aggregate time-to-event rows by elapsed-time bin without curve inference."""
@@ -54,8 +55,13 @@ def aggregate_life_table(
         if "reason" in records.column_names
         else [None] * records.num_rows
     )
-    censor_reasons = records["censor_reason"].to_pylist()
-    groups = [records[name].to_pylist() for name in group_by]
+    support_names = tuple(
+        dict.fromkeys(name for name in group_supports if name not in group_by)
+    )
+    if any(name not in records.column_names for name in support_names):
+        raise ValueError("life-table grouping support column is missing")
+    grouped_names = (*group_by, *support_names)
+    groups = [records[name].to_pylist() for name in grouped_names]
     width = interval_seconds * 1_000_000_000
     bins_by_group: dict[tuple[object, ...], dict[int, dict[str, object]]] = defaultdict(dict)
     output_bins = 0
@@ -91,14 +97,7 @@ def aggregate_life_table(
                 group_bins[time_bin] = current
             bin_start = time_bin * width
             bin_end = bin_start + width
-            if entry_elapsed < bin_end and (
-                terminal_elapsed > bin_start
-                or (
-                    terminal_elapsed == bin_start
-                    and events[index]
-                    and complete[index] is True
-                )
-            ):
+            if entry_elapsed < bin_end and terminal_elapsed >= bin_start:
                 current["at_risk"] += 1
             if delayed_bin == time_bin:
                 current["delayed_entries"] += 1
@@ -116,7 +115,7 @@ def aggregate_life_table(
             reason_counts = terminal_row["reasons"]
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
-    schema_fields = [records.schema.field(name) for name in group_by]
+    schema_fields = [records.schema.field(name) for name in grouped_names]
     schema_fields.extend(
         [
             pa.field("unit", pa.int64(), nullable=False),
@@ -139,7 +138,7 @@ def aggregate_life_table(
             at_risk = counts["at_risk"]
             events_count = counts["events"]
             censored_count = counts["censored"]
-            row = dict(zip(group_by, group_key, strict=True))
+            row = dict(zip(grouped_names, group_key, strict=True))
             row.update(
                 unit=unit,
                 anchor_id=time_bin,

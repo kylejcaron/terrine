@@ -710,3 +710,36 @@ def test_life_table_row_budget_applies_to_expanded_output():
     with pytest.raises(TerrineError) as error:
         aggregate_life_table(records, interval_seconds=86_400, group_by=[], max_rows=1)
     assert error.value.code == "terrine.budget.rows_exceeded"
+
+
+def test_life_table_keeps_boundary_censor_at_risk_and_group_support():
+    import pyarrow as pa
+
+    from terrine.compile.shapes.life_table import aggregate_life_table
+
+    timestamp = pa.timestamp("us", tz="UTC")
+    origin = datetime(2025, 1, 1, tzinfo=UTC)
+    records = pa.table(
+        {
+            "t0": pa.array([origin], type=timestamp),
+            "duration": pa.array([origin + timedelta(days=1)], type=timestamp),
+            "entry_time": pa.array([origin], type=timestamp),
+            "event": pa.array([False]),
+            "censor_reason": pa.array(["administrative_cutoff"]),
+            "region": pa.array([None], type=pa.string()),
+            "region_complete": pa.array([False]),
+            "region_reason": pa.array(["coverage_gap"]),
+        }
+    )
+    result = aggregate_life_table(
+        records,
+        interval_seconds=86_400,
+        group_by=["region"],
+        group_supports=["region_complete", "region_reason"],
+    )
+    row = result.to_pylist()[-1]
+    assert row["region_complete"] is False
+    assert row["region_reason"] == "coverage_gap"
+    assert row["at_risk"] == 1
+    assert row["censored"] == 1
+    assert row["censor_rate"] == 1
