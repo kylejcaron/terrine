@@ -14,7 +14,7 @@ from terrine.backends.capabilities import (
 )
 from terrine.errors import TerrineError
 from terrine.semantic.models import Catalog, RelationSpec, TableRef
-from terrine.semantic.sql import admit_read_query
+from terrine.semantic.sql import _parse_read_query_ast, admit_read_query
 
 if TYPE_CHECKING:
     import ibis
@@ -43,7 +43,10 @@ class BackendProvider(Protocol):
     def bind_resolver(
         self, catalog: Catalog, con: Any, **kwargs: Any
     ) -> Callable[[RelationSpec], Any]: ...
-    def sql(self, con: Any, sql: str) -> ibis.Table: ...
+    def sql(self, con: Any, sql: str) -> ibis.Table:
+        """Resolve a compiler-produced read query with native function ownership."""
+        ...
+
     def open_execution(
         self,
         catalog: Catalog,
@@ -92,6 +95,7 @@ class _DuckDBProvider:
         return _bind_native_resolver(catalog, con, **kwargs)
 
     def sql(self, con: Any, sql: str) -> ibis.Table:
+        _parse_read_query_ast(sql, "duckdb")
         from terrine.execution import _native
 
         raw = _native.raw_connection(con)
