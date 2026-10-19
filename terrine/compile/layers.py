@@ -97,6 +97,7 @@ def build_layer(design: Design, model, key: LayerKey, *, relation_resolver=None)
             event_ids=model.event_ids,
             resolver=relation_resolver,
             input_binding=model.input_binding,
+            source_names=set(model.sources),
         )
     expected = plan_layers(design, bound_model).keys
 

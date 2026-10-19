@@ -111,6 +111,54 @@ def test_build_anchor_layer_accepts_snapshot_relation_resolver(column_model):
     assert all(row["anchor_id"] == "fixed" for row in rows)
 
 
+def test_snapshot_resolver_rebinding_keeps_filtered_catalog_sources(column_model):
+    from copy import deepcopy
+
+    from terrine.compile.layers import build_layer
+    from terrine.model import Model
+    from terrine.semantic.models import Catalog
+
+    catalog_data = column_model.catalog.model_dump(mode="json")
+    unused = deepcopy(catalog_data["sources"]["events"])
+    unused["relation"]["name"] = "unused_missing_source"
+    catalog_data["sources"]["unused"] = unused
+    catalog = Catalog.model_validate(catalog_data)
+    filtered = Model._bind(
+        catalog,
+        con=column_model.con,
+        readiness=column_model.readiness,
+        units=column_model.units,
+        event_ids=column_model.event_ids,
+        resolver=column_model._resolver,
+        input_binding=column_model.input_binding,
+        source_names=set(column_model.sources),
+    )
+    design = _design()
+    key = plan_layers(design, filtered).keys[0]
+
+    anchor = build_layer(
+        design,
+        filtered,
+        replace(key, snapshot_id="snapshot"),
+        relation_resolver=filtered._relation,
+    )
+
+    assert len(anchor.execute()) == 2
+
+
+def test_runtime_shape_preflight_refuses_unsupported_shape_without_a_model():
+    from types import SimpleNamespace
+    from typing import cast
+
+    from terrine.compile.materialize import preflight_materialization_shape
+    from terrine.errors import TerrineError
+    from terrine.spec.design import Design
+
+    with pytest.raises(TerrineError) as error:
+        preflight_materialization_shape(cast(Design, SimpleNamespace(shape="time_to_event")))
+    assert error.value.code == "terrine.compile.runtime_shape_unsupported"
+
+
 def test_build_layer_composition_matches_state_panel_compilation(column_model):
     from terrine.compile.dispatch import compile_design
     from terrine.compile.layers import build_layer
