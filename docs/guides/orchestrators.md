@@ -29,6 +29,47 @@ trigger. The owner owns backend credentials and connections. Do not pass an
 Airflow connection URI to Ibis or give scheduler workers direct access to the
 owner's database.
 
+
+Each owner process must install the fresh-planning service as well as its
+execution callbacks; constructing a `ControlServer` without `plan_planner`
+cannot accept orchestration `PlanRequest`s. The model resolver and executor
+below are the real implementations supplied by the owning application: the
+resolver returns the referenced `Model`, and the executor implements both
+`run_snapshot_task` (using the retained source snapshot) and fenced publication.
+
+```python
+from pathlib import Path
+
+from terrine.runtime.control import ControlEndpoint, ControlServer
+from terrine.runtime.owner import RuntimeOwner
+from terrine.runtime.planning import OwnerPlanner
+from terrine.runtime.snapshot import SnapshotAuthority
+from terrine.runtime.state import RuntimeStore
+
+namespace = "analytics-owner"
+endpoint = ControlEndpoint(Path("/run/terrine/owner.sock"))
+store = RuntimeStore(owner_connection, namespace=namespace)
+store.initialize()
+snapshot_authority = SnapshotAuthority(
+    RuntimeOwner(Path("analytics.duckdb"), Path("/var/lib/terrine/snapshots"))
+)
+planner = OwnerPlanner(resolver=model_resolver, snapshot_authority=snapshot_authority)
+server = ControlServer(
+    store,
+    namespace=namespace,
+    endpoint=endpoint,
+    plan_planner=planner,
+    executor=runtime_executor,
+    resolver=model_resolver,
+    snapshot_authority=snapshot_authority,
+)
+server.start()
+```
+
+`owner_connection`, `model_resolver`, and `runtime_executor` are configured by
+the application that owns the model/catalog and backend. Keep the connection
+open only in the owner process. Restart the owner with the same namespace and
+snapshot root so its persisted invocation and retained recipes remain readable.
 A `PlanRequest` contains a stable invocation ID, owner-resolvable
 `ModelReference`, `Design`, destination, and optional changes, budget, and output
 scope. The owner resolves the current source revision and expected base manifest,
