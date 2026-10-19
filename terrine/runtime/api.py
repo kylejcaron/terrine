@@ -180,6 +180,7 @@ def run_serialized_plan(
 
         enforce_shape_budget(design.shape, plan.budget)
         if executor is None:
+            _preflight_design_partitions(plan)
             preflight_runtime_shape(design, plan.budget)
             executor = DesignExecutor(model, design, plan, con, namespace=namespace)
         if not callable(getattr(executor, "run_snapshot_task", None)):
@@ -327,6 +328,16 @@ def preflight_runtime_shape(design: Any, budget: Any = None) -> None:
 
     enforce_shape_budget(design.shape, budget)
     preflight_materialization_shape(design, budget)
+
+
+def _preflight_design_partitions(plan: RefreshPlan) -> None:
+    partitions = {task.partition for task in plan.tasks if task.layer == "frame"}
+    if len(partitions) > 1:
+        raise RefusalSpec(
+            "terrine.runtime.design_partition_unsupported",
+            "The built-in Design executor supports one output partition; use a "
+            "single-partition plan or a custom executor with per-partition bounds.",
+        ).error()
 
 
 _EXACT_LAYER_COLUMNS_KEY = b"terrine.runtime.exact_layer_columns"

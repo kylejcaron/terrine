@@ -595,3 +595,20 @@ def test_empty_plan_with_string_publisher_remains_successful():
 
     assert receipt.state == "succeeded"
     assert receipt.published_generation == "g0"
+def test_design_executor_refuses_multiple_output_partitions():
+    from terrine.runtime.api import _preflight_design_partitions
+
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="definition",
+        snapshot_id="snapshot",
+        graph=dependency_graph(
+            sources=("events",), definition_hash="definition", partitions=("p1", "p2")
+        ),
+    )
+
+    with pytest.raises(TerrineError) as error:
+        _preflight_design_partitions(plan)
+
+    assert error.value.code == "terrine.runtime.design_partition_unsupported"
