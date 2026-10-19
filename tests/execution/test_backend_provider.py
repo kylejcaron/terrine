@@ -109,3 +109,30 @@ def test_provider_does_not_accept_a_duckdb_name_without_native_connection():
     with pytest.raises(TerrineError) as error:
         verify_native_backend(Unverified())
     assert error.value.code == "terrine.execution.snapshot_unavailable"
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "snowflake", "bigquery", "sqlite"])
+def test_unverified_backend_evidence_does_not_admit_queries(dialect):
+    from terrine.execution.backend import backend_capabilities, backend_provider
+
+    class Connection:
+        name = dialect
+
+        def table(self, *args, **kwargs):
+            raise AssertionError("unverified backend must not inspect schema")
+
+        def sql(self, *args, **kwargs):
+            raise AssertionError("unverified backend must not execute")
+
+    con = Connection()
+    evidence = backend_capabilities(con)
+    assert evidence.dialect_admission is None
+    assert evidence.retained_snapshot is None
+    assert evidence.atomic_manifest_publish is None
+    assert evidence.arrow_batches is None
+    assert evidence.native_parquet_unload is None
+    with pytest.raises(TerrineError) as error:
+        backend_provider(con)
+    assert error.value.code == "terrine.backend.capability_unavailable"
+    assert error.value.context["status"] == "unverified"
+    assert error.value.context["backend"] == dialect

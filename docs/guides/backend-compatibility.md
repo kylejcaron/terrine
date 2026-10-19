@@ -41,3 +41,10 @@ Capabilities distinguish verified (`True`), unsupported (`False`), and unverifie
   and native Parquet unload are not inferred from the driver API. Cooperative
   runtime cancellation and closing owned sessions do not establish native query
   cancellation support.
+
+`terrine.execution.backend.backend_capabilities(con)` inspects evidence without
+admitting the connection or reading source schema. PostgreSQL, Snowflake,
+BigQuery and unregistered backend connections return unverified operation values;
+attempting execution still refuses. No optional driver extra or runtime backend
+class is supplied without a real execution slice. Local PostgreSQL was not
+available (`pg_isready`: no response); no service was launched.

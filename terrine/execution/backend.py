@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from terrine.backends.capabilities import (
     _CAPABILITY_UNAVAILABLE,
     DUCKDB_CAPABILITIES,
+    UNVERIFIED_CAPABILITIES,
     BackendCapabilities,
 )
 from terrine.errors import TerrineError
@@ -20,7 +21,7 @@ if TYPE_CHECKING:
 
     from terrine.execution.inputs import ExecutionContext, PhysicalRelationId, VerifiedInputBinding
 
-__all__ = ["BackendProvider", "backend_provider"]
+__all__ = ["BackendProvider", "backend_provider", "backend_capabilities"]
 
 
 class BackendProvider(Protocol):
@@ -110,6 +111,13 @@ class _DuckDBProvider:
 
 
 _DUCKDB_PROVIDER = _DuckDBProvider()
+
+
+def backend_capabilities(con: Any) -> BackendCapabilities:
+    """Inspect evidence without admitting a connection or reading source metadata."""
+    return (
+        _DUCKDB_PROVIDER.capabilities if _DUCKDB_PROVIDER.matches(con) else UNVERIFIED_CAPABILITIES
+    )
 
 
 def backend_provider(con: Any) -> BackendProvider:
