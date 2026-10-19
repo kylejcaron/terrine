@@ -323,3 +323,32 @@ def test_runtime_refuses_physical_partition_with_mismatched_logical_identity(
             receipt=receipt,
             partitions={replace(key, **{field: value}): "prefix-partition"},
         )
+
+
+def test_layer_identity_ignores_source_nullability_lost_in_snapshot(column_model):
+    from terrine.model import Model
+
+    con = column_model.con
+    con.raw_sql(
+        "CREATE TABLE events_not_null (user_id VARCHAR NOT NULL, ts TIMESTAMPTZ NOT NULL, "
+        "amount BIGINT NOT NULL, tier VARCHAR)"
+    )
+    con.raw_sql("INSERT INTO events_not_null SELECT * FROM events WHERE amount IS NOT NULL")
+    from_not_null = Model._bind(
+        column_model.catalog,
+        con=con,
+        readiness=column_model.readiness,
+        units=column_model.units,
+        event_ids=column_model.event_ids,
+        resolver=lambda relation: (
+            con.table("events_not_null")
+            if getattr(relation, "name", None) == "events"
+            else column_model._resolver(relation)
+        ),
+        input_binding=column_model.input_binding,
+        source_names={"events"},
+    )
+
+    assert plan_layers(_design(), from_not_null).keys == plan_layers(
+        _design(), column_model
+    ).keys

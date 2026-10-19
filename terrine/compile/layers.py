@@ -186,7 +186,7 @@ def plan_layers(design: Design, model) -> LayerPlan:
         expression(node)
     source_schema = {
         name: {
-            column: str(dtype)
+            column: str(dtype.copy(nullable=True))
             for column, dtype in model._resolver(source.relation).schema().items()
         }
         for name, source in model.sources.items()
