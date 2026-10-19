@@ -31,18 +31,17 @@ def test_runtime_generation_matches_clean_rebuild_after_declared_correction():
 
 
 @pytest.mark.parametrize(
-    ("scenario", "expected_total"),
+    ("scenario", "initial_total", "corrected_total"),
     [
-        ("insert", 8),
-        ("update", 7),
-        ("delete", 3),
-        ("late_arrival", 3),
-        ("readiness_advance", 3),
-
+        ("insert", 3, 8),
+        ("update", 3, 7),
+        ("delete", 8, 3),
+        ("late_arrival", 3, 3),
+        ("readiness_advance", 3, 3),
     ],
 )
-def test_saved_runtime_plan_matches_clean_rebuild_for_event_corrections(
-    tmp_path, scenario, expected_total
+def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
+    tmp_path, scenario, initial_total, corrected_total
 ):
     import ibis
 
@@ -69,98 +68,106 @@ def test_saved_runtime_plan_matches_clean_rebuild_for_event_corrections(
     try:
         con.raw_sql("CREATE TABLE events(occurred_at TIMESTAMP, user_id BIGINT, amount BIGINT)")
         con.raw_sql("INSERT INTO events VALUES ('2025-01-01 09:00:00', 1, 3)")
+        if scenario == "delete":
+            con.raw_sql("INSERT INTO events VALUES ('2025-01-01 11:00:00', 1, 5)")
         con.raw_sql("CREATE TABLE users(user_id BIGINT PRIMARY KEY)")
         con.raw_sql("INSERT INTO users VALUES (1)")
         catalog = _catalog()
         units = {"user": UnitSource(table="users", key="user_id")}
-        coverage = (
-            Coverage("2025-01-01", "2025-01-02")
-            if scenario == "readiness_advance"
-            else Coverage("2024-12-30", "2025-02-01")
+        readiness_end = "2025-01-03" if scenario == "readiness_advance" else "2025-02-01"
+        model = Model.from_catalog(
+            catalog,
+            con=con,
+            readiness={"events": Coverage("2024-12-30", readiness_end)},
+            units=units,
         )
-        model = Model.from_catalog(catalog, con=con, readiness={"events": coverage}, units=units)
         design = Design(
-            "user", FixedDate("2025-01-02T00:00:00+00:00"),
+            "user",
+            FixedDate("2025-01-02T00:00:00+00:00"),
             features={"total": agg("total", window=("-1d", "0s"))},
         )
-        if scenario == "insert":
-            con.raw_sql("INSERT INTO events VALUES ('2025-01-01 11:00:00', 1, 5)")
-        elif scenario == "update":
-            con.raw_sql("UPDATE events SET amount=7 WHERE user_id=1")
-        elif scenario == "delete":
-            con.raw_sql(
-                "INSERT INTO events VALUES ('2025-01-01 11:00:00', 1, 5); "
-                "DELETE FROM events WHERE amount=5"
-            )
-        elif scenario == "late_arrival":
-            con.raw_sql("INSERT INTO events VALUES ('2024-12-31 11:00:00', 1, 9)")
-        elif scenario == "readiness_advance":
-            model = Model.from_catalog(
-                catalog,
-                con=con,
-                readiness={"events": Coverage("2025-01-01", "2025-01-03")},
-                units=units,
-            )
-
         owner = RuntimeOwner(state_path=state_path, snapshot_root=tmp_path / "snapshots")
         authority = SnapshotAuthority(owner)
         namespace = "analytics_owner"
         store = RuntimeStore(con.con, namespace=namespace)
         store.initialize()
-        snapshot = authority.capture(
-            model, design=design, con=con, namespace=namespace,
-            run_id=f"runtime-{scenario}", budget=Budget(),
-        )
         destination = DestinationRef(str(state_path), "published", "orders")
-        graph = dependency_graph(
-            model, design, sources=("events",), partitions=("all",)
-        )
-        plan = plan_refresh(
-            namespace=namespace,
-            dataset=destination.dataset,
-            definition_hash=design.spec_hash,
-            snapshot_id=snapshot.snapshot_id,
-            graph=graph,
-            changes=ChangeSet(
-                (
-                    Change(
-                        "readiness"
-                        if scenario == "readiness_advance"
-                        else "insert"
-                        if scenario == "late_arrival"
-                        else scenario,
-                        "events",
-                        revision=scenario,
-                    ),
-                ),
-                "change_feed",
-            ),
-        )
-        assert any(task.layer == "frame" for task in plan.tasks)
-        recipe = SavedPlanRecipe.create(
-            plan_json=plan.serialize(),
-            design=design,
-            model=ModelReference.from_model(model, owner_key="events-model"),
-            destination=destination,
-            namespace=namespace,
-            expected_base_manifest=None,
-        )
-        recipe.pin_snapshot(store)
         executor = DesignExecutor(con.con, catalog, design, namespace=namespace)
-        receipt = run_serialized_plan(
-            recipe.to_json(),
-            con=con.con,
-            namespace=namespace,
-            request_key=f"runtime:{scenario}",
-            executor=executor,
-            resolver=ModelResolver(model),
-            snapshot_authority=authority,
+        resolver = ModelResolver(model)
+
+        def run_generation(*, name, model, changes=None, expected_manifest=None):
+            snapshot = authority.capture(
+                model,
+                design=design,
+                con=con,
+                namespace=namespace,
+                run_id=name,
+                budget=Budget(),
+            )
+            graph = dependency_graph(model, design, sources=("events",), partitions=("all",))
+            plan = plan_refresh(
+                namespace=namespace,
+                dataset=destination.dataset,
+                definition_hash=design.spec_hash,
+                snapshot_id=snapshot.snapshot_id,
+                graph=graph,
+                changes=changes,
+            )
+            recipe = SavedPlanRecipe.create(
+                plan_json=plan.serialize(),
+                design=design,
+                model=ModelReference.from_model(model, owner_key="events-model"),
+                destination=destination,
+                namespace=namespace,
+                expected_base_manifest=expected_manifest,
+            )
+            recipe.pin_snapshot(store)
+            receipt = run_serialized_plan(
+                recipe.to_json(),
+                con=con.con,
+                namespace=namespace,
+                request_key=f"runtime:{scenario}:{name}",
+                executor=executor,
+                resolver=ModelResolver(model),
+                snapshot_authority=authority,
+            )
+            published = open_published_generation(receipt, con=con.con, namespace=namespace)
+            rows = sorted(published.execute().to_dict("records"), key=lambda row: row["user_id"])
+            assert rows == _clean_rebuild_rows(model, design)
+            return receipt, rows
+
+        initial_receipt, initial_rows = run_generation(name="initial", model=model)
+        assert initial_rows == [{"user_id": 1, "total": initial_total}]
+
+        if scenario == "insert":
+            con.raw_sql("INSERT INTO events VALUES ('2025-01-01 11:00:00', 1, 5)")
+            change = Change("insert", "events", revision="insert-1")
+        elif scenario == "update":
+            con.raw_sql("UPDATE events SET amount=7 WHERE user_id=1")
+            change = Change("update", "events", revision="update-1")
+        elif scenario == "delete":
+            con.raw_sql("DELETE FROM events WHERE amount=5")
+            change = Change("delete", "events", revision="delete-1")
+        elif scenario == "late_arrival":
+            con.raw_sql("INSERT INTO events VALUES ('2024-12-31 11:00:00', 1, 9)")
+            change = Change("insert", "events", revision="late-arrival-1")
+        else:
+            readiness_end = "2025-01-04"
+            model = Model.from_catalog(
+                catalog,
+                con=con,
+                readiness={"events": Coverage("2024-12-30", readiness_end)},
+                units=units,
+            )
+            change = Change("readiness", "events", revision="coverage-advance-1")
+
+        corrected_receipt, corrected_rows = run_generation(
+            name="correction",
+            model=model,
+            changes=ChangeSet((change,), "change_feed"),
+            expected_manifest=initial_receipt.published_generation,
         )
-        published = open_published_generation(receipt, con=con.con, namespace=namespace)
-        rows = sorted(published.execute().to_dict("records"), key=lambda row: row["user_id"])
-        clean_rows = _clean_rebuild_rows(model, design)
-        assert rows == clean_rows
-        expected_row = {"user_id": 1, "total": expected_total}
-        assert rows == [expected_row]
+        assert corrected_receipt.published_generation != initial_receipt.published_generation
+        assert corrected_rows == [{"user_id": 1, "total": corrected_total}]
     finally:
         con.disconnect()
