@@ -408,6 +408,7 @@ class DesignExecutor:
 
         if task.layer in {
             "daily",
+            "roster",
             "prefix_certificate",
             "selector",
             "state_point",
@@ -416,11 +417,6 @@ class DesignExecutor:
         }:
             return pa.table({"_terrine_empty": pa.array([], type=pa.int8())})
         execution_model = self._execution_model(context)
-        if task.layer == "roster":
-            from terrine.semantic.models import TableRef
-
-            roster = execution_model.units[self.design.unit]
-            return context.execute(context.resolve(TableRef(kind="table", name=roster.table)))
         with self._lock:
             if self._keys is None:
                 self._keys = plan_layers(self.design, execution_model).keys
