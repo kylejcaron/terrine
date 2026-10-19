@@ -3,6 +3,7 @@
 - Native treatment-effect estimators, inferential/propensity diagnostics, and simulation truth/calibration claims. Terrine now delivers datasets and descriptive summaries; downstream libraries own estimation.
 
 - Add deterministic last-event-value lookup ordered by timestamp and canonical event ID, and exact retention occurrence bands that preserve incomplete follow-up as null.
+- Add bounded deterministic dataset-scale event batches and an opt-in DuckDB benchmark that checks output counts against a separate oracle.
 
 ## 0.1.0
 

@@ -1,0 +1,7 @@
+{
+  "units": 100,
+  "events_per_unit": 100,
+  "batch_size": 1024,
+  "seed": 20261018,
+  "version": 1
+}

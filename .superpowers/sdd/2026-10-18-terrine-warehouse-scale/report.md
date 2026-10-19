@@ -46,9 +46,12 @@
 
 ## Remaining
 
-Task 1 execution is complete on the verified DuckDB backend; exact quantiles refuse on other backends/types/precision limits, and approximate sketches remain refused pending owner approval. The earlier Task 2 deferral is superseded by this follow-up: deterministic last-event ordering is implemented, and occurrence-based retention threshold bands are implemented at the temporal operation layer. Bounded shape/range strategy selection and compiler integration remain. No owner-gated warehouse/sketch action was introduced.
- 
-- `ee47d5f` — Added deterministic last-event ordering by timestamp then event ID, with duplicate-ID refusal. Focused test: `tests/temporal/test_last_event.py` (2 passed); required Ruff format/check, ty, and tach gates passed.
-- `359a53e` — Fixed internal alias collision for event values named like a temporary rank column; added a regression that failed before the fix. Focused test: `tests/temporal/test_last_event.py` (3 passed); required quality gates passed. Roborev finding 8890 was fixed and dispositioned; review 8891 is pending.
-- Added `terrine.temporal.retention.retention_threshold_bands`: distinct target-event occurrence counts, exact threshold bands, finite-horizon follow-up, and open-ended source-cutoff completeness. Focused tests cover duplicate input rows, event filtering, finite incompleteness, and complete open-ended cutoff.
-- Range-strategy selection/scaling, winsorization, Task 5 cost/budget evidence, and Task 6 generator/benchmark harness remain. Fitted winsorization depends on absent Task 7.2 dataset training/scoring recipe contracts and was not implemented. No estimator/sampling work is in scope after the datasets-only cutover.
+Task 1 execution is complete on the verified DuckDB backend; exact quantiles refuse on other backends/types/precision limits, and approximate sketches remain refused pending owner approval. Task 2 now includes deterministic last-event ordering and occurrence-based retention bands, but bounded shape/range strategy selection and compiler integration remain. The scale generator and a local DuckDB count benchmark were added; runtime dry-run cost evidence/strict authorization beyond the existing unknown-cost refusal remains. Fitted winsorization depends on absent Task 7.2 training/scoring recipe contracts and was not implemented. No estimator/sampling work or paid warehouse action is in scope.
+
+- `ee47d5f` — Added deterministic last-event ordering by timestamp then event ID, with duplicate-ID refusal. Focused test: `tests/temporal/test_last_event.py` (2 passed); required quality gates passed.
+- `359a53e` — Fixed an internal alias collision; the regression failed before the fix. Roborev finding 8890 was fixed and closed.
+- `02b6fb5` — Preserved event fields whose names match last-event outputs. Roborev finding 8891 was fixed and closed.
+- `f3b3ad9` / `777f025` — Added retention threshold bands and review corrections: UTC-normalized naive/aware comparisons, unbounded null observation endpoints, exact unavailable reasons, and coded invalid-schema refusal. Roborev finding 8895 was fixed and closed; follow-up review 8901 is pending.
+- `tests/temporal/test_retention.py` (4 passed) and `tests/temporal/test_last_event.py` (4 passed); required Ruff format/check, ty and tach gates passed.
+- Added versioned deterministic event batches and an independent per-unit count oracle (`tests/simulate/test_scale_generator.py`: 3 passed).
+- Ran `uv run python -m benchmarks.run_duckdb --config benchmarks/workloads/small.json`: verified oracle match for 10,000 input events and 100 emitted unit counts; observed 1.172 seconds and 27,250,740 traced client peak bytes. Scan bytes/cost remain unknown. No live warehouse was selected or run.
