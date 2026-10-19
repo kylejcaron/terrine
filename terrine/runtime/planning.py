@@ -14,6 +14,7 @@ from terrine.execution.gates import enforce_shape_budget, validate_compiled_outp
 from terrine.model import Model
 from terrine.runtime.changes import Change, ChangeSet
 from terrine.runtime.graph import dependency_graph
+from terrine.runtime.materialize import ensure_runtime_expressions_supported
 from terrine.runtime.planner import RefreshPlan, plan_refresh
 from terrine.runtime.recipe import (
     DestinationRef,
@@ -236,6 +237,7 @@ class OwnerPlanner:
             return PlanInvocation.from_dict(json.loads(prior[1]))
 
         ensure_runtime_shape_supported(request.design.shape)
+        ensure_runtime_expressions_supported(request.design)
         model = self.resolver.resolve(request.model)
         if (
             not isinstance(model, Model)
@@ -248,18 +250,21 @@ class OwnerPlanner:
         budget = request.budget or Budget()
         _scan_policy(request.budget)
         enforce_shape_budget(request.design.shape, budget)
-        compiled = compile_design(request.design, model)
+        design = request.design
         if request.dataset_recipe is not None:
             try:
-                request.dataset_recipe.build(model)
+                frame = request.dataset_recipe.build(model)
             except TerrineError:
                 raise
             except (KeyError, TypeError, ValueError, OverflowError) as error:
                 raise INVALID_RECIPE.error(reason="dataset view cannot be constructed") from error
-        source_names, _, _ = _design_root_names(model, request.design)
+            design, compiled = frame._design, frame._active_compiled()
+        else:
+            compiled = compile_design(design, model)
+        source_names, _, _ = _design_root_names(model, design)
         graph = dependency_graph(
             model,
-            request.design,
+            design,
             sources=source_names,
             definition_hash=(
                 request.design.spec_hash
@@ -273,7 +278,7 @@ class OwnerPlanner:
         )
         snapshot = self.snapshot_authority.capture(
             model,
-            design=request.design,
+            design=design,
             con=con,
             namespace=namespace,
             run_id=request.invocation_id,
@@ -284,9 +289,13 @@ class OwnerPlanner:
             execution_model = model._for_execution(
                 context,
                 source_names=set(source_names),
-                unit_name=request.design.unit,
+                unit_name=design.unit,
             )
-            snapshot_compiled = compile_design(request.design, execution_model)
+            snapshot_compiled = (
+                compile_design(design, execution_model)
+                if request.dataset_recipe is None
+                else request.dataset_recipe.build(execution_model)._active_compiled()
+            )
             validate_compiled_output(snapshot_compiled, execution_model.con.to_pyarrow)
         finally:
             context.close()

@@ -5,6 +5,7 @@ import pytest
 from terrine.runtime.execute import execute_plan
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
+from tests._timing import HANG_GUARD_SECONDS
 
 
 def _plan():
@@ -249,12 +250,8 @@ def test_post_commit_empty_refresh_restores_previous_result_partitions():
 
 
 def test_expected_base_manifest_mismatch_refuses_before_source_work():
-    from dataclasses import replace
-
     con = duckdb.connect(":memory:")
-    plan = replace(
-        _plan(), expected_base_manifest="generation-1", expected_base_manifest_bound=True
-    )
+    plan = _plan().bind_base_manifest("generation-1")
     con.execute(
         "CREATE SCHEMA owner; CREATE TABLE owner.runtime_manifests "
         "(dataset VARCHAR PRIMARY KEY,generation VARCHAR NOT NULL,version BIGINT NOT NULL)"
@@ -278,14 +275,10 @@ def test_expected_base_manifest_mismatch_refuses_before_source_work():
 
 
 def test_overlapping_saved_base_replay_returns_terminal_receipt(monkeypatch):
-    from dataclasses import replace
-
     from terrine.runtime.leases import LeaseStore
 
     con = duckdb.connect(":memory:")
-    plan = replace(
-        _plan(), expected_base_manifest="generation-1", expected_base_manifest_bound=True
-    )
+    plan = _plan().bind_base_manifest("generation-1")
     con.execute(
         "CREATE SCHEMA owner; CREATE TABLE owner.runtime_manifests "
         "(dataset VARCHAR PRIMARY KEY,generation VARCHAR NOT NULL,version BIGINT NOT NULL)"
@@ -323,7 +316,6 @@ def test_overlapping_saved_base_replay_returns_terminal_receipt(monkeypatch):
 
 
 def test_retry_reconciles_publication_before_rejecting_its_own_manifest():
-    from dataclasses import replace
     from datetime import UTC, datetime, timedelta
 
     from terrine.runtime.backends.base import StagedGeneration
@@ -331,9 +323,7 @@ def test_retry_reconciles_publication_before_rejecting_its_own_manifest():
     from terrine.runtime.leases import LeaseStore
 
     con = duckdb.connect(":memory:")
-    plan = replace(
-        _plan(), expected_base_manifest="generation-1", expected_base_manifest_bound=True
-    )
+    plan = _plan().bind_base_manifest("generation-1")
     backend = DuckDBBackend(con, namespace="owner")
     backend.initialize()
     con.execute(
@@ -444,7 +434,7 @@ def test_disjoint_partition_tasks_run_concurrently_with_configured_bound():
             assert row is not None
             value = row[0]
             if task.partition in {"p1", "p2"}:
-                barrier.wait(timeout=5)
+                barrier.wait(timeout=HANG_GUARD_SECONDS)
             return pa.table({"task": [value]})
         finally:
             with lock:
@@ -494,7 +484,7 @@ def test_successful_partition_output_is_persisted_when_sibling_fails(monkeypatch
         if task.partition == "p1":
             raise RuntimeError("partition failed")
         if task.partition == "p2":
-            assert release_sibling.wait(timeout=5)
+            assert release_sibling.wait(timeout=HANG_GUARD_SECONDS)
         return pa.table({"task": [task.task_id]})
 
     with pytest.raises(RuntimeError, match="partition failed"):
@@ -761,7 +751,7 @@ def test_lease_heartbeat_keeps_long_task_alive(monkeypatch):
     monkeypatch.setattr(LeaseStore, "renew", renew)
 
     def run_task(task, dependencies):
-        assert renewed.wait(timeout=3)
+        assert renewed.wait(timeout=HANG_GUARD_SECONDS)
         return pa.table({"id": [1]})
 
     result = execute_plan(
@@ -800,13 +790,13 @@ def test_cancellation_serializes_with_heartbeat_persistence(monkeypatch):
 
     def renew(store, lease, *, ttl, now):
         renewing.set()
-        assert allow_renew.wait(timeout=3)
+        assert allow_renew.wait(timeout=HANG_GUARD_SECONDS)
         return original_renew(store, lease, ttl=ttl, now=now)
 
     monkeypatch.setattr(LeaseStore, "renew", renew)
 
     def run_task(task, dependencies):
-        assert renewing.wait(timeout=3)
+        assert renewing.wait(timeout=HANG_GUARD_SECONDS)
 
         def cancel():
             cancel_started.set()
@@ -817,9 +807,9 @@ def test_cancellation_serializes_with_heartbeat_persistence(monkeypatch):
 
         cancellation = threading.Thread(target=cancel)
         cancellation.start()
-        assert cancel_started.wait(timeout=3)
+        assert cancel_started.wait(timeout=HANG_GUARD_SECONDS)
         allow_renew.set()
-        cancellation.join(timeout=3)
+        cancellation.join(timeout=HANG_GUARD_SECONDS)
         assert not cancellation.is_alive()
         return pa.table({"id": [1]})
 
@@ -913,7 +903,7 @@ def test_stale_claim_during_running_takeover_preserves_newer_run_fence(monkeypat
                 [(datetime.now(UTC) - timedelta(seconds=1)).isoformat(), f"dataset:{plan.dataset}"],
             )
             old_lease_acquired.set()
-            assert resume_old_claim.wait(timeout=5)
+            assert resume_old_claim.wait(timeout=HANG_GUARD_SECONDS)
 
     monkeypatch.setattr(module, "_check_expected_base_manifest", delayed_check)
 
@@ -945,7 +935,7 @@ def test_stale_claim_during_running_takeover_preserves_newer_run_fence(monkeypat
                     run_id="running-takeover",
                     run_task=lambda task, dependencies: (
                         new_attempt_running.set(),
-                        finish_new_attempt.wait(timeout=5),
+                        finish_new_attempt.wait(timeout=HANG_GUARD_SECONDS),
                         pa.table({"id": [2]}),
                     )[-1],
                     publish=lambda plan, outputs, lease: "new",
@@ -956,12 +946,12 @@ def test_stale_claim_during_running_takeover_preserves_newer_run_fence(monkeypat
 
     old_thread = threading.Thread(target=old_attempt)
     old_thread.start()
-    assert old_lease_acquired.wait(timeout=5)
+    assert old_lease_acquired.wait(timeout=HANG_GUARD_SECONDS)
     new_thread = threading.Thread(target=new_attempt)
     new_thread.start()
-    assert new_attempt_running.wait(timeout=5)
+    assert new_attempt_running.wait(timeout=HANG_GUARD_SECONDS)
     resume_old_claim.set()
-    old_thread.join(timeout=5)
+    old_thread.join(timeout=HANG_GUARD_SECONDS)
     assert not old_thread.is_alive()
     row = con.execute(
         'SELECT state, attempt_fence FROM "owner".runtime_runs WHERE run_id=?',
@@ -971,7 +961,7 @@ def test_stale_claim_during_running_takeover_preserves_newer_run_fence(monkeypat
     assert row[0] == "running"
     new_fence = row[1]
     finish_new_attempt.set()
-    new_thread.join(timeout=5)
+    new_thread.join(timeout=HANG_GUARD_SECONDS)
     assert not new_thread.is_alive()
     assert old_errors == []
     assert old_result[0].state == "running"
@@ -1007,7 +997,7 @@ def test_stale_task_claim_cannot_replace_takeover_task_fence():
                 'INSERT INTO "owner".runtime_tasks'
             ):
                 old_claim_at_task_insert.set()
-                assert resume_old_task_insert.wait(timeout=5)
+                assert resume_old_task_insert.wait(timeout=HANG_GUARD_SECONDS)
             return con.execute(query, *args, **kwargs)
 
         def cursor(self):
@@ -1043,7 +1033,7 @@ def test_stale_task_claim_cannot_replace_takeover_task_fence():
                     run_id="task-takeover",
                     run_task=lambda task, dependencies: (
                         new_attempt_running.set(),
-                        finish_new_attempt.wait(timeout=5),
+                        finish_new_attempt.wait(timeout=HANG_GUARD_SECONDS),
                         pa.table({"id": [2]}),
                     )[-1],
                     publish=lambda plan, outputs, lease: "new",
@@ -1054,7 +1044,7 @@ def test_stale_task_claim_cannot_replace_takeover_task_fence():
 
     old_thread = threading.Thread(target=old_attempt)
     old_thread.start()
-    assert old_claim_at_task_insert.wait(timeout=5)
+    assert old_claim_at_task_insert.wait(timeout=HANG_GUARD_SECONDS)
     lease_row = con.execute(
         'SELECT fence, resource FROM "owner".runtime_leases WHERE owner=?',
         ["task-takeover"],
@@ -1069,7 +1059,7 @@ def test_stale_task_claim_cannot_replace_takeover_task_fence():
     )
     new_thread = threading.Thread(target=new_attempt)
     new_thread.start()
-    assert new_attempt_running.wait(timeout=5)
+    assert new_attempt_running.wait(timeout=HANG_GUARD_SECONDS)
     task_row = con.execute(
         'SELECT task_fence FROM "owner".runtime_tasks WHERE run_id=?',
         ["task-takeover"],
@@ -1077,7 +1067,7 @@ def test_stale_task_claim_cannot_replace_takeover_task_fence():
     assert task_row is not None
     new_task_fence = task_row[0]
     resume_old_task_insert.set()
-    old_thread.join(timeout=5)
+    old_thread.join(timeout=HANG_GUARD_SECONDS)
     assert not old_thread.is_alive()
     task_row_after_old_resume = con.execute(
         'SELECT task_fence FROM "owner".runtime_tasks WHERE run_id=?',
@@ -1087,7 +1077,7 @@ def test_stale_task_claim_cannot_replace_takeover_task_fence():
     task_fence_after_old_resume = task_row_after_old_resume[0]
     assert task_fence_after_old_resume == new_task_fence
     finish_new_attempt.set()
-    new_thread.join(timeout=5)
+    new_thread.join(timeout=HANG_GUARD_SECONDS)
     assert not new_thread.is_alive()
     assert len(old_errors) == 1
     assert "fenced" in str(old_errors[0])

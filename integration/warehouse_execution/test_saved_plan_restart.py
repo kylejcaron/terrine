@@ -15,6 +15,7 @@ from terrine.runtime.planner import plan_refresh
 from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
 from terrine.semantic.models import Catalog
 from terrine.spec import Design, FixedDate, agg
+from tests._timing import HANG_GUARD_SECONDS
 
 
 def _catalog() -> Catalog:
@@ -180,7 +181,7 @@ connection.disconnect()
         check=False,
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=HANG_GUARD_SECONDS,
         env=os.environ.copy(),
     )
     assert process.returncode == (73 if interrupted else 0), process.stderr

@@ -84,3 +84,81 @@ def test_scoring_today_is_resolved_once_at_catalog_day_boundary(
     assert staged.manifest.recipe.view["eligibility"]["active"]
     assert staged.manifest.recipe.view["parent_design_hash"] == design.spec_hash
     con.disconnect()
+
+
+def test_owner_prepares_scoring_view_before_preflight_without_label_inputs(
+    native_inputs, tmp_path, monkeypatch
+):
+    import json
+
+    import terrine.compile.dispatch as dispatch
+    from terrine.dataset.reference import _recipe_for
+    from terrine.runtime.owner import RuntimeOwner
+    from terrine.runtime.planning import OwnerPlanner, PlanRequest
+    from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
+    from terrine.runtime.snapshot import SnapshotAuthority
+    from terrine.spec.dataset import DatasetRecipe
+
+    catalog, source = native_inputs
+    database = tmp_path / "scoring-owner.duckdb"
+    con = ibis.duckdb.connect(str(database))
+    try:
+        for name in ("events", "labels", "users"):
+            con.create_table(name, source.table(name).execute())
+        model = Model.from_catalog(
+            catalog,
+            con=con,
+            readiness={"events": Coverage("2025-01-01", "2025-01-31")},
+            units={"user": UnitSource("users", "user_id")},
+        )
+        parent = Design(
+            "user",
+            EventAnchor("session"),
+            features={"past_sessions": agg("sessions", window=("-1d", "0s"))},
+            outcomes={"churn": agg("churned", window=("0s", "1d"))},
+        )
+        recipe = _recipe_for(parent.snapshot(model, as_of="2025-01-05", eligibility={}))
+        owner = RuntimeOwner.from_connection(con)
+        reference = ModelReference.from_model(model, owner_key=owner.reference)
+        con.drop_table("labels")
+        expected = reference
+
+        class Resolver:
+            def resolve(self, reference):
+                assert reference == expected
+                return model
+
+        resolved = []
+        build, compile_design = DatasetRecipe.build, dispatch.compile_design
+
+        def resolve_view(self, model):
+            resolved.append(self.digest)
+            return build(self, model)
+
+        def compile_resolved(design, model):
+            assert resolved, "resolve the recipe view before preflight compilation"
+            return compile_design(design, model)
+
+        monkeypatch.setattr(DatasetRecipe, "build", resolve_view)
+        monkeypatch.setattr(dispatch, "compile_design", compile_resolved)
+        authority = SnapshotAuthority(owner)
+        invocation = OwnerPlanner(resolver=Resolver(), snapshot_authority=authority).plan(
+            PlanRequest(
+                "scoring",
+                reference,
+                recipe.base_design,
+                DestinationRef(str(database), "owner", "scoring"),
+                budget=Budget(strict_scan=False),
+                dataset_recipe=recipe,
+            ),
+            con=con.con,
+            namespace="owner",
+        )
+        retained = authority.find_retained(invocation.snapshot_id, namespace="owner")
+        assert "labels" not in json.dumps(retained.roots)
+        saved = SavedPlanRecipe.from_json(invocation.recipe_json)
+        assert saved.restore_dataset_recipe() == recipe
+        assert recipe.view["parent_design_hash"] == parent.spec_hash
+        assert recipe.view["as_of"] == "2025-01-05T00:00:00+00:00"
+    finally:
+        con.disconnect()

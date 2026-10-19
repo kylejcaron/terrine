@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Any
 
 import yaml
@@ -13,7 +14,20 @@ from yaml.resolver import BaseResolver
 from terrine._time import utc_instant
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
-from terrine.spec.expressions import And, AttributeAsOf, Eq, EventTime, Gt, IsNull, MetricAgg
+from terrine.spec.expressions import (
+    And,
+    ApproxMetricDistinct,
+    ApproxMetricQuantile,
+    AttributeAsOf,
+    Eq,
+    EventTime,
+    Gt,
+    IsNull,
+    MetricAgg,
+    MetricQuantile,
+    RetentionMetric,
+    SketchRequest,
+)
 from terrine.spec.panels import (
     CalendarComparisonSpec,
     EventPanelSpec,
@@ -237,6 +251,44 @@ def _encode(value: Any) -> Any:
             "periods": value.periods,
             "cumulative": value.cumulative,
         }
+    if isinstance(value, MetricQuantile):
+        return {
+            "type": "MetricQuantile",
+            "metric": value.metric,
+            "probability": str(value.probability),
+            "window": _encode(value.window),
+            "interpolation": value.interpolation,
+        }
+    if isinstance(value, ApproxMetricQuantile):
+        return {
+            "type": "ApproxMetricQuantile",
+            "metric": value.metric,
+            "probability": str(value.probability),
+            "window": _encode(value.window),
+            "sketch": _encode(value.sketch),
+        }
+    if isinstance(value, ApproxMetricDistinct):
+        return {
+            "type": "ApproxMetricDistinct",
+            "metric": value.metric,
+            "window": _encode(value.window),
+        }
+    if isinstance(value, RetentionMetric):
+        return {
+            "type": "RetentionMetric",
+            "fact": value.fact,
+            "label_property": value.label_property,
+            "target_event": value.target_event,
+            "count_thresholds": list(value.count_thresholds),
+            "finite_horizon_seconds": value.finite_horizon_seconds,
+        }
+    if isinstance(value, SketchRequest):
+        return {
+            "type": "SketchRequest",
+            "algorithm": value.algorithm,
+            "version": value.version,
+            "rank_error": str(value.rank_error),
+        }
     if isinstance(value, MetricAgg):
         node = {"type": "MetricAgg", "metric": value.metric, "window": _encode(value.window)}
         if value.relative_to is not None:
@@ -339,6 +391,12 @@ def _read_date(value: Any) -> date | datetime:
     if item["type"] == "datetime":
         return utc_instant(item["value"])
     raise ValueError("unknown temporal value type")
+
+
+def _decimal_string(value: Any) -> Decimal:
+    if not isinstance(value, str):
+        raise ValueError("decimal specification values must be serialized as strings")
+    return Decimal(value)
 
 
 def _node(value: Any) -> Any:
@@ -522,6 +580,49 @@ def _node(value: Any) -> Any:
     if tag == "Window":
         item = _object(value, {"type", "start", "end"})
         return Window(item["start"], item["end"])
+    if tag == "SketchRequest":
+        item = _object(value, {"type", "algorithm", "version", "rank_error"})
+        return SketchRequest(
+            item["algorithm"], item["version"], _decimal_string(item["rank_error"])
+        )
+    if tag == "MetricQuantile":
+        item = _object(value, {"type", "metric", "probability", "window", "interpolation"})
+        return MetricQuantile(
+            item["metric"],
+            _decimal_string(item["probability"]),
+            _node(item["window"]),
+            item["interpolation"],
+        )
+    if tag == "ApproxMetricQuantile":
+        item = _object(value, {"type", "metric", "probability", "window", "sketch"})
+        return ApproxMetricQuantile(
+            item["metric"],
+            _decimal_string(item["probability"]),
+            _node(item["window"]),
+            _node(item["sketch"]),
+        )
+    if tag == "ApproxMetricDistinct":
+        item = _object(value, {"type", "metric", "window"})
+        return ApproxMetricDistinct(item["metric"], _node(item["window"]))
+    if tag == "RetentionMetric":
+        item = _object(
+            value,
+            {
+                "type",
+                "fact",
+                "label_property",
+                "target_event",
+                "count_thresholds",
+                "finite_horizon_seconds",
+            },
+        )
+        return RetentionMetric(
+            item["fact"],
+            item["label_property"],
+            item["target_event"],
+            tuple(item["count_thresholds"]),
+            item["finite_horizon_seconds"],
+        )
     if tag == "MetricAgg":
         item = _object(
             value,
@@ -650,8 +751,30 @@ def _design(value: Any) -> Design:
     return Design(
         unit,
         anchor,
-        features=named(item["features"], (MetricAgg, AttributeAsOf, EventTime)),
-        outcomes=named(item["outcomes"], (MetricAgg, AttributeAsOf, EventTime)),
+        features=named(
+            item["features"],
+            (
+                MetricAgg,
+                MetricQuantile,
+                ApproxMetricQuantile,
+                ApproxMetricDistinct,
+                RetentionMetric,
+                AttributeAsOf,
+                EventTime,
+            ),
+        ),
+        outcomes=named(
+            item["outcomes"],
+            (
+                MetricAgg,
+                MetricQuantile,
+                ApproxMetricQuantile,
+                ApproxMetricDistinct,
+                RetentionMetric,
+                AttributeAsOf,
+                EventTime,
+            ),
+        ),
         eligibility=named(item["eligibility"], (Gt, Eq, IsNull, And)),
         treatment=treatment,
         gap=item["gap"],

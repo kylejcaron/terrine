@@ -24,6 +24,18 @@ jobs:
       - run: uv run python examples/trajectories_survival.py
       - run: uv run python examples/materialization_runtime.py
       - run: uv build
+  sketches:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: uv sync --group dev --extra duckdb --extra pandas --extra sketches
+      - run: uv run pytest tests/temporal/test_sketches.py tests/spec/test_sketch_refusal.py tests/compile/test_nonadditive.py -q
 
   warehouse-runtime:
     if: github.event_name == 'workflow_dispatch'

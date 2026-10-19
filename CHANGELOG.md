@@ -7,6 +7,9 @@
 - Prepare complete dataset recipes through owner-retained snapshots and execute immutable opaque receipts with destination-scoped replay and renewed authorization.
 - Stage and refresh pinned datasets through separately authorized agent receipts, expose safe manifest summaries and bounded redacted previews, and restrict Parquet exports to exact owner-approved paths.
 - Add an executable restricted training/refresh/export example and local adversarial dataset evaluations covering policy escalation, injected metadata, response loss, replay conflicts, failed-run retry and cancellation before publication.
+- Separate backend execution admission from runtime publication with shared immutable capability evidence; unverified connections refuse before source/schema access while native DuckDB keeps identity checks and private-session cleanup.
+- Gate Dataset staging, retained snapshots and Arrow/Parquet reads independently; unsupported publication leaves ordinary Frame materialization available, and strict unknown scan budgets refuse before export destination work.
+- Document and exercise lossless bounded Arrow, pandas and Polars conversions plus pinned Dataset Parquet round-trips, including empty/all-null typed columns and manifest-backed semantic metadata.
 - Optional, preflight-backed DoubleML, DoWhy and same-connection duckreg recipes, with real integration examples and a dedicated CI job.
 - Snapshot-scoped warehouse export checks and exact per-reason exclusion counts; DoWhy refuses repeated-unit and declared-weight datasets rather than forwarding ignored arguments.
 - Add distinct lifelines KM-array and feature-only Cox-dataframe hand-offs, preserving elapsed entry times, declared weights/clusters, and exact exclusions; risk-set conversion retains coarsened counts and refuses delayed entry or incomplete trajectories.
@@ -21,11 +24,22 @@
 - Reserve failed retries and their leases together, recover interrupted runs before request-key replay and admission, and stop scheduling further tasks after cancellation or owner deadline.
 - Open authorized pinned generations through owner publication metadata so a bounded row preview does not rehash the entire dataset; explicit manifest reopening retains full integrity verification.
 - Compare admission and recovery lease expirations in UTC regardless of the owner's session timezone, and retain the exact approved destination when preparing refreshes.
+- Resolve owner-prepared dataset views before source discovery, compilation and retained capture, preserving feature-only scoring without unused label readiness or reads.
+- Refuse unsupported approximate-quantile runtime requests before source validation or retained snapshot capture, while preserving ordinary Frame sidecars.
+- Preserve native relation-discovery, input-binding and transaction-ownership regression coverage through the verified Ibis execution boundary.
+- Reject non-read and multi-statement compiled queries before native schema resolution, while preserving compiler built-ins and source-relation function admission.
+- Refuse raw driver connections at the Ibis execution-provider boundary instead of advertising relation methods they do not implement; native runtime connection verification is unchanged.
 - Refuse missing pandas with the coded optional-dependency error before decoding diff-diff timestamp periods, including nanosecond values.
 - Keep state-classification null assertions valid across the supported pandas 2.x and 3.x representations.
+- Retain separate fixed-baseline and scheduled prefix resolutions for subdaily state panels, including frozen-input reuse after raw-source changes.
+- Preserve sequential and event-panel shape provenance when publishing retained datasets from saved plans.
 
 ## Removed
 - Native treatment-effect estimators, inferential/propensity diagnostics, and simulation truth/calibration claims. Terrine now delivers datasets and descriptive summaries; downstream libraries own estimation.
+
+- Add deterministic last-event-value lookup ordered by timestamp and canonical event ID, and exact retention occurrence bands that preserve incomplete follow-up as null.
+- Preserve native submicrosecond anchor precision at zero-offset bounded retention endpoints instead of applying a precision-narrowing zero interval.
+- Add bounded deterministic dataset-scale event batches and an opt-in DuckDB benchmark that checks output counts against a separate oracle.
 
 ## 0.1.0
 
@@ -132,6 +146,17 @@
 - Add `terrine plan|run|status|events|cancel` commands over owner IPC with destination-scoped request-key replay.
 - Document Model/Design materialization plans, owner CLI workflows, exact-generation reads, and backend consistency limits.
 - Add an opt-in OpenTelemetry lifecycle projection with redacted attributes and bounded nonblocking export.
+- Add canonical Decimal exact quantiles, explicit DataSketches t-digest quantile expressions, and DuckDB HLL approximate-distinct expressions; retain exact quantile as default and publish approximation algorithm/version/error metadata through Frame Arrow serialization.
+- Execute t-digest sidecars from canonical-ordered bounded Arrow batches on cross-section Frames, refuse unavailable sketch extras before source queries, and refuse unsupported runtime composition with an ordinary-Frame route.
+- Bound repeated nonadditive windows with sparse time-bucket joins and metadata-derived candidate multipliers; preserve exact range/reference parity and refuse unknown or excessive anchor overlap before execution.
+- Propagate verified anchor/prefix substitutions through Sequential and EventPanel compilation, retain range-bound metadata across specialized shapes, and refuse unsupported substitutions before source resolution.
+- Reuse bounded sparse range joins for finite/open retention occurrence bands, require a known source span for bounded open horizons, and preserve exact incomplete-history reasons.
+- Add immutable named Design retention outcomes with canonical JSON/YAML, independent occurrence IDs, bounded finite/open follow-up, exact threshold bands, unavailable-label reasons and shape-aware treatment horizons.
+- Share calendar-comparison treatment-history endpoints between roster validation and control selection, including open retention cutoffs and anticipation, while accepting observation ending exactly at an exclusive horizon.
+- Add metadata-only per-phase runtime scan evidence and independent row/output forecasts, fingerprinted schema-2 plans, owner reauthorization of strict bounds/caps, durable retry allowances, and separately observed completed-artifact costs; preserve native DuckDB strict-unknown refusals.
+- Add version-2 bounded synthetic event/anchor/roster/correction streams, independent exact histogram references, opt-in real compiler/retained-runtime DuckDB benchmarks, sanitized measurements, and an explicitly owner-gated live warehouse tier without running paid resources.
+- Preserve sanitized scan/spend observations after authorized live workload failures and cleanup, retain over-cap evidence in immutable error context, and aggregate failed/refused benchmark records without inventing unavailable measurements.
+- Preserve native nanosecond range and finite-retention endpoints under nonzero elapsed offsets, including exact follow-up completeness and virtual endpoints beyond native timestamp storage.
 - Add owner-planned Airflow and Dagster orchestration triggers with durable invocation replay, partition-scoped snapshots, and recipe-routed execution.
 - Add a Dagster same-root fenced-retry acceptance test and dbt Core after-build recipe with reviewed manifest relations, a local DuckDB owner handoff, and two-build snapshot replay coverage.
 - Document optional orchestrator installation, owner-side planning/status limits, retry semantics, partition scope, and dbt stop/build/restart lifecycle.
@@ -139,3 +164,5 @@
 - Validate orchestrator row-dependent gates on reopened pinned snapshots with only selected sources and units, bind current published generations case-insensitively from the authoritative manifest, and wait through Airflow cancellation requests while returning final generation metadata; cover terminal cancellation at adapter boundaries.
 - Use the built-in Design executor for owner-planned Dagster partitions and dbt build cycles; verify compiled values and exact-generation metadata, and refuse unknown eligibility on pinned inputs before staging or publication.
 - Derive runtime layer identities from retained input schemas and execute roster-only owner recipes without accessing unused fact relations or exporting redundant roster payloads.
+- Unify retained shape admission and saved-recipe identity with verified scan evidence, while exposing snapshot capture accounting alongside separately observed completed-task artifacts.
+- Reuse verified scheduled anchors and additive prefixes in binned and observed StatePanel composition, including terminal metric endpoints and baseline features, without discarding supplied logical inputs.

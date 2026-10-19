@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from threading import Event
 
 from terrine.runtime.events import RunEvent
+from tests._timing import HANG_GUARD_SECONDS
 
 
 def test_otel_projects_only_allowlisted_lifecycle_state():
@@ -49,7 +50,7 @@ def test_otel_projects_only_allowlisted_lifecycle_state():
         adapter.observe_event(
             RunEvent("another-run", 2, datetime(2026, 10, 18, tzinfo=UTC), "progress", {})
         )
-        assert exported.wait(timeout=2)
+        assert exported.wait(timeout=HANG_GUARD_SECONDS)
     finally:
         adapter.close()
 
@@ -80,6 +81,6 @@ def test_otel_exporter_failures_do_not_escape_runtime_callback():
         adapter.observe_event(
             RunEvent("run", 1, datetime(2026, 10, 18, tzinfo=UTC), "lifecycle", {"state": "failed"})
         )
-        assert attempted.wait(timeout=2)
+        assert attempted.wait(timeout=HANG_GUARD_SECONDS)
     finally:
         adapter.close()

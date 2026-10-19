@@ -18,6 +18,7 @@ from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.recipe import DestinationRef
 from terrine.runtime.state import RuntimeStore
+from tests._timing import HANG_GUARD_SECONDS
 
 
 class _Executor:
@@ -54,6 +55,7 @@ def test_cli_plan_refuses_unknown_scan_under_strict_budget(tmp_path):
     fingerprint_payload = {
         key: payload[key]
         for key in (
+            "schema_version",
             "namespace",
             "dataset",
             "definition_hash",
@@ -251,7 +253,7 @@ def test_cli_run_waits_for_long_owner_execution_receipt():
     class SlowExecutor:
         def run_task(self, task, dependencies):
             started.set()
-            release.wait(timeout=10)
+            release.wait(timeout=HANG_GUARD_SECONDS)
             return pa.table({"id": [task.task_id]})
 
         def publish(self, plan, outputs, lease, run_id):
@@ -284,12 +286,12 @@ def test_cli_run_waits_for_long_owner_execution_receipt():
         env=env,
     )
     try:
-        assert started.wait(timeout=3)
+        assert started.wait(timeout=HANG_GUARD_SECONDS)
         with pytest.raises(subprocess.TimeoutExpired):
             process.communicate(timeout=2.2)
     finally:
         release.set()
-    stdout, _stderr = process.communicate(timeout=5)
+    stdout, _stderr = process.communicate(timeout=HANG_GUARD_SECONDS)
     plan_file.unlink()
     server.close()
     assert process.returncode == 0

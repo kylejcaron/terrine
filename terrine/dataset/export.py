@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from urllib.parse import quote
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from terrine.compile.cost import _scan_policy
 from terrine.data import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED, Budget
 from terrine.errors import RefusalSpec
 
@@ -221,6 +223,9 @@ def export_dataset(
     target_file_bytes: int = 134_217_728,
     budget: Budget | None = None,
 ) -> ExportManifest:
+    dataset._require_arrow_batches()
+    for warning in _scan_policy(budget):
+        warnings.warn(warning, RuntimeWarning, stacklevel=2)
     destination_path = Path(destination).expanduser()
     if not destination_path.parent.is_dir():
         raise _INVALID.error(reason="destination parent directory must exist")

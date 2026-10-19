@@ -3,28 +3,24 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import pyarrow as pa
 
+from terrine.backends.capabilities import BackendCapabilities
 from terrine.runtime.leases import Lease
+
+if TYPE_CHECKING:
+    from terrine.runtime.planner import TaskSpec
 
 __all__ = [
     "BackendCapabilities",
+    "CostProvider",
     "PublicationReceipt",
     "Reconciliation",
     "RuntimeBackend",
     "StagedGeneration",
 ]
-
-
-@dataclass(frozen=True, slots=True)
-class BackendCapabilities:
-    snapshot: bool | None
-    change_evidence: frozenset[str]
-    atomic_manifest_publish: bool | None
-    scan_estimate: bool | None
-    cancellation: bool | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +48,16 @@ class Reconciliation:
     run_id: str
     published_generation: str | None
     manifest_version: int | None
+
+
+class CostProvider(Protocol):
+    """Owner metadata only: no source-row reads while estimating a task."""
+
+    capabilities: BackendCapabilities
+
+    def estimate_task(
+        self, task: TaskSpec, *, definition_hash: str, snapshot_id: str
+    ) -> TaskSpec: ...
 
 
 class RuntimeBackend(Protocol):

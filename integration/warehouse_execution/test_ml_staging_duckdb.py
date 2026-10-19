@@ -19,6 +19,7 @@ from terrine.dataset.reference import Dataset
 from terrine.dataset.splits import GroupSplit
 from terrine.errors import TerrineError
 from terrine.runtime.arrow import ArrowOutput
+from tests._timing import HANG_GUARD_SECONDS
 
 
 def _training(model):
@@ -37,7 +38,7 @@ def _run(script, *args):
         cwd=Path(__file__).resolve().parents[2],
         capture_output=True,
         text=True,
-        timeout=300,
+        timeout=HANG_GUARD_SECONDS,
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr

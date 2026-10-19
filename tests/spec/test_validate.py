@@ -10,7 +10,7 @@ from terrine.errors import TerrineError
 from terrine.semantic.models import BoundMeasure, BoundMetric
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
-from terrine.spec.expressions import EventTime, agg, asof, gt
+from terrine.spec.expressions import EventTime, agg, asof, gt, quantile
 from terrine.spec.sequence import EventSequence
 from terrine.temporal.readiness import Readiness
 
@@ -362,6 +362,45 @@ def test_unknown_metric_refuses_with_stable_code():
     assert error.value.code == "terrine.design.missing_reference"
 
 
+def test_exact_quantile_is_admitted_without_query():
+    design = Design(
+        "user",
+        EventAnchor("session"),
+        features={"p50": quantile("sessions", "0.5", window=("-7d", "0d"))},
+    )
+    assert design.validate(model()) is None
+
+
+def test_exact_quantile_refuses_unverified_backend_before_query():
+    with pytest.raises(TerrineError) as error:
+        Design(
+            "user",
+            FixedDate(date(2025, 1, 1)),
+            features={"p50": quantile("sessions", "0.5", window=("-7d", "0d"))},
+        ).validate(model(dialect="postgres"))
+    assert error.value.code == "terrine.metric.exact_quantile_backend_unsupported"
+
+
+def test_exact_quantile_accepts_case_insensitive_duckdb_dialect():
+    design = Design(
+        "user",
+        FixedDate(date(2025, 1, 1)),
+        features={"p50": quantile("sessions", "0.5", window=("-7d", "0d"))},
+    )
+    assert design.validate(model(dialect="DuckDB")) is None
+
+
+@pytest.mark.parametrize("kind", ["conversion", "ratio"])
+def test_nonadditive_metric_aggregations_refuse_unsupported_metric_kinds(kind):
+    with pytest.raises(TerrineError) as error:
+        Design(
+            "user",
+            FixedDate(date(2025, 1, 1)),
+            features={"x": agg("sessions", window=("-1d", "0d"))},
+        ).validate(model(kind=kind, aggregation="min"))
+    assert error.value.code == "terrine.metric.nonadditive_kind_unsupported"
+
+
 def test_missing_referenced_source_readiness_refuses():
     with pytest.raises(TerrineError) as error:
         Design(
@@ -557,14 +596,13 @@ def test_subday_schedule_calendar_average_refuses_known_intraday_anchor():
 
 
 @pytest.mark.parametrize("aggregation", ["min", "max", "count_distinct"])
-def test_nonadditive_aggregations_refuse(aggregation):
-    with pytest.raises(TerrineError) as error:
-        Design(
-            "user",
-            EventAnchor("session"),
-            features={"x": agg("sessions", window=("-1d", "0d"))},
-        ).validate(model(aggregation=aggregation))
-    assert error.value.code == "terrine.metric.unsupported_aggregation"
+def test_nonadditive_aggregations_are_admitted(aggregation):
+    design = Design(
+        "user",
+        EventAnchor("session"),
+        features={"x": agg("sessions", window=("-1d", "0d"))},
+    )
+    assert design.validate(model(aggregation=aggregation)) is None
 
 
 def test_named_dimension_ambiguity_refuses_and_does_not_conflate_entity_keys():
@@ -857,6 +895,49 @@ def test_panel_history_validation_covers_reanchored_outcome_support(shape_name):
     with pytest.raises(TerrineError) as error:
         design.validate(model())
 
+    assert error.value.code == "terrine.design.incomplete_treatment_history"
+
+
+@pytest.mark.parametrize("shape_name", ["sequential", "calendar"])
+def test_panel_history_validation_covers_exact_quantile_outcome(shape_name):
+    from terrine.spec.panels import CalendarComparisonSpec, Initiation, SequentialSpec
+
+    initiation = Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC))
+    shape = (
+        SequentialSpec(initiation)
+        if shape_name == "sequential"
+        else CalendarComparisonSpec(initiation, "not_yet_treated", -1, (0,))
+    )
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-01", "2025-01-02"),
+        outcomes={"y": quantile("sessions", "0.5", window=("0d", "7d"))},
+        shape=shape,
+    )
+    with pytest.raises(TerrineError) as error:
+        design.validate(model())
+    assert error.value.code == "terrine.design.incomplete_treatment_history"
+
+
+@pytest.mark.parametrize("shape_name", ["sequential", "calendar"])
+def test_approximate_distinct_outcome_contributes_to_panel_followup_horizon(shape_name):
+    from terrine.spec.expressions import approx_distinct
+    from terrine.spec.panels import CalendarComparisonSpec, Initiation, SequentialSpec
+
+    initiation = Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC))
+    shape = (
+        SequentialSpec(initiation)
+        if shape_name == "sequential"
+        else CalendarComparisonSpec(initiation, "not_yet_treated", -1, (0,))
+    )
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-01", "2025-01-02"),
+        outcomes={"distinct": approx_distinct("sessions", window=("0d", "7d"))},
+        shape=shape,
+    )
+    with pytest.raises(TerrineError) as error:
+        design.validate(model(aggregation="count_distinct"))
     assert error.value.code == "terrine.design.incomplete_treatment_history"
 
 

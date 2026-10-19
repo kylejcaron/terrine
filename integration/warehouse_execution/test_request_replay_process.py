@@ -16,6 +16,7 @@ from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.recipe import DestinationRef
 from terrine.runtime.state import RuntimeStore
+from tests._timing import HANG_GUARD_SECONDS
 
 
 def test_response_loss_then_fresh_process_lookup_returns_same_run(tmp_path):
@@ -54,7 +55,7 @@ os._exit(73)
         [sys.executable, "-c", first],
         env={**os.environ, "TERRINE_DB": str(database)},
         check=False,
-        timeout=20,
+        timeout=HANG_GUARD_SECONDS,
     )
     assert first_result.returncode == 73
     second = r"""
@@ -80,7 +81,7 @@ print(json.dumps(None if receipt is None else {
         check=True,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=HANG_GUARD_SECONDS,
     )
 
     assert json.loads(result.stdout) == {

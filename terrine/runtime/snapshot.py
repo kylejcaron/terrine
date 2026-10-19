@@ -29,7 +29,14 @@ from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog
 from terrine.spec.design import Design
-from terrine.spec.expressions import AttributeAsOf, EventTime, MetricAgg
+from terrine.spec.expressions import (
+    ApproxMetricDistinct,
+    AttributeAsOf,
+    EventTime,
+    MetricAgg,
+    MetricQuantile,
+    RetentionMetric,
+)
 
 __all__ = ["ReopenableSnapshot", "SnapshotAuthority"]
 
@@ -247,6 +254,13 @@ class SnapshotAuthority:
             raise _BUDGET_UNKNOWN.error()
         if not isinstance(design, Design):
             raise TypeError("design must be Design")
+        from terrine.execution.backend import backend_provider
+
+        backend_provider(model.con).capabilities.require(
+            "retained_snapshot",
+            backend=model.catalog.dialect,
+            route="Materialize a Frame without saving it, or use verified retained local inputs.",
+        )
         _assert_owner_connection(self.owner, con)
         snapshot_id = uuid.uuid4().hex
         directory = self.owner.snapshot_root / namespace / f"{run_id}-{snapshot_id}"
@@ -465,11 +479,16 @@ def _design_root_names(
                 properties.add(value.label_property)
             if value.relative_to is not None:
                 visit(value.relative_to)
+        elif isinstance(value, RetentionMetric):
+            fact = model.catalog.facts.get(value.fact)
+            if fact is not None:
+                sources.add(fact.source)
+            properties.add(value.label_property)
         elif isinstance(value, AttributeAsOf):
             properties.add(value.attribute)
             if value.relative_to is not None:
                 visit(value.relative_to)
-        elif isinstance(value, MetricAgg):
+        elif isinstance(value, (MetricAgg, MetricQuantile, ApproxMetricDistinct)):
             metric = model.catalog.metrics.get(value.metric)
             if metric is not None:
                 for measure_name in (metric.measure, metric.numerator, metric.denominator):

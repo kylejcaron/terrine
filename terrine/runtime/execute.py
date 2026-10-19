@@ -15,6 +15,7 @@ import pyarrow as pa
 from terrine.compile.cost import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED
 from terrine.errors import RefusalSpec, TerrineError
 from terrine.runtime.arrow import _PREFIX, ArrowOutput
+from terrine.runtime.cost import _ATTEMPTS, ScanAuthorization, authorize_plan_scan
 from terrine.runtime.events import event_transaction, record_run_event
 from terrine.runtime.leases import Lease, LeaseStore
 from terrine.runtime.planner import RefreshPlan, TaskSpec
@@ -63,6 +64,7 @@ def execute_plan(
     max_concurrency: int = 1,
     max_active_runs: int | None = None,
     lease_ttl: timedelta = timedelta(minutes=5),
+    authorize_scan: Callable[[RefreshPlan], ScanAuthorization] | None = None,
 ) -> RunReceipt:
     """Execute a bounded DAG; callbacks must isolate connections when concurrency exceeds one."""
     if plan.namespace != namespace:
@@ -89,6 +91,7 @@ def execute_plan(
         not isinstance(destination, DestinationRef) or destination.dataset != plan.dataset
     ):
         raise ValueError("destination must identify the planned dataset")
+    authorize_plan_scan(plan, authorize_scan)
     destination_json = (
         json.dumps(destination.to_dict(), sort_keys=True, separators=(",", ":"))
         if destination is not None
@@ -125,6 +128,13 @@ def execute_plan(
         "output_blob BLOB, task_fence BIGINT, PRIMARY KEY(run_id, task_id))"
     )
     con.execute(f"ALTER TABLE {schema}.runtime_tasks ADD COLUMN IF NOT EXISTS task_fence BIGINT")
+    for column, dtype in (
+        ("attempts", "BIGINT DEFAULT 0"),
+        ("layer", "VARCHAR"),
+        ("output_rows", "BIGINT"),
+        ("output_bytes", "BIGINT"),
+    ):
+        con.execute(f"ALTER TABLE {schema}.runtime_tasks ADD COLUMN IF NOT EXISTS {column} {dtype}")
     con.execute(
         f"CREATE TABLE IF NOT EXISTS {schema}.runtime_run_results "
         "(run_id VARCHAR NOT NULL, partition VARCHAR NOT NULL, PRIMARY KEY(run_id,partition))"
@@ -434,7 +444,7 @@ def execute_plan(
                         break
                     del pending[task_id]
                     saved = con.execute(
-                        f"SELECT status, output_blob FROM {schema}.runtime_tasks "
+                        f"SELECT status, output_blob, attempts FROM {schema}.runtime_tasks "
                         "WHERE run_id=? AND task_id=?",
                         [run_id, task.task_id],
                     ).fetchone()
@@ -442,24 +452,39 @@ def execute_plan(
                         outputs[task.task_id] = _decode(saved[1])
                         made_progress = True
                         continue
+                    attempt_limit = (
+                        task.scan_evidence.max_attempts if task.scan_evidence is not None else None
+                    )
+                    if (
+                        attempt_limit is not None
+                        and saved is not None
+                        and saved[2] >= attempt_limit
+                    ):
+                        raise _ATTEMPTS.error(limit=attempt_limit)
                     claimed_task = con.execute(
                         f"INSERT INTO {schema}.runtime_tasks "
-                        "(run_id, task_id, status, output_blob, task_fence) "
-                        f"SELECT ?, ?, 'running', NULL, ? WHERE EXISTS ("
+                        "(run_id, task_id, status, output_blob, task_fence, attempts, layer) "
+                        f"SELECT ?, ?, 'running', NULL, ?, 1, ? WHERE EXISTS ("
                         f"SELECT 1 FROM {schema}.runtime_leases WHERE resource=? AND owner=? "
                         "AND fence=? AND expires_at>?) "
                         "ON CONFLICT(run_id, task_id) DO UPDATE SET status='running', "
-                        "output_blob=NULL, task_fence=excluded.task_fence "
-                        "WHERE runtime_tasks.task_fence IS NULL "
-                        "OR runtime_tasks.task_fence<excluded.task_fence RETURNING task_id",
+                        "output_blob=NULL, task_fence=excluded.task_fence, "
+                        "attempts=COALESCE(runtime_tasks.attempts,0)+1, layer=excluded.layer, "
+                        "output_rows=NULL, output_bytes=NULL "
+                        "WHERE (runtime_tasks.task_fence IS NULL "
+                        "OR runtime_tasks.task_fence<excluded.task_fence) "
+                        "AND (? IS NULL OR COALESCE(runtime_tasks.attempts,0)<?) RETURNING task_id",
                         [
                             run_id,
                             task.task_id,
                             lease.fence,
+                            task.layer,
                             lease.resource,
                             lease.owner,
                             lease.fence,
                             datetime.now(UTC).replace(tzinfo=None),
+                            attempt_limit,
+                            attempt_limit,
                         ],
                     ).fetchone()
                     if claimed_task is None:
@@ -492,13 +517,16 @@ def execute_plan(
                         _check_budget(task, output, plan, outputs)
                     leases.assert_current(lease)
                     completed = con.execute(
-                        f"UPDATE {schema}.runtime_tasks SET status='complete', output_blob=? "
+                        f"UPDATE {schema}.runtime_tasks SET status='complete', output_blob=?, "
+                        "output_rows=?, output_bytes=? "
                         "WHERE run_id=? AND task_id=? AND status='running' AND task_fence=? "
                         "AND EXISTS ("
                         f"SELECT 1 FROM {schema}.runtime_leases WHERE resource=? AND owner=? "
                         "AND fence=? AND expires_at>?) RETURNING task_id",
                         [
                             _encode(output),
+                            output.num_rows,
+                            output.nbytes,
                             run_id,
                             task.task_id,
                             lease.fence,

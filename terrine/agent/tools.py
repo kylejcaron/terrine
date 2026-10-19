@@ -59,7 +59,7 @@ from terrine.runtime.recipe import (
 )
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.anchors import EventAnchor, FixedDate
-from terrine.spec.dataset import DatasetRecipe
+from terrine.spec.dataset import INVALID_RECIPE, DatasetRecipe
 from terrine.spec.design import Design
 from terrine.spec.io import from_json, from_yaml, to_json
 from terrine.spec.validate import ensure_runtime_shape_supported, validate_design
@@ -527,6 +527,14 @@ class DatasetTools:
             self.model,
         )
 
+    def _resolved_recipe_design(self, recipe: DatasetRecipe) -> Design:
+        try:
+            return recipe.build(self.model)._design
+        except TerrineError:
+            raise
+        except (KeyError, TypeError, ValueError, OverflowError) as error:
+            raise INVALID_RECIPE.error(reason="dataset view cannot be constructed") from error
+
     def preview_dataset(
         self, recipe: DatasetRecipe | str, *, budget: Budget | None = None, bounded_count: int = 0
     ) -> Response[Preview]:
@@ -540,14 +548,13 @@ class DatasetTools:
             ):
                 raise _INVALID.error(route="Use a bounded count within the owner cap.")
             parsed = self._dataset_recipe(recipe)
-            valid = self._validated(parsed.base_design)
+            design = self._resolved_recipe_design(parsed)
+            valid = self._validated(design)
             if bounded_count:
                 self.policy.authorize("preview", sources=valid.required_sources)
             effective = effective_budget(self.policy.budget, budget)
             cost._scan_policy(effective)
-            result = cost.preview(
-                parsed.base_design, self.model, effective, bounded_count=bounded_count
-            )
+            result = cost.preview(design, self.model, effective, bounded_count=bounded_count)
             return replace(
                 result,
                 coverage={
@@ -603,7 +610,7 @@ class DatasetTools:
         expected_base_manifest: str | None = None,
         bind_base_manifest: bool = False,
     ) -> PlanReceipt:
-        valid = self._validated(recipe.base_design)
+        valid = self._validated(self._resolved_recipe_design(recipe))
         self.policy.authorize("prepare", sources=valid.required_sources, destination=destination)
         planner = self._owner_planner(destination)
         reference = self.policy.model_reference

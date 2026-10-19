@@ -312,4 +312,5 @@ def compile_cohorts(
         strategy=study.strategy,
         _anchors=study._anchors,
         _checks=tuple(checks),
+        range_plans=study.range_plans,
     )

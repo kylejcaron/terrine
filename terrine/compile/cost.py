@@ -22,8 +22,10 @@ __all__ = ["preview", "_OUTPUT_BYTES_EXCEEDED", "_ROWS_EXCEEDED"]
 
 _SCAN_UNKNOWN = RefusalSpec(
     "terrine.budget.scan_unknown",
-    "A strict scan-byte budget requires a verified scan bound; this backend has none. "
-    "Explicitly choose non-strict scan policy after reviewing upstream work.",
+    "A strict scan-byte budget requires a verified bound or enforceable cap "
+    "for every source-read phase. "
+    "Configure a capable owner or explicitly choose non-strict policy after reviewing capture, "
+    "validation, execution and retries.",
 )
 _SCAN_EXCEEDED = RefusalSpec(
     "terrine.budget.scan_exceeded", "The verified scan bound exceeds the configured limit {limit}."

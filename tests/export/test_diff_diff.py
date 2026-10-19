@@ -7,6 +7,7 @@ import pytest
 import terrine.export as exports
 from terrine.data import PanelMeta
 from terrine.errors import TerrineError
+from tests._timing import HANG_GUARD_SECONDS
 
 
 @pytest.fixture
@@ -132,4 +133,4 @@ except TerrineError as error:
 else:
     raise AssertionError('missing pandas was accepted')
 """
-    subprocess.run([sys.executable, "-c", code, str(path)], check=True, timeout=120)
+    subprocess.run([sys.executable, "-c", code, str(path)], check=True, timeout=HANG_GUARD_SECONDS)
