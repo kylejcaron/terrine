@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 
@@ -63,13 +64,23 @@ def run_after_dbt_build(
     if invocation.invocation_id != build_id:
         raise RuntimeError("owner returned a mismatched plan invocation")
     receipt = client.run(
-        invocation.serialized_plan,
+        invocation.recipe_json,
         request_key=invocation.request_key,
         destination=invocation.destination,
     )
     status = client.get_run(receipt.run_id)
+    while status.run_id == receipt.run_id and status.durable_state in {
+        "running",
+        "cancel_requested",
+    }:
+        time.sleep(1)
+        status = client.get_run(receipt.run_id)
     if status.run_id != receipt.run_id or status.durable_state != "succeeded":
         raise RuntimeError(
             f"Terrine runtime run {receipt.run_id} finished as {status.durable_state}"
         )
-    return receipt
+    return RunReceipt(
+        receipt.run_id,
+        status.durable_state,
+        status.pinned_result_ref or receipt.published_generation,
+    )

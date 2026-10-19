@@ -53,7 +53,7 @@ def test_dbt_after_build_replays_stable_build_invocation(monkeypatch):
     request = _request("build-17")
     invocation = SimpleNamespace(
         invocation_id="build-17",
-        serialized_plan="canonical-plan",
+        recipe_json="saved-recipe",
         request_key="destination-key",
         destination=object(),
     )
@@ -70,11 +70,19 @@ def test_dbt_after_build_replays_stable_build_invocation(monkeypatch):
 
         def run(self, serialized_plan, *, request_key, destination):
             calls.append(("run", serialized_plan, request_key, destination))
-            return SimpleNamespace(run_id="runtime-run", state="succeeded")
+            return SimpleNamespace(
+                run_id="runtime-run",
+                state="succeeded",
+                published_generation="generation-1",
+            )
 
         def get_run(self, run_id):
             assert run_id == "runtime-run"
-            return SimpleNamespace(run_id=run_id, durable_state="succeeded")
+            return SimpleNamespace(
+                run_id=run_id,
+                durable_state="succeeded",
+                pinned_result_ref=None,
+            )
 
     monkeypatch.setattr(recipe, "ControlClient", Client)
     for _ in range(2):
@@ -87,9 +95,9 @@ def test_dbt_after_build_replays_stable_build_invocation(monkeypatch):
         assert receipt.run_id == "runtime-run"
     assert calls == [
         ("plan", "build-17"),
-        ("run", "canonical-plan", "destination-key", invocation.destination),
+        ("run", "saved-recipe", "destination-key", invocation.destination),
         ("plan", "build-17"),
-        ("run", "canonical-plan", "destination-key", invocation.destination),
+        ("run", "saved-recipe", "destination-key", invocation.destination),
     ]
 
 
@@ -118,7 +126,7 @@ def test_dbt_after_build_refuses_non_succeeded_runtime_status(monkeypatch):
     request = _request("build-17")
     invocation = SimpleNamespace(
         invocation_id="build-17",
-        serialized_plan="canonical-plan",
+        recipe_json="saved-recipe",
         request_key="destination-key",
         destination=object(),
     )
@@ -144,3 +152,54 @@ def test_dbt_after_build_refuses_non_succeeded_runtime_status(monkeypatch):
             endpoint=ControlEndpoint(Path("owner.sock")),
             namespace="owner",
         )
+
+
+def test_dbt_after_build_reconnects_to_active_run_until_terminal(monkeypatch):
+    import examples.orchestrators.dbt_core_after_build as recipe
+
+    request = _request("build-17")
+    invocation = SimpleNamespace(
+        invocation_id="build-17",
+        recipe_json="saved-recipe",
+        request_key="destination-key",
+        destination=object(),
+    )
+    statuses = iter(
+        (
+            SimpleNamespace(run_id="runtime-run", durable_state="running", pinned_result_ref=None),
+            SimpleNamespace(
+                run_id="runtime-run", durable_state="cancel_requested", pinned_result_ref=None
+            ),
+            SimpleNamespace(
+                run_id="runtime-run", durable_state="succeeded", pinned_result_ref="generation-2"
+            ),
+        )
+    )
+
+    class Client:
+        def __init__(self, endpoint, *, namespace):
+            pass
+
+        def plan(self, received):
+            return invocation
+
+        def run(self, serialized_plan, *, request_key, destination):
+            return SimpleNamespace(run_id="runtime-run", state="running", published_generation=None)
+
+        def get_run(self, run_id):
+            return next(statuses)
+
+    sleeps = []
+    monkeypatch.setattr(recipe, "ControlClient", Client)
+    monkeypatch.setattr(recipe, "time", SimpleNamespace(sleep=sleeps.append), raising=False)
+    receipt = recipe.run_after_dbt_build(
+        build_id="build-17",
+        plan_request_provider=lambda build_id: request,
+        endpoint=ControlEndpoint(Path("owner.sock")),
+        namespace="owner",
+    )
+
+    assert receipt.run_id == "runtime-run"
+    assert receipt.state == "succeeded"
+    assert receipt.published_generation == "generation-2"
+    assert sleeps == [1, 1]

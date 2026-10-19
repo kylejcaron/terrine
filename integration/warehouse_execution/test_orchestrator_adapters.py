@@ -17,6 +17,8 @@ def test_two_dbt_build_cycles_stop_owner_and_replay_from_separate_processes(tmp_
 
     from terrine.data import Coverage, UnitSource
     from terrine.model import Model
+    from terrine.runtime.backends.base import StagedGeneration
+    from terrine.runtime.backends.duckdb import DuckDBBackend
     from terrine.runtime.control import ControlClient, ControlEndpoint, ControlServer
     from terrine.runtime.owner import RuntimeOwner
     from terrine.runtime.planning import OwnerPlanner, PlanInvocation, PlanRequest
@@ -55,11 +57,13 @@ def test_two_dbt_build_cycles_stop_owner_and_replay_from_separate_processes(tmp_
     assert dbt is not None
     endpoint = ControlEndpoint(Path("/tmp") / f"terrine-dbt-{uuid.uuid4().hex}.sock")
     snapshots = tmp_path / "snapshots"
-
     executed_task_ids = []
     fail_once = True
 
     class Executor:
+        def __init__(self, backend):
+            self.backend = backend
+
         def _run(self, task):
             nonlocal fail_once
             import pyarrow as pa
@@ -71,19 +75,33 @@ def test_two_dbt_build_cycles_stop_owner_and_replay_from_separate_processes(tmp_
             return pa.table({"task_id": [task.task_id]})
 
         def run_task(self, task, dependencies):
-            return self._run(task)
+            raise AssertionError("dbt recipe must reopen the saved owner snapshot")
 
         def run_snapshot_task(self, context, task, dependencies):
             return self._run(task)
 
         def publish(self, plan, outputs, lease, run_id):
-            return f"generation-{run_id}"
+            dependencies = {dependency for task in plan.tasks for dependency in task.dependencies}
+            terminal = [task for task in plan.tasks if task.task_id not in dependencies]
+            stage = StagedGeneration(
+                plan.dataset,
+                f"generation-{run_id}",
+                {"all": outputs[terminal[-1].task_id]},
+                run_id=run_id,
+                snapshot_id=plan.snapshot_id,
+            )
+            return self.backend.publish_generation(
+                stage,
+                expected_manifest=plan.expected_base_manifest,
+                lease=lease,
+            )
 
     def start_owner():
         connection = ibis.duckdb.connect(database=str(database))
         raw_connection = connection.con
         store = RuntimeStore(raw_connection, namespace="owner")
         store.initialize()
+        backend = DuckDBBackend(raw_connection, namespace="owner")
         authority = SnapshotAuthority(RuntimeOwner(database, snapshots))
 
         class Resolver:
@@ -103,7 +121,7 @@ def test_two_dbt_build_cycles_stop_owner_and_replay_from_separate_processes(tmp_
             namespace="owner",
             endpoint=endpoint,
             plan_planner=planner,
-            executor=Executor(),
+            executor=Executor(backend),
             resolver=Resolver(),
             snapshot_authority=authority,
         )
@@ -176,9 +194,11 @@ def test_two_dbt_build_cycles_stop_owner_and_replay_from_separate_processes(tmp_
                 "from terrine.runtime.planning import PlanRequest; "
                 "from examples.orchestrators.dbt_core_after_build import run_after_dbt_build; "
                 "request=PlanRequest.from_dict(json.loads(Path(sys.argv[2]).read_text())); "
-                "receipt=run_after_dbt_build(build_id=request.invocation_id, "
+                "exec('try:\\n receipt=run_after_dbt_build(build_id=request.invocation_id, "
                 "plan_request_provider=lambda _: request, "
-                "endpoint=ControlEndpoint(Path(sys.argv[1])), namespace='owner'); "
+                'endpoint=ControlEndpoint(Path(sys.argv[1])), namespace="owner")\\n'
+                "except Exception as error:\\n "
+                'print(getattr(error, "code", None), file=sys.stderr)\\n raise\'); '
                 "print(json.dumps(asdict(receipt)))"
             )
             if cycle == 1:
