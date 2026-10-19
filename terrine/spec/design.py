@@ -35,6 +35,7 @@ from terrine.spec.expressions import (
     MetricAgg,
     MetricQuantile,
     Predicate,
+    RetentionMetric,
 )
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import StatePanel
@@ -180,6 +181,7 @@ class Design:
                     MetricQuantile,
                     ApproxMetricQuantile,
                     ApproxMetricDistinct,
+                    RetentionMetric,
                     AttributeAsOf,
                     EventTime,
                 ),
@@ -196,6 +198,7 @@ class Design:
                     MetricQuantile,
                     ApproxMetricQuantile,
                     ApproxMetricDistinct,
+                    RetentionMetric,
                     AttributeAsOf,
                     EventTime,
                 ),

@@ -172,6 +172,7 @@ def plan_layers(design: Design, model) -> LayerPlan:
         IsNull,
         MetricAgg,
         MetricQuantile,
+        RetentionMetric,
     )
     from terrine.spec.validate import _fixed_anchors
 
@@ -187,7 +188,14 @@ def plan_layers(design: Design, model) -> LayerPlan:
             expression(node.expr)
         elif isinstance(
             node,
-            (AttributeAsOf, EventTime, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct),
+            (
+                AttributeAsOf,
+                EventTime,
+                MetricQuantile,
+                ApproxMetricQuantile,
+                ApproxMetricDistinct,
+                RetentionMetric,
+            ),
         ):
             return
         elif isinstance(node, MetricAgg):

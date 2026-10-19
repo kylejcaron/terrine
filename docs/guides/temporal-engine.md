@@ -171,8 +171,50 @@ null for incomplete observation, `horizon_unavailable` for a missing/invalid
 origin, and `incomplete_coverage` when the origin precedes declared source
 history. A null observation endpoint remains unavailable for finite follow-up;
 for an explicitly complete open horizon it means no narrower observation
-cutoff. Retention remains a temporal-engine primitive, not a named Design
-expression or a root-package API.
+cutoff. Missing target labels preserve `incomplete_label_history`, not zero.
+
+### Named retention outcomes
+
+Use the ordinary immutable Design expression:
+
+```python
+from terrine import Design, FixedDate, retention
+
+design = Design(
+    "user",
+    FixedDate("2025-03-01"),
+    outcomes={
+        "retention_band": retention(
+            "purchase_occurrence",
+            label_property="event_name",
+            target_event="purchase",
+            thresholds=(1, 3, 10),
+            horizon="7d",  # or the explicit "open_ended"
+        ),
+    },
+)
+dataset = design.build(model).materialize()
+```
+
+The fact's column supplies independent occurrence IDs, scoped by analysis unit.
+If the fact is a row marker without a column, declare `Model.event_ids` for its
+source. Repeated evidence for one identity is counted once across the entire
+horizon; unrelated labels and null fact identities do not count. The output is
+the ordinal band `sum(count >= threshold)` over strictly increasing positive
+Int64 thresholds, with exact integer comparison and no statistical approximation.
+
+Finite follow-up is `[t0, t0 + duration)`. Open follow-up is `[t0, U)`, where `U`
+is the source's declared exclusive completeness endpoint, not the final observed
+event. Source history, source follow-up, and declared roster observation bounds
+must cover the horizon. Finite follow-up requires a known roster observation end;
+an absent end is not evidence of complete finite follow-up. These outcomes may
+not be used as pre-anchor features or eligibility predicates. Their reference
+and threshold declarations round-trip through JSON/YAML and saved recipes;
+Arrow metadata retains exactness, completeness/reason, conservative support and
+the resolved horizon endpoint. Sequential/calendar treatment checks include the
+retention horizon, even when the occurrence and treatment sources differ.
+
+Run `uv run python examples/retention_metrics.py` for a complete local example.
 
 Catalog records and bound Models are immutable, including nested definition maps.
 Create a new definition and bind a new Model when semantics change; an existing

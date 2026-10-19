@@ -17,6 +17,8 @@ __all__ = [
     "SketchRequest",
     "ApproxMetricDistinct",
     "ApproxMetricQuantile",
+    "RetentionMetric",
+    "retention",
     "AttributeAsOf",
     "EventTime",
     "Gt",
@@ -117,6 +119,32 @@ class ApproxMetricDistinct:
         object.__setattr__(self, "metric", _name(self.metric, "metric"))
         if not isinstance(self.window, Window):
             raise TypeError("window must be a Window")
+
+
+@dataclass(frozen=True, slots=True)
+class RetentionMetric:
+    """Ordinal bands of distinct occurrence identities in a declared follow-up horizon."""
+
+    fact: str
+    label_property: str
+    target_event: str
+    count_thresholds: tuple[int, ...]
+    finite_horizon_seconds: int | None
+
+    def __post_init__(self) -> None:
+        for field in ("fact", "label_property", "target_event"):
+            object.__setattr__(self, field, _name(getattr(self, field), field))
+        thresholds = tuple(self.count_thresholds)
+        if (
+            not thresholds
+            or any(type(value) is not int or not 0 < value < 2**63 for value in thresholds)
+            or tuple(sorted(set(thresholds))) != thresholds
+        ):
+            raise ValueError("thresholds must be strictly increasing positive Int64 counts")
+        object.__setattr__(self, "count_thresholds", thresholds)
+        horizon = self.finite_horizon_seconds
+        if horizon is not None and (type(horizon) is not int or not 0 < horizon < 2**63):
+            raise ValueError("finite horizon must be positive Int64 elapsed seconds")
 
 
 type JsonScalar = None | bool | int | float | str
@@ -241,6 +269,7 @@ type Expr = (
     | MetricQuantile
     | ApproxMetricQuantile
     | ApproxMetricDistinct
+    | RetentionMetric
     | AttributeAsOf
     | EventTime
 )
@@ -282,6 +311,7 @@ def _require_expr(value: object) -> None:
             MetricQuantile,
             ApproxMetricQuantile,
             ApproxMetricDistinct,
+            RetentionMetric,
             AttributeAsOf,
             EventTime,
         ),
@@ -298,6 +328,28 @@ def agg(
     if not isinstance(window, (tuple, list)) or len(window) != 2:
         raise ValueError("window must contain a start and exclusive end")
     return MetricAgg(metric, Window(window[0], window[1]), relative_to)
+
+
+def retention(
+    fact: str,
+    *,
+    label_property: str,
+    target_event: str,
+    thresholds: tuple[int, ...],
+    horizon: str | int,
+) -> RetentionMetric:
+    """Count distinct fact identities, then return the highest reached threshold band.
+
+    A finite duration measures [t0, t0+horizon); ``open_ended`` ends at the
+    source's declared complete-through endpoint. Unknown follow-up stays null.
+    """
+    return RetentionMetric(
+        fact,
+        label_property,
+        target_event,
+        thresholds,
+        None if horizon == "open_ended" else seconds(horizon),
+    )
 
 
 def quantile(

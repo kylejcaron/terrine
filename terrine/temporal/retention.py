@@ -126,7 +126,7 @@ def retention_threshold_bands(
     )
     source = (
         events.filter(
-            (events[event_name] == target_event)
+            ((events[event_name] == target_event) | events[event_name].isnull())
             & events[timestamp].notnull()
             & events[event_id].notnull()
         )
@@ -134,6 +134,7 @@ def retention_threshold_bands(
             _ret_unit=events[unit],
             _ret_event_id=events[event_id],
             _ret_event_time=events[timestamp],
+            _ret_target=events[event_name] == target_event,
         )
         .distinct()
     )
@@ -194,7 +195,8 @@ def retention_threshold_bands(
             event_timestamp="_ret_event_time",
         ).matched
     grouped = matched.group_by(matched._ret_unit, matched._ret_anchor_id).aggregate(
-        _ret_count=matched._ret_event_id.nunique()
+        _ret_count=matched._ret_event_id.nunique(where=matched._ret_target.fill_null(False)),
+        _ret_unknown=(matched._ret_event_id.notnull() & matched._ret_target.isnull()).any(),
     )
     joined = anchor.left_join(
         grouped,
@@ -203,6 +205,12 @@ def retention_threshold_bands(
             anchor._ret_anchor_id == grouped._ret_anchor_id,
         ],
     )
+    reason = ibis.cases(
+        (reason.notnull(), reason),
+        (joined._ret_unknown.fill_null(False), "incomplete_label_history"),
+        else_=ibis.null().cast("string"),
+    )
+    complete = reason.isnull()
     count = complete.ifelse(joined._ret_count.fill_null(0).cast("int64"), ibis.null().cast("int64"))
     band = ibis.literal(0).cast("int64")
     for index, threshold in enumerate(count_thresholds, start=1):

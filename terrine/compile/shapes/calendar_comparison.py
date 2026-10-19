@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 from typing import TYPE_CHECKING, cast
 
 import ibis
@@ -15,8 +16,8 @@ from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
 from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
-from terrine.spec.expressions import ApproxMetricDistinct, MetricAgg, MetricQuantile
 from terrine.spec.panels import CalendarComparisonSpec
+from terrine.spec.validate import _outcome_bounds
 from terrine.temporal._timestamps import compare_timestamps
 from terrine.temporal.aggregate import _Check, _Failure
 
@@ -158,6 +159,7 @@ def _stack(
     spec: CalendarComparisonSpec,
     every: int,
     outcome_window_end: int,
+    outcome_cutoff: datetime | None,
 ):
     period_values = tuple(
         dict.fromkeys((spec.reference_period, *spec.comparison_periods, *spec.anticipation_periods))
@@ -213,15 +215,18 @@ def _stack(
     anticipation = max((abs(value) for value in spec.anticipation_periods), default=0)
     comparison_t0 = with_values.t0
     latest = cast(ir.TimestampValue, ibis.greatest(comparison_t0, reference_t0)) + ibis.interval(
-        seconds=anticipation * every + outcome_window_end
+        seconds=outcome_window_end
     )
+    if outcome_cutoff is not None:
+        latest = cast(ir.TimestampValue, ibis.greatest(latest, ibis.literal(outcome_cutoff)))
+    latest += ibis.interval(seconds=anticipation * every)
     treated = (with_values.unit_cohort == with_values.focal_cohort).fill_null(False)
     if spec.control == "never_treated":
         control = with_values.__terrine_initiation_time.isnull()
     else:
         control_after_cutoff = (
             with_values.__terrine_initiation_time >= latest
-            if outcome_window_end > 0
+            if outcome_window_end > 0 or outcome_cutoff is not None
             else with_values.__terrine_initiation_time > latest
         )
         control = with_values.__terrine_initiation_time.isnull() | control_after_cutoff
@@ -275,14 +280,9 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
     cohort_units, initiation_times, cohort_precision = _cohort_units(design, model, anchors)
     if cohort_precision is not None:
         anchors = replace(anchors, _checks=(*anchors._checks, cohort_precision))
-    outcome_window_end = max(
-        (
-            compiled.expression_timings[name].support_seconds[1]
-            for name, expression in design.outcomes.items()
-            if isinstance(expression, (MetricAgg, MetricQuantile, ApproxMetricDistinct))
-        ),
-        default=0,
-    )
+    outcome_offsets, outcome_cutoffs = _outcome_bounds(design, model)
+    outcome_window_end = max(outcome_offsets, default=0)
+    outcome_cutoff = max(outcome_cutoffs) if outcome_cutoffs else None
 
     def stack(source):
         return _stack(
@@ -293,6 +293,7 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
             spec=spec,
             every=schedule.every,
             outcome_window_end=outcome_window_end,
+            outcome_cutoff=outcome_cutoff,
         )
 
     retained = stack(compiled.table)

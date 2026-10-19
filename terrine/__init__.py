@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         FunnelSpec,
         LifeTable,
         MetricQuantile,
+        RetentionMetric,
         Schedule,
         SessionSpec,
         SketchRequest,
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
         gt,
         is_null,
         quantile,
+        retention,
         to_yaml,
     )
 from terrine.windows import Window
@@ -63,6 +65,8 @@ __all__ = [
     "FixedDate",
     "Frame",
     "MetricQuantile",
+    "RetentionMetric",
+    "retention",
     "Model",
     "Schedule",
     "SketchRequest",

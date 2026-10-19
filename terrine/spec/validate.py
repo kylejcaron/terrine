@@ -36,6 +36,7 @@ from terrine.spec.expressions import (
     MetricAgg,
     MetricQuantile,
     Predicate,
+    RetentionMetric,
     _expression_support_seconds,
 )
 from terrine.spec.sequence import EventSequence
@@ -76,6 +77,11 @@ _INCOMPLETE_TREATMENT_HISTORY = RefusalSpec(
 _METRIC_WINDOW = RefusalSpec(
     "terrine.design.metric_window_conflict",
     "Metric {metric!r} declares a conflicting window_days value.",
+)
+_RETENTION_IDENTITY = RefusalSpec(
+    "terrine.metric.retention_identity_unavailable",
+    "Retention fact {fact!r} has no occurrence identity; bind its column to an "
+    "occurrence ID or declare Model.event_ids for source {source!r}.",
 )
 
 
@@ -152,6 +158,31 @@ def _fixed_anchors(design: Design, model: Model) -> tuple[datetime, ...] | None:
             return first, first + timedelta(seconds=anchor.every)
         return (first,)
     return None
+
+
+def _retention_window(expr: RetentionMetric, model: Model) -> Window:
+    if expr.finite_horizon_seconds is not None:
+        return Window(0, expr.finite_horizon_seconds)
+    coverage = model.readiness.for_fact(model.catalog.facts[expr.fact].source)
+    span = coverage.end_exclusive - coverage.start
+    return Window(0, span.days * 86_400 + span.seconds + bool(span.microseconds))
+
+
+def _outcome_bounds(design: Design, model: Model) -> tuple[tuple[int, ...], tuple[datetime, ...]]:
+    offsets, cutoffs = [], []
+    for expression in design.outcomes.values():
+        if isinstance(expression, RetentionMetric):
+            if expression.finite_horizon_seconds is None:
+                fact = model.catalog.facts.get(expression.fact)
+                if fact is None:
+                    raise _MISSING.error(kind="fact", name=expression.fact)
+                source = fact.source
+                cutoffs.append(model.readiness.for_fact(source).end_exclusive)
+            else:
+                offsets.append(expression.finite_horizon_seconds)
+        elif isinstance(expression, (MetricAgg, MetricQuantile, ApproxMetricDistinct)):
+            offsets.append(_expression_support_seconds(expression)[1])
+    return tuple(offsets), tuple(cutoffs)
 
 
 def _required(model: Model, source_name: str, required: set[str]) -> None:
@@ -254,7 +285,14 @@ def _selector_timing(selector: EventTime) -> tuple[tuple[int, int], tuple[tuple[
     return support, (*dependencies, support)
 
 
-def _expression_timing(expr: Expr) -> tuple[tuple[int, int], tuple[tuple[int, int], ...]]:
+def _expression_timing(
+    expr: MetricAgg
+    | MetricQuantile
+    | ApproxMetricQuantile
+    | ApproxMetricDistinct
+    | AttributeAsOf
+    | EventTime,
+) -> tuple[tuple[int, int], tuple[tuple[int, int], ...]]:
     if isinstance(expr, EventTime):
         return _selector_timing(expr)
     if isinstance(expr, (MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct)):
@@ -271,7 +309,16 @@ def _expression_timing(expr: Expr) -> tuple[tuple[int, int], tuple[tuple[int, in
     return support, dependencies
 
 
-def _check_expression_timing(expr: Expr, role: str, design: Design) -> None:
+def _check_expression_timing(
+    expr: MetricAgg
+    | MetricQuantile
+    | ApproxMetricQuantile
+    | ApproxMetricDistinct
+    | AttributeAsOf
+    | EventTime,
+    role: str,
+    design: Design,
+) -> None:
     support, dependencies = _expression_timing(expr)
     if role in {"feature", "eligibility"} and (
         support[1] > -design.gap or any(dependency[1] > -design.gap for dependency in dependencies)
@@ -303,7 +350,7 @@ def _expression(
         _check_expression_timing(expr, role, design)
         _resolve_property(expr, role, design, model, required, obligations)
         return
-    if isinstance(expr, EventTime):
+    if isinstance(expr, (EventTime, RetentionMetric)):
         fact = model.catalog.facts.get(expr.fact)
         if fact is None:
             raise _MISSING.error(kind="fact", name=expr.fact)
@@ -312,11 +359,18 @@ def _expression(
             raise _MISSING.error(kind="bound fact", name=expr.fact)
         if design.unit not in source.entities:
             raise _UNIT.error(unit=design.unit, name=expr.fact)
-        if expr.label_property is not None:
+        if isinstance(expr, RetentionMetric):
+            _check_event_scalar(model, source.name, expr.label_property, expr.target_event)
+            if source.facts[expr.fact] is None and source.name not in model.event_ids:
+                raise _RETENTION_IDENTITY.error(fact=expr.fact, source=source.name)
+            if role != "outcome":
+                raise _GAP.error(role=role, gap=design.gap)
+        elif expr.label_property is not None:
             _check_event_scalar(model, source.name, expr.label_property, expr.equals)
         _required(model, source.name, required)
         obligations.append("coverage_completeness")
-        _check_expression_timing(expr, role, design)
+        if not isinstance(expr, RetentionMetric):
+            _check_expression_timing(expr, role, design)
         return
     if isinstance(expr, ApproxMetricQuantile):
         if design.shape != "cross_section":
@@ -517,16 +571,12 @@ def _validate_shape(
         coverage = model.readiness.for_fact(source.name)
         span_seconds = (design.anchor.end - design.anchor.start).days * 86_400
         last_offset = ((span_seconds - 1) // design.anchor.every) * design.anchor.every
-        outcome_horizons = [
-            _expression_support_seconds(expression)[1]
-            for expression in design.outcomes.values()
-            if isinstance(expression, (MetricAgg, MetricQuantile, ApproxMetricDistinct))
-        ]
+        outcome_horizons, outcome_cutoffs = _outcome_bounds(design, model)
         anticipation = design.shape.anticipation_seconds
-        if outcome_horizons:
-            followup_end = model.day_boundary(design.anchor.start) + timedelta(
-                seconds=last_offset + max(outcome_horizons) + anticipation
-            )
+        if outcome_horizons or outcome_cutoffs:
+            last_t0 = model.day_boundary(design.anchor.start) + timedelta(seconds=last_offset)
+            ends = [last_t0 + timedelta(seconds=horizon) for horizon in outcome_horizons]
+            followup_end = max(last_t0, *ends, *outcome_cutoffs) + timedelta(seconds=anticipation)
         else:
             followup_end = model.day_boundary(design.anchor.end) + timedelta(seconds=anticipation)
         if (
@@ -568,20 +618,18 @@ def _validate_shape(
         span_seconds = (schedule.end - schedule.start).days * 86_400
         last_offset = ((span_seconds - 1) // schedule.every) * schedule.every
         anticipation = max((abs(period) for period in design.shape.anticipation_periods), default=0)
-        outcome_horizons = [
-            _expression_support_seconds(expression)[1]
-            for expression in design.outcomes.values()
-            if isinstance(expression, (MetricAgg, MetricQuantile, ApproxMetricDistinct))
-        ]
+        outcome_horizons, outcome_cutoffs = _outcome_bounds(design, model)
         outcome_window_end = max(outcome_horizons, default=0)
-        horizon = model.day_boundary(schedule.start) + timedelta(
-            seconds=last_offset
-            + (max(0, max(design.shape.comparison_periods)) + anticipation) * schedule.every
-            + outcome_window_end
+        last_t0 = model.day_boundary(schedule.start) + timedelta(
+            seconds=last_offset + max(0, max(design.shape.comparison_periods)) * schedule.every
         )
+        horizon = last_t0 + timedelta(seconds=outcome_window_end)
+        if outcome_cutoffs:
+            horizon = max(horizon, *outcome_cutoffs)
+        horizon += timedelta(seconds=anticipation * schedule.every)
         comparison_incomplete = (
             coverage.end_exclusive < horizon
-            if outcome_window_end > 0
+            if outcome_window_end > 0 or outcome_cutoffs
             else coverage.end_exclusive <= horizon
         )
         schedule_incomplete = (

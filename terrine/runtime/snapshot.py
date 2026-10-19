@@ -35,6 +35,7 @@ from terrine.spec.expressions import (
     EventTime,
     MetricAgg,
     MetricQuantile,
+    RetentionMetric,
 )
 
 __all__ = ["ReopenableSnapshot", "SnapshotAuthority"]
@@ -434,6 +435,11 @@ def _design_root_names(
                 properties.add(value.label_property)
             if value.relative_to is not None:
                 visit(value.relative_to)
+        elif isinstance(value, RetentionMetric):
+            fact = model.catalog.facts.get(value.fact)
+            if fact is not None:
+                sources.add(fact.source)
+            properties.add(value.label_property)
         elif isinstance(value, AttributeAsOf):
             properties.add(value.attribute)
             if value.relative_to is not None:

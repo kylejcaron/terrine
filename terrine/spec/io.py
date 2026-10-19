@@ -25,6 +25,7 @@ from terrine.spec.expressions import (
     IsNull,
     MetricAgg,
     MetricQuantile,
+    RetentionMetric,
     SketchRequest,
 )
 from terrine.spec.panels import (
@@ -271,6 +272,15 @@ def _encode(value: Any) -> Any:
             "type": "ApproxMetricDistinct",
             "metric": value.metric,
             "window": _encode(value.window),
+        }
+    if isinstance(value, RetentionMetric):
+        return {
+            "type": "RetentionMetric",
+            "fact": value.fact,
+            "label_property": value.label_property,
+            "target_event": value.target_event,
+            "count_thresholds": list(value.count_thresholds),
+            "finite_horizon_seconds": value.finite_horizon_seconds,
         }
     if isinstance(value, SketchRequest):
         return {
@@ -594,6 +604,25 @@ def _node(value: Any) -> Any:
     if tag == "ApproxMetricDistinct":
         item = _object(value, {"type", "metric", "window"})
         return ApproxMetricDistinct(item["metric"], _node(item["window"]))
+    if tag == "RetentionMetric":
+        item = _object(
+            value,
+            {
+                "type",
+                "fact",
+                "label_property",
+                "target_event",
+                "count_thresholds",
+                "finite_horizon_seconds",
+            },
+        )
+        return RetentionMetric(
+            item["fact"],
+            item["label_property"],
+            item["target_event"],
+            tuple(item["count_thresholds"]),
+            item["finite_horizon_seconds"],
+        )
     if tag == "MetricAgg":
         item = _object(
             value,
@@ -729,6 +758,7 @@ def _design(value: Any) -> Design:
                 MetricQuantile,
                 ApproxMetricQuantile,
                 ApproxMetricDistinct,
+                RetentionMetric,
                 AttributeAsOf,
                 EventTime,
             ),
@@ -740,6 +770,7 @@ def _design(value: Any) -> Design:
                 MetricQuantile,
                 ApproxMetricQuantile,
                 ApproxMetricDistinct,
+                RetentionMetric,
                 AttributeAsOf,
                 EventTime,
             ),

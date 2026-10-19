@@ -12,8 +12,10 @@ from terrine.spec.expressions import (
     Expr,
     MetricAgg,
     MetricQuantile,
+    RetentionMetric,
 )
 from terrine.spec.panels import EventPanelSpec
+from terrine.spec.validate import _retention_window
 from terrine.temporal.ranges import _MAX_CANDIDATES, _RANGE_BOUND, RangePlan
 
 _ROUTE = (
@@ -38,7 +40,8 @@ def plan_ranges(design: Design, model) -> dict[Expr, RangePlan]:
     plans = {}
     for expression in expressions:
         nonadditive = isinstance(
-            expression, (MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct)
+            expression,
+            (MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct, RetentionMetric),
         ) or (
             isinstance(expression, MetricAgg)
             and len(model.metrics[expression.metric].measures) == 1
@@ -47,7 +50,12 @@ def plan_ranges(design: Design, model) -> dict[Expr, RangePlan]:
         )
         if not nonadditive:
             continue
-        width = expression.window.end - expression.window.start
+        window = (
+            _retention_window(expression, model)
+            if isinstance(expression, RetentionMetric)
+            else expression.window
+        )
+        width = window.end - window.start
         anchor = design.anchor
         step = None
         count = None

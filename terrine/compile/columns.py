@@ -27,6 +27,7 @@ from terrine.compile.anchors import (
 )
 from terrine.compile.layers import build_measure_layer, measure_identity
 from terrine.compile.ranges import plan_ranges
+from terrine.compile.retention import compile_retention
 from terrine.data import (
     ApproximationMeta,
     ColumnMeta,
@@ -51,6 +52,7 @@ from terrine.spec.expressions import (
     Expr,
     MetricAgg,
     MetricQuantile,
+    RetentionMetric,
     SketchRequest,
 )
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE
@@ -691,6 +693,25 @@ def compile_columns(
             cutoff = FeatureCutoff(cutoff_seconds, True, "retrospective_effective_time")
             strategy = "strict_history"
             result_table = result.table
+        elif isinstance(node, RetentionMetric):
+            source = model.sources[model.catalog.facts[node.fact].source]
+            result = compile_retention(
+                expression_anchors,
+                events_for(source.name),
+                node,
+                source,
+                model,
+                output=output,
+                range_plan=range_plans[node],
+                identity_column=selector_identity_columns.get(source.name),
+                property_columns=source_property_columns[source.name],
+            )
+            meta = result.columns[output]
+            cutoff = FeatureCutoff(
+                range_plans[node].block_seconds, True, "retrospective_effective_time"
+            )
+            strategy = "blocked_range_join/retention_occurrences"
+            result_table = result.table
         elif isinstance(node, MetricQuantile):
             metric = model.metrics[node.metric]
             if len(metric.measures) != 1:
@@ -914,6 +935,9 @@ def compile_columns(
             anchor_fields[selector_meta["end_bound"]] = expression_anchors[
                 selector_meta["end_bound"]
             ]
+        elif isinstance(node, RetentionMetric):
+            timing_refs = ("t0", None, f"{output}_end_bound")
+            timing_column_refs[node] = timing_refs
         elif relative is None:
             timing_refs = ("t0", None, None)
             timing_column_refs[node] = timing_refs
@@ -1036,7 +1060,7 @@ def compile_columns(
                 offsets = None
                 point_column = name
                 kind = "event_time"
-            elif relative is not None:
+            elif relative is not None and not isinstance(node, RetentionMetric):
                 origin, dependency_supports = selector_timing(relative)
                 selector_ref = repr(relative)
                 offsets = (
@@ -1049,9 +1073,13 @@ def compile_columns(
                 kind = "event_time"
             else:
                 support = (
-                    (node.before, node.before)
-                    if isinstance(node, AttributeAsOf)
-                    else (node.window.start, node.window.end)
+                    (0, range_plans[node].block_seconds)
+                    if isinstance(node, RetentionMetric)
+                    else (
+                        (node.before, node.before)
+                        if isinstance(node, AttributeAsOf)
+                        else (node.window.start, node.window.end)
+                    )
                 )
                 dependency_supports = {}
                 selector_ref = None

@@ -15,6 +15,7 @@ from terrine.spec.expressions import (
     MetricAgg,
     MetricQuantile,
     Predicate,
+    RetentionMetric,
     SketchRequest,
     agg,
     all_of,
@@ -26,6 +27,7 @@ from terrine.spec.expressions import (
     gt,
     is_null,
     quantile,
+    retention,
 )
 from terrine.spec.io import from_json, from_yaml, to_json, to_yaml
 from terrine.spec.panels import (
@@ -75,6 +77,8 @@ __all__ = [
     "ApproxMetricQuantile",
     "ApproxMetricDistinct",
     "MetricQuantile",
+    "RetentionMetric",
+    "retention",
     "SketchRequest",
     "PersistentAdoption",
     "Predicate",
