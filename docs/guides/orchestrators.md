@@ -46,7 +46,7 @@ from terrine.runtime.planning import OwnerPlanner
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 
-namespace = "analytics-owner"
+namespace = "analytics_owner"
 endpoint = ControlEndpoint(Path("/run/terrine/owner.sock"))
 store = RuntimeStore(owner_connection, namespace=namespace)
 store.initialize()
@@ -136,7 +136,7 @@ receipt = run_after_dbt_build(
     build_id=build_id,  # generated once for this logical dbt build
     plan_request_provider=plan_request_for_reviewed_manifest,
     endpoint=ControlEndpoint(Path("/run/terrine/owner.sock")),
-    namespace="analytics-owner",
+    namespace="analytics_owner",
 )
 ```
 
