@@ -67,7 +67,7 @@ def test_parquet_export_preserves_pinned_arrow_schema_and_refuses_overwrite(
             target_file_bytes=128,
             budget=Budget(max_rows=0, strict_scan=False),
         )
-    assert limit_error.value.code == "terrine.dataset.export_limit"
+    assert limit_error.value.code == "terrine.budget.rows_exceeded"
     con.disconnect()
 
 

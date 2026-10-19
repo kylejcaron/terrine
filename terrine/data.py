@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 import pyarrow as pa
 
-from terrine.errors import TerrineError, freeze, thaw
+from terrine.errors import RefusalSpec, TerrineError, freeze, thaw
 from terrine.windows import Window, seconds
 
 __all__ = [
@@ -40,6 +40,13 @@ __all__ = [
     "UnitSource",
 ]
 
+
+_ROWS_EXCEEDED = RefusalSpec(
+    "terrine.budget.rows_exceeded", "Output exceeds the configured row limit {limit}."
+)
+_OUTPUT_BYTES_EXCEEDED = RefusalSpec(
+    "terrine.budget.output_bytes_exceeded", "Output exceeds the configured byte limit {limit}."
+)
 _INVALID_ELIGIBILITY = "terrine.metadata.invalid_eligibility_summary"
 _UNREPRESENTABLE_COVERAGE = "terrine.metadata.unrepresentable_coverage"
 _ARROW_METADATA_KEY = b"terrine.materialized_frame.v1"

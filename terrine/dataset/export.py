@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -13,7 +14,7 @@ from urllib.parse import quote
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from terrine.data import Budget
+from terrine.data import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED, Budget
 from terrine.errors import RefusalSpec
 
 __all__ = ["ExportManifest", "ExportShard", "export_dataset"]
@@ -23,7 +24,6 @@ _CONFLICT = RefusalSpec(
     "terrine.dataset.export_conflict",
     "Export destination conflicts with an existing export or partial export.",
 )
-_LIMIT = RefusalSpec("terrine.dataset.export_limit", "Export exceeds configured limit {limit}.")
 
 
 def _hash_file(path: Path) -> str:
@@ -164,9 +164,9 @@ def _existing_export(
         return None
     if budget is not None:
         if budget.max_rows is not None and manifest.row_count > budget.max_rows:
-            raise _LIMIT.error(limit=budget.max_rows)
+            raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
         if budget.max_output_bytes is not None and manifest.byte_count > budget.max_output_bytes:
-            raise _LIMIT.error(limit=budget.max_output_bytes)
+            raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
     return manifest
 
 
@@ -210,6 +210,35 @@ def _schema(dataset: Any) -> pa.Schema:
 
 
 def export_dataset(
+    dataset: Any,
+    *,
+    destination: str,
+    partition_by: tuple[str, ...] = (),
+    target_file_bytes: int = 134_217_728,
+    budget: Budget | None = None,
+) -> ExportManifest:
+    destination_path = Path(destination).expanduser()
+    if not destination_path.parent.is_dir():
+        raise _INVALID.error(reason="destination parent directory must exist")
+    lock_path = destination_path.parent / f".{destination_path.name}.lock"
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise _CONFLICT.error() from None
+        return _export_dataset_locked(
+            dataset,
+            destination=destination,
+            partition_by=partition_by,
+            target_file_bytes=target_file_bytes,
+            budget=budget,
+        )
+    finally:
+        os.close(descriptor)
+
+
+def _export_dataset_locked(
     dataset: Any,
     *,
     destination: str,
@@ -263,9 +292,9 @@ def export_dataset(
         records = list(state.shards)
         schema = _schema(dataset)
     else:
+        schema = _schema(dataset)
         partial.mkdir()
         records = []
-        schema = _schema(dataset)
     by_path = {record.path: record for record in records}
     row_count = byte_count = 0
     shard_index = 0
@@ -287,6 +316,15 @@ def export_dataset(
             target_file_bytes,
         )
         _write_state(partial, manifest)
+
+    if not records:
+        try:
+            checkpoint()
+        except Exception:
+            import shutil
+
+            shutil.rmtree(partial, ignore_errors=True)
+            raise
 
     def close_writer() -> None:
         nonlocal writer, active_path, active_key, skip_active, current_estimate, current_rows
@@ -316,7 +354,7 @@ def export_dataset(
                 raise _INVALID.error(reason="Arrow batch schema changed during export")
             row_count += batch.num_rows
             if budget is not None and budget.max_rows is not None and row_count > budget.max_rows:
-                raise _LIMIT.error(limit=budget.max_rows)
+                raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
             for key, table in _partition_rows(batch, partition_by):
                 estimated = table.nbytes
                 if active_path is not None and (
@@ -359,7 +397,7 @@ def export_dataset(
             and budget.max_output_bytes is not None
             and byte_count > budget.max_output_bytes
         ):
-            raise _LIMIT.error(limit=budget.max_output_bytes)
+            raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
         manifest = ExportManifest(
             dataset.manifest.generation.dataset_id,
             dataset.manifest.generation.generation_id,
@@ -377,9 +415,16 @@ def export_dataset(
         os.rename(partial, destination_path)
         return manifest
     except Exception:
-        if writer is not None:
-            try:
-                close_writer()
-            except Exception:
-                writer.close()
+        if active_path is not None:
+            if writer is not None:
+                try:
+                    writer.close()
+                finally:
+                    active_path.unlink(missing_ok=True)
+            writer = None
+            active_path = None
+            active_key = None
+            skip_active = False
+            current_estimate = current_rows = 0
+            checkpoint()
         raise
