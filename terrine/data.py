@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 import pyarrow as pa
 
-from terrine.errors import RefusalSpec, TerrineError, freeze, thaw
+from terrine.errors import RefusalSpec, freeze, thaw
 from terrine.windows import Window, seconds
 
 __all__ = [
@@ -49,8 +49,22 @@ _ROWS_EXCEEDED = RefusalSpec(
 _OUTPUT_BYTES_EXCEEDED = RefusalSpec(
     "terrine.budget.output_bytes_exceeded", "Output exceeds the configured byte limit {limit}."
 )
-_INVALID_ELIGIBILITY = "terrine.metadata.invalid_eligibility_summary"
-_UNREPRESENTABLE_COVERAGE = "terrine.metadata.unrepresentable_coverage"
+_INVALID_ELIGIBILITY = RefusalSpec(
+    "terrine.metadata.invalid_eligibility_summary",
+    "Eligibility counts must be nonnegative and reconcile",
+)
+_COVERAGE_DAY_OVERFLOW = RefusalSpec(
+    "terrine.metadata.unrepresentable_coverage",
+    "Coverage requires a following calendar day; use through before date.max",
+)
+_COVERAGE_BOUND_OVERFLOW = RefusalSpec(
+    "terrine.metadata.unrepresentable_coverage",
+    "Coverage boundary exceeds datetime's range; use interior calendar dates",
+)
+_COVERAGE_UTC_OVERFLOW = RefusalSpec(
+    "terrine.metadata.unrepresentable_coverage",
+    "Coverage exceeds UTC datetime's range; use interior instants",
+)
 _ARROW_METADATA_KEY = b"terrine.materialized_frame.v1"
 
 
@@ -107,11 +121,7 @@ class Coverage:
         if self.start > self.through:
             raise ValueError("coverage start must not follow through")
         if self.through == date.max:
-            raise TerrineError(
-                "Coverage requires a following calendar day; use through before date.max",
-                code=_UNREPRESENTABLE_COVERAGE,
-                context={"through": self.through.isoformat()},
-            )
+            raise _COVERAGE_DAY_OVERFLOW.error(through=self.through.isoformat())
 
     def bind(self, day_boundary: Callable[[date], datetime]) -> BoundCoverage:
         if not callable(day_boundary):
@@ -120,10 +130,8 @@ class Coverage:
             start = day_boundary(self.start)
             end = day_boundary(self.through + timedelta(days=1))
         except OverflowError as exc:
-            raise TerrineError(
-                "Coverage boundary exceeds datetime's range; use interior calendar dates",
-                code=_UNREPRESENTABLE_COVERAGE,
-                context={"start": self.start.isoformat(), "through": self.through.isoformat()},
+            raise _COVERAGE_BOUND_OVERFLOW.error(
+                start=self.start.isoformat(), through=self.through.isoformat()
             ) from exc
         return BoundCoverage(start, end)
 
@@ -142,13 +150,8 @@ class BoundCoverage:
             start = self.start.astimezone(UTC)
             end = self.end_exclusive.astimezone(UTC)
         except OverflowError as exc:
-            raise TerrineError(
-                "Coverage exceeds UTC datetime's range; use interior instants",
-                code=_UNREPRESENTABLE_COVERAGE,
-                context={
-                    "start": self.start.isoformat(),
-                    "end_exclusive": self.end_exclusive.isoformat(),
-                },
+            raise _COVERAGE_UTC_OVERFLOW.error(
+                start=self.start.isoformat(), end_exclusive=self.end_exclusive.isoformat()
             ) from exc
         if start >= end:
             raise ValueError("bound coverage start must precede end_exclusive")
@@ -713,15 +716,11 @@ class EligibilitySummary:
             )
             or self.candidate != self.excluded_false + self.unknown + self.retained
         ):
-            raise TerrineError(
-                "Eligibility counts must be nonnegative and reconcile",
-                code=_INVALID_ELIGIBILITY,
-                context={
-                    "candidate": self.candidate,
-                    "excluded_false": self.excluded_false,
-                    "unknown": self.unknown,
-                    "retained": self.retained,
-                },
+            raise _INVALID_ELIGIBILITY.error(
+                candidate=self.candidate,
+                excluded_false=self.excluded_false,
+                unknown=self.unknown,
+                retained=self.retained,
             )
 
 

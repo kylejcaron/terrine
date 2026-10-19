@@ -1,0 +1,32 @@
+site_name: Terrine
+site_description: Typed point-in-time analytical and ML datasets
+site_dir: .superpowers/docs-site
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - content.code.copy
+nav:
+  - Overview: docs/index.md
+  - First dataset: docs/guides/first-dataset.md
+  - Guides: docs/guides/index.md
+  - Capabilities: docs/guides/capabilities.md
+  - Public API: docs/guides/public-api.md
+  - Compatibility: docs/guides/backend-compatibility.md
+  - Refusal codes: docs/reference/refusals.md
+  - Inherent limits: docs/guides/limitations.md
+  - README: README.md
+  - Changelog: CHANGELOG.md
+  - Benchmarks: benchmarks/README.md
+markdown_extensions:
+  - tables
+  - fenced_code
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+validation:
+  nav:
+    omitted_files: info
+  links:
+    anchors: warn
+    unrecognized_links: warn

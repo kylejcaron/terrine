@@ -9,6 +9,8 @@ uv sync --extra duckdb
 uv run python examples/first_dataset.py
 ```
 
+
+--8<-- "README.md:first-dataset"
 ## Four objects
 
 1. **Model** binds a native Catalog to existing tables. It owns the unit roster,

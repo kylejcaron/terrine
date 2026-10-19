@@ -45,6 +45,7 @@ dev = [
     "complexipy>=4,<6",
     "prek>=0.2,<1",
 ]
+docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9.6,<10"]
 
 [build-system]
 requires = ["hatchling>=1.27,<2"]

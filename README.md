@@ -33,6 +33,7 @@ Install the local execution extra with `uv pip install 'terrine[duckdb]'`
 two users, including one with no events, and follows **Model → Design → Frame →
 Dataset**. It uses a temporary, file-backed DuckDB database; nothing is uploaded.
 
+<!-- --8<-- [start:first-dataset] -->
 ```python
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -114,6 +115,7 @@ metrics:
     finally:
         con.disconnect()
 ```
+<!-- --8<-- [end:first-dataset] -->
 
 The event at exactly midnight belongs to the outcome, not the feature.
 `materialize` collects this tiny Frame with typed metadata; `stage` publishes a
@@ -274,6 +276,8 @@ Window endpoints represent elapsed durations, not calendar dates.
 
 ## Guides
 
-- [Synthetic dataset worlds and reference rows](docs/guides/synthetic-worlds.md)
-- [Shared dataset contract with increment](docs/guides/shared-dataset-contract.md)
-- [Bounded state panels](docs/guides/state-panels.md)
+- [All guides and references](docs/guides/index.md)
+- [Capability matrix](docs/guides/capabilities.md)
+- [Cost and data residency](docs/guides/cost-and-residency.md)
+- [Inherent limits](docs/guides/limitations.md)
+- [Refusal-code reference](docs/reference/refusals.md)

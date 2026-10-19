@@ -15,7 +15,7 @@ Dataset. The [first dataset](first-dataset.md) executes that whole path.
 | Eligibility and descriptive treatment | `eq`, `gt`, `is_null`, `all_of`, `Treatment` | [Design specifications](design-specs.md) |
 | Bounded trajectories and cohorts | `Trajectory`, `CohortSpec`, `CohortGrouping`, `TimeToEvent`, `LifeTable` | [Trajectories and risk sets](trajectories-survival.md) |
 | State pairs | `StatePanel`, `StateObservations`, `BinnedMetricState` | [State panels](state-panels.md) |
-| Ordered event datasets | `EventSequence`, `SessionSpec`, `FunnelSpec` | [Sequences](temporal-engine.md#bounded-event-sequences) |
+| Ordered event datasets | `EventSequence`, `SessionSpec`, `FunnelSpec` | [Sequences](temporal-engine.md#bounded-event-sequences-and-event-time-origins) |
 | Save a description or handle a refusal | `DatasetRecipe`, `from_yaml`, `to_yaml`, `TerrineError` | [ML staging](ml-staging.md), [refusal reference](../reference/refusals.md) |
 
 Use the expression functions rather than constructing their underlying node

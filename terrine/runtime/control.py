@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, overload
 if TYPE_CHECKING:
     from terrine.runtime.planning import PlanInvocation, PlanRequest
 
-from terrine.errors import TerrineError
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.runtime.events import (
     EventPage,
     RunEvent,
@@ -34,7 +34,13 @@ from terrine.runtime.status import (
 __all__ = ["ControlEndpoint", "ControlServer", "ControlClient"]
 
 _MAX_CONTROL_MESSAGE_BYTES = 16_777_216
-_MESSAGE_TOO_LARGE = "terrine.runtime.control_message_too_large"
+_MESSAGE_TOO_LARGE = RefusalSpec(
+    "terrine.runtime.control_message_too_large",
+    "Owner control message exceeds the configured limit.",
+)
+_CONTROL_UNAVAILABLE = RefusalSpec(
+    "terrine.runtime.control_unavailable", "Owner control request was refused."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +92,7 @@ class ControlServer:
                 if not line:
                     return
                 if len(line) > _MAX_CONTROL_MESSAGE_BYTES + 1:
-                    response = json.dumps({"ok": False, "code": _MESSAGE_TOO_LARGE}).encode()
+                    response = json.dumps({"ok": False, "code": _MESSAGE_TOO_LARGE.code}).encode()
                     self.wfile.write(response + b"\n")
                     return
                 con = server.store.con.cursor()
@@ -101,11 +107,11 @@ class ControlServer:
                     ).encode()
                     if len(response_bytes) > _MAX_CONTROL_MESSAGE_BYTES:
                         response_bytes = json.dumps(
-                            {"ok": False, "code": _MESSAGE_TOO_LARGE}
+                            {"ok": False, "code": _MESSAGE_TOO_LARGE.code}
                         ).encode()
                     self.wfile.write(response_bytes + b"\n")
                 except Exception as error:
-                    code = getattr(error, "code", "terrine.runtime.control_unavailable")
+                    code = getattr(error, "code", _CONTROL_UNAVAILABLE.code)
                     self.wfile.write(json.dumps({"ok": False, "code": code}).encode() + b"\n")
                 finally:
                     con.close()
@@ -259,11 +265,7 @@ class ControlClient:
         request = json.dumps({"namespace": self.namespace, "operation": operation, **payload})
         encoded = request.encode()
         if len(encoded) > _MAX_CONTROL_MESSAGE_BYTES:
-            raise TerrineError(
-                "Owner control message exceeds the configured limit.",
-                code=_MESSAGE_TOO_LARGE,
-                context={},
-            )
+            raise _MESSAGE_TOO_LARGE.error()
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(None if operation in {"cancel", "run", "plan"} else 2)
             client.connect(str(self.endpoint.path))
@@ -275,8 +277,8 @@ class ControlClient:
             response = json.loads(line)
         if not response.get("ok"):
             raise TerrineError(
-                "Owner control request was refused.",
-                code=response.get("code", "terrine.runtime.control_unavailable"),
+                _CONTROL_UNAVAILABLE.template,
+                code=response.get("code", _CONTROL_UNAVAILABLE.code),
                 context={},
             )
         return response["value"]

@@ -8,7 +8,7 @@ from typing import Any
 import pyarrow as pa
 
 from terrine.data import Budget, EligibilitySummary
-from terrine.errors import RefusalSpec, TerrineError
+from terrine.errors import RefusalSpec
 
 _STATE_PANEL_BUDGET = RefusalSpec(
     "terrine.state_panel.budget_required",
@@ -22,6 +22,10 @@ _ELIGIBILITY_UNKNOWN = RefusalSpec(
     "terrine.study.eligibility_unknown",
     "Eligibility is unresolved for {unknown} of {candidate} candidates; "
     "complete the required history before exporting rows.",
+)
+_INVALID_ELIGIBILITY_RESULT = RefusalSpec(
+    "terrine.metadata.invalid_eligibility_summary",
+    "Eligibility audit did not return one aggregate count record",
 )
 
 
@@ -68,11 +72,7 @@ def _eligibility_summary(
         or result.num_rows != 1
         or set(result.column_names) != set(names)
     ):
-        raise TerrineError(
-            "Eligibility audit did not return one aggregate count record",
-            code="terrine.metadata.invalid_eligibility_summary",
-            context={},
-        )
+        raise _INVALID_ELIGIBILITY_RESULT.error()
     return EligibilitySummary(**{name: result[name][0].as_py() for name in names})
 
 

@@ -1,177 +1,84 @@
 # Changelog
 
-## Added
-- Provide a self-contained Model → Design → Frame → Dataset tutorial with exact boundary/zero-activity checks and pinned-generation reopening.
-- Keep implementation records out of ordinary package facades and allow all public facades to import without optional backend, dataframe or modeling libraries.
-- Add strict versioned dataset-tool envelopes and immutable owner policy with separate operation grants, exact resource allowlists and intersected execution budgets.
-- Add destination- and owner-scoped run status, bounded event pages and separately authorized cancellation through the existing runtime APIs.
-- Add editable training/scoring recipe discovery, canonical proposals and named recipe storage, with strict split fields and resolved scoring instants.
-- Prepare complete dataset recipes through owner-retained snapshots and execute immutable opaque receipts with destination-scoped replay and renewed authorization.
-- Stage and refresh pinned datasets through separately authorized agent receipts, expose safe manifest summaries and bounded redacted previews, and restrict Parquet exports to exact owner-approved paths.
-- Add an executable restricted training/refresh/export example and local adversarial dataset evaluations covering policy escalation, injected metadata, response loss, replay conflicts, failed-run retry and cancellation before publication.
-- Separate backend execution admission from runtime publication with shared immutable capability evidence; unverified connections refuse before source/schema access while native DuckDB keeps identity checks and private-session cleanup.
-- Gate Dataset staging, retained snapshots and Arrow/Parquet reads independently; unsupported publication leaves ordinary Frame materialization available, and strict unknown scan budgets refuse before export destination work.
-- Document and exercise lossless bounded Arrow, pandas and Polars conversions plus pinned Dataset Parquet round-trips, including empty/all-null typed columns and manifest-backed semantic metadata.
-- Optional, preflight-backed DoubleML, DoWhy and same-connection duckreg recipes, with real integration examples and a dedicated CI job.
-- Snapshot-scoped warehouse export checks and exact per-reason exclusion counts; DoWhy refuses repeated-unit and declared-weight datasets rather than forwarding ignored arguments.
-- Add distinct lifelines KM-array and feature-only Cox-dataframe hand-offs, preserving elapsed entry times, declared weights/clusters, and exact exclusions; risk-set conversion retains coarsened counts and refuses delayed entry or incomplete trajectories.
-- Add diff-diff first-treatment encoding for observed persistent-adoption panels, with never-treated zero, preserved calendar gaps, and treatment-history validation before outcome exclusions; exercise Callaway–Sant'Anna, Sun–Abraham and event studies.
-- Add exact fixed and train-only fitted post-aggregation winsorization with immutable typed limits, training recipe/snapshot/split identity, preserved null reasons, and frozen recipe/manifest reuse during scoring and refresh.
+## Unreleased
 
-## Fixed
-- Keep agent discovery schemas compatible with canonical temporal Design nodes, derive editable examples for rosterless event models, and preserve destination aliases through request JSON round trips.
-- Ignore unrelated case-distinct saved-plan namespaces when authorizing dataset run feedback.
-- Validate scoring recipe anchor, feature and eligibility consistency, reject inexact scoring instants, and return coded refusals for overflowing split durations.
-- Refuse malformed scoring eligibility through the shared dataset recipe error contract before named persistence or frame construction.
-- Enforce owner run deadlines at cancellation/publication checkpoints and admit concurrent runs atomically, preserving terminal replay and failed-run fence renewal.
-- Reserve failed retries and their leases together, recover interrupted runs before request-key replay and admission, and stop scheduling further tasks after cancellation or owner deadline.
-- Open authorized pinned generations through owner publication metadata so a bounded row preview does not rehash the entire dataset; explicit manifest reopening retains full integrity verification.
-- Compare admission and recovery lease expirations in UTC regardless of the owner's session timezone, and retain the exact approved destination when preparing refreshes.
-- Resolve owner-prepared dataset views before source discovery, compilation and retained capture, preserving feature-only scoring without unused label readiness or reads.
-- Replay retained preparation receipts before compiling live inputs, so a lost preparation response remains recoverable after a source or roster is removed.
-- Return only aggregate export metadata through agent tools; retain partition-value-bearing shard paths in the owner-side manifest rather than disclosing them in responses.
-- Recover matching refresh preparation receipts before live preflight or current-generation checks; new invocations still validate their pinned base before capturing inputs.
-- Apply owner strict-scan, row and projected Arrow-byte budgets to bounded row previews, returning coded refusals without partial rows and closing the reader on budget failure.
-- Refuse unsupported approximate-quantile runtime requests before source validation or retained snapshot capture, while preserving ordinary Frame sidecars.
-- Preserve native relation-discovery, input-binding and transaction-ownership regression coverage through the verified Ibis execution boundary.
-- Reject non-read and multi-statement compiled queries before native schema resolution, while preserving compiler built-ins and source-relation function admission.
-- Refuse raw driver connections at the Ibis execution-provider boundary instead of advertising relation methods they do not implement; native runtime connection verification is unchanged.
-- Refuse missing pandas with the coded optional-dependency error before decoding diff-diff timestamp periods, including nanosecond values.
-- Keep state-classification null assertions valid across the supported pandas 2.x and 3.x representations.
-- Retain separate fixed-baseline and scheduled prefix resolutions for subdaily state panels, including frozen-input reuse after raw-source changes.
-- Preserve sequential and event-panel shape provenance when publishing retained datasets from saved plans.
-- Include resolved metric/source bindings for nonadditive features in training/scoring identity; frozen winsorization refuses same-typed quantile or distinct-count features rebound to another fact.
-- Include every nested EventTime selector's resolved fact/source, label-property history, and event-identity bindings in shared training/scoring feature hashes; frozen limits refuse selector rebinding even when the outer feature type is unchanged.
+### Dataset construction
 
-## Removed
-- Native treatment-effect estimators, inferential/propensity diagnostics, and simulation truth/calibration claims. Terrine now delivers datasets and descriptive summaries; downstream libraries own estimation.
+- Build typed, point-in-time analytical and ML datasets with a standalone native
+  Model → Design → Frame → Dataset workflow and a complete executable tutorial.
+- Describe sources, entities, dimensions, facts and metrics in a strict native
+  Catalog; bind existing tables or admitted read-only SQL without requiring a
+  semantic adapter or sibling checkout.
+- Preserve exact fixed, scheduled and event anchors, stable event identities,
+  roster membership and independent observation bounds. First/nth events are
+  selected before cohort range filtering.
+- Construct named half-open features/outcomes, strict as-of attributes,
+  three-valued eligibility and descriptive treatment/cluster/weight roles.
+- Preserve source-specific completeness, numeric nulls and exact unavailable
+  reasons; distinguish fully observed zero activity from missing follow-up.
+- Build sequential/calendar/event panels, bounded state pairs, LTV trajectories,
+  cohort summaries, per-unit time-to-event records and risk-set counts/plain
+  rates. Retain row identity, temporal support and typed shape provenance.
+- Build deterministic bounded event sequences, sessions, funnels, transitions
+  and event-relative selectors with explicit tie, missing-predecessor and
+  temporal-leakage rules.
+- Support exact retention occurrence bands and deterministic last-event values,
+  exact min/max/distinct/type-7 quantiles, explicit native approximate distinct,
+  and optional cross-sectional DataSketches quantile sidecars.
 
-- Add deterministic last-event-value lookup ordered by timestamp and canonical event ID, and exact retention occurrence bands that preserve incomplete follow-up as null.
-- Preserve native submicrosecond anchor precision at zero-offset bounded retention endpoints instead of applying a precision-narrowing zero interval.
-- Add bounded deterministic dataset-scale event batches and an opt-in DuckDB benchmark that checks output counts against a separate oracle.
+### Reproducibility and ML
 
-## 0.1.0
+- Stage immutable DuckDB generations with bounded Arrow transfers and pinned
+  reads. Preserve logical types, column roles, coverage, completeness, precision
+  metadata and construction recipes through manifests and Arrow serialization.
+- Reopen and refresh saved training/scoring recipes in a fresh process. Explicit
+  source corrections publish a new generation without mutating existing readers.
+- Select training features/labels with exact incomplete-label exclusions and
+  leakage-aware group/time splits, purging, embargo and unassigned-row reasons.
+- Resolve scoring instants once, select an explicit eligible roster and omit
+  unused labels, treatment and label-source reads.
+- Apply fixed or train-only fitted post-aggregation winsorization, retain exact
+  frozen limits and require matching feature/recipe/snapshot identities on reuse.
+- Export resumable checksum-verified local Parquet shards with semantic metadata,
+  exact decimal/timestamp/null values and typed empty outputs.
 
-- Define versioned canonical dataset recipes and manifests, including owner-scoped immutable content-addressed recipe references verified on reopening.
-- Add lazy Frame.training_set feature/label projections, metadata-derived completeness handling, exact incomplete-label reason counts, and train-only preprocessing acceptance coverage.
-- Add resumable, checksum-verified Parquet export checkpoints and partition-aware, budget-enforced export replay.
-- Add fixed roster-backed scoring snapshots with explicit eligibility, resolved `as_of`, feature-only source validation, and persisted scoring-view recipes.
-- Bind canonical dataset construction recipes into SavedPlanRecipe serialization for validated reconstruction.
-- Execute dataset staging through persisted saved Design recipes, renewable fenced leases, bounded durable Arrow task outputs, and metadata-preserving exact-generation reads.
-- Share ordinary Frame normalization with staged StatePanel outputs and keep long-stage leases renewable throughout snapshot-bound execution and publication.
-- Refresh pinned datasets from their saved training/scoring recipes, apply leakage-aware split assignments in bounded batches, and retain complete view provenance in manifests.
-- Include selector dependencies in label split support, distinguish StatePanel semantics from column names, retain complete as-of labels, and reopen version-1 manifests without optional frame metadata.
-- Add executable local training and batch-scoring examples covering pinned Arrow reads, exact Decimal Parquet export, manifest reopening, and refresh after source corrections.
-- Verify fresh-process refresh and local export recovery/cancellation, normalize publication timestamp digests across session timezones, and explicitly release export batch readers on failure.
-- Verify historical unprefixed publication checksums using their original complete Arrow IPC stream encoding, while authenticating retry data against the immutable physical generation.
-- Fingerprint as-of features with the resolved dimension relation, entity identity, validity, and selected property definition, using the same resolution rules as execution.
-- Fsync closed Parquet shards and their directory hierarchy before checkpointing; durably publish the final manifest and destination directory rename.
-- Retain the complete Arrow schema and provenance in a zero-row Parquet shard when training or scoring exports have no eligible rows, including partitioned exports.
+### Execution and integrations
 
-- Stage file-backed DuckDB Frames into immutable runtime-published generations through retained input snapshots, with bounded Arrow batch transfer and manifest-verified pinned reads.
-- Export pinned datasets to bounded Parquet shards with checksums, generation manifests, and verified completed-export replay.
-- Establish the standalone Python package and development quality gates.
-- Expose the implemented elapsed-time `Window` and coded `TerrineError` contracts.
-- Include inline type metadata so installed-package consumers receive type checking.
-- Add immutable study specifications with exact elapsed windows and safe, canonical JSON/YAML serialization.
-- Load study constructors on demand to keep independent workflows isolated from unused study modules.
-- Bind native semantic catalogs and explicit source coverage with immutable definitions, dialect-aware read-only SQL admission, and selected-entity event normalization.
-- Validate scalar column types independently of nullability, require source and dimension declarations for referenced inputs, and refuse qualified table-valued functions.
-- Add independent seeded baseline-treatment worlds, paired-outcome truth, and typed raw-data reference fixtures.
-- Refuse coverage and synthetic configurations whose exclusive calendar or UTC endpoints exceed datetime's representable range.
-- Bind standard signed ISO fixed-offset catalogs through the public Model, Coverage, and UnitSource workflow without importing unrelated study code eagerly.
-- Preserve aware intraday fixed anchors and their canonical JSON/YAML hashes; refuse nonrepresentable timestamp precision instead of silently narrowing it.
-- Require scalar dimension and roster temporal schemas and unambiguous range/change-point history declarations before data execution.
-- Add standalone cross-fitted IPW, regression-adjustment and AIPW estimators with explicit baseline/weight/precision gates, joint parametric uncertainty, and independent overlap/balance diagnostics.
-- Preserve nanosecond baseline identity without optional dataframe dependencies, reject lossy diagnostic integer casts, verify separation certificates, and project joint inference without dense full-system allocation.
-- Normalize diagnostic log weights after shifting their maximum so large common offsets cannot change balance scores or decisions.
-- Add lazy strict SCD2/static attribute lookup and cross-entity event enrichment, with explicit snapshot-bound integrity checks and matched-null metadata.
-- Refuse overlapping open-ended histories and validate physical keys or validity columns without internal aggregate-alias collisions.
-- Report missing history validity columns through the same coded schema refusal in event enrichment and attribute lookup.
-- Validate study references, selected-unit keys, temporal gaps, calendar alignment and semantic capabilities using bound metadata only; retain runtime completeness obligations without reading source data.
-- Classify property cutoffs by temporal meaning and exact local clock, deferring unknown anchor alignment; reject event facts absent from their bound source.
-- Require versioned dimension cutoff checks even when a property's value is annotated static.
-- Add optional published semantic-definition import through Model.from_increment without making increment a native dataset dependency or inferring experiment assignment.
-- Preserve scoped properties and shared dimensions across imported sources, re-admit source SQL, and reject unsupported definitions with coded errors.
-- Build sparse daily and equal-time cumulative states without dense unit calendars, preserving exact integer/decimal coefficients and three-valued filter provenance.
-- Certify Float64 cumulative sums with outward error bounds and explicit snapshot-backed checks; retain original leaf counts and refuse nonfinite or uncertifiable arithmetic.
-- Keep selected unit identity separate from state metadata and compare exact numeric filters without narrowing source values, including native signed 128-bit inputs.
-- Preserve outward overflow failures and exact pre-epoch nanosecond day membership; retain separate nonfinite-filter provenance rather than admitting NaN through native ordering.
-- Project certificate intermediates once so conservative overflow checks do not cause exponential SQL expansion.
-- Use the same stable unsupported-aggregation refusal during study validation and sparse-state resolution.
-- Compile lazy fixed, scheduled and event anchor candidates with explicit roster membership, independent observation bounds, exact UTC identities and snapshot-bound integrity checks.
-- Refuse actual submicrosecond anchor/roster timestamps before publishing narrowed UTC values; preserve microsecond-aligned source timestamps.
-- Preserve legal event key names and identities despite helper-column case collisions, handle wide calendar ranges on nanosecond sources, and reject event facts absent from their bound source with the shared validation refusal.
-- Scope configured event IDs to their analysis unit and align missing-unit refusals between validation and anchor compilation.
-- Add strict native and coherent union/window prefix lookups, including independent repeated cutoffs and null-preserving state.
-- Admit implicit binned state-period metrics through shared unit, aggregation, transform, and window validation before compilation.
-- Compute named half-open windows with per-source/unit completeness, exact scale-preserving output and certified Float64 sums, averages and ratios; refuse unknown filters or unrepresentable required results before export.
-- Apply numerical tolerance in the final average/ratio units while retaining constituent validity checks; refuse overflowing outward input intervals even when division would hide them.
-- Build lazy study Frames with named features, outcomes, descriptive treatment and three-valued eligibility; retain exact observation/null reasons and candidate audit totals.
-- Execute native builds in private snapshot transactions, or against runtime-owned read-only input publications with exact source substitution and leased cleanup.
-- Enforce output row/Arrow-byte limits without returning partial results, refuse unbounded strict scan budgets before reads, and keep default previews row-free.
-- Export Arrow metadata and optional nullable dataframe conversions; include readiness, roster and event-ID declarations in model identity without requiring unused label-source readiness.
-- Preserve lossless mixed microsecond/nanosecond as-of and prefix ordering, NULL lookup requests and matched-state history continuity; refuse unsupported native timestamp ordering with a normalization route.
-- Apply interval-certain checked numeric eligibility and deferred endpoint-overflow checks even when another conjunct excludes the candidate.
-- Preserve UTC Arrow output under non-UTC SQL sessions and coordinate shared-origin metadata and capture across concurrent exports.
-- Add a focused optional-increment per-unit frame parity pilot with an explicit exposure-boundary comparison and shared-dataset evidence guide.
-- Add native end-to-end baseline recovery, population-target calibration, failure accounting, and uncertainty-validation guidance.
-- Add bounded state panels with canonical binned metrics, exact point-observation transitions, absorbing terminal suffix handling, baseline/per-origin timing, ordered metadata, and positive output-budget enforcement.
-- Add runtime event-time selectors and conservative re-anchoring, bounded event-sequence provenance with Arrow round-trip, and a local DuckDB sequence example.
-- Add canonical schedule-based sequential designs, distinct initiation/adoption history declarations, and event-relative panels with typed parent-period identity and Arrow provenance.
-- Add exact-t0 sequential treatment classification with complete declared history checks and refusal of later initiation under sustained no-initiation strategies; add hashed matched-t0 policies, deterministic contemporaneous risk-set sampling, exact inclusion-probability roles, and sampling provenance round trips.
-- Apply sequential anticipation to control initiation-risk and history horizons, retaining the declared interval in typed Arrow panel provenance.
-- Keep sequential source coverage and no-outcome fallback horizons aligned with anticipation buffers.
-- Correct matched-t0 control-only ranking, zero-treated strata, name-collision refusals, UTC treatment comparisons, fact-row initiation, roster observation bounds, eligibility-scoped follow-up checks, and treatment-history coverage through outcome follow-up; align the integration fixture and public example with declared history.
-- Add trial-weighted panel AIPW with trial-specific nuisance fits, unit-grouped cross-fitting, sampled-population refusal, and unit-cluster cross-fit inference.
-- Add canonical serialized calendar-comparison specifications with hashed control modes and reference/anticipation conflict refusals.
-- Compile roster-backed calendar comparisons with never-treated and admissible not-yet-treated controls, reference/anticipation eligibility, and portable Frame provenance.
-- Keep stacked comparison output restricted to compiled eligibility and label never-adopter controls explicitly as untreated.
-- Distinguish late-known treatment initiation from never-treated controls, require per-unit treatment-history bounds, and refuse requested comparison periods absent from the schedule.
-- Add weighted stacked cohort-time effects with target/cohort aggregation weights, joint unit-cluster covariance, sampled-population refusal, and an explicit naive staggered-TWFE warning.
-- Refuse sampled stacked analysis populations when either typed sampling metadata or the legacy `weight_kind="sampled_control"` marker is present.
-- Validate actual initiation timing and exclusive outcome-window coverage; refuse incomplete treated/admissible-control pairs, preserve numeric precision and finite-value refusals, safely scale large weights and means, and use tail-stable confidence quantiles.
-- Add evidence-only joint pretrend, placebo, and negative-control diagnostics with explicit low-power/unavailable status and non-identification caveats.
-- Allow explicitly declared pre-treatment comparison periods before the anticipation window, making compiled stacked results usable by the joint pretrend diagnostic.
-- Refuse negative stacked comparison windows whose outcome endpoints reach actual treated initiation/anticipation; require full-schedule treatment history for never-treated controls.
-- Preserve the inclusive-history refusal at an exact no-outcome anticipation cutoff, alongside full schedule-end coverage for never-treated panels.
-- Extend the independent simulator with repeated-trial potential outcomes, trial-specific assignment and baseline profiles, overlap regimes, heterogeneous cohort-time effects, and population/cohort truth; use it directly in the calibration harness.
-- Expand independent pandas panel-row references for canonical sequential/calendar rows, event-relative windows and cutoffs, and exact matched-t0 inclusion probabilities; add a temporary-output, smoke-only calibration-harness mode.
-- Predeclare eight stochastic heterogeneous stacked CATT recovery cells with per-cohort recovery, inference gates, per-cell JSON, and a deterministic fast smoke.
-- Gate CATT calibration on both cohort-specific effects and their normalized aggregate uncertainty.
-- Normalize calendar cohort timestamps to aware UTC instants, use exact timestamp ordering for sequential adoption history, validate treatment/cohort source units, and stabilize stacked weighted means and outcome-only risk horizons.
-- Select exact first eligible event occurrences with stable tie ordering, candidate retention and deferred event-ID integrity checks.
-- Compile bounded additive LTV age trajectories with null-preserving cumulative values and recipe-backed cohort summaries under the verified execution snapshot, with explicit cutoff completeness, denominators, operation provenance and output budgets.
-- Compile bounded time-to-event histories with prevalent-event exclusion, explicit observation/censor bounds, optional delayed entry and independent administrative cutoffs; compute Arrow-only Kaplan–Meier curves with tied-time ordering, Greenwood variance and exact nanosecond elapsed-time support.
-- Refit earlier-only measurement-time survival backtests with exact per-row cutoff recensoring and explicit retrospective-effective-time labeling; refuse unsupported recorded-at claims and export versioned Arrow surrogate projections with provenance.
-- Normalize survival timestamps independently of DuckDB session timezone while preserving nanosecond event ties through Arrow estimation.
-- Mask post-cutoff failure timestamps, preserve subsecond censor cutoffs, retain structural survival axes and projected typed metadata, and reserve internal timestamp aliases while supporting wide coverage bounds.
-- Preserve native-precision coverage bounds for wide timestamp histories, avoid Python datetime conversion when recensoring Arrow timestamps, and retain support metadata for automatically included outcomes.
-- Compare backtest cutoffs at exact microsecond precision per cutoff; preserve mixed-resolution censor values and avoid out-of-range nanosecond casts for wide cutoffs.
-- Preserve fractional cohort means and checked-float reduction certificates, widen second-resolution censor outputs for fractional cutoffs, bound wide compiler cutoffs before nanosecond casts, and retain age/denominator axes in cohort surrogate exports.
-- Preserve event-relative timing provenance and support columns through LTV and survival materialization and reject unsupported string shapes during validation.
-- Add durable runtime run status, bounded resumable event pages, cancellation state and owner-local IPC status/cancel/request-key lookup.
-- Persist destination-scoped request keys for response-loss replay, expose the explicit runtime Python facade, and reconcile expired owner runs on restart.
-- Add `terrine plan|run|status|events|cancel` commands over owner IPC with destination-scoped request-key replay.
-- Document Model/Design materialization plans, owner CLI workflows, exact-generation reads, and backend consistency limits.
-- Add an opt-in OpenTelemetry lifecycle projection with redacted attributes and bounded nonblocking export.
-- Add canonical Decimal exact quantiles, explicit DataSketches t-digest quantile expressions, and DuckDB HLL approximate-distinct expressions; retain exact quantile as default and publish approximation algorithm/version/error metadata through Frame Arrow serialization.
-- Execute t-digest sidecars from canonical-ordered bounded Arrow batches on cross-section Frames, refuse unavailable sketch extras before source queries, and refuse unsupported runtime composition with an ordinary-Frame route.
-- Bound repeated nonadditive windows with sparse time-bucket joins and metadata-derived candidate multipliers; preserve exact range/reference parity and refuse unknown or excessive anchor overlap before execution.
-- Propagate verified anchor/prefix substitutions through Sequential and EventPanel compilation, retain range-bound metadata across specialized shapes, and refuse unsupported substitutions before source resolution.
-- Reuse bounded sparse range joins for finite/open retention occurrence bands, require a known source span for bounded open horizons, and preserve exact incomplete-history reasons.
-- Add immutable named Design retention outcomes with canonical JSON/YAML, independent occurrence IDs, bounded finite/open follow-up, exact threshold bands, unavailable-label reasons and shape-aware treatment horizons.
-- Share calendar-comparison treatment-history endpoints between roster validation and control selection, including open retention cutoffs and anticipation, while accepting observation ending exactly at an exclusive horizon.
-- Add metadata-only per-phase runtime scan evidence and independent row/output forecasts, fingerprinted schema-2 plans, owner reauthorization of strict bounds/caps, durable retry allowances, and separately observed completed-artifact costs; preserve native DuckDB strict-unknown refusals.
-- Add version-2 bounded synthetic event/anchor/roster/correction streams, independent exact histogram references, opt-in real compiler/retained-runtime DuckDB benchmarks, sanitized measurements, and an explicitly owner-gated live warehouse tier without running paid resources.
-- Preserve sanitized scan/spend observations after authorized live workload failures and cleanup, retain over-cap evidence in immutable error context, and aggregate failed/refused benchmark records without inventing unavailable measurements.
-- Preserve native nanosecond range and finite-retention endpoints under nonzero elapsed offsets, including exact follow-up completeness and virtual endpoints beyond native timestamp storage.
-- Add owner-planned Airflow and Dagster orchestration triggers with durable invocation replay, partition-scoped snapshots, and recipe-routed execution.
-- Add a Dagster same-root fenced-retry acceptance test and dbt Core after-build recipe with reviewed manifest relations, a local DuckDB owner handoff, and two-build snapshot replay coverage.
-- Document optional orchestrator installation, owner-side planning/status limits, retry semantics, partition scope, and dbt stop/build/restart lifecycle.
-- Demonstrate real Model/Design saved-recipe execution from retained DuckDB inputs, exact-generation reads, operator-declared corrections, and same-snapshot clean-rebuild parity; cover partition retries and owner-held lost-response lookup in warehouse integration tests.
-- Validate orchestrator row-dependent gates on reopened pinned snapshots with only selected sources and units, bind current published generations case-insensitively from the authoritative manifest, and wait through Airflow cancellation requests while returning final generation metadata; cover terminal cancellation at adapter boundaries.
-- Use the built-in Design executor for owner-planned Dagster partitions and dbt build cycles; verify compiled values and exact-generation metadata, and refuse unknown eligibility on pinned inputs before staging or publication.
-- Derive runtime layer identities from retained input schemas and execute roster-only owner recipes without accessing unused fact relations or exporting redundant roster payloads.
-- Unify retained shape admission and saved-recipe identity with verified scan evidence, while exposing snapshot capture accounting alongside separately observed completed-task artifacts.
-- Reuse verified scheduled anchors and additive prefixes in binned and observed StatePanel composition, including terminal metric endpoints and baseline features, without discarding supplied logical inputs.
+- Execute in owned private transaction sessions or retained immutable inputs;
+  keep caller connections open and preserve exact UTC output instants under
+  non-UTC SQL sessions.
+- Save destination-bound plans and track authoritative run status, bounded event
+  pages, request-key replay, cancellation requests, renewable fences and atomic
+  generation publication through Python, CLI and owner-local IPC.
+- Keep scan estimates, owner authorization and observed completed-artifact costs
+  distinct. Unknown strict scan bounds refuse before source work; output limits
+  abort rather than returning truncated success.
+- Provide optional Airflow/Dagster triggers and a local dbt Core after-build
+  recipe over the same owner planning, execution and publication contracts.
+- Preserve Arrow metadata through optional pandas/Polars conversions. Add
+  preflight-backed DoubleML, DoWhy and same-connection duckreg recipes, and
+  lifelines/diff-diff dataset conversions with real integration examples.
+- Keep increment as an optional semantic-definition adapter with explicit
+  compatibility and shared-dataset evidence, never a native dependency.
+- Offer separately authorized dataset agent discovery, Design/recipe edits,
+  preparation, staging/refresh, pinned run reads, redacted previews and exports.
+  Bound requests and budgets without exposing raw SQL or granting permissions
+  through inspection. Telemetry is an optional owner-configured projection.
+
+### Correctness and support
+
+- Preserve integer/decimal scale and checked Float64 arithmetic; reject
+  unrepresentable temporal/numeric results instead of narrowing or overflowing.
+- Retain snapshot-scoped integrity, exact boundary, source-identity and treatment
+  history checks across ordinary, retained and downstream export paths.
+- Share export refusals for incomplete outcomes, unknown eligibility, missing
+  repeated-unit clusters and grace-defined baseline treatment. DoWhy additionally
+  refuses repeated units and declared weights rather than forwarding ignored
+  arguments.
+- Keep implementation records out of ordinary public facades and isolate all
+  optional backend, dataframe, orchestration and modeling imports.
+- Document capability/compatibility evidence, inherent information limits,
+  recovery routes and data residency. Supply independent expected-row worlds,
+  bounded local scale measurements and an owner-gated live warehouse tier.
+- Terrine delivers datasets and descriptive summaries, not native effect
+  estimators, inferential diagnostics, survival curves or causal guarantees.
