@@ -22,19 +22,26 @@ def test_fitted_transform_reopens_without_training_rows_and_survives_publication
         con = ibis.duckdb.connect(str(Path(training_root) / "training.duckdb"))
         try:
             model = create_model(con)
-            frame = design().build(model).training_set(
-                label="label", split=TimeSplit(
-                    train_until="2025-01-06", validation_until="2025-01-07"
+            frame = (
+                design()
+                .build(model)
+                .training_set(
+                    label="label",
+                    split=TimeSplit(train_until="2025-01-06", validation_until="2025-01-07"),
                 )
             )
             fitted = frame.fit_winsorization("value", lower="0.25", upper="0.75")
             staged = frame.winsorize(fitted).stage("training", budget=Budget(strict_scan=False))
             stored = next(column for column in staged.manifest.columns if column.name == "value")
-            assert stored.metadata["transformation"]["fit"]["recipe_hash"] == _recipe_for(frame).digest
+            assert (
+                stored.metadata["transformation"]["fit"]["recipe_hash"] == _recipe_for(frame).digest
+            )
             assert staged.manifest.recipe.transforms == (fitted,)
-            scoring = design().snapshot(
-                model, as_of="2025-01-10", features=("value",), eligibility={}
-            ).winsorize(fitted)
+            scoring = (
+                design()
+                .snapshot(model, as_of="2025-01-10", features=("value",), eligibility={})
+                .winsorize(fitted)
+            )
             (scoring_root / "training.json").write_bytes(_recipe_for(frame).canonical_json())
             (scoring_root / "scoring.json").write_bytes(_recipe_for(scoring).canonical_json())
             (scoring_root / "transform.json").write_bytes(fitted.to_json())
@@ -42,7 +49,10 @@ def test_fitted_transform_reopens_without_training_rows_and_survives_publication
             con.disconnect()
     assert not Path(training_root).exists()
     result = subprocess.run(
-        [sys.executable, "-c", r'''
+        [
+            sys.executable,
+            "-c",
+            r"""
 import json, sys
 from pathlib import Path
 import ibis
@@ -70,16 +80,20 @@ try:
     model = bind_model(con, scoring=True)
     frame = recipe.build(model)
     output = frame.materialize()
-    assert [str(value) for value in output.table.sort_by('unit')['value'].to_pylist()] == ['5', '15']
+    values = output.table.sort_by('unit')['value'].to_pylist()
+    assert [str(value) for value in values] == ['5', '15']
     dataset = frame.stage('scoring_frozen', budget=Budget(strict_scan=False))
-    streamed = MaterializedFrame.from_arrow(pa.Table.from_batches(list(dataset.to_arrow_batches(batch_size=1))))
+    batches = list(dataset.to_arrow_batches(batch_size=1))
+    streamed = MaterializedFrame.from_arrow(pa.Table.from_batches(batches))
     assert streamed.table.sort_by('unit').equals(output.table.sort_by('unit'))
     assert streamed.columns == output.columns
     con.raw_sql("UPDATE events SET amount=CASE user_id WHEN 'a' THEN 5000 ELSE -100 END")
     refreshed = dataset.refresh(model, changes=ChangeSet((Change('update','events'),), 'operator'),
                                 budget=Budget(strict_scan=False))
-    changed = MaterializedFrame.from_arrow(pa.Table.from_batches(list(refreshed.to_arrow_batches(batch_size=1))))
-    assert [str(value) for value in changed.table.sort_by('unit')['value'].to_pylist()] == ['15', '5']
+    batches = list(refreshed.to_arrow_batches(batch_size=1))
+    changed = MaterializedFrame.from_arrow(pa.Table.from_batches(batches))
+    values = changed.table.sort_by('unit')['value'].to_pylist()
+    assert [str(value) for value in values] == ['15', '5']
     assert refreshed.manifest.recipe.digest == dataset.manifest.recipe.digest
     assert refreshed.manifest.recipe.transforms == (fitted,)
     assert 'labels' not in con.list_tables()
@@ -87,11 +101,19 @@ try:
                       'rows': output.table.num_rows, 'changed_rows': changed.table.num_rows}))
 finally:
     con.disconnect()
-''', str(scoring_root)],
-        cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True,
-        timeout=HANG_GUARD_SECONDS, check=False,
+""",
+            str(scoring_root),
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=HANG_GUARD_SECONDS,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout.strip().splitlines()[-1]) == {
-        "lower": "5", "upper": "15", "rows": 2, "changed_rows": 2,
+        "lower": "5",
+        "upper": "15",
+        "rows": 2,
+        "changed_rows": 2,
     }
