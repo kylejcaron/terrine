@@ -4,7 +4,7 @@ Terrine builds immutable datasets from a `Design` and a bound `Model`; it does n
 
 ## Training data
 
-Select outcome labels and, optionally, a subset of declared features. The default incomplete-label policy drops rows with unavailable or known-null labels and records excluded reasons; `keep` preserves null values and their reason metadata. A split policy is not silently applied by this view: use the explicit split-assignment API or omit `split`.
+Select outcome labels and, optionally, a subset of declared features. The default incomplete-label policy drops rows with unavailable or known-null labels; `keep` preserves null values and their reason metadata. `training.materialize()` records excluded-label reason counts in its provenance; staging the resulting view does not copy those counts into the dataset manifest. A split policy is not silently applied by this view: use the explicit split-assignment API or omit `split`.
 
 ```python
 frame = design.build(model)
@@ -41,7 +41,7 @@ A scoring snapshot does not establish historical recorded-at availability. Share
 
 ## Reopening a pinned dataset
 
-Keep the `DatasetManifest` with the consumer-owned export or persist it using the owner's configured immutable recipe storage. Reopen the exact committed generation rather than consulting a moving destination:
+Keep the `DatasetManifest` with the consumer-owned export, or persist `DatasetManifest.to_json()` separately from the immutable `DatasetRecipe` stored by the runtime. Reopen the exact committed generation rather than consulting a moving destination:
 
 ```python
 reopened = Dataset.from_manifest(dataset.manifest, con=model.con)
@@ -49,6 +49,6 @@ for batch in reopened.to_arrow_batches():
     consume(batch)
 ```
 
-The manifest binds the canonical construction recipe, selected view, generation, schema, and output checksums. Reopening verifies the committed publication, partition checksums, physical schema, and row count before returning the reference. Credentials, live connections, SQL, and row payloads are not stored in the recipe.
+The manifest binds the canonical construction recipe, selected view, generation, schema, and output checksums. Reopening verifies the committed publication, partition checksums, physical schema, and row count before returning the reference. `DatasetRecipeStore` stores a `DatasetRecipe`, not the manifest; restore a serialized manifest with `DatasetManifest.from_json()` and pass it to `Dataset.from_manifest()`. Credentials, live connections, SQL, and row payloads are not stored in the recipe.
 
 Parquet export currently provides local filesystem publication. A URI alone does not establish an object-store atomicity or durability contract; use only a storage backend whose publication and recovery behavior has been independently verified.
