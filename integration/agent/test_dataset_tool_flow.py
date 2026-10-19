@@ -55,6 +55,8 @@ def test_restricted_metadata_evaluations(case, tmp_path):
         if case.get("exhaust_requests"):
             tools = DatasetTools(model, replace(policy, max_requests=1), namespace="agent")
             assert tools.inspect_catalog().status == "ok"
+            for _ in range(2):
+                assert tools.inspect_catalog().code == case["code"]
         operation = case["operation"]
         if operation == "validate_design":
             result = tools.validate_design(json.dumps(payload))

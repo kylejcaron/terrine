@@ -82,15 +82,21 @@ integrity checks can still scan upstream data.
 
 ## Restricted dataset tools
 
-`terrine.agent` exposes owner-configured dataset metadata and typed Design tools.
-Use `AgentPolicy` and `DatasetTools` to discover allowlisted semantic descriptors,
-retrieve a tagged Design schema and editable example, propose canonical changes,
-validate metadata contracts, and save/load named definitions under an owner root.
-Inspection and validation do not grant source preparation, dataset writes,
-exports, row preview, run reads or cancellation. Responses omit source rows,
-raw SQL and connection details; denied calls share the session request cap.
-See [dataset agent tools](docs/guides/dataset-agent-tools.md) for permissions,
-privacy boundaries and refusal routes. MCP transport is separately owner-gated.
+`terrine.agent` exposes owner-configured dataset discovery, typed Design and
+training/scoring recipe edits, metadata-only cost preview, immutable execution
+receipts, pinned staging/refresh, separately authorized Parquet exports and
+bounded redacted previews. `AgentPolicy` independently controls preparation,
+writes, exports, row preview, run reads and cancellation; inspection never grants
+these operations. Runtime status and bounded events resolve the saved owner
+invocation before access. Responses omit raw SQL, source snapshots and connection
+details, and all calls share the session request cap.
+
+Run the local restricted training workflow with
+`uv run python examples/dataset_agent_tools.py`. It prints safe aggregate metadata
+only. See [dataset agent tools](docs/guides/dataset-agent-tools.md) for exact
+permissions, unknown scan-cost behavior, privacy boundaries and refusal routes.
+Optional MCP transport remains owner-gated and is not installed or exposed by
+this Python interface.
 
 ## Durable materialization runtime
 

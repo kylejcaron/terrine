@@ -12,6 +12,31 @@ never grants another. Request budgets can only tighten numeric owner limits;
 owner-required strict scan policy cannot be disabled. Output limits do not
 bound source scan work, and an unknown scan cost is not a zero cost.
 
+| Operations | Required grant |
+| --- | --- |
+| `inspect_catalog`, `list_capabilities`, `get_design_schema`, `get_dataset_recipe_schema` | `inspect` |
+| `design_example`, proposals, validation, named save/load, metadata-only `preview_dataset` | `validate` |
+| `prepare_dataset`, `prepare_refresh` | `prepare` |
+| `execute_plan`, `stage`, `refresh` | `write` |
+| `export_parquet` | `export`, plus an exact `allowed_exports` path |
+| `preview_rows`, nonzero preview `bounded_count` | `preview`, plus column/count limits |
+| `get_run_status`, `get_run_events` | `read` |
+| `request_cancel` | `cancel` |
+
+Named save/load additionally requires `design_root`; it does not authorize
+dataset writes. Inspection and validation default to enabled; other grants
+default to disabled. Resource lookups also require the exact owner source,
+catalog, destination and model bindings.
+
+Run `uv run python examples/dataset_agent_tools.py` for a local owner-created
+training recipe, metadata preview, explicit preparation/write grants, response
+replay, redacted row preview, corrected refresh and separately authorized
+Parquet export. Only safe counts and workflow flags are printed.
+
+The local adversarial cases in `evals/agent_dataset_tools.yaml` run through
+`uv run pytest integration/agent -q`. These exercise actual DuckDB
+preparation/publication, not just JSON Schema validation.
+
 ## Metadata and Design workflow
 
 Start with `inspect_catalog`, `list_capabilities`, `get_design_schema` and
@@ -62,8 +87,9 @@ or phase fields, not arbitrary runtime payloads. Cancellation returns the
 runtime's actual disposition and durable state; a cancellation request is not
 reported as completed cancellation or successful publication.
 
-The optional MCP transport and external object-store destinations require
-separate owner authorization and are not included in this Python interface.
+The optional MCP transport, SDK dependency extra and adapter tests remain
+owner-gated and unimplemented. No MCP installation command or registration is
+advertised. External object-store destinations are likewise not included.
 
 ## Owner-prepared execution
 
@@ -106,11 +132,11 @@ column roles/types with completeness/reason-column links. They omit internal
 recipes, coverage literals, snapshots, SQL, database paths and arbitrary Frame
 metadata. Lookups compare the complete reference to persisted owner metadata and
 authorize the operation before opening the pinned dataset.
+
 `Dataset.open_generation` reopens this trusted owner publication metadata without
 rehashing all output rows. Integrity verification at staging and explicit
 `Dataset.from_manifest` reopening remains unchanged. Bounded previews trust the
 owner's fenced immutable publication rather than performing an unbounded scan.
-
 
 `export_parquet` additionally requires `export=True` and an exact resolved path in
 `allowed_exports`. An allowed runtime table is not an export grant. Export uses
