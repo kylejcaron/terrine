@@ -161,6 +161,67 @@ def test_state_panel_training_view_hashes_baseline_and_prior_state(native_inputs
     assert result.provenance.dataset_view is not None
 
 
+def test_state_panel_feature_hash_includes_state_definition(native_inputs):
+    from dataclasses import replace
+
+    from terrine.frame import _feature_definition_hash
+    from terrine.model import Model
+    from terrine.spec import BinnedMetricState, Schedule, StatePanel
+
+    frame = _frame(native_inputs)
+    model = frame._model
+    state = BinnedMetricState("sessions", (0,), ("none", "some"))
+    design = Design(
+        "user", Schedule("1d", "2025-01-03", "2025-01-05"), shape=StatePanel(state, max_periods=2)
+    )
+    altered_metrics = dict(model.metrics)
+    altered_metrics["sessions"] = replace(model.metrics["sessions"], kind="conversion")
+    altered_model = Model(
+        catalog=model.catalog,
+        con=model.con,
+        readiness=model.readiness,
+        units=model.units,
+        event_ids=model.event_ids,
+        sources=model.sources,
+        metrics=altered_metrics,
+        resolver=model._resolver,
+        input_binding=model.input_binding,
+    )
+
+    assert _feature_definition_hash(design, ("from_state",), model) != _feature_definition_hash(
+        design, ("from_state",), altered_model
+    )
+
+
+def test_state_panel_feature_hash_distinguishes_baseline_evaluation(native_inputs):
+    from terrine.frame import _feature_definition_hash
+    from terrine.spec import BinnedMetricState, Schedule, StatePanel
+
+    frame = _frame(native_inputs)
+    model = frame._model
+    expression = agg("sessions", window=("-1d", "0d"))
+    schedule = Schedule("1d", "2025-01-03", "2025-01-05")
+    row_design = Design(
+        "user",
+        schedule,
+        features={"sessions_at_start": expression},
+        shape=StatePanel(BinnedMetricState("sessions", (0,), ("none", "some")), max_periods=2),
+    )
+    baseline_design = Design(
+        "user",
+        schedule,
+        shape=StatePanel(
+            BinnedMetricState("sessions", (0,), ("none", "some")),
+            max_periods=2,
+            baseline_features={"sessions_at_start": expression},
+        ),
+    )
+
+    assert _feature_definition_hash(
+        row_design, ("sessions_at_start",), model
+    ) != _feature_definition_hash(baseline_design, ("sessions_at_start",), model)
+
+
 def test_training_view_does_not_claim_unapplied_split(native_inputs):
     from terrine.dataset.splits import TimeSplit
 

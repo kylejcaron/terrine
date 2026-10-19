@@ -142,18 +142,47 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
     selected_records: dict[str, object] = {}
     for name in features:
         expression = design.features.get(name)
+        evaluation_reference = "row_t0"
         if expression is not None:
             selected_records[name] = record["features"][name]
         elif isinstance(design.shape, StatePanel):
             if name in design.shape.baseline_features:
                 selected_records[name] = record["shape"]["baseline_features"][name]
                 expression = design.shape.baseline_features[name]
+                evaluation_reference = "panel_start"
             elif name == "from_state":
+                state = design.shape.state
                 selected_records[name] = {"prior_state": record["shape"]["state"]}
+                if isinstance(state, BinnedMetricState):
+                    metric = model.metrics.get(state.metric)
+                    semantic[name] = {
+                        "state": _definition_record(state),
+                        "metric": _definition_record(metric) if metric is not None else None,
+                    }
+                else:
+                    semantic[name] = {
+                        "state": _definition_record(state),
+                        "property_bindings": [
+                            {
+                                "source": source_name,
+                                "relation": _definition_record(source.relation),
+                                "day_boundary": source.day_boundary,
+                                "timestamp_column": source.timestamp_column,
+                                "binding": _definition_record(source.properties[state.property]),
+                            }
+                            for source_name, source in sorted(model.sources.items())
+                            if state.property in source.properties
+                        ],
+                    }
             else:
                 raise ValueError(f"Unknown selected feature {name!r}")
         else:
             raise ValueError(f"Unknown selected feature {name!r}")
+        if expression is not None:
+            selected_records[name] = {
+                "expression": selected_records[name],
+                "evaluation_reference": evaluation_reference,
+            }
         resolved: dict[str, object] = {}
         if isinstance(expression, MetricAgg):
             metric = model.metrics.get(expression.metric)
@@ -183,7 +212,8 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
                 for source_name, source in sorted(model.sources.items())
                 if expression.fact in source.facts
             ]
-        semantic[name] = resolved
+        if name not in semantic:
+            semantic[name] = resolved
     payload = {
         "unit": record["unit"],
         "unit_binding": _definition_record(model.units.get(design.unit)),
