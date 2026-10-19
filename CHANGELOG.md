@@ -14,6 +14,7 @@
 - Snapshot-scoped warehouse export checks and exact per-reason exclusion counts; DoWhy refuses repeated-unit and declared-weight datasets rather than forwarding ignored arguments.
 - Add distinct lifelines KM-array and feature-only Cox-dataframe hand-offs, preserving elapsed entry times, declared weights/clusters, and exact exclusions; risk-set conversion retains coarsened counts and refuses delayed entry or incomplete trajectories.
 - Add diff-diff first-treatment encoding for observed persistent-adoption panels, with never-treated zero, preserved calendar gaps, and treatment-history validation before outcome exclusions; exercise Callaway–Sant'Anna, Sun–Abraham and event studies.
+- Add exact fixed and train-only fitted post-aggregation winsorization with immutable typed limits, training recipe/snapshot/split identity, preserved null reasons, and frozen recipe/manifest reuse during scoring and refresh.
 
 ## Fixed
 - Keep agent discovery schemas compatible with canonical temporal Design nodes, derive editable examples for rosterless event models, and preserve destination aliases through request JSON round trips.
@@ -37,6 +38,8 @@
 - Keep state-classification null assertions valid across the supported pandas 2.x and 3.x representations.
 - Retain separate fixed-baseline and scheduled prefix resolutions for subdaily state panels, including frozen-input reuse after raw-source changes.
 - Preserve sequential and event-panel shape provenance when publishing retained datasets from saved plans.
+- Include resolved metric/source bindings for nonadditive features in training/scoring identity; frozen winsorization refuses same-typed quantile or distinct-count features rebound to another fact.
+- Include every nested EventTime selector's resolved fact/source, label-property history, and event-identity bindings in shared training/scoring feature hashes; frozen limits refuse selector rebinding even when the outer feature type is unchanged.
 
 ## Removed
 - Native treatment-effect estimators, inferential/propensity diagnostics, and simulation truth/calibration claims. Terrine now delivers datasets and descriptive summaries; downstream libraries own estimation.

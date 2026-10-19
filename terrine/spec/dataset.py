@@ -14,6 +14,7 @@ from terrine.errors import RefusalSpec, freeze, thaw
 from terrine.spec.design import Design
 from terrine.spec.io import canonical_json as design_json
 from terrine.spec.io import from_json as design_from_json
+from terrine.spec.transforms import Winsorization
 
 __all__ = [
     "DatasetRecipe",
@@ -43,8 +44,16 @@ class DatasetRecipe:
     schema_version: int
     base_design: Design
     view: Any
+    transforms: tuple[Winsorization, ...]
 
-    def __init__(self, *, schema_version: int, base_design: Design, view: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        schema_version: int,
+        base_design: Design,
+        view: Any = None,
+        transforms: tuple[Winsorization, ...] = (),
+    ) -> None:
         if schema_version != 1 or isinstance(schema_version, bool):
             raise INVALID_RECIPE.error(reason="unsupported schema version")
         if not isinstance(base_design, Design):
@@ -63,9 +72,19 @@ class DatasetRecipe:
                 view = freeze(view)
             except (TypeError, ValueError) as error:
                 raise INVALID_RECIPE.error(reason="view contains a runtime value") from error
+        transforms = tuple(transforms)
+        if any(
+            not isinstance(item, Winsorization) or item.source_type is None for item in transforms
+        ):
+            raise INVALID_RECIPE.error(
+                reason="transforms must be typed frozen winsorization records"
+            )
+        if len({item.column for item in transforms}) != len(transforms):
+            raise INVALID_RECIPE.error(reason="duplicate transformed columns")
         object.__setattr__(self, "schema_version", 1)
         object.__setattr__(self, "base_design", base_design)
         object.__setattr__(self, "view", view)
+        object.__setattr__(self, "transforms", transforms)
 
     def canonical_json(self) -> bytes:
         payload = {
@@ -73,6 +92,8 @@ class DatasetRecipe:
             "base_design": json.loads(design_json(self.base_design))["design"],
             "view": thaw(self.view),
         }
+        if self.transforms:
+            payload["transforms"] = [item.to_record() for item in self.transforms]
         return _canonical(payload)
 
     @property
@@ -80,36 +101,37 @@ class DatasetRecipe:
         return hashlib.sha256(self.canonical_json()).hexdigest()
 
     def build(self, model: Any):
-        """Reconstruct the recorded view without changing its scoring instant."""
+        """Reconstruct the recorded view and frozen transforms without refitting."""
         frame = self.base_design.build(model)
         view = thaw(self.view)
-        if view is None:
-            return frame
-        if view["kind"] == "training":
+        if view is not None and view["kind"] == "training":
             split = view.get("split")
             if split is not None:
                 from importlib import import_module
 
                 split = import_module("terrine.dataset.splits").policy_from_record(split)
-            return frame.training_set(
+            frame = frame.training_set(
                 label=tuple(view["labels"]),
                 features=tuple(view["features"]),
                 incomplete_labels=view["incomplete_labels"],
                 split=split,
             )
-        from datetime import datetime
+        elif view is not None:
+            from datetime import datetime
 
-        from terrine.frame import _ScoringView
+            from terrine.frame import _ScoringView
 
-        object.__setattr__(
-            frame,
-            "_scoring_view",
-            _ScoringView(
-                view["parent_design_hash"],
-                tuple(view["features"]),
-                datetime.fromisoformat(view["as_of"]),
-            ),
-        )
+            object.__setattr__(
+                frame,
+                "_scoring_view",
+                _ScoringView(
+                    view["parent_design_hash"],
+                    tuple(view["features"]),
+                    datetime.fromisoformat(view["as_of"]),
+                ),
+            )
+        for transform in self.transforms:
+            frame = frame.winsorize(transform)
         return frame
 
     @classmethod
@@ -118,7 +140,7 @@ class DatasetRecipe:
             payload = json.loads(
                 value, object_pairs_hook=_unique_pairs, parse_constant=_bad_constant
             )
-            if not isinstance(payload, dict) or set(payload) != {
+            if not isinstance(payload, dict) or set(payload) - {"transforms"} != {
                 "schema_version",
                 "base_design",
                 "view",
@@ -129,7 +151,14 @@ class DatasetRecipe:
             design = design_from_json(
                 _canonical({"schema_version": 1, "design": payload["base_design"]})
             )
-            return cls(schema_version=1, base_design=design, view=payload["view"])
+            return cls(
+                schema_version=1,
+                base_design=design,
+                view=payload["view"],
+                transforms=tuple(
+                    Winsorization.from_record(item) for item in payload.get("transforms", [])
+                ),
+            )
         except Exception as error:
             if getattr(error, "code", None) == INVALID_RECIPE.code:
                 raise

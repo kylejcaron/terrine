@@ -7,6 +7,7 @@ import json
 import warnings
 from dataclasses import dataclass, replace
 from datetime import datetime
+from decimal import Decimal
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
@@ -35,6 +36,8 @@ if TYPE_CHECKING:
     from terrine.compile.columns import CompiledStudy
     from terrine.model import Model
     from terrine.spec.design import Design
+    from terrine.spec.expressions import EventTime
+    from terrine.spec.transforms import Winsorization
 
 __all__ = ["Frame", "CohortTable"]
 
@@ -141,9 +144,28 @@ def _metric_definition(metric: object, model: Model) -> object:
     }
 
 
+def _selector_definition(selector: EventTime, model: Model) -> object:
+    fact = model.catalog.facts[selector.fact]
+    return {
+        "fact": _definition_record(fact),
+        "source": _definition_record(model.sources[fact.source]),
+        "event_id": model.event_ids.get(fact.source),
+        "relative_to": None
+        if selector.relative_to is None
+        else _selector_definition(selector.relative_to, model),
+    }
+
+
 def _feature_definition_hash(design: Design, features: tuple[str, ...], model: Model) -> str:
     from terrine.compile._asof import resolve_attribute
-    from terrine.spec.expressions import AttributeAsOf, EventTime, MetricAgg
+    from terrine.spec.expressions import (
+        ApproxMetricDistinct,
+        ApproxMetricQuantile,
+        AttributeAsOf,
+        EventTime,
+        MetricAgg,
+        MetricQuantile,
+    )
     from terrine.spec.io import canonical_json
 
     record = json.loads(canonical_json(design))["design"]
@@ -193,7 +215,9 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
                 "evaluation_reference": evaluation_reference,
             }
         resolved: dict[str, object] = {}
-        if isinstance(expression, MetricAgg):
+        if isinstance(
+            expression, (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct)
+        ):
             metric = model.metrics.get(expression.metric)
             if metric is not None:
                 resolved["metric"] = _metric_definition(metric, model)
@@ -216,18 +240,13 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
                     "validity": _definition_record(dimension.validity),
                 },
             }
-        elif isinstance(expression, EventTime):
-            resolved["facts"] = [
-                {
-                    "source": source_name,
-                    "relation": _definition_record(source.relation),
-                    "day_boundary": source.day_boundary,
-                    "timestamp_column": source.timestamp_column,
-                    "column": source.facts[expression.fact],
-                }
-                for source_name, source in sorted(model.sources.items())
-                if expression.fact in source.facts
-            ]
+        selector = (
+            expression
+            if isinstance(expression, EventTime)
+            else getattr(expression, "relative_to", None)
+        )
+        if selector is not None:
+            resolved["selector"] = _selector_definition(selector, model)
         if name not in semantic:
             semantic[name] = resolved
     payload = {
@@ -358,6 +377,7 @@ class Frame:
     _compiled: CompiledStudy
     _training_view: _TrainingView | None
     _scoring_view: _ScoringView | None
+    _winsorizations: tuple[Winsorization, ...]
 
     def __init__(self, design: Design, model: Model) -> None:
         from terrine.compile.dispatch import compile_design
@@ -367,16 +387,42 @@ class Frame:
         object.__setattr__(self, "_compiled", compile_design(design, model))
         object.__setattr__(self, "_training_view", None)
         object.__setattr__(self, "_scoring_view", None)
+        object.__setattr__(self, "_winsorizations", ())
 
     def _active_compiled(self, compiled: CompiledStudy | None = None) -> CompiledStudy:
         active = self._compiled if compiled is None else compiled
-        if self._training_view is None:
-            return active
-        return _apply_training_view(active, self._training_view)
+        if self._training_view is not None:
+            active = _apply_training_view(active, self._training_view)
+        return self._with_winsorization_metadata(active)
+
+    def _with_winsorization_metadata(self, compiled: CompiledStudy) -> CompiledStudy:
+        if not self._winsorizations:
+            return compiled
+        transforms = import_module("terrine.dataset.transforms")
+        columns = dict(compiled.columns)
+        for transform in self._winsorizations:
+            if transform.column not in columns:
+                raise transforms.identity_error(transform.column)
+            columns[transform.column] = replace(
+                columns[transform.column], transformation=transform.to_record()
+            )
+        return replace(compiled, columns=columns)
+
+    def _winsorize_output(self, table):
+        if not self._winsorizations:
+            return table
+        return import_module("terrine.dataset.transforms").apply_winsorization(
+            table, self._winsorizations
+        )
 
     @property
     def expr(self):
         """Return the Ibis graph; direct execution bypasses all export safeguards."""
+        if self._winsorizations:
+            raise RefusalSpec(
+                "terrine.transform.winsorization_expr_unsupported",
+                "Post-aggregation winsorization requires guarded Arrow output. {route}",
+            ).error(route="Use Frame.materialize(), Frame.stage(), or a Dataset export.")
         return self._active_compiled().table
 
     @property
@@ -468,6 +514,83 @@ class Frame:
             "_training_view",
             _TrainingView(selected_features, labels, incomplete_labels, split),
         )
+        object.__setattr__(result, "_winsorizations", self._winsorizations)
+        if self._winsorizations:
+            result._active_compiled()
+        return result
+
+    def fit_winsorization(
+        self,
+        column: str,
+        *,
+        lower: Decimal | str | int,
+        upper: Decimal | str | int,
+        budget: Budget | None = None,
+    ) -> Winsorization:
+        """Fit exact type-7 limits on the declared training split, never held-out rows."""
+        transforms = import_module("terrine.dataset.transforms")
+        from terrine.spec.transforms import _invalid, decimal_value
+
+        if self._training_view is None or self._training_view.split is None:
+            transforms.require_training_split()
+        if self._winsorizations:
+            raise _invalid("fit on the untransformed training view before applying frozen limits")
+        if column not in self.roles.features:
+            raise _invalid("fit column must be a selected feature")
+        probabilities = (decimal_value(lower), decimal_value(upper))
+        if not Decimal(0) <= probabilities[0] <= probabilities[1] <= Decimal(1):
+            raise _invalid("probabilities must be ordered in [0, 1]")
+        transforms.require_numeric_type(
+            self._active_compiled().table.schema()[column].to_pyarrow(), column
+        )
+        recipe = import_module("terrine.dataset.reference")._recipe_for(self)
+        return transforms.fit_winsorization(
+            self.materialize(budget),
+            column=column,
+            lower=probabilities[0],
+            upper=probabilities[1],
+            recipe_hash=recipe.digest,
+            feature_definition_hash=_feature_definition_hash(self._design, (column,), self._model),
+        )
+
+    def winsorize(self, transform: Winsorization) -> Frame:
+        """Apply explicit or training-fitted frozen limits after aggregation."""
+        from terrine.spec.transforms import Winsorization, _invalid
+
+        transforms = import_module("terrine.dataset.transforms")
+        if not isinstance(transform, Winsorization):
+            raise _invalid("expected a typed Winsorization record")
+        if transform.column not in self.roles.features:
+            raise _invalid("transform column must be a selected feature")
+        if any(item.column == transform.column for item in self._winsorizations):
+            raise _invalid("a feature can have only one declared winsorization")
+        bound = transforms.bind_winsorization(
+            transform, self._active_compiled().table.schema()[transform.column].to_pyarrow()
+        )
+        if bound.fit is not None:
+            fit = bound.fit
+            if self._training_view is not None:
+                recipe_hash = (
+                    import_module("terrine.dataset.reference")
+                    ._recipe_for(self, include_transforms=False)
+                    .digest
+                )
+                compatible = recipe_hash == fit.recipe_hash
+            else:
+                compatible = (
+                    self._scoring_view is not None
+                    and self._scoring_view.parent_design_hash == fit.design_hash
+                )
+            if (
+                not compatible
+                or _feature_definition_hash(self._design, (transform.column,), self._model)
+                != fit.feature_definition_hash
+            ):
+                raise transforms.identity_error(transform.column)
+        result = Frame(self._design, self._model)
+        object.__setattr__(result, "_training_view", self._training_view)
+        object.__setattr__(result, "_scoring_view", self._scoring_view)
+        object.__setattr__(result, "_winsorizations", (*self._winsorizations, bound))
         return result
 
     def stage(self, table: str, *, budget: Budget | None = None):
@@ -525,6 +648,7 @@ class Frame:
                 compiled = _apply_training_view(compiled, self._training_view)
             if transform is not None:
                 compiled = transform(compiled)
+            compiled = self._with_winsorization_metadata(compiled)
             summary = validate_compiled_output(compiled, context.execute)
             query = compiled.table
             chunk_size = 65_536
@@ -539,9 +663,13 @@ class Frame:
             reader = context.con.to_pyarrow_batches(query, chunk_size=chunk_size)
             try:
                 schema = reader.schema
+                output_schema = self._winsorize_output(
+                    pa.Table.from_batches([], schema=schema)
+                ).schema
                 for batch in reader:
                     if batch.schema != schema:
                         batch = batch.cast(schema)
+                    batch = self._winsorize_output(batch)
                     row_count += batch.num_rows
                     byte_count += batch.nbytes
                     if budget is not None and not is_life_table:
@@ -553,7 +681,7 @@ class Frame:
                         ):
                             raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
                     batches.append(batch)
-                table = pa.Table.from_batches(batches, schema=schema)
+                table = pa.Table.from_batches(batches, schema=output_schema)
             finally:
                 reader.close()
             from terrine.compile.columns import resolve_sketch_sidecars

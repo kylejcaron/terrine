@@ -43,6 +43,80 @@ scoring = scoring_frame.stage("scoring")
 
 A scoring snapshot does not establish historical recorded-at availability. Shared feature definitions reduce definition drift but do not prove that a retrospectively corrected value was known at a past prediction time. A new scoring date is a new explicit snapshot; it does not mutate an older pinned generation.
 
+## Frozen winsorization
+
+Declare fixed limits with `Winsorization` from `terrine.spec`, or fit exact
+percentile limits on a declared training view. Both probabilities are explicit:
+
+```python
+from terrine.dataset.splits import TimeSplit
+from terrine.spec import Winsorization
+
+training = design.build(model).training_set(
+    label="churned",
+    features=("past_sessions",),
+    split=TimeSplit(train_until="2026-08-01", validation_until="2026-09-01"),
+)
+limits = training.fit_winsorization(
+    "past_sessions", lower="0.01", upper="0.99", budget=budget
+)
+dataset = training.winsorize(limits).stage("training", budget=budget)
+
+scoring = design.snapshot(
+    model, as_of="2026-10-18", eligibility={}, features=("past_sessions",)
+).winsorize(limits)
+scored_dataset = scoring.stage("scoring", budget=budget)
+
+fixed = design.build(model).winsorize(
+    Winsorization("past_sessions", lower="0", upper="100")
+)
+```
+
+Fitting uses only rows assigned to `train`, after the declared label policy and
+the shared label-completeness preflight. `keep` does not authorize fitting on
+incomplete labels. Validation/test rows cannot contribute threshold values;
+unassigned rows do not become training rows. Null feature values are excluded
+from quantile ranks, not imputed. Empty/all-null training populations refuse.
+Fit each feature's limits on the untransformed training view before applying
+the frozen transforms.
+
+Fitting uses guarded Frame materialization and exact local order statistics;
+unlike staging, it collects the selected view. Supply `Budget.max_rows` and
+`max_output_bytes` to bound that collected output. These limits do not establish
+an upstream scan-byte or warehouse-memory bound. Thresholds are unweighted
+quantiles of the declared non-null training rows.
+
+The threshold method is exact Hyndman–Fan type 7, using integer/Decimal
+arithmetic rather than floating probabilities or approximate sketches. Limits
+are applied **after aggregation**, not to individual source events, and nulls,
+completeness, and reason columns are preserved. Exact integer and Decimal128
+features are supported; floating, Boolean, and nonnumeric inputs refuse with
+`terrine.transform.winsorization_type_unsupported`. Unrepresentable output
+limits/scales refuse with `terrine.transform.winsorization_precision_unavailable`.
+Use an exactly representable integer/Decimal feature and limits instead.
+
+The immutable typed record includes algorithm/version, both probabilities,
+training recipe/view/design/model hashes, snapshot and split identity, a
+training-population digest, counts, source type, and exact frozen limits.
+`limits.to_json()` and `Winsorization.from_json(...)` persist/reopen that record
+without fitting. Dataset recipes embed it; manifests and each transformed
+column's `ColumnMeta.transformation` retain it through Arrow, Parquet, staging,
+and refresh. Scoring verifies the original parent design, feature definition,
+and physical source type; it never reads the training population. Refitting
+requires an explicit new training fit and a new recipe.
+Feature identity includes resolved metric/source bindings for aggregates,
+quantiles, and distinct counts. Rebinding a feature to another fact does not
+become compatible merely because its output type is unchanged.
+This also covers standalone EventTime features and every nested `relative_to`
+selector, including label-property bindings, dimension history definitions,
+and configured event-identity columns.
+
+Ordinary `Frame.expr` cannot represent this guarded Arrow-output stage and
+refuses for transformed Frames rather than exposing silently untransformed
+values. Use guarded materialization, staging, or Dataset exports. Imported
+adapter transform declarations are not automatically translated into this
+stage; unsupported declarations still refuse instead of being stripped.
+
 ## Reopening a pinned dataset
 
 Keep the `DatasetManifest` with the consumer-owned export, or persist `DatasetManifest.to_json()` separately from the immutable `DatasetRecipe` stored by the runtime. Reopen the exact committed generation rather than consulting a moving destination:
@@ -86,6 +160,7 @@ Run the complete training/export/correction workflow and the feature-only scorin
 ```sh
 uv run python examples/ml_staging.py
 uv run python examples/batch_scoring.py
+uv run python examples/retention_and_winsorization.py
 ```
 
 Both examples configure an owner-local namespace and retained snapshot directory, create a file-backed Model, build a Design, stage it, consume bounded Arrow batches, reopen its manifest, export Parquet, and refresh after a source correction. The training example retains exact integral Decimal values beyond the default Python Decimal arithmetic precision. The scoring example removes the unused label relation before staging and preserves the explicit scoring instant through refresh. Temporary databases, snapshots, and exports are cleaned up when each script exits.

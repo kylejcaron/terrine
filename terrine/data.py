@@ -253,6 +253,7 @@ class ColumnMeta:
     numeric_policy: Literal["exact", "checked_float64_v1"] | None = None
     absolute_error_column: str | None = None
     approximation: ApproximationMeta | None = None
+    transformation: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.window is not None and not isinstance(self.window, Window):
@@ -274,6 +275,10 @@ class ColumnMeta:
             self.absolute_error_column is not None
         ):
             raise ValueError("checked float64 metadata requires exactly one error-bound column")
+        if self.transformation is not None:
+            object.__setattr__(
+                self, "transformation", _mapping(self.transformation, "transformation")
+            )
 
 
 @dataclass(frozen=True, slots=True)
