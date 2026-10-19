@@ -71,29 +71,25 @@ def test_parquet_export_preserves_pinned_arrow_schema_and_refuses_overwrite(
     con.disconnect()
 
 
-def test_export_resumes_shard_durable_before_manifest_publication(
+def test_export_discards_unfinished_shard_and_rewrites_on_retry(
     native_inputs, tmp_path, monkeypatch
 ):
     dataset, con = _staged_dataset(native_inputs, tmp_path)
     destination = tmp_path / "resumable"
+    partial = tmp_path / ".resumable.partial"
     original = dataset.to_arrow_batches
-    failed = False
 
     def interrupted(*, batch_size=65_536):
-        nonlocal failed
-        for batch in original(batch_size=batch_size):
-            yield batch
-            if not failed:
-                failed = True
-                raise OSError("simulated interruption after a durable shard")
+        batch = next(iter(original(batch_size=batch_size)))
+        yield batch
+        raise OSError("simulated interruption in an unfinished shard")
 
     monkeypatch.setattr(
         type(dataset), "to_arrow_batches", lambda self, **kwargs: interrupted(**kwargs)
     )
-    with pytest.raises(OSError, match="simulated interruption"):
+    with pytest.raises(OSError, match="unfinished shard"):
         dataset.export_parquet(destination=str(destination), target_file_bytes=1)
-    partial = tmp_path / ".resumable.partial"
-    assert list(partial.glob("**/*.parquet"))
+    assert list(partial.glob("**/*.parquet")) == []
 
     monkeypatch.setattr(
         type(dataset), "to_arrow_batches", lambda self, **kwargs: original(**kwargs)
@@ -110,7 +106,7 @@ def test_export_resumes_shard_durable_before_manifest_publication(
 
     monkeypatch.setattr(export_module.pq, "ParquetWriter", count_writers)
     export = dataset.export_parquet(destination=str(destination), target_file_bytes=1)
-    assert writers == 0
+    assert writers > 0
     assert export.row_count == dataset.manifest.generation.row_count
     assert sum(shard.row_count for shard in export.shards) == export.row_count
     assert all((destination / shard.path).is_file() for shard in export.shards)
