@@ -310,6 +310,15 @@ class DuckDBBackend:
         if row is None:
             raise KeyError(partition)
         table = self.con.execute(f"SELECT * FROM {self._schema}.{_quote(row[0])}").to_arrow_table()
+        schema = self._partition_schema(receipt, partition)
+        for index, field in enumerate(schema):
+            if pa.types.is_null(field.type):
+                if table.column(index).null_count != table.num_rows:
+                    raise ValueError("published null column contains non-null values")
+                table = table.set_column(index, field, pa.nulls(table.num_rows))
+        return table.cast(schema)
+
+    def _partition_schema(self, receipt: PublicationReceipt, partition: str) -> pa.Schema:
         metadata = self.con.execute(
             f"SELECT schema_metadata FROM {self._schema}.runtime_partition_metadata "
             "WHERE dataset=? AND generation=? AND partition=?",
@@ -317,12 +326,12 @@ class DuckDBBackend:
         ).fetchone()
         if metadata is None:
             raise ValueError("published partition has no retained Arrow schema")
-        return table.cast(pa.ipc.read_schema(pa.BufferReader(bytes(metadata[0]))))
+        return pa.ipc.read_schema(pa.BufferReader(bytes(metadata[0])))
 
     def read_relation(
         self, receipt: PublicationReceipt, partition: str, *, ibis_backend: Any
     ) -> ibis.Table:
-        """Resolve a committed physical partition as a lazy Ibis table relation."""
+        """Resolve a committed partition with its logical types as a lazy Ibis relation."""
         row = self.con.execute(
             f"SELECT table_name FROM {self._schema}.runtime_partitions "
             "WHERE dataset=? AND generation=? AND partition=?",
@@ -332,15 +341,24 @@ class DuckDBBackend:
             raise KeyError(partition)
         model_connection = getattr(ibis_backend, "con", None)
         if model_connection is self.con:
-            return ibis_backend.table(row[0], database=self.namespace)
-        if self._ibis_backend is None:
-            timezone = self.con.execute("SELECT current_setting('TimeZone')").fetchone()[0]
-            try:
-                self._ibis_backend = IbisDuckDBBackend.from_connection(self.con)
-            finally:
-                escaped_timezone = timezone.replace("'", "''")
-                self.con.execute(f"SET TimeZone = '{escaped_timezone}'")
-        return self._ibis_backend.table(row[0], database=self.namespace)
+            backend = ibis_backend
+        else:
+            if self._ibis_backend is None:
+                timezone = self.con.execute("SELECT current_setting('TimeZone')").fetchone()[0]
+                try:
+                    self._ibis_backend = IbisDuckDBBackend.from_connection(self.con)
+                finally:
+                    escaped_timezone = timezone.replace("'", "''")
+                    self.con.execute(f"SET TimeZone = '{escaped_timezone}'")
+            backend = self._ibis_backend
+        relation = backend.table(row[0], database=self.namespace)
+        restored = {}
+        for field in self._partition_schema(receipt, partition):
+            if pa.types.is_duration(field.type):
+                restored[field.name] = relation[field.name].as_interval(field.type.unit)
+            elif pa.types.is_null(field.type):
+                restored[field.name] = ibis.null()
+        return relation.mutate(**restored) if restored else relation
 
     def reconcile(self, run_id: str) -> Reconciliation:
         row = self.con.execute(

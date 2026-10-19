@@ -88,7 +88,11 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
 
     from terrine.data import Budget, Coverage, UnitSource
     from terrine.model import Model
-    from terrine.runtime import open_published_frame, run_serialized_plan
+    from terrine.runtime import (
+        open_published_frame,
+        open_published_generation,
+        run_serialized_plan,
+    )
     from terrine.runtime.changes import Change, ChangeSet
     from terrine.runtime.graph import dependency_graph
     from terrine.runtime.owner import RuntimeOwner
@@ -210,6 +214,15 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
             assert published.columns == clean.columns
             assert type(published) is type(clean)
             assert published.columns["total"].numeric_policy == "exact"
+            if scenario == "state_panel":
+                lazy = open_published_generation(receipt, con=con.con, namespace=namespace)
+                ends = (
+                    lazy.order_by("period_index")
+                    .select(end=lazy.t0 + lazy.gap)
+                    .execute()["end"]
+                    .tolist()
+                )
+                assert ends == [row["to_time"] for row in rows]
             return receipt, rows
 
         initial_receipt, initial_rows = run_generation(name="initial", model=model)

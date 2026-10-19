@@ -30,6 +30,7 @@ def test_publication_preserves_arrow_schema_and_values():
                 [timedelta(days=1, microseconds=1), None, timedelta(microseconds=-3)],
                 type=pa.duration("us"),
             ),
+            "reason": pa.nulls(3),
         }
     ).replace_schema_metadata({b"terrine.frame": b"metadata"})
 
