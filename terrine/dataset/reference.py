@@ -329,6 +329,7 @@ def stage_frame(frame: Any, table: str, *, budget: Budget | None = None) -> Data
                     "features": list(scoring.features),
                     "as_of": scoring.resolved_as_of.isoformat(),
                     "eligibility": design_record["eligibility"],
+                    "parent_design_hash": scoring.parent_design_hash,
                 }
             digests = raw.execute(
                 f'SELECT digest FROM "{namespace}".runtime_partitions '

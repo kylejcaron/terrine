@@ -55,7 +55,7 @@ class DatasetRecipe:
             kind = view["kind"]
             fields = {
                 "training": {"kind", "features", "labels", "incomplete_labels", "split"},
-                "scoring": {"kind", "features", "as_of", "eligibility"},
+                "scoring": {"kind", "features", "as_of", "eligibility", "parent_design_hash"},
             }
             if kind not in fields or set(view) - fields[kind]:
                 raise INVALID_RECIPE.error(reason="unknown view tag or field")

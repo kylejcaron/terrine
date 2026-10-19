@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ibis
+import pytest
 
 from terrine.data import Budget, Coverage, UnitSource
 from terrine.model import Model
@@ -26,6 +27,16 @@ def test_scoring_today_is_resolved_once_at_catalog_day_boundary(
         features={"past_sessions": agg("sessions", window=("-1d", "0d"))},
         outcomes={"churn": agg("churned", window=("0d", "1d"))},
     )
+    from terrine.errors import TerrineError
+
+    with pytest.raises(TerrineError) as error:
+        design.snapshot(
+            model,
+            as_of="2025-01-05T00:00:00.000000001Z",
+            eligibility={"active": gt(agg("sessions", window=("-1d", "0d")), 0)},
+            features=("past_sessions",),
+        )
+    assert error.value.code == "terrine.dataset.invalid_view"
     from datetime import UTC
     from datetime import datetime as OriginalDateTime
 
@@ -45,6 +56,11 @@ def test_scoring_today_is_resolved_once_at_catalog_day_boundary(
         as_of="today",
         eligibility=eligibility,
         features=("past_sessions",),
+    )
+    from terrine.frame import _feature_definition_hash
+
+    assert _feature_definition_hash(design, ("past_sessions",), model) == _feature_definition_hash(
+        scoring._design, ("past_sessions",), model
     )
     assert FrozenDateTime.calls == 1
 
@@ -66,4 +82,5 @@ def test_scoring_today_is_resolved_once_at_catalog_day_boundary(
     assert staged.manifest.recipe.view["features"] == ("past_sessions",)
     assert staged.manifest.recipe.view["as_of"] == view.resolved_as_of.isoformat()
     assert staged.manifest.recipe.view["eligibility"]["active"]
+    assert staged.manifest.recipe.view["parent_design_hash"] == design.spec_hash
     con.disconnect()

@@ -258,7 +258,7 @@ class Design:
                 resolved = model.day_boundary(now.astimezone(zone).date())
             elif isinstance(as_of, str):
                 if "T" in as_of or " " in as_of:
-                    resolved = utc_instant(datetime.fromisoformat(as_of))
+                    resolved = utc_instant(as_of)
                 else:
                     resolved = model.day_boundary(date.fromisoformat(as_of))
             elif isinstance(as_of, datetime):
@@ -269,6 +269,7 @@ class Design:
                 resolved = model.day_boundary(as_of)
             else:
                 raise ValueError("as_of must be a date, aware datetime, ISO string, or 'today'")
+            resolved = utc_instant(resolved)
         except (TypeError, ValueError, OverflowError) as error:
             raise INVALID_VIEW.error(reason="as_of is invalid") from error
         scoring_design = Design(
