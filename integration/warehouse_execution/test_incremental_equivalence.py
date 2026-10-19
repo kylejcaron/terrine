@@ -75,6 +75,7 @@ class _Resolver:
         ("delete", [8], [3]),
         ("late_arrival", [3], [3]),
         ("readiness_advance", [3], [3]),
+        ("no_op", [3], [3]),
         ("roster_exit_and_reentry", [3], []),
         ("strict_asof_dimension", [3], [3]),
         ("nested_selector", [3], [3]),
@@ -167,6 +168,7 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
         store.initialize()
         destination = DestinationRef(str(state_path), "published", "orders")
         budget = Budget(max_rows=10, max_output_bytes=100_000)
+        frames = {}
 
         def ordered_rows(frame):
             return sorted(frame.table.to_pylist(), key=lambda row: (row["unit"], row["t0"]))
@@ -208,6 +210,7 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
                 snapshot_authority=authority,
             )
             published = open_published_frame(receipt, con=con.con, namespace=namespace)
+            frames[name] = published
             clean = design.build(model).materialize(budget)
             rows = ordered_rows(published)
             assert rows == ordered_rows(clean)
@@ -269,6 +272,8 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
                     datetime(2024, 12, 31, 9, 31, tzinfo=UTC),
                 ),
             )
+        elif scenario == "no_op":
+            change = None
         else:
             readiness["events"] = Coverage("2024-12-30", "2025-01-04")
             model = Model.from_catalog(catalog, con=con, readiness=readiness, units=units)
@@ -277,10 +282,14 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
         corrected_receipt, corrected_rows = run_generation(
             name="correction",
             model=model,
-            changes=ChangeSet((change,), "change_feed"),
+            changes=ChangeSet((change,), "change_feed") if change else ChangeSet((), "revision"),
             expected_manifest=initial_receipt.published_generation,
         )
-        assert corrected_receipt.published_generation != initial_receipt.published_generation
+        if scenario == "no_op":
+            assert corrected_receipt.published_generation == initial_receipt.published_generation
+            assert frames["correction"].provenance == frames["initial"].provenance
+        else:
+            assert corrected_receipt.published_generation != initial_receipt.published_generation
         assert [row["total"] for row in corrected_rows] == corrected_totals
         if scenario == "strict_asof_dimension":
             assert corrected_rows[0]["tier"] == "bronze"

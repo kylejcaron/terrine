@@ -476,9 +476,10 @@ def execute_plan(
         )
         if publication is not None:
             generation = publication[0]
-            runtime_store.replace_published_snapshot(
-                plan.dataset, generation, plan.snapshot_id, lease=lease
-            )
+            if plan.tasks:
+                runtime_store.replace_published_snapshot(
+                    plan.dataset, generation, plan.snapshot_id, lease=lease
+                )
             with event_transaction(con, namespace=namespace):
                 dependencies = {
                     dependency for task in plan.tasks for dependency in task.dependencies
@@ -567,7 +568,7 @@ def _reconcile_committed_publication(
         f"SELECT generation FROM {schema}.runtime_manifests WHERE dataset=?", [plan.dataset]
     ).fetchone()
     generation = publication[0]
-    if manifest is not None and manifest[0] == generation:
+    if plan.tasks and manifest is not None and manifest[0] == generation:
         runtime_store.replace_published_snapshot(
             plan.dataset, generation, plan.snapshot_id, lease=lease
         )
@@ -755,7 +756,7 @@ def _finish_run(
     published = publish(plan, MappingProxyType(dict(outputs)), lease)
     generation = getattr(published, "generation", published)
     generation_text = str(generation) if generation is not None else None
-    if generation_text is not None:
+    if generation_text is not None and plan.tasks:
         runtime_store.replace_published_snapshot(
             plan.dataset, generation_text, plan.snapshot_id, lease=lease
         )

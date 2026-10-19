@@ -110,6 +110,8 @@ When an operator declares a correction, capture or identify the corrected source
 
 Effective-dated attribute corrections and roster exits or re-entries are source changes too: they can change output rows without changing fact-table totals. Nested `event_time(..., relative_to=...)` selectors can depend on corrections outside an aggregate's window around `t0`; refresh their dependent outputs rather than limiting change evidence to that aggregate window. The runtime correction matrix compares complete published rows and column metadata with ordinary Frame materialization, including these cases and a two-period `StatePanel`.
 
+An authoritative empty revision change set produces a no-change refresh. The built-in executor records that run against its expected current publication without creating an empty generation: exact result selection, column metadata, and the publication's original retained input binding remain unchanged.
+
 ## Consistency guarantees and limits
 
 - Plans and runtime records separate definition identity from source-snapshot identity. Results are associated with the plan/run and published generation; retries use the persisted run/task state and fences.

@@ -278,6 +278,39 @@ class DuckDBBackend:
             self.fault_injector("after_commit")
         return PublicationReceipt(stage.dataset, stage.generation, version, tuple(stored))
 
+    def reuse_generation(
+        self, dataset: str, *, expected_manifest: str | None, lease: Any, run_id: str
+    ) -> PublicationReceipt:
+        """Record a no-change run against the current immutable publication."""
+        if lease.resource != f"dataset:{dataset}":
+            raise ValueError("lease resource does not match dataset")
+        leases = LeaseStore(self.con, namespace=self.namespace)
+        self.con.execute("BEGIN TRANSACTION")
+        try:
+            leases.guard_publication(lease)
+            current = self.con.execute(
+                f"SELECT generation,version,snapshot_id FROM {self._schema}.runtime_manifests "
+                "WHERE dataset=?",
+                [dataset],
+            ).fetchone()
+            if current is None or current[0] != expected_manifest:
+                raise ValueError("no-change refresh requires the current base publication")
+            generation, version, snapshot_id = current
+            self._record_run_publication(
+                StagedGeneration(dataset, generation, {}, run_id=run_id, snapshot_id=snapshot_id),
+                version,
+            )
+            partitions = self.con.execute(
+                f"SELECT partition FROM {self._schema}.runtime_partitions "
+                "WHERE dataset=? AND generation=? ORDER BY partition",
+                [dataset, generation],
+            ).fetchall()
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
+        return PublicationReceipt(dataset, generation, version, tuple(row[0] for row in partitions))
+
     def current_generation(self, dataset: str) -> str | None:
         return self._current_generation(dataset)
 

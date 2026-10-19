@@ -574,6 +574,14 @@ class DesignExecutor:
     def publish(self, plan: Any, outputs: Any, lease: Any, run_id: str):
         from terrine.runtime.backends.base import StagedGeneration
 
+        if not plan.tasks:
+            return self._backend.reuse_generation(
+                plan.dataset,
+                expected_manifest=plan.expected_base_manifest,
+                lease=lease,
+                run_id=run_id,
+            )
+
         stage = StagedGeneration(
             plan.dataset,
             f"generation-{run_id}",
