@@ -1,0 +1,141 @@
+"""Owner-only grants and resource limits for dataset operations."""
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal
+
+from terrine.data import Budget
+from terrine.errors import RefusalSpec
+from terrine.runtime.api import Executor
+from terrine.runtime.recipe import DestinationRef, ModelReference, ModelResolver
+from terrine.runtime.snapshot import SnapshotAuthority
+
+__all__ = ["AgentPolicy"]
+
+type Permission = Literal[
+    "inspect", "validate", "prepare", "write", "export", "preview", "read", "cancel"
+]
+
+_DENIED = RefusalSpec("terrine.agent.permission_denied", "Owner policy denies this operation.")
+_SCOPE = RefusalSpec("terrine.agent.scope_denied", "Requested resources are outside owner policy.")
+_LIMIT = RefusalSpec("terrine.agent.request_limit", "Owner tool request limit has been reached.")
+
+
+def effective_budget(owner: Budget, requested: Budget | None) -> Budget:
+    """Intersect optional nonnegative limits; None denotes no numeric bound."""
+    if not isinstance(owner, Budget) or (
+        requested is not None and not isinstance(requested, Budget)
+    ):
+        raise TypeError("budgets must be Budget values")
+    if requested is None:
+        return owner
+    values = {}
+    for name in ("max_rows", "max_output_bytes", "max_scan_bytes"):
+        limits = [
+            value for value in (getattr(owner, name), getattr(requested, name)) if value is not None
+        ]
+        values[name] = min(limits) if limits else None
+    return Budget(**values, strict_scan=owner.strict_scan or requested.strict_scan)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AgentPolicy:
+    """Trusted configuration, never deserialized from a tool request.
+
+    Source identities are Catalog source names, destinations are exact owner
+    references, and catalogs use the owner ModelReference's catalog hash.
+    """
+
+    inspect: bool = True
+    validate: bool = True
+    prepare: bool = False
+    write: bool = False
+    export: bool = False
+    preview: bool = False
+    read: bool = False
+    cancel: bool = False
+    allowed_sources: frozenset[str] = frozenset()
+    allowed_catalogs: frozenset[str] = frozenset()
+    allowed_destinations: frozenset[DestinationRef] = frozenset()
+    design_root: Path | None = None
+    budget: Budget = field(default_factory=Budget)
+    max_run_seconds: int = 300
+    max_concurrency: int = 1
+    max_requests: int = 100
+    max_preview_rows: int = 20
+    max_bounded_count: int = 1000
+    batch_cap: int = 100
+    preview_columns: frozenset[str] = frozenset()
+    redacted_columns: frozenset[str] = frozenset()
+    model_reference: ModelReference | None = None
+    resolver: ModelResolver | None = field(default=None, repr=False, compare=False)
+    snapshot_authority: SnapshotAuthority | None = field(default=None, repr=False, compare=False)
+    executor: Executor | None = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        for name in (
+            "inspect",
+            "validate",
+            "prepare",
+            "write",
+            "export",
+            "preview",
+            "read",
+            "cancel",
+        ):
+            if not isinstance(getattr(self, name), bool):
+                raise TypeError(f"{name} must be bool")
+        for name in (
+            "max_run_seconds",
+            "max_concurrency",
+            "max_requests",
+            "max_preview_rows",
+            "max_bounded_count",
+            "batch_cap",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+        for name in ("allowed_sources", "allowed_catalogs", "preview_columns", "redacted_columns"):
+            value = frozenset(getattr(self, name))
+            if any(not isinstance(item, str) or not item for item in value):
+                raise TypeError(f"{name} must contain nonempty strings")
+            object.__setattr__(self, name, value)
+        destinations = frozenset(self.allowed_destinations)
+        if any(not isinstance(item, DestinationRef) for item in destinations):
+            raise TypeError("allowed_destinations must contain DestinationRef values")
+        object.__setattr__(self, "allowed_destinations", destinations)
+        if not isinstance(self.budget, Budget):
+            raise TypeError("budget must be Budget")
+        if self.design_root is not None:
+            object.__setattr__(self, "design_root", Path(self.design_root).resolve())
+
+    def authorize(
+        self,
+        permission: Permission,
+        *,
+        sources: tuple[str, ...] = (),
+        catalog: str | None = None,
+        destination: DestinationRef | None = None,
+    ) -> None:
+        if permission not in {
+            "inspect",
+            "validate",
+            "prepare",
+            "write",
+            "export",
+            "preview",
+            "read",
+            "cancel",
+        } or not getattr(self, permission):
+            raise _DENIED.error(
+                operation=permission, route="Ask the owner to grant this operation."
+            )
+        if (
+            not set(sources) <= self.allowed_sources
+            or (catalog is not None and catalog not in self.allowed_catalogs)
+            or (destination is not None and destination not in self.allowed_destinations)
+        ):
+            raise _SCOPE.error(
+                operation=permission, route="Use owner-approved sources and destinations."
+            )
