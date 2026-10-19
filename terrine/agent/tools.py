@@ -14,13 +14,17 @@ from typing import Any
 from terrine.agent.design_schema import design_schema
 from terrine.agent.policy import _LIMIT, AgentPolicy, Permission
 from terrine.agent.schemas import (
+    CancelOutput,
     CapabilityOutput,
     CatalogOutput,
     DesignOutput,
     DesignRequest,
+    EventOutput,
+    EventsOutput,
     MetricMetadata,
     PropertyMetadata,
     Response,
+    RunOutput,
     SchemaOutput,
     SourceMetadata,
     ValidationOutput,
@@ -28,8 +32,15 @@ from terrine.agent.schemas import (
 )
 from terrine.errors import RefusalSpec, TerrineError
 from terrine.model import Model
-from terrine.runtime.api import Executor
-from terrine.runtime.recipe import ModelReference
+from terrine.runtime.api import Executor, cancel_run, get_run, read_run_events
+from terrine.runtime.planning import PlanInvocation
+from terrine.runtime.recipe import (
+    DestinationRef,
+    ModelReference,
+    SavedPlanRecipe,
+    _bind_recipe_plan,
+)
+from terrine.runtime.state import RuntimeStore
 from terrine.spec.anchors import EventAnchor, FixedDate
 from terrine.spec.design import Design
 from terrine.spec.io import from_json, from_yaml, to_json
@@ -40,6 +51,9 @@ __all__ = ["DatasetTools"]
 _INVALID = RefusalSpec("terrine.agent.invalid_request", "Use a valid typed Design payload.")
 _STORAGE = RefusalSpec("terrine.agent.storage_denied", "Named Design storage is unavailable.")
 _MODEL = RefusalSpec("terrine.agent.model_mismatch", "Owner model configuration has changed.")
+_RUN = RefusalSpec(
+    "terrine.agent.run_unavailable", "Run has no matching owner-prepared invocation."
+)
 
 
 def _diff(before: Any, after: Any, path: str = "") -> tuple[str, ...]:
@@ -203,6 +217,9 @@ class DatasetTools:
                     "validate_design",
                     "save_design",
                     "load_design",
+                    "get_run_status",
+                    "get_run_events",
+                    "request_cancel",
                 ),
                 runtime_shapes=tuple(shapes),
             )
@@ -307,3 +324,114 @@ class DatasetTools:
             return self._design_output(serialized)
 
         return self._call("validate", load)
+
+    def _authorize_run(self, run_id: str, permission: Permission) -> None:
+        if not isinstance(run_id, str) or not run_id:
+            raise _INVALID.error()
+        con = self.model.con.con
+        store = RuntimeStore(con, namespace=self.namespace)
+        tables = {
+            item[0]
+            for item in con.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE lower(table_schema)=lower(?)",
+                [self.namespace],
+            ).fetchall()
+        }
+        if not {"runtime_runs", "runtime_plan_invocations"} <= tables:
+            raise _RUN.error()
+        columns = {
+            item[0]
+            for item in con.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE lower(table_schema)=lower(?) AND table_name='runtime_runs'",
+                [self.namespace],
+            ).fetchall()
+        }
+        if "destination_json" not in columns:
+            raise _RUN.error()
+        row = con.execute(
+            f"SELECT destination_json, fingerprint FROM {store._schema}.runtime_runs "
+            "WHERE run_id=?",
+            [run_id],
+        ).fetchone()
+        if row is None or row[0] is None:
+            raise _RUN.error()
+        destination = DestinationRef(**json.loads(row[0]))
+        self.policy.authorize(permission, destination=destination)
+        invocations = con.execute(
+            f"SELECT invocation_json FROM {store._schema}.runtime_plan_invocations"
+        ).fetchall()
+        for record in invocations:
+            invocation = PlanInvocation.from_dict(json.loads(record[0]))
+            if invocation.destination != destination or not invocation.recipe_json:
+                continue
+            recipe = SavedPlanRecipe.from_json(invocation.recipe_json)
+            if recipe.model != self.policy.model_reference:
+                continue
+            if _bind_recipe_plan(recipe, namespace=self.namespace).recipe.fingerprint != row[1]:
+                continue
+            report = validate_design(from_json(recipe.design_json), self.model)
+            self.policy.authorize(permission, sources=report.required_sources)
+            return
+        raise _RUN.error(route="Use a run from an owner-prepared invocation for this Model.")
+
+    def get_run_status(self, run_id: str) -> Response[RunOutput]:
+        def status():
+            self._authorize_run(run_id, "read")
+            result = get_run(run_id, con=self.model.con.con, namespace=self.namespace)
+            return RunOutput(
+                run_id=result.run_id,
+                durable_state=result.durable_state,
+                phase=result.phase,
+                error_code=result.error_code,
+                pinned_result_ref=result.pinned_result_ref,
+                latest_event_cursor=result.latest_event_cursor,
+            )
+
+        return self._call("read", status)
+
+    def get_run_events(
+        self, run_id: str, *, after: str | None = None, limit: int = 100
+    ) -> Response[EventsOutput]:
+        def events():
+            if (
+                isinstance(limit, bool)
+                or not isinstance(limit, int)
+                or not 0 < limit <= self.policy.batch_cap
+            ):
+                raise _INVALID.error(
+                    route="Choose a positive event limit no larger than the owner batch cap."
+                )
+            self._authorize_run(run_id, "read")
+            page = read_run_events(
+                run_id, con=self.model.con.con, namespace=self.namespace, after=after, limit=limit
+            )
+            return EventsOutput(
+                events=tuple(
+                    EventOutput(
+                        sequence=event.sequence,
+                        kind=event.kind,
+                        state=event.payload.get("state"),
+                        phase=event.payload.get("phase"),
+                    )
+                    for event in page.events
+                ),
+                next_cursor=page.next_cursor,
+                has_more=page.has_more,
+                cursor_gap=page.cursor_gap,
+            )
+
+        return self._call("read", events)
+
+    def request_cancel(self, run_id: str) -> Response[CancelOutput]:
+        def cancel():
+            self._authorize_run(run_id, "cancel")
+            receipt = cancel_run(run_id, con=self.model.con.con, namespace=self.namespace)
+            return CancelOutput(
+                run_id=run_id,
+                disposition=receipt.disposition,
+                durable_state=receipt.status.durable_state,
+            )
+
+        return self._call("cancel", cancel)

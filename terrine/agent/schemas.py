@@ -217,3 +217,32 @@ def refusal_response(error: TerrineError) -> Response[Any]:
             error.code, "Review the typed request and owner-approved dataset configuration."
         ),
     )
+
+
+class RunOutput(Record):
+    run_id: str
+    durable_state: str
+    phase: str | None = None
+    error_code: str | None = None
+    pinned_result_ref: str | None = None
+    latest_event_cursor: str | None = None
+
+
+class CancelOutput(Record):
+    run_id: str
+    disposition: str
+    durable_state: str
+
+
+class EventOutput(Record):
+    sequence: int
+    kind: str
+    state: str | None = None
+    phase: str | None = None
+
+
+class EventsOutput(Record):
+    events: tuple[EventOutput, ...]
+    next_cursor: str | None
+    has_more: bool
+    cursor_gap: bool

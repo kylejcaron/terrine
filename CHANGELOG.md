@@ -2,6 +2,7 @@
 
 ## Added
 - Add strict versioned dataset-tool envelopes and immutable owner policy with separate operation grants, exact resource allowlists and intersected execution budgets.
+- Add destination- and owner-scoped run status, bounded event pages and separately authorized cancellation through the existing runtime APIs.
 - Optional, preflight-backed DoubleML, DoWhy and same-connection duckreg recipes, with real integration examples and a dedicated CI job.
 - Snapshot-scoped warehouse export checks and exact per-reason exclusion counts; DoWhy refuses repeated-unit and declared-weight datasets rather than forwarding ignored arguments.
 - Add distinct lifelines KM-array and feature-only Cox-dataframe hand-offs, preserving elapsed entry times, declared weights/clusters, and exact exclusions; risk-set conversion retains coarsened counts and refuses delayed entry or incomplete trajectories.

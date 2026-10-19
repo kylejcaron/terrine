@@ -38,5 +38,21 @@ Backend exception messages are not response fields. Non-refusal programming
 errors are not disguised as successful responses. All calls, including denied
 calls, share the session's `max_requests` count.
 
+## Run feedback
+
+`get_run_status(run_id)` and `get_run_events(run_id, after=cursor, limit=100)`
+require `read=True`. `request_cancel(run_id)` independently requires
+`cancel=True`. Each lookup verifies the persisted run destination, exact saved
+invocation fingerprint, owner Model reference and required source identities
+before returning status or applying cancellation. A grant for another dataset in
+the same runtime namespace is insufficient. Runs without matching owner-prepared
+invocations are refused.
+
+Status projects lifecycle state, phase, stable error code, pinned result and
+event cursor only. Events are cursor-bounded by `batch_cap` and expose lifecycle
+or phase fields, not arbitrary runtime payloads. Cancellation returns the
+runtime's actual disposition and durable state; a cancellation request is not
+reported as completed cancellation or successful publication.
+
 The optional MCP transport and external object-store destinations require
 separate owner authorization and are not included in this Python interface.
