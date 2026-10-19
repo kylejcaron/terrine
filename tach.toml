@@ -48,7 +48,7 @@ depends_on = ["terrine.errors", "terrine.semantic"]
 
 [[modules]]
 path = "terrine.compile"
-depends_on = ["terrine.errors", "terrine.model", "terrine.spec", "terrine.data", "terrine.semantic", "terrine.temporal"]
+depends_on = ["terrine.errors", "terrine.execution", "terrine.model", "terrine.spec", "terrine.data", "terrine.semantic", "terrine.temporal"]
 
 [[modules]]
 path = "terrine.compile.cost"

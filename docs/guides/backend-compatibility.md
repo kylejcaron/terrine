@@ -28,6 +28,9 @@ Capabilities distinguish verified (`True`), unsupported (`False`), and unverifie
 
 - Query admission requires a verified dialect; transaction-scoped execution and
   Arrow materialization have independent gates.
+- Source timestamp and declared decimal fields require exact-type evidence;
+  roster-only anchor compilation also requires exact timestamp semantics.
+  Existing precision and overflow checks still apply within the verified domain.
 - Retained input capture requires `retained_snapshot`; unknown retained snapshot
   support does not block an ordinary Frame materialization.
 - Generation publication requires both `table_publication` and

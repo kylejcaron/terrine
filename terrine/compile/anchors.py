@@ -450,6 +450,13 @@ def compile_anchors(
     """Build or validate a lazy candidate relation without executing data-dependent checks."""
     if not isinstance(design, Design) or not isinstance(model, Model):
         raise TypeError("compile_anchors requires a Design and a bound Model")
+    from terrine.execution.backend import backend_provider
+
+    backend_provider(model.con).capabilities.require(
+        "exact_timestamps",
+        backend=model.catalog.dialect,
+        route="Use verified native timestamp semantics before compiling dataset anchors.",
+    )
     if persisted is not None:
         if isinstance(design.anchor, (FixedDate, Schedule)):
             _, source_checks = _roster_anchors(model, design, include_membership=include_membership)

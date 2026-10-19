@@ -106,3 +106,42 @@ def test_unverified_publication_refuses_before_lease_or_destination_work(
     assert error.value.code == "terrine.backend.capability_unavailable"
     assert error.value.context["operation"] == operation
     assert backend.current_generation("data") is None
+
+
+@pytest.mark.parametrize("operation", ["exact_timestamps", "exact_decimals"])
+def test_unverified_scalar_semantics_refuse_declared_source_types(
+    native_inputs, monkeypatch, operation
+):
+    catalog, con = native_inputs
+    if operation == "exact_decimals":
+        con.con.execute("ALTER TABLE events ADD COLUMN amount DECIMAL(20, 2)")
+        definition = catalog.model_dump(mode="python")
+        definition["facts"]["session"]["column"] = "amount"
+        from terrine.semantic.models import Catalog
+
+        catalog = Catalog.model_validate(definition)
+    provider = backend_provider(con)
+    monkeypatch.setattr(
+        provider, "capabilities", replace(provider.capabilities, **{operation: None})
+    )
+    with pytest.raises(TerrineError) as error:
+        Model.from_catalog(catalog, con=con, readiness={})
+    assert error.value.code == "terrine.backend.capability_unavailable"
+    assert error.value.context["operation"] == operation
+
+
+def test_roster_only_compilation_requires_verified_timestamp_semantics(native_inputs, monkeypatch):
+    from terrine.spec import FixedDate
+
+    catalog, con = native_inputs
+    model = Model.from_catalog(
+        catalog, con=con, readiness={}, units={"user": UnitSource("users", "user_id")}
+    )
+    provider = backend_provider(con)
+    monkeypatch.setattr(
+        provider, "capabilities", replace(provider.capabilities, exact_timestamps=None)
+    )
+    with pytest.raises(TerrineError) as error:
+        Design("user", FixedDate("2025-01-02")).build(model)
+    assert error.value.code == "terrine.backend.capability_unavailable"
+    assert error.value.context["operation"] == "exact_timestamps"

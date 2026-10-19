@@ -23,7 +23,11 @@ def test_backend_provider_preserves_duckdb_relation_admission_and_identity():
         assert provider.matches(con)
         assert provider.dialect(con) == "duckdb"
         relation = TableRef(kind="table", name="events")
-        assert provider.resolve_relation(con, relation).execute()["value"].tolist() == [7]
+        identities = provider.required_relations(_catalog(), con)
+        assert [(identity.kind, identity.schema, identity.name) for identity in identities] == [
+            ("table", "main", "events")
+        ]
+        assert con.to_pyarrow(provider.resolve_relation(con, relation))["value"].to_pylist() == [7]
         with provider.open_execution(_catalog(), con) as context:
             assert context.owner_con is con
             assert context.execute(context.resolve(relation)).to_pylist()[0]["value"] == 7
