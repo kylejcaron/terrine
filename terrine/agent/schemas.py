@@ -1,11 +1,12 @@
 """Strict, data-only version-one dataset tool envelopes."""
 
 from collections.abc import Mapping
-from typing import Any, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Field,
     JsonValue,
     field_serializer,
     field_validator,
@@ -50,6 +51,52 @@ class AgentDatasetReference(Record):
     definition_hash: str
     recipe_reference: str
     columns: tuple[str, ...] = ()
+
+
+class BudgetRequest(Record):
+    max_rows: Annotated[int, Field(ge=0)] | None = None
+    max_output_bytes: Annotated[int, Field(ge=0)] | None = None
+    max_scan_bytes: Annotated[int, Field(ge=0)] | None = None
+    strict_scan: bool = True
+
+
+class DestinationRequest(Record):
+    database: str
+    schema_name: str = Field(alias="schema")
+    dataset: str
+
+
+class PreviewRequest(Record):
+    serialized: str
+    budget: BudgetRequest | None = None
+    bounded_count: Annotated[int, Field(ge=0)] = 0
+
+
+class PrepareRequest(Record):
+    serialized: str
+    destination: DestinationRequest
+    invocation_id: str
+    budget: BudgetRequest | None = None
+
+
+class ExecuteRequest(Record):
+    receipt_id: str
+    request_key: Annotated[str, Field(min_length=1, max_length=256)]
+
+
+class RunRequest(Record):
+    run_id: str
+
+
+class RunEventsRequest(RunRequest):
+    after: str | None = None
+    limit: Annotated[int, Field(gt=0)] = 100
+
+
+class RowPreviewRequest(Record):
+    reference: AgentDatasetReference
+    limit: Annotated[int, Field(gt=0)]
+    columns: tuple[str, ...]
 
 
 class ValidationOutput(Record):
