@@ -25,6 +25,7 @@
 - Open authorized pinned generations through owner publication metadata so a bounded row preview does not rehash the entire dataset; explicit manifest reopening retains full integrity verification.
 - Compare admission and recovery lease expirations in UTC regardless of the owner's session timezone, and retain the exact approved destination when preparing refreshes.
 - Resolve owner-prepared dataset views before source discovery, compilation and retained capture, preserving feature-only scoring without unused label readiness or reads.
+- Replay retained preparation receipts before compiling live inputs, so a lost preparation response remains recoverable after a source or roster is removed.
 - Refuse unsupported approximate-quantile runtime requests before source validation or retained snapshot capture, while preserving ordinary Frame sidecars.
 - Preserve native relation-discovery, input-binding and transaction-ownership regression coverage through the verified Ibis execution boundary.
 - Reject non-read and multi-statement compiled queries before native schema resolution, while preserving compiler built-ins and source-relation function admission.

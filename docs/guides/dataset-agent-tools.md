@@ -111,6 +111,10 @@ The owner resolves the recorded dataset view before discovering required sources
 compiling preflight output or capturing retained inputs. A feature-only scoring
 recipe does not require readiness for, or read, an unused label source; the saved
 recipe still binds its entire base Design and resolved scoring view.
+Preparation rechecks metadata-only authorization before the owner's persisted
+invocation lookup. A matching invocation replays its receipt without compiling
+or reopening live source/roster relations; only a new invocation resolves and
+preflights its view before retained capture.
 
 `execute_plan(receipt, request_key=...)` requires `write=True` and resolves only
 the persisted owner invocation; the agent receives an opaque receipt and safe

@@ -237,3 +237,18 @@ def test_prepare_requires_the_connected_dataset_owner_configuration(owner_tools,
         invocation_id="mismatched-owner",
     )
     assert result.code == "terrine.agent.owner_configuration"
+
+
+def test_preparation_replays_before_source_or_roster_reopening(owner_tools):
+    recipe = recipe_for(owner_tools)
+    destination = next(iter(owner_tools.policy.allowed_destinations))
+    first = owner_tools.prepare_dataset(
+        recipe, destination=destination, invocation_id="lost-preparation"
+    )
+    assert first.status == "ok" and first.output is not None
+    owner_tools.model.con.drop_table("events")
+    owner_tools.model.con.drop_table("users")
+    replay = owner_tools.prepare_dataset(
+        recipe, destination=destination, invocation_id="lost-preparation"
+    )
+    assert replay.status == "ok" and replay.output == first.output

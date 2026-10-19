@@ -610,7 +610,7 @@ class DatasetTools:
         expected_base_manifest: str | None = None,
         bind_base_manifest: bool = False,
     ) -> PlanReceipt:
-        valid = self._validated(self._resolved_recipe_design(recipe))
+        valid = self._validated(recipe.base_design)
         self.policy.authorize("prepare", sources=valid.required_sources, destination=destination)
         planner = self._owner_planner(destination)
         reference = self.policy.model_reference
