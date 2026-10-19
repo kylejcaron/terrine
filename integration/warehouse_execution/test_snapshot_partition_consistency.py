@@ -53,7 +53,8 @@ def test_partition_and_retry_reopen_same_retained_input_authority(tmp_path):
         catalog, con=con, readiness={"events": Coverage("2025-01-01", "2025-02-01")}
     )
     design = Design(
-        "user", FixedDate("2025-01-02T00:00:00+00:00"),
+        "user",
+        FixedDate("2025-01-02T00:00:00+00:00"),
         features={"total": agg("total", window=("-1d", "0s"))},
     )
     owner = RuntimeOwner(state_path=path, snapshot_root=tmp_path / "snapshots")
@@ -64,15 +65,20 @@ def test_partition_and_retry_reopen_same_retained_input_authority(tmp_path):
         model, design=design, con=con, namespace="runtime", run_id="initial", budget=Budget()
     )
     plan = plan_refresh(
-        namespace="runtime", dataset="orders", definition_hash=design.spec_hash,
+        namespace="runtime",
+        dataset="orders",
+        definition_hash=design.spec_hash,
         snapshot_id=retained.snapshot_id,
         graph=dependency_graph(model, design, sources=("events",), partitions=("p1", "p2")),
     )
     destination = DestinationRef("output.duckdb", "analytics", "orders")
     recipe = SavedPlanRecipe.create(
-        plan_json=plan.serialize(), design=design,
+        plan_json=plan.serialize(),
+        design=design,
         model=ModelReference.from_model(model, owner_key="model"),
-        destination=destination, namespace="runtime", expected_base_manifest=None,
+        destination=destination,
+        namespace="runtime",
+        expected_base_manifest=None,
     )
     recipe.pin_snapshot(store)
 
@@ -103,9 +109,14 @@ def test_partition_and_retry_reopen_same_retained_input_authority(tmp_path):
             generation = "g1"
             return self.backend.publish_generation(
                 StagedGeneration(
-                    resolved_plan.dataset, generation, outputs,
-                    run_id=run_id, snapshot_id=resolved_plan.snapshot_id,
-                ), expected_manifest=None, lease=lease,
+                    resolved_plan.dataset,
+                    generation,
+                    outputs,
+                    run_id=run_id,
+                    snapshot_id=resolved_plan.snapshot_id,
+                ),
+                expected_manifest=None,
+                lease=lease,
             )
 
     executor = SnapshotExecutor()
@@ -114,12 +125,22 @@ def test_partition_and_retry_reopen_same_retained_input_authority(tmp_path):
 
         with pytest.raises(RuntimeError, match="retry partition"):
             run_serialized_plan(
-                recipe.to_json(), con=con.con, namespace="runtime", request_key="partition-run",
-                executor=executor, resolver=Resolver(), snapshot_authority=authority,
+                recipe.to_json(),
+                con=con.con,
+                namespace="runtime",
+                request_key="partition-run",
+                executor=executor,
+                resolver=Resolver(),
+                snapshot_authority=authority,
             )
         receipt = run_serialized_plan(
-            recipe.to_json(), con=con.con, namespace="runtime", request_key="partition-run",
-            executor=executor, resolver=Resolver(), snapshot_authority=authority,
+            recipe.to_json(),
+            con=con.con,
+            namespace="runtime",
+            request_key="partition-run",
+            executor=executor,
+            resolver=Resolver(),
+            snapshot_authority=authority,
         )
         assert receipt.state == "succeeded"
         assert executor.seen
