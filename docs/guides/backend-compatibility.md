@@ -60,12 +60,87 @@ attempting execution still refuses. No optional driver extra or runtime backend
 class is supplied without a real execution slice. Local PostgreSQL was not
 available (`pg_isready`: no response); no service was launched.
 
-## Executed version matrix
+## Python and dependency support
 
-The local evidence below was run with Python **3.13.5**, Ibis **12.0.0**, DuckDB
-driver **1.5.6** / embedded engine **v1.5.6**, and PyArrow **23.0.1**. These are
-measured versions, not a claim for every release in a dependency range. Python
-3.14 and other dependency combinations are unverified here.
+The package supports CPython 3.13 and 3.14. Native dataset execution requires
+`terrine[duckdb]`; base Terrine has no mandatory backend, dataframe, orchestration
+or modeling library. The local engine is pinned to DuckDB **1.5.6**, matching
+the exact arithmetic capability check, rather than advertising unverified engine
+versions. Ibis starts at 11 and SQLGlot at 29: Ibis 10 constrains SQLGlot below
+the version needed for native `BIGNUM` types.
+
+The [distribution acceptance command][distribution] builds a wheel from the
+sdist, compares package contents, installs it into a fresh environment outside
+the checkout, checks that optional distributions are absent, and imports every
+public facade with optional imports blocked. It then installs the DuckDB extra
+and executes the exact README tutorial, including retained staging and reopening.
+The installed package location is checked, so a source checkout cannot mask
+missing wheel files. The sdist retains guides, examples, typed package data and
+the direct-dependency notice inventory; wheels retain matching notices.
+
+CI runs this command for both Python versions with highest and lowest direct
+dependency resolution. Lowest resolution uses `uv pip compile --resolution
+lowest-direct --only-binary :all:`: the floor is the lowest compatible **wheel**
+combination for that interpreter/platform, not an assurance that older dependency
+sdists can be built on new Python versions. Source-building third-party native
+libraries is not the supported installation path. Transitive dependencies are
+resolved normally; the job does not claim a lowest-transitive combination.
+
+Run either resolution locally after building (replace `3.13` with `3.14` for the
+other interpreter):
+
+```sh
+uv build
+uv run python -m tests.integration.distribution_smoke \
+  --wheel dist/*.whl --sdist dist/*.tar.gz --python 3.13 \
+  --resolution lowest-direct
+```
+
+Measured on macOS arm64, with the same expected rows in each completed wheel
+tutorial (`a`: one feature/two outcomes; `b`: zero/zero):
+
+| Python | Resolution | Ibis | DuckDB | Pydantic | PyYAML | SQLGlot | PyArrow | NumPy |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 3.13.5 | Highest | 12.0.0 | 1.5.6 | 2.14.1 | 6.0.3 | 29.0.1 | 23.0.1 | 2.5.4 |
+| 3.13.5 | Lowest direct wheels | 11.0.0 | 1.5.6 | 2.8.1 | 6.0.2 | 29.0.0 | 18.0.0 | 2.1.0 |
+| 3.14.5 | Highest | 12.0.0 | 1.5.6 | 2.14.1 | 6.0.3 | 29.0.1 | 23.0.1 | 2.5.4 |
+| 3.14.5 | Lowest direct wheels | 11.0.0 | 1.5.6 | 2.12.0 | 6.0.3 | 29.0.0 | 22.0.0 | 2.3.2 |
+
+The 3.13 floor also passed 186 spec, metadata, error, window and column-compilation
+tests with `python -m pytest -q -n 4 tests/spec tests/test_metadata.py
+tests/test_errors.py tests/test_windows.py tests/compile/test_columns.py`.
+The wheel matrix is narrower than the full operation and optional-adapter suites;
+do not infer warehouse or downstream-library support from the tutorial.
+
+### Optional extras
+
+Each extra is separately declared; none is loaded by base/facade imports.
+The locked Python 3.13 checks install all extras and run the integration suites.
+The Python 3.14 native wheel checks do **not** establish that all optional
+orchestration or modeling libraries support that interpreter.
+
+| Extra | Dependency contract / evidence |
+| --- | --- |
+| `duckdb` | DuckDB 1.5.6 and Ibis DuckDB backend; wheel matrix above |
+| `pandas`, `polars` | Common-stack round trips in the operation matrix below |
+| `airflow` | Airflow 3.3.2 / standard provider 1.20.1; [adapter tests](../../tests/adapters/test_airflow.py) |
+| `dagster` | Dagster 1.13.26; [adapter tests](../../tests/adapters/test_dagster.py) |
+| `dbt` | Core 1.10.13 / dbt-duckdb 1.9.6; [adapter tests](../../tests/adapters/test_dbt_core_recipe.py) |
+| `increment` | 0.1.0a2; [independent optional compatibility contract][increment] |
+| `sketches` | DataSketches 5.2 or later below 6; [sketch support/refusals][sketches] |
+| `doubleml`, `duckreg`, `lifelines`, `diff-diff` | Pinned downstream versions in `pyproject.toml`; [real library hand-offs][libraries] |
+| `dowhy` | 0.14 on Python **below 3.14 only**; dependency marker omits it on 3.14, not a promise of adapter availability |
+
+[Third-party notices](../../THIRD_PARTY_NOTICES.txt) inventory every direct base
+and optional dependency. Upstream binaries and their transitive dependencies
+retain their own complete platform-specific license/notice artifacts.
+
+## Operation regression environment
+
+The operation evidence below was run with Python **3.13.5**, Ibis **12.0.0**,
+DuckDB driver **1.5.6** / embedded engine **v1.5.6**, and PyArrow **23.0.1**.
+These are measured versions, not a claim for every release in a dependency range.
+Python 3.14 distribution/tutorial checks above do not replace these operation tests.
 
 | Operation | Local DuckDB versions above | PostgreSQL | Snowflake | BigQuery | Route or limitation |
 | --- | --- | --- | --- | --- | --- |
@@ -110,3 +185,7 @@ without increment; unsupported semantic mappings are listed separately in the
 [exports]: ../../tests/dataset/test_export.py
 [gates]: ../../tests/runtime/test_backend_capabilities.py
 [increment]: ../../tests/compat/test_increment_semantics.py
+
+[distribution]: ../../tests/integration/distribution_smoke.py
+[sketches]: ../../tests/temporal/test_sketches.py
+[libraries]: library-handoffs.md

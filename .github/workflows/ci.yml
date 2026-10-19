@@ -17,13 +17,38 @@ jobs:
         with:
           python-version: "3.13"
       # Type checking and adapter tests need the optional integrations installed.
-      - run: uv sync --locked --group dev --all-extras
+      - run: uv sync --locked --group dev --group docs --all-extras
       - run: make check TESTS="tests"
       - run: uv run pytest tests/temporal/test_window_aggregates.py tests/compile/test_columns.py tests/compile/test_state_panel.py tests/spec/test_state_panel.py tests/test_frame_runtime.py -m slow
       - run: uv run python -m tests.integration.study_api_smoke
-      - run: uv run python examples/trajectories_survival.py
-      - run: uv run python examples/materialization_runtime.py
+      - run: uv run pytest -q -n 4 integration
+      - run: |
+          for example in examples/*.py; do
+            uv run python "$example"
+          done
+      - run: uv run --group docs python -m tests.documentation --build
       - run: uv build
+  distributions:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.13", "3.14"]
+        resolution: [highest, lowest-direct]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv build
+      - run: >-
+          uv run --no-project --python "${{ matrix.python }}" python
+          -m tests.integration.distribution_smoke
+          --wheel dist/*.whl --sdist dist/*.tar.gz
+          --python "${{ matrix.python }}" --resolution "${{ matrix.resolution }}"
   sketches:
     runs-on: ubuntu-latest
     steps:
