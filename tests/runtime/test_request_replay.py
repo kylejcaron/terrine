@@ -112,7 +112,7 @@ def test_request_key_is_scoped_to_destination():
     assert [receipt.run_id for receipt in receipts] == ["run-1", "run-2"]
 
 
-def test_new_request_waiting_on_dataset_lease_is_retryable():
+def test_unadmitted_request_waiting_on_dataset_lease_is_retryable():
     con = duckdb.connect(":memory:")
     leases = LeaseStore(con, namespace="owner")
     leases.initialize()
@@ -137,7 +137,7 @@ def test_new_request_waiting_on_dataset_lease_is_retryable():
     row = con.execute(
         'SELECT state FROM "owner".runtime_runs WHERE run_id=?', ["new-run"]
     ).fetchone()
-    assert row is not None and row[0] == "queued"
+    assert row is None
     leases.release(active)
     receipt = execute_plan(
         _plan(),
@@ -151,3 +151,45 @@ def test_new_request_waiting_on_dataset_lease_is_retryable():
     )
 
     assert receipt.state == "succeeded"
+
+
+def test_owner_api_recovers_interrupted_matching_key_before_replay():
+    from functools import partial
+
+    from terrine.runtime.api import run_plan
+
+    class Executor:
+        fail = True
+
+        def run_task(self, task, dependencies):
+            if self.fail:
+                raise RuntimeError("owner interrupted")
+            return pa.table({"id": [task.task_id]})
+
+        def publish(self, plan, outputs, lease, run_id):
+            return "g1"
+
+    con = duckdb.connect(":memory:")
+    try:
+        executor = Executor()
+        run = partial(
+            run_plan,
+            con=con,
+            namespace="owner",
+            request_key="retry",
+            destination=DestinationRef("out.duckdb", "analytics", "orders"),
+            executor=executor,
+        )
+        with pytest.raises(RuntimeError):
+            run(_plan())
+        original = con.execute("SELECT run_id,attempt_fence FROM owner.runtime_runs").fetchone()
+        assert original is not None
+        run_id, fence = original
+        con.execute("UPDATE owner.runtime_runs SET state='running' WHERE run_id=?", [run_id])
+        executor.fail = False
+        result = run(_plan())
+        assert result.state == "succeeded" and result.run_id == run_id
+        renewed = con.execute("SELECT attempt_fence FROM owner.runtime_runs").fetchone()
+        assert renewed is not None and renewed[0] > fence
+    finally:
+        con.close()

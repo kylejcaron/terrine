@@ -128,11 +128,50 @@ class Dataset:
             raise _GENERATION_INVALID.error()
         return cls(manifest, con=con, namespace=resolved)
 
-    def _verify_publication(self) -> None:
+    @classmethod
+    def open_generation(cls, dataset: str, generation: str, *, con: Any, namespace: str) -> Dataset:
+        """Open an owner-persisted publication without rescanning its output."""
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", namespace):
+            raise _GENERATION_INVALID.error()
+        record = con.con.execute(
+            f'SELECT manifest_json FROM "{namespace}".runtime_dataset_recipes '
+            "WHERE dataset=? AND generation=?",
+            [dataset, generation],
+        ).fetchone()
+        if record is None:
+            raise _GENERATION_INVALID.error()
+        instance = cls.__new__(cls)
+        instance._con, instance._raw = con, con.con
+        instance._namespace, instance._manifest = namespace, DatasetManifest.from_json(record[0])
+        if (
+            instance.manifest.generation.dataset_id != dataset
+            or instance.manifest.generation.generation_id != generation
+        ):
+            raise _GENERATION_INVALID.error()
+        instance._load_publication()
+        for partition, checksum in zip(
+            instance.manifest.generation.output_refs,
+            instance.manifest.generation.checksums,
+            strict=True,
+        ):
+            instance._partition_table(partition, checksum)
+        return instance
+
+    def _partition_table(self, partition: str, checksum: str) -> str:
+        generation = self._manifest.generation
+        stored = self._raw.execute(
+            f'SELECT digest,table_name FROM "{self._namespace}".runtime_partitions '
+            "WHERE dataset=? AND generation=? AND partition=?",
+            [generation.dataset_id, generation.generation_id, partition],
+        ).fetchone()
+        if stored is None or stored[0] != checksum:
+            raise _GENERATION_INVALID.error()
+        return stored[1]
+
+    def _load_publication(self) -> None:
         generation, namespace = self._manifest.generation, self._namespace
         if self._manifest.source_snapshots.get("owner") != _owner_for(self._con).reference:
             raise _GENERATION_INVALID.error()
-        backend = DuckDBBackend(self._raw, namespace=namespace)
         record = self._raw.execute(
             "SELECT d.manifest_json,p.version,r.state "
             f'FROM "{namespace}".runtime_dataset_recipes d '
@@ -151,21 +190,20 @@ class Dataset:
         self._receipt = PublicationReceipt(
             generation.dataset_id, generation.generation_id, record[1], generation.output_refs
         )
+
+    def _verify_publication(self) -> None:
+        self._load_publication()
+        generation, namespace = self._manifest.generation, self._namespace
+        backend = DuckDBBackend(self._raw, namespace=namespace)
         expected_schema = tuple(
             (column.name, column.data_type) for column in self._manifest.columns
         )
         rows = 0
         for partition, checksum in zip(generation.output_refs, generation.checksums, strict=True):
-            stored = self._raw.execute(
-                f'SELECT digest,table_name FROM "{namespace}".runtime_partitions '
-                "WHERE dataset=? AND generation=? AND partition=?",
-                [generation.dataset_id, generation.generation_id, partition],
-            ).fetchone()
+            table_name = self._partition_table(partition, checksum)
             if (
-                stored is None
-                or stored[0] != checksum
-                or _digest_relation(
-                    self._raw, f'"{namespace}"', stored[1], version=_digest_version(checksum)
+                _digest_relation(
+                    self._raw, f'"{namespace}"', table_name, version=_digest_version(checksum)
                 )
                 != checksum
             ):
@@ -174,7 +212,7 @@ class Dataset:
             if tuple((field.name, str(field.type)) for field in schema) != expected_schema:
                 raise _GENERATION_INVALID.error()
             rows += self._raw.execute(
-                f'SELECT count(*) FROM "{namespace}"."{stored[1]}"'
+                f'SELECT count(*) FROM "{namespace}"."{table_name}"'
             ).fetchone()[0]
         if rows != generation.row_count:
             raise _GENERATION_INVALID.error()

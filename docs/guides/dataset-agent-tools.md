@@ -106,6 +106,11 @@ column roles/types with completeness/reason-column links. They omit internal
 recipes, coverage literals, snapshots, SQL, database paths and arbitrary Frame
 metadata. Lookups compare the complete reference to persisted owner metadata and
 authorize the operation before opening the pinned dataset.
+`Dataset.open_generation` reopens this trusted owner publication metadata without
+rehashing all output rows. Integrity verification at staging and explicit
+`Dataset.from_manifest` reopening remains unchanged. Bounded previews trust the
+owner's fenced immutable publication rather than performing an unbounded scan.
+
 
 `export_parquet` additionally requires `export=True` and an exact resolved path in
 `allowed_exports`. An allowed runtime table is not an export grant. Export uses
@@ -117,11 +122,13 @@ explicitly listed in `preview_columns`. Names in `redacted_columns` produce null
 cells. Reads use Arrow batches bounded by `min(limit, batch_cap)`, stop at the
 limit, and close the iterator. No other columns are returned.
 
-`max_concurrency` admits new runs atomically against active runs in the runtime
-namespace; matching request-key replays do not consume another slot.
-`max_run_seconds` requests cancellation at runtime checkpoints, including before
-publication, independently of renewable leases. It does not forcibly terminate an
-owner callback in the middle of an external operation. `max_requests` separately
+`max_concurrency` atomically reserves new and failed-retry runs together with
+their fenced leases; matching request-key replays do not consume another slot.
+Interrupted attempts without live leases are reconciled before admission or
+replay. `max_run_seconds` stops submission of further tasks at runtime
+checkpoints and cancels before publication, independently of renewable leases.
+It does not forcibly terminate an owner callback in the middle of an external
+operation. `max_requests` separately
 limits all tool calls, including refused calls.
 
 Use `RuntimeOwner.from_connection(model.con)` when configuring the trusted

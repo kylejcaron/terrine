@@ -8,33 +8,33 @@ import socketserver
 import stat
 import threading
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, overload
 
 if TYPE_CHECKING:
     from terrine.runtime.planning import PlanInvocation, PlanRequest
 
-from terrine.errors import RefusalSpec, TerrineError
+from terrine.errors import TerrineError
 from terrine.runtime.events import (
     EventPage,
     RunEvent,
-    event_transaction,
     read_run_events,
-    record_run_event,
 )
 from terrine.runtime.execute import RunReceipt
 from terrine.runtime.state import RuntimeStore
-from terrine.runtime.status import CancelReceipt, RunStatus, cancel_run, get_run
+from terrine.runtime.status import (
+    CancelReceipt,
+    RunStatus,
+    _recover_interrupted_runs,
+    cancel_run,
+    get_run,
+)
 
 __all__ = ["ControlEndpoint", "ControlServer", "ControlClient"]
 
 _MAX_CONTROL_MESSAGE_BYTES = 16_777_216
 _MESSAGE_TOO_LARGE = "terrine.runtime.control_message_too_large"
-_INTERRUPTED = RefusalSpec(
-    "terrine.runtime.owner_interrupted",
-    "The runtime owner stopped before completing or publishing this run.",
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,108 +43,6 @@ class ControlEndpoint:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "path", Path(os.path.abspath(Path(self.path).expanduser())))
-
-
-def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
-    """Reconcile runs only after the durable owner has reacquired its database."""
-    store = RuntimeStore(con, namespace=namespace)
-    store.initialize()
-    schema = store._schema
-    exists = con.execute(
-        "SELECT 1 FROM information_schema.tables "
-        "WHERE lower(table_schema)=lower(?) AND table_name='runtime_runs'",
-        [namespace],
-    ).fetchone()
-    if exists is None:
-        return
-    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP")
-    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS error_code VARCHAR")
-    lease_table = con.execute(
-        "SELECT 1 FROM information_schema.tables "
-        "WHERE lower(table_schema)=lower(?) AND table_name='runtime_leases'",
-        [namespace],
-    ).fetchone()
-    if lease_table is None:
-        return
-    publications = con.execute(
-        "SELECT 1 FROM information_schema.tables "
-        "WHERE lower(table_schema)=lower(?) AND table_name='runtime_run_publications'",
-        [namespace],
-    ).fetchone()
-    with event_transaction(con, namespace=namespace):
-        stale = con.execute(
-            f"SELECT r.run_id,r.state,r.attempt_fence FROM {schema}.runtime_runs r "
-            f"LEFT JOIN {schema}.runtime_leases l ON l.resource='dataset:' || r.dataset "
-            "AND l.owner=r.run_id AND l.fence=r.attempt_fence "
-            "WHERE r.state IN ('running','cancel_requested') "
-            "AND (l.resource IS NULL OR l.expires_at<=current_timestamp) "
-            "ORDER BY r.run_id"
-        ).fetchall()
-        for run_id, old_state, fence in stale:
-            publication = (
-                con.execute(
-                    f"SELECT dataset,generation FROM {schema}.runtime_run_publications "
-                    "WHERE run_id=?",
-                    [run_id],
-                ).fetchone()
-                if publications is not None
-                else None
-            )
-            state = (
-                "succeeded"
-                if publication is not None
-                else "cancelled"
-                if old_state == "cancel_requested"
-                else "failed"
-            )
-            generation = publication[1] if publication is not None else None
-            if publication is not None:
-                con.execute(
-                    f"CREATE TABLE IF NOT EXISTS {schema}.runtime_run_results "
-                    "(run_id VARCHAR NOT NULL, partition VARCHAR NOT NULL, "
-                    "PRIMARY KEY(run_id,partition))"
-                )
-                previous = con.execute(
-                    f"SELECT DISTINCT result.partition FROM {schema}.runtime_run_results result "
-                    f"JOIN {schema}.runtime_run_publications prior ON prior.run_id=result.run_id "
-                    "WHERE prior.dataset=? AND prior.generation=? AND result.run_id<>? "
-                    "ORDER BY result.partition",
-                    [publication[0], publication[1], run_id],
-                ).fetchall()
-                for (partition,) in previous:
-                    con.execute(
-                        f"INSERT INTO {schema}.runtime_run_results VALUES (?, ?) "
-                        "ON CONFLICT DO NOTHING",
-                        [run_id, partition],
-                    )
-            transitioned = con.execute(
-                f"UPDATE {schema}.runtime_runs SET state=?, "
-                "published_generation=COALESCE(?,published_generation), updated_at=?, error_code=? "
-                "WHERE run_id=? AND state=? AND attempt_fence=? AND NOT EXISTS ("
-                f"SELECT 1 FROM {schema}.runtime_leases l "
-                "WHERE l.resource='dataset:' || runtime_runs.dataset "
-                "AND l.owner=runtime_runs.run_id "
-                "AND l.fence=runtime_runs.attempt_fence AND l.expires_at>current_timestamp) "
-                "RETURNING state",
-                [
-                    state,
-                    generation,
-                    datetime.now(UTC).replace(tzinfo=None),
-                    _INTERRUPTED.code if state == "failed" else None,
-                    run_id,
-                    old_state,
-                    fence,
-                ],
-            ).fetchone()
-            if transitioned is not None:
-                record_run_event(
-                    run_id,
-                    "lifecycle",
-                    {"state": transitioned[0]},
-                    con=con,
-                    namespace=namespace,
-                    _in_transaction=True,
-                )
 
 
 class ControlServer:

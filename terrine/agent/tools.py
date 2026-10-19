@@ -764,7 +764,9 @@ class DatasetTools:
         manifest = DatasetManifest.from_json(record[1])
         if manifest.recipe.digest != reference.recipe_reference:
             raise _RECEIPT.error()
-        dataset = Dataset.from_manifest(manifest, con=self.model.con, namespace=self.namespace)
+        dataset = Dataset.open_generation(
+            reference.dataset, reference.generation, con=self.model.con, namespace=self.namespace
+        )
         if self._dataset_reference(dataset) != reference:
             raise _RECEIPT.error()
         return dataset

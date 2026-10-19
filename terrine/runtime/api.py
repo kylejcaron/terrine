@@ -24,7 +24,7 @@ from terrine.runtime.recipe import (
 )
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
-from terrine.runtime.status import cancel_run, get_run
+from terrine.runtime.status import _recover_interrupted_runs, cancel_run, get_run
 
 __all__ = [
     "DesignExecutor",
@@ -269,6 +269,7 @@ def find_run_by_request_key(
     con.execute(
         f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS destination_json VARCHAR"
     )
+    _recover_interrupted_runs(con, namespace=namespace)
     destination_json = json.dumps(destination.to_dict(), sort_keys=True, separators=(",", ":"))
     row = con.execute(
         f"SELECT run_id,state,published_generation FROM {schema}.runtime_runs "

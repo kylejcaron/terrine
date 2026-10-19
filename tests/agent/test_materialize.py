@@ -115,18 +115,27 @@ def test_preview_is_denied_by_default_and_bounded_redacted_when_granted(owner_to
 
 
 def test_runtime_and_concurrency_limits_are_distinct(owner_tools, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
     import terrine.agent.tools as module
+    from terrine.runtime.leases import LeaseStore
 
     receipt = _prepare(owner_tools)
     first = owner_tools.execute_plan(receipt, request_key="complete")
     assert first.output.durable_state == "succeeded"
     raw = owner_tools.model.con.con
     receipt = _prepare(owner_tools, invocation="limits")
+    leases = LeaseStore(raw, namespace="agent")
+    active = leases.acquire(
+        "dataset:study", first.output.run_id, ttl=timedelta(minutes=5), now=datetime.now(UTC)
+    )
     raw.execute(
-        "UPDATE agent.runtime_runs SET state='running' WHERE run_id=?", [first.output.run_id]
+        "UPDATE agent.runtime_runs SET state='running',attempt_fence=? WHERE run_id=?",
+        [active.fence, first.output.run_id],
     )
     blocked = owner_tools.execute_plan(receipt, request_key="concurrency")
     assert blocked.code == "terrine.runtime.concurrency_limit"
+    leases.release(active)
     raw.execute(
         "UPDATE agent.runtime_runs SET state='succeeded' WHERE run_id=?", [first.output.run_id]
     )
@@ -179,3 +188,21 @@ def test_typed_dataset_views_survive_preparation_and_staging(owner_tools, kind):
     )
     assert ("label" in {column.name for column in staged.output.columns}) == (kind == "training")
     assert staged.output.recipe_reference == recipe.digest
+
+
+def test_preview_reads_only_bounded_batches_without_rehashing_output(owner_tools, monkeypatch):
+    import terrine.dataset.reference as module
+
+    reference = owner_tools.stage(_prepare(owner_tools), request_key="bounded").output
+    name = next(column.name for column in reference.columns if column.role == "unit")
+    owner_tools.policy = replace(
+        owner_tools.policy, preview=True, preview_columns=frozenset({name}), batch_cap=1
+    )
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("bounded preview rehashed full output")
+
+    monkeypatch.setattr(module, "_digest_relation", unexpected)
+    result = owner_tools.preview_rows(reference, limit=1, columns=(name,))
+    assert result.status == "ok"
+    assert len(result.output.rows) == 1
