@@ -53,7 +53,9 @@ class RangeJoin:
     matched: ibis.Table
 
 
-def _bucket(timestamp: ir.TimestampValue, width: int) -> ir.NumericValue:
+def _bucket(
+    timestamp: ir.TimestampValue, width: int, *, offset_seconds: int = 0
+) -> ir.NumericValue:
     key = timestamp_order_key(timestamp)
     zero = ibis.literal(0)
     seconds = cast(ir.IntegerValue, key["seconds"]) - cast(
@@ -61,12 +63,20 @@ def _bucket(timestamp: ir.TimestampValue, width: int) -> ir.NumericValue:
     )
     quotient = cast(ir.IntegerValue, _quotient(seconds, width))
     remainder = cast(ir.IntegerValue, _remainder(seconds, width))
-    return quotient - cast(ir.IntegerValue, (remainder < zero).cast(dt.int64))
-
-
-def _shift(timestamp: ir.TimestampValue, seconds: int) -> ir.TimestampValue:
-    # Even a zero interval can lower a backend timestamp's precision.
-    return timestamp if seconds == 0 else timestamp + ibis.interval(seconds=seconds)
+    negative = cast(ir.IntegerValue, (remainder < zero).cast(dt.int64))
+    wide = dt.Decimal(38, 0)
+    base = cast(ir.DecimalValue, (quotient - negative).cast(wide))
+    if offset_seconds == 0:
+        return base
+    # Split before addition so bucket division stays integral at wide offsets.
+    shift, residue = divmod(offset_seconds, width)
+    shifted = base + cast(ir.DecimalValue, ibis.literal(shift, type=wide))
+    if residue:
+        normalized = cast(ir.IntegerValue, remainder + negative * width)
+        shifted += cast(
+            ir.IntegerValue, (normalized >= ibis.literal(width - residue)).cast(dt.int64)
+        )
+    return shifted
 
 
 def blocked_range_join(
@@ -90,12 +100,10 @@ def blocked_range_join(
     bucket = "__terrine_range_bucket"
     while bucket in reserved:
         bucket += "_"
-    start = _shift(anchors.t0, window.start)
-    end = _shift(anchors.t0, window.end)
-    first = anchors.mutate(**{bucket: _bucket(start, plan.block_seconds)})
-    last = anchors.mutate(**{bucket: _bucket(end, plan.block_seconds)}).filter(
-        _bucket(start, plan.block_seconds) != _bucket(end, plan.block_seconds)
-    )
+    first_bucket = _bucket(anchors.t0, plan.block_seconds, offset_seconds=window.start)
+    last_bucket = _bucket(anchors.t0, plan.block_seconds, offset_seconds=window.end)
+    first = anchors.mutate(**{bucket: first_bucket})
+    last = anchors.mutate(**{bucket: last_bucket}).filter(first_bucket != last_bucket)
     requests = first.union(last, distinct=False)
     selected = events.mutate(**{bucket: _bucket(events[event_timestamp], plan.block_seconds)})
     candidates = requests.inner_join(
@@ -108,7 +116,11 @@ def blocked_range_join(
     if event_time in anchors.columns:
         event_time += "_right"
     matched = candidates.filter(
-        compare_timestamps(candidates[event_time], _shift(candidates.t0, window.start), "ge")
-        & compare_timestamps(candidates[event_time], _shift(candidates.t0, window.end), "lt")
+        compare_timestamps(
+            candidates[event_time], candidates.t0, "ge", right_offset_seconds=window.start
+        )
+        & compare_timestamps(
+            candidates[event_time], candidates.t0, "lt", right_offset_seconds=window.end
+        )
     )
     return RangeJoin(requests, candidates, matched)

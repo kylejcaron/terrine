@@ -471,3 +471,67 @@ def test_bounded_retention_preserves_submicrosecond_anchor_lower_bound(finite):
         assert bounded == exact
     finally:
         con.disconnect()
+
+
+@pytest.mark.parametrize("bounded", [False, True])
+@pytest.mark.parametrize("anchor_ns,end_ns", [(1, 1_000_000_001), (-1, 999_999_999)])
+def test_finite_retention_preserves_nanosecond_end_and_followup(bounded, anchor_ns, end_ns):
+    from terrine.temporal.ranges import RangePlan
+
+    con = ibis.duckdb.connect()
+    try:
+        anchors = con.create_table(
+            "precise_end_anchors",
+            pa.table(
+                {
+                    "unit": ["u", "u"],
+                    "anchor_id": ["exact", "short"],
+                    "t0": pa.array([anchor_ns, anchor_ns], type=pa.timestamp("ns")),
+                    "observed_until": pa.array([end_ns, end_ns - 1], type=pa.timestamp("ns")),
+                }
+            ),
+        )
+        events = con.create_table(
+            "precise_end_events",
+            pa.table(
+                {
+                    "unit": ["u"] * 4,
+                    "event_id": ["before", "start", "inside", "end"],
+                    "name": ["target"] * 4,
+                    "timestamp": pa.array(
+                        [anchor_ns - 1, anchor_ns, end_ns - 1, end_ns], type=pa.timestamp("ns")
+                    ),
+                }
+            ),
+        )
+        result = retention_threshold_bands(
+            events,
+            anchors,
+            unit="unit",
+            event_id="event_id",
+            event_name="name",
+            target_event="target",
+            timestamp="timestamp",
+            anchor_id="anchor_id",
+            anchor_timestamp="t0",
+            observed_until="observed_until",
+            count_thresholds=(1, 2),
+            finite_horizon_seconds=1,
+            range_plan=RangePlan(1, 2, "declared_anchor_count") if bounded else None,
+        )
+        actual = con.to_pyarrow(result).sort_by("anchor_id").to_pylist()
+        assert [
+            (
+                row["anchor_id"],
+                row["occurrence_count"],
+                row["retention_band"],
+                row["complete"],
+                row["reason"],
+            )
+            for row in actual
+        ] == [
+            ("exact", 2, 2, True, None),
+            ("short", None, None, False, "insufficient_followup"),
+        ]
+    finally:
+        con.disconnect()

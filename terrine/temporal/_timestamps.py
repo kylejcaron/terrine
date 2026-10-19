@@ -1,4 +1,4 @@
-"""Lossless native ordering of timestamp instants without widening coefficients."""
+"""Lossless native timestamp ordering and exact elapsed-offset comparisons."""
 
 from __future__ import annotations
 
@@ -85,12 +85,28 @@ def compare_timestamps(
     left: ir.TimestampValue,
     right: ir.TimestampValue,
     op: Literal["lt", "le", "gt", "ge", "eq"],
+    *,
+    right_offset_seconds: int = 0,
 ) -> ir.BooleanValue:
+    """Compare instants with an optional exact whole-second shift of the right operand."""
     left_key = timestamp_order_key(left)
     right_key = timestamp_order_key(right)
     left_rank, right_rank = left_key["rank"], right_key["rank"]
     left_seconds, right_seconds = left_key["seconds"], right_key["seconds"]
     left_nanos, right_nanos = left_key["nanos"], right_key["nanos"]
+    if right_offset_seconds:
+        # Integer nanosecond coordinates preserve shifts without timestamp narrowing.
+        wide = dt.Decimal(38, 0)
+        left_seconds = cast(ir.DecimalValue, left_seconds.cast(wide)) * 10**9 + cast(
+            ir.IntegerValue, left_nanos
+        )
+        shifted = (
+            cast(ir.DecimalValue, right_seconds.cast(wide)) * 10**9
+            + cast(ir.IntegerValue, right_nanos)
+            + cast(ir.DecimalValue, ibis.literal(right_offset_seconds * 10**9, type=wide))
+        )
+        right_seconds = (right_rank == ibis.literal(0)).ifelse(shifted, right_seconds.cast(wide))
+        left_nanos = right_nanos = ibis.literal(0)
     equal_rank = left_rank == right_rank
     equal_seconds = left_seconds == right_seconds
     equal = equal_rank & equal_seconds & (left_nanos == right_nanos)

@@ -141,12 +141,10 @@ def retention_threshold_bands(
     if finite_horizon_seconds is None:
         end = cast(ir.TimestampValue, ibis.literal(source_complete_through))
     else:
-        end = cast(
-            ir.TimestampValue,
-            anchor._ret_anchor_time + ibis.interval(seconds=finite_horizon_seconds),
-        )
+        end = anchor._ret_anchor_time
+    end_offset = 0 if finite_horizon_seconds is None else finite_horizon_seconds
     anchor_valid = anchor._ret_anchor_time.notnull() & compare_timestamps(
-        anchor._ret_anchor_time, end, "lt"
+        anchor._ret_anchor_time, end, "lt", right_offset_seconds=end_offset
     )
     source_history = (
         compare_timestamps(
@@ -163,7 +161,7 @@ def retention_threshold_bands(
         )
     else:
         has_followup = anchor._ret_observed_until.notnull() & compare_timestamps(
-            anchor._ret_observed_until, end, "ge"
+            anchor._ret_observed_until, end, "ge", right_offset_seconds=end_offset
         )
     reason = ibis.cases(
         (~anchor_valid, ibis.literal("horizon_unavailable")),
@@ -178,7 +176,9 @@ def retention_threshold_bands(
             [
                 anchor._ret_unit == source._ret_unit,
                 compare_timestamps(source._ret_event_time, anchor._ret_anchor_time, "ge"),
-                compare_timestamps(source._ret_event_time, end, "lt"),
+                compare_timestamps(
+                    source._ret_event_time, end, "lt", right_offset_seconds=end_offset
+                ),
             ],
         )
     else:

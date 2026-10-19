@@ -123,3 +123,121 @@ def test_bucket_join_keeps_pre_epoch_nanosecond_edges():
         assert con.to_pyarrow(joined.candidates).num_rows <= 2 * len(coefficients)
     finally:
         con.disconnect()
+
+
+@pytest.mark.parametrize(
+    "anchor_ns,start,end,coefficients,want",
+    [
+        (1, 0, 1, [0, 1, 1_000_000_000, 1_000_000_001], [1, 1_000_000_000]),
+        (1, -1, 0, [-1_000_000_000, -999_999_999, 0, 1], [-999_999_999, 0]),
+        (-1, 0, 1, [-2, -1, 999_999_998, 999_999_999], [-1, 999_999_998]),
+        (-1, -1, 0, [-1_000_000_002, -1_000_000_001, -2, -1], [-1_000_000_001, -2]),
+    ],
+)
+def test_bucket_join_preserves_shifted_nanosecond_endpoints(
+    anchor_ns, start, end, coefficients, want
+):
+    from terrine.temporal.ranges import RangePlan, blocked_range_join
+
+    con = ibis.duckdb.connect()
+    try:
+        anchors = con.create_table(
+            "shifted_anchors",
+            pa.table({"unit": ["u"], "t0": pa.array([anchor_ns], type=pa.timestamp("ns"))}),
+        )
+        events = con.create_table(
+            "shifted_events",
+            pa.table(
+                {
+                    "event_unit": ["u"] * len(coefficients),
+                    "timestamp": pa.array(coefficients, type=pa.timestamp("ns")),
+                    "coefficient": coefficients,
+                }
+            ),
+        )
+        joined = blocked_range_join(
+            anchors,
+            events,
+            plan=RangePlan(1, 1, "fixed"),
+            window=Window(start, end),
+            event_unit="event_unit",
+            event_timestamp="timestamp",
+        )
+        actual = con.to_pyarrow(joined.matched.select("coefficient")).column(0).to_pylist()
+        assert sorted(actual) == want
+        assert con.to_pyarrow(joined.requests).num_rows <= 2
+        assert con.to_pyarrow(joined.candidates).num_rows <= len(coefficients)
+    finally:
+        con.disconnect()
+
+
+@pytest.mark.parametrize(
+    "anchor_us,start,end",
+    [
+        (2**63 - 2, 2**63 - 2, 2**63 - 1),
+        (-(2**63) + 1, -(2**63), -(2**63) + 1),
+    ],
+)
+def test_bucket_join_virtual_endpoints_do_not_overflow_native_timestamp_domain(
+    anchor_us, start, end
+):
+    from terrine.temporal.ranges import RangePlan, blocked_range_join
+
+    con = ibis.duckdb.connect()
+    try:
+        anchors = con.create_table(
+            "wide_anchors",
+            pa.table({"unit": ["u"], "t0": pa.array([anchor_us], type=pa.timestamp("us"))}),
+        )
+        events = con.create_table(
+            "wide_events",
+            pa.table(
+                {
+                    "event_unit": ["u"],
+                    "timestamp": pa.array([anchor_us], type=pa.timestamp("us")),
+                }
+            ),
+        )
+        joined = blocked_range_join(
+            anchors,
+            events,
+            plan=RangePlan(1, 1, "fixed"),
+            window=Window(start, end),
+            event_unit="event_unit",
+            event_timestamp="timestamp",
+        )
+        assert con.to_pyarrow(joined.requests).num_rows <= 2
+        assert con.to_pyarrow(joined.candidates).num_rows == 0
+        assert con.to_pyarrow(joined.matched).num_rows == 0
+    finally:
+        con.disconnect()
+
+
+def test_shifted_timestamp_comparisons_preserve_null_predicates():
+    from terrine.temporal._timestamps import compare_timestamps
+
+    con = ibis.duckdb.connect()
+    try:
+        timestamps = con.create_table(
+            "nullable_timestamps",
+            pa.table(
+                {
+                    "left": pa.array([1, None], type=pa.timestamp("ns")),
+                    "right": pa.array([None, 1], type=pa.timestamp("ns")),
+                }
+            ),
+        )
+        comparisons = timestamps.select(
+            **{
+                op: compare_timestamps(
+                    timestamps.left, timestamps.right, op, right_offset_seconds=1
+                )
+                for op in ("lt", "le", "gt", "ge", "eq")
+            }
+        )
+        assert (
+            con.to_pyarrow(comparisons).to_pylist()
+            == [{op: None for op in ("lt", "le", "gt", "ge", "eq")}] * 2
+        )
+    finally:
+        con.disconnect()
