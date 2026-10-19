@@ -85,22 +85,31 @@ _READ_FUNCTIONS = frozenset(
 )
 
 
-def admit_read_query(sql: str, declared_dialect: str, execution_dialect: str) -> str:
-    """Accept exactly one read-only query when declaration matches execution."""
-    if declared_dialect.casefold() != execution_dialect.casefold():
-        raise DIALECT_MISMATCH.error(declared=declared_dialect, execution=execution_dialect)
+def _parse_read_query_ast(sql: str, dialect: str) -> exp.Query:
+    """Parse one read-only query structure without admitting its functions."""
     try:
-        statements = parse(sql, read=declared_dialect)
+        statements = parse(sql, read=dialect)
     except Exception as exc:
-        raise _INVALID.error(reason="parse failed for the declared dialect") from exc
+        raise _INVALID.error(reason="parse failed for the execution dialect") from exc
     if len(statements) != 1 or statements[0] is None:
         raise _INVALID.error(reason="expected exactly one statement")
     statement = statements[0]
     if not isinstance(statement, exp.Query):
         raise _INVALID.error(reason="expected a SELECT or other read query")
+    if any(
+        isinstance(node, (exp.DML, exp.DDL, exp.Command, exp.Into, exp.Lock))
+        for node in statement.walk()
+    ):
+        raise _INVALID.error(reason="write and row-lock constructs are not allowed")
+    return statement
+
+
+def admit_read_query(sql: str, declared_dialect: str, execution_dialect: str) -> str:
+    """Accept exactly one read-only query when declaration matches execution."""
+    if declared_dialect.casefold() != execution_dialect.casefold():
+        raise DIALECT_MISMATCH.error(declared=declared_dialect, execution=execution_dialect)
+    statement = _parse_read_query_ast(sql, declared_dialect)
     for node in statement.walk():
-        if isinstance(node, (exp.DML, exp.DDL, exp.Command, exp.Into, exp.Lock)):
-            raise _INVALID.error(reason="write and row-lock constructs are not allowed")
         if isinstance(node, exp.Func) and (
             node.sql_name() not in _READ_FUNCTIONS
             or isinstance(node.parent, exp.Dot)
@@ -146,20 +155,7 @@ def _admit_stored_view_query_ast(definition: str, dialect: str) -> exp.Query:
 
 def _admit_capture_result_query_ast(sql: str, dialect: str) -> exp.Query:
     """Admit one explicit read-result boundary without trusting its functions."""
-    try:
-        statements = parse(sql, read=dialect)
-    except Exception as exc:
-        raise _INVALID.error(reason="capture result query could not be parsed") from exc
-    if len(statements) != 1 or statements[0] is None:
-        raise _INVALID.error(reason="capture requires exactly one query")
-    statement = statements[0]
-    if not isinstance(statement, exp.Query):
-        raise _INVALID.error(reason="capture requires a read query")
-    if any(
-        isinstance(node, (exp.DML, exp.DDL, exp.Command, exp.Into, exp.Lock))
-        for node in statement.walk()
-    ):
-        raise _INVALID.error(reason="capture result contains write or row-lock constructs")
+    statement = _parse_read_query_ast(sql, dialect)
     for node in statement.walk():
         if not isinstance(node, exp.Func):
             continue

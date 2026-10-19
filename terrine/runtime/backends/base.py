@@ -7,6 +7,7 @@ from typing import Protocol
 
 import pyarrow as pa
 
+from terrine.backends.capabilities import BackendCapabilities
 from terrine.runtime.leases import Lease
 
 __all__ = [
@@ -16,15 +17,6 @@ __all__ = [
     "RuntimeBackend",
     "StagedGeneration",
 ]
-
-
-@dataclass(frozen=True, slots=True)
-class BackendCapabilities:
-    snapshot: bool | None
-    change_evidence: frozenset[str]
-    atomic_manifest_publish: bool | None
-    scan_estimate: bool | None
-    cancellation: bool | None
 
 
 @dataclass(frozen=True, slots=True)

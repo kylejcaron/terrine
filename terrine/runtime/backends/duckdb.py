@@ -13,9 +13,9 @@ import pyarrow as pa
 import pyarrow.compute as pc
 from ibis.backends.duckdb import Backend as IbisDuckDBBackend
 
+from terrine.backends.capabilities import DUCKDB_CAPABILITIES
 from terrine.errors import RefusalSpec
 from terrine.runtime.backends.base import (
-    BackendCapabilities,
     PublicationReceipt,
     Reconciliation,
     StagedGeneration,
@@ -34,13 +34,7 @@ _LAZY_DURATION_UNSUPPORTED = RefusalSpec(
 class DuckDBBackend:
     """DuckDB publication via one transaction containing immutable tables and manifest switch."""
 
-    capabilities = BackendCapabilities(
-        snapshot=False,
-        change_evidence=frozenset(),
-        atomic_manifest_publish=True,
-        scan_estimate=None,
-        cancellation=None,
-    )
+    capabilities = DUCKDB_CAPABILITIES
 
     def __init__(self, con: Any, *, namespace: str) -> None:
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", namespace):
@@ -110,6 +104,12 @@ class DuckDBBackend:
         expected_manifest: str | None,
         lease,
     ) -> PublicationReceipt:
+        for operation in ("table_publication", "atomic_manifest_publish"):
+            self.capabilities.require(
+                operation,
+                backend="duckdb",
+                route="Materialize a Frame directly instead of publishing a Dataset generation.",
+            )
         if not stage.partitions:
             raise ValueError("generation must contain at least one partition")
         if lease.resource != f"dataset:{stage.dataset}":

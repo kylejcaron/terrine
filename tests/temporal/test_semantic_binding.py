@@ -12,6 +12,15 @@ from terrine.semantic.models import Catalog
 
 
 @pytest.fixture
+def semantic_con():
+    con = ibis.duckdb.connect()
+    try:
+        yield con
+    finally:
+        con.disconnect()
+
+
+@pytest.fixture
 def event_catalog():
     return Catalog.model_validate(
         {
@@ -116,7 +125,7 @@ def test_ratio_binds_different_physical_keys_and_retains_filters():
     assert metric.measures[1].aggregation == "count"
 
 
-def test_normalized_events_keep_other_entity_keys(event_catalog):
+def test_normalized_events_keep_other_entity_keys(event_catalog, semantic_con):
     table = ibis.memtable(
         {
             "ts": [datetime(2025, 3, 1, tzinfo=UTC)],
@@ -143,18 +152,17 @@ def test_normalized_events_keep_other_entity_keys(event_catalog):
         "as_of": "event_time",
     }
     catalog = Catalog.model_validate(definition)
-    bound = normalize_source(_SchemaConnection(table), catalog, "events")
-    events = normalize_events(table, bound, "user_id")
-    con = ibis.duckdb.connect()
-    try:
-        result = con.to_pyarrow(events.select("_unit", "workspace_id", "birthday"))
-    finally:
-        con.disconnect()
+    con = semantic_con
+    con.create_table("events", table)
+    bound = normalize_source(con, catalog, "events")
+    events = normalize_events(con.table("events"), bound, "user_id")
+    result = con.to_pyarrow(events.select("_unit", "workspace_id", "birthday"))
     assert result.to_pylist() == [{"_unit": "u", "workspace_id": "w", "birthday": date(2000, 1, 1)}]
 
     mismatch = ibis.memtable({"ts": [datetime(2025, 3, 1, tzinfo=UTC)], "user_id": ["u"]})
+    con.create_table("events", mismatch, overwrite=True)
     with pytest.raises(TerrineError) as error:
-        normalize_source(_SchemaConnection(mismatch), catalog, "events")
+        normalize_source(con, catalog, "events")
     assert error.value.code == "terrine.semantic.schema_mismatch"
 
 
@@ -162,7 +170,7 @@ def test_normalized_events_keep_other_entity_keys(event_catalog):
     ("column", "dtype"),
     [("ts", "array<timestamp>"), ("bad", "array<int64>")],
 )
-def test_nested_physical_types_are_not_scalar_bindings(event_catalog, column, dtype):
+def test_nested_physical_types_are_not_scalar_bindings(event_catalog, semantic_con, column, dtype):
     definition = event_catalog.model_dump(mode="python")
     schema = {"ts": "timestamp('UTC')", "user_id": "string", "workspace_id": "string"}
     schema[column] = dtype
@@ -174,13 +182,13 @@ def test_nested_physical_types_are_not_scalar_bindings(event_catalog, column, dt
             "dtype": "int",
             "as_of": "event_time",
         }
-    relation = ibis.table(schema, name="events")
+    semantic_con.create_table("events", schema=schema)
     with pytest.raises(TerrineError) as error:
-        normalize_source(_SchemaConnection(relation), Catalog.model_validate(definition), "events")
+        normalize_source(semantic_con, Catalog.model_validate(definition), "events")
     assert error.value.code == "terrine.semantic.schema_mismatch"
 
 
-def test_dimension_filter_requires_dimension_property_membership(event_catalog):
+def test_dimension_filter_requires_dimension_property_membership(event_catalog, semantic_con):
     definition = event_catalog.model_dump(mode="python")
     definition["sources"]["events"]["properties"] = ["tier"]
     definition["sources"]["events"]["dimensions"] = ["accounts"]
@@ -201,12 +209,11 @@ def test_dimension_filter_requires_dimension_property_membership(event_catalog):
         {"property": "tier", "op": "equals", "value": "premium"}
     ]
     catalog = Catalog.model_validate(definition)
-    relation = ibis.table(
-        {"ts": "timestamp('UTC')", "user_id": "string", "workspace_id": "string"},
-        name="events",
+    semantic_con.create_table(
+        "events", schema={"ts": "timestamp('UTC')", "user_id": "string", "workspace_id": "string"}
     )
     for bind in (
-        lambda: normalize_source(_SchemaConnection(relation), catalog, "events"),
+        lambda: normalize_source(semantic_con, catalog, "events"),
         lambda: bind_metric(catalog, "sessions"),
     ):
         with pytest.raises(TerrineError) as error:
@@ -354,16 +361,6 @@ def test_dimension_and_roster_temporal_columns_require_scalar_timestamps(
         assert error.value.code == "terrine.semantic.schema_mismatch"
     finally:
         con.disconnect()
-
-
-class _SchemaConnection:
-    name = "duckdb"
-
-    def __init__(self, table):
-        self._table = table
-
-    def table(self, name):
-        return self._table
 
 
 @pytest.mark.parametrize(

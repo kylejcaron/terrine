@@ -272,7 +272,7 @@ def _check_fact_schema(raw: Any, fact: _BackingFact) -> None:
         raise _INVALID.error(reason="published backing schema changed")
 
 
-def required_relations(
+def _required_native_relations(
     catalog: Catalog, con: Any, *, units: Mapping[str, Any] | None = None
 ) -> tuple[PhysicalRelationId, ...]:
     issuer = _published_issuer(con)
@@ -367,7 +367,7 @@ def _resolve_relation(
         return table
 
 
-def bind_resolver(
+def _bind_native_resolver(
     catalog: Catalog,
     con: Any,
     *,
@@ -497,6 +497,7 @@ class ExecutionContext:
     snapshot: ExecutionSnapshot
     _resolver: Callable[[RelationSpec], Any]
     _raw: Any = None
+    owner_con: Any = None
     _revalidate: Callable[[], None] | None = None
 
     def resolve(self, relation: RelationSpec) -> Any:
@@ -537,7 +538,7 @@ class ExecutionContext:
 
 
 @contextlib.contextmanager
-def open_execution(
+def _open_native_execution(
     catalog: Catalog,
     con: Any,
     *,
@@ -582,6 +583,7 @@ def open_execution(
                 resolver,
                 _raw=raw,
                 _revalidate=validate,
+                owner_con=con,
             )
             yield context
         finally:
@@ -607,6 +609,7 @@ def open_execution(
             _execution_snapshot(catalog, units),
             resolver,
             _raw=raw,
+            owner_con=con,
         )
         yield context
     finally:
@@ -614,6 +617,42 @@ def open_execution(
             context.close()
         elif raw is not None:
             raw.close()
+
+
+def required_relations(
+    catalog: Catalog, con: Any, *, units: Mapping[str, Any] | None = None
+) -> tuple[PhysicalRelationId, ...]:
+    from terrine.execution.backend import backend_provider
+
+    return backend_provider(con).required_relations(catalog, con, units=units)
+
+
+def bind_resolver(
+    catalog: Catalog,
+    con: Any,
+    *,
+    units: Mapping[str, Any] | None = None,
+    input_binding: VerifiedInputBinding | None = None,
+) -> Callable[[RelationSpec], Any]:
+    from terrine.execution.backend import backend_provider
+
+    return backend_provider(con).bind_resolver(
+        catalog, con, units=units, input_binding=input_binding
+    )
+
+
+def open_execution(
+    catalog: Catalog,
+    con: Any,
+    *,
+    units: Mapping[str, Any] | None = None,
+    input_binding: VerifiedInputBinding | None = None,
+) -> contextlib.AbstractContextManager[ExecutionContext]:
+    from terrine.execution.backend import backend_provider
+
+    return backend_provider(con).open_execution(
+        catalog, con, units=units, input_binding=input_binding
+    )
 
 
 def publish_native_inputs(

@@ -1,12 +1,17 @@
 # Changelog
 
 ## Added
+- Separate backend execution admission from runtime publication with shared immutable capability evidence; unverified connections refuse before source/schema access while native DuckDB keeps identity checks and private-session cleanup.
+- Gate Dataset staging, retained snapshots and Arrow/Parquet reads independently; unsupported publication leaves ordinary Frame materialization available, and strict unknown scan budgets refuse before export destination work.
+- Document and exercise lossless bounded Arrow, pandas and Polars conversions plus pinned Dataset Parquet round-trips, including empty/all-null typed columns and manifest-backed semantic metadata.
 - Optional, preflight-backed DoubleML, DoWhy and same-connection duckreg recipes, with real integration examples and a dedicated CI job.
 - Snapshot-scoped warehouse export checks and exact per-reason exclusion counts; DoWhy refuses repeated-unit and declared-weight datasets rather than forwarding ignored arguments.
 - Add distinct lifelines KM-array and feature-only Cox-dataframe hand-offs, preserving elapsed entry times, declared weights/clusters, and exact exclusions; risk-set conversion retains coarsened counts and refuses delayed entry or incomplete trajectories.
 - Add diff-diff first-treatment encoding for observed persistent-adoption panels, with never-treated zero, preserved calendar gaps, and treatment-history validation before outcome exclusions; exercise Callaway–Sant'Anna, Sun–Abraham and event studies.
 
 ## Fixed
+- Reject non-read and multi-statement compiled queries before native schema resolution, while preserving compiler built-ins and source-relation function admission.
+- Refuse raw driver connections at the Ibis execution-provider boundary instead of advertising relation methods they do not implement; native runtime connection verification is unchanged.
 - Refuse missing pandas with the coded optional-dependency error before decoding diff-diff timestamp periods, including nanosecond values.
 - Keep state-classification null assertions valid across the supported pandas 2.x and 3.x representations.
 
