@@ -63,7 +63,7 @@ def test_run_serialized_plan_executes_through_python_facade():
 
 def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path):
     from terrine.data import Budget, Coverage
-    from terrine.model import Model
+    from terrine.model import Model, UnitSource
     from terrine.runtime.owner import RuntimeOwner
     from terrine.runtime.recipe import ModelReference, SavedPlanRecipe
     from terrine.runtime.snapshot import SnapshotAuthority
@@ -75,6 +75,11 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
     con = ibis.duckdb.connect(str(path))
     con.raw_sql("CREATE TABLE events(ts TIMESTAMP, user_id INTEGER, value INTEGER)")
     con.raw_sql("INSERT INTO events VALUES ('2025-01-01', 1, 3)")
+    con.raw_sql("CREATE TABLE unused_events(ts TIMESTAMP, other_id INTEGER)")
+    con.raw_sql("CREATE TABLE users(id INTEGER)")
+    con.raw_sql("INSERT INTO users VALUES (1)")
+    con.raw_sql("CREATE TABLE other_users(id INTEGER)")
+    con.raw_sql("INSERT INTO other_users VALUES (999)")
     catalog = Catalog.model_validate(
         {
             "schema_version": 1,
@@ -88,7 +93,15 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
                     "facts": ["value"],
                     "properties": [],
                     "dimensions": [],
-                }
+                },
+                "unused": {
+                    "relation": {"kind": "table", "name": "unused_events"},
+                    "timestamp": "ts",
+                    "entities": {"other": "other_id"},
+                    "facts": [],
+                    "properties": [],
+                    "dimensions": [],
+                },
             },
             "facts": {"value": {"source": "events", "column": "value"}},
             "properties": {},
@@ -98,13 +111,23 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
         }
     )
     model = Model.from_catalog(
-        catalog, con=con, readiness={"events": Coverage("2025-01-01", "2025-02-01")}
+        catalog,
+        con=con,
+        units={
+            "user": UnitSource("users", "id"),
+            "other": UnitSource("other_users", "id"),
+        },
+        readiness={
+            "events": Coverage("2025-01-01", "2025-02-01"),
+            "unused": Coverage("2025-01-01", "2025-02-01"),
+        },
     )
     design = Design(
         "user",
         FixedDate("2025-01-02T00:00:00+00:00"),
         features={"total": agg("total", window=("-1d", "0s"))},
     )
+    ordinary = design.build(model).materialize()
     owner = RuntimeOwner(state_path=path, snapshot_root=tmp_path / "snapshots")
     authority = SnapshotAuthority(owner)
     store = RuntimeStore(con.con, namespace="runtime")
@@ -117,7 +140,7 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
         design,
         sources=("events",),
         definition_hash=design.spec_hash,
-        partitions=("p1", "p2"),
+        partitions=("all",),
     )
     plan = plan_refresh(
         namespace="runtime",
@@ -214,6 +237,31 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
     assert replay == result
     assert result.state == "succeeded"
     assert executor.observed == [3] * len(plan.tasks)
+
+    built_in = runtime.run_serialized_plan(
+        recipe.to_json(),
+        con=con.con,
+        namespace="runtime",
+        request_key="built-in-scoped-model",
+        resolver=Resolver(),
+        snapshot_authority=authority,
+    )
+    published = runtime.open_published_frame(built_in, con=con.con, namespace="runtime")
+    assert built_in.state == "succeeded"
+    assert published.table.num_rows == 1
+    assert published.table["total"].to_pylist() == [3.0]
+
+    from dataclasses import fields
+
+    assert {
+        field.name: getattr(published.provenance, field.name)
+        for field in fields(published.provenance)
+        if field.name not in {"source_generations", "execution_snapshot"}
+    } == {
+        field.name: getattr(ordinary.provenance, field.name)
+        for field in fields(ordinary.provenance)
+        if field.name not in {"source_generations", "execution_snapshot"}
+    }
 
 
 def test_custom_saved_recipe_executor_is_not_limited_by_builtin_shape_preflight(tmp_path):
@@ -612,3 +660,62 @@ def test_design_executor_refuses_multiple_output_partitions():
         _preflight_design_partitions(plan)
 
     assert error.value.code == "terrine.runtime.design_partition_unsupported"
+
+def test_custom_saved_recipe_executor_keeps_state_panel_budget_refusal():
+    from types import SimpleNamespace
+
+    from terrine.runtime.recipe import ModelReference, SavedPlanRecipe
+    from terrine.spec import Design, Schedule
+    from terrine.spec.state_panel import StateObservations, StatePanel
+    from tests.runtime.test_recipe import _model
+
+    con = ibis.duckdb.connect()
+    con.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+    model = _model(con)
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-02", "2025-01-04"),
+        shape=StatePanel(StateObservations("status", ("new", "old")), max_periods=3),
+    )
+    plan = plan_refresh(
+        namespace="runtime",
+        dataset="study",
+        definition_hash=design.spec_hash,
+        snapshot_id="snapshot",
+        graph=dependency_graph(
+            model, design, sources=("events",), definition_hash=design.spec_hash
+        ),
+    )
+    recipe = SavedPlanRecipe.create(
+        plan_json=plan.serialize(),
+        design=design,
+        model=ModelReference.from_model(model, owner_key="model"),
+        destination=DestinationRef("output.duckdb", "analytics", "study"),
+        namespace="runtime",
+        expected_base_manifest=None,
+    )
+
+    class Resolver:
+        def resolve(self, reference):
+            return model
+
+    class SnapshotAuthority:
+        def find_retained(self, snapshot_id, *, namespace):
+            return SimpleNamespace(model_hash=model.model_hash)
+
+    class CustomExecutor:
+        def run_snapshot_task(self, context, task, dependencies):
+            raise AssertionError("budget refusal must precede custom execution")
+
+    with pytest.raises(TerrineError) as error:
+        runtime.run_serialized_plan(
+            recipe.to_json(),
+            con=con.con,
+            namespace="runtime",
+            executor=CustomExecutor(),
+            resolver=Resolver(),
+            snapshot_authority=SnapshotAuthority(),
+        )
+
+    assert error.value.code == "terrine.state_panel.budget_required"
+    con.disconnect()

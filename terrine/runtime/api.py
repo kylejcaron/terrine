@@ -526,6 +526,14 @@ class DesignExecutor:
             compiled = compose_runtime_frame(
                 self.design, execution_model, persisted=persisted, budget=self._plan.budget
             )
+            from terrine.frame import (
+                _calendar_comparison_metadata,
+                _panel_metadata,
+                _state_panel_metadata,
+            )
+            from terrine.spec.anchors import FixedDate
+            from terrine.spec.sequence import EventSequence
+            from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
             from terrine.spec.state_panel import StatePanel
 
             table = context.execute(compiled.table)
@@ -534,13 +542,39 @@ class DesignExecutor:
                 table = table.set_column(
                     gap_index, "gap", table.column(gap_index).cast(pa.duration("us"))
                 )
-            shape = (
-                "state_panel"
-                if isinstance(self.design.shape, StatePanel)
-                else str(self.design.shape)
-            )
+            if isinstance(self.design.shape, StatePanel):
+                shape = "state_panel"
+            elif isinstance(self.design.shape, EventSequence):
+                shape = "event_sequence"
+            elif _calendar_comparison_metadata(self.design) is not None:
+                shape = "calendar_comparison"
+            elif isinstance(self.design.shape, CohortSpec):
+                shape = "ltv"
+            elif isinstance(self.design.shape, LifeTable):
+                shape = "life_table"
+            elif isinstance(self.design.shape, TimeToEvent):
+                shape = "time_to_event"
+            else:
+                shape = (
+                    self.design.shape
+                    if isinstance(self.design.shape, str)
+                    else "cross_section"
+                )
             from terrine.execution.gates import _eligibility_summary
+            from terrine.frame import _panel_metadata
+            from terrine.data import SamplingMeta
 
+            treatment = self.design.treatment
+            treatment_column = compiled.roles.treatment
+            baseline_binary = (
+                treatment is not None
+                and treatment_column is not None
+                and isinstance(self.design.anchor, FixedDate)
+                and self.design.shape == "cross_section"
+                and treatment.at == 0
+                and treatment.known_at_t0
+                and pa.types.is_boolean(table.schema.field(treatment_column).type)
+            )
             return MaterializedFrame(
                 table,
                 compiled.roles,
@@ -550,13 +584,30 @@ class DesignExecutor:
                     eligibility_cutoffs=compiled.eligibility_cutoffs,
                     eligibility_summary=_eligibility_summary(compiled.audit_table, context.execute),
                     design_hash=self.design.spec_hash,
-                    model_hash=execution_model.model_hash,
+                    model_hash=self._model.model_hash,
                     source_generations=context.snapshot.source_generations,
                     execution_snapshot=context.snapshot,
-                    state_panel=_state_panel_provenance(self.design, execution_model),
+                    state_panel=_state_panel_metadata(self.design, self._model),
                     shape=shape,
-                    treatment_design=None,
+                    treatment_design="baseline_binary" if baseline_binary else None,
+                    treatment_knowledge=(
+                        "retrospective_effective_time" if treatment is not None else None
+                    ),
+                    treatment_known_at_t0=treatment.known_at_t0 if treatment is not None else False,
                     expression_timings=compiled.expression_timings,
+                    sequence_meta=compiled.sequence_meta,
+                    panel=_panel_metadata(self.design),
+                    sampling=(
+                        SamplingMeta(
+                            self.design.sample.strata,
+                            self.design.sample.controls_per_treated,
+                            self.design.sample.seed,
+                        )
+                        if self.design.sample is not None
+                        else None
+                    ),
+                    calendar_comparison=_calendar_comparison_metadata(self.design),
+                    administrative_cutoff=self.design.administrative_cutoff,
                 ),
             ).to_arrow()
         finally:
