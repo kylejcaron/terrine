@@ -332,7 +332,7 @@ def _bind_recipe_plan(recipe: SavedPlanRecipe, *, namespace: str) -> RefreshPlan
 
 def resolve_plan(
     recipe: SavedPlanRecipe, *, resolver: ModelResolver, namespace: str
-) -> tuple[RefreshPlan, Model, Design, DestinationRef]:
+) -> tuple[RefreshPlan, Model, Design | DatasetRecipe, DestinationRef]:
     restored = SavedPlanRecipe.from_json(recipe.to_json())
     if namespace != restored.namespace:
         raise _INVALID.error(reason="owner namespace mismatch")
@@ -344,4 +344,4 @@ def resolve_plan(
         raise _INVALID.error(reason="owner Model declaration does not match reference")
     plan = _bind_recipe_plan(restored, namespace=namespace)
     design = from_json(restored.design_json)
-    return plan, model, design, restored.destination
+    return plan, model, restored.restore_dataset_recipe() or design, restored.destination

@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import secrets
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 from terrine.agent.design_schema import design_schema
-from terrine.agent.policy import _LIMIT, AgentPolicy, Permission
+from terrine.agent.policy import _LIMIT, _SCOPE, AgentPolicy, Permission, effective_budget
 from terrine.agent.recipes import parse_recipe, recipe_schema
 from terrine.agent.schemas import (
     CancelOutput,
@@ -23,6 +26,7 @@ from terrine.agent.schemas import (
     EventOutput,
     EventsOutput,
     MetricMetadata,
+    PlanReceipt,
     PropertyMetadata,
     RecipeOutput,
     Response,
@@ -32,10 +36,12 @@ from terrine.agent.schemas import (
     ValidationOutput,
     refusal_response,
 )
+from terrine.data import Budget, Preview
 from terrine.errors import RefusalSpec, TerrineError
 from terrine.model import Model
-from terrine.runtime.api import Executor, cancel_run, get_run, read_run_events
-from terrine.runtime.planning import PlanInvocation
+from terrine.runtime.api import Executor, cancel_run, get_run, read_run_events, run_serialized_plan
+from terrine.runtime.changes import ChangeSet
+from terrine.runtime.planning import OwnerPlanner, PlanInvocation, PlanRequest
 from terrine.runtime.recipe import (
     DestinationRef,
     ModelReference,
@@ -44,6 +50,7 @@ from terrine.runtime.recipe import (
 )
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.anchors import EventAnchor, FixedDate
+from terrine.spec.dataset import DatasetRecipe
 from terrine.spec.design import Design
 from terrine.spec.io import from_json, from_yaml, to_json
 from terrine.spec.validate import ensure_runtime_shape_supported, validate_design
@@ -55,6 +62,12 @@ _STORAGE = RefusalSpec("terrine.agent.storage_denied", "Named Design storage is 
 _MODEL = RefusalSpec("terrine.agent.model_mismatch", "Owner model configuration has changed.")
 _RUN = RefusalSpec(
     "terrine.agent.run_unavailable", "Run has no matching owner-prepared invocation."
+)
+_OWNER = RefusalSpec(
+    "terrine.agent.owner_configuration", "Owner execution configuration is unavailable."
+)
+_RECEIPT = RefusalSpec(
+    "terrine.agent.receipt_unavailable", "Use an unchanged owner-prepared receipt."
 )
 
 
@@ -222,6 +235,9 @@ class DatasetTools:
                     "validate_recipe",
                     "save_design",
                     "load_design",
+                    "preview_dataset",
+                    "prepare_dataset",
+                    "execute_plan",
                     "get_run_status",
                     "get_run_events",
                     "request_cancel",
@@ -488,3 +504,182 @@ class DatasetTools:
         if isinstance(payload, dict) and "base_design" in payload:
             return self._recipe_output(serialized)
         return self._design_output(serialized)
+
+    def _dataset_recipe(self, recipe: DatasetRecipe | str) -> DatasetRecipe:
+        if not isinstance(recipe, (DatasetRecipe, str)):
+            raise _INVALID.error(route="Use the discovered DatasetRecipe schema.")
+        return parse_recipe(
+            recipe.canonical_json().decode() if isinstance(recipe, DatasetRecipe) else recipe,
+            self.model,
+        )
+
+    def preview_dataset(
+        self, recipe: DatasetRecipe | str, *, budget: Budget | None = None, bounded_count: int = 0
+    ) -> Response[Preview]:
+        def preview():
+            from terrine.compile import cost
+
+            if (
+                isinstance(bounded_count, bool)
+                or not isinstance(bounded_count, int)
+                or not 0 <= bounded_count <= self.policy.max_bounded_count
+            ):
+                raise _INVALID.error(route="Use a bounded count within the owner cap.")
+            parsed = self._dataset_recipe(recipe)
+            valid = self._validated(parsed.base_design)
+            if bounded_count:
+                self.policy.authorize("preview", sources=valid.required_sources)
+            effective = effective_budget(self.policy.budget, budget)
+            cost._scan_policy(effective)
+            result = cost.preview(
+                parsed.base_design, self.model, effective, bounded_count=bounded_count
+            )
+            return replace(
+                result,
+                coverage={
+                    name: value
+                    for name, value in result.coverage.items()
+                    if name in valid.required_sources
+                },
+            )
+
+        return self._call("validate", preview)
+
+    def _owner_planner(self, destination: DestinationRef) -> OwnerPlanner:
+        authority = self.policy.snapshot_authority
+        if authority is None or self.policy.resolver is None or self.policy.model_reference is None:
+            raise _OWNER.error(route="Configure an owner resolver and retained snapshot authority.")
+        if (
+            destination.schema != self.namespace
+            or Path(destination.database).resolve() != authority.owner.state_path.resolve()
+        ):
+            raise _SCOPE.error(route="Use this owner's database and runtime namespace.")
+        return OwnerPlanner(resolver=self.policy.resolver, snapshot_authority=authority)
+
+    @staticmethod
+    def _receipt(invocation: PlanInvocation) -> PlanReceipt:
+        saved = SavedPlanRecipe.from_json(invocation.recipe_json)
+        identity = json.dumps(invocation.to_dict(), sort_keys=True, separators=(",", ":"))
+        return PlanReceipt(
+            receipt_id=hashlib.sha256(identity.encode()).hexdigest(),
+            design_hash=saved.design_hash,
+            recipe_hash=saved.recipe_hash,
+        )
+
+    def _prepare(
+        self,
+        recipe: DatasetRecipe,
+        *,
+        destination: DestinationRef,
+        invocation_id: str,
+        budget: Budget | None,
+        changes: ChangeSet | None = None,
+        expected_base_manifest: str | None = None,
+        bind_base_manifest: bool = False,
+    ) -> PlanReceipt:
+        valid = self._validated(recipe.base_design)
+        self.policy.authorize("prepare", sources=valid.required_sources, destination=destination)
+        planner = self._owner_planner(destination)
+        reference = self.policy.model_reference
+        if reference is None:
+            raise _OWNER.error()
+        try:
+            request = PlanRequest(
+                invocation_id,
+                reference,
+                recipe.base_design,
+                destination,
+                changes=changes,
+                budget=effective_budget(self.policy.budget, budget),
+                dataset_recipe=recipe,
+                expected_base_manifest=expected_base_manifest,
+                bind_base_manifest=bind_base_manifest,
+            )
+        except (TypeError, ValueError) as error:
+            raise _INVALID.error(
+                route="Use a safe invocation ID and typed change evidence."
+            ) from error
+        return self._receipt(
+            planner.plan(request, con=self.model.con.con, namespace=self.namespace)
+        )
+
+    def prepare_dataset(
+        self,
+        recipe: DatasetRecipe | str,
+        *,
+        destination: DestinationRef,
+        invocation_id: str,
+        budget: Budget | None = None,
+    ) -> Response[PlanReceipt]:
+        return self._call(
+            "prepare",
+            lambda: self._prepare(
+                self._dataset_recipe(recipe),
+                destination=destination,
+                invocation_id=invocation_id,
+                budget=budget,
+            ),
+        )
+
+    def _resolve_receipt(
+        self, receipt: PlanReceipt, permission: Permission
+    ) -> tuple[PlanInvocation, SavedPlanRecipe]:
+        if not isinstance(receipt, PlanReceipt):
+            raise _RECEIPT.error()
+        con = self.model.con.con
+        exists = con.execute(
+            "SELECT 1 FROM information_schema.tables WHERE lower(table_schema)=lower(?) "
+            "AND table_name='runtime_plan_invocations'",
+            [self.namespace],
+        ).fetchone()
+        if exists is None:
+            raise _RECEIPT.error()
+        for (payload,) in con.execute(
+            f'SELECT invocation_json FROM "{self.namespace}".runtime_plan_invocations'
+        ).fetchall():
+            invocation = PlanInvocation.from_dict(json.loads(payload))
+            if self._receipt(invocation) != receipt:
+                continue
+            saved = SavedPlanRecipe.from_json(invocation.recipe_json)
+            if saved.namespace != self.namespace or saved.model != self.policy.model_reference:
+                raise _SCOPE.error()
+            valid = validate_design(from_json(saved.design_json), self.model)
+            self.policy.authorize(
+                permission, sources=valid.required_sources, destination=saved.destination
+            )
+            self._owner_planner(saved.destination)
+            planned_budget = _bind_recipe_plan(saved, namespace=self.namespace).budget
+            if effective_budget(self.policy.budget, planned_budget) != planned_budget:
+                raise _SCOPE.error(route="Prepare a new invocation under the current owner budget.")
+            return invocation, saved
+        raise _RECEIPT.error()
+
+    def _execute(self, receipt: PlanReceipt, *, request_key: str):
+        if not isinstance(request_key, str) or not request_key.strip() or len(request_key) > 256:
+            raise _INVALID.error(route="Use a nonempty request key of at most 256 characters.")
+        invocation, saved = self._resolve_receipt(receipt, "write")
+        return run_serialized_plan(
+            invocation.recipe_json,
+            con=self.model.con.con,
+            namespace=self.namespace,
+            request_key=request_key,
+            destination=saved.destination,
+            executor=self.policy.executor,
+            resolver=self.policy.resolver,
+            snapshot_authority=self.policy.snapshot_authority,
+        )
+
+    def execute_plan(self, receipt: PlanReceipt, *, request_key: str) -> Response[RunOutput]:
+        def execute():
+            result = self._execute(receipt, request_key=request_key)
+            status = get_run(result.run_id, con=self.model.con.con, namespace=self.namespace)
+            return RunOutput(
+                run_id=status.run_id,
+                durable_state=status.durable_state,
+                phase=status.phase,
+                error_code=status.error_code,
+                pinned_result_ref=status.pinned_result_ref,
+                latest_event_cursor=status.latest_event_cursor,
+            )
+
+        return self._call("write", execute)

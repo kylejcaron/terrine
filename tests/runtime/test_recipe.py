@@ -123,7 +123,8 @@ def test_saved_plan_recipe_reconstructs_design_and_verifies_owner_model_in_fresh
         assert restored_plan.expected_base_manifest == "manifest-1"
         assert restored_plan.expected_base_manifest_bound
         assert resolved_model is model
-        assert resolved_design.spec_hash == design.spec_hash
+        assert isinstance(resolved_design, DatasetRecipe)
+        assert resolved_design.digest == dataset_recipe.digest
         con.raw_sql(
             "CREATE TABLE runtime.runtime_manifests "
             "(dataset VARCHAR PRIMARY KEY,generation VARCHAR NOT NULL,version BIGINT NOT NULL,"
@@ -295,5 +296,70 @@ def test_saved_recipe_rejects_null_checksum_with_coded_refusal():
         with pytest.raises(TerrineError) as error:
             SavedPlanRecipe.from_json(json.dumps(document))
         assert error.value.code == "terrine.runtime.plan_recipe_mismatch"
+    finally:
+        con.disconnect()
+
+
+def test_saved_plan_recipe_round_trips_typed_dataset_view():
+    from terrine.runtime.changes import ChangeSet
+    from terrine.runtime.recipe import _bind_recipe_plan
+
+    con = ibis.duckdb.connect()
+    try:
+        con.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        model = _model(con)
+        design = Design("user", FixedDate("2025-01-15"))
+        plan = plan_refresh(
+            namespace="runtime",
+            dataset="study",
+            definition_hash=design.spec_hash,
+            snapshot_id="retained",
+            graph=dependency_graph(sources=("events",), definition_hash=design.spec_hash),
+            changes=ChangeSet((), "conservative_rebuild"),
+        )
+        for view in (
+            {
+                "kind": "training",
+                "features": ["x"],
+                "labels": ["y"],
+                "incomplete_labels": "keep",
+                "split": {"kind": "time", "train_until": "2025-01-15"},
+            },
+            {
+                "kind": "scoring",
+                "features": [],
+                "eligibility": {},
+                "as_of": "2025-01-15T00:00:00+00:00",
+                "parent_design_hash": design.spec_hash,
+            },
+        ):
+            typed = DatasetRecipe(schema_version=1, base_design=design, view=view)
+            saved = SavedPlanRecipe.create(
+                plan_json=plan.serialize(),
+                design=design,
+                model=ModelReference.from_model(model, owner_key="owner"),
+                destination=DestinationRef("owner.duckdb", "runtime", "study"),
+                namespace="runtime",
+                expected_base_manifest="generation-1",
+                dataset_recipe=typed,
+            )
+            restored = SavedPlanRecipe.from_json(saved.to_json())
+            restored_recipe = restored.restore_dataset_recipe()
+            assert restored_recipe is not None and restored_recipe.digest == typed.digest
+            bound = _bind_recipe_plan(restored, namespace="runtime")
+            assert bound.expected_base_manifest == "generation-1"
+            assert bound.recipe.change_evidence == plan.recipe.change_evidence
+            tampered = json.loads(saved.to_json())
+            tampered["dataset_recipe_json"] = tampered["dataset_recipe_json"].replace(
+                "2025-01-15", "2025-01-16"
+            )
+            with pytest.raises(TerrineError):
+                SavedPlanRecipe.from_json(json.dumps(tampered))
+            tampered = json.loads(saved.to_json())
+            raw_plan = json.loads(tampered["plan_json"])
+            raw_plan["change_evidence"] = {}
+            tampered["plan_json"] = json.dumps(raw_plan)
+            with pytest.raises(TerrineError):
+                SavedPlanRecipe.from_json(json.dumps(tampered))
     finally:
         con.disconnect()

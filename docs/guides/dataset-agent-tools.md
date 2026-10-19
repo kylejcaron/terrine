@@ -64,3 +64,28 @@ reported as completed cancellation or successful publication.
 
 The optional MCP transport and external object-store destinations require
 separate owner authorization and are not included in this Python interface.
+
+## Owner-prepared execution
+
+`preview_dataset(recipe)` calls the shared cost preview without capturing inputs
+or reading source rows. Unknown scan/output costs remain unknown. A strict scan
+budget with no verified backend scan bound refuses, including during preparation.
+`bounded_count` additionally requires `preview=True` and the owner's count cap.
+Counts can scan upstream data; they are not a source-work budget.
+
+`prepare_dataset(recipe, destination=..., invocation_id=...)` requires the
+separate `prepare` grant, an exact destination, an owner Model resolver and a
+retained snapshot authority for the connected database. Owner and request budgets
+are intersected: each finite bound is the minimum, and strict scan is logical OR.
+The invocation binds the entire training/scoring recipe, changes, snapshot,
+destination, budget and expected base publication. Reusing an invocation ID
+with changed bindings refuses.
+
+`execute_plan(receipt, request_key=...)` requires `write=True` and resolves only
+the persisted owner invocation; the agent receives an opaque receipt and safe
+hashes, not internal source snapshots or executable callbacks. It rechecks
+source/destination grants and refuses a saved budget weaker than current owner
+policy. Matching destination-scoped request keys replay the existing run before
+reopening retained inputs; a conflicting plan fingerprint refuses. Failed runs
+retry with the same run identity and a newer fence, while succeeded and cancelled
+runs stay terminal.

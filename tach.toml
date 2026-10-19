@@ -98,4 +98,4 @@ depends_on = ["terrine.data", "terrine.errors", "terrine.spec"]
 
 [[modules]]
 path = "terrine.agent"
-depends_on = ["terrine.errors", "terrine.data", "terrine.runtime", "terrine.model", "terrine.spec", "terrine.dataset", "terrine._time"]
+depends_on = ["terrine.errors", "terrine.data", "terrine.runtime", "terrine.model", "terrine.spec", "terrine.dataset", "terrine._time", "terrine.compile.cost"]

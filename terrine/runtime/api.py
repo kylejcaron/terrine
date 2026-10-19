@@ -169,8 +169,13 @@ def run_serialized_plan(
             raise ValueError("destination is only used with a request_key")
         if resolver is None or snapshot_authority is None:
             raise ValueError("saved recipes require an owner resolver and snapshot authority")
-        plan, model, design, _recipe_destination = resolve_plan(
+        plan, model, construction, _recipe_destination = resolve_plan(
             recipe, resolver=resolver, namespace=namespace
+        )
+        from terrine.spec.dataset import DatasetRecipe
+
+        design = (
+            construction.base_design if isinstance(construction, DatasetRecipe) else construction
         )
         receipt = snapshot_authority.find_retained(plan.snapshot_id, namespace=namespace)
         if receipt.model_hash != model.model_hash:

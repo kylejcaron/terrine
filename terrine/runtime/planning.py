@@ -23,6 +23,7 @@ from terrine.runtime.recipe import (
 )
 from terrine.runtime.snapshot import SnapshotAuthority, _design_root_names
 from terrine.runtime.state import RuntimeStore
+from terrine.spec.dataset import DatasetRecipe
 from terrine.spec.design import Design
 from terrine.spec.io import from_json, to_json
 from terrine.spec.validate import ensure_runtime_shape_supported
@@ -52,6 +53,9 @@ class PlanRequest:
     budget: Budget | None = None
     requested_scope: str | None = None
     schema_version: int = 1
+    dataset_recipe: DatasetRecipe | None = None
+    expected_base_manifest: str | None = None
+    bind_base_manifest: bool = False
 
     def __post_init__(self) -> None:
         if self.schema_version != 1:
@@ -72,6 +76,16 @@ class PlanRequest:
             raise TypeError("budget must be Budget or None")
         if self.requested_scope is not None and not self.requested_scope.strip():
             raise ValueError("requested_scope must be non-empty when supplied")
+        if self.dataset_recipe is not None and (
+            not isinstance(self.dataset_recipe, DatasetRecipe)
+            or self.dataset_recipe.base_design.spec_hash != self.design.spec_hash
+        ):
+            raise ValueError("dataset_recipe must match the base Design")
+        if not isinstance(self.bind_base_manifest, bool) or (
+            self.expected_base_manifest is not None
+            and not isinstance(self.expected_base_manifest, str)
+        ):
+            raise ValueError("invalid expected base manifest")
 
     def to_dict(self) -> dict[str, Any]:
         changes = None
@@ -96,6 +110,13 @@ class PlanRequest:
             "changes": changes,
             "budget": asdict(self.budget) if self.budget is not None else None,
             "requested_scope": self.requested_scope,
+            "dataset_recipe": (
+                self.dataset_recipe.canonical_json().decode()
+                if self.dataset_recipe is not None
+                else None
+            ),
+            "expected_base_manifest": self.expected_base_manifest,
+            "bind_base_manifest": self.bind_base_manifest,
         }
 
     @classmethod
@@ -129,6 +150,11 @@ class PlanRequest:
                 budget,
                 value["requested_scope"],
                 value["schema_version"],
+                DatasetRecipe.from_json(value["dataset_recipe"])
+                if value.get("dataset_recipe") is not None
+                else None,
+                value.get("expected_base_manifest"),
+                value.get("bind_base_manifest", False),
             )
         except (KeyError, TypeError, ValueError) as error:
             raise _INVALID_REQUEST.error(reason="malformed or unsupported schema") from error
@@ -223,12 +249,20 @@ class OwnerPlanner:
         _scan_policy(request.budget)
         enforce_shape_budget(request.design.shape, budget)
         compiled = compile_design(request.design, model)
+        if request.dataset_recipe is not None:
+            request.dataset_recipe.build(model)
         source_names, _, _ = _design_root_names(model, request.design)
         graph = dependency_graph(
             model,
             request.design,
             sources=source_names,
-            definition_hash=request.design.spec_hash,
+            definition_hash=(
+                request.design.spec_hash
+                if request.dataset_recipe is None
+                else hashlib.sha256(
+                    (request.dataset_recipe.digest + model.model_hash).encode()
+                ).hexdigest()
+            ),
             partitions=(request.requested_scope or "all",),
             expression_timings=compiled.expression_timings,
         )
@@ -265,6 +299,8 @@ class OwnerPlanner:
             else None
         )
         expected_manifest = expected[0] if expected is not None else None
+        if request.bind_base_manifest and expected_manifest != request.expected_base_manifest:
+            raise _INVALID_REQUEST.error(reason="pinned base generation is no longer current")
         plan = plan_refresh(
             namespace=namespace,
             dataset=request.destination.dataset,
@@ -281,6 +317,7 @@ class OwnerPlanner:
             destination=request.destination,
             namespace=namespace,
             expected_base_manifest=expected_manifest,
+            dataset_recipe=request.dataset_recipe,
         )
         request_key = hashlib.sha256(
             _canonical([namespace, request.invocation_id, request.destination.to_dict()]).encode()
