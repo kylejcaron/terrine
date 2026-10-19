@@ -105,8 +105,8 @@ interpolation at a supported output scale; unsupported numeric types or
 precision refuse with a stable error before query execution. Results exclude
 null observations and preserve distinct reasons for no observations, all-null
 windows, and incomplete coverage. Min, max, and distinct-count operations use
-the same sparse range join; distinct values are counted once across the full
-window rather than by adding daily counts.
+the same sparse range machinery; distinct values are counted once across the
+full window rather than by adding daily counts.
 
 Exact quantiles and approximate distinct are capability-gated to DuckDB until
 other backend behavior is verified. `approx_distinct(metric, window=...)` uses
@@ -126,6 +126,35 @@ approximate results record algorithm, implementation/version, parameters, and
 error description in `ColumnMeta` and preserve that record through Frame Arrow
 and JSON metadata serialization. Other shapes and runtime composition refuse
 approximate quantiles; ordinary `Frame.materialize()` is the supported route.
+
+### Bounded repeated windows
+
+Additive panel metrics retain sparse prefix lookups, including long and sparse
+windows. Exact min/max/distinct/quantile and approximate distinct use sparse
+time-bucket equality joins followed by the exact half-open timestamp predicates.
+Only occupied event buckets and at most two requests per anchor exist; there
+is no unit-by-day spine. No nonadditive state is prefix-subtracted.
+
+The compiler derives a conservative candidate multiplier before executing
+queries. For window width `W`, schedule step `S` and `N` anchors per unit,
+`K = min(N, 2 ceil(W/S))`. A fixed or first/nth event anchor has `N = 1`.
+An EventPanel over a first/nth event uses its declared period count and step.
+Re-anchoring may collapse those spacings, so it uses the whole anchor count.
+For `A` input anchors and `E` selected events, request rows are at most `2A`,
+bucketed event rows at most `E`, and equality-join candidates at most `K E`.
+The exact time predicates can only remove candidates. These are relational
+cardinality bounds, **not** source-scan, client-memory or execution-time bounds.
+The immutable `CompiledStudy.range_plans` records the width, multiplier and
+derivation for each named nonadditive output; no row count is guessed.
+
+The supported candidate multiplier is at most 128. Unknown per-unit event-anchor
+multiplicity (`EventAnchor(..., which="each")`) and larger declared overlaps
+refuse before execution with `terrine.temporal.range_bound_unavailable`.
+Use first/nth event anchors, fewer event periods/anchors, a coarser schedule or
+narrower window, or an additive metric with sparse prefix lookups. Additive
+requests do not inherit this nonadditive overlap limit. This also applies to
+the raw values streamed by cross-section t-digest sidecars.
+
 
 Catalog records and bound Models are immutable, including nested definition maps.
 Create a new definition and bind a new Model when semantics change; an existing

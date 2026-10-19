@@ -18,6 +18,7 @@ from terrine.semantic.rules import UNKNOWN_FILTER
 from terrine.temporal._timestamps import compare_timestamps
 from terrine.temporal.aggregate import TemporalResult, _Check, _Failure
 from terrine.temporal.daily import _predicate
+from terrine.temporal.ranges import RangePlan, blocked_range_join
 from terrine.temporal.readiness import Readiness
 from terrine.windows import Window
 
@@ -130,6 +131,7 @@ def aggregate_nonadditive_window(
     operation: Literal["min", "max", "count_distinct", "approx_count_distinct", "quantile"],
     probability: Decimal | None = None,
     unit_column: str = "unit",
+    range_plan: RangePlan | None = None,
 ) -> TemporalResult:
     """Aggregate only matched sparse range-join rows, retaining completeness metadata."""
     if operation == "quantile":
@@ -166,7 +168,19 @@ def aggregate_nonadditive_window(
         compare_timestamps(selected[event_time], start, "ge"),
         compare_timestamps(selected[event_time], end, "lt"),
     ]
-    matched = anchors.inner_join(selected, conditions)
+    matched = (
+        anchors.inner_join(selected, conditions)
+        if range_plan is None
+        else blocked_range_join(
+            anchors,
+            selected,
+            plan=range_plan,
+            window=window,
+            event_unit=event_unit,
+            event_timestamp=event_time,
+            unit_column=unit_column,
+        ).matched
+    )
     value = matched[event_value]
     groups = [matched[unit_column], matched.anchor_id]
     summary = matched.group_by(*groups).aggregate(
@@ -329,19 +343,53 @@ def aggregate_nonadditive_window(
     checks: tuple[_Check, ...] = ()
     if measure.filters:
         unknown = events.filter(predicate.isnull())
-        unknown_match = anchors.inner_join(
-            unknown,
-            [
-                anchors[unit_column] == unknown._unit,
-                compare_timestamps(unknown._timestamp, start, "ge"),
-                compare_timestamps(unknown._timestamp, end, "lt"),
-            ],
-        ).filter(source_complete & observation_complete)
+        if range_plan is None:
+            unknown_match = anchors.inner_join(
+                unknown,
+                [
+                    anchors[unit_column] == unknown._unit,
+                    compare_timestamps(unknown._timestamp, start, "ge"),
+                    compare_timestamps(unknown._timestamp, end, "lt"),
+                ],
+            )
+        else:
+            unknown_match = blocked_range_join(
+                anchors,
+                unknown,
+                plan=range_plan,
+                window=window,
+                event_unit="_unit",
+                event_timestamp="_timestamp",
+                unit_column=unit_column,
+            ).matched
+        unknown_match = unknown_match.filter(
+            (unknown_match.t0 + ibis.interval(seconds=window.start) >= ibis.literal(coverage.start))
+            & (
+                unknown_match.t0 + ibis.interval(seconds=window.end)
+                <= ibis.literal(coverage.end_exclusive)
+            )
+        )
+        if "_observed_from" in anchors.columns:
+            unknown_match = unknown_match.filter(
+                unknown_match._observed_from.isnull()
+                | (
+                    unknown_match.t0 + ibis.interval(seconds=window.start)
+                    >= unknown_match._observed_from
+                )
+            )
+        if "_observed_until" in anchors.columns:
+            unknown_match = unknown_match.filter(
+                unknown_match._observed_until.isnull()
+                | (
+                    unknown_match.t0 + ibis.interval(seconds=window.end)
+                    <= unknown_match._observed_until
+                )
+            )
         failure_column = "failed_unknown_filter"
-        failed_count = unknown_match.count().cast("string").name(failure_column)
+        failed_count = unknown_match.count().cast("string")
         checks = (
             _Check(
-                unknown_match.aggregate(failed_count),
+                unknown_match.aggregate(failed_unknown_filter=failed_count),
                 (
                     _Failure(
                         failure_column,
@@ -371,6 +419,7 @@ def approximate_quantile_window_values(
     window: Window,
     *,
     unit_column: str = "unit",
+    range_plan: RangePlan | None = None,
 ) -> ibis.Table:
     """Return canonical-ordered event values per anchor for sketch sidecar execution."""
     value_column = source.facts[measure.fact]
@@ -384,13 +433,25 @@ def approximate_quantile_window_values(
     )
     start = anchors.t0 + ibis.interval(seconds=window.start)
     end = anchors.t0 + ibis.interval(seconds=window.end)
-    matched = anchors.inner_join(
-        selected,
-        [
-            anchors[unit_column] == selected.__sketch_unit,
-            compare_timestamps(selected.__sketch_time, start, "ge"),
-            compare_timestamps(selected.__sketch_time, end, "lt"),
-        ],
+    matched = (
+        anchors.inner_join(
+            selected,
+            [
+                anchors[unit_column] == selected.__sketch_unit,
+                compare_timestamps(selected.__sketch_time, start, "ge"),
+                compare_timestamps(selected.__sketch_time, end, "lt"),
+            ],
+        )
+        if range_plan is None
+        else blocked_range_join(
+            anchors,
+            selected,
+            plan=range_plan,
+            window=window,
+            event_unit="__sketch_unit",
+            event_timestamp="__sketch_time",
+            unit_column=unit_column,
+        ).matched
     )
     return (
         matched.filter(matched.__sketch_value.notnull())

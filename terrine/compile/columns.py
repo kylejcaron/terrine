@@ -26,6 +26,7 @@ from terrine.compile.anchors import (
     compile_anchors,
 )
 from terrine.compile.layers import build_measure_layer, measure_identity
+from terrine.compile.ranges import plan_ranges
 from terrine.data import (
     ApproximationMeta,
     ColumnMeta,
@@ -65,6 +66,7 @@ from terrine.temporal.nonadditive import (
     aggregate_nonadditive_window,
     approximate_quantile_window_values,
 )
+from terrine.temporal.ranges import RangePlan
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -177,6 +179,7 @@ class CompiledStudy:
     expression_timings: Mapping[str, ExpressionTiming] = field(default_factory=dict)
     sequence_meta: SequenceMeta | None = None
     sketches: tuple[SketchSidecar, ...] = ()
+    range_plans: Mapping[str, RangePlan] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for name in (
@@ -185,6 +188,7 @@ class CompiledStudy:
             "eligibility_cutoffs",
             "strategy",
             "expression_timings",
+            "range_plans",
         ):
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
         object.__setattr__(self, "_checks", tuple(self._checks))
@@ -246,6 +250,7 @@ def compile_columns(
     """Compile candidates and distinct expressions once without reading source rows."""
     _validate_names(design)
     design.validate(model)
+    range_plans = plan_ranges(design, model)
     anchors = _anchor_table or compile_anchors(
         design, model, include_membership=include_membership, persisted=persisted_anchors
     )
@@ -708,10 +713,11 @@ def compile_columns(
                 role="feature",
                 operation="quantile",
                 probability=node.probability,
+                range_plan=range_plans[node],
             )
             meta = result.columns[output]
             cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
-            strategy = "sparse_range_join/exact_type7"
+            strategy = "blocked_range_join/exact_type7"
             result_table = result.table
         elif isinstance(node, ApproxMetricQuantile):
             metric = model.metrics[node.metric]
@@ -734,13 +740,19 @@ def compile_columns(
                 output=output,
                 role="feature",
                 operation="min",
+                range_plan=range_plans[node],
             )
             result = summary
             sketches.append(
                 SketchSidecar(
                     (output,),
                     approximate_quantile_window_values(
-                        expression_anchors, events, measure, source, node.window
+                        expression_anchors,
+                        events,
+                        measure,
+                        source,
+                        node.window,
+                        range_plan=range_plans[node],
                     ),
                     node.probability,
                     node.sketch,
@@ -761,7 +773,7 @@ def compile_columns(
                 ),
             )
             cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
-            strategy = "sparse_range_join/tdigest_sidecar"
+            strategy = "blocked_range_join/tdigest_sidecar"
             result_table = summary.table.mutate(**{output: ibis.null().cast("float64")})
         elif isinstance(node, ApproxMetricDistinct):
             metric = model.metrics[node.metric]
@@ -784,6 +796,7 @@ def compile_columns(
                 output=output,
                 role="feature",
                 operation="approx_count_distinct",
+                range_plan=range_plans[node],
             )
             meta = replace(
                 result.columns[output],
@@ -797,7 +810,7 @@ def compile_columns(
                 ),
             )
             cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
-            strategy = "sparse_range_join/hll"
+            strategy = "blocked_range_join/hll"
             result_table = result.table
         elif (
             isinstance(node, MetricAgg)
@@ -820,6 +833,7 @@ def compile_columns(
                 output=output,
                 role="feature",
                 operation=cast(Literal["min", "max", "count_distinct"], measure.aggregation),
+                range_plan=range_plans[node],
             )
             meta = result.columns[output]
             cutoff_seconds = (
@@ -828,7 +842,7 @@ def compile_columns(
                 else node.window.end
             )
             cutoff = FeatureCutoff(cutoff_seconds, True, "retrospective_effective_time")
-            strategy = "sparse_range_join/nonadditive"
+            strategy = "blocked_range_join/nonadditive"
             result_table = result.table
         elif not isinstance(node, EventTime):
             metric = model.metrics[node.metric]
@@ -1138,4 +1152,10 @@ def compile_columns(
             for sidecar in sketches
             for sidecar_output in sidecar.outputs
         ),
+        range_plans={
+            name: range_plans[node]
+            for named in (design.features, design.outcomes)
+            for name, node in named.items()
+            if node in range_plans
+        },
     )
