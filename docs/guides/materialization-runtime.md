@@ -112,6 +112,8 @@ When an operator declares a correction, capture or identify the corrected source
 
 Effective-dated attribute corrections and roster exits or re-entries are source changes too: they can change output rows without changing fact-table totals. Nested `event_time(..., relative_to=...)` selectors can depend on corrections outside an aggregate's window around `t0`; refresh their dependent outputs rather than limiting change evidence to that aggregate window. The runtime correction matrix compares complete published rows and column metadata with ordinary Frame materialization, including these cases and a two-period `StatePanel`.
 
+That comparison also covers stable `EventAnchor(..., "each")` identities after removal, input schema widening, incomplete-to-complete readiness, panel baseline attributes, and corrected absorbing terminal histories. Every corrected saved request is replayed without re-executing its tasks. Published provenance names the exact retained input generations, and retained prefix outputs are checked when one aggregate window changes while another remains unaffected. A fresh process can reconstruct and execute a previously saved Model/Design recipe even after live facts change. If any retained input artifact changes after partial task completion, execution refuses the artifact and publishes no generation; live fact, dimension, and roster mutations do not change a valid retained artifact.
+
 An authoritative empty revision change set produces a no-change refresh. The built-in executor records that run against its expected current publication without creating an empty generation: exact result selection, column metadata, and the publication's original retained input binding remain unchanged.
 
 ## Consistency guarantees and limits

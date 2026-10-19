@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, datetime
 
 import pytest
@@ -27,7 +29,7 @@ def _catalog():
                     "timestamp": "occurred_at",
                     "entities": {"user": "user_id"},
                     "facts": ["score"],
-                    "properties": [],
+                    "properties": ["state"],
                     "dimensions": [],
                 },
             },
@@ -42,7 +44,13 @@ def _catalog():
                     "dtype": "string",
                     "as_of": "event_time",
                     "dimension": "history",
-                }
+                },
+                "state": {
+                    "source": "statuses",
+                    "column": "state",
+                    "dtype": "string",
+                    "as_of": "event_time",
+                },
             },
             "dimensions": {
                 "history": {
@@ -80,6 +88,10 @@ class _Resolver:
         ("strict_asof_dimension", [3], [3]),
         ("nested_selector", [3], [3]),
         ("state_panel", [3, 0], [7, 0]),
+        ("each_anchor_removal", [0, 3], [0]),
+        ("schema_change", [3], [3]),
+        ("state_panel_baseline", [3, 0], [3, 0]),
+        ("state_panel_terminal", [3], [3, 0]),
     ],
 )
 def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
@@ -104,8 +116,10 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
     from terrine.spec import (
         BinnedMetricState,
         Design,
+        EventAnchor,
         FixedDate,
         Schedule,
+        StateObservations,
         StatePanel,
         agg,
         asof,
@@ -116,6 +130,8 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
     con = ibis.duckdb.connect(str(state_path))
     try:
         con.raw_sql("CREATE TABLE events(occurred_at TIMESTAMP, user_id BIGINT, amount BIGINT)")
+        if scenario == "schema_change":
+            con.raw_sql("ALTER TABLE events ALTER COLUMN amount TYPE INTEGER")
         con.raw_sql("INSERT INTO events VALUES ('2025-01-01 09:00:00', 1, 3)")
         if scenario == "delete":
             con.raw_sql("INSERT INTO events VALUES ('2025-01-01 11:00:00', 1, 5)")
@@ -129,12 +145,24 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
             "(1, 'gold', '2024-01-01', '2025-01-02'), "
             "(1, 'silver', '2025-01-02', '2026-01-01')"
         )
-        con.raw_sql("CREATE TABLE statuses(occurred_at TIMESTAMP, user_id BIGINT, score BIGINT)")
+        con.raw_sql(
+            "CREATE TABLE statuses("
+            "occurred_at TIMESTAMP, user_id BIGINT, score BIGINT, state VARCHAR)"
+        )
         if scenario == "strict_asof_dimension":
             con.raw_sql("INSERT INTO events VALUES ('2025-01-02 00:00:00', 1, 101)")
         elif scenario == "nested_selector":
             con.raw_sql("INSERT INTO events VALUES ('2024-12-31 11:00:00', 1, 9)")
-            con.raw_sql("INSERT INTO statuses VALUES ('2024-12-31 10:30:00', 1, 1)")
+            con.raw_sql("INSERT INTO statuses VALUES ('2024-12-31 10:30:00', 1, 1, NULL)")
+        elif scenario == "each_anchor_removal":
+            con.raw_sql("ALTER TABLE events ADD COLUMN event_id VARCHAR")
+            con.raw_sql("UPDATE events SET event_id='first'")
+            con.raw_sql("INSERT INTO events VALUES ('2025-01-01 12:00:00', 1, 5, 'second')")
+        elif scenario == "state_panel_terminal":
+            con.raw_sql(
+                "INSERT INTO statuses VALUES "
+                "('2025-01-02', 1, 0, 'active'), ('2025-01-03', 1, 0, 'closed')"
+            )
         catalog = _catalog()
         units = {"user": UnitSource(table="users", key="user_id", exited_at="exited")}
         readiness_end = "2024-12-31" if scenario == "readiness_advance" else "2025-02-01"
@@ -142,25 +170,48 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
             "events": Coverage("2024-12-30", readiness_end),
             "statuses": Coverage("2024-12-30", "2025-02-01"),
         }
-        model = Model.from_catalog(catalog, con=con, readiness=readiness, units=units)
+        model = Model.from_catalog(
+            catalog,
+            con=con,
+            readiness=readiness,
+            units=units,
+            event_ids={"events": "event_id"} if scenario == "each_anchor_removal" else None,
+        )
         features = {"total": agg("total", window=("-1d", "0s"))}
+        if scenario == "late_arrival":
+            features["history"] = agg("total", window=("-3d", "0s"))
         if scenario == "strict_asof_dimension":
             features["tier"] = asof("tier", before="0s")
         elif scenario == "nested_selector":
             origin = event_time("amount", window=("-2d", "-1d"))
             features["nested_time"] = event_time("score", window=("-2h", "0s"), relative_to=origin)
-        if scenario == "state_panel":
+        if scenario.startswith("state_panel"):
             design = Design(
                 "user",
                 Schedule("1d", "2025-01-02", "2025-01-04"),
                 features=features,
                 shape=StatePanel(
-                    BinnedMetricState("total", cutpoints=(5,), levels=("low", "high")),
+                    (
+                        StateObservations("state", ("active", "closed"), absorbing=("closed",))
+                        if scenario == "state_panel_terminal"
+                        else BinnedMetricState("total", cutpoints=(5,), levels=("low", "high"))
+                    ),
                     max_periods=2,
+                    baseline_features=(
+                        {"baseline_tier": asof("tier", before="0s")}
+                        if scenario == "state_panel_baseline"
+                        else None
+                    ),
                 ),
             )
         else:
-            design = Design("user", FixedDate("2025-01-02T00:00:00+00:00"), features=features)
+            design = Design(
+                "user",
+                EventAnchor("amount", "each")
+                if scenario == "each_anchor_removal"
+                else FixedDate("2025-01-02T00:00:00+00:00"),
+                features=features,
+            )
         owner = RuntimeOwner(state_path=state_path, snapshot_root=tmp_path / "snapshots")
         authority = SnapshotAuthority(owner)
         namespace = "analytics_owner"
@@ -169,6 +220,8 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
         destination = DestinationRef(str(state_path), "published", "orders")
         budget = Budget(max_rows=10, max_output_bytes=100_000)
         frames = {}
+        snapshots = {}
+        prefixes = {}
 
         def ordered_rows(frame):
             return sorted(frame.table.to_pylist(), key=lambda row: (row["unit"], row["t0"]))
@@ -182,6 +235,7 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
                 run_id=name,
                 budget=budget,
             )
+            snapshots[name] = snapshot
             graph = dependency_graph(model, design, sources=("events",), partitions=("all",))
             plan = plan_refresh(
                 namespace=namespace,
@@ -215,9 +269,63 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
             rows = ordered_rows(published)
             assert rows == ordered_rows(clean)
             assert published.columns == clean.columns
+            assert published.table.schema.remove_metadata() == clean.table.schema.remove_metadata()
+            bound_snapshot = snapshot if plan.tasks else snapshots["initial"]
+            expected_generations = {
+                key: hashlib.sha256(f"{bound_snapshot.artifact_hash}:{key}".encode()).hexdigest()
+                for kind, names in (
+                    ("source", model.catalog.sources),
+                    ("dimension", model.catalog.dimensions),
+                    ("roster", (design.unit,)),
+                )
+                for name in names
+                for key in (json.dumps([kind, name], separators=(",", ":")),)
+            }
+            assert published.provenance.source_generations == expected_generations
+            assert (
+                published.provenance.execution_snapshot.source_generations == expected_generations
+            )
+            assert published.provenance.execution_snapshot.snapshot_id == bound_snapshot.snapshot_id
+            assert (
+                published.provenance.execution_snapshot.input_binding_id
+                == bound_snapshot.snapshot_id
+            )
+            assert published.provenance.execution_snapshot.replay_equivalence == "verified"
+            prefixes[name] = tuple(
+                hashlib.sha256(
+                    con.con.execute(
+                        f"SELECT output_blob FROM {store._schema}.runtime_tasks "
+                        "WHERE run_id=? AND task_id=? AND status='complete'",
+                        [receipt.run_id, task.task_id],
+                    ).fetchone()[0]
+                ).hexdigest()
+                for task in plan.tasks
+                if task.layer == "prefix"
+            )
+            task_count = con.con.execute(
+                f"SELECT count(*) FROM {store._schema}.runtime_tasks WHERE run_id=?",
+                [receipt.run_id],
+            ).fetchone()[0]
+            replay = run_serialized_plan(
+                recipe.to_json(),
+                con=con.con,
+                namespace=namespace,
+                request_key=f"runtime:{scenario}:{name}",
+            )
+            assert replay == receipt
+            assert open_published_frame(replay, con=con.con, namespace=namespace).table.equals(
+                published.table
+            )
+            assert (
+                con.con.execute(
+                    f"SELECT count(*) FROM {store._schema}.runtime_tasks WHERE run_id=?",
+                    [receipt.run_id],
+                ).fetchone()[0]
+                == task_count
+            )
             assert type(published) is type(clean)
             assert published.columns["total"].numeric_policy == "exact"
-            if scenario == "state_panel":
+            if scenario.startswith("state_panel"):
                 lazy = open_published_generation(receipt, con=con.con, namespace=namespace)
                 ends = (
                     lazy.order_by("period_index")
@@ -243,6 +351,22 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
                 ("low", "low"),
                 ("low", "low"),
             ]
+        elif scenario == "each_anchor_removal":
+            assert [row["t0"] for row in initial_rows] == [
+                datetime(2025, 1, 1, 9, tzinfo=UTC),
+                datetime(2025, 1, 1, 12, tzinfo=UTC),
+            ]
+            assert len({row["anchor_id"] for row in initial_rows}) == 2
+        elif scenario == "state_panel_baseline":
+            assert [row["baseline_tier"] for row in initial_rows] == ["gold", "gold"]
+        elif scenario == "state_panel_terminal":
+            assert [(row["terminal"], row["to_state"]) for row in initial_rows] == [
+                (True, "closed")
+            ]
+        elif scenario == "schema_change":
+            assert str(con.table("events").schema()["amount"]) == "int32"
+        elif scenario == "late_arrival":
+            assert [row["history"] for row in initial_rows] == [3]
 
         if scenario == "insert":
             con.raw_sql("INSERT INTO events VALUES ('2025-01-01 11:00:00', 1, 5)")
@@ -259,7 +383,7 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
         elif scenario == "roster_exit_and_reentry":
             con.raw_sql("UPDATE users SET exited='2025-01-02'")
             change = Change("roster", "users", revision="exit-1")
-        elif scenario == "strict_asof_dimension":
+        elif scenario in ("strict_asof_dimension", "state_panel_baseline"):
             con.raw_sql("UPDATE user_tier SET tier='bronze' WHERE tier='gold'")
             change = Change("update", "history", revision="tier-correction-1")
         elif scenario == "nested_selector":
@@ -276,6 +400,17 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
                     datetime(2024, 12, 31, 9, 31, tzinfo=UTC),
                 ),
             )
+        elif scenario == "each_anchor_removal":
+            con.raw_sql("DELETE FROM events WHERE event_id='first'")
+            change = Change("delete", "events", revision="remove-first-anchor")
+        elif scenario == "schema_change":
+            con.raw_sql("ALTER TABLE events ALTER COLUMN amount TYPE BIGINT")
+            model = Model.from_catalog(catalog, con=con, readiness=readiness, units=units)
+            change = Change("definition", "events", revision="amount-type-widening")
+        elif scenario == "state_panel_terminal":
+            con.raw_sql("UPDATE statuses SET state='active' WHERE state='closed'")
+            con.raw_sql("INSERT INTO statuses VALUES ('2025-01-04', 1, 0, 'closed')")
+            change = Change("update", "statuses", revision="terminal-boundary-correction")
         elif scenario == "no_op":
             change = None
         else:
@@ -308,6 +443,23 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
                 ("high", "low"),
                 ("low", "low"),
             ]
+        elif scenario == "each_anchor_removal":
+            assert corrected_rows[0]["anchor_id"] == initial_rows[1]["anchor_id"]
+            assert initial_rows[0]["anchor_id"] not in {row["anchor_id"] for row in corrected_rows}
+        elif scenario == "state_panel_baseline":
+            assert [row["baseline_tier"] for row in corrected_rows] == ["bronze", "bronze"]
+        elif scenario == "state_panel_terminal":
+            assert [(row["terminal"], row["to_state"]) for row in corrected_rows] == [
+                (False, "active"),
+                (True, "closed"),
+            ]
+            assert corrected_rows[-1]["to_time"] == datetime(2025, 1, 4, tzinfo=UTC)
+        elif scenario == "schema_change":
+            assert str(con.table("events").schema()["amount"]) == "int64"
+        elif scenario == "late_arrival":
+            assert [row["history"] for row in corrected_rows] == [12]
+            assert len(prefixes["initial"]) == len(prefixes["correction"]) == 1
+            assert prefixes["initial"] != prefixes["correction"]
         elif scenario == "roster_exit_and_reentry":
             con.raw_sql("UPDATE users SET exited=NULL")
             reentry_receipt, reentry_rows = run_generation(
