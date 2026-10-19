@@ -76,6 +76,146 @@ def test_dagster_partition_reaches_owner_plan_and_receipt_metadata(monkeypatch, 
     assert all(request.invocation_id != "provider-id" for request in seen)
 
 
+def test_dagster_historical_partitions_publish_distinct_owner_outputs(monkeypatch, tmp_path):
+    import ibis
+    import pyarrow as pa
+
+    from terrine.data import Coverage, UnitSource
+    from terrine.model import Model
+    from terrine.runtime.api import get_run, run_serialized_plan
+    from terrine.runtime.control import ControlEndpoint
+    from terrine.runtime.owner import RuntimeOwner
+    from terrine.runtime.planning import OwnerPlanner
+    from terrine.runtime.snapshot import SnapshotAuthority
+    from terrine.spec import agg
+    from tests.runtime.test_recipe import _model
+
+    database = tmp_path / "historical.duckdb"
+    connection = ibis.duckdb.connect(database=str(database))
+    connection.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+    connection.raw_sql("INSERT INTO events VALUES ('2025-01-14', 1, 3), ('2025-01-15', 1, 4)")
+    connection.raw_sql("CREATE TABLE users (id INTEGER)")
+    connection.raw_sql("INSERT INTO users VALUES (1)")
+    model = Model.from_catalog(
+        _model(connection).catalog,
+        con=connection,
+        units={"user": UnitSource("users", "id")},
+        readiness={"events": Coverage("2025-01-01", "2025-02-01")},
+    )
+    reference_model = ModelReference.from_model(model, owner_key="owner-model")
+
+    class Resolver:
+        def resolve(self, reference):
+            assert reference == reference_model
+            return model
+
+    class Executor:
+        def __init__(self):
+            self.generations = 0
+            self.layers = []
+
+        def _run(self, task):
+            self.layers.append(task.layer)
+            if task.layer == "daily":
+                return pa.table({"task_id": pa.array([], type=pa.string())})
+            return pa.table({"task_id": [task.task_id]})
+
+        def run_task(self, task, dependencies):
+            return self._run(task)
+
+        def run_snapshot_task(self, context, task, dependencies):
+            return self._run(task)
+
+        def publish(self, plan, outputs, lease, run_id):
+            self.generations += 1
+            return f"generation-{self.generations}"
+
+    executor = Executor()
+    authority = SnapshotAuthority(RuntimeOwner(database, tmp_path / "snapshots"))
+    planner = OwnerPlanner(resolver=Resolver(), snapshot_authority=authority)
+    planned = []
+    invocations = []
+    receipts = []
+
+    class LocalOwnerClient:
+        def __init__(self, endpoint, *, namespace):
+            assert namespace == "owner"
+
+        def plan(self, request):
+            planned.append(request)
+            invocation = planner.plan(request, con=connection.con, namespace="owner")
+            invocations.append(invocation)
+            return invocation
+
+        def run(self, serialized_plan, *, request_key, destination):
+            receipt = run_serialized_plan(
+                serialized_plan,
+                con=connection.con,
+                namespace="owner",
+                request_key=request_key,
+                destination=destination,
+                executor=executor,
+                resolver=Resolver(),
+                snapshot_authority=authority,
+            )
+            receipts.append(receipt)
+            return receipt
+
+        def get_run(self, run_id):
+            return get_run(run_id, con=connection.con, namespace="owner")
+
+    import terrine.orchestration.dagster as adapter
+
+    monkeypatch.setattr(adapter, "ControlClient", LocalOwnerClient)
+    endpoint = ControlEndpoint(tmp_path / "local-owner.sock")
+    asset = build_materialization_asset(
+        plan_request_provider=lambda context: PlanRequest(
+            "provider-id",
+            reference_model,
+            Design(
+                "user",
+                FixedDate(context["partition_key"]),
+                features={"total": agg("total", window=("-1d", "0s"))},
+                outcomes={},
+            ),
+            DestinationRef(str(database), "published", "study"),
+        ),
+        endpoint=endpoint,
+        namespace="owner",
+        partitions_start="2025-01-01",
+        resource_concurrency_key="terrine-owner",
+    )
+    assert asset.node_def.tags["dagster/concurrency_key"] == "terrine-owner"
+    try:
+        instance = DagsterInstance.ephemeral()
+        results = [
+            materialize([asset], partition_key=partition, instance=instance)
+            for partition in ("2025-01-14", "2025-01-15")
+        ]
+        assert all(result.success for result in results)
+        assert executor.generations == 2
+        assert [request.requested_scope for request in planned] == [
+            "2025-01-14",
+            "2025-01-15",
+        ]
+        assert [request.design.anchor for request in planned] == [
+            FixedDate("2025-01-14"),
+            FixedDate("2025-01-15"),
+        ]
+        assert [request.destination.dataset for request in planned] == [
+            "study_p2025_01_14",
+            "study_p2025_01_15",
+        ]
+        assert {"daily", "prefix", "frame"}.issubset(executor.layers)
+        assert len({invocation.snapshot_id for invocation in invocations}) == 2
+        assert len(receipts) == 2
+        assert all(
+            receipt.state == "succeeded" and receipt.published_generation for receipt in receipts
+        )
+    finally:
+        connection.disconnect()
+
+
 def test_dagster_waits_for_cancel_request_and_reports_final_generation(monkeypatch, tmp_path):
     import terrine.orchestration.dagster as adapter
 
