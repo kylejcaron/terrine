@@ -68,6 +68,11 @@ Arrow-backed types; `to_polars` and `to_pandas` require their respective extras.
 Arrow exports carry the same metadata. `frame.expr` is an explicitly unsafe Ibis
 escape hatch: executing it directly bypasses validation, budgets and provenance.
 
+See [library hand-offs](docs/guides/library-handoffs.md) for preflight-backed
+DoubleML, DoWhy and same-connection duckreg recipes, plus lifelines and diff-diff
+dataset conversions. Downstream libraries are optional; Terrine makes no causal
+estimates or identification claims.
+
 Output row/byte limits abort instead of returning truncated success. They do
 **not** bound source scans, query work or peak memory. Native scan costs are
 unknown; a strict `max_scan_bytes` therefore refuses before integrity reads.

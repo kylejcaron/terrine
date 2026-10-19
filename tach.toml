@@ -88,3 +88,7 @@ depends_on = ["terrine.compile", "terrine.compile.cost", "terrine.compile.dispat
 [[modules]]
 path = "terrine.orchestration"
 depends_on = ["terrine.runtime"]
+
+[[modules]]
+path = "terrine.export"
+depends_on = ["terrine.data", "terrine.errors", "terrine.spec"]
