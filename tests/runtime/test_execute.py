@@ -830,21 +830,21 @@ def test_cancellation_serializes_with_heartbeat_persistence(monkeypatch):
 def test_delayed_lease_claim_cannot_overwrite_successful_retry(monkeypatch):
     from datetime import UTC, datetime, timedelta
 
-    from terrine.runtime.leases import LeaseStore
+    import terrine.runtime.execute as module
 
     con = duckdb.connect(":memory:")
     plan = _plan()
-    original_acquire = LeaseStore.acquire
+    original_check = module._check_expected_base_manifest
     acquisitions = 0
 
-    def delayed_acquire(store, resource, owner, *, ttl, now):
+    def delayed_check(plan, *, con, namespace):
+        original_check(plan, con=con, namespace=namespace)
         nonlocal acquisitions
-        lease = original_acquire(store, resource, owner, ttl=ttl, now=now)
         acquisitions += 1
         if acquisitions == 1:
             con.execute(
                 'UPDATE "owner".runtime_leases SET expires_at=? WHERE resource=?',
-                [(datetime.now(UTC) - timedelta(seconds=1)).isoformat(), resource],
+                [(datetime.now(UTC) - timedelta(seconds=1)).isoformat(), f"dataset:{plan.dataset}"],
             )
             execute_plan(
                 plan,
@@ -854,9 +854,8 @@ def test_delayed_lease_claim_cannot_overwrite_successful_retry(monkeypatch):
                 run_task=lambda task, dependencies: pa.table({"id": [2]}),
                 publish=lambda plan, outputs, lease: "g2",
             )
-        return lease
 
-    monkeypatch.setattr(LeaseStore, "acquire", delayed_acquire)
+    monkeypatch.setattr(module, "_check_expected_base_manifest", delayed_check)
 
     def unexpected_task(task, dependencies) -> pa.Table:
         raise AssertionError("stale attempt must not execute")
@@ -879,7 +878,7 @@ def test_stale_claim_during_running_takeover_preserves_newer_run_fence(monkeypat
     import threading
     from datetime import UTC, datetime, timedelta
 
-    from terrine.runtime.leases import LeaseStore
+    import terrine.runtime.execute as module
 
     con = duckdb.connect(":memory:")
     plan = _plan()
@@ -887,27 +886,26 @@ def test_stale_claim_during_running_takeover_preserves_newer_run_fence(monkeypat
     resume_old_claim = threading.Event()
     new_attempt_running = threading.Event()
     finish_new_attempt = threading.Event()
-    original_acquire = LeaseStore.acquire
+    original_check = module._check_expected_base_manifest
     acquisition_count = 0
     old_result = []
     old_errors = []
     new_result = []
     new_errors = []
 
-    def delayed_acquire(store, resource, owner, *, ttl, now):
+    def delayed_check(plan, *, con, namespace):
+        original_check(plan, con=con, namespace=namespace)
         nonlocal acquisition_count
-        lease = original_acquire(store, resource, owner, ttl=ttl, now=now)
         acquisition_count += 1
         if acquisition_count == 1:
             con.execute(
                 'UPDATE "owner".runtime_leases SET expires_at=? WHERE resource=?',
-                [(datetime.now(UTC) - timedelta(seconds=1)).isoformat(), resource],
+                [(datetime.now(UTC) - timedelta(seconds=1)).isoformat(), f"dataset:{plan.dataset}"],
             )
             old_lease_acquired.set()
             assert resume_old_claim.wait(timeout=HANG_GUARD_SECONDS)
-        return lease
 
-    monkeypatch.setattr(LeaseStore, "acquire", delayed_acquire)
+    monkeypatch.setattr(module, "_check_expected_base_manifest", delayed_check)
 
     def old_attempt():
         def unexpected_task(task, dependencies) -> pa.Table:
@@ -1110,3 +1108,140 @@ def test_intermediate_partition_sizes_do_not_consume_final_output_budget():
         publish=lambda plan, outputs, lease: "g1",
     )
     assert result.state == "succeeded"
+
+
+def test_failed_retry_reserves_concurrency_before_lease_start(monkeypatch):
+    from terrine.runtime.leases import LeaseStore
+
+    con = duckdb.connect(":memory:")
+    try:
+
+        def fail(task, dependencies):
+            raise RuntimeError("interrupted task")
+
+        with pytest.raises(RuntimeError):
+            execute_plan(
+                _plan(),
+                con=con,
+                namespace="owner",
+                run_id="retry",
+                run_task=fail,
+                publish=lambda *a: "g1",
+                max_active_runs=1,
+            )
+        acquire = LeaseStore.acquire
+
+        def reserved(self, resource, owner, **kwargs):
+            row = con.execute(
+                "SELECT state FROM owner.runtime_runs WHERE run_id='retry'"
+            ).fetchone()
+            assert row is not None and row[0] == "queued"
+            return acquire(self, resource, owner, **kwargs)
+
+        monkeypatch.setattr(LeaseStore, "acquire", reserved)
+        retried = execute_plan(
+            _plan(),
+            con=con,
+            namespace="owner",
+            run_id="retry",
+            max_active_runs=1,
+            run_task=lambda task, deps: pa.table({"id": [task.task_id]}),
+            publish=lambda *a: "g1",
+        )
+        assert retried.state == "succeeded"
+    finally:
+        con.close()
+
+
+def test_expired_or_missing_lease_does_not_consume_concurrency():
+    from functools import partial
+
+    con = duckdb.connect(":memory:")
+    try:
+        run = partial(
+            execute_plan,
+            con=con,
+            namespace="owner",
+            max_active_runs=1,
+            run_task=lambda task, deps: pa.table({"id": [task.task_id]}),
+            publish=lambda *a: "g1",
+        )
+        run(_plan(), run_id="interrupted")
+        con.execute("UPDATE owner.runtime_runs SET state='running' WHERE run_id='interrupted'")
+        result = run(_plan(), run_id="next")
+        assert result.state == "succeeded"
+        row = con.execute(
+            "SELECT state FROM owner.runtime_runs WHERE run_id='interrupted'"
+        ).fetchone()
+        assert row is not None and row[0] == "failed"
+    finally:
+        con.close()
+
+
+def test_cancellation_stops_submitting_tasks_after_current_callback():
+    con = duckdb.connect(":memory:")
+    calls = []
+    try:
+
+        def task(current, dependencies):
+            calls.append(current.task_id)
+            return pa.table({"id": [current.task_id]})
+
+        def publish(*args):
+            raise AssertionError("cancelled execution published")
+
+        result = execute_plan(
+            _plan(),
+            con=con,
+            namespace="owner",
+            run_id="deadline",
+            run_task=task,
+            cancelled=lambda: bool(calls),
+            publish=publish,
+        )
+        assert result.state == "cancelled"
+        assert len(calls) == 1
+    finally:
+        con.close()
+
+
+def test_non_utc_owner_preserves_active_admission_and_recovery():
+    from datetime import UTC, datetime, timedelta
+
+    from terrine.errors import TerrineError
+    from terrine.runtime.leases import LeaseStore
+
+    con = duckdb.connect(":memory:")
+    try:
+        with pytest.raises(RuntimeError):
+            execute_plan(
+                _plan(),
+                con=con,
+                namespace="owner",
+                run_id="active",
+                run_task=lambda *args: (_ for _ in ()).throw(RuntimeError("interrupted")),
+                publish=lambda *args: "g1",
+            )
+        lease = LeaseStore(con, namespace="owner").acquire(
+            "dataset:orders", "active", ttl=timedelta(minutes=5), now=datetime.now(UTC)
+        )
+        con.execute(
+            "UPDATE owner.runtime_runs SET state='running',attempt_fence=? WHERE run_id='active'",
+            [lease.fence],
+        )
+        con.execute("SET TimeZone='Asia/Tokyo'")
+        with pytest.raises(TerrineError) as error:
+            execute_plan(
+                _plan(),
+                con=con,
+                namespace="owner",
+                run_id="next",
+                max_active_runs=1,
+                run_task=lambda *args: pa.table({"unexpected": [True]}),
+                publish=lambda *args: "unexpected",
+            )
+        assert error.value.code == "terrine.runtime.concurrency_limit"
+        row = con.execute("SELECT state FROM owner.runtime_runs WHERE run_id='active'").fetchone()
+        assert row is not None and row[0] == "running"
+    finally:
+        con.close()

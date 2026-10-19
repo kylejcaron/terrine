@@ -496,3 +496,36 @@ def test_owner_planning_refuses_before_staging_on_pinned_inputs(tmp_path, monkey
         )
     finally:
         connection.disconnect()
+
+
+def test_plan_request_round_trip_preserves_dataset_recipe_view():
+    from dataclasses import replace
+
+    from terrine.spec.dataset import DatasetRecipe
+
+    request = _request()
+    for view in (
+        {
+            "kind": "training",
+            "features": ["x"],
+            "labels": ["y"],
+            "incomplete_labels": "keep",
+            "split": {"kind": "time", "train_until": "2025-01-15"},
+        },
+        {
+            "kind": "scoring",
+            "features": ["x"],
+            "as_of": "2025-01-15T00:00:00+00:00",
+            "eligibility": {},
+            "parent_design_hash": request.design.spec_hash,
+        },
+    ):
+        recipe = DatasetRecipe(schema_version=1, base_design=request.design, view=view)
+        typed = replace(request, dataset_recipe=recipe)
+        restored = PlanRequest.from_dict(json.loads(json.dumps(typed.to_dict())))
+        assert restored.dataset_recipe is not None
+        assert restored.dataset_recipe.digest == recipe.digest
+        assert restored.dataset_recipe.base_design.spec_hash == request.design.spec_hash
+        assert restored.dataset_recipe.view == recipe.view
+        with pytest.raises(ValueError, match="base Design"):
+            replace(typed, design=Design("user", FixedDate("2025-01-16")))

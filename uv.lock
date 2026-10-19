@@ -4188,6 +4188,7 @@ sketches = [
 dev = [
     { name = "complexipy" },
     { name = "hypothesis" },
+    { name = "jsonschema" },
     { name = "prek" },
     { name = "pydoclint" },
     { name = "pytest" },
@@ -4229,6 +4230,7 @@ provides-extras = ["duckdb", "pandas", "polars", "airflow", "dagster", "dbt", "i
 dev = [
     { name = "complexipy", specifier = ">=4,<6" },
     { name = "hypothesis", specifier = ">=6,<7" },
+    { name = "jsonschema", specifier = ">=4,<5" },
     { name = "prek", specifier = ">=0.2,<1" },
     { name = "pydoclint", specifier = ">=0.6,<1" },
     { name = "pytest", specifier = ">=8,<9" },

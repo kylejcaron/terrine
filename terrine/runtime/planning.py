@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from terrine.data import Budget
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.execution.gates import enforce_shape_budget, validate_compiled_output
 from terrine.model import Model
 from terrine.runtime.changes import Change, ChangeSet
@@ -24,6 +24,7 @@ from terrine.runtime.recipe import (
 )
 from terrine.runtime.snapshot import SnapshotAuthority, _design_root_names
 from terrine.runtime.state import RuntimeStore
+from terrine.spec.dataset import INVALID_RECIPE, DatasetRecipe
 from terrine.spec.design import Design
 from terrine.spec.io import from_json, to_json
 from terrine.spec.validate import ensure_runtime_shape_supported
@@ -53,6 +54,9 @@ class PlanRequest:
     budget: Budget | None = None
     requested_scope: str | None = None
     schema_version: int = 1
+    dataset_recipe: DatasetRecipe | None = None
+    expected_base_manifest: str | None = None
+    bind_base_manifest: bool = False
 
     def __post_init__(self) -> None:
         if self.schema_version != 1:
@@ -73,6 +77,16 @@ class PlanRequest:
             raise TypeError("budget must be Budget or None")
         if self.requested_scope is not None and not self.requested_scope.strip():
             raise ValueError("requested_scope must be non-empty when supplied")
+        if self.dataset_recipe is not None and (
+            not isinstance(self.dataset_recipe, DatasetRecipe)
+            or self.dataset_recipe.base_design.spec_hash != self.design.spec_hash
+        ):
+            raise ValueError("dataset_recipe must match the base Design")
+        if not isinstance(self.bind_base_manifest, bool) or (
+            self.expected_base_manifest is not None
+            and not isinstance(self.expected_base_manifest, str)
+        ):
+            raise ValueError("invalid expected base manifest")
 
     def to_dict(self) -> dict[str, Any]:
         changes = None
@@ -97,6 +111,13 @@ class PlanRequest:
             "changes": changes,
             "budget": asdict(self.budget) if self.budget is not None else None,
             "requested_scope": self.requested_scope,
+            "dataset_recipe": (
+                self.dataset_recipe.canonical_json().decode()
+                if self.dataset_recipe is not None
+                else None
+            ),
+            "expected_base_manifest": self.expected_base_manifest,
+            "bind_base_manifest": self.bind_base_manifest,
         }
 
     @classmethod
@@ -130,6 +151,11 @@ class PlanRequest:
                 budget,
                 value["requested_scope"],
                 value["schema_version"],
+                DatasetRecipe.from_json(value["dataset_recipe"])
+                if value.get("dataset_recipe") is not None
+                else None,
+                value.get("expected_base_manifest"),
+                value.get("bind_base_manifest", False),
             )
         except (KeyError, TypeError, ValueError) as error:
             raise _INVALID_REQUEST.error(reason="malformed or unsupported schema") from error
@@ -210,49 +236,6 @@ class OwnerPlanner:
                 raise _INVOCATION_CONFLICT.error()
             return PlanInvocation.from_dict(json.loads(prior[1]))
 
-        ensure_runtime_shape_supported(request.design.shape)
-        ensure_runtime_expressions_supported(request.design)
-        model = self.resolver.resolve(request.model)
-        if (
-            not isinstance(model, Model)
-            or ModelReference.from_model(model, owner_key=request.model.owner_key) != request.model
-        ):
-            raise _INVALID_REQUEST.error(reason="owner Model reference does not match")
-        from terrine.compile.cost import _scan_policy
-        from terrine.compile.dispatch import compile_design
-
-        budget = request.budget or Budget()
-        _scan_policy(request.budget)
-        enforce_shape_budget(request.design.shape, budget)
-        compiled = compile_design(request.design, model)
-        source_names, _, _ = _design_root_names(model, request.design)
-        graph = dependency_graph(
-            model,
-            request.design,
-            sources=source_names,
-            definition_hash=request.design.spec_hash,
-            partitions=(request.requested_scope or "all",),
-            expression_timings=compiled.expression_timings,
-        )
-        snapshot = self.snapshot_authority.capture(
-            model,
-            design=request.design,
-            con=con,
-            namespace=namespace,
-            run_id=request.invocation_id,
-            budget=budget,
-        )
-        context = self.snapshot_authority.reopen(snapshot, con=con, namespace=namespace)
-        try:
-            execution_model = model._for_execution(
-                context,
-                source_names=set(source_names),
-                unit_name=request.design.unit,
-            )
-            snapshot_compiled = compile_design(request.design, execution_model)
-            validate_compiled_output(snapshot_compiled, execution_model.con.to_pyarrow)
-        finally:
-            context.close()
         manifest_table = con.execute(
             "SELECT 1 FROM information_schema.tables "
             "WHERE lower(table_schema)=lower(?) AND lower(table_name)='runtime_manifests'",
@@ -267,6 +250,71 @@ class OwnerPlanner:
             else None
         )
         expected_manifest = expected[0] if expected is not None else None
+        if request.bind_base_manifest and expected_manifest != request.expected_base_manifest:
+            raise _INVALID_REQUEST.error(reason="pinned base generation is no longer current")
+        ensure_runtime_shape_supported(request.design.shape)
+        ensure_runtime_expressions_supported(request.design)
+        model = self.resolver.resolve(request.model)
+        if (
+            not isinstance(model, Model)
+            or ModelReference.from_model(model, owner_key=request.model.owner_key) != request.model
+        ):
+            raise _INVALID_REQUEST.error(reason="owner Model reference does not match")
+        from terrine.compile.cost import _scan_policy
+        from terrine.compile.dispatch import compile_design
+
+        budget = request.budget or Budget()
+        _scan_policy(request.budget)
+        enforce_shape_budget(request.design.shape, budget)
+        design = request.design
+        if request.dataset_recipe is not None:
+            try:
+                frame = request.dataset_recipe.build(model)
+            except TerrineError:
+                raise
+            except (KeyError, TypeError, ValueError, OverflowError) as error:
+                raise INVALID_RECIPE.error(reason="dataset view cannot be constructed") from error
+            design, compiled = frame._design, frame._active_compiled()
+        else:
+            compiled = compile_design(design, model)
+        source_names, _, _ = _design_root_names(model, design)
+        graph = dependency_graph(
+            model,
+            design,
+            sources=source_names,
+            definition_hash=(
+                request.design.spec_hash
+                if request.dataset_recipe is None
+                else hashlib.sha256(
+                    (request.dataset_recipe.digest + model.model_hash).encode()
+                ).hexdigest()
+            ),
+            partitions=(request.requested_scope or "all",),
+            expression_timings=compiled.expression_timings,
+        )
+        snapshot = self.snapshot_authority.capture(
+            model,
+            design=design,
+            con=con,
+            namespace=namespace,
+            run_id=request.invocation_id,
+            budget=budget,
+        )
+        context = self.snapshot_authority.reopen(snapshot, con=con, namespace=namespace)
+        try:
+            execution_model = model._for_execution(
+                context,
+                source_names=set(source_names),
+                unit_name=design.unit,
+            )
+            snapshot_compiled = (
+                compile_design(design, execution_model)
+                if request.dataset_recipe is None
+                else request.dataset_recipe.build(execution_model)._active_compiled()
+            )
+            validate_compiled_output(snapshot_compiled, execution_model.con.to_pyarrow)
+        finally:
+            context.close()
         plan = plan_refresh(
             namespace=namespace,
             dataset=request.destination.dataset,
@@ -283,6 +331,7 @@ class OwnerPlanner:
             destination=request.destination,
             namespace=namespace,
             expected_base_manifest=expected_manifest,
+            dataset_recipe=request.dataset_recipe,
         )
         request_key = hashlib.sha256(
             _canonical([namespace, request.invocation_id, request.destination.to_dict()]).encode()

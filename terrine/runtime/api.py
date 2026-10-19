@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Callable
 from typing import Any, Protocol
 
 import ibis
@@ -24,7 +25,7 @@ from terrine.runtime.recipe import (
 )
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
-from terrine.runtime.status import cancel_run, get_run
+from terrine.runtime.status import _recover_interrupted_runs, cancel_run, get_run
 
 __all__ = [
     "CostProvider",
@@ -74,6 +75,8 @@ def run_plan(
     request_key: str | None = None,
     destination: DestinationRef | None = None,
     executor: Executor | None = None,
+    max_active_runs: int | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> RunReceipt:
     """Run a plan under owner execution callbacks, replaying destination-scoped keys."""
     if request_key is not None:
@@ -119,6 +122,8 @@ def run_plan(
         run_id=run_id,
         request_key=request_key,
         destination=destination,
+        max_active_runs=max_active_runs,
+        cancelled=cancelled,
         run_task=executor.run_task,
         authorize_scan=getattr(executor, "authorize_scan", None),
         publish=lambda current_plan, outputs, lease: executor.publish(
@@ -139,6 +144,8 @@ def run_serialized_plan(
     executor: Any | None = None,
     resolver: ModelResolver | None = None,
     snapshot_authority: SnapshotAuthority | None = None,
+    max_active_runs: int | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> RunReceipt:
     """Verify and execute a plan, reopening owner-retained inputs for saved recipes."""
     document = json.loads(serialized)
@@ -182,8 +189,13 @@ def run_serialized_plan(
             raise ValueError("destination is only used with a request_key")
         if resolver is None or snapshot_authority is None:
             raise ValueError("saved recipes require an owner resolver and snapshot authority")
-        plan, model, design, _recipe_destination = resolve_plan(
+        plan, model, construction, _recipe_destination = resolve_plan(
             recipe, resolver=resolver, namespace=namespace
+        )
+        from terrine.spec.dataset import DatasetRecipe
+
+        design = (
+            construction.base_design if isinstance(construction, DatasetRecipe) else construction
         )
         receipt = snapshot_authority.find_retained(plan.snapshot_id, namespace=namespace)
         if receipt.model_hash != model.model_hash:
@@ -219,6 +231,8 @@ def run_serialized_plan(
         request_key=request_key,
         destination=destination,
         executor=executor,
+        max_active_runs=max_active_runs,
+        cancelled=cancelled,
     )
 
 
@@ -274,6 +288,7 @@ def find_run_by_request_key(
     con.execute(
         f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS destination_json VARCHAR"
     )
+    _recover_interrupted_runs(con, namespace=namespace)
     destination_json = json.dumps(destination.to_dict(), sort_keys=True, separators=(",", ":"))
     row = con.execute(
         f"SELECT run_id,state,published_generation FROM {schema}.runtime_runs "

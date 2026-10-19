@@ -17,19 +17,24 @@ from terrine.data import Budget, MaterializedFrame
 from terrine.dataset.manifest import DatasetManifest, ManifestColumn, ManifestGeneration
 from terrine.errors import RefusalSpec
 from terrine.execution.backend import backend_provider
-from terrine.runtime.api import run_serialized_plan
+from terrine.runtime.api import RunReceipt, run_serialized_plan
 from terrine.runtime.backends.base import PublicationReceipt
 from terrine.runtime.backends.duckdb import DuckDBBackend, _digest_relation, _digest_version
 from terrine.runtime.changes import ChangeSet
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.planner import RefreshPlan, plan_refresh
-from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
+from terrine.runtime.recipe import (
+    DestinationRef,
+    ModelReference,
+    SavedPlanRecipe,
+    _bind_recipe_plan,
+)
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.dataset import DatasetRecipe
 
-__all__ = ["Dataset", "stage_frame"]
+__all__ = ["Dataset", "stage_frame", "dataset_from_run"]
 
 _INVALID_DESTINATION = RefusalSpec(
     "terrine.dataset.invalid_destination", "Dataset destination is invalid: {reason}."
@@ -125,11 +130,51 @@ class Dataset:
             raise _GENERATION_INVALID.error()
         return cls(manifest, con=con, namespace=resolved)
 
-    def _verify_publication(self) -> None:
+    @classmethod
+    def open_generation(cls, dataset: str, generation: str, *, con: Any, namespace: str) -> Dataset:
+        """Open an owner-persisted publication without rescanning its output."""
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", namespace):
+            raise _GENERATION_INVALID.error()
+        backend_provider(con)
+        record = con.con.execute(
+            f'SELECT manifest_json FROM "{namespace}".runtime_dataset_recipes '
+            "WHERE dataset=? AND generation=?",
+            [dataset, generation],
+        ).fetchone()
+        if record is None:
+            raise _GENERATION_INVALID.error()
+        instance = cls.__new__(cls)
+        instance._con, instance._raw = con, con.con
+        instance._namespace, instance._manifest = namespace, DatasetManifest.from_json(record[0])
+        if (
+            instance.manifest.generation.dataset_id != dataset
+            or instance.manifest.generation.generation_id != generation
+        ):
+            raise _GENERATION_INVALID.error()
+        instance._load_publication()
+        for partition, checksum in zip(
+            instance.manifest.generation.output_refs,
+            instance.manifest.generation.checksums,
+            strict=True,
+        ):
+            instance._partition_table(partition, checksum)
+        return instance
+
+    def _partition_table(self, partition: str, checksum: str) -> str:
+        generation = self._manifest.generation
+        stored = self._raw.execute(
+            f'SELECT digest,table_name FROM "{self._namespace}".runtime_partitions '
+            "WHERE dataset=? AND generation=? AND partition=?",
+            [generation.dataset_id, generation.generation_id, partition],
+        ).fetchone()
+        if stored is None or stored[0] != checksum:
+            raise _GENERATION_INVALID.error()
+        return stored[1]
+
+    def _load_publication(self) -> None:
         generation, namespace = self._manifest.generation, self._namespace
         if self._manifest.source_snapshots.get("owner") != _owner_for(self._con).reference:
             raise _GENERATION_INVALID.error()
-        backend = DuckDBBackend(self._raw, namespace=namespace)
         record = self._raw.execute(
             "SELECT d.manifest_json,p.version,r.state "
             f'FROM "{namespace}".runtime_dataset_recipes d '
@@ -148,21 +193,20 @@ class Dataset:
         self._receipt = PublicationReceipt(
             generation.dataset_id, generation.generation_id, record[1], generation.output_refs
         )
+
+    def _verify_publication(self) -> None:
+        self._load_publication()
+        generation, namespace = self._manifest.generation, self._namespace
+        backend = DuckDBBackend(self._raw, namespace=namespace)
         expected_schema = tuple(
             (column.name, column.data_type) for column in self._manifest.columns
         )
         rows = 0
         for partition, checksum in zip(generation.output_refs, generation.checksums, strict=True):
-            stored = self._raw.execute(
-                f'SELECT digest,table_name FROM "{namespace}".runtime_partitions '
-                "WHERE dataset=? AND generation=? AND partition=?",
-                [generation.dataset_id, generation.generation_id, partition],
-            ).fetchone()
+            table_name = self._partition_table(partition, checksum)
             if (
-                stored is None
-                or stored[0] != checksum
-                or _digest_relation(
-                    self._raw, f'"{namespace}"', stored[1], version=_digest_version(checksum)
+                _digest_relation(
+                    self._raw, f'"{namespace}"', table_name, version=_digest_version(checksum)
                 )
                 != checksum
             ):
@@ -171,7 +215,7 @@ class Dataset:
             if tuple((field.name, str(field.type)) for field in schema) != expected_schema:
                 raise _GENERATION_INVALID.error()
             rows += self._raw.execute(
-                f'SELECT count(*) FROM "{namespace}"."{stored[1]}"'
+                f'SELECT count(*) FROM "{namespace}"."{table_name}"'
             ).fetchone()[0]
         if rows != generation.row_count:
             raise _GENERATION_INVALID.error()
@@ -301,7 +345,6 @@ def stage_frame(
     if not isinstance(table, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table):
         raise _INVALID_DESTINATION.error(reason="table must be a simple SQL identifier")
     from terrine.runtime.api import preflight_runtime_shape
-    from terrine.spec.validate import validate_design
 
     model = frame._model
     provider = backend_provider(model.con)
@@ -343,9 +386,7 @@ def stage_frame(
     raw = model.con.con
     store = RuntimeStore(raw, namespace=namespace)
     store.initialize()
-    backend = DuckDBBackend(raw, namespace=namespace)
     recipe = _recipe_for(frame)
-    required_sources = validate_design(frame._design, model).required_sources
     plan = _plan_frame(
         frame,
         namespace=namespace,
@@ -380,8 +421,70 @@ def stage_frame(
         resolver=_ModelResolver(model),
         snapshot_authority=authority,
     )
-    if receipt.state != "succeeded" or receipt.published_generation is None:
+    return dataset_from_run(
+        saved,
+        receipt,
+        model=model,
+        namespace=namespace,
+        request_key=request_key,
+        snapshot_authority=authority,
+    )
+
+
+def dataset_from_run(
+    saved: SavedPlanRecipe,
+    receipt: RunReceipt,
+    *,
+    model: Any,
+    namespace: str,
+    request_key: str,
+    snapshot_authority: SnapshotAuthority,
+) -> Dataset:
+    """Record and reopen the exact committed generation of a saved dataset run."""
+    from terrine.spec.validate import validate_design
+
+    if (
+        namespace != saved.namespace
+        or receipt.state != "succeeded"
+        or receipt.published_generation is None
+    ):
         raise _GENERATION_INVALID.error()
+    if snapshot_authority.owner.reference != _owner_for(model.con).reference:
+        raise _GENERATION_INVALID.error()
+    table, raw = saved.destination.dataset, model.con.con
+    plan = _bind_recipe_plan(saved, namespace=namespace)
+    record = raw.execute(
+        f"SELECT dataset,state,published_generation,request_key,fingerprint,destination_json "
+        f'FROM "{namespace}".runtime_runs WHERE run_id=?',
+        [receipt.run_id],
+    ).fetchone()
+    if record is None or (
+        record[:5]
+        != (table, "succeeded", receipt.published_generation, request_key, plan.recipe.fingerprint)
+        or json.loads(record[5]) != saved.destination.to_dict()
+        or ModelReference.from_model(model, owner_key=saved.model.owner_key) != saved.model
+    ):
+        raise _GENERATION_INVALID.error()
+    exists = raw.execute(
+        "SELECT 1 FROM information_schema.tables WHERE lower(table_schema)=lower(?) "
+        "AND table_name='runtime_dataset_recipes'",
+        [namespace],
+    ).fetchone()
+    if exists is not None:
+        prior = raw.execute(
+            f'SELECT manifest_json FROM "{namespace}".runtime_dataset_recipes '
+            "WHERE dataset=? AND generation=?",
+            [table, receipt.published_generation],
+        ).fetchone()
+        if prior is not None:
+            return Dataset(DatasetManifest.from_json(prior[0]), con=model.con, namespace=namespace)
+    recipe = saved.restore_dataset_recipe()
+    if recipe is None:
+        raise _GENERATION_INVALID.error()
+    snapshot = snapshot_authority.find_retained(plan.snapshot_id, namespace=namespace)
+    owner = snapshot_authority.owner
+    backend = DuckDBBackend(raw, namespace=namespace)
+    required_sources = validate_design(recipe.base_design, model).required_sources
     partitions = raw.execute(
         f'SELECT p.partition,p.digest,p.table_name FROM "{namespace}".runtime_partitions p '
         f'JOIN "{namespace}".runtime_run_results r ON r.partition=p.partition '
@@ -423,7 +526,7 @@ def stage_frame(
             )
             for field in schema
         ),
-        frame._design.spec_hash,
+        recipe.base_design.spec_hash,
         model.model_hash,
         coverage,
         {
@@ -442,7 +545,8 @@ def stage_frame(
         "manifest_json VARCHAR,PRIMARY KEY(dataset,generation))"
     )
     raw.execute(
-        f'INSERT INTO "{namespace}".runtime_dataset_recipes VALUES (?,?,?,?,?)',
+        f'INSERT INTO "{namespace}".runtime_dataset_recipes VALUES (?,?,?,?,?) '
+        "ON CONFLICT DO NOTHING",
         [
             table,
             receipt.published_generation,

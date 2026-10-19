@@ -21,6 +21,7 @@ from terrine.runtime.leases import Lease, LeaseStore
 from terrine.runtime.planner import RefreshPlan, TaskSpec
 from terrine.runtime.recipe import DestinationRef
 from terrine.runtime.state import RuntimeStore
+from terrine.runtime.status import _recover_interrupted_runs
 from terrine.runtime.synchronization import run_publication_lock
 
 __all__ = ["RunReceipt", "execute_plan"]
@@ -31,6 +32,9 @@ _REQUEST_KEY_CONFLICT = RefusalSpec(
 _EXECUTION_FAILED = RefusalSpec(
     "terrine.runtime.execution_failed",
     "Runtime execution failed outside a coded Terrine refusal.",
+)
+_CONCURRENCY = RefusalSpec(
+    "terrine.runtime.concurrency_limit", "Owner concurrent run limit has been reached."
 )
 
 
@@ -58,6 +62,7 @@ def execute_plan(
     cancelled: Callable[[], bool] | None = None,
     max_tasks: int = 4096,
     max_concurrency: int = 1,
+    max_active_runs: int | None = None,
     lease_ttl: timedelta = timedelta(minutes=5),
     authorize_scan: Callable[[RefreshPlan], ScanAuthorization] | None = None,
 ) -> RunReceipt:
@@ -70,6 +75,12 @@ def execute_plan(
         raise ValueError("plan task count exceeds configured max_tasks")
     if isinstance(max_concurrency, bool) or max_concurrency < 1:
         raise ValueError("max_concurrency must be positive")
+    if max_active_runs is not None and (
+        isinstance(max_active_runs, bool)
+        or not isinstance(max_active_runs, int)
+        or max_active_runs < 1
+    ):
+        raise ValueError("max_active_runs must be positive")
     if request_key is not None and (
         not isinstance(request_key, str) or not request_key.strip() or len(request_key) > 256
     ):
@@ -132,6 +143,9 @@ def execute_plan(
     result_partitions = sorted(
         task.task_id for task in plan.tasks if task.task_id not in dependencies
     )
+    leases.initialize()
+    _recover_interrupted_runs(con, namespace=namespace)
+    lease = None
     existing_request = None
     with event_transaction(con, namespace=namespace):
         if request_key is not None:
@@ -156,6 +170,19 @@ def execute_plan(
             f"destination_json FROM {schema}.runtime_runs WHERE run_id=?",
             [run_id],
         ).fetchone()
+        if max_active_runs is not None and (
+            run is None or run[2] not in {"succeeded", "cancelled"}
+        ):
+            active = con.execute(
+                f"SELECT COUNT(*) FROM {schema}.runtime_runs r "
+                f"JOIN {schema}.runtime_leases l ON l.resource='dataset:' || r.dataset "
+                "AND l.owner=r.run_id AND l.fence=r.attempt_fence "
+                "WHERE r.state IN ('queued','running','cancel_requested') "
+                "AND l.expires_at>(current_timestamp AT TIME ZONE 'UTC') AND r.run_id<>?",
+                [run_id],
+            ).fetchone()[0]
+            if active >= max_active_runs:
+                raise _CONCURRENCY.error(limit=max_active_runs)
         if run is not None:
             if run[0] != plan.dataset or run[1] != plan.recipe.fingerprint:
                 raise ValueError("run_id is already bound to a different plan")
@@ -186,6 +213,23 @@ def execute_plan(
                 namespace=namespace,
                 _in_transaction=True,
             )
+        if run is None or run[2] not in {"succeeded", "cancelled"}:
+            con.execute(
+                f"UPDATE {schema}.runtime_runs SET state="
+                "CASE WHEN state='failed' THEN 'queued' ELSE state END WHERE run_id=?",
+                [run_id],
+            )
+            lease = leases.acquire(
+                f"dataset:{plan.dataset}",
+                run_id,
+                ttl=lease_ttl,
+                now=datetime.now(UTC),
+                _in_transaction=True,
+            )
+            con.execute(
+                f"UPDATE {schema}.runtime_runs SET attempt_fence=? WHERE run_id=?",
+                [lease.fence, run_id],
+            )
         if result_partitions:
             for partition in result_partitions:
                 con.execute(
@@ -196,8 +240,7 @@ def execute_plan(
     if run is not None and run[2] in {"succeeded", "cancelled"}:
         _release_run_snapshot_refs(runtime_store, plan.snapshot_id, run_id)
         return RunReceipt(run_id, run[2], run[3])
-    leases.initialize()
-    lease = leases.acquire(f"dataset:{plan.dataset}", run_id, ttl=lease_ttl, now=datetime.now(UTC))
+    assert lease is not None
     current = con.execute(
         f"SELECT state, published_generation FROM {schema}.runtime_runs WHERE run_id=?",
         [run_id],
@@ -254,7 +297,7 @@ def execute_plan(
                 rejected = con.execute(
                     f"UPDATE {schema}.runtime_runs SET state='failed', attempt_fence=?, "
                     "updated_at=?, error_code=? WHERE run_id=? AND state IN ('queued','running') "
-                    "AND (attempt_fence IS NULL OR attempt_fence<?) RETURNING run_id",
+                    "AND (attempt_fence IS NULL OR attempt_fence<=?) RETURNING run_id",
                     [
                         lease.fence,
                         datetime.now(UTC).replace(tzinfo=None),
@@ -281,7 +324,7 @@ def execute_plan(
                 f"UPDATE {schema}.runtime_runs SET state='running', attempt_fence=?, "
                 "updated_at=?, error_code=NULL WHERE run_id=? "
                 "AND state IN ('queued','running','failed') "
-                "AND (attempt_fence IS NULL OR attempt_fence<?) AND EXISTS ("
+                "AND (attempt_fence IS NULL OR attempt_fence<=?) AND EXISTS ("
                 f"SELECT 1 FROM {schema}.runtime_leases WHERE resource=? AND owner=? "
                 "AND fence=? AND expires_at>?) RETURNING run_id",
                 [
@@ -376,10 +419,14 @@ def execute_plan(
         inflight: dict[Future[pa.Table | ArrowOutput], TaskSpec] = {}
         active_partitions: set[str] = set()
         task_failure: Exception | None = None
+        stop_requested = False
         with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
             while (pending and task_failure is None) or inflight:
                 if heartbeat_error:
                     raise heartbeat_error[0]
+                if _cancellation_requested(con, schema, run_id, cancelled):
+                    stop_requested = True
+                    pending.clear()
                 made_progress = False
                 for task_id in task_order:
                     if task_failure is not None:
@@ -391,6 +438,10 @@ def execute_plan(
                         continue
                     if task.partition in active_partitions:
                         continue
+                    if stop_requested or _cancellation_requested(con, schema, run_id, cancelled):
+                        stop_requested = True
+                        pending.clear()
+                        break
                     del pending[task_id]
                     saved = con.execute(
                         f"SELECT status, output_blob, attempts FROM {schema}.runtime_tasks "
@@ -500,7 +551,7 @@ def execute_plan(
                 lease=lease,
                 publish=publish,
                 schema=schema,
-                cancelled=cancelled,
+                cancelled=(lambda: True) if stop_requested else cancelled,
                 con=con,
                 runtime_store=runtime_store,
                 leases=leases,
@@ -637,7 +688,7 @@ def _reconcile_committed_publication(
             f"UPDATE {schema}.runtime_runs SET state='succeeded', published_generation=?, "
             "attempt_fence=?, updated_at=? WHERE run_id=? AND state IN "
             "('queued','running','cancel_requested') AND "
-            "(attempt_fence IS NULL OR attempt_fence<?) RETURNING run_id",
+            "(attempt_fence IS NULL OR attempt_fence<=?) RETURNING run_id",
             [generation, lease.fence, datetime.now(UTC).replace(tzinfo=None), run_id, lease.fence],
         ).fetchone()
         if reconciled is None:
@@ -771,6 +822,17 @@ def _check_budget(
         raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
 
 
+def _cancellation_requested(
+    con: Any, schema: str, run_id: str, cancelled: Callable[[], bool] | None
+) -> bool:
+    current = con.execute(
+        f"SELECT state FROM {schema}.runtime_runs WHERE run_id=?", [run_id]
+    ).fetchone()
+    return (current is not None and current[0] == "cancel_requested") or (
+        cancelled is not None and cancelled()
+    )
+
+
 def _finish_run(
     *,
     plan: RefreshPlan,
@@ -784,11 +846,7 @@ def _finish_run(
     runtime_store: RuntimeStore,
     leases: LeaseStore,
 ) -> RunReceipt:
-    current = con.execute(
-        f"SELECT state FROM {schema}.runtime_runs WHERE run_id=?", [run_id]
-    ).fetchone()
-    cancel_requested = current is not None and current[0] == "cancel_requested"
-    if cancel_requested or (cancelled is not None and cancelled()):
+    if _cancellation_requested(con, schema, run_id, cancelled):
         with event_transaction(con, namespace=runtime_store.namespace):
             terminal = con.execute(
                 f"UPDATE {schema}.runtime_runs SET state='cancelled', updated_at=? "

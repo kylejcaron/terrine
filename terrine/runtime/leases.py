@@ -54,10 +54,19 @@ class LeaseStore:
             "resource VARCHAR PRIMARY KEY, guard_version BIGINT NOT NULL)"
         )
 
-    def acquire(self, resource: str, owner: str, *, ttl: timedelta, now: datetime) -> Lease:
+    def acquire(
+        self,
+        resource: str,
+        owner: str,
+        *,
+        ttl: timedelta,
+        now: datetime,
+        _in_transaction: bool = False,
+    ) -> Lease:
         self._validate(resource, owner, ttl, now)
         expires = now + ttl
-        self.con.execute("BEGIN TRANSACTION")
+        if not _in_transaction:
+            self.con.execute("BEGIN TRANSACTION")
         try:
             row = self.con.execute(
                 f"SELECT owner, fence, expires_at "
@@ -92,9 +101,11 @@ class LeaseStore:
                 "SET guard_version=guard_version+1 WHERE resource=?",
                 [resource],
             )
-            self.con.execute("COMMIT")
+            if not _in_transaction:
+                self.con.execute("COMMIT")
         except Exception:
-            self.con.execute("ROLLBACK")
+            if not _in_transaction:
+                self.con.execute("ROLLBACK")
             raise
         return Lease(resource, owner, fence, expires)
 

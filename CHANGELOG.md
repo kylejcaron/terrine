@@ -1,6 +1,12 @@
 # Changelog
 
 ## Added
+- Add strict versioned dataset-tool envelopes and immutable owner policy with separate operation grants, exact resource allowlists and intersected execution budgets.
+- Add destination- and owner-scoped run status, bounded event pages and separately authorized cancellation through the existing runtime APIs.
+- Add editable training/scoring recipe discovery, canonical proposals and named recipe storage, with strict split fields and resolved scoring instants.
+- Prepare complete dataset recipes through owner-retained snapshots and execute immutable opaque receipts with destination-scoped replay and renewed authorization.
+- Stage and refresh pinned datasets through separately authorized agent receipts, expose safe manifest summaries and bounded redacted previews, and restrict Parquet exports to exact owner-approved paths.
+- Add an executable restricted training/refresh/export example and local adversarial dataset evaluations covering policy escalation, injected metadata, response loss, replay conflicts, failed-run retry and cancellation before publication.
 - Separate backend execution admission from runtime publication with shared immutable capability evidence; unverified connections refuse before source/schema access while native DuckDB keeps identity checks and private-session cleanup.
 - Gate Dataset staging, retained snapshots and Arrow/Parquet reads independently; unsupported publication leaves ordinary Frame materialization available, and strict unknown scan budgets refuse before export destination work.
 - Document and exercise lossless bounded Arrow, pandas and Polars conversions plus pinned Dataset Parquet round-trips, including empty/all-null typed columns and manifest-backed semantic metadata.
@@ -10,6 +16,19 @@
 - Add diff-diff first-treatment encoding for observed persistent-adoption panels, with never-treated zero, preserved calendar gaps, and treatment-history validation before outcome exclusions; exercise Callaway–Sant'Anna, Sun–Abraham and event studies.
 
 ## Fixed
+- Keep agent discovery schemas compatible with canonical temporal Design nodes, derive editable examples for rosterless event models, and preserve destination aliases through request JSON round trips.
+- Ignore unrelated case-distinct saved-plan namespaces when authorizing dataset run feedback.
+- Validate scoring recipe anchor, feature and eligibility consistency, reject inexact scoring instants, and return coded refusals for overflowing split durations.
+- Refuse malformed scoring eligibility through the shared dataset recipe error contract before named persistence or frame construction.
+- Enforce owner run deadlines at cancellation/publication checkpoints and admit concurrent runs atomically, preserving terminal replay and failed-run fence renewal.
+- Reserve failed retries and their leases together, recover interrupted runs before request-key replay and admission, and stop scheduling further tasks after cancellation or owner deadline.
+- Open authorized pinned generations through owner publication metadata so a bounded row preview does not rehash the entire dataset; explicit manifest reopening retains full integrity verification.
+- Compare admission and recovery lease expirations in UTC regardless of the owner's session timezone, and retain the exact approved destination when preparing refreshes.
+- Resolve owner-prepared dataset views before source discovery, compilation and retained capture, preserving feature-only scoring without unused label readiness or reads.
+- Replay retained preparation receipts before compiling live inputs, so a lost preparation response remains recoverable after a source or roster is removed.
+- Return only aggregate export metadata through agent tools; retain partition-value-bearing shard paths in the owner-side manifest rather than disclosing them in responses.
+- Recover matching refresh preparation receipts before live preflight or current-generation checks; new invocations still validate their pinned base before capturing inputs.
+- Apply owner strict-scan, row and projected Arrow-byte budgets to bounded row previews, returning coded refusals without partial rows and closing the reader on budget failure.
 - Refuse unsupported approximate-quantile runtime requests before source validation or retained snapshot capture, while preserving ordinary Frame sidecars.
 - Preserve native relation-discovery, input-binding and transaction-ownership regression coverage through the verified Ibis execution boundary.
 - Reject non-read and multi-statement compiled queries before native schema resolution, while preserving compiler built-ins and source-relation function admission.
