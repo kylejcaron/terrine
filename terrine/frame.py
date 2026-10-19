@@ -145,7 +145,14 @@ def _metric_definition(metric: object, model: Model) -> object:
 
 def _feature_definition_hash(design: Design, features: tuple[str, ...], model: Model) -> str:
     from terrine.compile._asof import resolve_attribute
-    from terrine.spec.expressions import AttributeAsOf, EventTime, MetricAgg
+    from terrine.spec.expressions import (
+        ApproxMetricDistinct,
+        ApproxMetricQuantile,
+        AttributeAsOf,
+        EventTime,
+        MetricAgg,
+        MetricQuantile,
+    )
     from terrine.spec.io import canonical_json
 
     record = json.loads(canonical_json(design))["design"]
@@ -195,7 +202,9 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
                 "evaluation_reference": evaluation_reference,
             }
         resolved: dict[str, object] = {}
-        if isinstance(expression, MetricAgg):
+        if isinstance(
+            expression, (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct)
+        ):
             metric = model.metrics.get(expression.metric)
             if metric is not None:
                 resolved["metric"] = _metric_definition(metric, model)

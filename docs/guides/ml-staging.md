@@ -104,6 +104,9 @@ column's `ColumnMeta.transformation` retain it through Arrow, Parquet, staging,
 and refresh. Scoring verifies the original parent design, feature definition,
 and physical source type; it never reads the training population. Refitting
 requires an explicit new training fit and a new recipe.
+Feature identity includes resolved metric/source bindings for aggregates,
+quantiles, and distinct counts. Rebinding a feature to another fact does not
+become compatible merely because its output type is unchanged.
 
 Ordinary `Frame.expr` cannot represent this guarded Arrow-output stage and
 refuses for transformed Frames rather than exposing silently untransformed

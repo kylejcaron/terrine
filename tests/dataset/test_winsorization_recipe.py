@@ -172,3 +172,47 @@ def test_independently_fitted_features_compose_and_reopen(model):
     assert result.table["value"].to_pylist() == [Decimal(value) for value in (5, 10, 15, 15, 15)]
     assert result.table["other"].equals(result.table["value"])
     assert first.fit.recipe_hash == second.fit.recipe_hash == _recipe_for(frame).digest
+
+
+@pytest.mark.parametrize("kind", ("quantile", "approximate_distinct"))
+def test_fitted_transform_refuses_same_typed_rebound_metric(model, kind):
+    from dataclasses import replace
+
+    from terrine import Coverage, Model, UnitSource
+    from terrine.semantic.models import Catalog
+    from terrine.spec import approx_distinct, quantile
+
+    model.con.raw_sql("ALTER TABLE events ADD COLUMN other_amount BIGINT DEFAULT 7")
+    definitions = model.catalog.model_dump(mode="python")
+    definitions["sources"]["events"]["facts"] = (
+        *definitions["sources"]["events"]["facts"],
+        "other_amount",
+    )
+    definitions["facts"]["other_amount"] = {"source": "events", "column": "other_amount"}
+
+    def bind():
+        return Model.from_catalog(
+            Catalog.model_validate(definitions),
+            con=model.con,
+            units={"user": UnitSource("users", "user_id")},
+            readiness={name: Coverage("2025-01-01", "2025-01-12") for name in ("events", "labels")},
+        )
+
+    expression = (
+        quantile("total", "0.5", window=("-1d", "0d"))
+        if kind == "quantile"
+        else approx_distinct("total", window=("-1d", "0d"))
+    )
+    study = replace(design(), features={"value": expression})
+    original = bind()
+    frame = study.build(original).training_set(
+        label="label",
+        split=TimeSplit(train_until="2025-01-06", validation_until="2025-01-07"),
+    )
+    fitted = frame.fit_winsorization("value", lower="0.25", upper="0.75")
+    definitions["measures"]["total"]["fact"] = "other_amount"
+    rebound = study.snapshot(bind(), as_of="2025-01-08", features=("value",), eligibility={})
+    assert rebound.expr.schema()["value"] == frame._active_compiled().table.schema()["value"]
+    with pytest.raises(TerrineError) as error:
+        rebound.winsorize(fitted)
+    assert error.value.code == "terrine.transform.winsorization_identity_mismatch"
