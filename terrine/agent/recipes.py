@@ -6,10 +6,14 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
+from terrine._time import utc_instant
 from terrine.agent.design_schema import design_schema
 from terrine.dataset.splits import policy_from_record
 from terrine.errors import thaw
+from terrine.model import Model
+from terrine.spec.anchors import FixedDate
 from terrine.spec.dataset import INVALID_RECIPE, DatasetRecipe
+from terrine.spec.io import from_json
 
 
 class ViewRecord(BaseModel):
@@ -64,32 +68,48 @@ class ScoringView(ViewRecord):
     @field_validator("as_of")
     @classmethod
     def _instant(cls, value: str) -> str:
-        parsed = datetime.fromisoformat(value)
-        if parsed.tzinfo is None or parsed.utcoffset() is None:
-            raise ValueError("scoring as_of must be a resolved aware instant")
+        utc_instant(value)
         return value
 
 
 _VIEW = TypeAdapter(Annotated[TrainingView | ScoringView, Field(discriminator="kind")])
 
 
-def parse_recipe(serialized: str) -> DatasetRecipe:
+def parse_recipe(serialized: str, model: Model) -> DatasetRecipe:
     recipe = DatasetRecipe.from_json(serialized)
     if recipe.view is not None:
         try:
             _VIEW.validate_json(json.dumps(thaw(recipe.view)))
             if recipe.view["kind"] == "training" and recipe.view["split"] is not None:
                 policy_from_record(thaw(recipe.view["split"]))
-        except ValueError as error:
+        except (ValueError, OverflowError) as error:
             raise INVALID_RECIPE.error(
                 reason="use the discovered typed training or scoring view"
             ) from error
         if recipe.view["kind"] == "scoring":
-            expected = json.loads(recipe.canonical_json())["base_design"]["eligibility"]
-            if thaw(recipe.view["eligibility"]) != expected or recipe.base_design.outcomes:
+            design = recipe.base_design
+            if (
+                design.shape != "cross_section"
+                or not isinstance(design.anchor, FixedDate)
+                or design.outcomes
+                or set(recipe.view["features"]) != set(design.features)
+            ):
                 raise INVALID_RECIPE.error(
-                    reason="scoring view must match its feature-only base Design"
+                    reason="scoring view must match its fixed feature-only base Design"
                 )
+            anchor = design.anchor.date
+            resolved = (
+                utc_instant(anchor) if isinstance(anchor, datetime) else model.day_boundary(anchor)
+            )
+            if utc_instant(recipe.view["as_of"]) != resolved:
+                raise INVALID_RECIPE.error(
+                    reason="scoring instant must match its base Design anchor"
+                )
+            document = json.loads(recipe.canonical_json())["base_design"]
+            document["eligibility"] = thaw(recipe.view["eligibility"])
+            eligibility_design = from_json(json.dumps({"schema_version": 1, "design": document}))
+            if eligibility_design.eligibility != design.eligibility:
+                raise INVALID_RECIPE.error(reason="scoring eligibility must match its base Design")
     return recipe
 
 

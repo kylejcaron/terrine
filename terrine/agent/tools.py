@@ -445,13 +445,15 @@ class DatasetTools:
         return self._call("inspect", lambda: SchemaOutput(document=recipe_schema()))
 
     def _recipe_output(self, serialized: str, base: str | None = None) -> RecipeOutput:
-        recipe = parse_recipe(serialized)
+        recipe = parse_recipe(serialized, self.model)
         valid = self._validated(recipe.base_design)
         canonical = recipe.canonical_json().decode()
         paths = (
             ()
             if base is None
-            else _diff(json.loads(parse_recipe(base).canonical_json()), json.loads(canonical))
+            else _diff(
+                json.loads(parse_recipe(base, self.model).canonical_json()), json.loads(canonical)
+            )
         )
         return RecipeOutput(
             **valid.model_dump(),
@@ -467,7 +469,7 @@ class DatasetTools:
         def validate():
             output = self._recipe_output(serialized)
             try:
-                parse_recipe(serialized).build(self.model)
+                parse_recipe(serialized, self.model).build(self.model)
             except (KeyError, TypeError, ValueError) as error:
                 if isinstance(error, TerrineError):
                     raise

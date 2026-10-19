@@ -12,6 +12,7 @@
 ## Fixed
 - Keep agent discovery schemas compatible with canonical temporal Design nodes, derive editable examples for rosterless event models, and preserve destination aliases through request JSON round trips.
 - Ignore unrelated case-distinct saved-plan namespaces when authorizing dataset run feedback.
+- Validate scoring recipe anchor, feature and eligibility consistency, reject inexact scoring instants, and return coded refusals for overflowing split durations.
 - Refuse missing pandas with the coded optional-dependency error before decoding diff-diff timestamp periods, including nanosecond values.
 - Keep state-classification null assertions valid across the supported pandas 2.x and 3.x representations.
 

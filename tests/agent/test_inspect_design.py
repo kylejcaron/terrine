@@ -174,3 +174,78 @@ def test_propose_design_and_recipe_from_discovered_schema(tools, monkeypatch):
     assert tools.validate_recipe(json.dumps(recipe)).status == "ok"
     recipe["view"]["as_of"] = "2025-01-01"
     assert tools.validate_recipe(json.dumps(recipe)).status == "refused"
+
+
+def _scoring_record(tools):
+    document = json.loads(tools.design_example().output.serialized)["design"]
+    document["features"] = {
+        "history": {
+            "type": "MetricAgg",
+            "metric": tools.inspect_catalog().output.metrics[0].name,
+            "window": {"type": "Window", "start": -86400, "end": 0},
+        }
+    }
+    return {
+        "schema_version": 1,
+        "base_design": document,
+        "view": {
+            "kind": "scoring",
+            "features": ["history"],
+            "as_of": "2025-01-01T00:00:00+00:00",
+            "eligibility": {},
+            "parent_design_hash": "a" * 64,
+        },
+    }
+
+
+@pytest.mark.parametrize("mutation", ["instant", "precision", "features", "shape", "anchor"])
+def test_scoring_recipe_refuses_inconsistent_reconstruction(tools, mutation):
+    recipe = _scoring_record(tools)
+    if mutation == "instant":
+        recipe["view"]["as_of"] = "2025-01-15T00:00:00+00:00"
+    elif mutation == "precision":
+        recipe["view"]["as_of"] = "2025-01-01T00:00:00.000000001Z"
+    elif mutation == "features":
+        recipe["view"]["features"] = []
+    elif mutation == "shape":
+        recipe["base_design"]["shape"] = "panel"
+    else:
+        recipe["base_design"]["anchor"] = {"type": "EventAnchor", "fact": "event", "which": "first"}
+    result = tools.propose_recipe(json.dumps(recipe))
+    assert result.status == "refused"
+    assert result.code == "terrine.dataset.invalid_recipe"
+
+
+def test_scoring_recipe_canonicalizes_eligibility_defaults(tools):
+    recipe = _scoring_record(tools)
+    eligibility = {
+        "missing": {"type": "IsNull", "expr": recipe["base_design"]["features"]["history"]}
+    }
+    recipe["base_design"]["eligibility"] = eligibility
+    recipe["view"]["eligibility"] = eligibility
+    assert tools.propose_recipe(json.dumps(recipe)).status == "ok"
+
+
+def test_recipe_split_overflow_is_a_coded_refusal(tools):
+    recipe = _scoring_record(tools)
+    recipe["view"] = {
+        "kind": "training",
+        "features": ["history"],
+        "labels": ["future"],
+        "incomplete_labels": "keep",
+        "split": {
+            "kind": "time",
+            "train_until": "2025-01-15",
+            "validation_until": None,
+            "embargo_microseconds": 10**30,
+            "groups": None,
+        },
+    }
+    for operation in (
+        tools.propose_recipe,
+        tools.validate_recipe,
+        lambda value: tools.save_design("overflow", value),
+    ):
+        result = operation(json.dumps(recipe))
+        assert result.status == "refused"
+        assert result.code == "terrine.dataset.invalid_recipe"
