@@ -305,6 +305,17 @@ class RuntimeStore:
                 [self.namespace],
             ).fetchone()
             if partition_catalog is not None:
+                metadata_catalog = self.con.execute(
+                    "SELECT 1 FROM information_schema.tables "
+                    "WHERE table_schema=? AND table_name='runtime_partition_metadata'",
+                    [self.namespace],
+                ).fetchone()
+                if metadata_catalog is not None:
+                    self.con.execute(
+                        f"DELETE FROM {self._schema}.runtime_partition_metadata "
+                        "WHERE dataset=? AND generation=?",
+                        [ref.dataset, ref.generation],
+                    )
                 partitions = self.con.execute(
                     f"SELECT table_name FROM {self._schema}.runtime_partitions "
                     "WHERE dataset=? AND generation=?",

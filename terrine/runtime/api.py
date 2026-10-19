@@ -23,11 +23,13 @@ from terrine.runtime.state import RuntimeStore
 from terrine.runtime.status import cancel_run, get_run
 
 __all__ = [
+    "DesignExecutor",
     "Executor",
     "RunReceipt",
     "cancel_run",
     "find_run_by_request_key",
     "get_run",
+    "open_published_frame",
     "open_published_generation",
     "plan_refresh",
     "read_run_events",
@@ -118,7 +120,7 @@ def run_serialized_plan(
     namespace: str,
     request_key: str | None = None,
     destination: DestinationRef | None = None,
-    executor: Executor | None = None,
+    executor: Any | None = None,
     resolver: ModelResolver | None = None,
     snapshot_authority: SnapshotAuthority | None = None,
 ) -> RunReceipt:
@@ -164,9 +166,7 @@ def run_serialized_plan(
             raise ValueError("destination is only used with a request_key")
         if resolver is None or snapshot_authority is None:
             raise ValueError("saved recipes require an owner resolver and snapshot authority")
-        if executor is None or not callable(getattr(executor, "run_snapshot_task", None)):
-            raise ValueError("saved recipes require an executor with run_snapshot_task")
-        plan, model, _design, recipe_destination = resolve_plan(
+        plan, model, design, _recipe_destination = resolve_plan(
             recipe, resolver=resolver, namespace=namespace
         )
         receipt = snapshot_authority.find_retained(plan.snapshot_id, namespace=namespace)
@@ -176,6 +176,11 @@ def run_serialized_plan(
                 "Saved plan reconstruction failed verification "
                 "(retained snapshot Model declaration differs).",
             ).error()
+        preflight_runtime_shape(design, plan.budget)
+        if executor is None:
+            executor = DesignExecutor(model, design, plan, con, namespace=namespace)
+        if not callable(getattr(executor, "run_snapshot_task", None)):
+            raise ValueError("saved recipes require an executor with run_snapshot_task")
         executor = _SnapshotBoundExecutor(executor, snapshot_authority, receipt, con, namespace)
     else:
         plan = RefreshPlan.deserialize(serialized)
@@ -311,3 +316,173 @@ def open_published_generation(receipt: RunReceipt, *, con: Any, namespace: str) 
         for (partition,) in partitions
     ]
     return relations[0] if len(relations) == 1 else ibis.union(*relations, distinct=False)
+
+
+def preflight_runtime_shape(design: Any, budget: Any = None) -> None:
+    from terrine.compile.materialize import preflight_materialization_shape
+    from terrine.execution.gates import enforce_shape_budget
+
+    enforce_shape_budget(design.shape, budget)
+    preflight_materialization_shape(design, budget)
+
+
+class DesignExecutor:
+    """Execute a Design through snapshot-bound compiler layers and atomic publication."""
+
+    def __init__(self, model: Any, design: Any, plan: Any, con: Any, *, namespace: str) -> None:
+        from threading import RLock
+
+        from terrine.compile.layers import plan_layers
+        from terrine.runtime.backends.duckdb import DuckDBBackend
+
+        self.model = model
+        self.design = design
+        self._plan = plan
+        self._keys = plan_layers(design, model).keys
+        self._backend = DuckDBBackend(con, namespace=namespace)
+        self._layers: dict[str, dict[Any, Any]] = {}
+        self._lock = RLock()
+
+    def run_snapshot_task(self, context: Any, task: Any, dependencies: Any):
+        import uuid
+
+        import pyarrow as pa
+
+        from terrine.compile.layers import build_layer
+        from terrine.data import MaterializedFrame, Provenance
+
+        if task.layer in {"daily", "prefix_certificate"}:
+            return pa.table({"_terrine_empty": pa.array([], type=pa.int8())})
+        if task.layer in {"prefix", "anchor"}:
+            key = self._layer_key(task.source, task.layer, self._plan.snapshot_id)
+            result = context.execute(
+                build_layer(self.design, self.model, key, relation_resolver=context.resolve)
+            )
+            with self._lock:
+                self._layers.setdefault(task.partition, {})[key] = result
+            return result
+        if task.layer != "frame":
+            raise ValueError(f"unsupported runtime task layer: {task.layer}")
+
+        from terrine.runtime.materialize import compose_runtime_frame
+
+        persisted = {}
+        registered = []
+        with self._lock:
+            layer_outputs = dict(self._layers.get(task.partition, {}))
+        for key, arrow in layer_outputs.items():
+            name = f"_terrine_runtime_layer_{uuid.uuid4().hex}"
+            relation = context.con.create_table(name, obj=arrow, temp=True)
+            registered.append(name)
+            persisted[key] = relation
+        try:
+            execution_model = self.model._for_execution(context)
+            compiled = compose_runtime_frame(
+                self.design, execution_model, persisted=persisted, budget=self._plan.budget
+            )
+            table = context.execute(compiled.table)
+            shape = (
+                "state_panel"
+                if type(self.design.shape).__name__ == "StatePanel"
+                else str(self.design.shape)
+            )
+            return MaterializedFrame(
+                table,
+                compiled.roles,
+                compiled.columns,
+                Provenance(
+                    feature_cutoffs=compiled.feature_cutoffs,
+                    eligibility_cutoffs=compiled.eligibility_cutoffs,
+                    design_hash=self.design.spec_hash,
+                    model_hash=execution_model.model_hash,
+                    source_generations=context.snapshot.source_generations,
+                    execution_snapshot=context.snapshot,
+                    shape=shape,
+                    treatment_design=None,
+                    expression_timings=compiled.expression_timings,
+                ),
+            ).to_arrow()
+        finally:
+            for name in registered:
+                context.con.drop_table(name, force=True)
+
+    def publish(self, plan: Any, outputs: Any, lease: Any, run_id: str):
+        from terrine.runtime.backends.base import StagedGeneration
+
+        stage = StagedGeneration(
+            plan.dataset,
+            f"generation-{run_id}",
+            outputs,
+            run_id=run_id,
+            snapshot_id=plan.snapshot_id,
+        )
+        return self._backend.publish_generation(
+            stage, expected_manifest=plan.expected_base_manifest, lease=lease
+        )
+
+    def _layer_key(self, source: str, layer: str, snapshot_id: str):
+        from dataclasses import replace
+
+        if layer == "anchor":
+            key = next(key for key in self._keys if key.layer == "anchor")
+        else:
+            matches = [key for key in self._keys if key.layer == "prefix" and key.source == source]
+            if len(matches) != 1:
+                raise ValueError(f"expected one compiler prefix layer for source {source!r}")
+            key = matches[0]
+        return replace(key, snapshot_id=snapshot_id)
+
+
+def open_published_frame(receipt: RunReceipt, *, con: Any, namespace: str):
+    """Read metadata-preserving Arrow output from the exact published run generation."""
+    import pyarrow as pa
+
+    if not isinstance(receipt, RunReceipt) or receipt.state != "succeeded":
+        raise ValueError("a succeeded run receipt is required")
+    if receipt.published_generation is None:
+        raise ValueError("run receipt has no published generation")
+    store = RuntimeStore(con, namespace=namespace)
+    store.initialize()
+    schema = store._schema
+    run = con.execute(
+        f"SELECT dataset,state,published_generation FROM {schema}.runtime_runs WHERE run_id=?",
+        [receipt.run_id],
+    ).fetchone()
+    if run is None or run[1] != "succeeded" or run[2] != receipt.published_generation:
+        raise ValueError("run receipt does not match authoritative runtime state")
+    publication = con.execute(
+        f"SELECT dataset,generation,version FROM {schema}.runtime_run_publications WHERE run_id=?",
+        [receipt.run_id],
+    ).fetchone()
+    if publication is None or (publication[0], publication[1]) != (run[0], run[2]):
+        raise ValueError("run has no matching durable publication receipt")
+    partitions = con.execute(
+        f"SELECT p.partition FROM {schema}.runtime_run_results p "
+        f"JOIN {schema}.runtime_partitions r ON r.partition=p.partition "
+        "WHERE p.run_id=? AND r.dataset=? AND r.generation=? ORDER BY p.partition",
+        [receipt.run_id, run[0], run[2]],
+    ).fetchall()
+    if not partitions:
+        raise ValueError("published generation has no retained partitions")
+    from terrine.data import MaterializedFrame
+    from terrine.runtime.backends.base import PublicationReceipt
+    from terrine.runtime.backends.duckdb import DuckDBBackend
+
+    publication_receipt = PublicationReceipt(
+        run[0], run[2], publication[2], tuple(item[0] for item in partitions)
+    )
+    backend = DuckDBBackend(con, namespace=namespace)
+    frames = [
+        MaterializedFrame.from_arrow(backend.read_partition(publication_receipt, partition[0]))
+        for partition in partitions
+    ]
+    first = frames[0]
+    if any(
+        frame.roles != first.roles
+        or frame.columns != first.columns
+        or frame.provenance != first.provenance
+        for frame in frames[1:]
+    ):
+        raise ValueError("published Arrow partitions do not share one Frame metadata contract")
+    table = pa.concat_tables([frame.table for frame in frames])
+    return MaterializedFrame(table, first.roles, first.columns, first.provenance)

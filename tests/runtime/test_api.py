@@ -252,6 +252,59 @@ def test_published_generation_uses_receipt_generation_not_current_manifest():
     assert second.published_generation == "g2"
 
 
+def test_published_frame_reader_roundtrips_exact_generation_metadata():
+    from datetime import UTC, datetime
+
+    from terrine.data import ColumnMeta, MaterializedFrame, Roles
+    from terrine.runtime.backends.base import StagedGeneration
+    from terrine.runtime.backends.duckdb import DuckDBBackend
+    from tests.test_metadata import _provenance
+
+    con = duckdb.connect(":memory:")
+    clean = MaterializedFrame(
+        pa.table(
+            {
+                "unit": ["u"],
+                "anchor": ["a"],
+                "t0": pa.array(
+                    [datetime(2025, 1, 1, tzinfo=UTC)], type=pa.timestamp("us", tz="UTC")
+                ),
+                "revenue": [3],
+                "revenue_complete": [True],
+                "revenue_reason": [None],
+            }
+        ),
+        Roles("unit", "anchor", "t0", None, (), ("revenue",)),
+        {"revenue": ColumnMeta(None, "outcome", None, None, "revenue_complete", "revenue_reason")},
+        _provenance(),
+    )
+
+    class Publisher(_Executor):
+        def run_task(self, task, dependencies):
+            return clean.to_arrow()
+
+        def publish(self, plan, outputs, lease, run_id):
+            return DuckDBBackend(con, namespace="owner").publish_generation(
+                StagedGeneration(
+                    plan.dataset,
+                    "g1",
+                    outputs,
+                    run_id=run_id,
+                    snapshot_id=plan.snapshot_id,
+                ),
+                expected_manifest=None,
+                lease=lease,
+            )
+
+    receipt = runtime.run_plan(_plan(), con=con, namespace="owner", executor=Publisher())
+    restored = runtime.open_published_frame(receipt, con=con, namespace="owner")
+
+    assert restored.roles == clean.roles
+    assert restored.columns == clean.columns
+    assert restored.provenance == clean.provenance
+    assert restored.table.column("revenue").to_pylist() == clean.table.column("revenue").to_pylist()
+
+
 def test_request_key_replay_is_available_without_executor():
     con = duckdb.connect(":memory:")
     destination = DestinationRef("out.duckdb", "analytics", "orders")

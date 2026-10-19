@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import re
@@ -69,6 +70,11 @@ class DuckDBBackend:
             "dataset VARCHAR NOT NULL, generation VARCHAR NOT NULL, "
             "partition VARCHAR NOT NULL, table_name VARCHAR NOT NULL, "
             "digest VARCHAR NOT NULL, PRIMARY KEY(dataset, generation, partition))"
+        )
+        self.con.execute(
+            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_partition_metadata ("
+            "dataset VARCHAR NOT NULL, generation VARCHAR NOT NULL, partition VARCHAR NOT NULL, "
+            "schema_metadata BLOB NOT NULL, PRIMARY KEY(dataset, generation, partition))"
         )
         self.con.execute(
             f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_references ("
@@ -183,6 +189,23 @@ class DuckDBBackend:
                         f"INSERT INTO {self._schema}.runtime_partitions VALUES (?, ?, ?, ?, ?)",
                         [stage.dataset, stage.generation, partition, table_name, digest],
                     )
+                metadata = _encode_schema_metadata(table.schema.metadata)
+                if metadata is not None:
+                    saved_metadata = self.con.execute(
+                        f"SELECT schema_metadata FROM {self._schema}.runtime_partition_metadata "
+                        "WHERE dataset=? AND generation=? AND partition=?",
+                        [stage.dataset, stage.generation, partition],
+                    ).fetchone()
+                    if saved_metadata is None:
+                        self.con.execute(
+                            f"INSERT INTO {self._schema}.runtime_partition_metadata "
+                            "VALUES (?, ?, ?, ?)",
+                            [stage.dataset, stage.generation, partition, metadata],
+                        )
+                    elif bytes(saved_metadata[0]) != metadata:
+                        raise ValueError(
+                            "retry partition schema metadata does not match staged generation"
+                        )
                 stored.append(partition)
             self.con.execute(
                 f"INSERT INTO {self._schema}.runtime_publications VALUES (?, ?, ?) "
@@ -288,7 +311,15 @@ class DuckDBBackend:
         ).fetchone()
         if row is None:
             raise KeyError(partition)
-        return self.con.execute(f"SELECT * FROM {self._schema}.{_quote(row[0])}").to_arrow_table()
+        table = self.con.execute(f"SELECT * FROM {self._schema}.{_quote(row[0])}").to_arrow_table()
+        metadata = self.con.execute(
+            f"SELECT schema_metadata FROM {self._schema}.runtime_partition_metadata "
+            "WHERE dataset=? AND generation=? AND partition=?",
+            [receipt.dataset, receipt.generation, partition],
+        ).fetchone()
+        if metadata is not None:
+            table = table.replace_schema_metadata(_decode_schema_metadata(bytes(metadata[0])))
+        return table
 
     def read_relation(
         self, receipt: PublicationReceipt, partition: str, *, ibis_backend: Any
@@ -350,3 +381,21 @@ def _digest(table: pa.Table) -> str:
     with pa.ipc.new_stream(sink, table.schema) as writer:
         writer.write_table(table)
     return hashlib.sha256(sink.getvalue().to_pybytes()).hexdigest()
+
+
+def _encode_schema_metadata(metadata: dict[bytes, bytes] | None) -> bytes | None:
+    if metadata is None:
+        return None
+    value = {
+        base64.b64encode(key).decode("ascii"): base64.b64encode(item).decode("ascii")
+        for key, item in metadata.items()
+    }
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _decode_schema_metadata(payload: bytes) -> dict[bytes, bytes]:
+    value = json.loads(payload.decode("utf-8"))
+    return {
+        base64.b64decode(key, validate=True): base64.b64decode(item, validate=True)
+        for key, item in value.items()
+    }

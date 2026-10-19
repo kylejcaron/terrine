@@ -19,6 +19,21 @@ def test_duckdb_manifest_switch_is_atomic_with_generation():
     assert backend.read_partition(receipt, "p1").to_pylist() == [{"id": 1}, {"id": 2}]
 
 
+def test_publication_preserves_arrow_schema_metadata():
+    con = duckdb.connect(":memory:")
+    backend = DuckDBBackend(con, namespace="owner")
+    lease = _lease(con, "owner")
+    source = pa.table({"id": [1]}).replace_schema_metadata({b"terrine.frame": b"metadata"})
+
+    receipt = backend.publish_generation(
+        StagedGeneration("orders", "g1", {"frame": source}),
+        expected_manifest=None,
+        lease=lease,
+    )
+
+    assert backend.read_partition(receipt, "frame").schema.metadata == source.schema.metadata
+
+
 def test_manifest_publication_atomically_moves_snapshot_reference():
     con = duckdb.connect(":memory:")
     backend = DuckDBBackend(con, namespace="owner")
