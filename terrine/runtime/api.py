@@ -354,12 +354,41 @@ class DesignExecutor:
         from terrine.compile.layers import build_layer
         from terrine.data import MaterializedFrame, Provenance
 
-        if task.layer in {"daily", "prefix_certificate"}:
+        if task.layer in {
+            "daily",
+            "prefix_certificate",
+            "selector",
+            "state_point",
+            "state_period",
+            "baseline",
+        }:
             return pa.table({"_terrine_empty": pa.array([], type=pa.int8())})
-        if task.layer in {"prefix", "anchor"}:
-            key = self._layer_key(task.source, task.layer, self._plan.snapshot_id)
+        execution_model = self._execution_model(context)
+        if task.layer == "prefix":
+            keys = [
+                self._with_snapshot(key, self._plan.snapshot_id)
+                for key in self._keys
+                if key.layer == "prefix" and key.source == task.source
+            ]
+            results = {
+                key: context.execute(
+                    build_layer(
+                        self.design, execution_model, key, relation_resolver=context.resolve
+                    )
+                )
+                for key in keys
+            }
+            with self._lock:
+                self._layers.setdefault(task.partition, {}).update(results)
+            return (
+                next(iter(results.values()))
+                if results
+                else pa.table({"_terrine_empty": pa.array([], type=pa.int8())})
+            )
+        if task.layer == "anchor":
+            key = self._with_snapshot(self._keys[0], self._plan.snapshot_id)
             result = context.execute(
-                build_layer(self.design, self.model, key, relation_resolver=context.resolve)
+                build_layer(self.design, execution_model, key, relation_resolver=context.resolve)
             )
             with self._lock:
                 self._layers.setdefault(task.partition, {})[key] = result
@@ -379,7 +408,6 @@ class DesignExecutor:
             registered.append(name)
             persisted[key] = relation
         try:
-            execution_model = self.model._for_execution(context)
             compiled = compose_runtime_frame(
                 self.design, execution_model, persisted=persisted, budget=self._plan.budget
             )
@@ -389,6 +417,8 @@ class DesignExecutor:
                 if type(self.design.shape).__name__ == "StatePanel"
                 else str(self.design.shape)
             )
+            from terrine.execution.gates import _eligibility_summary
+
             return MaterializedFrame(
                 table,
                 compiled.roles,
@@ -396,6 +426,7 @@ class DesignExecutor:
                 Provenance(
                     feature_cutoffs=compiled.feature_cutoffs,
                     eligibility_cutoffs=compiled.eligibility_cutoffs,
+                    eligibility_summary=_eligibility_summary(compiled.audit_table, context.execute),
                     design_hash=self.design.spec_hash,
                     model_hash=execution_model.model_hash,
                     source_generations=context.snapshot.source_generations,
@@ -408,6 +439,20 @@ class DesignExecutor:
         finally:
             for name in registered:
                 context.con.drop_table(name, force=True)
+
+    def _execution_model(self, context: Any):
+        from terrine.spec.validate import validate_design
+
+        required_sources = set(validate_design(self.design, self.model).required_sources)
+        return self.model._for_execution(
+            context, source_names=required_sources, unit_name=self.design.unit
+        )
+
+    @staticmethod
+    def _with_snapshot(key: Any, snapshot_id: str):
+        from dataclasses import replace
+
+        return replace(key, snapshot_id=snapshot_id)
 
     def publish(self, plan: Any, outputs: Any, lease: Any, run_id: str):
         from terrine.runtime.backends.base import StagedGeneration
@@ -422,18 +467,6 @@ class DesignExecutor:
         return self._backend.publish_generation(
             stage, expected_manifest=plan.expected_base_manifest, lease=lease
         )
-
-    def _layer_key(self, source: str, layer: str, snapshot_id: str):
-        from dataclasses import replace
-
-        if layer == "anchor":
-            key = next(key for key in self._keys if key.layer == "anchor")
-        else:
-            matches = [key for key in self._keys if key.layer == "prefix" and key.source == source]
-            if len(matches) != 1:
-                raise ValueError(f"expected one compiler prefix layer for source {source!r}")
-            key = matches[0]
-        return replace(key, snapshot_id=snapshot_id)
 
 
 def open_published_frame(receipt: RunReceipt, *, con: Any, namespace: str):
