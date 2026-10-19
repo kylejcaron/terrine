@@ -51,7 +51,27 @@ def _deferred_refusal(query):
     )
 
 
-def _history_check(design: Design, model: Model, rows, outcome_window_end: int):
+def _followup_bound(
+    t0,
+    reference_t0,
+    *,
+    outcome_window_end: int,
+    outcome_cutoff: datetime | None,
+    anticipation_seconds: int,
+) -> tuple[ir.TimestampValue, bool]:
+    end = cast(ir.TimestampValue, ibis.greatest(t0, reference_t0))
+    if outcome_window_end:
+        end += ibis.interval(seconds=outcome_window_end)
+    if outcome_cutoff is not None:
+        end = cast(ir.TimestampValue, ibis.greatest(end, ibis.literal(outcome_cutoff)))
+    if anticipation_seconds:
+        end += ibis.interval(seconds=anticipation_seconds)
+    return end, outcome_window_end > 0 or outcome_cutoff is not None
+
+
+def _history_check(
+    design: Design, model: Model, rows, outcome_window_end: int, outcome_cutoff: datetime | None
+):
     spec = design.shape
     assert isinstance(spec, CalendarComparisonSpec)
     anchor = design.anchor
@@ -62,8 +82,12 @@ def _history_check(design: Design, model: Model, rows, outcome_window_end: int):
         participants = participants.filter(rows.__terrine_eligible)
     reference_t0 = participants.cohort + ibis.interval(seconds=spec.reference_period * anchor.every)
     anticipation = max((abs(value) for value in spec.anticipation_periods), default=0)
-    latest = cast(ir.TimestampValue, ibis.greatest(participants.t0, reference_t0)) + ibis.interval(
-        seconds=anticipation * anchor.every + outcome_window_end
+    latest, exclusive = _followup_bound(
+        participants.t0,
+        reference_t0,
+        outcome_window_end=outcome_window_end,
+        outcome_cutoff=outcome_cutoff,
+        anticipation_seconds=anticipation * anchor.every,
     )
     schedule_end = ibis.literal(model.day_boundary(anchor.end))
     never_control = participants.control_eligible & ~participants.treatment
@@ -76,7 +100,7 @@ def _history_check(design: Design, model: Model, rows, outcome_window_end: int):
     if "_observed_until" in participants.columns:
         observation_cutoff_failure = (
             participants._observed_until < latest
-            if outcome_window_end > 0
+            if exclusive
             else participants._observed_until <= latest
         )
         missing = missing | (participants._observed_until.notnull() & observation_cutoff_failure)
@@ -214,19 +238,20 @@ def _stack(
     reference_t0 = with_values.focal_cohort + ibis.interval(seconds=spec.reference_period * every)
     anticipation = max((abs(value) for value in spec.anticipation_periods), default=0)
     comparison_t0 = with_values.t0
-    latest = cast(ir.TimestampValue, ibis.greatest(comparison_t0, reference_t0)) + ibis.interval(
-        seconds=outcome_window_end
+    latest, exclusive = _followup_bound(
+        comparison_t0,
+        reference_t0,
+        outcome_window_end=outcome_window_end,
+        outcome_cutoff=outcome_cutoff,
+        anticipation_seconds=anticipation * every,
     )
-    if outcome_cutoff is not None:
-        latest = cast(ir.TimestampValue, ibis.greatest(latest, ibis.literal(outcome_cutoff)))
-    latest += ibis.interval(seconds=anticipation * every)
     treated = (with_values.unit_cohort == with_values.focal_cohort).fill_null(False)
     if spec.control == "never_treated":
         control = with_values.__terrine_initiation_time.isnull()
     else:
         control_after_cutoff = (
             with_values.__terrine_initiation_time >= latest
-            if outcome_window_end > 0 or outcome_cutoff is not None
+            if exclusive
             else with_values.__terrine_initiation_time > latest
         )
         control = with_values.__terrine_initiation_time.isnull() | control_after_cutoff
@@ -331,7 +356,7 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
         anchors,
         (
             *compiled._checks,
-            _history_check(design, model, audit, outcome_window_end),
+            _history_check(design, model, audit, outcome_window_end, outcome_cutoff),
             _period_check(
                 cohort_units,
                 anchors,

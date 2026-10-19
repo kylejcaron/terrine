@@ -251,3 +251,88 @@ def test_open_retention_sets_independent_treatment_followup_bound(retention_mode
     with pytest.raises(TerrineError) as error:
         design.validate(model)
     assert error.value.code == "terrine.design.incomplete_treatment_history"
+
+
+@pytest.mark.parametrize(("observed_day", "refused"), [(5, True), (6, False)])
+def test_calendar_open_retention_history_includes_anticipation(
+    retention_model, observed_day, refused
+):
+    from terrine.compile.dispatch import compile_design
+    from terrine.spec import CalendarComparisonSpec, Initiation
+
+    original = retention_model
+    original.con.create_table(
+        "calendar_users",
+        pa.table(
+            {
+                "id": ["a", "empty"],
+                "observed_from": [datetime(2025, 1, 1, tzinfo=UTC)] * 2,
+                "observed_until": [datetime(2025, 1, observed_day, tzinfo=UTC)] * 2,
+            }
+        ),
+    )
+    original.con.create_table(
+        "treatment_events",
+        pa.table(
+            {
+                "user_id": ["a"],
+                "ts": [datetime(2025, 1, 3, tzinfo=UTC)],
+                "name": ["adopted"],
+            }
+        ),
+    )
+    record = original.catalog.model_dump(mode="json")
+    record["sources"]["treatments"] = {
+        **record["sources"]["events"],
+        "facts": [],
+        "properties": ["cohort_name"],
+        "relation": {"kind": "table", "name": "treatment_events"},
+    }
+    record["properties"]["cohort_name"] = {
+        "source": "treatments",
+        "column": "name",
+        "dtype": "string",
+        "as_of": "event_time",
+    }
+    model = Model.from_catalog(
+        Catalog.model_validate(record),
+        con=original.con,
+        units={
+            "user": UnitSource(
+                "calendar_users",
+                "id",
+                observed_from="observed_from",
+                observed_until="observed_until",
+            )
+        },
+        readiness={
+            "events": Coverage("2025-01-01", "2025-01-04"),
+            "treatments": Coverage("2025-01-01", "2025-01-09"),
+        },
+    )
+    expression = retention(
+        "occurrence",
+        label_property="event_name",
+        target_event="target",
+        thresholds=(1,),
+        horizon="open_ended",
+    )
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-01", "2025-01-04"),
+        outcomes={"retained": expression},
+        shape=CalendarComparisonSpec(
+            Initiation("treatments", "cohort_name", datetime(2025, 1, 1, tzinfo=UTC)),
+            "not_yet_treated",
+            -2,
+            (0,),
+            (-1,),
+        ),
+    )
+    compiled = compile_design(design, model)
+    if refused:
+        with pytest.raises(TerrineError) as error:
+            compiled.validate(execute=model.con.to_pyarrow)
+        assert error.value.code == "terrine.design.incomplete_unit_treatment_history"
+    else:
+        compiled.validate(execute=model.con.to_pyarrow)

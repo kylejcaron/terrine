@@ -99,5 +99,6 @@
 - Propagate verified anchor/prefix substitutions through Sequential and EventPanel compilation, retain range-bound metadata across specialized shapes, and refuse unsupported substitutions before source resolution.
 - Reuse bounded sparse range joins for finite/open retention occurrence bands, require a known source span for bounded open horizons, and preserve exact incomplete-history reasons.
 - Add immutable named Design retention outcomes with canonical JSON/YAML, independent occurrence IDs, bounded finite/open follow-up, exact threshold bands, unavailable-label reasons and shape-aware treatment horizons.
+- Share calendar-comparison treatment-history endpoints between roster validation and control selection, including open retention cutoffs and anticipation, while accepting observation ending exactly at an exclusive horizon.
 - Demonstrate real Model/Design saved-recipe execution from retained DuckDB inputs, exact-generation reads, operator-declared corrections, and same-snapshot clean-rebuild parity; cover partition retries and owner-held lost-response lookup in warehouse integration tests.
 - Refuse fingerprint-valid serialized plans whose strict scan budget cannot be satisfied by known scan bounds, preserving the refusal code through saved recipes.
