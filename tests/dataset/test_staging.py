@@ -59,6 +59,24 @@ def test_frame_stage_publishes_and_reads_its_pinned_generation(
     con.disconnect()
 
 
+def test_manifest_reopen_rejects_tampered_generation_row_count(native_inputs, tmp_path):
+    from dataclasses import replace
+
+    from terrine.errors import TerrineError
+
+    frame, con = _durable_frame(native_inputs, tmp_path)
+    dataset = frame.stage("training", budget=Budget(strict_scan=False))
+    altered_generation = replace(
+        dataset.manifest.generation,
+        row_count=dataset.manifest.generation.row_count + 1,
+    )
+    altered_manifest = replace(dataset.manifest, generation=altered_generation)
+    with pytest.raises(TerrineError) as error:
+        Dataset.from_manifest(altered_manifest, con=con)
+    assert error.value.code == "terrine.dataset.invalid_generation"
+    con.disconnect()
+
+
 def test_invalid_arrow_batch_size_refuses_before_read(native_inputs, tmp_path):
     from terrine.errors import TerrineError
 

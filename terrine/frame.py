@@ -85,13 +85,74 @@ def _view_digest(
     ).hexdigest()
 
 
-def _feature_definition_hash(design: Design, features: tuple[str, ...]) -> str:
+def _definition_record(value: object) -> object:
+    from collections.abc import Mapping
+    from dataclasses import fields, is_dataclass
+    from datetime import date, datetime
+    from enum import Enum
+
+    if is_dataclass(value):
+        return {
+            field.name: _definition_record(getattr(value, field.name)) for field in fields(value)
+        }
+    if isinstance(value, Mapping):
+        return {str(key): _definition_record(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_definition_record(item) for item in value]
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, Enum):
+        return value.value
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    raise TypeError(f"Unsupported feature definition value: {type(value).__name__}")
+
+
+def _feature_definition_hash(design: Design, features: tuple[str, ...], model: Model) -> str:
+    from terrine.spec.expressions import AttributeAsOf, EventTime, MetricAgg
     from terrine.spec.io import canonical_json
 
     record = json.loads(canonical_json(design))["design"]
+    semantic: dict[str, object] = {}
+    for name in features:
+        expression = design.features[name]
+        resolved: dict[str, object] = {}
+        if isinstance(expression, MetricAgg):
+            metric = model.metrics.get(expression.metric)
+            if metric is not None:
+                resolved["metric"] = _definition_record(metric)
+        elif isinstance(expression, AttributeAsOf):
+            resolved["attributes"] = [
+                {
+                    "source": source_name,
+                    "relation": _definition_record(source.relation),
+                    "day_boundary": source.day_boundary,
+                    "timestamp_column": source.timestamp_column,
+                    "binding": _definition_record(source.properties[expression.attribute]),
+                }
+                for source_name, source in sorted(model.sources.items())
+                if expression.attribute in source.properties
+            ]
+        elif isinstance(expression, EventTime):
+            resolved["facts"] = [
+                {
+                    "source": source_name,
+                    "relation": _definition_record(source.relation),
+                    "day_boundary": source.day_boundary,
+                    "timestamp_column": source.timestamp_column,
+                    "column": source.facts[expression.fact],
+                }
+                for source_name, source in sorted(model.sources.items())
+                if expression.fact in source.facts
+            ]
+        semantic[name] = resolved
     payload = {
         "unit": record["unit"],
+        "unit_binding": _definition_record(model.units[design.unit]),
+        "anchor": record["anchor"],
+        "gap": record["gap"],
         "features": {name: record["features"][name] for name in features},
+        "semantic": semantic,
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -580,7 +641,7 @@ class Frame:
                             self._design.spec_hash,
                         ),
                         feature_definition_hash=_feature_definition_hash(
-                            self._design, view.features
+                            self._design, view.features, self._model
                         ),
                         incomplete_labels=view.incomplete_labels,
                         split_policy=split_policy,

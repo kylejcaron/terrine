@@ -124,10 +124,51 @@ class Dataset:
             if _digest_relation(self._raw, f'"{namespace}"', table_name) != digest:
                 raise _GENERATION_INVALID.error()
         receipt = PublicationReceipt(
-            generation.dataset_id, generation.generation_id, publication[0], tuple(sorted(expected))
+            generation.dataset_id,
+            generation.generation_id,
+            publication[0],
+            tuple(sorted(expected)),
+        )
+        measured_rows = 0
+        expected_schema = tuple(
+            (column.name, column.data_type) for column in self._manifest.columns
         )
         for partition in receipt.partitions:
-            backend.read_relation(receipt, partition, ibis_backend=self._con)
+            relation = backend.read_relation(receipt, partition, ibis_backend=self._con)
+            reader = self._con.to_pyarrow_batches(relation, chunk_size=65_536)
+            try:
+                schema = tuple((field.name, str(field.type)) for field in reader.schema)
+                if schema != expected_schema:
+                    raise _GENERATION_INVALID.error()
+                for batch in reader:
+                    measured_rows += batch.num_rows
+            finally:
+                reader.close()
+        if measured_rows != generation.row_count:
+            raise _GENERATION_INVALID.error()
+
+    def _arrow_schema(self) -> pa.Schema:
+        generation = self._manifest.generation
+        backend = DuckDBBackend(self._raw, namespace=self._namespace)
+        publication = self._raw.execute(
+            f'SELECT version FROM "{self._namespace}".runtime_publications '
+            "WHERE dataset=? AND generation=?",
+            [generation.dataset_id, generation.generation_id],
+        ).fetchone()
+        if publication is None or not generation.output_refs:
+            raise _GENERATION_INVALID.error()
+        receipt = PublicationReceipt(
+            generation.dataset_id,
+            generation.generation_id,
+            publication[0],
+            generation.output_refs,
+        )
+        relation = backend.read_relation(receipt, generation.output_refs[0], ibis_backend=self._con)
+        reader = self._con.to_pyarrow_batches(relation, chunk_size=1)
+        try:
+            return reader.schema
+        finally:
+            reader.close()
 
     def to_arrow_batches(self, *, batch_size: int = 65_536) -> Iterator[pa.RecordBatch]:
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:

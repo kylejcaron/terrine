@@ -115,6 +115,27 @@ def test_retry_reuses_only_matching_generation_partitions():
         )
 
 
+def test_retry_digest_ignores_arrow_chunk_boundaries():
+    con = duckdb.connect(":memory:")
+    backend = DuckDBBackend(con, namespace="owner")
+    lease = _lease(con, "owner")
+    first = pa.table({"id": pa.chunked_array([[1], [2]])})
+    retry = pa.table({"id": [1, 2]})
+    receipt = backend.publish_generation(
+        StagedGeneration("orders", "g1", {"p1": first}),
+        expected_manifest=None,
+        lease=lease,
+    )
+    assert (
+        backend.publish_generation(
+            StagedGeneration("orders", "g1", {"p1": retry}),
+            expected_manifest=None,
+            lease=lease,
+        )
+        == receipt
+    )
+
+
 def test_publication_without_snapshot_releases_previous_tracked_reference():
     con = duckdb.connect(":memory:")
     store = RuntimeStore(con, namespace="owner")
