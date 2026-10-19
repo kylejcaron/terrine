@@ -141,3 +141,84 @@ def test_additive_prefix_does_not_inherit_nonadditive_overlap_limit(nonadditive_
     compiled = compile_design(design, nonadditive_model)
     assert compiled.range_plans == {}
     assert "prefix" in compiled.strategy["total"]
+
+
+def test_nonadditive_layer_plan_does_not_request_subtractable_prefixes(nonadditive_model):
+    from terrine.compile.layers import plan_layers
+
+    design = Design("user", Schedule("1d", "2025-01-02", "2025-01-04"), features=_features())
+    assert {key.layer for key in plan_layers(design, nonadditive_model).keys} == {"anchor"}
+
+
+@pytest.mark.parametrize("shape", ["calendar", "event_sequence", "binned_state", "observed_state"])
+def test_shape_outputs_preserve_range_bound_metadata(nonadditive_model, shape):
+    from terrine.semantic.models import Catalog
+    from terrine.spec import (
+        BinnedMetricState,
+        CalendarComparisonSpec,
+        EventSequence,
+        StateObservations,
+        StatePanel,
+    )
+    from terrine.windows import Window
+
+    original = nonadditive_model
+    catalog = original.catalog.model_dump(mode="json")
+    catalog["sources"]["events"]["properties"] = ["state"]
+    catalog["properties"]["state"] = {
+        "source": "events",
+        "column": "user_id",
+        "dtype": "string",
+        "as_of": "event_time",
+    }
+    model = Model.from_catalog(
+        Catalog.model_validate(catalog),
+        con=original.con,
+        units=original.units,
+        readiness={name: Coverage("2025-01-01", "2025-01-31") for name in original.sources},
+    )
+    q = quantile("amount", "0.25", window=("-1d", "0d"))
+    if shape == "calendar":
+        design = Design(
+            "user",
+            Schedule("1d", "2025-01-01", "2025-01-05"),
+            features={"q": q},
+            shape=CalendarComparisonSpec(
+                Initiation("events", "value", datetime(2025, 1, 1, tzinfo=UTC)),
+                "never_treated",
+                -1,
+                (0,),
+            ),
+        )
+    elif shape == "event_sequence":
+        design = Design(
+            "user",
+            EventAnchor("value", "first"),
+            features={"q": q},
+            shape=EventSequence("value", Window("-1d", "0d"), max_events=10),
+        )
+    else:
+        state = (
+            BinnedMetricState("amount", cutpoints=(0,), levels=("none", "some"))
+            if shape == "binned_state"
+            else StateObservations("state", levels=("a", "b", "c"))
+        )
+        design = Design(
+            "user",
+            Schedule("1d", "2025-01-02", "2025-01-04"),
+            features={"q": q},
+            shape=StatePanel(
+                state,
+                max_periods=2,
+                baseline_features={
+                    "baseline_min": agg("amount_min", window=("-1d", "0d")),
+                },
+            ),
+        )
+    compiled = compile_design(design, model)
+    names = {"q", "baseline_min"} if shape.endswith("state") else {"q"}
+    assert set(compiled.range_plans) == names
+    assert all(compiled.range_plans[name].max_candidates_per_event <= 2 for name in names)
+    rows = model.con.to_pyarrow(compiled.table).to_pylist()
+    assert rows
+    assert all(name in rows[0] for name in names)

@@ -20,7 +20,25 @@ A destination reference identifies `(database, schema, dataset)` for request-key
 
 ## Runtime shape support
 
-Runtime composition enters through the same `compile_design` dispatcher as ordinary Frames. `cross_section` reuses verified persisted anchor/prefix layers. `StatePanel` is supported through that dispatcher as a full rebuild. Other specialized shapes are refused before source work with `terrine.compile.runtime_shape_unsupported`; the coded refusal carries the shape and the route `ordinary Frame materialization or a full rebuild`. Use ordinary Frame materialization or perform a full rebuild for those shapes.
+Runtime composition enters through the same `compile_design` dispatcher as
+ordinary Frames. Its supported logical-input matrix is:
+
+| Shape | Persisted anchor/prefix substitution |
+| --- | --- |
+| `cross_section` | Verified anchor and additive prefix layers |
+| `SequentialSpec` | Verified scheduled anchors and additive prefixes; treatment, sampling and timing metadata retained |
+| `EventPanelSpec` | Verified parent event anchors expanded into the declared periods; additive prefixes reused at translated evaluation times |
+| `StatePanel` | Full rebuild only; nonempty substitutions refuse |
+| Calendar comparisons, event sequences, cohorts, survival and other shapes | Refuse |
+
+Unsupported substitutions refuse before source resolution with
+`terrine.compile.runtime_shape_unsupported`, including direct `compile_design`
+calls. The coded refusal carries the shape and the route
+`ordinary Frame materialization or a full rebuild`. Nonadditive windows use raw
+events with their compiler-derived sparse range bounds, never an additive
+prefix layer. Nested event selectors reuse the existing selector-dependency
+invalidation contract, and re-anchored additive metrics require event-resolution
+prefixes rather than assuming calendar alignment.
 
 For persisted-layer staging, pass the resolved design, model, logical relations, and budget through `terrine.runtime.materialize.compose_runtime_frame`. This runtime entry point applies the same execution-owned shape-budget, integrity, and unknown-eligibility gates as `Frame.materialize` before returning the compiled relation for staging.
 

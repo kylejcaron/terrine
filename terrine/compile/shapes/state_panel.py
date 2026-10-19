@@ -411,6 +411,10 @@ def _binned(design: Design, model: Model, panel: StatePanel) -> CompiledStudy:
             ),
             **compiled.expression_timings,
         },
+        range_plans={
+            **(baseline_compiled.range_plans if baseline_compiled is not None else {}),
+            **compiled.range_plans,
+        },
     )
 
 

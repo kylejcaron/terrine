@@ -7,10 +7,34 @@ from typing import Literal, cast
 
 import ibis
 
+from terrine.errors import RefusalSpec
 from terrine.spec.design import Design
 
 LayerResolution = Literal["day", "event", "point", "period"]
 LayerName = Literal["daily", "prefix", "anchor", "state_point", "state_period"]
+
+_RUNTIME_SHAPE_UNSUPPORTED = RefusalSpec(
+    "terrine.compile.runtime_shape_unsupported",
+    "Persisted-layer runtime does not support shape {shape!r}; use ordinary Frame "
+    "materialization or a full rebuild.",
+)
+
+
+def validate_persisted_shape(design: Design, *, has_substitutions: bool) -> None:
+    """Admit the explicit substitution matrix before resolving source relations."""
+    from terrine.spec.panels import EventPanelSpec, SequentialSpec
+    from terrine.spec.state_panel import StatePanel
+
+    if design.shape == "cross_section" or isinstance(
+        design.shape, (SequentialSpec, EventPanelSpec)
+    ):
+        return
+    if isinstance(design.shape, StatePanel) and not has_substitutions:
+        return
+    shape = design.shape if isinstance(design.shape, str) else type(design.shape).__name__
+    raise _RUNTIME_SHAPE_UNSUPPORTED.error(
+        shape=shape, route="ordinary Frame materialization or a full rebuild"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +200,7 @@ def plan_layers(design: Design, model) -> LayerPlan:
             resolution: LayerResolution = (
                 "day"
                 if fixed
+                and node.relative_to is None
                 and all(
                     calendar_average_alignment(
                         node.window, anchor=instant, day_boundary=model.catalog.day_boundary
@@ -186,6 +211,8 @@ def plan_layers(design: Design, model) -> LayerPlan:
                 else "event"
             )
             for measure in metric.measures:
+                if measure.aggregation in {"min", "max", "count_distinct"}:
+                    continue
                 identity = measure_identity(measure)
                 measures[(measure.source_name, identity, design.unit, resolution)] = None
         else:

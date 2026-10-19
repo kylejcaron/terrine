@@ -95,5 +95,6 @@
 - Add canonical Decimal exact quantiles, explicit DataSketches t-digest quantile expressions, and DuckDB HLL approximate-distinct expressions; retain exact quantile as default and publish approximation algorithm/version/error metadata through Frame Arrow serialization.
 - Execute t-digest sidecars from canonical-ordered bounded Arrow batches on cross-section Frames, refuse unavailable sketch extras before source queries, and refuse unsupported runtime composition with an ordinary-Frame route.
 - Bound repeated nonadditive windows with sparse time-bucket joins and metadata-derived candidate multipliers; preserve exact range/reference parity and refuse unknown or excessive anchor overlap before execution.
+- Propagate verified anchor/prefix substitutions through Sequential and EventPanel compilation, retain range-bound metadata across specialized shapes, and refuse unsupported substitutions before source resolution.
 - Demonstrate real Model/Design saved-recipe execution from retained DuckDB inputs, exact-generation reads, operator-declared corrections, and same-snapshot clean-rebuild parity; cover partition retries and owner-held lost-response lookup in warehouse integration tests.
 - Refuse fingerprint-valid serialized plans whose strict scan budget cannot be satisfied by known scan bounds, preserving the refusal code through saved recipes.

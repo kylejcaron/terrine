@@ -339,4 +339,5 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
             ),
         ),
         expression_timings=compiled.expression_timings,
+        range_plans=compiled.range_plans,
     )

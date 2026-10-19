@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, timedelta
 from typing import cast
@@ -279,10 +280,21 @@ def _attach_treatment(table, values):
     )
 
 
-def compile_sequential(design: Design, model) -> CompiledStudy:
+def compile_sequential(
+    design: Design,
+    model,
+    *,
+    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None = None,
+    persisted_anchors: ibis.Table | None = None,
+) -> CompiledStudy:
     if not isinstance(design.shape, SequentialSpec):
         raise TypeError("compile_sequential requires a Sequential Design")
-    compiled = compile_columns(design, model)
+    compiled = compile_columns(
+        design,
+        model,
+        persisted_prefixes=persisted_prefixes,
+        persisted_anchors=persisted_anchors,
+    )
     values = _treatment_rows(design, model, compiled._anchors)
     sample = design.sample
     table = _trial_columns(_attach_treatment(compiled.table, values), design)

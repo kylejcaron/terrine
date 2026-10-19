@@ -495,4 +495,8 @@ def compile_observed_state_panel(design: Design, model: Model, panel: StatePanel
             ),
             **compiled.expression_timings,
         },
+        range_plans={
+            **(baseline_compiled.range_plans if baseline_compiled is not None else {}),
+            **compiled.range_plans,
+        },
     )

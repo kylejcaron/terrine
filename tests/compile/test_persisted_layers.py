@@ -240,8 +240,6 @@ def test_runtime_composition_refuses_approximate_quantile_sidecar_before_source_
     [
         "custom_shape",
         "EventSequence",
-        "SequentialSpec",
-        "EventPanelSpec",
         "CalendarComparisonSpec",
         "CohortSpec",
         "TimeToEvent",
@@ -414,3 +412,97 @@ def test_physical_source_type_change_invalidates_persisted_layer_identity(column
             changed_model,
             persisted={replace(old_key, snapshot_id="same-snapshot"): old_relation},
         )
+
+
+@pytest.mark.parametrize("shape", ["sequential", "event_panel"])
+def test_persisted_shape_matrix_preserves_panel_rows_and_metadata(column_model, shape):
+    from datetime import UTC, datetime
+
+    from terrine.compile.dispatch import compile_design
+    from terrine.data import Coverage
+    from terrine.spec import EventAnchor, EventPanel, Initiation, Schedule, Sequential
+
+    column_model = Model.from_catalog(
+        column_model.catalog,
+        con=column_model.con,
+        units=column_model.units,
+        readiness={"events": Coverage("2025-01-01", "2025-01-05")},
+    )
+    if shape == "sequential":
+        design = Sequential(
+            Design(
+                "user",
+                Schedule("12h", "2025-01-03", "2025-01-05"),
+                features={"total": agg("total", window=("-1d", "0s"))},
+            ),
+            treatment=Initiation("events", "amount", datetime(2025, 1, 1, tzinfo=UTC)),
+        )
+    else:
+        design = EventPanel(
+            Design(
+                "user",
+                EventAnchor("amount", "first"),
+                features={"total": agg("total", window=("-1h", "0s"))},
+            ),
+            periods=(-1, 0, 1),
+            period_seconds=3600,
+        )
+    ordinary = compile_design(design, column_model)
+    persisted = _persisted_prefixes(design, column_model)
+    anchor_key = next(
+        key for key in plan_layers(design, column_model).keys if key.layer == "anchor"
+    )
+    parent = ibis.memtable(column_model.con.to_pyarrow(compile_anchors(design, column_model).table))
+    persisted[replace(anchor_key, snapshot_id="same-snapshot")] = parent
+    reused = compose_materialized_frame(design, column_model, persisted=persisted)
+    ordinary.validate(execute=column_model.con.to_pyarrow)
+    reused.validate(execute=column_model.con.to_pyarrow)
+    assert column_model.con.to_pyarrow(ordinary.audit_table.order_by("unit", "t0")).equals(
+        column_model.con.to_pyarrow(reused.audit_table.order_by("unit", "t0"))
+    )
+    assert reused.roles == ordinary.roles
+    assert reused.columns == ordinary.columns
+    assert reused.expression_timings == ordinary.expression_timings
+    assert reused.sequence_meta == ordinary.sequence_meta
+    assert reused.range_plans == ordinary.range_plans
+
+
+def test_direct_dispatch_refuses_unsupported_substitutions_before_sources(
+    column_model, monkeypatch
+):
+    from terrine.compile.dispatch import compile_design
+    from terrine.spec import EventSequence
+    from terrine.windows import Window
+
+    design = Design(
+        "user",
+        FixedDate("2025-01-03"),
+        shape=EventSequence("amount", Window("-1d", "0s"), max_events=3),
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("unsupported substitution resolved a source")
+
+    monkeypatch.setattr(Model, "_relation", forbidden)
+    with pytest.raises(TerrineError) as error:
+        compile_design(design, column_model, persisted_anchors=ibis.memtable({"x": [1]}))
+    assert error.value.code == "terrine.compile.runtime_shape_unsupported"
+    assert error.value.context["shape"] == "EventSequence"
+
+
+def test_reanchored_layer_plan_uses_event_resolution(column_model):
+    from terrine.spec import event_time
+
+    design = Design(
+        "user",
+        FixedDate("2025-01-03"),
+        features={
+            "total": agg(
+                "total",
+                window=("-1d", "0s"),
+                relative_to=event_time("amount", window=("-2d", "-1d")),
+            )
+        },
+    )
+    keys = plan_layers(design, column_model).keys
+    assert {key.resolution for key in keys if key.layer == "prefix"} == {"event"}
