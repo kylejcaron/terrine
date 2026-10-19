@@ -348,8 +348,9 @@ def _export_dataset_locked(
         current_estimate = current_rows = 0
         checkpoint()
 
+    batches = dataset.to_arrow_batches()
     try:
-        for batch in dataset.to_arrow_batches():
+        for batch in batches:
             if batch.schema != schema:
                 raise _INVALID.error(reason="Arrow batch schema changed during export")
             row_count += batch.num_rows
@@ -428,3 +429,5 @@ def _export_dataset_locked(
             current_estimate = current_rows = 0
             checkpoint()
         raise
+    finally:
+        batches.close()

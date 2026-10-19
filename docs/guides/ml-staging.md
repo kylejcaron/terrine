@@ -55,6 +55,8 @@ for batch in reopened.to_arrow_batches():
 
 The manifest binds the canonical construction recipe, selected view, generation, schema, and output checksums. Reopening verifies the committed publication, partition checksums, physical schema, and row count before returning the reference. `DatasetRecipeStore` stores a `DatasetRecipe`, not the manifest; restore a serialized manifest with `DatasetManifest.from_json()` and pass it to `Dataset.from_manifest()`. Credentials, live connections, SQL, and row payloads are not stored in the recipe.
 
+Current `arrow-v2` publication checksums normalize timestamp instants to UTC and canonicalize nullable Arrow buffers before hashing, independently of the connection's display timezone or unused null-slot bytes. Recorded earlier checksums retain their original verification format; the original logical timezone remains in the Arrow schema. When consuming only part of a batch iterator, call its `close()` method or use `contextlib.closing`. Parquet export closes its iterator on both success and failure, while retaining only verified completed shards for retry.
+
 ## Recipe-backed refresh
 
 `plan_refresh` reconstructs the saved view and produces a metadata-only runtime plan. `refresh` captures current inputs once, reopens that retained snapshot for every runtime task, and publishes a new pinned generation through the built-in executor. It never changes the old reference or a reader already consuming it.
@@ -87,4 +89,6 @@ uv run python examples/batch_scoring.py
 ```
 
 Both examples configure an owner-local namespace and retained snapshot directory, create a file-backed Model, build a Design, stage it, consume bounded Arrow batches, reopen its manifest, export Parquet, and refresh after a source correction. The training example retains exact integral Decimal values beyond the default Python Decimal arithmetic precision. The scoring example removes the unused label relation before staging and preserves the explicit scoring instant through refresh. Temporary databases, snapshots, and exports are cleaned up when each script exits.
+
+Run composed local acceptance with `uv run pytest -q integration/warehouse_execution`. It includes fresh-process reconstruction against an independent clean build, Parquet recovery and cancellation, and growing-input bounds on live client Arrow batches and allocator-owned buffers. Those client bounds do not claim to bound DuckDB's own query or source-scan memory.
 

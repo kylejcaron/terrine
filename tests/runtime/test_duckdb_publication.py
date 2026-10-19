@@ -343,3 +343,49 @@ def test_publication_retry_verifies_logical_schema_before_physical_digest(change
             expected_manifest="g1",
             lease=lease,
         )
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_publication_digest_preserves_timestamp_instants_across_session_timezones(nested):
+    from terrine.runtime.backends.duckdb import _digest_relation
+
+    con = duckdb.connect()
+    con.execute("SET timezone='UTC'")
+    backend = DuckDBBackend(con, namespace="owner")
+    dtype = pa.timestamp("us", "Pacific/Auckland")
+    values = [datetime(2025, 1, 1, tzinfo=UTC), None]
+    column = (
+        pa.array([[values[0], None], None], pa.list_(dtype)) if nested else pa.array(values, dtype)
+    )
+    table = pa.table({"value": column})
+    lease = _lease(con, "owner")
+    stage = StagedGeneration("orders", "g1", {"frame": table})
+    receipt = backend.publish_generation(stage, expected_manifest=None, lease=lease)
+    stored = con.execute(
+        "SELECT table_name,digest FROM owner.runtime_partitions WHERE partition='frame'"
+    ).fetchone()
+    assert stored is not None
+    physical, digest = stored
+    con.execute("SET timezone='America/New_York'")
+    assert _digest_relation(con, "owner", physical) == digest
+    assert backend.read_partition(receipt, "frame").equals(table)
+    assert backend.publish_generation(stage, expected_manifest="g1", lease=lease) == receipt
+    con.close()
+
+
+def test_publication_retry_verifies_original_checksum_format():
+    from terrine.runtime.backends.duckdb import _digest_relation
+
+    con = duckdb.connect()
+    backend = DuckDBBackend(con, namespace="owner")
+    table = pa.table({"value": [1, None]})
+    stage = StagedGeneration("orders", "g1", {"frame": table})
+    lease = _lease(con, "owner")
+    receipt = backend.publish_generation(stage, expected_manifest=None, lease=lease)
+    physical = con.execute("SELECT table_name FROM owner.runtime_partitions").fetchone()
+    assert physical is not None
+    original = _digest_relation(con, "owner", physical[0], version=1)
+    con.execute("UPDATE owner.runtime_partitions SET digest=?", [original])
+    assert backend.publish_generation(stage, expected_manifest="g1", lease=lease) == receipt
+    assert backend.read_partition(receipt, "frame").equals(table)
+    con.close()

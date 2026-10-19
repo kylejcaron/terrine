@@ -136,10 +136,28 @@ def test_reopen_preserves_version_one_manifest_without_frame_metadata(native_inp
     from dataclasses import replace
 
     from terrine.dataset.manifest import DatasetManifest
+    from terrine.runtime.backends.duckdb import _digest_relation
 
     frame, con = _durable_frame(native_inputs, tmp_path)
     dataset = frame.stage("training", budget=Budget(strict_scan=False))
-    old = replace(dataset.manifest, frame_metadata=None).to_json()
+    checksums = []
+    for partition in dataset.manifest.generation.output_refs:
+        physical = con.con.execute(
+            "SELECT table_name FROM terrine_runtime.runtime_partitions WHERE partition=?",
+            [partition],
+        ).fetchone()
+        assert physical is not None
+        checksum = _digest_relation(con.con, "terrine_runtime", physical[0], version=1)
+        con.con.execute(
+            "UPDATE terrine_runtime.runtime_partitions SET digest=? WHERE partition=?",
+            [checksum, partition],
+        )
+        checksums.append(checksum)
+    old = replace(
+        dataset.manifest,
+        frame_metadata=None,
+        generation=replace(dataset.manifest.generation, checksums=tuple(checksums)),
+    ).to_json()
     assert "frame_metadata" not in json.loads(old)
     con.con.execute(
         "UPDATE terrine_runtime.runtime_dataset_recipes SET manifest_json=? "

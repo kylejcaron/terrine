@@ -7,7 +7,9 @@ from collections.abc import Callable, Generator
 from typing import Any
 
 import ibis
+import numpy as np
 import pyarrow as pa
+import pyarrow.compute as pc
 from ibis.backends.duckdb import Backend as IbisDuckDBBackend
 
 from terrine.errors import RefusalSpec
@@ -179,7 +181,9 @@ class DuckDBBackend:
                     [stage.dataset, stage.generation, partition],
                 ).fetchone()
                 if existing is not None:
-                    digest = _digest_relation(self.con, self._schema, existing[1])
+                    digest = _digest_relation(
+                        self.con, self._schema, existing[1], version=_digest_version(existing[0])
+                    )
                     if existing[0] != digest:
                         raise ValueError("retry partition content does not match staged generation")
                     table_name = existing[1]
@@ -336,12 +340,17 @@ class DuckDBBackend:
             )
             if not payload.schema.equals(schema, check_metadata=True):
                 raise ValueError("retry partition Arrow schema does not match staged generation")
-        if set(stored) != set(stage.partitions) or any(
-            stored[name][0] != _digest_relation(self.con, self._schema, stored[name][1])
-            or stored[name][0] != _digest_payload(self.con, stage.partitions[name])
-            for name in stored
-        ):
+        if set(stored) != set(stage.partitions):
             raise ValueError("retry generation content does not match published generation")
+        for name, (expected, table_name) in stored.items():
+            version = _digest_version(expected)
+            if expected != _digest_relation(self.con, self._schema, table_name, version=version):
+                raise ValueError("retry generation content does not match published generation")
+            canonical = (
+                expected if version == 2 else _digest_relation(self.con, self._schema, table_name)
+            )
+            if canonical != _digest_payload(self.con, stage.partitions[name]):
+                raise ValueError("retry generation content does not match published generation")
         row = self.con.execute(
             f"SELECT version FROM {self._schema}.runtime_publications "
             "WHERE dataset=? AND generation=?",
@@ -484,17 +493,66 @@ def _table_name(dataset: str, generation: str, partition: str) -> str:
     return "generation_" + hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
-def _digest_relation(con: Any, schema: str, table_name: str) -> str:
+def _digest_version(checksum: str) -> int:
+    if re.fullmatch(r"[0-9a-f]{64}", checksum):
+        return 1
+    if re.fullmatch(r"arrow-v2:[0-9a-f]{64}", checksum):
+        return 2
+    raise ValueError("unsupported partition checksum format")
+
+
+def _digest_relation(con: Any, schema: str, table_name: str, *, version: int = 2) -> str:
+    """Hash canonical logical buffers; version one retains the original physical encoding."""
+    if version not in (1, 2):
+        raise ValueError("unsupported partition checksum version")
     reader = con.execute(f"SELECT * FROM {schema}.{_quote(table_name)}").to_arrow_reader(
         batch_size=65_536
     )
-    digest = hashlib.sha256(reader.schema.serialize().to_pybytes())
+    canonical_schema = (
+        pa.schema(
+            [field.with_type(_digest_type(field.type)) for field in reader.schema],
+            metadata=reader.schema.metadata,
+        )
+        if version == 2
+        else reader.schema
+    )
+    digest = hashlib.sha256(canonical_schema.serialize().to_pybytes())
+    normalize = canonical_schema != reader.schema
+    indices = None
     try:
         for batch in reader:
+            if normalize:
+                batch = batch.cast(canonical_schema)
+            if version == 2:
+                if indices is None or len(indices) < batch.num_rows:
+                    indices = pa.array(np.arange(batch.num_rows, dtype=np.int32))
+                batch = pc.take(batch, indices.slice(0, batch.num_rows))
             digest.update(batch.serialize().to_pybytes())
     finally:
         reader.close()
-    return digest.hexdigest()
+    return ("arrow-v2:" if version == 2 else "") + digest.hexdigest()
+
+
+def _digest_type(dtype: pa.DataType) -> pa.DataType:
+    if pa.types.is_timestamp(dtype) and dtype.tz is not None:
+        return pa.timestamp(dtype.unit, tz="UTC")
+    if pa.types.is_struct(dtype):
+        return pa.struct([field.with_type(_digest_type(field.type)) for field in dtype])
+    if pa.types.is_list(dtype):
+        return pa.list_(dtype.value_field.with_type(_digest_type(dtype.value_type)))
+    if pa.types.is_large_list(dtype):
+        return pa.large_list(dtype.value_field.with_type(_digest_type(dtype.value_type)))
+    if pa.types.is_fixed_size_list(dtype):
+        return pa.list_(
+            dtype.value_field.with_type(_digest_type(dtype.value_type)), dtype.list_size
+        )
+    if pa.types.is_map(dtype):
+        return pa.map_(
+            dtype.key_field.with_type(_digest_type(dtype.key_type)),
+            dtype.item_field.with_type(_digest_type(dtype.item_type)),
+            keys_sorted=dtype.keys_sorted,
+        )
+    return dtype
 
 
 def _digest_payload(con: Any, payload: pa.Table | pa.RecordBatchReader) -> str:

@@ -7,7 +7,7 @@ import json
 import os
 import re
 import uuid
-from collections.abc import Iterator
+from collections.abc import Generator
 from dataclasses import replace
 from typing import Any
 
@@ -18,7 +18,7 @@ from terrine.dataset.manifest import DatasetManifest, ManifestColumn, ManifestGe
 from terrine.errors import RefusalSpec
 from terrine.runtime.api import run_serialized_plan
 from terrine.runtime.backends.base import PublicationReceipt
-from terrine.runtime.backends.duckdb import DuckDBBackend, _digest_relation
+from terrine.runtime.backends.duckdb import DuckDBBackend, _digest_relation, _digest_version
 from terrine.runtime.changes import ChangeSet
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.owner import RuntimeOwner
@@ -159,7 +159,10 @@ class Dataset:
             if (
                 stored is None
                 or stored[0] != checksum
-                or _digest_relation(self._raw, f'"{namespace}"', stored[1]) != checksum
+                or _digest_relation(
+                    self._raw, f'"{namespace}"', stored[1], version=_digest_version(checksum)
+                )
+                != checksum
             ):
                 raise _GENERATION_INVALID.error()
             schema = backend._partition_schema(self._receipt, partition)
@@ -176,12 +179,12 @@ class Dataset:
             self._receipt, self._receipt.partitions[0]
         )
 
-    def to_arrow_batches(self, *, batch_size: int = 65_536) -> Iterator[pa.RecordBatch]:
+    def to_arrow_batches(self, *, batch_size: int = 65_536) -> Generator[pa.RecordBatch]:
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
             raise _INVALID_BATCH.error()
         return self._iter_arrow_batches(batch_size)
 
-    def _iter_arrow_batches(self, batch_size: int) -> Iterator[pa.RecordBatch]:
+    def _iter_arrow_batches(self, batch_size: int) -> Generator[pa.RecordBatch]:
         backend = DuckDBBackend(self._raw, namespace=self._namespace)
         for partition in self._receipt.partitions:
             reader = backend.read_batches(self._receipt, partition, batch_size=batch_size)
