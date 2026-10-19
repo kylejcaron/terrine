@@ -93,6 +93,8 @@ versioned adapter in [increment compatibility](increment-compatibility.md).
 Arbitrary YAML, MetricFlow and LookML do not establish a lossless mapping and are
 not accepted as guessed metric definitions. This is a semantic-mapping boundary,
 not evidence of runtime backend support.
+The [semantic-layer matrix](semantic-layer-interop.md) separates verified native
+and versioned increment contracts from unsupported or owner-gated mappings.
 
 Named dbt relation binding remains owner-gated. This work does not add a dbt
 manifest reader, execute macros, infer metrics from columns, or claim a reviewed
