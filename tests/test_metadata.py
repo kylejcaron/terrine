@@ -9,6 +9,7 @@ import pytest
 from terrine.data import (
     BoundCoverage,
     Budget,
+    ApproximationMeta,
     ColumnMeta,
     Coverage,
     CoverageSummary,
@@ -232,7 +233,21 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values():
         table=table,
         roles=Roles("unit", "anchor", "t0", "treated", (), ("amount",)),
         columns={
-            "amount": ColumnMeta(None, "outcome", None, None, "amount_complete", "amount_reason"),
+            "amount": ColumnMeta(
+                None,
+                "outcome",
+                None,
+                None,
+                "amount_complete",
+                "amount_reason",
+                approximation=ApproximationMeta(
+                    algorithm="hll",
+                    implementation="duckdb",
+                    version="1.2.0",
+                    parameters={"precision": 12},
+                    error_description="HLL relative standard error ≈ 1.04/√m",
+                ),
+            )
         },
         provenance=_provenance(),
     )

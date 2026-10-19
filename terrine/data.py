@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from base64 import b64decode, b64encode
 from collections.abc import Callable, Mapping
+import math
 from dataclasses import dataclass, fields, is_dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, date, datetime, timedelta
@@ -17,6 +18,7 @@ from terrine.errors import TerrineError, freeze, thaw
 from terrine.windows import Window, seconds
 
 __all__ = [
+    "ApproximationMeta",
     "BoundCoverage",
     "Budget",
     "CalendarComparisonMeta",
@@ -209,6 +211,54 @@ class Roles:
             raise ValueError("feature and outcome names must be unique")
 
 
+
+@dataclass(frozen=True, slots=True)
+class ApproximationMeta:
+    algorithm: str
+    implementation: str
+    version: str
+    parameters: Mapping[str, str | int | float | bool]
+    error_description: str
+
+    def __post_init__(self) -> None:
+        for name in ("algorithm", "implementation", "version", "error_description"):
+            _nonempty(getattr(self, name), name)
+        if any(
+            not isinstance(key, str)
+            or not key
+            or isinstance(value, float)
+            and not __import__("math").isfinite(value)
+            or not isinstance(value, (str, int, float, bool))
+            for key, value in self.parameters.items()
+        ):
+            raise ValueError("parameters must map names to finite scalar values")
+        object.__setattr__(self, "parameters", MappingProxyType(dict(self.parameters)))
+
+
+
+@dataclass(frozen=True, slots=True)
+class ApproximationMeta:
+    algorithm: str
+    implementation: str
+    version: str
+    parameters: Mapping[str, str | int | float | bool]
+    error_description: str
+
+    def __post_init__(self) -> None:
+        for name in ("algorithm", "implementation", "version", "error_description"):
+            _nonempty(getattr(self, name), name)
+        if any(
+            not isinstance(key, str)
+            or not key
+            or isinstance(value, float)
+            and not math.isfinite(value)
+            or not isinstance(value, (str, int, float, bool))
+            for key, value in self.parameters.items()
+        ):
+            raise ValueError("parameters must map names to finite scalar values")
+        object.__setattr__(self, "parameters", MappingProxyType(dict(self.parameters)))
+
+
 @dataclass(frozen=True, slots=True)
 class ColumnMeta:
     window: Window | None
@@ -219,6 +269,7 @@ class ColumnMeta:
     reason_column: str | None
     numeric_policy: Literal["exact", "checked_float64_v1"] | None = None
     absolute_error_column: str | None = None
+    approximation: ApproximationMeta | None = None
 
     def __post_init__(self) -> None:
         if self.window is not None and not isinstance(self.window, Window):
@@ -920,7 +971,9 @@ def _decode(value: Any, cls: type) -> Any:
         if field.name not in value:
             continue
         item = value[field.name]
-        if field.name in ("feature_cutoffs", "eligibility_cutoffs"):
+        if field.name == "approximation" and item is not None:
+            kwargs[field.name] = _decode(item, ApproximationMeta)
+        elif field.name in ("feature_cutoffs", "eligibility_cutoffs"):
             kwargs[field.name] = {k: _decode(v, FeatureCutoff) for k, v in item.items()}
         elif field.name == "expression_timings":
             timings = {}
