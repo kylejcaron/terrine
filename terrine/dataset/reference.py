@@ -7,19 +7,21 @@ import os
 import re
 import uuid
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
 
-from terrine.data import Budget
+from terrine.data import Budget, MaterializedFrame
 from terrine.dataset.manifest import DatasetManifest, ManifestColumn, ManifestGeneration
 from terrine.errors import RefusalSpec
-from terrine.runtime.backends.base import PublicationReceipt, StagedGeneration
+from terrine.runtime.api import run_serialized_plan
+from terrine.runtime.backends.base import PublicationReceipt
 from terrine.runtime.backends.duckdb import DuckDBBackend, _digest_relation
-from terrine.runtime.leases import LeaseStore
+from terrine.runtime.graph import dependency_graph
 from terrine.runtime.owner import RuntimeOwner
+from terrine.runtime.planner import plan_refresh
+from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.dataset import DatasetRecipe
@@ -31,13 +33,6 @@ _INVALID_DESTINATION = RefusalSpec(
 )
 _INVALID_BATCH = RefusalSpec(
     "terrine.dataset.invalid_batch_size", "Arrow batch size must be a positive integer."
-)
-_ROWS_EXCEEDED = RefusalSpec(
-    "terrine.budget.rows_exceeded", "Output exceeded the configured row budget of {limit}."
-)
-_OUTPUT_EXCEEDED = RefusalSpec(
-    "terrine.budget.output_bytes_exceeded",
-    "Output exceeded the configured byte budget of {limit}.",
 )
 _GENERATION_INVALID = RefusalSpec(
     "terrine.dataset.invalid_generation",
@@ -61,14 +56,9 @@ def _owner_for(con: Any) -> RuntimeOwner:
 
 
 def _column_role(name: str, roles: Any) -> str:
-    if name == roles.unit:
-        return "unit"
-    if name == roles.anchor:
-        return "anchor"
-    if name == roles.t0:
-        return "t0"
-    if name == roles.treatment:
-        return "treatment"
+    for role in ("unit", "anchor", "t0", "treatment"):
+        if name == getattr(roles, role):
+            return role
     if name in roles.features:
         return "feature"
     if name in roles.outcomes:
@@ -76,18 +66,50 @@ def _column_role(name: str, roles: Any) -> str:
     return "support"
 
 
+def _recipe_for(frame: Any) -> DatasetRecipe:
+    view = None
+    if frame._training_view is not None:
+        training = frame._training_view
+        view = {
+            "kind": "training",
+            "features": list(training.features),
+            "labels": list(training.labels),
+            "incomplete_labels": training.incomplete_labels,
+            "split": None if training.split is None else training.split.to_record(),
+        }
+    elif frame._scoring_view is not None:
+        from terrine.spec.io import canonical_json
+
+        scoring = frame._scoring_view
+        design_record = json.loads(canonical_json(frame._design))["design"]
+        view = {
+            "kind": "scoring",
+            "features": list(scoring.features),
+            "as_of": scoring.resolved_as_of.isoformat(),
+            "eligibility": design_record["eligibility"],
+            "parent_design_hash": scoring.parent_design_hash,
+        }
+    return DatasetRecipe(schema_version=1, base_design=frame._design, view=view)
+
+
+class _ModelResolver:
+    def __init__(self, model: Any) -> None:
+        self.model = model
+
+    def resolve(self, reference: ModelReference):
+        return self.model
+
+
 class Dataset:
     """An immutable reference to one committed output generation."""
 
-    __slots__ = ("_con", "_raw", "_namespace", "_manifest")
+    __slots__ = ("_con", "_raw", "_namespace", "_manifest", "_receipt")
 
     def __init__(self, manifest: DatasetManifest, *, con: Any, namespace: str) -> None:
         if not isinstance(manifest, DatasetManifest):
             raise TypeError("manifest must be a DatasetManifest")
-        self._con = con
-        self._raw = con.con
-        self._namespace = namespace
-        self._manifest = manifest
+        self._con, self._raw = con, con.con
+        self._namespace, self._manifest = namespace, manifest
         self._verify_publication()
 
     @property
@@ -95,81 +117,64 @@ class Dataset:
         return self._manifest
 
     @classmethod
-    def from_manifest(
-        cls, manifest: DatasetManifest, *, con: Any, namespace: str | None = None
-    ) -> Dataset:
+    def from_manifest(cls, manifest: DatasetManifest, *, con: Any, namespace: str | None = None):
         resolved = namespace or os.environ.get("TERRINE_RUNTIME_NAMESPACE", "terrine_runtime")
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", resolved):
             raise _GENERATION_INVALID.error()
         return cls(manifest, con=con, namespace=resolved)
 
     def _verify_publication(self) -> None:
-        generation = self._manifest.generation
-        namespace = self._namespace
+        generation, namespace = self._manifest.generation, self._namespace
+        if self._manifest.source_snapshots.get("owner") != _owner_for(self._con).reference:
+            raise _GENERATION_INVALID.error()
         backend = DuckDBBackend(self._raw, namespace=namespace)
-        publication = self._raw.execute(
-            f'SELECT version FROM "{namespace}".runtime_publications '
-            "WHERE dataset=? AND generation=?",
+        record = self._raw.execute(
+            "SELECT d.manifest_json,p.version,r.state "
+            f'FROM "{namespace}".runtime_dataset_recipes d '
+            f'JOIN "{namespace}".runtime_runs r ON r.request_key=d.request_key '
+            f'JOIN "{namespace}".runtime_run_publications p ON p.run_id=r.run_id '
+            "WHERE d.dataset=? AND d.generation=? AND p.dataset=d.dataset "
+            "AND p.generation=d.generation AND r.published_generation=d.generation",
             [generation.dataset_id, generation.generation_id],
         ).fetchone()
-        rows = self._raw.execute(
-            f'SELECT partition, digest, table_name FROM "{namespace}".runtime_partitions '
-            "WHERE dataset=? AND generation=? ORDER BY partition",
-            [generation.dataset_id, generation.generation_id],
-        ).fetchall()
-        expected = dict(zip(generation.output_refs, generation.checksums, strict=True))
-        actual = {partition: digest for partition, digest, _ in rows}
-        if publication is None or actual != expected:
+        if (
+            record is None
+            or record[2] != "succeeded"
+            or record[0].encode() != self._manifest.to_json()
+        ):
             raise _GENERATION_INVALID.error()
-        for _partition, digest, table_name in rows:
-            if _digest_relation(self._raw, f'"{namespace}"', table_name) != digest:
-                raise _GENERATION_INVALID.error()
-        receipt = PublicationReceipt(
-            generation.dataset_id,
-            generation.generation_id,
-            publication[0],
-            tuple(sorted(expected)),
+        self._receipt = PublicationReceipt(
+            generation.dataset_id, generation.generation_id, record[1], generation.output_refs
         )
-        measured_rows = 0
         expected_schema = tuple(
             (column.name, column.data_type) for column in self._manifest.columns
         )
-        for partition in receipt.partitions:
-            relation = backend.read_relation(receipt, partition, ibis_backend=self._con)
-            reader = self._con.to_pyarrow_batches(relation, chunk_size=65_536)
-            try:
-                schema = tuple((field.name, str(field.type)) for field in reader.schema)
-                if schema != expected_schema:
-                    raise _GENERATION_INVALID.error()
-                for batch in reader:
-                    measured_rows += batch.num_rows
-            finally:
-                reader.close()
-        if measured_rows != generation.row_count:
+        rows = 0
+        for partition, checksum in zip(generation.output_refs, generation.checksums, strict=True):
+            stored = self._raw.execute(
+                f'SELECT digest,table_name FROM "{namespace}".runtime_partitions '
+                "WHERE dataset=? AND generation=? AND partition=?",
+                [generation.dataset_id, generation.generation_id, partition],
+            ).fetchone()
+            if (
+                stored is None
+                or stored[0] != checksum
+                or _digest_relation(self._raw, f'"{namespace}"', stored[1]) != checksum
+            ):
+                raise _GENERATION_INVALID.error()
+            schema = backend._partition_schema(self._receipt, partition)
+            if tuple((field.name, str(field.type)) for field in schema) != expected_schema:
+                raise _GENERATION_INVALID.error()
+            rows += self._raw.execute(
+                f'SELECT count(*) FROM "{namespace}"."{stored[1]}"'
+            ).fetchone()[0]
+        if rows != generation.row_count:
             raise _GENERATION_INVALID.error()
 
     def _arrow_schema(self) -> pa.Schema:
-        generation = self._manifest.generation
-        backend = DuckDBBackend(self._raw, namespace=self._namespace)
-        publication = self._raw.execute(
-            f'SELECT version FROM "{self._namespace}".runtime_publications '
-            "WHERE dataset=? AND generation=?",
-            [generation.dataset_id, generation.generation_id],
-        ).fetchone()
-        if publication is None or not generation.output_refs:
-            raise _GENERATION_INVALID.error()
-        receipt = PublicationReceipt(
-            generation.dataset_id,
-            generation.generation_id,
-            publication[0],
-            generation.output_refs,
+        return DuckDBBackend(self._raw, namespace=self._namespace)._partition_schema(
+            self._receipt, self._receipt.partitions[0]
         )
-        relation = backend.read_relation(receipt, generation.output_refs[0], ibis_backend=self._con)
-        reader = self._con.to_pyarrow_batches(relation, chunk_size=1)
-        try:
-            return reader.schema
-        finally:
-            reader.close()
 
     def to_arrow_batches(self, *, batch_size: int = 65_536) -> Iterator[pa.RecordBatch]:
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
@@ -177,24 +182,9 @@ class Dataset:
         return self._iter_arrow_batches(batch_size)
 
     def _iter_arrow_batches(self, batch_size: int) -> Iterator[pa.RecordBatch]:
-        generation = self._manifest.generation
         backend = DuckDBBackend(self._raw, namespace=self._namespace)
-        publication = self._raw.execute(
-            f'SELECT version FROM "{self._namespace}".runtime_publications '
-            "WHERE dataset=? AND generation=?",
-            [generation.dataset_id, generation.generation_id],
-        ).fetchone()
-        if publication is None:
-            raise _GENERATION_INVALID.error()
-        receipt = PublicationReceipt(
-            generation.dataset_id,
-            generation.generation_id,
-            publication[0],
-            generation.output_refs,
-        )
-        for partition in generation.output_refs:
-            relation = backend.read_relation(receipt, partition, ibis_backend=self._con)
-            reader = self._con.to_pyarrow_batches(relation, chunk_size=batch_size)
+        for partition in self._receipt.partitions:
+            reader = backend.read_batches(self._receipt, partition, batch_size=batch_size)
             try:
                 yield from reader
             finally:
@@ -222,140 +212,136 @@ class Dataset:
 def stage_frame(frame: Any, table: str, *, budget: Budget | None = None) -> Dataset:
     if not isinstance(table, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table):
         raise _INVALID_DESTINATION.error(reason="table must be a simple SQL identifier")
-    from terrine.compile.dispatch import compile_design
-    from terrine.execution.gates import enforce_shape_budget, validate_compiled_output
+    from terrine.runtime.api import preflight_runtime_shape
     from terrine.spec.validate import validate_design
 
     model = frame._model
     budget = budget if budget is not None else Budget(strict_scan=False)
-    enforce_shape_budget(frame._design.shape, budget)
+    preflight_runtime_shape(frame._design, budget)
     namespace = os.environ.get("TERRINE_RUNTIME_NAMESPACE", "terrine_runtime")
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", namespace):
         raise _INVALID_DESTINATION.error(reason="runtime namespace must be a simple SQL identifier")
     owner = _owner_for(model.con)
     authority = SnapshotAuthority(owner)
-    run_id = uuid.uuid4().hex
+    request_key = uuid.uuid4().hex
     snapshot = authority.capture(
         model,
         design=frame._design,
         con=model.con,
         namespace=namespace,
-        run_id=run_id,
+        run_id=request_key,
         budget=budget,
     )
     raw = model.con.con
-    RuntimeStore(raw, namespace=namespace).initialize()
-    lease_store = LeaseStore(raw, namespace=namespace)
-    lease_store.initialize()
+    store = RuntimeStore(raw, namespace=namespace)
+    store.initialize()
     backend = DuckDBBackend(raw, namespace=namespace)
-    expected_manifest = backend.current_generation(table)
-    lease = lease_store.acquire(
-        f"dataset:{table}", run_id, ttl=timedelta(minutes=5), now=datetime.now(UTC)
+    recipe = _recipe_for(frame)
+    required_sources = validate_design(frame._design, model).required_sources
+    plan = plan_refresh(
+        namespace=namespace,
+        dataset=table,
+        definition_hash=frame._design.spec_hash,
+        snapshot_id=snapshot.snapshot_id,
+        budget=budget,
+        graph=dependency_graph(
+            model, frame._design, sources=required_sources, definition_hash=recipe.digest
+        ),
     )
-    generation_id = uuid.uuid4().hex
-    try:
-        with authority.reopen(snapshot, con=model.con, namespace=namespace) as context:
-            execution_model = model._for_execution(
-                context,
-                source_names=set(validate_design(frame._design, model).required_sources),
-                unit_name=frame._design.unit,
+    saved = SavedPlanRecipe.create(
+        plan_json=plan.serialize(),
+        design=frame._design,
+        model=ModelReference.from_model(model, owner_key=owner.reference),
+        destination=DestinationRef(str(owner.state_path), namespace, table),
+        namespace=namespace,
+        expected_base_manifest=backend.current_generation(table),
+        dataset_recipe=recipe,
+    )
+    saved.pin_snapshot(store)
+    raw.execute(
+        f'CREATE TABLE IF NOT EXISTS "{namespace}".runtime_dataset_requests '
+        "(request_key VARCHAR PRIMARY KEY,recipe_json VARCHAR NOT NULL)"
+    )
+    raw.execute(
+        f'INSERT INTO "{namespace}".runtime_dataset_requests VALUES (?,?)',
+        [request_key, saved.to_json()],
+    )
+    receipt = run_serialized_plan(
+        saved.to_json(),
+        con=raw,
+        namespace=namespace,
+        request_key=request_key,
+        resolver=_ModelResolver(model),
+        snapshot_authority=authority,
+    )
+    if receipt.state != "succeeded" or receipt.published_generation is None:
+        raise _GENERATION_INVALID.error()
+    partitions = raw.execute(
+        f'SELECT p.partition,p.digest,p.table_name FROM "{namespace}".runtime_partitions p '
+        f'JOIN "{namespace}".runtime_run_results r ON r.partition=p.partition '
+        "WHERE r.run_id=? AND p.dataset=? AND p.generation=? ORDER BY p.partition",
+        [receipt.run_id, table, receipt.published_generation],
+    ).fetchall()
+    published = PublicationReceipt(
+        table, receipt.published_generation, 0, tuple(item[0] for item in partitions)
+    )
+    schema = backend._partition_schema(published, partitions[0][0])
+    metadata = MaterializedFrame.from_arrow(pa.Table.from_batches([], schema=schema))
+    row_count = sum(
+        raw.execute(f'SELECT count(*) FROM "{namespace}"."{item[2]}"').fetchone()[0]
+        for item in partitions
+    )
+    coverage = {
+        name: [
+            model.readiness.sources[name].start.isoformat(),
+            model.readiness.sources[name].end_exclusive.isoformat(),
+        ]
+        for name in required_sources
+        if name in model.readiness.sources
+    }
+    manifest = DatasetManifest(
+        recipe,
+        ManifestGeneration(
+            table,
+            receipt.published_generation,
+            published.partitions,
+            tuple(item[1] for item in partitions),
+            row_count,
+        ),
+        tuple(
+            ManifestColumn(
+                field.name,
+                str(field.type),
+                _column_role(field.name, metadata.roles),
+                metadata.to_metadata()["columns"].get(field.name, {}),
             )
-            compiled = compile_design(frame._design, execution_model)
-            compiled.validate(execute=context.execute)
-            compiled = frame._active_compiled(compiled)
-            validate_compiled_output(compiled, context.execute)
-            query = compiled.table
-            context._check_query(query)
-            source_reader = context.con.to_pyarrow_batches(query, chunk_size=65_536)
-            schema = source_reader.schema
-            row_count = 0
-            output_bytes = 0
-
-            def batches():
-                nonlocal row_count, output_bytes
-                try:
-                    for batch in source_reader:
-                        row_count += batch.num_rows
-                        output_bytes += batch.nbytes
-                        if budget.max_rows is not None and row_count > budget.max_rows:
-                            raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
-                        if (
-                            budget.max_output_bytes is not None
-                            and output_bytes > budget.max_output_bytes
-                        ):
-                            raise _OUTPUT_EXCEEDED.error(limit=budget.max_output_bytes)
-                        yield batch
-                finally:
-                    source_reader.close()
-
-            stream = pa.RecordBatchReader.from_batches(schema, batches())
-            receipt = backend.publish_generation(
-                StagedGeneration(
-                    table,
-                    generation_id,
-                    {"data": stream},
-                    run_id=run_id,
-                    snapshot_id=snapshot.snapshot_id,
-                ),
-                expected_manifest=expected_manifest,
-                lease=lease,
-            )
-            columns = tuple(
-                ManifestColumn(
-                    field.name,
-                    str(field.type),
-                    _column_role(field.name, compiled.roles),
-                    {"nullable": field.nullable},
-                )
-                for field in schema
-            )
-            view = None
-            if frame._training_view is not None:
-                training = frame._training_view
-                view = {
-                    "kind": "training",
-                    "features": list(training.features),
-                    "labels": list(training.labels),
-                    "incomplete_labels": training.incomplete_labels,
-                    "split": None if training.split is None else training.split.to_record(),
-                }
-            elif frame._scoring_view is not None:
-                from terrine.spec.io import canonical_json
-
-                scoring = frame._scoring_view
-                design_record = json.loads(canonical_json(frame._design))["design"]
-                view = {
-                    "kind": "scoring",
-                    "features": list(scoring.features),
-                    "as_of": scoring.resolved_as_of.isoformat(),
-                    "eligibility": design_record["eligibility"],
-                    "parent_design_hash": scoring.parent_design_hash,
-                }
-            digests = raw.execute(
-                f'SELECT digest FROM "{namespace}".runtime_partitions '
-                "WHERE dataset=? AND generation=? ORDER BY partition",
-                [table, generation_id],
-            ).fetchall()
-            coverage = {
-                name: [item.start.isoformat(), item.end_exclusive.isoformat()]
-                for name, item in model.readiness.sources.items()
-            }
-            manifest = DatasetManifest(
-                DatasetRecipe(schema_version=1, base_design=frame._design, view=view),
-                ManifestGeneration(
-                    table,
-                    generation_id,
-                    receipt.partitions,
-                    tuple(row[0] for row in digests),
-                    row_count,
-                ),
-                columns,
-                frame._design.spec_hash,
-                model.model_hash,
-                coverage,
-                {"snapshot_id": snapshot.snapshot_id, "receipt_hash": snapshot.receipt_hash},
-                coverage,
-            )
-            return Dataset(manifest, con=model.con, namespace=namespace)
-    finally:
-        lease_store.release(lease)
+            for field in schema
+        ),
+        frame._design.spec_hash,
+        model.model_hash,
+        coverage,
+        {
+            "snapshot_id": snapshot.snapshot_id,
+            "receipt_hash": snapshot.receipt_hash,
+            "owner": owner.reference,
+            "revisions": {name: None for name in required_sources},
+        },
+        coverage,
+        None if recipe.view is None else recipe.view.get("split"),
+    )
+    raw.execute(
+        f'CREATE TABLE IF NOT EXISTS "{namespace}".runtime_dataset_recipes '
+        "(dataset VARCHAR,generation VARCHAR,recipe_json VARCHAR,request_key VARCHAR,"
+        "manifest_json VARCHAR,PRIMARY KEY(dataset,generation))"
+    )
+    raw.execute(
+        f'INSERT INTO "{namespace}".runtime_dataset_recipes VALUES (?,?,?,?,?)',
+        [
+            table,
+            receipt.published_generation,
+            saved.to_json(),
+            request_key,
+            manifest.to_json().decode(),
+        ],
+    )
+    return Dataset(manifest, con=model.con, namespace=namespace)

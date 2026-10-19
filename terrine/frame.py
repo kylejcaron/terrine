@@ -129,6 +129,18 @@ def _definition_record(value: object) -> object:
     raise TypeError(f"Unsupported feature definition value: {type(value).__name__}")
 
 
+def _metric_definition(metric: object, model: Model) -> object:
+    if metric is None:
+        return None
+    return {
+        "metric": _definition_record(metric),
+        "sources": {
+            name: _definition_record(model.sources[name])
+            for name in getattr(metric, "source_names", ())
+        },
+    }
+
+
 def _feature_definition_hash(design: Design, features: tuple[str, ...], model: Model) -> str:
     from terrine.spec.expressions import AttributeAsOf, EventTime, MetricAgg
     from terrine.spec.io import canonical_json
@@ -153,7 +165,7 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
                     metric = model.metrics.get(state.metric)
                     semantic[name] = {
                         "state": record["shape"]["state"],
-                        "metric": _definition_record(metric) if metric is not None else None,
+                        "metric": _metric_definition(metric, model),
                     }
                 else:
                     semantic[name] = {
@@ -183,7 +195,7 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
         if isinstance(expression, MetricAgg):
             metric = model.metrics.get(expression.metric)
             if metric is not None:
-                resolved["metric"] = _definition_record(metric)
+                resolved["metric"] = _metric_definition(metric, model)
         elif isinstance(expression, AttributeAsOf):
             resolved["attributes"] = [
                 {
@@ -243,6 +255,7 @@ def _apply_training_view(compiled: CompiledStudy, view: _TrainingView) -> Compil
     )
     structural = (
         "period",
+        "period_index",
         "from_time",
         "to_time",
         "scheduled_to",
@@ -267,7 +280,9 @@ def _apply_training_view(compiled: CompiledStudy, view: _TrainingView) -> Compil
         ):
             if support is not None and support in compiled.table.columns and support not in names:
                 names.append(support)
-    for name in (*view.features, *view.labels):
+    for name in tuple(names):
+        if name not in compiled.columns:
+            continue
         metadata = compiled.columns[name]
         for support in (
             metadata.observed_from_column,
@@ -378,6 +393,13 @@ class Frame:
 
             raise INVALID_VIEW.error(
                 reason="views cannot be composed; start from the original Design"
+            )
+        if isinstance(self._design.shape, (LifeTable, EventSequence)):
+            from terrine.spec.dataset import UNSUPPORTED_VIEW
+
+            raise UNSUPPORTED_VIEW.error(
+                reason="training selections require row-oriented values; use the specialized "
+                "Frame export directly or construct a cross-sectional training Design"
             )
         if split is not None:
             raise RefusalSpec(
@@ -564,20 +586,7 @@ class Frame:
                         for name in roles.outcomes
                     }
                 )
-            if isinstance(self._design.shape, TimeToEvent):
-                for name in ("event_time", "censor_time", "duration", "entry_time"):
-                    if name not in table.column_names:
-                        continue
-                    dtype = table.schema.field(name).type
-                    if pa.types.is_timestamp(dtype) and dtype.tz is None:
-                        timestamp = table[name].cast(pa.timestamp(dtype.unit, tz="UTC"))
-                        table = table.set_column(
-                            table.schema.get_field_index(name), name, timestamp
-                        )
-            if isinstance(self._design.shape, StatePanel):
-                gap_index = table.schema.get_field_index("gap")
-                gap = table.column(gap_index).cast(pa.duration("us"))
-                table = table.set_column(gap_index, "gap", gap)
+            table = self._normalize_output(table)
             treatment = self._design.treatment
             treatment_column = compiled.roles.treatment
             baseline_binary = (
@@ -654,48 +663,68 @@ class Frame:
                 administrative_cutoff=self._design.administrative_cutoff,
                 cohort_operation=cohort_operation,
             )
-            if self._training_view is not None:
-                view = self._training_view
-                split_policy = (
-                    None if view.split is None else cast(_SplitPolicy, view.split).to_record()
-                )
-                provenance = replace(
-                    provenance,
-                    dataset_view=DatasetViewMeta(
-                        kind="training",
-                        selected_features=view.features,
-                        selected_labels=view.labels,
-                        view_hash=_view_digest(
-                            view.features,
-                            view.labels,
-                            view.incomplete_labels,
-                            view.split,
-                            self._design.spec_hash,
-                        ),
-                        feature_definition_hash=_feature_definition_hash(
-                            self._design, view.features, self._model
-                        ),
-                        incomplete_labels=view.incomplete_labels,
-                        split_policy=split_policy,
-                        counts_by_reason=excluded_counts,
-                    ),
-                )
-            elif self._scoring_view is not None:
-                view = self._scoring_view
-                provenance = replace(
-                    provenance,
-                    dataset_view=DatasetViewMeta(
-                        kind="scoring",
-                        selected_features=view.features,
-                        selected_labels=(),
-                        view_hash=_scoring_view_digest(view, self._design.spec_hash),
-                        feature_definition_hash=_feature_definition_hash(
-                            self._design, view.features, model
-                        ),
-                        resolved_as_of=view.resolved_as_of,
-                    ),
-                )
+            provenance = self._view_provenance(provenance, excluded_counts)
             return MaterializedFrame(table, roles, columns, provenance)
+
+    def _view_provenance(self, provenance: Provenance, excluded_counts: dict[str, int]):
+        model = self._model
+        if self._training_view is not None:
+            view = self._training_view
+            provenance = replace(
+                provenance,
+                dataset_view=DatasetViewMeta(
+                    kind="training",
+                    selected_features=view.features,
+                    selected_labels=view.labels,
+                    view_hash=_view_digest(
+                        view.features,
+                        view.labels,
+                        view.incomplete_labels,
+                        view.split,
+                        self._design.spec_hash,
+                    ),
+                    feature_definition_hash=_feature_definition_hash(
+                        self._design, view.features, model
+                    ),
+                    incomplete_labels=view.incomplete_labels,
+                    split_policy=None
+                    if view.split is None
+                    else cast(_SplitPolicy, view.split).to_record(),
+                    counts_by_reason=excluded_counts,
+                ),
+            )
+        elif self._scoring_view is not None:
+            scoring = self._scoring_view
+            provenance = replace(
+                provenance,
+                dataset_view=DatasetViewMeta(
+                    kind="scoring",
+                    selected_features=scoring.features,
+                    selected_labels=(),
+                    view_hash=_scoring_view_digest(scoring, self._design.spec_hash),
+                    feature_definition_hash=_feature_definition_hash(
+                        self._design, scoring.features, model
+                    ),
+                    resolved_as_of=scoring.resolved_as_of,
+                ),
+            )
+        return provenance
+
+    def _normalize_output(self, table: pa.Table) -> pa.Table:
+        if isinstance(self._design.shape, TimeToEvent):
+            for name in ("event_time", "censor_time", "duration", "entry_time"):
+                if name in table.column_names:
+                    dtype = table.schema.field(name).type
+                    if pa.types.is_timestamp(dtype) and dtype.tz is None:
+                        table = table.set_column(
+                            table.schema.get_field_index(name),
+                            name,
+                            table[name].cast(pa.timestamp(dtype.unit, tz="UTC")),
+                        )
+        if isinstance(self._design.shape, StatePanel):
+            index = table.schema.get_field_index("gap")
+            table = table.set_column(index, "gap", table.column(index).cast(pa.duration("us")))
+        return table
 
     def to_pyarrow(self, *, budget: Budget | None = None) -> pa.Table:
         """Execute once and attach portable study metadata to the Arrow schema."""

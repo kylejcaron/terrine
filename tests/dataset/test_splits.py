@@ -160,3 +160,14 @@ def test_mixed_calendar_and_instant_boundaries_order_after_catalog_binding() -> 
         "label_end": datetime(2025, 2, 1, 4, tzinfo=UTC),
     }
     assert assign_splits([row], bound)["mixed"].split == "validation"
+
+
+def test_split_policy_record_reconstructs_identical_assignments():
+    from terrine.dataset.splits import policy_from_record
+
+    groups = GroupSplit(seed=42)
+    policy = TimeSplit(train_until="2025-02-01", embargo="2d", groups=groups)
+    assert policy_from_record(policy.to_record()) == policy
+    assert policy_from_record(groups.to_record()) == groups
+    with pytest.raises(ValueError):
+        policy_from_record({**groups.to_record(), "codec": "unknown"})

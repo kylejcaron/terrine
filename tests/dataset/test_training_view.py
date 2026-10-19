@@ -106,6 +106,15 @@ def test_training_projection_preserves_baseline_treatment_role(native_inputs):
     materialized = frame.training_set(label="future", features=("enabled",)).materialize()
     assert materialized.roles.treatment == "treatment"
     assert "treatment" in materialized.table.column_names
+    treatment = materialized.columns["treatment"]
+    for support in (
+        treatment.observed_from_column,
+        treatment.observed_until_column,
+        treatment.complete_column,
+        treatment.reason_column,
+    ):
+        if support is not None:
+            assert support in materialized.table.column_names
 
 
 def test_training_view_hashes_selected_feature_definition_and_parent_design(native_inputs):
@@ -161,6 +170,12 @@ def test_state_panel_training_view_hashes_baseline_and_prior_state(native_inputs
     ).materialize(Budget(max_rows=100, max_output_bytes=100_000))
     assert result.roles.features == ("baseline", "from_state")
     assert result.provenance.dataset_view is not None
+    assert result.provenance.state_panel is not None
+    assert result.provenance.state_panel.period_column in result.table.column_names
+    prior = result.columns["from_state"]
+    for support in (prior.complete_column, prior.reason_column):
+        if support is not None:
+            assert support in result.table.column_names
 
 
 def test_state_panel_feature_hash_includes_state_definition(native_inputs):
@@ -256,3 +271,58 @@ def test_downstream_vocabulary_is_fitted_only_from_training_rows():
     )
     vocabulary = {row["token"] for row in rows if assignments[row["id"]].split == "train"}
     assert vocabulary == {"training-only"}
+
+
+def test_feature_definition_hash_tracks_source_timestamp_semantics(native_inputs):
+    from terrine.frame import _feature_definition_hash
+    from terrine.semantic.models import Catalog
+    from terrine.spec import FixedDate
+
+    catalog, con = native_inputs
+    con.raw_sql("ALTER TABLE events ADD COLUMN earlier TIMESTAMPTZ")
+    con.raw_sql("UPDATE events SET earlier=ts-INTERVAL '1 day'")
+    units = {"user": UnitSource("users", "user_id")}
+    readiness = {"events": Coverage("2025-01-01", "2025-01-31")}
+    original = Model.from_catalog(catalog, con=con, units=units, readiness=readiness)
+    changed = catalog.model_dump(mode="json")
+    changed["sources"]["events"]["timestamp"] = "earlier"
+    corrected = Model.from_catalog(
+        Catalog.model_validate(changed), con=con, units=units, readiness=readiness
+    )
+    design = Design(
+        "user",
+        FixedDate("2025-01-04"),
+        features={"sessions": agg("sessions", window=("-1d", "0s"))},
+    )
+    assert design.build(original).materialize().table["sessions"].to_pylist() == [1, 1]
+    assert design.build(corrected).materialize().table["sessions"].to_pylist() == [0, 0]
+    assert _feature_definition_hash(design, ("sessions",), original) != _feature_definition_hash(
+        design, ("sessions",), corrected
+    )
+
+
+@pytest.mark.parametrize("kind", ["life_table", "sequence"])
+def test_training_rejects_non_tabular_shapes_before_execution(native_inputs, kind):
+    from terrine.spec import EventSequence, LifeTable, TimeToEvent, event_time
+    from terrine.windows import Window
+
+    frame = _frame(native_inputs)
+    model = frame._model
+    shape = (
+        LifeTable(TimeToEvent("churn"), "1d")
+        if kind == "life_table"
+        else EventSequence("session", Window("-1d", "0s"), max_events=2, representation="arrays")
+    )
+    design = Design(
+        "user",
+        EventAnchor("session"),
+        shape=shape,
+        outcomes={}
+        if kind == "life_table"
+        else {"churn": event_time("churn", window=("0s", "1d"))},
+    )
+    with pytest.raises(TerrineError) as error:
+        design.build(model).training_set(
+            label=("duration", "event") if kind == "life_table" else "churn"
+        )
+    assert error.value.code == "terrine.dataset.unsupported_view"

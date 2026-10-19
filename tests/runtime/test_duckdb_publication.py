@@ -319,3 +319,27 @@ def _lease(con, namespace):
     return store.acquire(
         "dataset:orders", "writer", ttl=timedelta(minutes=1), now=datetime.now(UTC)
     )
+
+
+@pytest.mark.parametrize("change", ["duration_unit", "metadata"])
+def test_publication_retry_verifies_logical_schema_before_physical_digest(change):
+    con = duckdb.connect(":memory:")
+    backend = DuckDBBackend(con, namespace="owner")
+    lease = _lease(con, "owner")
+    table = pa.table({"gap": pa.array([1], type=pa.duration("us"))})
+    backend.publish_generation(
+        StagedGeneration("orders", "g1", {"frame": table}),
+        expected_manifest=None,
+        lease=lease,
+    )
+    changed = (
+        pa.table({"gap": pa.array([1], type=pa.duration("ns"))})
+        if change == "duration_unit"
+        else table.replace_schema_metadata({b"contract": b"changed"})
+    )
+    with pytest.raises(ValueError):
+        backend.publish_generation(
+            StagedGeneration("orders", "g1", {"frame": changed}),
+            expected_manifest="g1",
+            lease=lease,
+        )

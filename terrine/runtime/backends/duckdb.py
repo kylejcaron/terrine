@@ -330,6 +330,12 @@ class DuckDBBackend:
             [stage.dataset, stage.generation],
         ).fetchall()
         stored = {name: (digest, table_name) for name, digest, table_name in rows}
+        for partition, payload in stage.partitions.items():
+            schema = self._partition_schema(
+                PublicationReceipt(stage.dataset, stage.generation, 0, tuple(stored)), partition
+            )
+            if not payload.schema.equals(schema, check_metadata=True):
+                raise ValueError("retry partition Arrow schema does not match staged generation")
         if set(stored) != set(stage.partitions) or any(
             stored[name][0] != _digest_relation(self.con, self._schema, stored[name][1])
             or stored[name][0] != _digest_payload(self.con, stage.partitions[name])
@@ -361,6 +367,38 @@ class DuckDBBackend:
                     raise ValueError("published null column contains non-null values")
                 table = table.set_column(index, field, pa.nulls(table.num_rows))
         return table.cast(schema)
+
+    def read_batches(
+        self, receipt: PublicationReceipt, partition: str, *, batch_size: int = 65_536
+    ) -> pa.RecordBatchReader:
+        """Stream exact-generation data with its retained logical schema and metadata."""
+        row = self.con.execute(
+            f"SELECT table_name FROM {self._schema}.runtime_partitions "
+            "WHERE dataset=? AND generation=? AND partition=?",
+            [receipt.dataset, receipt.generation, partition],
+        ).fetchone()
+        if row is None or partition not in receipt.partitions:
+            raise KeyError(partition)
+        schema = self._partition_schema(receipt, partition)
+        cursor = self.con.cursor()
+        reader = cursor.execute(f"SELECT * FROM {self._schema}.{_quote(row[0])}").to_arrow_reader(
+            batch_size=batch_size
+        )
+
+        def batches():
+            try:
+                for batch in reader:
+                    for index, field in enumerate(schema):
+                        if pa.types.is_null(field.type):
+                            if batch.column(index).null_count != batch.num_rows:
+                                raise ValueError("published null column contains non-null values")
+                            batch = batch.set_column(index, field, pa.nulls(batch.num_rows))
+                    yield batch.cast(schema)
+            finally:
+                reader.close()
+                cursor.close()
+
+        return pa.RecordBatchReader.from_batches(schema, batches())
 
     def _partition_schema(self, receipt: PublicationReceipt, partition: str) -> pa.Schema:
         metadata = self.con.execute(

@@ -185,7 +185,15 @@ def run_serialized_plan(
         if executor is None:
             _preflight_design_partitions(plan)
             preflight_runtime_shape(design, plan.budget)
-            executor = DesignExecutor(model, design, plan, con, namespace=namespace)
+            executor = DesignExecutor(
+                model,
+                design,
+                plan,
+                con,
+                namespace=namespace,
+                dataset_recipe=recipe.restore_dataset_recipe(),
+                output_root=snapshot_authority.owner.snapshot_root / namespace / "outputs",
+            )
         if not callable(getattr(executor, "run_snapshot_task", None)):
             raise ValueError("saved recipes require an executor with run_snapshot_task")
         executor = _SnapshotBoundExecutor(executor, snapshot_authority, receipt, con, namespace)
@@ -360,9 +368,15 @@ def _persistable_layer(relation: Any, execute: Any):
     )
     result = execute(serializable)
     if exact_columns:
-        result = result.replace_schema_metadata(
-            {_EXACT_LAYER_COLUMNS_KEY: json.dumps(exact_columns).encode()}
-        )
+        import pyarrow as pa
+
+        metadata = {_EXACT_LAYER_COLUMNS_KEY: json.dumps(exact_columns).encode()}
+        if isinstance(result, pa.RecordBatchReader):
+            result = pa.RecordBatchReader.from_batches(
+                result.schema.with_metadata(metadata), result
+            )
+        else:
+            result = result.replace_schema_metadata(metadata)
     return result
 
 
@@ -372,8 +386,20 @@ def _restore_persisted_layer(context: Any, arrow: Any, name: str):
 
     exact_dtype = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
 
-    relation = context.con.create_table(name, obj=arrow, temp=True)
+    from terrine.runtime.arrow import ArrowOutput
+
     metadata = arrow.schema.metadata or {}
+    if isinstance(arrow, ArrowOutput):
+        with arrow.open() as reader:
+            raw = context.con.con
+            raw.register(name + "_input", reader)
+            try:
+                raw.execute(f'CREATE TEMP TABLE "{name}" AS SELECT * FROM "{name}_input"')
+            finally:
+                raw.unregister(name + "_input")
+        relation = context.con.table(name)
+    else:
+        relation = context.con.create_table(name, obj=arrow, temp=True)
     exact_columns = json.loads(metadata.get(_EXACT_LAYER_COLUMNS_KEY, b"[]"))
     return (
         relation.mutate(**{column: relation[column].cast(exact_dtype) for column in exact_columns})
@@ -385,7 +411,17 @@ def _restore_persisted_layer(context: Any, arrow: Any, name: str):
 class DesignExecutor:
     """Execute a Design through snapshot-bound compiler layers and atomic publication."""
 
-    def __init__(self, model: Any, design: Any, plan: Any, con: Any, *, namespace: str) -> None:
+    def __init__(
+        self,
+        model: Any,
+        design: Any,
+        plan: Any,
+        con: Any,
+        *,
+        namespace: str,
+        dataset_recipe: Any = None,
+        output_root: Any = None,
+    ) -> None:
         from threading import RLock
 
         from terrine.compile.layers import plan_layers
@@ -414,6 +450,10 @@ class DesignExecutor:
         self._backend = DuckDBBackend(con, namespace=namespace)
         self._layers: dict[str, dict[Any, Any]] = {}
         self._lock = RLock()
+        self._frame = (
+            dataset_recipe.build(model) if dataset_recipe is not None else design.build(model)
+        )
+        self._output_root = output_root
 
     def run_snapshot_task(self, context: Any, task: Any, dependencies: Any):
         import uuid
@@ -440,11 +480,11 @@ class DesignExecutor:
                 if key.layer == "prefix" and key.source == task.source
             ]
             results = {
-                key: _persistable_layer(
+                key: self._stream_layer(
                     build_layer(
                         self.design, execution_model, key, relation_resolver=context.resolve
                     ),
-                    context.execute,
+                    context,
                 )
                 for key in keys
             }
@@ -457,8 +497,9 @@ class DesignExecutor:
             )
         if task.layer == "anchor":
             key = self._with_snapshot(self._keys[0], self._plan.snapshot_id)
-            result = context.execute(
-                build_layer(self.design, execution_model, key, relation_resolver=context.resolve)
+            result = self._stream_layer(
+                build_layer(self.design, execution_model, key, relation_resolver=context.resolve),
+                context,
             )
             with self._lock:
                 self._layers.setdefault(task.partition, {})[key] = result
@@ -489,12 +530,19 @@ class DesignExecutor:
             from terrine.spec.state_panel import StatePanel
             from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
 
-            table = context.execute(compiled.table)
-            if isinstance(self.design.shape, StatePanel):
-                gap_index = table.schema.get_field_index("gap")
-                table = table.set_column(
-                    gap_index, "gap", table.column(gap_index).cast(pa.duration("us"))
-                )
+            excluded_counts = {}
+            if self._frame._training_view is not None:
+                from terrine.frame import _excluded_label_counts
+
+                if self._frame._training_view.incomplete_labels == "drop":
+                    excluded_counts = _excluded_label_counts(
+                        compiled, self._frame._training_view, context.execute
+                    )
+                compiled = self._frame._active_compiled(compiled)
+            summary = _eligibility_summary(compiled.audit_table, context.execute)
+            context._check_query(compiled.table)
+            reader = context.con.to_pyarrow_batches(compiled.table, chunk_size=65_536)
+            table = self._frame._normalize_output(pa.Table.from_batches([], schema=reader.schema))
             if isinstance(self.design.shape, StatePanel):
                 shape = "state_panel"
             elif isinstance(self.design.shape, EventSequence):
@@ -521,14 +569,14 @@ class DesignExecutor:
                 and treatment.known_at_t0
                 and pa.types.is_boolean(table.schema.field(treatment_column).type)
             )
-            return MaterializedFrame(
+            metadata = MaterializedFrame(
                 table,
                 compiled.roles,
                 compiled.columns,
                 Provenance(
                     feature_cutoffs=compiled.feature_cutoffs,
                     eligibility_cutoffs=compiled.eligibility_cutoffs,
-                    eligibility_summary=_eligibility_summary(compiled.audit_table, context.execute),
+                    eligibility_summary=summary,
                     design_hash=self.design.spec_hash,
                     model_hash=self._model.model_hash,
                     source_generations=context.snapshot.source_generations,
@@ -555,10 +603,46 @@ class DesignExecutor:
                     calendar_comparison=_provenance.calendar_comparison_metadata(self.design),
                     administrative_cutoff=self.design.administrative_cutoff,
                 ),
-            ).to_arrow()
+            )
+            metadata = (
+                MaterializedFrame(
+                    metadata.table,
+                    metadata.roles,
+                    metadata.columns,
+                    self._frame._view_provenance(metadata.provenance, excluded_counts),
+                )
+                .to_arrow()
+                .schema
+            )
+
+            def batches():
+                try:
+                    for batch in reader:
+                        normalized = self._frame._normalize_output(pa.Table.from_batches([batch]))
+                        yield from normalized.cast(metadata).to_batches()
+                finally:
+                    reader.close()
+
+            from terrine.runtime.arrow import ArrowOutput
+
+            return ArrowOutput.write(
+                pa.RecordBatchReader.from_batches(metadata, batches()),
+                root=self._output_root,
+                budget=self._plan.budget,
+            )
         finally:
             for name in registered:
                 context.con.drop_table(name, force=True)
+
+    def _stream_layer(self, relation: Any, context: Any):
+        from terrine.runtime.arrow import ArrowOutput
+
+        def read_layer(table):
+            context._check_query(table)
+            return context.con.to_pyarrow_batches(table, chunk_size=65_536)
+
+        reader = _persistable_layer(relation, read_layer)
+        return ArrowOutput.write(reader, root=self._output_root)
 
     def _execution_model(self, context: Any):
         from terrine.spec.validate import validate_design
@@ -575,6 +659,7 @@ class DesignExecutor:
         return replace(key, snapshot_id=snapshot_id)
 
     def publish(self, plan: Any, outputs: Any, lease: Any, run_id: str):
+        from terrine.runtime.arrow import ArrowOutput
         from terrine.runtime.backends.base import StagedGeneration
 
         if not plan.tasks:
@@ -588,7 +673,10 @@ class DesignExecutor:
         stage = StagedGeneration(
             plan.dataset,
             f"generation-{run_id}",
-            outputs,
+            {
+                key: output.open() if isinstance(output, ArrowOutput) else output
+                for key, output in outputs.items()
+            },
             run_id=run_id,
             snapshot_id=plan.snapshot_id,
         )

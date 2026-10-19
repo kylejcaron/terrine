@@ -79,6 +79,39 @@ class DatasetRecipe:
     def digest(self) -> str:
         return hashlib.sha256(self.canonical_json()).hexdigest()
 
+    def build(self, model: Any):
+        """Reconstruct the recorded view without changing its scoring instant."""
+        frame = self.base_design.build(model)
+        view = thaw(self.view)
+        if view is None:
+            return frame
+        if view["kind"] == "training":
+            split = view.get("split")
+            if split is not None:
+                from importlib import import_module
+
+                split = import_module("terrine.dataset.splits").policy_from_record(split)
+            return frame.training_set(
+                label=tuple(view["labels"]),
+                features=tuple(view["features"]),
+                incomplete_labels=view["incomplete_labels"],
+                split=split,
+            )
+        from datetime import datetime
+
+        from terrine.frame import _ScoringView
+
+        object.__setattr__(
+            frame,
+            "_scoring_view",
+            _ScoringView(
+                view["parent_design_hash"],
+                tuple(view["features"]),
+                datetime.fromisoformat(view["as_of"]),
+            ),
+        )
+        return frame
+
     @classmethod
     def from_json(cls, value: str | bytes) -> DatasetRecipe:
         try:

@@ -194,6 +194,39 @@ def _time_record(policy: TimeSplit) -> dict[str, Any]:
     }
 
 
+def policy_from_record(record: dict[str, Any]) -> TimeSplit | GroupSplit:
+    """Restore a versioned split policy through its ordinary input validation."""
+    if (
+        record.get("kind") == "group"
+        and set(record)
+        == {"kind", "group", "train_fraction", "validation_fraction", "seed", "codec"}
+        and record["codec"] == "terrine.group.v1"
+    ):
+        return GroupSplit(
+            group=record["group"],
+            train_fraction=float(record["train_fraction"]),
+            validation_fraction=float(record["validation_fraction"]),
+            seed=record["seed"],
+        )
+    if record.get("kind") == "time" and set(record) == {
+        "kind",
+        "train_until",
+        "validation_until",
+        "embargo_microseconds",
+        "groups",
+    }:
+        groups = None if record["groups"] is None else policy_from_record(record["groups"])
+        if groups is not None and not isinstance(groups, GroupSplit):
+            raise ValueError("time groups must be a group policy")
+        return TimeSplit(
+            train_until=record["train_until"],
+            validation_until=record["validation_until"],
+            embargo=timedelta(microseconds=record["embargo_microseconds"]),
+            groups=groups,
+        )
+    raise ValueError("unknown split policy record")
+
+
 def group_bucket(key: str | int, policy: GroupSplit) -> Literal["train", "validation", "test"]:
     if isinstance(key, bool) or not isinstance(key, (str, int)):
         raise TypeError("group keys must be strings or integers, excluding bool")
