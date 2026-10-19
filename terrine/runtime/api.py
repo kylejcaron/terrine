@@ -379,54 +379,6 @@ def _restore_persisted_layer(context: Any, arrow: Any, name: str):
     )
 
 
-def _state_panel_provenance(design: Any, model: Any):
-    from datetime import UTC
-
-    from terrine.data import StatePanelMeta
-    from terrine.spec.anchors import Schedule
-    from terrine.spec.state_panel import BinnedMetricState, StatePanel, encode_cutpoint
-
-    if not isinstance(design.shape, StatePanel):
-        return None
-    schedule = design.anchor
-    assert isinstance(schedule, Schedule)
-    state = design.shape.state
-    if isinstance(state, BinnedMetricState):
-        source = {
-            "kind": "binned_metric",
-            "metric": state.metric,
-            "cutpoints": [encode_cutpoint(value) for value in state.cutpoints],
-        }
-        levels, ordered, absorbing = state.levels, True, ()
-        timing = "strict_period"
-    else:
-        source = {
-            "kind": "observations",
-            "property": state.property,
-            "point_time_columns": {"from_state": "from_time", "to_state": "to_time"},
-        }
-        levels, ordered, absorbing = state.levels, state.ordered, state.absorbing
-        timing = "at_origin"
-    return StatePanelMeta(
-        state_source=source,
-        levels=levels,
-        ordered=ordered,
-        absorbing=absorbing,
-        panel_start=model.day_boundary(schedule.start).astimezone(UTC),
-        administrative_end=model.day_boundary(schedule.end).astimezone(UTC),
-        period_seconds=schedule.every,
-        baseline_features=tuple(design.shape.baseline_features),
-        time_varying_features=tuple(design.features),
-        prior_state_timing=timing,
-        period_column="period_index",
-        from_time_column="from_time",
-        to_time_column="to_time",
-        scheduled_to_column="scheduled_to",
-        gap_column="gap",
-        terminal_column="terminal",
-    )
-
-
 class DesignExecutor:
     """Execute a Design through snapshot-bound compiler layers and atomic publication."""
 
@@ -526,15 +478,13 @@ class DesignExecutor:
             compiled = compose_runtime_frame(
                 self.design, execution_model, persisted=persisted, budget=self._plan.budget
             )
-            from terrine.frame import (
-                _calendar_comparison_metadata,
-                _panel_metadata,
-                _state_panel_metadata,
-            )
+            import terrine.compile.provenance as _provenance
+            from terrine.data import SamplingMeta
+            from terrine.execution.gates import _eligibility_summary
             from terrine.spec.anchors import FixedDate
             from terrine.spec.sequence import EventSequence
-            from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
             from terrine.spec.state_panel import StatePanel
+            from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
 
             table = context.execute(compiled.table)
             if isinstance(self.design.shape, StatePanel):
@@ -546,7 +496,7 @@ class DesignExecutor:
                 shape = "state_panel"
             elif isinstance(self.design.shape, EventSequence):
                 shape = "event_sequence"
-            elif _calendar_comparison_metadata(self.design) is not None:
+            elif _provenance.calendar_comparison_metadata(self.design) is not None:
                 shape = "calendar_comparison"
             elif isinstance(self.design.shape, CohortSpec):
                 shape = "ltv"
@@ -555,14 +505,7 @@ class DesignExecutor:
             elif isinstance(self.design.shape, TimeToEvent):
                 shape = "time_to_event"
             else:
-                shape = (
-                    self.design.shape
-                    if isinstance(self.design.shape, str)
-                    else "cross_section"
-                )
-            from terrine.execution.gates import _eligibility_summary
-            from terrine.frame import _panel_metadata
-            from terrine.data import SamplingMeta
+                shape = self.design.shape if isinstance(self.design.shape, str) else "cross_section"
 
             treatment = self.design.treatment
             treatment_column = compiled.roles.treatment
@@ -587,7 +530,7 @@ class DesignExecutor:
                     model_hash=self._model.model_hash,
                     source_generations=context.snapshot.source_generations,
                     execution_snapshot=context.snapshot,
-                    state_panel=_state_panel_metadata(self.design, self._model),
+                    state_panel=_provenance.state_panel_metadata(self.design, self._model),
                     shape=shape,
                     treatment_design="baseline_binary" if baseline_binary else None,
                     treatment_knowledge=(
@@ -596,7 +539,7 @@ class DesignExecutor:
                     treatment_known_at_t0=treatment.known_at_t0 if treatment is not None else False,
                     expression_timings=compiled.expression_timings,
                     sequence_meta=compiled.sequence_meta,
-                    panel=_panel_metadata(self.design),
+                    panel=_provenance.panel_metadata(self.design),
                     sampling=(
                         SamplingMeta(
                             self.design.sample.strata,
@@ -606,7 +549,7 @@ class DesignExecutor:
                         if self.design.sample is not None
                         else None
                     ),
-                    calendar_comparison=_calendar_comparison_metadata(self.design),
+                    calendar_comparison=_provenance.calendar_comparison_metadata(self.design),
                     administrative_cutoff=self.design.administrative_cutoff,
                 ),
             ).to_arrow()

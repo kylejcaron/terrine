@@ -6,32 +6,27 @@ import hashlib
 import json
 import warnings
 from dataclasses import dataclass
-from datetime import UTC
 from importlib import import_module
 from typing import TYPE_CHECKING
 
 import pyarrow as pa
 
+import terrine.compile.provenance as _provenance
 from terrine.compile.cost import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED, _scan_policy
 from terrine.data import (
     Budget,
-    CalendarComparisonMeta,
     CohortOperationMeta,
     ColumnMeta,
     MaterializedFrame,
-    PanelMeta,
     Provenance,
     Roles,
     SamplingMeta,
-    StatePanelMeta,
-    TreatmentHistoryMeta,
-    TrialWeightMeta,
 )
 from terrine.errors import RefusalSpec
 from terrine.execution.gates import enforce_shape_budget, validate_compiled_output
 from terrine.spec.anchors import FixedDate
 from terrine.spec.sequence import EventSequence
-from terrine.spec.state_panel import BinnedMetricState, StatePanel, encode_cutpoint
+from terrine.spec.state_panel import StatePanel
 from terrine.spec.trajectory import CohortGrouping, CohortSpec, LifeTable, TimeToEvent
 
 if TYPE_CHECKING:
@@ -52,109 +47,6 @@ def _optional_dependency(name: str):
         return import_module(name)
     except ImportError as exc:
         raise _MISSING_DEPENDENCY.error(extra=name) from exc
-
-
-def _state_panel_metadata(design: Design, model: Model) -> StatePanelMeta | None:
-    from terrine.spec.anchors import Schedule
-
-    if not isinstance(design.shape, StatePanel):
-        return None
-    schedule = design.anchor
-    assert isinstance(schedule, Schedule)
-    state = design.shape.state
-    if isinstance(state, BinnedMetricState):
-        source = {
-            "kind": "binned_metric",
-            "metric": state.metric,
-            "cutpoints": [encode_cutpoint(value) for value in state.cutpoints],
-        }
-        levels, ordered, absorbing = state.levels, True, ()
-        timing = "strict_period"
-    else:
-        source = {
-            "kind": "observations",
-            "property": state.property,
-            "point_time_columns": {"from_state": "from_time", "to_state": "to_time"},
-        }
-        levels, ordered, absorbing = state.levels, state.ordered, state.absorbing
-        timing = "at_origin"
-    return StatePanelMeta(
-        state_source=source,
-        levels=levels,
-        ordered=ordered,
-        absorbing=absorbing,
-        panel_start=model.day_boundary(schedule.start).astimezone(UTC),
-        administrative_end=model.day_boundary(schedule.end).astimezone(UTC),
-        period_seconds=schedule.every,
-        baseline_features=tuple(design.shape.baseline_features),
-        time_varying_features=tuple(design.features),
-        prior_state_timing=timing,
-        period_column="period_index",
-        from_time_column="from_time",
-        to_time_column="to_time",
-        scheduled_to_column="scheduled_to",
-        gap_column="gap",
-        terminal_column="terminal",
-    )
-
-
-def _panel_metadata(design: Design) -> PanelMeta | None:
-    from terrine.spec.anchors import Schedule
-    from terrine.spec.panels import EventPanelSpec, Initiation, PersistentAdoption, SequentialSpec
-
-    if isinstance(design.shape, SequentialSpec):
-        treatment = design.shape.treatment
-        history = TreatmentHistoryMeta(
-            "initiation" if isinstance(treatment, Initiation) else "persistent_adoption",
-            treatment.source,
-            treatment.property,
-            treatment.history_start,
-            treatment.knowledge,
-            treatment.adopted_value if isinstance(treatment, PersistentAdoption) else None,
-            treatment.persistence if isinstance(treatment, PersistentAdoption) else None,
-        )
-        assert isinstance(design.anchor, Schedule)
-        weight = design.shape.trial_weight
-        trial_weight = None if weight is None else TrialWeightMeta(weight.kind, weight.values)
-        span = (design.anchor.end - design.anchor.start).days * 86_400
-        count = (span - 1) // design.anchor.every + 1
-        trials = tuple(f"schedule:{index}" for index in range(count))
-        return PanelMeta(
-            "sequential",
-            history,
-            trial_weight,
-            trials=trials,
-            anticipation_seconds=design.shape.anticipation_seconds,
-        )
-    if isinstance(design.shape, EventPanelSpec):
-        return PanelMeta(
-            "event_panel",
-            periods=design.shape.periods,
-            period_seconds=design.shape.period_seconds,
-            reference_period=design.shape.reference_period,
-        )
-    return None
-
-
-def _calendar_comparison_metadata(design: Design) -> CalendarComparisonMeta | None:
-    from terrine.spec.anchors import Schedule
-    from terrine.spec.panels import CalendarComparisonSpec
-
-    if not isinstance(design.shape, CalendarComparisonSpec):
-        return None
-    assert isinstance(design.anchor, Schedule)
-    cohort = design.shape.cohort
-    return CalendarComparisonMeta(
-        design.shape.control,
-        cohort.source,
-        cohort.property,
-        cohort.history_start,
-        cohort.knowledge,
-        design.shape.reference_period,
-        design.shape.comparison_periods,
-        design.shape.anticipation_periods,
-        design.anchor.every,
-    )
 
 
 @dataclass(frozen=True, slots=True, init=False, repr=False, eq=False)
@@ -338,8 +230,8 @@ class Frame:
                 and treatment.known_at_t0
                 and pa.types.is_boolean(table.schema.field(treatment_column).type)
             )
-            calendar_comparison = _calendar_comparison_metadata(self._design)
-            panel = _panel_metadata(self._design)
+            calendar_comparison = _provenance.calendar_comparison_metadata(self._design)
+            panel = _provenance.panel_metadata(self._design)
 
             if isinstance(self._design.shape, StatePanel):
                 shape_name = "state_panel"
@@ -386,7 +278,7 @@ class Frame:
                 if treatment is not None
                 else None,
                 treatment_known_at_t0=treatment.known_at_t0 if treatment is not None else False,
-                state_panel=_state_panel_metadata(self._design, model),
+                state_panel=_provenance.state_panel_metadata(self._design, model),
                 expression_timings=expression_timings,
                 sequence_meta=compiled.sequence_meta,
                 panel=panel,
