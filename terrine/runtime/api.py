@@ -329,6 +329,45 @@ def preflight_runtime_shape(design: Any, budget: Any = None) -> None:
     preflight_materialization_shape(design, budget)
 
 
+_EXACT_LAYER_COLUMNS_KEY = b"terrine.runtime.exact_layer_columns"
+
+
+def _persistable_layer(relation: Any, execute: Any):
+
+    exact_columns = tuple(
+        name
+        for name, dtype in relation.schema().items()
+        if dtype.is_unknown() and str(dtype.raw_type).upper() == "BIGNUM"
+    )
+    serializable = (
+        relation.mutate(**{name: relation[name].cast("string") for name in exact_columns})
+        if exact_columns
+        else relation
+    )
+    result = execute(serializable)
+    if exact_columns:
+        result = result.replace_schema_metadata(
+            {_EXACT_LAYER_COLUMNS_KEY: json.dumps(exact_columns).encode()}
+        )
+    return result
+
+
+def _restore_persisted_layer(context: Any, arrow: Any, name: str):
+    from ibis.expr import datatypes as dt
+    from sqlglot import exp as sge
+
+    exact_dtype = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
+
+    relation = context.con.create_table(name, obj=arrow, temp=True)
+    metadata = arrow.schema.metadata or {}
+    exact_columns = json.loads(metadata.get(_EXACT_LAYER_COLUMNS_KEY, b"[]"))
+    return (
+        relation.mutate(**{column: relation[column].cast(exact_dtype) for column in exact_columns})
+        if exact_columns
+        else relation
+    )
+
+
 def _state_panel_provenance(design: Any, model: Any):
     from datetime import UTC
 
@@ -401,6 +440,7 @@ class DesignExecutor:
             input_binding=model.input_binding,
             source_names=required_sources,
         )
+        self._model = model
         self.model = scoped_model
         self.design = design
         self._plan = plan
@@ -434,10 +474,11 @@ class DesignExecutor:
                 if key.layer == "prefix" and key.source == task.source
             ]
             results = {
-                key: context.execute(
+                key: _persistable_layer(
                     build_layer(
                         self.design, execution_model, key, relation_resolver=context.resolve
-                    )
+                    ),
+                    context.execute,
                 )
                 for key in keys
             }
@@ -467,22 +508,24 @@ class DesignExecutor:
             layer_outputs = dict(self._layers.get(task.partition, {}))
         for key, arrow in layer_outputs.items():
             name = f"_terrine_runtime_layer_{uuid.uuid4().hex}"
-            relation = context.con.create_table(name, obj=arrow, temp=True)
+            relation = _restore_persisted_layer(context, arrow, name)
             registered.append(name)
             persisted[key] = relation
         try:
             compiled = compose_runtime_frame(
                 self.design, execution_model, persisted=persisted, budget=self._plan.budget
             )
+            from terrine.spec.state_panel import StatePanel
+
             table = context.execute(compiled.table)
-            if type(self.design.shape).__name__ == "StatePanel":
+            if isinstance(self.design.shape, StatePanel):
                 gap_index = table.schema.get_field_index("gap")
                 table = table.set_column(
                     gap_index, "gap", table.column(gap_index).cast(pa.duration("us"))
                 )
             shape = (
                 "state_panel"
-                if type(self.design.shape).__name__ == "StatePanel"
+                if isinstance(self.design.shape, StatePanel)
                 else str(self.design.shape)
             )
             from terrine.execution.gates import _eligibility_summary
@@ -512,8 +555,8 @@ class DesignExecutor:
     def _execution_model(self, context: Any):
         from terrine.spec.validate import validate_design
 
-        required_sources = set(validate_design(self.design, self.model).required_sources)
-        return self.model._for_execution(
+        required_sources = set(validate_design(self.design, self._model).required_sources)
+        return self._model._for_execution(
             context, source_names=required_sources, unit_name=self.design.unit
         )
 

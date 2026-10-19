@@ -7,14 +7,11 @@ import tempfile
 from pathlib import Path
 
 import ibis
-import pyarrow as pa
 
 from terrine.compile.columns import compile_columns
 from terrine.data import Budget, Coverage, UnitSource
 from terrine.model import Model
-from terrine.runtime import open_published_generation, run_serialized_plan
-from terrine.runtime.backends.base import StagedGeneration
-from terrine.runtime.backends.duckdb import DuckDBBackend
+from terrine.runtime import open_published_frame, run_serialized_plan
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.planner import plan_refresh
@@ -48,46 +45,6 @@ def _catalog() -> Catalog:
             "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
         }
     )
-
-
-class DesignExecutor:
-    """Execute this example's declared one-day total from the retained event input."""
-
-    def __init__(self, con, catalog: Catalog, design: Design, namespace: str) -> None:
-        self.con = con
-        self.catalog = catalog
-        self.design = design
-        self.backend = DuckDBBackend(con, namespace=namespace)
-        self.expected_manifest: str | None = None
-
-    def run_snapshot_task(self, context, task, dependencies):
-        if task.layer != "frame":
-            return pa.table(
-                {"user_id": pa.array([], type=pa.int64()), "total": pa.array([], type=pa.int64())}
-            )
-        events = context.resolve(self.catalog.sources["events"].relation)
-        anchor = ibis.timestamp("2025-01-02 00:00:00")
-        selected = events.filter(
-            (events.occurred_at >= anchor - ibis.interval(days=1)) & (events.occurred_at < anchor)
-        )
-        result = selected.group_by("user_id").aggregate(total=selected.amount.sum())
-        return context.execute(result)
-
-    def publish(self, plan, outputs, lease, run_id):
-        next_generation = "generation-1" if self.expected_manifest is None else "generation-2"
-        publication = self.backend.publish_generation(
-            StagedGeneration(
-                plan.dataset,
-                next_generation,
-                outputs,
-                run_id=run_id,
-                snapshot_id=plan.snapshot_id,
-            ),
-            expected_manifest=self.expected_manifest,
-            lease=lease,
-        )
-        self.expected_manifest = publication.generation
-        return publication
 
 
 class ModelResolver:
@@ -175,7 +132,6 @@ def main() -> None:
             store = RuntimeStore(con.con, namespace="analytics_owner")
             store.initialize()
             destination = DestinationRef(str(state_path), "published", "orders")
-            executor = DesignExecutor(con.con, catalog, design, namespace="analytics_owner")
             resolver = ModelResolver(model)
 
             recipe = _saved_recipe(
@@ -195,12 +151,14 @@ def main() -> None:
                 con=con.con,
                 namespace="analytics_owner",
                 request_key="orders:initial",
-                executor=executor,
                 resolver=resolver,
                 snapshot_authority=authority,
             )
-            initial = open_published_generation(receipt, con=con.con, namespace="analytics_owner")
-            initial_rows = initial.execute().to_dict("records")
+            initial = open_published_frame(receipt, con=con.con, namespace="analytics_owner")
+            initial_rows = [
+                {"user_id": row["unit"], "total": int(row["total"])}
+                for row in initial.to_arrow().to_pylist()
+            ]
             assert sorted(initial_rows, key=lambda row: row["user_id"]) == _clean_rebuild_rows(
                 model, design
             )
@@ -231,14 +189,14 @@ def main() -> None:
                 con=con.con,
                 namespace="analytics_owner",
                 request_key="orders:correction-1",
-                executor=executor,
                 resolver=resolver,
                 snapshot_authority=authority,
             )
-            published = open_published_generation(
-                corrected, con=con.con, namespace="analytics_owner"
-            )
-            corrected_rows = published.execute().to_dict("records")
+            published = open_published_frame(corrected, con=con.con, namespace="analytics_owner")
+            corrected_rows = [
+                {"user_id": row["unit"], "total": int(row["total"])}
+                for row in published.to_arrow().to_pylist()
+            ]
             assert sorted(corrected_rows, key=lambda row: row["user_id"]) == _clean_rebuild_rows(
                 model, design
             )

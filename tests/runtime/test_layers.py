@@ -93,6 +93,28 @@ def test_build_layer_composition_matches_direct_compilation(column_model):
     assert actual.expression_timings == expected.expression_timings
 
 
+def test_exact_prefix_layers_roundtrip_through_arrow_storage(column_model):
+    import json
+    from types import SimpleNamespace
+
+    from terrine.compile.layers import build_layer
+    from terrine.runtime.api import _persistable_layer, _restore_persisted_layer
+
+    design = _design()
+    key = next(key for key in plan_layers(design, column_model).keys if key.layer == "prefix")
+    relation = build_layer(design, column_model, key)
+
+    arrow = _persistable_layer(relation, column_model.con.to_pyarrow)
+
+    exact_columns = set(json.loads(arrow.schema.metadata[b"terrine.runtime.exact_layer_columns"]))
+    assert {"event_count", "sum_value"} <= exact_columns
+    assert arrow.schema.field("sum_value").type == pa.string()
+    restored = _restore_persisted_layer(
+        SimpleNamespace(con=column_model.con), arrow, "exact_prefix"
+    )
+    assert restored.schema()["sum_value"].is_unknown()
+
+
 def test_build_anchor_layer_accepts_snapshot_relation_resolver(column_model):
     from terrine.compile.layers import build_layer
 
