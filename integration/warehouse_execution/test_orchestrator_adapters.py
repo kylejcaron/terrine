@@ -282,6 +282,7 @@ def test_two_dbt_build_cycles_stop_owner_and_replay_from_separate_processes(tmp_
 def test_airflow_and_dagster_share_owner_state_and_failed_run_fence(tmp_path):
     pytest.importorskip("airflow")
     pytest.importorskip("dagster")
+    import os
     from pathlib import Path
     from uuid import uuid4
 
@@ -309,7 +310,7 @@ def test_airflow_and_dagster_share_owner_state_and_failed_run_fence(tmp_path):
     database = tmp_path / "shared-adapters.duckdb"
     connection = ibis.duckdb.connect(database=str(database))
     connection.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
-    connection.raw_sql("INSERT INTO events VALUES ('2025-01-15', 1, 4)")
+    connection.raw_sql("INSERT INTO events VALUES ('2025-01-15', 1, 987654321)")
     connection.raw_sql("CREATE TABLE users (id INTEGER)")
     connection.raw_sql("INSERT INTO users VALUES (1)")
     model = Model.from_catalog(
@@ -375,7 +376,13 @@ def test_airflow_and_dagster_share_owner_state_and_failed_run_fence(tmp_path):
             pool="terrine-owner",
         )
     task = next(iter(group.children.values()))
-    context = {"ti": type("TaskInstance", (), {"xcom_push": lambda self, **kwargs: None})()}
+    xcom_payloads = []
+    task_instance = type(
+        "TaskInstance",
+        (),
+        {"xcom_push": lambda self, **kwargs: xcom_payloads.append(kwargs)},
+    )()
+    context = {"ti": task_instance}
     asset = build_materialization_asset(
         plan_request_provider=lambda values: PlanRequest(
             "provider-request",
@@ -413,6 +420,30 @@ def test_airflow_and_dagster_share_owner_state_and_failed_run_fence(tmp_path):
         ).fetchone()[0]
         assert airflow_result["run_id"] == failed.run_id
         assert advanced_fence > first_fence
+
+        serialized_xcom = json.dumps(xcom_payloads)
+        assert "987654321" not in serialized_xcom
+        assert "transient owner failure" not in serialized_xcom
+        cli_env = {
+            **os.environ,
+            "TERRINE_RUNTIME_SOCKET": str(endpoint.path),
+            "TERRINE_RUNTIME_NAMESPACE": "owner",
+        }
+        cli_status = subprocess.run(
+            [
+                str(Path(sys.executable).with_name("terrine")),
+                "status",
+                airflow_result["run_id"],
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=cli_env,
+        )
+        cli_run = json.loads(cli_status.stdout)
+        assert cli_run["run_id"] == airflow_result["run_id"]
+        assert cli_run["durable_state"] == airflow_result["state"]
+        assert cli_run["pinned_result_ref"] == airflow_result["published_generation"]
 
         dagster_result = materialize(
             [asset],
