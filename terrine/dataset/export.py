@@ -5,8 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,19 +21,16 @@ __all__ = ["ExportManifest", "ExportShard", "export_dataset"]
 _INVALID = RefusalSpec("terrine.dataset.invalid_export", "Invalid Parquet export: {reason}.")
 _CONFLICT = RefusalSpec(
     "terrine.dataset.export_conflict",
-    "Export destination already exists and will not be overwritten.",
+    "Export destination conflicts with an existing export or partial export.",
 )
-_LIMIT = RefusalSpec(
-    "terrine.budget.output_bytes_exceeded",
-    "Parquet export exceeded the configured byte budget of {limit}.",
-)
+_LIMIT = RefusalSpec("terrine.dataset.export_limit", "Export exceeds configured limit {limit}.")
 
 
 def _hash_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
+        for chunk in iter(lambda: stream.read(1_048_576), b""):
+            digest.update(chunk)
     return digest.hexdigest()
 
 
@@ -55,15 +50,18 @@ class ExportManifest:
     row_count: int
     byte_count: int
     schema: tuple[tuple[str, str], ...]
+    partition_by: tuple[str, ...] = ()
+    target_file_bytes: int = 134_217_728
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "shards", tuple(self.shards))
         object.__setattr__(self, "schema", tuple(self.schema))
+        object.__setattr__(self, "partition_by", tuple(self.partition_by))
 
     def to_json(self) -> bytes:
         return json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "dataset_id": self.dataset_id,
                 "generation_id": self.generation_id,
                 "shards": [
@@ -78,6 +76,8 @@ class ExportManifest:
                 "row_count": self.row_count,
                 "byte_count": self.byte_count,
                 "schema": self.schema,
+                "partition_by": self.partition_by,
+                "target_file_bytes": self.target_file_bytes,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -86,19 +86,21 @@ class ExportManifest:
     @classmethod
     def from_json(cls, content: bytes | str) -> ExportManifest:
         payload = json.loads(content)
+        expected = {
+            "schema_version",
+            "dataset_id",
+            "generation_id",
+            "shards",
+            "row_count",
+            "byte_count",
+            "schema",
+            "partition_by",
+            "target_file_bytes",
+        }
         if (
             not isinstance(payload, dict)
-            or set(payload)
-            != {
-                "schema_version",
-                "dataset_id",
-                "generation_id",
-                "shards",
-                "row_count",
-                "byte_count",
-                "schema",
-            }
-            or payload["schema_version"] != 1
+            or set(payload) != expected
+            or payload["schema_version"] != 2
         ):
             raise ValueError("invalid export manifest")
         return cls(
@@ -108,39 +110,64 @@ class ExportManifest:
             payload["row_count"],
             payload["byte_count"],
             tuple(tuple(field) for field in payload["schema"]),
+            tuple(payload["partition_by"]),
+            payload["target_file_bytes"],
         )
 
 
-def _existing_export(path: Path, dataset: Any) -> ExportManifest | None:
+def _verify_shards(root: Path, manifest: ExportManifest) -> bool:
     try:
-        manifest = ExportManifest.from_json((path / "export-manifest.json").read_bytes())
-        generation = dataset.manifest.generation
-        if (
-            manifest.dataset_id != generation.dataset_id
-            or manifest.generation_id != generation.generation_id
-            or len({shard.path for shard in manifest.shards}) != len(manifest.shards)
-        ):
-            return None
-        rows = bytes_ = 0
-        root = path.resolve()
+        root = root.resolve()
+        rows = byte_count = 0
+        seen: set[str] = set()
         for shard in manifest.shards:
+            if shard.path in seen:
+                return False
+            seen.add(shard.path)
             file_path = (root / shard.path).resolve()
             if not file_path.is_relative_to(root) or not file_path.is_file():
-                return None
+                return False
             size = file_path.stat().st_size
             if size != shard.byte_count or _hash_file(file_path) != shard.checksum:
-                return None
+                return False
             parquet = pq.ParquetFile(file_path)
             schema = tuple((field.name, str(field.type)) for field in parquet.schema_arrow)
             if schema != manifest.schema or parquet.metadata.num_rows != shard.row_count:
-                return None
+                return False
             rows += shard.row_count
-            bytes_ += size
-        if rows != manifest.row_count or bytes_ != manifest.byte_count:
-            return None
-        return manifest
+            byte_count += size
+        return rows == manifest.row_count and byte_count == manifest.byte_count
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
+
+
+def _existing_export(
+    path: Path,
+    dataset: Any,
+    *,
+    partition_by: tuple[str, ...],
+    target_file_bytes: int,
+    budget: Budget | None,
+) -> ExportManifest | None:
+    try:
+        manifest = ExportManifest.from_json((path / "export-manifest.json").read_bytes())
     except (OSError, ValueError, TypeError, KeyError):
         return None
+    generation = dataset.manifest.generation
+    if (
+        manifest.dataset_id != generation.dataset_id
+        or manifest.generation_id != generation.generation_id
+        or manifest.partition_by != partition_by
+        or manifest.target_file_bytes != target_file_bytes
+        or not _verify_shards(path, manifest)
+    ):
+        return None
+    if budget is not None:
+        if budget.max_rows is not None and manifest.row_count > budget.max_rows:
+            raise _LIMIT.error(limit=budget.max_rows)
+        if budget.max_output_bytes is not None and manifest.byte_count > budget.max_output_bytes:
+            raise _LIMIT.error(limit=budget.max_output_bytes)
+    return manifest
 
 
 def _partition_rows(batch: pa.RecordBatch, columns: tuple[str, ...]):
@@ -148,24 +175,38 @@ def _partition_rows(batch: pa.RecordBatch, columns: tuple[str, ...]):
         yield (), pa.Table.from_batches([batch])
         return
     table = pa.Table.from_batches([batch])
-    key_rows = zip(*(table[name].to_pylist() for name in columns), strict=True)
     groups: dict[tuple[Any, ...], list[int]] = {}
-    for index, key in enumerate(key_rows):
+    for index, key in enumerate(zip(*(table[name].to_pylist() for name in columns), strict=True)):
         groups.setdefault(tuple(key), []).append(index)
     for key, indices in groups.items():
         yield key, table.take(pa.array(indices, type=pa.int64()))
 
 
 def _shard_path(root: Path, key: tuple[Any, ...], columns: tuple[str, ...], index: int) -> Path:
-    if key:
-        directory = root
-        for name, value in zip(columns, key, strict=True):
-            encoded = "__null__" if value is None else quote(str(value), safe="")
-            directory = directory / f"{quote(name, safe='')}={encoded}"
-        directory.mkdir(parents=True, exist_ok=True)
-    else:
-        directory = root
+    directory = root
+    for name, value in zip(columns, key, strict=True):
+        encoded = "__null__" if value is None else quote(str(value), safe="")
+        directory = directory / f"{quote(name, safe='')}={encoded}"
+    directory.mkdir(parents=True, exist_ok=True)
     return directory / f"part-{index:08d}.parquet"
+
+
+def _write_state(root: Path, manifest: ExportManifest) -> None:
+    temporary = root / ".export-state.tmp"
+    with temporary.open("wb") as stream:
+        stream.write(manifest.to_json())
+        stream.flush()
+        os.fsync(stream.fileno())
+    temporary.replace(root / "export-state.json")
+    descriptor = os.open(root, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _schema(dataset: Any) -> pa.Schema:
+    return dataset._arrow_schema()
 
 
 def export_dataset(
@@ -190,107 +231,155 @@ def export_dataset(
     if len(set(partition_by)) != len(partition_by) or not set(partition_by) <= names:
         raise _INVALID.error(reason="partition_by contains duplicate or unknown columns")
     destination_path = Path(destination).expanduser()
+    partial = destination_path.parent / f".{destination_path.name}.partial"
     if destination_path.exists():
-        existing = _existing_export(destination_path, dataset)
+        existing = _existing_export(
+            destination_path,
+            dataset,
+            partition_by=partition_by,
+            target_file_bytes=target_file_bytes,
+            budget=budget,
+        )
         if existing is not None:
             return existing
         raise _CONFLICT.error()
     parent = destination_path.parent.resolve()
     if not parent.is_dir():
         raise _INVALID.error(reason="destination parent directory must exist")
-    temporary = Path(tempfile.mkdtemp(prefix=f".{destination_path.name}-", dir=parent))
-    schema: pa.Schema | None = None
+    if partial.exists():
+        try:
+            state = ExportManifest.from_json((partial / "export-state.json").read_bytes())
+        except (OSError, ValueError, TypeError, KeyError):
+            raise _CONFLICT.error() from None
+        generation = dataset.manifest.generation
+        if (
+            state.dataset_id != generation.dataset_id
+            or state.generation_id != generation.generation_id
+            or state.partition_by != partition_by
+            or state.target_file_bytes != target_file_bytes
+            or not _verify_shards(partial, state)
+        ):
+            raise _CONFLICT.error()
+        records = list(state.shards)
+        schema = _schema(dataset)
+    else:
+        partial.mkdir()
+        records = []
+        schema = _schema(dataset)
+    by_path = {record.path: record for record in records}
     row_count = byte_count = 0
-    shard_records: list[ExportShard] = []
     shard_index = 0
     active_path: Path | None = None
     active_key: tuple[Any, ...] | None = None
     writer: pq.ParquetWriter | None = None
-    current_estimate = 0
-    current_rows = 0
+    skip_active = False
+    current_estimate = current_rows = 0
+
+    def checkpoint() -> None:
+        manifest = ExportManifest(
+            dataset.manifest.generation.dataset_id,
+            dataset.manifest.generation.generation_id,
+            tuple(records),
+            sum(shard.row_count for shard in records),
+            sum(shard.byte_count for shard in records),
+            tuple((field.name, str(field.type)) for field in schema),
+            partition_by,
+            target_file_bytes,
+        )
+        _write_state(partial, manifest)
 
     def close_writer() -> None:
-        nonlocal writer, active_path, active_key, current_estimate, current_rows, byte_count
-        if writer is None or active_path is None:
+        nonlocal writer, active_path, active_key, skip_active, current_estimate, current_rows
+        if active_path is None:
             return
-        writer.close()
-        size = active_path.stat().st_size
-        relative = str(active_path.relative_to(temporary))
-        checksum = _hash_file(active_path)
-        shard_records.append(ExportShard(relative, checksum, current_rows, size))
-        byte_count += size
+        if writer is not None:
+            writer.close()
+            size = active_path.stat().st_size
+            relative = str(active_path.relative_to(partial))
+            record = ExportShard(relative, _hash_file(active_path), current_rows, size)
+            records.append(record)
+            by_path[relative] = record
+        elif skip_active:
+            record = by_path[str(active_path.relative_to(partial))]
+            if current_rows != record.row_count:
+                raise _CONFLICT.error()
         writer = None
         active_path = None
         active_key = None
+        skip_active = False
         current_estimate = current_rows = 0
+        checkpoint()
 
     try:
         for batch in dataset.to_arrow_batches():
-            if schema is None:
-                schema = batch.schema
-            elif batch.schema != schema:
+            if batch.schema != schema:
                 raise _INVALID.error(reason="Arrow batch schema changed during export")
             row_count += batch.num_rows
+            if budget is not None and budget.max_rows is not None and row_count > budget.max_rows:
+                raise _LIMIT.error(limit=budget.max_rows)
             for key, table in _partition_rows(batch, partition_by):
                 estimated = table.nbytes
-                if writer is not None and (
+                if active_path is not None and (
                     key != active_key
                     or (current_estimate and current_estimate + estimated > target_file_bytes)
                 ):
                     close_writer()
-                if writer is None:
-                    active_path = _shard_path(temporary, key, partition_by, shard_index)
-                    writer = pq.ParquetWriter(active_path, schema, compression="zstd")
+                if active_path is None:
+                    shard_path = _shard_path(partial, key, partition_by, shard_index)
+                    active_path = shard_path
+                    relative = str(shard_path.relative_to(partial))
                     active_key = key
                     shard_index += 1
-                assert writer is not None
-                writer.write_table(table)
+                    known = by_path.get(relative)
+                    if known is not None and _verify_shards(
+                        partial,
+                        ExportManifest(
+                            dataset.manifest.generation.dataset_id,
+                            dataset.manifest.generation.generation_id,
+                            (known,),
+                            known.row_count,
+                            known.byte_count,
+                            tuple((field.name, str(field.type)) for field in schema),
+                            partition_by,
+                            target_file_bytes,
+                        ),
+                    ):
+                        skip_active = True
+                    else:
+                        shard_path.unlink(missing_ok=True)
+                        writer = pq.ParquetWriter(shard_path, schema, compression="zstd")
+                if writer is not None:
+                    writer.write_table(table)
                 current_estimate += estimated
                 current_rows += table.num_rows
         close_writer()
+        byte_count = sum(shard.byte_count for shard in records)
         if (
             budget is not None
             and budget.max_output_bytes is not None
             and byte_count > budget.max_output_bytes
         ):
             raise _LIMIT.error(limit=budget.max_output_bytes)
-        if schema is None:
-            schema = pa.schema(
-                [
-                    (column.name, pa.type_for_alias(column.data_type))
-                    for column in dataset.manifest.columns
-                ]
-            )
         manifest = ExportManifest(
             dataset.manifest.generation.dataset_id,
             dataset.manifest.generation.generation_id,
-            tuple(shard_records),
+            tuple(records),
             row_count,
             byte_count,
             tuple((field.name, str(field.type)) for field in schema),
+            partition_by,
+            target_file_bytes,
         )
-        manifest_path = temporary / "export-manifest.json"
-        with manifest_path.open("xb") as stream:
+        with (partial / "export-manifest.json").open("wb") as stream:
             stream.write(manifest.to_json())
             stream.flush()
             os.fsync(stream.fileno())
-        reserved = False
-        try:
-            os.mkdir(destination_path)
-            reserved = True
-        except FileExistsError as error:
-            raise _CONFLICT.error() from error
-        children = sorted(
-            temporary.iterdir(), key=lambda child: child.name == "export-manifest.json"
-        )
-        for child in children:
-            child.rename(destination_path / child.name)
-        temporary.rmdir()
+        os.rename(partial, destination_path)
         return manifest
     except Exception:
         if writer is not None:
-            writer.close()
-        shutil.rmtree(temporary, ignore_errors=True)
-        if "reserved" in locals() and reserved:
-            shutil.rmtree(destination_path, ignore_errors=True)
+            try:
+                close_writer()
+            except Exception:
+                writer.close()
         raise
