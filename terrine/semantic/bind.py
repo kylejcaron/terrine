@@ -19,7 +19,7 @@ from terrine.semantic.models import (
     RelationSpec,
 )
 from terrine.semantic.rules import UNSUPPORTED_TEMPORAL_KIND
-from terrine.semantic.sql import DIALECT_MISMATCH, admit_read_query
+from terrine.semantic.sql import DIALECT_MISMATCH
 from terrine.semantic.time import boundary_timezone
 
 __all__ = ["normalize_source", "bind_metric", "normalize_events"]
@@ -45,11 +45,12 @@ def _reference(registry: Mapping[str, Any], name: str, label: str):
 
 
 def _relation(con: Any, relation, dialect: str):
-    if relation.kind == "table":
-        return con.table(relation.name)
-    actual = str(getattr(con, "name", "")).casefold()
-    sql = admit_read_query(relation.sql, dialect, actual)
-    return con.sql(sql)
+    from terrine.execution.backend import backend_provider
+
+    provider = backend_provider(con)
+    if dialect.casefold() != provider.dialect(con):
+        raise DIALECT_MISMATCH.error(declared=dialect, execution=provider.dialect(con))
+    return provider.resolve_relation(con, relation)
 
 
 def _dtype_ok(dtype: Any, expected: str) -> bool:
@@ -75,7 +76,9 @@ def normalize_source(
 ) -> BoundSource:
     """Bind one source against declared schema metadata without reading rows."""
     boundary_timezone(catalog.day_boundary)
-    execution_dialect = str(getattr(con, "name", "")).casefold()
+    from terrine.execution.backend import backend_provider
+
+    execution_dialect = backend_provider(con).dialect(con)
     if catalog.dialect.casefold() != execution_dialect:
         raise DIALECT_MISMATCH.error(declared=catalog.dialect, execution=execution_dialect)
     source = _reference(catalog.sources, source_name, "source")

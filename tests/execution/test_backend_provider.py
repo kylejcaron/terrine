@@ -1,0 +1,111 @@
+from __future__ import annotations
+
+import subprocess
+import sys
+
+import duckdb
+import ibis
+import pytest
+
+from terrine.errors import TerrineError
+from terrine.semantic.models import SqlQuery, TableRef
+from tests.execution.test_inputs import _catalog
+
+
+def test_backend_provider_preserves_duckdb_relation_admission_and_identity():
+    from terrine.execution.backend import backend_provider
+
+    con = ibis.duckdb.connect()
+    try:
+        con.con.execute("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        con.con.execute("INSERT INTO events VALUES ('2025-01-01', 1, 7)")
+        provider = backend_provider(con)
+        assert provider.matches(con)
+        assert provider.dialect(con) == "duckdb"
+        relation = TableRef(kind="table", name="events")
+        assert provider.resolve_relation(con, relation).execute()["value"].tolist() == [7]
+        with provider.open_execution(_catalog(), con) as context:
+            assert context.owner_con is con
+            assert context.execute(context.resolve(relation)).to_pylist()[0]["value"] == 7
+        with pytest.raises(TerrineError) as error:
+            provider.resolve_relation(con, SqlQuery(kind="sql", sql="DELETE FROM events"))
+        assert error.value.code == "terrine.sql.invalid_read_query"
+        assert con.con.execute("SELECT count(*) FROM events").fetchone() == (1,)
+    finally:
+        con.disconnect()
+
+
+def test_unknown_backend_refuses_before_schema_or_source_query():
+    from terrine import Model
+    from terrine.execution.backend import backend_provider
+
+    class Unknown:
+        name = "snowflake"
+
+        def table(self, *args, **kwargs):
+            raise AssertionError("unverified backend accessed source schema")
+
+        def sql(self, *args, **kwargs):
+            raise AssertionError("unverified backend executed source SQL")
+
+    con = Unknown()
+    for operation in (
+        lambda: backend_provider(con),
+        lambda: Model.from_catalog(_catalog(), con=con, readiness={}),
+    ):
+        with pytest.raises(TerrineError) as error:
+            operation()
+        assert error.value.code == "terrine.backend.capability_unavailable"
+        assert error.value.context["backend"] == "snowflake"
+        assert error.value.context["status"] == "unverified"
+        assert error.value.context["route"]
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt])
+def test_provider_releases_owned_execution_resources_after_error_or_cancel(failure):
+    from terrine.execution.backend import backend_provider
+
+    con = ibis.duckdb.connect()
+    try:
+        con.con.execute("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        provider = backend_provider(con)
+        with pytest.raises(failure), provider.open_execution(_catalog(), con) as context:
+            private = context.con.con
+            raise failure()
+        with pytest.raises(duckdb.ConnectionException):
+            private.execute("SELECT 1")
+        assert con.con.execute("SELECT 1").fetchone() == (1,)
+        with provider.open_execution(_catalog(), con) as again:
+            assert again.execute(again.con.sql("SELECT 2 AS value")).to_pylist() == [{"value": 2}]
+    finally:
+        con.disconnect()
+
+
+def test_compiler_and_execution_imports_do_not_depend_on_runtime():
+    code = """
+import builtins
+original = builtins.__import__
+def guarded(name, *args, **kwargs):
+    if name == 'terrine.runtime' or name.startswith('terrine.runtime.'):
+        raise ImportError('runtime intentionally unavailable')
+    return original(name, *args, **kwargs)
+builtins.__import__ = guarded
+import terrine.compile.anchors
+import terrine.execution.backend
+import terrine.backends.capabilities
+"""
+    subprocess.run([sys.executable, "-c", code], check=True, timeout=120)
+
+
+def test_provider_does_not_accept_a_duckdb_name_without_native_connection():
+    from terrine.execution._native import verify_native_backend
+    from terrine.execution.backend import backend_provider
+
+    class Unverified:
+        name = "duckdb"
+
+    with pytest.raises(TerrineError):
+        backend_provider(Unverified())
+    with pytest.raises(TerrineError) as error:
+        verify_native_backend(Unverified())
+    assert error.value.code == "terrine.execution.snapshot_unavailable"
