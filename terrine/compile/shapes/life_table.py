@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import pyarrow as pa
 
@@ -28,7 +28,7 @@ def aggregate_life_table(
     *,
     interval_seconds: int,
     group_by: Sequence[str],
-    group_supports: Sequence[str] = (),
+    group_supports: Mapping[str, str] | None = None,
     max_rows: int | None = None,
 ) -> pa.Table:
     """Aggregate time-to-event rows by elapsed-time bin without curve inference."""
@@ -55,13 +55,22 @@ def aggregate_life_table(
         if "reason" in records.column_names
         else [None] * records.num_rows
     )
-    support_names = tuple(
-        dict.fromkeys(name for name in group_supports if name not in group_by)
-    )
-    if any(name not in records.column_names for name in support_names):
+    censor_reasons = records["censor_reason"].to_pylist()
+    group_supports = group_supports or {}
+    if any(name not in records.column_names for name in group_supports):
         raise ValueError("life-table grouping support column is missing")
-    grouped_names = (*group_by, *support_names)
-    groups = [records[name].to_pylist() for name in grouped_names]
+    if any(
+        policy not in {"min", "max", "all", "reasons"}
+        for policy in group_supports.values()
+    ):
+        raise ValueError("unsupported life-table grouping support policy")
+    groups = [records[name].to_pylist() for name in group_by]
+    support_values = {
+        name: records[name].to_pylist() for name in group_supports
+    }
+    support_by_group: dict[tuple[object, ...], dict[str, list[object]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
     width = interval_seconds * 1_000_000_000
     bins_by_group: dict[tuple[object, ...], dict[int, dict[str, object]]] = defaultdict(dict)
     output_bins = 0
@@ -72,6 +81,8 @@ def aggregate_life_table(
         if origin is None or terminal is None or entered is None:
             continue
         key = tuple(column[index] for column in groups)
+        for name, values in support_values.items():
+            support_by_group[key][name].append(values[index])
         terminal_elapsed = terminal - origin
         entry_elapsed = entered - origin
         if terminal_elapsed < 0 or entry_elapsed < 0:
@@ -115,7 +126,8 @@ def aggregate_life_table(
             reason_counts = terminal_row["reasons"]
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
-    schema_fields = [records.schema.field(name) for name in grouped_names]
+    schema_fields = [records.schema.field(name) for name in group_by]
+    schema_fields.extend(records.schema.field(name) for name in group_supports)
     schema_fields.extend(
         [
             pa.field("unit", pa.int64(), nullable=False),
@@ -138,7 +150,18 @@ def aggregate_life_table(
             at_risk = counts["at_risk"]
             events_count = counts["events"]
             censored_count = counts["censored"]
-            row = dict(zip(grouped_names, group_key, strict=True))
+            row = dict(zip(group_by, group_key, strict=True))
+            for name, policy in group_supports.items():
+                values = support_by_group[group_key][name]
+                present = [value for value in values if value is not None]
+                if policy == "min":
+                    row[name] = min(present) if present else None
+                elif policy == "max":
+                    row[name] = max(present) if present else None
+                elif policy == "all":
+                    row[name] = all(value is True for value in values)
+                else:
+                    row[name] = ";".join(sorted(set(present))) or None
             row.update(
                 unit=unit,
                 anchor_id=time_bin,

@@ -721,25 +721,36 @@ def test_life_table_keeps_boundary_censor_at_risk_and_group_support():
     origin = datetime(2025, 1, 1, tzinfo=UTC)
     records = pa.table(
         {
-            "t0": pa.array([origin], type=timestamp),
-            "duration": pa.array([origin + timedelta(days=1)], type=timestamp),
-            "entry_time": pa.array([origin], type=timestamp),
-            "event": pa.array([False]),
-            "censor_reason": pa.array(["administrative_cutoff"]),
-            "region": pa.array([None], type=pa.string()),
-            "region_complete": pa.array([False]),
-            "region_reason": pa.array(["coverage_gap"]),
+            "t0": pa.array([origin, origin], type=timestamp),
+            "duration": pa.array(
+                [origin + timedelta(days=1), origin + timedelta(days=1)], type=timestamp
+            ),
+            "entry_time": pa.array([origin, origin], type=timestamp),
+            "event": pa.array([False, False]),
+            "censor_reason": pa.array(["administrative_cutoff", "administrative_cutoff"]),
+            "region": pa.array([None, None], type=pa.string()),
+            "region_complete": pa.array([False, False]),
+            "region_reason": pa.array(["coverage_gap", "source_missing"]),
+            "region_observed_until": pa.array(
+                [origin + timedelta(days=1), origin + timedelta(days=2)], type=timestamp
+            ),
         }
     )
     result = aggregate_life_table(
         records,
         interval_seconds=86_400,
         group_by=["region"],
-        group_supports=["region_complete", "region_reason"],
+        group_supports={
+            "region_complete": "all",
+            "region_reason": "reasons",
+            "region_observed_until": "max",
+        },
     )
+    assert result.num_rows == 2
     row = result.to_pylist()[-1]
     assert row["region_complete"] is False
-    assert row["region_reason"] == "coverage_gap"
-    assert row["at_risk"] == 1
-    assert row["censored"] == 1
+    assert row["region_reason"] == "coverage_gap;source_missing"
+    assert row["region_observed_until"] == origin + timedelta(days=2)
+    assert row["at_risk"] == 2
+    assert row["censored"] == 2
     assert row["censor_rate"] == 1

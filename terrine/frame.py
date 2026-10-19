@@ -263,25 +263,23 @@ class Frame:
                 from terrine.compile.shapes.life_table import aggregate_life_table
 
                 life_table = self._design.shape
-                group_support_columns = tuple(
-                    dict.fromkeys(
-                        column
-                        for name in life_table.group_by
-                        for column in (
-                            compiled.columns[name].observed_from_column,
-                            compiled.columns[name].observed_until_column,
-                            compiled.columns[name].complete_column,
-                            compiled.columns[name].reason_column,
-                            compiled.columns[name].absolute_error_column,
-                        )
-                        if column is not None
-                    )
-                )
+                group_supports: dict[str, str] = {}
+                for name in life_table.group_by:
+                    meta = compiled.columns[name]
+                    for column, policy in (
+                        (meta.observed_from_column, "min"),
+                        (meta.observed_until_column, "max"),
+                        (meta.complete_column, "all"),
+                        (meta.reason_column, "reasons"),
+                        (meta.absolute_error_column, "max"),
+                    ):
+                        if column is not None:
+                            group_supports.setdefault(column, policy)
                 table = aggregate_life_table(
                     table,
                     interval_seconds=life_table.interval,
                     group_by=life_table.group_by,
-                    group_supports=group_support_columns,
+                    group_supports=group_supports,
                     max_rows=None if budget is None else budget.max_rows,
                 )
                 if budget is not None:
