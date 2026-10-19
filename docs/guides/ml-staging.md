@@ -76,3 +76,15 @@ Staging requires a file-backed DuckDB Model connection. The runtime namespace de
 Saved requests bind the entire dataset view and model reconstruction identity. Replaying the persisted request through `run_serialized_plan` returns its committed receipt; changing a view under the same request key refuses. Consumers need neither custom task callbacks nor live source connections to read an already committed output generation.
 
 Parquet export currently provides local filesystem publication. A URI alone does not establish an object-store atomicity or durability contract; use only a storage backend whose publication and recovery behavior has been independently verified.
+
+## Worked local examples
+
+Run the complete training/export/correction workflow and the feature-only scoring workflow from the repository root:
+
+```sh
+uv run python examples/ml_staging.py
+uv run python examples/batch_scoring.py
+```
+
+Both examples configure an owner-local namespace and retained snapshot directory, create a file-backed Model, build a Design, stage it, consume bounded Arrow batches, reopen its manifest, export Parquet, and refresh after a source correction. The training example retains exact integral Decimal values beyond the default Python Decimal arithmetic precision. The scoring example removes the unused label relation before staging and preserves the explicit scoring instant through refresh. Temporary databases, snapshots, and exports are cleaned up when each script exits.
+
