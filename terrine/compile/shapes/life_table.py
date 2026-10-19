@@ -126,7 +126,8 @@ def aggregate_life_table(
             reason_counts = terminal_row["reasons"]
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
     reduced_support_by_group = {}
-    for group_key, support in support_by_group.items():
+    for group_key in bins_by_group:
+        support = support_by_group.get(group_key, {})
         reduced = {}
         for name, policy in group_supports.items():
             values = support[name]

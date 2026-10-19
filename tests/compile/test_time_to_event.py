@@ -766,3 +766,7 @@ def test_life_table_keeps_boundary_censor_at_risk_and_group_support():
     assert row["at_risk"] == 2
     assert row["censored"] == 2
     assert row["censor_rate"] == 1
+    without_support_metadata = aggregate_life_table(
+        records, interval_seconds=86_400, group_by=["region"]
+    )
+    assert without_support_metadata.num_rows == 2
