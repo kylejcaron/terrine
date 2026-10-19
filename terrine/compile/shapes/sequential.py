@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
-from datetime import UTC, timedelta
+from datetime import UTC
 from typing import cast
 
 import ibis
@@ -16,8 +17,8 @@ from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
 from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
-from terrine.spec.expressions import MetricAgg, _expression_support_seconds
 from terrine.spec.panels import Initiation, PersistentAdoption, SequentialSpec
+from terrine.spec.validate import _outcome_bounds
 from terrine.temporal._timestamps import compare_timestamps
 from terrine.temporal.aggregate import _Check, _Failure
 
@@ -31,30 +32,19 @@ _CONTRADICTORY_ADOPTION = RefusalSpec(
 )
 
 
-def _followup_horizon(design: Design) -> int | None:
-    assert isinstance(design.shape, SequentialSpec)
-    horizons = [
-        _expression_support_seconds(expression)[1]
-        for expression in design.outcomes.values()
-        if isinstance(expression, MetricAgg)
-    ]
-    if not horizons:
-        return None
-    return max(horizons) + design.shape.anticipation_seconds
-
-
-def _followup_end(design: Design, model):
+def _followup_at(design: Design, model, timestamp):
     assert isinstance(design.shape, SequentialSpec)
     assert isinstance(design.anchor, Schedule)
-    horizon = _followup_horizon(design)
-    if horizon is None:
-        return model.day_boundary(design.anchor.end) + timedelta(
-            seconds=design.shape.anticipation_seconds
-        )
-    elapsed = (design.anchor.end - design.anchor.start).days * 86_400
-    last_offset = ((elapsed - 1) // design.anchor.every) * design.anchor.every
-    last_t0 = model.day_boundary(design.anchor.start) + timedelta(seconds=last_offset)
-    return last_t0 + timedelta(seconds=horizon)
+    offsets, cutoffs = _outcome_bounds(design, model)
+    ends = [timestamp + ibis.interval(seconds=max(offsets))] if offsets else []
+    if cutoffs:
+        ends.append(ibis.literal(max(cutoffs)))
+    end = (
+        ibis.greatest(timestamp, *ends)
+        if ends
+        else ibis.literal(model.day_boundary(design.anchor.end))
+    )
+    return cast(ir.TimestampValue, end) + ibis.interval(seconds=design.shape.anticipation_seconds)
 
 
 def _trial_columns(table, design: Design):
@@ -109,18 +99,10 @@ def _unit_history_gaps(design: Design, model, anchors, eligible_table):
         _observed_until=source._observed_until,
     )
     history_start = cast(ir.TimestampScalar, ibis.literal(selector.history_start))
-    horizon = _followup_horizon(design) if isinstance(selector, Initiation) else None
     end = (
-        table.t0 + ibis.interval(seconds=horizon)
-        if horizon is not None
-        else cast(
-            ir.TimestampScalar,
-            ibis.literal(
-                _followup_end(design, model)
-                if isinstance(selector, Initiation)
-                else model.day_boundary(design.anchor.end)
-            ),
-        )
+        _followup_at(design, model, table.t0)
+        if isinstance(selector, Initiation)
+        else ibis.literal(model.day_boundary(design.anchor.end))
     )
     missing = ibis.literal(False)
     if "_observed_from" in source.columns:
@@ -238,12 +220,7 @@ def _later_initiations(design: Design, model, eligible_table, treatment_rows):
             eligible_table.anchor_id.identical_to(treatment_rows.anchor_id),
         ],
     ).filter(~treatment_rows.treatment.fill_null(False))
-    horizon = _followup_horizon(design)
-    followup_end = (
-        control.t0 + ibis.interval(seconds=horizon)
-        if horizon is not None
-        else cast(ir.TimestampScalar, ibis.literal(_followup_end(design, model)))
-    )
+    followup_end = _followup_at(design, model, control.t0)
     return (
         control.join(
             events,
@@ -274,10 +251,21 @@ def _attach_treatment(table, values):
     )
 
 
-def compile_sequential(design: Design, model) -> CompiledStudy:
+def compile_sequential(
+    design: Design,
+    model,
+    *,
+    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None = None,
+    persisted_anchors: ibis.Table | None = None,
+) -> CompiledStudy:
     if not isinstance(design.shape, SequentialSpec):
         raise TypeError("compile_sequential requires a Sequential Design")
-    compiled = compile_columns(design, model)
+    compiled = compile_columns(
+        design,
+        model,
+        persisted_prefixes=persisted_prefixes,
+        persisted_anchors=persisted_anchors,
+    )
     values = _treatment_rows(design, model, compiled._anchors)
     sample = design.sample
     table = _trial_columns(_attach_treatment(compiled.table, values), design)

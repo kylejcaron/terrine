@@ -92,6 +92,130 @@ instants, or choose aligned anchors and endpoints. Unsupported temporal kinds
 and declared transforms retain their meaning and are refused rather than
 silently approximated.
 
+## Quantile declarations
+
+`quantile(metric, probability, window=...)` is a typed, canonical specification:
+the probability is a `Decimal` or decimal string in `[0, 1]`, the window is
+half-open, and interpolation is Hyndman--Fan type 7 (`linear_type7`). The
+specification serializes through Design JSON/YAML and contributes to its
+canonical hash.
+The native DuckDB compiler executes exact type-7 order statistics over matched
+half-open event windows. Integer and Decimal facts retain exact decimal
+interpolation at a supported output scale; unsupported numeric types or
+precision refuse with a stable error before query execution. Results exclude
+null observations and preserve distinct reasons for no observations, all-null
+windows, and incomplete coverage. Min, max, and distinct-count operations use
+the same sparse range machinery; distinct values are counted once across the
+full window rather than by adding daily counts.
+
+Exact quantiles and approximate distinct are capability-gated to DuckDB until
+other backend behavior is verified. `approx_distinct(metric, window=...)` uses
+DuckDB's native HLL aggregate and records its algorithm, engine version and
+relative-error description in the output column metadata. Exact distinct
+remains the default when requested through `agg`; approximation is explicit.
+
+`approx_quantile(metric, probability, window=..., sketch=SketchRequest(...))`
+uses DataSketches t-digest on `cross_section` designs only. It is available with
+the optional `terrine[sketches]` extra; otherwise the request refuses before
+source queries and points to `uv add 'terrine[sketches]'` or exact `quantile`.
+The compiler streams canonical `(unit, anchor, event time, value)` Arrow batches
+to the client, updating t-digests in sorted anchor order. This transfers all
+matched window values out of DuckDB and can cost more than in-database exact
+work; t-digest accuracy is empirical and has no guaranteed rank bound. Both
+approximate results record algorithm, implementation/version, parameters, and
+error description in `ColumnMeta` and preserve that record through Frame Arrow
+and JSON metadata serialization. Other shapes and runtime composition refuse
+approximate quantiles; ordinary `Frame.materialize()` is the supported route.
+
+### Bounded repeated windows
+
+Additive panel metrics retain sparse prefix lookups, including long and sparse
+windows. Exact min/max/distinct/quantile and approximate distinct use sparse
+time-bucket equality joins followed by the exact half-open timestamp predicates.
+Only occupied event buckets and at most two requests per anchor exist; there
+is no unit-by-day spine. No nonadditive state is prefix-subtracted.
+
+The compiler derives a conservative candidate multiplier before executing
+queries. For window width `W`, schedule step `S` and `N` anchors per unit,
+`K = min(N, 2 ceil(W/S))`. A fixed or first/nth event anchor has `N = 1`.
+An EventPanel over a first/nth event uses its declared period count and step.
+Re-anchoring may collapse those spacings, so it uses the whole anchor count.
+For `A` input anchors and `E` selected events, request rows are at most `2A`,
+bucketed event rows at most `E`, and equality-join candidates at most `K E`.
+The exact time predicates can only remove candidates. These are relational
+cardinality bounds, **not** source-scan, client-memory or execution-time bounds.
+The immutable `CompiledStudy.range_plans` records the width, multiplier and
+derivation for each named nonadditive output; no row count is guessed.
+
+The supported candidate multiplier is at most 128. Unknown per-unit event-anchor
+multiplicity (`EventAnchor(..., which="each")`) and larger declared overlaps
+refuse before execution with `terrine.temporal.range_bound_unavailable`.
+Use first/nth event anchors, fewer event periods/anchors, a coarser schedule or
+narrower window, or an additive metric with sparse prefix lookups. Additive
+requests do not inherit this nonadditive overlap limit. This also applies to
+the raw values streamed by cross-section t-digest sidecars.
+
+The temporal retention primitive can consume that same derived range plan.
+It counts distinct identities of independently selected target-event
+occurrences across the full horizon, then applies the exact integer threshold
+bands; it never adds daily distinct counts. Finite horizons use their declared
+duration as the block width. For an open horizon bounded by an explicit source
+cutoff, bounded execution additionally requires a declared source completeness
+start; the block width is the coverage span rounded upward to integral seconds.
+Only anchors within that covered history contribute event matches. An unknown
+open span or a mismatched plan refuses with the same range-bound code, rather
+than silently reverting to the unbounded exact path.
+
+Retention preserves zero for a complete horizon with no target occurrences,
+null for incomplete observation, `horizon_unavailable` for a missing/invalid
+origin, and `incomplete_coverage` when the origin precedes declared source
+history. A null observation endpoint remains unavailable for finite follow-up;
+for an explicitly complete open horizon it means no narrower observation
+cutoff. Missing target labels preserve `incomplete_label_history`, not zero.
+
+### Named retention outcomes
+
+Use the ordinary immutable Design expression:
+
+```python
+from terrine import Design, FixedDate, retention
+
+design = Design(
+    "user",
+    FixedDate("2025-03-01"),
+    outcomes={
+        "retention_band": retention(
+            "purchase_occurrence",
+            label_property="event_name",
+            target_event="purchase",
+            thresholds=(1, 3, 10),
+            horizon="7d",  # or the explicit "open_ended"
+        ),
+    },
+)
+dataset = design.build(model).materialize()
+```
+
+The fact's column supplies independent occurrence IDs, scoped by analysis unit.
+If the fact is a row marker without a column, declare `Model.event_ids` for its
+source. Repeated evidence for one identity is counted once across the entire
+horizon; unrelated labels and null fact identities do not count. The output is
+the ordinal band `sum(count >= threshold)` over strictly increasing positive
+Int64 thresholds, with exact integer comparison and no statistical approximation.
+
+Finite follow-up is `[t0, t0 + duration)`. Open follow-up is `[t0, U)`, where `U`
+is the source's declared exclusive completeness endpoint, not the final observed
+event. Source history, source follow-up, and declared roster observation bounds
+must cover the horizon. Finite follow-up requires a known roster observation end;
+an absent end is not evidence of complete finite follow-up. These outcomes may
+not be used as pre-anchor features or eligibility predicates. Their reference
+and threshold declarations round-trip through JSON/YAML and saved recipes;
+Arrow metadata retains exactness, completeness/reason, conservative support and
+the resolved horizon endpoint. Sequential/calendar treatment checks include the
+retention horizon, even when the occurrence and treatment sources differ.
+
+Run `uv run python examples/retention_metrics.py` for a complete local example.
+
 Catalog records and bound Models are immutable, including nested definition maps.
 Create a new definition and bind a new Model when semantics change; an existing
 model's hash cannot drift with a mutated catalog.

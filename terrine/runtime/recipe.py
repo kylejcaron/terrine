@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from terrine.errors import RefusalSpec, TerrineError
@@ -13,6 +13,7 @@ from terrine.runtime.planner import RefreshPlan
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.dataset import DatasetRecipe
 from terrine.spec.design import Design
+from terrine.spec.expressions import ApproxMetricQuantile
 from terrine.spec.io import canonical_json, from_json, to_json
 
 __all__ = [
@@ -26,6 +27,12 @@ __all__ = [
 _INVALID = RefusalSpec(
     "terrine.runtime.plan_recipe_mismatch",
     "Saved plan reconstruction failed verification ({reason}).",
+)
+
+_RUNTIME_SKETCH_UNAVAILABLE = RefusalSpec(
+    "terrine.runtime.sketch_sidecar_unavailable",
+    "Approximate quantile sidecars are unavailable in runtime planning and composition; "
+    "use ordinary Frame materialization.",
 )
 
 
@@ -134,6 +141,12 @@ class SavedPlanRecipe:
         expected_base_manifest: str | None,
         dataset_recipe: DatasetRecipe | None = None,
     ) -> SavedPlanRecipe:
+        if any(
+            isinstance(expression, ApproxMetricQuantile)
+            for expressions in (design.features, design.outcomes)
+            for expression in expressions.values()
+        ):
+            raise _RUNTIME_SKETCH_UNAVAILABLE.error()
         if not isinstance(model, ModelReference) or not isinstance(destination, DestinationRef):
             raise TypeError("model and destination must be verified references")
         if not namespace:
@@ -300,33 +313,8 @@ def _bind_recipe_plan(recipe: SavedPlanRecipe, *, namespace: str) -> RefreshPlan
         or not plan.snapshot_id
     ):
         raise _INVALID.error(reason="plan identity differs from owner-bound references")
-    bound_payload = {
-        "namespace": plan.namespace,
-        "dataset": plan.dataset,
-        "definition_hash": plan.definition_hash,
-        "snapshot_id": plan.snapshot_id,
-        "tasks": plan.recipe.tasks,
-        "change_evidence": plan.recipe.change_evidence,
-        "budget": plan.recipe.budget,
-        "expected_base_manifest": restored.expected_base_manifest,
-        "expected_base_manifest_bound": True,
-        "reconstruction_hash": restored.recipe_hash,
-    }
-    fingerprint = hashlib.sha256(
-        json.dumps(bound_payload, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    plan_recipe = replace(
-        plan.recipe,
-        fingerprint=fingerprint,
-        expected_base_manifest=restored.expected_base_manifest,
-        expected_base_manifest_bound=True,
-        reconstruction_hash=restored.recipe_hash,
-    )
-    return replace(
-        plan,
-        recipe=plan_recipe,
-        expected_base_manifest=restored.expected_base_manifest,
-        expected_base_manifest_bound=True,
+    return plan.bind_base_manifest(
+        restored.expected_base_manifest, reconstruction_hash=restored.recipe_hash
     )
 
 

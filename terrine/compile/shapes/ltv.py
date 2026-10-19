@@ -304,4 +304,5 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         _anchors=compiled._anchors,
         _checks=tuple(checks),
         expression_timings=expression_timings,
+        range_plans=compiled.range_plans,
     )

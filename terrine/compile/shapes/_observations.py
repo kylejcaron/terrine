@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -217,7 +217,14 @@ def _status(table, point, *, time, coverage):
     return value, complete, reason
 
 
-def compile_observed_state_panel(design: Design, model: Model, panel: StatePanel) -> CompiledStudy:
+def compile_observed_state_panel(
+    design: Design,
+    model: Model,
+    panel: StatePanel,
+    *,
+    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None = None,
+    persisted_anchors: ibis.Table | None = None,
+) -> CompiledStudy:
     """Compile exact point lookups, independently usable states, and terminal suffixes."""
     state = panel.state
     assert isinstance(state, StateObservations)
@@ -283,7 +290,12 @@ def compile_observed_state_panel(design: Design, model: Model, panel: StatePanel
         features=design.features,
         filter_population=True,
     )
-    compiled = compile_columns(output_design, model)
+    compiled = compile_columns(
+        output_design,
+        model,
+        persisted_prefixes=persisted_prefixes,
+        persisted_anchors=persisted_anchors,
+    )
     interval = ibis.interval(seconds=schedule.every)
 
     def attach(source_rows):
@@ -342,7 +354,12 @@ def compile_observed_state_panel(design: Design, model: Model, panel: StatePanel
             FixedDate(schedule.start),
             features=panel.baseline_features,
         )
-        baseline_compiled = compile_columns(baseline_design, model, include_membership=False)
+        baseline_compiled = compile_columns(
+            baseline_design,
+            model,
+            include_membership=False,
+            persisted_prefixes=persisted_prefixes,
+        )
         base = baseline_compiled.table
         projection = {"unit": base.unit}
         remapped = {}
@@ -494,5 +511,9 @@ def compile_observed_state_panel(design: Design, model: Model, panel: StatePanel
                 else {}
             ),
             **compiled.expression_timings,
+        },
+        range_plans={
+            **(baseline_compiled.range_plans if baseline_compiled is not None else {}),
+            **compiled.range_plans,
         },
     )

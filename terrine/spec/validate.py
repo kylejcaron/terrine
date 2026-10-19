@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from typing import TYPE_CHECKING
 
 from terrine.errors import RefusalSpec
@@ -21,7 +23,10 @@ from terrine.semantic.rules import (
 from terrine.spec.anchors import EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.expressions import (
+    _SKETCH_UNAVAILABLE,
     And,
+    ApproxMetricDistinct,
+    ApproxMetricQuantile,
     AttributeAsOf,
     Eq,
     EventTime,
@@ -29,7 +34,9 @@ from terrine.spec.expressions import (
     Gt,
     IsNull,
     MetricAgg,
+    MetricQuantile,
     Predicate,
+    RetentionMetric,
     _expression_support_seconds,
 )
 from terrine.spec.sequence import EventSequence
@@ -41,6 +48,17 @@ if TYPE_CHECKING:
 __all__ = ["ValidationReport", "validate_design"]
 
 _INVALID = RefusalSpec("terrine.design.invalid", "Design validation failed: {reason}.")
+_QUANTILE_BACKEND = RefusalSpec(
+    "terrine.metric.exact_quantile_backend_unsupported",
+    (
+        "Exact type-7 quantiles are unavailable for backend {dialect!r}; "
+        "use a verified supported backend."
+    ),
+)
+_NONADDITIVE_KIND_UNSUPPORTED = RefusalSpec(
+    "terrine.metric.nonadditive_kind_unsupported",
+    "Nonadditive aggregation {aggregation!r} is unsupported for metric kind {kind!r}.",
+)
 
 _RUNTIME_SHAPE_UNSUPPORTED = RefusalSpec(
     "terrine.compile.runtime_shape_unsupported",
@@ -51,13 +69,15 @@ _RUNTIME_SHAPE_UNSUPPORTED = RefusalSpec(
 
 def ensure_runtime_shape_supported(shape: object) -> None:
     """Apply the canonical persisted-layer runtime supported-shape matrix."""
+    from terrine.spec.panels import EventPanelSpec, SequentialSpec
     from terrine.spec.state_panel import StatePanel
 
-    if shape != "cross_section" and not isinstance(shape, StatePanel):
-        name = shape if isinstance(shape, str) else type(shape).__name__
-        raise _RUNTIME_SHAPE_UNSUPPORTED.error(
-            shape=name, route="ordinary Frame materialization or a full rebuild"
-        )
+    if shape == "cross_section" or isinstance(shape, (SequentialSpec, EventPanelSpec, StatePanel)):
+        return
+    name = shape if isinstance(shape, str) else type(shape).__name__
+    raise _RUNTIME_SHAPE_UNSUPPORTED.error(
+        shape=name, route="ordinary Frame materialization or a full rebuild"
+    )
 
 
 _MISSING = RefusalSpec(
@@ -78,6 +98,11 @@ _INCOMPLETE_TREATMENT_HISTORY = RefusalSpec(
 _METRIC_WINDOW = RefusalSpec(
     "terrine.design.metric_window_conflict",
     "Metric {metric!r} declares a conflicting window_days value.",
+)
+_RETENTION_IDENTITY = RefusalSpec(
+    "terrine.metric.retention_identity_unavailable",
+    "Retention fact {fact!r} has no occurrence identity; bind its column to an "
+    "occurrence ID or declare Model.event_ids for source {source!r}.",
 )
 
 
@@ -154,6 +179,31 @@ def _fixed_anchors(design: Design, model: Model) -> tuple[datetime, ...] | None:
             return first, first + timedelta(seconds=anchor.every)
         return (first,)
     return None
+
+
+def _retention_window(expr: RetentionMetric, model: Model) -> Window:
+    if expr.finite_horizon_seconds is not None:
+        return Window(0, expr.finite_horizon_seconds)
+    coverage = model.readiness.for_fact(model.catalog.facts[expr.fact].source)
+    span = coverage.end_exclusive - coverage.start
+    return Window(0, span.days * 86_400 + span.seconds + bool(span.microseconds))
+
+
+def _outcome_bounds(design: Design, model: Model) -> tuple[tuple[int, ...], tuple[datetime, ...]]:
+    offsets, cutoffs = [], []
+    for expression in design.outcomes.values():
+        if isinstance(expression, RetentionMetric):
+            if expression.finite_horizon_seconds is None:
+                fact = model.catalog.facts.get(expression.fact)
+                if fact is None:
+                    raise _MISSING.error(kind="fact", name=expression.fact)
+                source = fact.source
+                cutoffs.append(model.readiness.for_fact(source).end_exclusive)
+            else:
+                offsets.append(expression.finite_horizon_seconds)
+        elif isinstance(expression, (MetricAgg, MetricQuantile, ApproxMetricDistinct)):
+            offsets.append(_expression_support_seconds(expression)[1])
+    return tuple(offsets), tuple(cutoffs)
 
 
 def _required(model: Model, source_name: str, required: set[str]) -> None:
@@ -256,9 +306,18 @@ def _selector_timing(selector: EventTime) -> tuple[tuple[int, int], tuple[tuple[
     return support, (*dependencies, support)
 
 
-def _expression_timing(expr: Expr) -> tuple[tuple[int, int], tuple[tuple[int, int], ...]]:
+def _expression_timing(
+    expr: MetricAgg
+    | MetricQuantile
+    | ApproxMetricQuantile
+    | ApproxMetricDistinct
+    | AttributeAsOf
+    | EventTime,
+) -> tuple[tuple[int, int], tuple[tuple[int, int], ...]]:
     if isinstance(expr, EventTime):
         return _selector_timing(expr)
+    if isinstance(expr, (MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct)):
+        return (expr.window.start, expr.window.end), ()
     if expr.relative_to is None:
         if isinstance(expr, AttributeAsOf):
             return (expr.before, expr.before), ()
@@ -271,7 +330,16 @@ def _expression_timing(expr: Expr) -> tuple[tuple[int, int], tuple[tuple[int, in
     return support, dependencies
 
 
-def _check_expression_timing(expr: Expr, role: str, design: Design) -> None:
+def _check_expression_timing(
+    expr: MetricAgg
+    | MetricQuantile
+    | ApproxMetricQuantile
+    | ApproxMetricDistinct
+    | AttributeAsOf
+    | EventTime,
+    role: str,
+    design: Design,
+) -> None:
     support, dependencies = _expression_timing(expr)
     if role in {"feature", "eligibility"} and (
         support[1] > -design.gap or any(dependency[1] > -design.gap for dependency in dependencies)
@@ -303,7 +371,7 @@ def _expression(
         _check_expression_timing(expr, role, design)
         _resolve_property(expr, role, design, model, required, obligations)
         return
-    if isinstance(expr, EventTime):
+    if isinstance(expr, (EventTime, RetentionMetric)):
         fact = model.catalog.facts.get(expr.fact)
         if fact is None:
             raise _MISSING.error(kind="fact", name=expr.fact)
@@ -312,12 +380,45 @@ def _expression(
             raise _MISSING.error(kind="bound fact", name=expr.fact)
         if design.unit not in source.entities:
             raise _UNIT.error(unit=design.unit, name=expr.fact)
-        if expr.label_property is not None:
+        if isinstance(expr, RetentionMetric):
+            _check_event_scalar(model, source.name, expr.label_property, expr.target_event)
+            if source.facts[expr.fact] is None and source.name not in model.event_ids:
+                raise _RETENTION_IDENTITY.error(fact=expr.fact, source=source.name)
+            if role != "outcome":
+                raise _GAP.error(role=role, gap=design.gap)
+        elif expr.label_property is not None:
             _check_event_scalar(model, source.name, expr.label_property, expr.equals)
         _required(model, source.name, required)
         obligations.append("coverage_completeness")
-        _check_expression_timing(expr, role, design)
+        if not isinstance(expr, RetentionMetric):
+            _check_expression_timing(expr, role, design)
         return
+    if isinstance(expr, ApproxMetricQuantile):
+        if design.shape != "cross_section":
+            raise RefusalSpec(
+                "terrine.metric.approx_shape_unavailable",
+                "Approximate quantile supports cross_section only; "
+                "use exact quantile or cross_section.",
+            ).error()
+        try:
+            from importlib import import_module
+
+            import_module("datasketches")
+            installed_version = package_version("datasketches")
+        except (ImportError, PackageNotFoundError) as exc:
+            raise _SKETCH_UNAVAILABLE.error(
+                algorithm=expr.sketch.algorithm, version=expr.sketch.version
+            ) from exc
+        if expr.sketch.algorithm != "tdigest" or expr.sketch.version != installed_version:
+            raise _SKETCH_UNAVAILABLE.error(
+                algorithm=expr.sketch.algorithm, version=expr.sketch.version
+            )
+        if role == "eligibility":
+            raise RefusalSpec(
+                "terrine.metric.approx_eligibility_unavailable",
+                "Approximate quantiles cannot determine eligibility; use exact quantile or "
+                "a non-approximate predicate.",
+            ).error()
     if isinstance(expr, MetricAgg):
         _check_expression_timing(expr, role, design)
     metric = _metric(model, expr.metric)
@@ -326,6 +427,19 @@ def _expression(
     win = expr.window
     if not isinstance(win, Window) or win.start >= win.end:
         raise _WINDOW.error(name=expr.metric)
+    if isinstance(expr, (MetricQuantile, ApproxMetricQuantile)):
+        for source_name in metric.source_names:
+            dialect = model.sources[source_name].dialect
+            if dialect.casefold() != "duckdb":
+                raise _QUANTILE_BACKEND.error(dialect=dialect)
+    if isinstance(expr, ApproxMetricDistinct):
+        for source_name in metric.source_names:
+            dialect = model.sources[source_name].dialect
+            if dialect.casefold() != "duckdb":
+                raise RefusalSpec(
+                    "terrine.metric.approx_backend_unavailable",
+                    "Approximate distinct is unavailable for backend {dialect!r}.",
+                ).error(dialect=dialect)
     for source_name in metric.source_names:
         _required(model, source_name, required)
     obligations.append("coverage_completeness")
@@ -334,21 +448,38 @@ def _expression(
             source = model.sources[source_name]
             if not supports_event_resolution(source.dialect):
                 raise UNSUPPORTED_EVENT_RESOLUTION.error(dialect=source.dialect)
-    if expr.relative_to is None and role in {"feature", "eligibility"} and win.end > -design.gap:
+    if relative_to is None and role in {"feature", "eligibility"} and win.end > -design.gap:
         raise _GAP.error(role=role, gap=design.gap)
-    if expr.relative_to is None and role == "outcome" and win.start < 0:
+    if relative_to is None and role == "outcome" and win.start < 0:
         raise _GAP.error(role=role, gap=design.gap)
     if metric.kind not in {"mean", "conversion", "ratio"}:
         raise UNSUPPORTED_TEMPORAL_KIND.error(kind=metric.kind)
     if metric.transforms:
         raise UNSUPPORTED_TRANSFORM.error(transform=type(metric.transforms[0]).__name__)
+    if isinstance(expr, MetricQuantile) and len(metric.measures) != 1:
+        raise RefusalSpec(
+            "terrine.metric.quantile_requires_single_measure",
+            "Exact quantile requires metric {metric!r} to have exactly one measure.",
+        ).error(metric=expr.metric)
+    nonadditive = {"min", "max", "count_distinct"}
+    if any(measure.aggregation in nonadditive for measure in metric.measures) and (
+        metric.kind != "mean" or len(metric.measures) != 1
+    ):
+        aggregation = next(
+            measure.aggregation for measure in metric.measures if measure.aggregation in nonadditive
+        )
+        raise _NONADDITIVE_KIND_UNSUPPORTED.error(aggregation=aggregation, kind=metric.kind)
     for measure in metric.measures:
-        if not supports_temporal_aggregation(measure.aggregation):
+        if not supports_temporal_aggregation(measure.aggregation) and measure.aggregation not in {
+            "min",
+            "max",
+            "count_distinct",
+        }:
             raise UNSUPPORTED_TEMPORAL_AGGREGATION.error(aggregation=measure.aggregation)
         if measure.window_days is not None and win.end - win.start != measure.window_days * 86400:
             raise _METRIC_WINDOW.error(metric=expr.metric)
         if measure.aggregation == "avg_calendar_day":
-            anchors = None if expr.relative_to is not None else _fixed_anchors(design, model)
+            anchors = None if relative_to is not None else _fixed_anchors(design, model)
             if anchors is None:
                 alignment = calendar_average_alignment(
                     win, anchor=None, day_boundary=model.catalog.day_boundary
@@ -461,16 +592,12 @@ def _validate_shape(
         coverage = model.readiness.for_fact(source.name)
         span_seconds = (design.anchor.end - design.anchor.start).days * 86_400
         last_offset = ((span_seconds - 1) // design.anchor.every) * design.anchor.every
-        outcome_horizons = [
-            _expression_support_seconds(expression)[1]
-            for expression in design.outcomes.values()
-            if isinstance(expression, MetricAgg)
-        ]
+        outcome_horizons, outcome_cutoffs = _outcome_bounds(design, model)
         anticipation = design.shape.anticipation_seconds
-        if outcome_horizons:
-            followup_end = model.day_boundary(design.anchor.start) + timedelta(
-                seconds=last_offset + max(outcome_horizons) + anticipation
-            )
+        if outcome_horizons or outcome_cutoffs:
+            last_t0 = model.day_boundary(design.anchor.start) + timedelta(seconds=last_offset)
+            ends = [last_t0 + timedelta(seconds=horizon) for horizon in outcome_horizons]
+            followup_end = max(last_t0, *ends, *outcome_cutoffs) + timedelta(seconds=anticipation)
         else:
             followup_end = model.day_boundary(design.anchor.end) + timedelta(seconds=anticipation)
         if (
@@ -512,20 +639,18 @@ def _validate_shape(
         span_seconds = (schedule.end - schedule.start).days * 86_400
         last_offset = ((span_seconds - 1) // schedule.every) * schedule.every
         anticipation = max((abs(period) for period in design.shape.anticipation_periods), default=0)
-        outcome_horizons = [
-            _expression_support_seconds(expression)[1]
-            for expression in design.outcomes.values()
-            if isinstance(expression, MetricAgg)
-        ]
+        outcome_horizons, outcome_cutoffs = _outcome_bounds(design, model)
         outcome_window_end = max(outcome_horizons, default=0)
-        horizon = model.day_boundary(schedule.start) + timedelta(
-            seconds=last_offset
-            + (max(0, max(design.shape.comparison_periods)) + anticipation) * schedule.every
-            + outcome_window_end
+        last_t0 = model.day_boundary(schedule.start) + timedelta(
+            seconds=last_offset + max(0, max(design.shape.comparison_periods)) * schedule.every
         )
+        horizon = last_t0 + timedelta(seconds=outcome_window_end)
+        if outcome_cutoffs:
+            horizon = max(horizon, *outcome_cutoffs)
+        horizon += timedelta(seconds=anticipation * schedule.every)
         comparison_incomplete = (
             coverage.end_exclusive < horizon
-            if outcome_window_end > 0
+            if outcome_window_end > 0 or outcome_cutoffs
             else coverage.end_exclusive <= horizon
         )
         schedule_incomplete = (

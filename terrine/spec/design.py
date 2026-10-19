@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.expressions import (
     And,
+    ApproxMetricDistinct,
+    ApproxMetricQuantile,
     AttributeAsOf,
     Eq,
     EventTime,
@@ -31,7 +33,9 @@ from terrine.spec.expressions import (
     Gt,
     IsNull,
     MetricAgg,
+    MetricQuantile,
     Predicate,
+    RetentionMetric,
 )
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import StatePanel
@@ -170,12 +174,36 @@ class Design:
         object.__setattr__(
             self,
             "features",
-            _named_nodes(features, (MetricAgg, AttributeAsOf, EventTime), "features"),
+            _named_nodes(
+                features,
+                (
+                    MetricAgg,
+                    MetricQuantile,
+                    ApproxMetricQuantile,
+                    ApproxMetricDistinct,
+                    RetentionMetric,
+                    AttributeAsOf,
+                    EventTime,
+                ),
+                "features",
+            ),
         )
         object.__setattr__(
             self,
             "outcomes",
-            _named_nodes(outcomes, (MetricAgg, AttributeAsOf, EventTime), "outcomes"),
+            _named_nodes(
+                outcomes,
+                (
+                    MetricAgg,
+                    MetricQuantile,
+                    ApproxMetricQuantile,
+                    ApproxMetricDistinct,
+                    RetentionMetric,
+                    AttributeAsOf,
+                    EventTime,
+                ),
+                "outcomes",
+            ),
         )
         object.__setattr__(
             self, "eligibility", _named_nodes(eligibility, (Gt, Eq, IsNull, And), "eligibility")

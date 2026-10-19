@@ -1,7 +1,12 @@
 from terrine.runtime.api import (
+    CostProvider,
     DesignExecutor,
     Executor,
     RunReceipt,
+    ScanAuthorization,
+    ScanAuthorizingExecutor,
+    ScanEvidence,
+    ScanPhase,
     cancel_run,
     find_run_by_request_key,
     get_run,
@@ -45,6 +50,7 @@ def __getattr__(name: str):
 
 __all__ = [
     "CancelReceipt",
+    "CostProvider",
     "DefinitionVersion",
     "DependencyGraph",
     "DesignExecutor",
@@ -66,6 +72,10 @@ __all__ = [
     "RuntimeOwner",
     "RuntimeStore",
     "SavedPlanRecipe",
+    "ScanAuthorization",
+    "ScanAuthorizingExecutor",
+    "ScanEvidence",
+    "ScanPhase",
     "SnapshotAuthority",
     "SnapshotRetention",
     "SourceSnapshot",

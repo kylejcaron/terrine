@@ -293,14 +293,19 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
         "running_tasks": 0,
         "total_tasks": len(plan.tasks),
     }
-    assert status.cost == {
-        "capture": {
-            "snapshot_id": snapshot.snapshot_id,
-            "artifact_bytes": Path(snapshot.artifact_path).stat().st_size,
-            "root_count": 2,
-            "scan_bytes": None,
-        }
+    assert status.cost["capture"] == {
+        "snapshot_id": snapshot.snapshot_id,
+        "artifact_bytes": Path(snapshot.artifact_path).stat().st_size,
+        "root_count": 2,
+        "scan_bytes": None,
     }
+    assert status.cost["status"] == "observed"
+    assert status.cost["scope"] == "completed_task_artifacts"
+    assert status.cost["attempts"] == len(plan.tasks)
+    assert status.cost["output_rows"] == published.table.num_rows
+    assert status.cost["output_bytes"] == published.table.nbytes
+    assert status.cost["intermediate_output_bytes"] > 0
+    assert status.cost["scan_bytes"] is None
     assert status.readiness == {
         "events": {
             "start": "2025-01-01T00:00:00+00:00",

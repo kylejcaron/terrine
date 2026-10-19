@@ -30,7 +30,7 @@ def test_refresh_plan_serialization_is_stable_and_costs_remain_unknown():
     )
     assert first.serialize() == second.serialize()
     data = json.loads(first.serialize())
-    assert data["schema_version"] == 1
+    assert data["schema_version"] == 2
     assert all(task.estimated_scan_bytes is None for task in first.tasks)
 
 

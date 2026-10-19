@@ -50,6 +50,30 @@ def _design():
     )
 
 
+def test_snapshot_root_discovery_includes_approx_distinct_without_unit_roster():
+    from terrine.runtime.snapshot import _design_root_names
+    from terrine.spec import EventAnchor, approx_distinct
+
+    con = ibis.duckdb.connect()
+    try:
+        con.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        model = Model.from_catalog(
+            _catalog(),
+            con=con,
+            readiness={"events": Coverage("2025-01-01", "2025-02-01")},
+        )
+        design = Design(
+            "user",
+            EventAnchor("value"),
+            features={"distinct": approx_distinct("total", window=("-1d", "0d"))},
+        )
+        sources, dimensions, units = _design_root_names(model, design)
+        assert sources == frozenset({"events"})
+        assert dimensions == units == frozenset()
+    finally:
+        con.disconnect()
+
+
 def test_snapshot_receipt_reopens_same_inputs_after_fresh_owner_connection(tmp_path):
     state_path = tmp_path / "owner.duckdb"
     owner = RuntimeOwner(state_path=state_path, snapshot_root=tmp_path / "snapshots")

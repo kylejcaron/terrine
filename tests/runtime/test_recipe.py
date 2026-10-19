@@ -119,7 +119,12 @@ def test_saved_plan_recipe_reconstructs_design_and_verifies_owner_model_in_fresh
         )
         assert resolved_plan.expected_base_manifest == "manifest-1"
         assert resolved_plan.expected_base_manifest_bound
+        assert resolved_plan.recipe.reconstruction_hash == restored.recipe_hash
+        assert resolved_plan.recipe.schema_version == 2
+        assert resolved_plan.tasks == plan.tasks
+        assert resolved_plan.scan_bytes == plan.scan_bytes
         restored_plan = type(resolved_plan).deserialize(resolved_plan.serialize())
+        assert restored_plan == resolved_plan
         assert restored_plan.expected_base_manifest == "manifest-1"
         assert restored_plan.expected_base_manifest_bound
         assert resolved_model is model
@@ -147,6 +152,46 @@ def test_saved_plan_recipe_reconstructs_design_and_verifies_owner_model_in_fresh
         assert run.state == "succeeded"
     finally:
         con.disconnect()
+
+
+def test_saved_plan_creation_refuses_approximate_quantile_design():
+    from decimal import Decimal
+
+    from terrine.spec import SketchRequest, approx_quantile
+
+    design = Design(
+        "user",
+        FixedDate("2025-01-15"),
+        features={
+            "q": approx_quantile(
+                "total",
+                "0.5",
+                window=("-1d", "0d"),
+                sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
+            )
+        },
+    )
+    plan = plan_refresh(
+        namespace="runtime",
+        dataset="study",
+        definition_hash=design.spec_hash,
+        snapshot_id="snapshot-1",
+        graph=dependency_graph(
+            design=design, sources=("events",), definition_hash=design.spec_hash
+        ),
+    )
+    with pytest.raises(TerrineError) as error:
+        SavedPlanRecipe.create(
+            plan_json=plan.serialize(),
+            design=design,
+            model=ModelReference(
+                "owner-model", "catalog", "model", "units", "readiness", "event_ids"
+            ),
+            destination=DestinationRef("output.duckdb", "analytics", "study"),
+            namespace="runtime",
+            expected_base_manifest=None,
+        )
+    assert error.value.code == "terrine.runtime.sketch_sidecar_unavailable"
 
 
 def test_saved_recipe_preserves_strict_unknown_scan_refusal():
@@ -177,6 +222,7 @@ def test_saved_recipe_preserves_strict_unknown_scan_refusal():
         fingerprint_body = {
             key: payload[key]
             for key in (
+                "schema_version",
                 "namespace",
                 "dataset",
                 "definition_hash",

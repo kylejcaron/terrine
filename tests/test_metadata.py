@@ -7,6 +7,7 @@ import pyarrow as pa
 import pytest
 
 from terrine.data import (
+    ApproximationMeta,
     BoundCoverage,
     Budget,
     ColumnMeta,
@@ -270,13 +271,28 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values():
         table=table,
         roles=Roles("unit", "anchor", "t0", "treated", (), ("amount",)),
         columns={
-            "amount": ColumnMeta(None, "outcome", None, None, "amount_complete", "amount_reason"),
+            "amount": ColumnMeta(
+                None,
+                "outcome",
+                None,
+                None,
+                "amount_complete",
+                "amount_reason",
+                approximation=ApproximationMeta(
+                    algorithm="hll",
+                    implementation="duckdb",
+                    version="1.2.0",
+                    parameters={"precision": 12},
+                    error_description="HLL relative standard error ≈ 1.04/√m",
+                ),
+            )
         },
         provenance=_provenance(),
     )
     restored = MaterializedFrame.from_json(frame.to_json())
     assert restored.roles == frame.roles
     assert restored.columns == frame.columns
+    assert MaterializedFrame.from_arrow(frame.to_arrow()).columns == frame.columns
     assert restored.provenance == frame.provenance
     assert restored.table.schema == table.schema
     assert restored.table.column("amount").to_pylist() == [Decimal("12.3400"), None]
@@ -304,6 +320,7 @@ def test_materialized_frame_arrow_schema_metadata_can_be_recovered():
         provenance=_provenance(),
     )
     recovered = MaterializedFrame.from_arrow(frame.to_arrow())
+    assert recovered.columns == frame.columns
     assert recovered.roles == frame.roles
     assert recovered.provenance == frame.provenance
     assert recovered.table.schema.metadata == frame.table.schema.metadata

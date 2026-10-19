@@ -20,7 +20,9 @@ from terrine.runtime.backends.base import (
     Reconciliation,
     StagedGeneration,
 )
+from terrine.runtime.cost import ScanEvidence
 from terrine.runtime.leases import LeaseStore
+from terrine.runtime.planner import TaskSpec
 from terrine.runtime.state import RuntimeStore, snapshot_manifest_reference
 
 __all__ = ["DuckDBBackend"]
@@ -45,6 +47,13 @@ class DuckDBBackend:
         self.fault_injector: Callable[[str], None] | None = None
         self._ibis_backend: Any | None = None
         self.initialize()
+
+    def estimate_task(self, task: TaskSpec, *, definition_hash: str, snapshot_id: str) -> TaskSpec:
+        """DuckDB has no metadata-only upper bound on physical query scan bytes."""
+        return task.with_estimate(
+            scan=ScanEvidence.unknown(definition_hash, snapshot_id),
+            basis="backend_scan_bound_unavailable",
+        )
 
     def initialize(self) -> None:
         self.con.execute(f"CREATE SCHEMA IF NOT EXISTS {self._schema}")

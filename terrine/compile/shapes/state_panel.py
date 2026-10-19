@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import replace
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -142,7 +143,13 @@ def _state_value(relation, state: BinnedMetricState, meta: ColumnMeta):
     return value.cast("string"), (available & label.notnull()), reason
 
 
-def _union_state_periods(design: Design, model: Model, metric: str):
+def _union_state_periods(
+    design: Design,
+    model: Model,
+    metric: str,
+    *,
+    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None,
+):
     schedule = design.anchor
     assert isinstance(schedule, Schedule)
     period = Window(-schedule.every, 0)
@@ -150,24 +157,35 @@ def _union_state_periods(design: Design, model: Model, metric: str):
     state_design = _state_panel_design(
         design, anchor=schedule, features={"_state_period": node}, gap=0
     )
-    compiled = compile_columns(state_design, model, include_membership=False)
+    compiled = compile_columns(
+        state_design, model, include_membership=False, persisted_prefixes=persisted_prefixes
+    )
     endpoint = _state_panel_design(
         design, anchor=FixedDate(schedule.end), features={"_state_period": node}, gap=0
     )
-    final = compile_columns(endpoint, model, include_membership=False)
+    final = compile_columns(
+        endpoint, model, include_membership=False, persisted_prefixes=persisted_prefixes
+    )
     left, right = compiled.table, final.table
     table = left.union(right)
     audit = compiled.audit_table.union(final.audit_table)
     return table, audit, compiled, final
 
 
-def _binned(design: Design, model: Model, panel: StatePanel) -> CompiledStudy:
+def _binned(
+    design: Design,
+    model: Model,
+    panel: StatePanel,
+    *,
+    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None,
+    persisted_anchors: ibis.Table | None,
+) -> CompiledStudy:
     spec = panel.state
     assert isinstance(spec, BinnedMetricState)
     schedule = design.anchor
     assert isinstance(schedule, Schedule)
     period_relation, _, period_compiled, endpoint_compiled = _union_state_periods(
-        design, model, spec.metric
+        design, model, spec.metric, persisted_prefixes=persisted_prefixes
     )
     state_meta = period_compiled.columns["_state_period"]
     period_relation = period_relation.mutate(
@@ -180,7 +198,12 @@ def _binned(design: Design, model: Model, panel: StatePanel) -> CompiledStudy:
         features=design.features,
         filter_population=True,
     )
-    compiled = compile_columns(output_design, model)
+    compiled = compile_columns(
+        output_design,
+        model,
+        persisted_prefixes=persisted_prefixes,
+        persisted_anchors=persisted_anchors,
+    )
 
     def attach(source):
         prior = period_relation.view()
@@ -231,7 +254,12 @@ def _binned(design: Design, model: Model, panel: StatePanel) -> CompiledStudy:
             anchor=FixedDate(schedule.start),
             features=panel.baseline_features,
         )
-        baseline_compiled = compile_columns(baseline_design, model, include_membership=False)
+        baseline_compiled = compile_columns(
+            baseline_design,
+            model,
+            include_membership=False,
+            persisted_prefixes=persisted_prefixes,
+        )
         raw_baseline = baseline_compiled.table
         baseline_projection = {"unit": raw_baseline.unit}
         remapped = {}
@@ -411,10 +439,20 @@ def _binned(design: Design, model: Model, panel: StatePanel) -> CompiledStudy:
             ),
             **compiled.expression_timings,
         },
+        range_plans={
+            **(baseline_compiled.range_plans if baseline_compiled is not None else {}),
+            **compiled.range_plans,
+        },
     )
 
 
-def compile_state_panel(design: Design, model: Model) -> CompiledStudy:
+def compile_state_panel(
+    design: Design,
+    model: Model,
+    *,
+    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None = None,
+    persisted_anchors: ibis.Table | None = None,
+) -> CompiledStudy:
     """Compile a bounded schedule into paired unit-period state rows."""
     panel = design.shape
     assert isinstance(panel, StatePanel)
@@ -425,5 +463,17 @@ def compile_state_panel(design: Design, model: Model) -> CompiledStudy:
     if isinstance(panel.state, StateObservations):
         from terrine.compile.shapes._observations import compile_observed_state_panel
 
-        return compile_observed_state_panel(design, model, panel)
-    return _binned(design, model, panel)
+        return compile_observed_state_panel(
+            design,
+            model,
+            panel,
+            persisted_prefixes=persisted_prefixes,
+            persisted_anchors=persisted_anchors,
+        )
+    return _binned(
+        design,
+        model,
+        panel,
+        persisted_prefixes=persisted_prefixes,
+        persisted_anchors=persisted_anchors,
+    )

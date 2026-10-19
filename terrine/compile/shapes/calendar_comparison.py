@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 from typing import TYPE_CHECKING, cast
 
 import ibis
@@ -15,8 +16,8 @@ from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
 from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
-from terrine.spec.expressions import MetricAgg
 from terrine.spec.panels import CalendarComparisonSpec
+from terrine.spec.validate import _outcome_bounds
 from terrine.temporal._timestamps import compare_timestamps
 from terrine.temporal.aggregate import _Check, _Failure
 
@@ -50,7 +51,27 @@ def _deferred_refusal(query):
     )
 
 
-def _history_check(design: Design, model: Model, rows, outcome_window_end: int):
+def _followup_bound(
+    t0,
+    reference_t0,
+    *,
+    outcome_window_end: int,
+    outcome_cutoff: datetime | None,
+    anticipation_seconds: int,
+) -> tuple[ir.TimestampValue, bool]:
+    end = cast(ir.TimestampValue, ibis.greatest(t0, reference_t0))
+    if outcome_window_end:
+        end += ibis.interval(seconds=outcome_window_end)
+    if outcome_cutoff is not None:
+        end = cast(ir.TimestampValue, ibis.greatest(end, ibis.literal(outcome_cutoff)))
+    if anticipation_seconds:
+        end += ibis.interval(seconds=anticipation_seconds)
+    return end, outcome_window_end > 0 or outcome_cutoff is not None
+
+
+def _history_check(
+    design: Design, model: Model, rows, outcome_window_end: int, outcome_cutoff: datetime | None
+):
     spec = design.shape
     assert isinstance(spec, CalendarComparisonSpec)
     anchor = design.anchor
@@ -61,8 +82,12 @@ def _history_check(design: Design, model: Model, rows, outcome_window_end: int):
         participants = participants.filter(rows.__terrine_eligible)
     reference_t0 = participants.cohort + ibis.interval(seconds=spec.reference_period * anchor.every)
     anticipation = max((abs(value) for value in spec.anticipation_periods), default=0)
-    latest = cast(ir.TimestampValue, ibis.greatest(participants.t0, reference_t0)) + ibis.interval(
-        seconds=anticipation * anchor.every + outcome_window_end
+    latest, exclusive = _followup_bound(
+        participants.t0,
+        reference_t0,
+        outcome_window_end=outcome_window_end,
+        outcome_cutoff=outcome_cutoff,
+        anticipation_seconds=anticipation * anchor.every,
     )
     schedule_end = ibis.literal(model.day_boundary(anchor.end))
     never_control = participants.control_eligible & ~participants.treatment
@@ -75,7 +100,7 @@ def _history_check(design: Design, model: Model, rows, outcome_window_end: int):
     if "_observed_until" in participants.columns:
         observation_cutoff_failure = (
             participants._observed_until < latest
-            if outcome_window_end > 0
+            if exclusive
             else participants._observed_until <= latest
         )
         missing = missing | (participants._observed_until.notnull() & observation_cutoff_failure)
@@ -158,6 +183,7 @@ def _stack(
     spec: CalendarComparisonSpec,
     every: int,
     outcome_window_end: int,
+    outcome_cutoff: datetime | None,
 ):
     period_values = tuple(
         dict.fromkeys((spec.reference_period, *spec.comparison_periods, *spec.anticipation_periods))
@@ -212,8 +238,12 @@ def _stack(
     reference_t0 = with_values.focal_cohort + ibis.interval(seconds=spec.reference_period * every)
     anticipation = max((abs(value) for value in spec.anticipation_periods), default=0)
     comparison_t0 = with_values.t0
-    latest = cast(ir.TimestampValue, ibis.greatest(comparison_t0, reference_t0)) + ibis.interval(
-        seconds=anticipation * every + outcome_window_end
+    latest, exclusive = _followup_bound(
+        comparison_t0,
+        reference_t0,
+        outcome_window_end=outcome_window_end,
+        outcome_cutoff=outcome_cutoff,
+        anticipation_seconds=anticipation * every,
     )
     treated = (with_values.unit_cohort == with_values.focal_cohort).fill_null(False)
     if spec.control == "never_treated":
@@ -221,7 +251,7 @@ def _stack(
     else:
         control_after_cutoff = (
             with_values.__terrine_initiation_time >= latest
-            if outcome_window_end > 0
+            if exclusive
             else with_values.__terrine_initiation_time > latest
         )
         control = with_values.__terrine_initiation_time.isnull() | control_after_cutoff
@@ -275,14 +305,9 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
     cohort_units, initiation_times, cohort_precision = _cohort_units(design, model, anchors)
     if cohort_precision is not None:
         anchors = replace(anchors, _checks=(*anchors._checks, cohort_precision))
-    outcome_window_end = max(
-        (
-            compiled.expression_timings[name].support_seconds[1]
-            for name, expression in design.outcomes.items()
-            if isinstance(expression, MetricAgg)
-        ),
-        default=0,
-    )
+    outcome_offsets, outcome_cutoffs = _outcome_bounds(design, model)
+    outcome_window_end = max(outcome_offsets, default=0)
+    outcome_cutoff = max(outcome_cutoffs) if outcome_cutoffs else None
 
     def stack(source):
         return _stack(
@@ -293,6 +318,7 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
             spec=spec,
             every=schedule.every,
             outcome_window_end=outcome_window_end,
+            outcome_cutoff=outcome_cutoff,
         )
 
     retained = stack(compiled.table)
@@ -330,7 +356,7 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
         anchors,
         (
             *compiled._checks,
-            _history_check(design, model, audit, outcome_window_end),
+            _history_check(design, model, audit, outcome_window_end, outcome_cutoff),
             _period_check(
                 cohort_units,
                 anchors,
@@ -339,4 +365,5 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
             ),
         ),
         expression_timings=compiled.expression_timings,
+        range_plans=compiled.range_plans,
     )

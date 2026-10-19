@@ -138,41 +138,66 @@ def plan_layers(design: Design, model) -> LayerPlan:
     """Describe compiler input layers for a design, without consulting runtime state."""
     from terrine.semantic.rules import calendar_average_alignment
     from terrine.spec.anchors import FixedDate, Schedule
-    from terrine.spec.expressions import And, AttributeAsOf, Eq, EventTime, Gt, IsNull, MetricAgg
+    from terrine.spec.expressions import (
+        And,
+        ApproxMetricDistinct,
+        ApproxMetricQuantile,
+        AttributeAsOf,
+        Eq,
+        EventTime,
+        Gt,
+        IsNull,
+        MetricAgg,
+        MetricQuantile,
+        RetentionMetric,
+        agg,
+    )
+    from terrine.spec.state_panel import BinnedMetricState, StatePanel
     from terrine.spec.validate import _fixed_anchors
 
     measures: dict[tuple[str, str, str, LayerResolution], None] = {}
+    anchor_points = (
+        _fixed_anchors(design, model) if isinstance(design.anchor, (FixedDate, Schedule)) else None
+    )
 
-    def expression(node) -> None:
+    def expression(node, points=anchor_points) -> None:
         if isinstance(node, And):
             for term in node.terms:
-                expression(term)
+                expression(term, points)
         elif isinstance(node, (Eq, Gt)):
-            expression(node.left if isinstance(node, Eq) else node.expr)
+            expression(node.left if isinstance(node, Eq) else node.expr, points)
         elif isinstance(node, IsNull):
-            expression(node.expr)
-        elif isinstance(node, (AttributeAsOf, EventTime)):
+            expression(node.expr, points)
+        elif isinstance(
+            node,
+            (
+                AttributeAsOf,
+                EventTime,
+                MetricQuantile,
+                ApproxMetricQuantile,
+                ApproxMetricDistinct,
+                RetentionMetric,
+            ),
+        ):
             return
         elif isinstance(node, MetricAgg):
             metric = model.metrics[node.metric]
-            fixed = (
-                _fixed_anchors(design, model)
-                if isinstance(design.anchor, (FixedDate, Schedule))
-                else None
-            )
             resolution: LayerResolution = (
                 "day"
-                if fixed
+                if points
+                and node.relative_to is None
                 and all(
                     calendar_average_alignment(
                         node.window, anchor=instant, day_boundary=model.catalog.day_boundary
                     )
                     == "aligned"
-                    for instant in fixed
+                    for instant in points
                 )
                 else "event"
             )
             for measure in metric.measures:
+                if measure.aggregation in {"min", "max", "count_distinct"}:
+                    continue
                 identity = measure_identity(measure)
                 measures[(measure.source_name, identity, design.unit, resolution)] = None
         else:
@@ -184,6 +209,14 @@ def plan_layers(design: Design, model) -> LayerPlan:
         *design.eligibility.values(),
     ):
         expression(node)
+    if isinstance(design.shape, StatePanel):
+        assert anchor_points is not None
+        baseline_points = anchor_points[:1]
+        for node in design.shape.baseline_features.values():
+            expression(node, baseline_points)
+        if isinstance(design.shape.state, BinnedMetricState):
+            assert isinstance(design.anchor, Schedule)
+            expression(agg(design.shape.state.metric, window=(-design.anchor.every, 0)))
     source_schema = {
         name: {
             column: str(dtype.copy(nullable=True))

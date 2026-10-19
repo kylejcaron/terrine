@@ -250,12 +250,8 @@ def test_post_commit_empty_refresh_restores_previous_result_partitions():
 
 
 def test_expected_base_manifest_mismatch_refuses_before_source_work():
-    from dataclasses import replace
-
     con = duckdb.connect(":memory:")
-    plan = replace(
-        _plan(), expected_base_manifest="generation-1", expected_base_manifest_bound=True
-    )
+    plan = _plan().bind_base_manifest("generation-1")
     con.execute(
         "CREATE SCHEMA owner; CREATE TABLE owner.runtime_manifests "
         "(dataset VARCHAR PRIMARY KEY,generation VARCHAR NOT NULL,version BIGINT NOT NULL)"
@@ -279,14 +275,10 @@ def test_expected_base_manifest_mismatch_refuses_before_source_work():
 
 
 def test_overlapping_saved_base_replay_returns_terminal_receipt(monkeypatch):
-    from dataclasses import replace
-
     from terrine.runtime.leases import LeaseStore
 
     con = duckdb.connect(":memory:")
-    plan = replace(
-        _plan(), expected_base_manifest="generation-1", expected_base_manifest_bound=True
-    )
+    plan = _plan().bind_base_manifest("generation-1")
     con.execute(
         "CREATE SCHEMA owner; CREATE TABLE owner.runtime_manifests "
         "(dataset VARCHAR PRIMARY KEY,generation VARCHAR NOT NULL,version BIGINT NOT NULL)"
@@ -324,7 +316,6 @@ def test_overlapping_saved_base_replay_returns_terminal_receipt(monkeypatch):
 
 
 def test_retry_reconciles_publication_before_rejecting_its_own_manifest():
-    from dataclasses import replace
     from datetime import UTC, datetime, timedelta
 
     from terrine.runtime.backends.base import StagedGeneration
@@ -332,9 +323,7 @@ def test_retry_reconciles_publication_before_rejecting_its_own_manifest():
     from terrine.runtime.leases import LeaseStore
 
     con = duckdb.connect(":memory:")
-    plan = replace(
-        _plan(), expected_base_manifest="generation-1", expected_base_manifest_bound=True
-    )
+    plan = _plan().bind_base_manifest("generation-1")
     backend = DuckDBBackend(con, namespace="owner")
     backend.initialize()
     con.execute(

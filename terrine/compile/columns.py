@@ -5,6 +5,8 @@ from __future__ import annotations
 import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
+from importlib.metadata import version as package_version
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
@@ -24,14 +26,35 @@ from terrine.compile.anchors import (
     compile_anchors,
 )
 from terrine.compile.layers import build_measure_layer, measure_identity
-from terrine.data import ColumnMeta, ExpressionTiming, FeatureCutoff, Roles, SequenceMeta
+from terrine.compile.ranges import plan_ranges
+from terrine.compile.retention import compile_retention
+from terrine.data import (
+    ApproximationMeta,
+    ColumnMeta,
+    ExpressionTiming,
+    FeatureCutoff,
+    Roles,
+    SequenceMeta,
+)
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import BoundDimension
 from terrine.semantic.rules import calendar_average_alignment
 from terrine.spec.anchors import FixedDate, Schedule
 from terrine.spec.design import Design
-from terrine.spec.expressions import And, AttributeAsOf, Eq, EventTime, Expr
+from terrine.spec.expressions import (
+    And,
+    ApproxMetricDistinct,
+    ApproxMetricQuantile,
+    AttributeAsOf,
+    Eq,
+    EventTime,
+    Expr,
+    MetricAgg,
+    MetricQuantile,
+    RetentionMetric,
+    SketchRequest,
+)
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE
 from terrine.spec.validate import _fixed_anchors
 from terrine.temporal.aggregate import aggregate_window
@@ -41,11 +64,16 @@ from terrine.temporal.attributes import (
     validate_history,
 )
 from terrine.temporal.daily import resolve_measure
+from terrine.temporal.nonadditive import (
+    aggregate_nonadditive_window,
+    approximate_quantile_window_values,
+)
+from terrine.temporal.ranges import RangePlan
 
 if TYPE_CHECKING:
     from terrine.model import Model
 
-__all__ = ["CompiledStudy", "compile_columns"]
+__all__ = ["CompiledStudy", "compile_columns", "resolve_sketch_sidecars"]
 
 _NAME_CONFLICT = RefusalSpec(
     "terrine.spec.output_name_conflict",
@@ -132,6 +160,14 @@ class _HistoryValidation:
 
 
 @dataclass(frozen=True, slots=True)
+class SketchSidecar:
+    outputs: tuple[str, ...]
+    rows: ibis.Table
+    probability: Decimal
+    request: SketchRequest
+
+
+@dataclass(frozen=True, slots=True)
 class CompiledStudy:
     table: ibis.Table
     audit_table: ibis.Table
@@ -144,6 +180,8 @@ class CompiledStudy:
     _checks: tuple[_DeferredCheck, ...]
     expression_timings: Mapping[str, ExpressionTiming] = field(default_factory=dict)
     sequence_meta: SequenceMeta | None = None
+    sketches: tuple[SketchSidecar, ...] = ()
+    range_plans: Mapping[str, RangePlan] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for name in (
@@ -152,15 +190,54 @@ class CompiledStudy:
             "eligibility_cutoffs",
             "strategy",
             "expression_timings",
+            "range_plans",
         ):
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
         object.__setattr__(self, "_checks", tuple(self._checks))
+        object.__setattr__(self, "sketches", tuple(self.sketches))
 
     def validate(self, *, execute: Callable[[ibis.Table], pa.Table]) -> None:
         """Run every deferred integrity check before audit or output leaves its view."""
         self._anchors.validate(execute=execute)
         for check in self._checks:
             check.validate(execute)
+
+
+def resolve_sketch_sidecars(table: pa.Table, compiled: CompiledStudy, con) -> pa.Table:
+    """Execute optional t-digest sidecars inside the owning execution context."""
+    if not compiled.sketches:
+        return table
+    from terrine.temporal.sketches import approximate_quantiles_by_key
+
+    for sidecar in compiled.sketches:
+        reader = con.to_pyarrow_batches(sidecar.rows, chunk_size=65_536)
+        try:
+            estimates, _ = approximate_quantiles_by_key(
+                reader,
+                sidecar.probability,
+                sidecar.request,
+            )
+        finally:
+            reader.close()
+        for output in sidecar.outputs:
+            meta = compiled.columns[output]
+            complete = (
+                table.column(meta.complete_column).to_pylist()
+                if meta.complete_column is not None
+                else [True] * table.num_rows
+            )
+            keys = zip(
+                table.column("unit").to_pylist(),
+                table.column("anchor_id").to_pylist(),
+                strict=True,
+            )
+            values = [
+                estimates.get(key) if is_complete else None
+                for key, is_complete in zip(keys, complete, strict=True)
+            ]
+            index = table.schema.get_field_index(output)
+            table = table.set_column(index, output, pa.array(values, type=pa.float64()))
+    return table
 
 
 def compile_columns(
@@ -175,6 +252,7 @@ def compile_columns(
     """Compile candidates and distinct expressions once without reading source rows."""
     _validate_names(design)
     design.validate(model)
+    range_plans = plan_ranges(design, model)
     anchors = _anchor_table or compile_anchors(
         design, model, include_membership=include_membership, persisted=persisted_anchors
     )
@@ -182,6 +260,8 @@ def compile_columns(
     values: dict[Expr, CompiledValue] = {}
     checks: list[_DeferredCheck] = []
     normalized_sources, sources, selector_sources, source_histories, states = {}, {}, {}, {}, {}
+    sketches: list[SketchSidecar] = []
+    sketch_aliases: dict[str, list[str]] = {}
     selector_identity_checks = []
     checked_selector_sources = set()
     for (source_name, measure_key, unit, resolution), relation in (
@@ -613,6 +693,178 @@ def compile_columns(
             cutoff = FeatureCutoff(cutoff_seconds, True, "retrospective_effective_time")
             strategy = "strict_history"
             result_table = result.table
+        elif isinstance(node, RetentionMetric):
+            source = model.sources[model.catalog.facts[node.fact].source]
+            result = compile_retention(
+                expression_anchors,
+                events_for(source.name),
+                node,
+                source,
+                model,
+                output=output,
+                range_plan=range_plans[node],
+                identity_column=selector_identity_columns.get(source.name),
+                property_columns=source_property_columns[source.name],
+            )
+            meta = result.columns[output]
+            cutoff = FeatureCutoff(
+                range_plans[node].block_seconds, True, "retrospective_effective_time"
+            )
+            strategy = "blocked_range_join/retention_occurrences"
+            result_table = result.table
+        elif isinstance(node, MetricQuantile):
+            metric = model.metrics[node.metric]
+            if len(metric.measures) != 1:
+                raise RefusalSpec(
+                    "terrine.metric.quantile_requires_single_measure",
+                    "Exact quantile requires metric {metric!r} to have exactly one measure.",
+                ).error(metric=node.metric)
+            unresolved = metric.measures[0]
+            source = model.sources[unresolved.source_name]
+            events = events_for(source.name)
+            measure = resolve_measure(events, unresolved, source=source, allow_nonadditive=True)
+            result = aggregate_nonadditive_window(
+                expression_anchors,
+                events,
+                measure,
+                source,
+                node.window,
+                model.readiness,
+                output=output,
+                role="feature",
+                operation="quantile",
+                probability=node.probability,
+                range_plan=range_plans[node],
+            )
+            meta = result.columns[output]
+            cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
+            strategy = "blocked_range_join/exact_type7"
+            result_table = result.table
+        elif isinstance(node, ApproxMetricQuantile):
+            metric = model.metrics[node.metric]
+            if len(metric.measures) != 1:
+                raise RefusalSpec(
+                    "terrine.metric.quantile_requires_single_measure",
+                    "Approximate quantile requires metric {metric!r} to have exactly one measure.",
+                ).error(metric=node.metric)
+            unresolved = metric.measures[0]
+            source = model.sources[unresolved.source_name]
+            events = events_for(source.name)
+            measure = resolve_measure(events, unresolved, source=source, allow_nonadditive=True)
+            summary = aggregate_nonadditive_window(
+                expression_anchors,
+                events,
+                measure,
+                source,
+                node.window,
+                model.readiness,
+                output=output,
+                role="feature",
+                operation="min",
+                range_plan=range_plans[node],
+            )
+            result = summary
+            sketches.append(
+                SketchSidecar(
+                    (output,),
+                    approximate_quantile_window_values(
+                        expression_anchors,
+                        events,
+                        measure,
+                        source,
+                        node.window,
+                        range_plan=range_plans[node],
+                    ),
+                    node.probability,
+                    node.sketch,
+                )
+            )
+            from terrine.temporal.sketches import quantile_request_metadata
+
+            sketch_metadata = quantile_request_metadata(node.sketch)
+            meta = replace(
+                summary.columns[output],
+                numeric_policy=None,
+                approximation=ApproximationMeta(
+                    algorithm=sketch_metadata.algorithm,
+                    implementation="DataSketches t-digest",
+                    version=sketch_metadata.version,
+                    parameters=dict(sketch_metadata.parameters),
+                    error_description="t-digest empirical, no guaranteed bound",
+                ),
+            )
+            cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
+            strategy = "blocked_range_join/tdigest_sidecar"
+            result_table = summary.table.mutate(**{output: ibis.null().cast("float64")})
+        elif isinstance(node, ApproxMetricDistinct):
+            metric = model.metrics[node.metric]
+            if len(metric.measures) != 1:
+                raise RefusalSpec(
+                    "terrine.metric.approx_distinct_requires_single_measure",
+                    "Approximate distinct requires metric {metric!r} to have exactly one measure.",
+                ).error(metric=node.metric)
+            unresolved = metric.measures[0]
+            source = model.sources[unresolved.source_name]
+            events = events_for(source.name)
+            measure = resolve_measure(events, unresolved, source=source, allow_nonadditive=True)
+            result = aggregate_nonadditive_window(
+                expression_anchors,
+                events,
+                measure,
+                source,
+                node.window,
+                model.readiness,
+                output=output,
+                role="feature",
+                operation="approx_count_distinct",
+                range_plan=range_plans[node],
+            )
+            meta = replace(
+                result.columns[output],
+                numeric_policy=None,
+                approximation=ApproximationMeta(
+                    algorithm="hll",
+                    implementation="DuckDB approx_count_distinct",
+                    version=package_version("duckdb"),
+                    parameters={"precision": "engine-default"},
+                    error_description="HLL relative standard error ≈ 1.04/√m",
+                ),
+            )
+            cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
+            strategy = "blocked_range_join/hll"
+            result_table = result.table
+        elif (
+            isinstance(node, MetricAgg)
+            and len(model.metrics[node.metric].measures) == 1
+            and model.metrics[node.metric].measures[0].aggregation
+            in {"min", "max", "count_distinct"}
+        ):
+            metric = model.metrics[node.metric]
+            unresolved = metric.measures[0]
+            source = model.sources[unresolved.source_name]
+            events = events_for(source.name)
+            measure = resolve_measure(events, unresolved, source=source, allow_nonadditive=True)
+            result = aggregate_nonadditive_window(
+                expression_anchors,
+                events,
+                measure,
+                source,
+                node.window,
+                model.readiness,
+                output=output,
+                role="feature",
+                operation=cast(Literal["min", "max", "count_distinct"], measure.aggregation),
+                range_plan=range_plans[node],
+            )
+            meta = result.columns[output]
+            cutoff_seconds = (
+                selector_timing(relative)[0][1] + node.window.end
+                if relative is not None
+                else node.window.end
+            )
+            cutoff = FeatureCutoff(cutoff_seconds, True, "retrospective_effective_time")
+            strategy = "blocked_range_join/nonadditive"
+            result_table = result.table
         elif not isinstance(node, EventTime):
             metric = model.metrics[node.metric]
             resolution: Literal["day", "event"] = (
@@ -683,6 +935,9 @@ def compile_columns(
             anchor_fields[selector_meta["end_bound"]] = expression_anchors[
                 selector_meta["end_bound"]
             ]
+        elif isinstance(node, RetentionMetric):
+            timing_refs = ("t0", None, f"{output}_end_bound")
+            timing_column_refs[node] = timing_refs
         elif relative is None:
             timing_refs = ("t0", None, None)
             timing_column_refs[node] = timing_refs
@@ -795,6 +1050,8 @@ def compile_columns(
         for name, node in named.items():
             value = expression(node)
             public[name] = value.name
+            if any(value.name in sidecar.outputs for sidecar in sketches):
+                sketch_aliases.setdefault(value.name, []).append(name)
             columns[name] = replace(value.meta, role=role)
             relative = getattr(node, "relative_to", None)
             if isinstance(node, EventTime):
@@ -803,7 +1060,7 @@ def compile_columns(
                 offsets = None
                 point_column = name
                 kind = "event_time"
-            elif relative is not None:
+            elif relative is not None and not isinstance(node, RetentionMetric):
                 origin, dependency_supports = selector_timing(relative)
                 selector_ref = repr(relative)
                 offsets = (
@@ -816,9 +1073,13 @@ def compile_columns(
                 kind = "event_time"
             else:
                 support = (
-                    (node.before, node.before)
-                    if isinstance(node, AttributeAsOf)
-                    else (node.window.start, node.window.end)
+                    (0, range_plans[node].block_seconds)
+                    if isinstance(node, RetentionMetric)
+                    else (
+                        (node.before, node.before)
+                        if isinstance(node, AttributeAsOf)
+                        else (node.window.start, node.window.end)
+                    )
                 )
                 dependency_supports = {}
                 selector_ref = None
@@ -914,4 +1175,15 @@ def compile_columns(
         anchors,
         tuple(checks),
         expression_timings,
+        sketches=tuple(
+            replace(sidecar, outputs=tuple(sketch_aliases.get(sidecar_output, ())))
+            for sidecar in sketches
+            for sidecar_output in sidecar.outputs
+        ),
+        range_plans={
+            name: range_plans[node]
+            for named in (design.features, design.outcomes)
+            for name, node in named.items()
+            if node in range_plans
+        },
     )

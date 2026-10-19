@@ -55,6 +55,7 @@ def test_cli_plan_refuses_unknown_scan_under_strict_budget(tmp_path):
     fingerprint_payload = {
         key: payload[key]
         for key in (
+            "schema_version",
             "namespace",
             "dataset",
             "definition_hash",

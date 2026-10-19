@@ -24,11 +24,86 @@ DuckDB capture uses backend-native `COPY` into retained storage rather than tran
 
 ## Runtime shape support
 
-Runtime composition enters through the same `compile_design` dispatcher as ordinary Frames. `cross_section` reuses verified persisted anchor/prefix layers. `StatePanel` is supported through that dispatcher as a full rebuild. Other specialized shapes are refused before source work with `terrine.compile.runtime_shape_unsupported`; the coded refusal carries the shape and the route `ordinary Frame materialization or a full rebuild`. Use ordinary Frame materialization or perform a full rebuild for those shapes.
+Runtime composition enters through the same `compile_design` dispatcher as
+ordinary Frames. Its supported logical-input matrix is:
+
+| Shape | Persisted anchor/prefix substitution |
+| --- | --- |
+| `cross_section` | Verified anchor and additive prefix layers |
+| `SequentialSpec` | Verified scheduled anchors and additive prefixes; treatment, sampling and timing metadata retained |
+| `EventPanelSpec` | Verified parent event anchors expanded into the declared periods; additive prefixes reused at translated evaluation times |
+| `StatePanel` | Verified scheduled output anchors and additive prefixes for features, binned state periods/endpoints, and baseline features; internal endpoint and baseline anchors keep their own domains |
+| Calendar comparisons, event sequences, cohorts, survival and other shapes | Refuse |
+
+Unsupported substitutions refuse before source resolution with
+`terrine.compile.runtime_shape_unsupported`, including direct `compile_design`
+calls. The coded refusal carries the shape and the route
+`ordinary Frame materialization or a full rebuild`. Nonadditive windows use raw
+events with their compiler-derived sparse range bounds, never an additive
+prefix layer. Nested event selectors reuse the existing selector-dependency
+invalidation contract, and re-anchored additive metrics require event-resolution
+prefixes rather than assuming calendar alignment.
 
 For persisted-layer staging, pass the resolved design, model, logical relations, and budget through `terrine.runtime.materialize.compose_runtime_frame`. This runtime entry point applies the same execution-owned shape-budget, integrity, and unknown-eligibility gates as `Frame.materialize` before returning the compiled relation for staging.
 
 The built-in executor transfers anchor, prefix, and final outputs in bounded Arrow batches to owner-retained IPC artifacts. Task state stores verified artifact references rather than full Arrow payloads; retry checks the artifact checksum before use. Final output budgets are enforced while writing batches. Publication streams these artifacts into generation-specific DuckDB tables and retains their logical Arrow schema, including duration ticks and Frame metadata. `DuckDBBackend.read_batches` reopens an exact partition with that schema and closes its cursor when the reader closes.
+
+## Cost evidence and scan budgets
+
+`plan_refresh(..., cost_provider=owner_provider)` can attach owner-supplied
+metadata estimates without executing source rows. The provider implements
+`CostProvider` and declares `BackendCapabilities.scan_estimate=True`; its
+`estimate_task` preserves task identity and returns `task.with_estimate(...)`.
+Rows and output bytes are independent forecasts with an explicit basis.
+`estimated_scan_bytes` is the sum of the phase estimates only when every phase
+is known; an unknown phase makes the aggregate `None`.
+
+`ScanEvidence` binds the definition hash and snapshot ID to separate
+`ScanPhase` entries for **capture, validation, execution, and retry**. Each entry
+names its basis and is `unknown`, `forecast`, `verified_upper_bound`, or
+`backend_enforced_cap`. Retry bytes cover *all* additional allowed attempts,
+including failed work and snapshot reopening, not just one retry. Plan scan
+work sums every task and phase, regardless of concurrency. Output limits and
+table sizes are not physical scan guarantees.
+
+A strict `Budget.max_scan_bytes` admits only if every phase has a sufficient
+verified bound or enforceable cap and a finite `max_attempts` allowance.
+Unknown or forecast-only evidence refuses with `terrine.budget.scan_unknown`;
+an excessive bound refuses with `terrine.budget.scan_exceeded`. Non-strict
+unknown costs remain explicit warnings, not an implicit scan limit.
+
+Before any task source callback, the executor must implement
+`ScanAuthorizingExecutor.authorize_scan(plan)` and return
+`ScanAuthorization(plan.recipe.fingerprint)` only after verifying the saved
+evidence against its actual retained inputs and read/cap implementation.
+A fingerprint verifies the recipe, not the truth of a backend claim. Missing
+authorization refuses with `terrine.budget.scan_authority_unavailable`.
+Ordinary Model/Design callers do not supply numeric proofs; capable owner
+adapters derive and enforce them. Declared attempt limits are persisted before
+dispatch and survive failed runs/restarts. Exhaustion refuses before another
+read with `terrine.budget.scan_attempts_exhausted`; a new run requires a new
+budget allowance.
+
+Native DuckDB query scan bounds/caps remain unavailable. Its estimates stay
+`None`, including snapshot capture; strict scan budgets still refuse before
+source execution. Apply the same budget to capture as to execution: a later
+plan cannot authorize already-unbudgeted source capture. Retaining input rows
+or limiting output does not turn their size into a scan bound.
+
+Runtime plan schema **2** fingerprints cost evidence, forecast fields, attempt
+limits, budget, publication preconditions, and the reconstruction identity when
+bound to a saved Model/Design recipe. Schema 1 is explicitly rejected; replan
+older recipes rather than silently upgrading absent evidence. Use
+`plan.bind_base_manifest(generation)` when binding publication preconditions
+without a saved Model/Design recipe.
+
+`get_run(...).cost` separately reports observed completed-task artifact rows
+and bytes, intermediate artifact bytes, and durable attempt counts. When
+available, its nested `capture` entry reports retained input artifact accounting;
+it does not replace the completed-task observations. These are not total
+allocation, repeated-query work, or scan measurements. Unavailable scan
+observations remain `None` with a reason; legacy missing artifact observations
+remain unavailable. Observations never rewrite saved forecasts.
 
 ## Save, run, and follow runs
 
