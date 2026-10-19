@@ -61,7 +61,7 @@ class _DuckDBProvider:
     capabilities = DUCKDB_CAPABILITIES
 
     def matches(self, con: Any) -> bool:
-        if type(con).__module__ not in {"ibis.backends.duckdb", "_duckdb"}:
+        if type(con).__module__ != "ibis.backends.duckdb":
             return False
         from terrine.execution._native import raw_connection
 
@@ -137,5 +137,5 @@ def backend_provider(con: Any) -> BackendProvider:
         backend=str(getattr(con, "name", type(con).__name__)).casefold(),
         operation="query",
         status="unverified",
-        route="Bind a native local DuckDB connection; other backend execution is unverified.",
+        route="Bind a local Ibis DuckDB backend; other execution providers are unverified.",
     )

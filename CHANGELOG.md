@@ -11,6 +11,7 @@
 
 ## Fixed
 - Reject non-read and multi-statement compiled queries before native schema resolution, while preserving compiler built-ins and source-relation function admission.
+- Refuse raw driver connections at the Ibis execution-provider boundary instead of advertising relation methods they do not implement; native runtime connection verification is unchanged.
 - Refuse missing pandas with the coded optional-dependency error before decoding diff-diff timestamp periods, including nanosecond values.
 - Keep state-classification null assertions valid across the supported pandas 2.x and 3.x representations.
 

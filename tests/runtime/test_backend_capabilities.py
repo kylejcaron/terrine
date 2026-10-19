@@ -254,3 +254,23 @@ def test_dataset_reopen_refuses_unverified_backend_before_native_attributes(publ
         Dataset.from_manifest(dataset.manifest, con=Unverified())
     assert error.value.code == "terrine.backend.capability_unavailable"
     assert error.value.context["backend"] == "bigquery"
+
+
+def test_retained_capture_accepts_raw_owner_connection_with_verified_model(
+    publication_frame, tmp_path
+):
+    frame, con = publication_frame
+    authority = SnapshotAuthority(
+        RuntimeOwner(tmp_path / "capabilities.duckdb", tmp_path / "snapshots")
+    )
+    receipt = authority.capture(
+        frame._model,
+        design=frame._design,
+        con=con.con,
+        namespace="owner",
+        run_id="capture",
+        budget=Budget(strict_scan=False),
+    )
+    assert receipt.snapshot_id
+    restored = authority.find_retained(receipt.snapshot_id, namespace="owner")
+    assert restored.to_json() == receipt.to_json()

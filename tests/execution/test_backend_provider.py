@@ -165,3 +165,19 @@ def test_provider_rejects_non_read_compiler_queries_before_native_execution(sql)
         ).fetchone() == (0,)
     finally:
         con.disconnect()
+
+
+def test_raw_driver_connection_is_not_an_ibis_execution_provider():
+    from terrine.execution._native import verify_native_backend
+    from terrine.execution.backend import backend_capabilities, backend_provider
+
+    raw = duckdb.connect()
+    try:
+        assert verify_native_backend(raw)[0] is raw
+        with pytest.raises(TerrineError) as error:
+            backend_provider(raw)
+        assert error.value.code == "terrine.backend.capability_unavailable"
+        assert "Ibis" in error.value.context["route"]
+        assert backend_capabilities(raw).dialect_admission is None
+    finally:
+        raw.close()
