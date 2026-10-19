@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from terrine.errors import TerrineError
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.runtime.events import (
     EventPage,
     RunEvent,
@@ -28,6 +28,10 @@ __all__ = ["ControlEndpoint", "ControlServer", "ControlClient"]
 
 _MAX_CONTROL_MESSAGE_BYTES = 16_777_216
 _MESSAGE_TOO_LARGE = "terrine.runtime.control_message_too_large"
+_INTERRUPTED = RefusalSpec(
+    "terrine.runtime.owner_interrupted",
+    "The runtime owner stopped before completing or publishing this run.",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +55,7 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
     if exists is None:
         return
     con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP")
+    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS error_code VARCHAR")
     lease_table = con.execute(
         "SELECT 1 FROM information_schema.tables "
         "WHERE lower(table_schema)=lower(?) AND table_name='runtime_leases'",
@@ -111,7 +116,7 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
                     )
             transitioned = con.execute(
                 f"UPDATE {schema}.runtime_runs SET state=?, "
-                "published_generation=COALESCE(?,published_generation), updated_at=? "
+                "published_generation=COALESCE(?,published_generation), updated_at=?, error_code=? "
                 "WHERE run_id=? AND state=? AND attempt_fence=? AND NOT EXISTS ("
                 f"SELECT 1 FROM {schema}.runtime_leases l "
                 "WHERE l.resource='dataset:' || runtime_runs.dataset "
@@ -122,6 +127,7 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
                     state,
                     generation,
                     datetime.now(UTC).replace(tzinfo=None),
+                    _INTERRUPTED.code if state == "failed" else None,
                     run_id,
                     old_state,
                     fence,

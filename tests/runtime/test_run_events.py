@@ -129,3 +129,23 @@ def test_concurrent_lifecycle_emission_allocates_unique_sequences():
 
     events = read_run_events("r1", con=con, namespace="owner").events
     assert [event.sequence for event in events] == list(range(1, 9))
+
+
+def test_consumer_deduplicates_redelivered_pages_and_resumes_from_acknowledged_cursor():
+    con = duckdb.connect(":memory:")
+    for state in ("queued", "running"):
+        record_run_event("r1", "lifecycle", {"state": state}, con=con, namespace="owner")
+    first = read_run_events("r1", con=con, namespace="owner", limit=2)
+    redelivered = read_run_events("r1", con=con, namespace="owner", limit=2)
+    assert redelivered == first
+    record_run_event("r1", "lifecycle", {"state": "succeeded"}, con=con, namespace="owner")
+    resumed = read_run_events("r1", con=con, namespace="owner", after=first.next_cursor, limit=2)
+    delivered = (*first.events, *redelivered.events, *resumed.events, *resumed.events)
+    acknowledged = {(event.run_id, event.sequence): event for event in delivered}
+    assert list(acknowledged) == [("r1", 1), ("r1", 2), ("r1", 3)]
+    assert [event.payload["state"] for event in acknowledged.values()] == [
+        "queued",
+        "running",
+        "succeeded",
+    ]
+    assert read_run_events("r1", con=con, namespace="owner", after=resumed.next_cursor).events == ()

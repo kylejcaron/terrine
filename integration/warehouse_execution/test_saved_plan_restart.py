@@ -6,6 +6,7 @@ import subprocess
 import sys
 
 import ibis
+import pytest
 
 from terrine.data import Budget, Coverage
 from terrine.model import Model
@@ -47,7 +48,8 @@ def _model(con, catalog: Catalog) -> Model:
     )
 
 
-def test_saved_plan_materializes_retained_model_and_design_in_fresh_process(tmp_path):
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_saved_plan_materializes_retained_model_and_design_in_fresh_process(tmp_path, interrupted):
     import pyarrow as pa
 
     from terrine.model import UnitSource
@@ -108,18 +110,19 @@ def test_saved_plan_materializes_retained_model_and_design_in_fresh_process(tmp_
     con.raw_sql("UPDATE events SET value=99")
     con.disconnect()
     script = r"""
-import json, sys
+import json, os, sys, threading
 import ibis
 import pyarrow as pa
 from terrine.data import Coverage, MaterializedFrame
 from terrine.model import Model, UnitSource
 from terrine.runtime import run_serialized_plan, open_published_frame
+from terrine.runtime.api import DesignExecutor
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.recipe import SavedPlanRecipe
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.semantic.models import Catalog
 
-state_path, snapshot_root, recipe_path, catalog_path, expected_path = sys.argv[1:]
+state_path, snapshot_root, recipe_path, catalog_path, expected_path, interrupted = sys.argv[1:]
 connection = ibis.duckdb.connect(state_path)
 class OwnerResolver:
     def resolve(self, reference):
@@ -129,6 +132,20 @@ class OwnerResolver:
             readiness={'events': Coverage('2025-01-01', '2025-02-01')},
             units={'user': UnitSource('users', 'id')})
 serialized = open(recipe_path).read()
+if interrupted == 'True':
+    original_task = DesignExecutor.run_snapshot_task
+    completed = []
+    def interrupted_task(self, context, task, dependencies):
+        if completed:
+            while connection.con.execute(
+                "SELECT heartbeat_at FROM runtime.runtime_runs"
+            ).fetchone()[0] is None:
+                threading.Event().wait(0.01)
+            os._exit(73)
+        result = original_task(self, context, task, dependencies)
+        completed.append(task.task_id)
+        return result
+    DesignExecutor.run_snapshot_task = interrupted_task
 recipe = SavedPlanRecipe.from_json(serialized)
 owner = RuntimeOwner(state_path=state_path, snapshot_root=snapshot_root)
 receipt = run_serialized_plan(serialized, con=connection.con, namespace='runtime',
@@ -148,7 +165,7 @@ assert run_serialized_plan(serialized, con=connection.con, namespace='runtime',
 assert connection.table('events').execute()['value'].tolist() == [99]
 connection.disconnect()
 """
-    subprocess.run(
+    process = subprocess.run(
         [
             sys.executable,
             "-c",
@@ -158,12 +175,92 @@ connection.disconnect()
             str(recipe_path),
             str(catalog_path),
             str(expected_path),
+            str(interrupted),
         ],
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
+        timeout=60,
         env=os.environ.copy(),
     )
+    assert process.returncode == (73 if interrupted else 0), process.stderr
+    if interrupted:
+        from pathlib import Path
+        from uuid import uuid4
+
+        from terrine.runtime import get_run, open_published_frame
+        from terrine.runtime.control import ControlClient, ControlEndpoint, ControlServer
+
+        reopened = ibis.duckdb.connect(str(state_path))
+        try:
+            run_id = reopened.con.execute("SELECT run_id FROM runtime.runtime_runs").fetchone()[0]
+            disconnected = get_run(run_id, con=reopened.con, namespace="runtime")
+            assert disconnected.durable_state == "running"
+            assert disconnected.heartbeat_at is not None
+            assert disconnected.phase == "executing"
+            assert disconnected.progress["completed_tasks"] == 1
+            retained_task = reopened.con.execute(
+                "SELECT task_id,output_blob,task_fence FROM runtime.runtime_tasks "
+                "WHERE status='complete'"
+            ).fetchone()
+            reopened.con.execute(
+                "UPDATE runtime.runtime_leases SET expires_at=TIMESTAMP '2000-01-01'"
+            )
+            stale = get_run(run_id, con=reopened.con, namespace="runtime")
+            assert stale.durable_state == "running"
+            assert stale.freshness == "stale"
+            assert stale.heartbeat_at == disconnected.heartbeat_at
+
+            class Resolver:
+                def resolve(self, reference):
+                    return Model.from_catalog(
+                        catalog,
+                        con=reopened,
+                        readiness={"events": Coverage("2025-01-01", "2025-02-01")},
+                        units={"user": UnitSource("users", "id")},
+                    )
+
+            endpoint = ControlEndpoint(Path(f"/tmp/terrine-resume-{uuid4().hex}.sock"))
+            server = ControlServer(
+                RuntimeStore(reopened.con, namespace="runtime"),
+                namespace="runtime",
+                endpoint=endpoint,
+                resolver=Resolver(),
+                snapshot_authority=SnapshotAuthority(owner),
+            )
+            server.start()
+            try:
+                client = ControlClient(endpoint, namespace="runtime")
+                recovered = client.get_run(run_id)
+                assert recovered.durable_state == "failed"
+                assert recovered.error_code == "terrine.runtime.owner_interrupted"
+                resumed = client.run(recipe.to_json(), request_key="fresh-process")
+                assert resumed.run_id == run_id
+                assert resumed.state == "succeeded"
+                frame = open_published_frame(resumed, con=reopened.con, namespace="runtime")
+                assert frame.table.to_pylist() == expected.table.to_pylist()
+                assert frame.columns == expected.columns
+                assert (
+                    reopened.con.execute(
+                        "SELECT task_id,output_blob,task_fence FROM runtime.runtime_tasks "
+                        "WHERE task_id=?",
+                        [retained_task[0]],
+                    ).fetchone()
+                    == retained_task
+                )
+                resumed_events = client.read_run_events(
+                    run_id, after=disconnected.latest_event_cursor
+                )
+                assert [event.payload["state"] for event in resumed_events.events] == [
+                    "failed",
+                    "running",
+                    "succeeded",
+                ]
+                assert client.get_run(run_id).progress["completed_tasks"] == len(plan.tasks)
+            finally:
+                server.close()
+        finally:
+            reopened.disconnect()
 
 
 def test_reopenable_snapshot_resumes_in_fresh_process_after_source_mutation(tmp_path):

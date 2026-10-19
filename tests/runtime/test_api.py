@@ -62,6 +62,8 @@ def test_run_serialized_plan_executes_through_python_facade():
 
 
 def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path):
+    from pathlib import Path
+
     from terrine.data import Budget, Coverage
     from terrine.model import Model, UnitSource
     from terrine.runtime.owner import RuntimeOwner
@@ -201,15 +203,21 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
             resolver=Resolver(),
             snapshot_authority=authority,
         )
-    assert (
-        runtime.find_run_by_request_key(
-            "saved-run",
-            destination=DestinationRef("output.duckdb", "analytics", "orders"),
-            con=con.con,
-            namespace="runtime",
-        )
-        is not None
+    failed = runtime.find_run_by_request_key(
+        "saved-run",
+        destination=DestinationRef("output.duckdb", "analytics", "orders"),
+        con=con.con,
+        namespace="runtime",
     )
+    assert failed is not None
+    failed_status = runtime.get_run(failed.run_id, con=con.con, namespace="runtime")
+    assert failed_status.phase == "failed"
+    assert failed_status.error_code == "terrine.runtime.execution_failed"
+    assert failed_status.progress == {
+        "completed_tasks": 0,
+        "running_tasks": 0,
+        "total_tasks": len(plan.tasks),
+    }
     conflicting_plan = plan
     conflicting_recipe = SavedPlanRecipe.create(
         plan_json=conflicting_plan.serialize(),
@@ -277,6 +285,47 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
     assert built_in.state == "succeeded"
     assert published.table.num_rows == 1
     assert published.table["total"].to_pylist() == [3.0]
+    status = runtime.get_run(built_in.run_id, con=con.con, namespace="runtime")
+    assert status.phase == "succeeded"
+    assert status.error_code is None
+    assert status.progress == {
+        "completed_tasks": len(plan.tasks),
+        "running_tasks": 0,
+        "total_tasks": len(plan.tasks),
+    }
+    assert status.cost == {
+        "capture": {
+            "snapshot_id": snapshot.snapshot_id,
+            "artifact_bytes": Path(snapshot.artifact_path).stat().st_size,
+            "root_count": 2,
+            "scan_bytes": None,
+        }
+    }
+    assert status.readiness == {
+        "events": {
+            "start": "2025-01-01T00:00:00+00:00",
+            "end_exclusive": "2025-02-02T00:00:00+00:00",
+        }
+    }
+
+    from sqlglot import exp, parse_one
+
+    class RuntimeQuerySpy:
+        def __init__(self):
+            self.queries = []
+
+        def execute(self, sql, *args, **kwargs):
+            self.queries.append(sql)
+            for table in parse_one(sql, read="duckdb").find_all(exp.Table):
+                assert table.db == "information_schema" or (
+                    table.db == "runtime" and (not table.name or table.name.startswith("runtime_"))
+                )
+            return con.con.execute(sql, *args, **kwargs)
+
+    query_spy = RuntimeQuerySpy()
+    assert runtime.get_run(built_in.run_id, con=query_spy, namespace="runtime") == status
+    assert runtime.read_run_events(built_in.run_id, con=query_spy, namespace="runtime").events
+    assert query_spy.queries
 
     from dataclasses import fields
 

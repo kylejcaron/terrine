@@ -20,6 +20,8 @@ A destination reference identifies `(database, schema, dataset)` for request-key
 
 `SnapshotAuthority.capture` is scoped to the resolved `Design`: it captures only required fact/property sources, their required dimensions and integrity inputs, and that design unit's roster. It keeps the full Catalog/model identity bound in the receipt without copying unrelated source rows. For example, a label source unused by the plan is not captured.
 
+DuckDB capture uses backend-native `COPY` into retained storage rather than transferring source rows through the Ibis client. Output row/byte limits do not limit this input capture, and unknown source scan work cannot satisfy a strict scan budget. Capture acceptance increases input cardinality while prohibiting client row-fetch APIs and bounding steady-state Python allocations independently of the retained row count; backend-native memory and one-time initialization are not presented as measured client buffers.
+
 ## Runtime shape support
 
 Runtime composition enters through the same `compile_design` dispatcher as ordinary Frames. `cross_section` reuses verified persisted anchor/prefix layers. `StatePanel` is supported through that dispatcher as a full rebuild. Other specialized shapes are refused before source work with `terrine.compile.runtime_shape_unsupported`; the coded refusal carries the shape and the route `ordinary Frame materialization or a full rebuild`. Use ordinary Frame materialization or perform a full rebuild for those shapes.
@@ -64,6 +66,10 @@ terrine cancel RUN_ID
 For saved recipes, the durable request fingerprint includes the complete reconstruction recipe: the owner Model reference and its Catalog, roster, readiness and event-ID bindings, Design, destination, retained snapshot, and expected base manifest. Changing any binding is a different request even after the original run has finished; terminal replay verifies that identity without requiring the resolver or snapshot artifact to remain available.
 
 Status, event pages, and cancellation are projections of durable owner state. Event cursors are exclusive and pages bounded. Endpoint availability is tied to the owner process: after a crash, wait until a recovery owner can reacquire the DuckDB database and reconcile before querying again. A cancellation request is durable but does not prove that an active backend query or its billing stopped. A stale heartbeat means liveness is unknown, not that a run is safely terminal.
+
+Executed runs expose durable task progress (`completed_tasks`, `running_tasks`, `total_tasks`), an execution/publication or terminal phase, the captured source readiness bounds, and a stable failure code. Capture accounting records the retained artifact's byte size, root count, and snapshot identity; `scan_bytes` remains unknown rather than being reported as zero. These projections and event pages read runtime metadata only, never customer source tables. Legacy records without capture or task accounting retain unknown values.
+
+Status freshness describes whether the persisted attempt lease is current or stale, not proof that a backend query is alive or stopped. After an interrupted owner loses its lease, a recovery owner records `terrine.runtime.owner_interrupted` and can resume the same saved request from completed task outputs. Consumers can redeliver event pages safely by deduplicating on `(run_id, sequence)` and advancing only the acknowledged exclusive cursor.
 
 Run-state transitions distinguish recoverable failure from terminal results. A `failed` run may retry only after acquiring a newer lease fencing token; an expired writer cannot resume or publish. `succeeded` and `cancelled` runs are terminal and never regress.
 

@@ -127,6 +127,11 @@ class RuntimeStore:
             f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_manifests ("
             "dataset VARCHAR PRIMARY KEY, generation VARCHAR NOT NULL, snapshot_id VARCHAR)"
         )
+        self.con.execute(
+            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_captures ("
+            "snapshot_id VARCHAR PRIMARY KEY, cost_json VARCHAR NOT NULL, "
+            "readiness_json VARCHAR NOT NULL)"
+        )
 
     def write_generation(
         self,
