@@ -143,6 +143,8 @@ def simulate(config: WorldConfig, seed: int) -> World:
         values["mean"] + assigned * (2 + 0.75 * values["x"] + 0.5 * plus)
         + outcome.normal(0, config.outcome_noise_sd, config.n_units)
     )
+    if not np.isfinite(observed).all():
+        raise _NONFINITE.error(quantity="outcome")
     roster, events, attributes = _raw_tables(config, values, assigned, observed, timing)
     coverage = Coverage(
         (config.t0 - timedelta(seconds=config.lookback_seconds)).date(),

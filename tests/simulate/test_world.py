@@ -79,6 +79,13 @@ def test_invalid_world_config_is_rejected(changes):
         WorldConfig(**changes)
 
 
+def test_nonfinite_observed_outcomes_refuse():
+    config = WorldConfig(n_units=256, outcome_noise_sd=1.7e308)
+    with pytest.raises(TerrineError) as error:
+        simulate(config, seed=31)
+    assert error.value.code == "terrine.simulate.nonfinite"
+
+
 @pytest.mark.parametrize("seed", [-1, 2**64, True, 1.5])
 def test_seed_must_be_an_unsigned_64_bit_integer(seed):
     with pytest.raises(TerrineError) as exc:

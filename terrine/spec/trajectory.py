@@ -124,6 +124,21 @@ class LifeTable:
             raise TypeError("group_by must be a tuple of non-empty feature names")
         if len(set(group_by)) != len(group_by):
             raise ValueError("group_by names must be unique")
+        reserved = {
+            "unit",
+            "anchor_id",
+            "t0",
+            "time_bin",
+            "at_risk",
+            "events",
+            "censored",
+            "censored_by_reason",
+            "delayed_entries",
+            "event_rate",
+            "censor_rate",
+        }
+        if reserved.intersection(group_by):
+            raise ValueError("group_by names cannot collide with life-table output columns")
         object.__setattr__(self, "time_to_event", time_to_event)
         object.__setattr__(self, "interval", width)
         object.__setattr__(self, "group_by", group_by)

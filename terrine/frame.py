@@ -229,7 +229,8 @@ class Frame:
             summary = validate_compiled_output(compiled, context.execute)
             query = compiled.table
             chunk_size = 65_536
-            if budget is not None and budget.max_rows is not None:
+            is_life_table = isinstance(self._design.shape, LifeTable)
+            if budget is not None and budget.max_rows is not None and not is_life_table:
                 limit = min(budget.max_rows + 1, 2**63 - 1)
                 query = query.limit(limit)
                 chunk_size = min(chunk_size, limit)
@@ -244,7 +245,7 @@ class Frame:
                         batch = batch.cast(schema)
                     row_count += batch.num_rows
                     byte_count += batch.nbytes
-                    if budget is not None:
+                    if budget is not None and not is_life_table:
                         if budget.max_rows is not None and row_count > budget.max_rows:
                             raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
                         if (
@@ -266,7 +267,16 @@ class Frame:
                     table,
                     interval_seconds=life_table.interval,
                     group_by=life_table.group_by,
+                    max_rows=None if budget is None else budget.max_rows,
                 )
+                if budget is not None:
+                    if budget.max_rows is not None and table.num_rows > budget.max_rows:
+                        raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
+                    if (
+                        budget.max_output_bytes is not None
+                        and table.nbytes > budget.max_output_bytes
+                    ):
+                        raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
                 roles = Roles(
                     "unit",
                     "anchor_id",
@@ -282,7 +292,10 @@ class Frame:
                         "censor_rate",
                     ),
                 )
-                columns = {name: compiled.columns[name] for name in life_table.group_by}
+                columns = {
+                    name: ColumnMeta(None, "feature", None, None, None, None)
+                    for name in life_table.group_by
+                }
                 columns["time_bin"] = ColumnMeta(None, "feature", None, None, None, None)
                 columns.update(
                     {

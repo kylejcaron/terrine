@@ -67,11 +67,12 @@ def preflight_export(
         )
 
     roles = data.roles
+    if roles.cluster_unit is not None and roles.cluster_unit not in data.table.column_names:
+        raise _CLUSTER_REQUIRED.error()
     if roles.unit in data.table.column_names:
         units = data.table[roles.unit].to_pylist()
         if len(set(units)) != len(units) and roles.cluster_unit is None:
             raise _CLUSTER_REQUIRED.error()
-
     excluded: dict[str, int] = {}
     excluded_rows: set[int] = set()
     for outcome in roles.outcomes:
@@ -86,11 +87,11 @@ def preflight_export(
             incomplete = [i for i, value in enumerate(complete) if value is not True]
             if reason_name is not None and reason_name in data.table.column_names:
                 reason_values = data.table[reason_name].to_pylist()
-                incomplete_rows = set(incomplete)
                 reasons = [
-                    value if isinstance(value, str) and value else "reason_unavailable"
-                    for i, value in enumerate(reason_values)
-                    if i in incomplete_rows
+                    reason_values[i]
+                    if isinstance(reason_values[i], str) and reason_values[i]
+                    else "reason_unavailable"
+                    for i in incomplete
                 ]
             else:
                 reasons = ["reason_unavailable"] * len(incomplete)

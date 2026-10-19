@@ -28,6 +28,7 @@ def aggregate_life_table(
     *,
     interval_seconds: int,
     group_by: Sequence[str],
+    max_rows: int | None = None,
 ) -> pa.Table:
     """Aggregate time-to-event rows by elapsed-time bin without curve inference."""
     if interval_seconds <= 0:
@@ -43,10 +44,21 @@ def aggregate_life_table(
     duration = _nanoseconds(records, "duration")
     entry = _nanoseconds(records, "entry_time")
     events = records["event"].to_pylist()
-    reasons = records["censor_reason"].to_pylist()
+    complete = (
+        records["complete"].to_pylist()
+        if "complete" in records.column_names
+        else [True] * records.num_rows
+    )
+    record_reasons = (
+        records["reason"].to_pylist()
+        if "reason" in records.column_names
+        else [None] * records.num_rows
+    )
+    censor_reasons = records["censor_reason"].to_pylist()
     groups = [records[name].to_pylist() for name in group_by]
     width = interval_seconds * 1_000_000_000
     bins_by_group: dict[tuple[object, ...], dict[int, dict[str, object]]] = defaultdict(dict)
+    output_bins = 0
 
     for index, origin in enumerate(t0):
         terminal = duration[index]
@@ -62,21 +74,45 @@ def aggregate_life_table(
         delayed_bin = entry_elapsed // width if entry_elapsed > 0 else None
         group_bins = bins_by_group[key]
         for time_bin in range(terminal_bin + 1):
-            group_bins.setdefault(
-                time_bin,
-                {"at_risk": 0, "events": 0, "censored": 0, "delayed_entries": 0, "reasons": {}},
-            )
-            current = group_bins[time_bin]
-            if entry_elapsed <= time_bin * width:
+            current = group_bins.get(time_bin)
+            if current is None:
+                output_bins += 1
+                if max_rows is not None and output_bins > max_rows:
+                    from terrine.compile.cost import _ROWS_EXCEEDED
+
+                    raise _ROWS_EXCEEDED.error(limit=max_rows)
+                current = {
+                    "at_risk": 0,
+                    "events": 0,
+                    "censored": 0,
+                    "delayed_entries": 0,
+                    "reasons": {},
+                }
+                group_bins[time_bin] = current
+            bin_start = time_bin * width
+            bin_end = bin_start + width
+            if entry_elapsed < bin_end and (
+                terminal_elapsed > bin_start
+                or (
+                    terminal_elapsed == bin_start
+                    and events[index]
+                    and complete[index] is True
+                )
+            ):
                 current["at_risk"] += 1
             if delayed_bin == time_bin:
                 current["delayed_entries"] += 1
         terminal_row = group_bins[terminal_bin]
-        if events[index]:
+        is_complete = complete[index] is True
+        if events[index] and is_complete:
             terminal_row["events"] += 1
         else:
             terminal_row["censored"] += 1
-            reason = reasons[index] or "unknown"
+            reason = (
+                record_reasons[index]
+                if not is_complete
+                else censor_reasons[index]
+            ) or "unknown"
             reason_counts = terminal_row["reasons"]
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
 

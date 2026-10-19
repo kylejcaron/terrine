@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import ibis
 import pytest
@@ -662,3 +662,51 @@ def test_life_table_matches_independent_pandas_risk_set_oracle():
         assert rows[-1]["censored_by_reason"] == [("administrative_cutoff", 1)]
     finally:
         con.disconnect()
+
+
+def test_life_table_delayed_entries_and_incomplete_records_preserve_reason():
+    import pyarrow as pa
+
+    from terrine.compile.shapes.life_table import aggregate_life_table
+
+    timestamp = pa.timestamp("us", tz="UTC")
+    origin = datetime(2025, 1, 1, tzinfo=UTC)
+    records = pa.table(
+        {
+            "t0": pa.array([origin], type=timestamp),
+            "duration": pa.array([origin + timedelta(hours=18)], type=timestamp),
+            "entry_time": pa.array([origin + timedelta(hours=12)], type=timestamp),
+            "event": pa.array([True]),
+            "complete": pa.array([False]),
+            "reason": pa.array(["incomplete_initial_history"]),
+            "censor_reason": pa.array([None], type=pa.string()),
+        }
+    )
+    rows = aggregate_life_table(records, interval_seconds=86_400, group_by=[]).to_pylist()
+    assert len(rows) == 1
+    assert rows[0]["at_risk"] == 1
+    assert rows[0]["delayed_entries"] == 1
+    assert rows[0]["events"] == 0
+    assert rows[0]["censored"] == 1
+    assert rows[0]["censored_by_reason"] == [("incomplete_initial_history", 1)]
+
+
+def test_life_table_row_budget_applies_to_expanded_output():
+    import pyarrow as pa
+
+    from terrine.compile.shapes.life_table import aggregate_life_table
+
+    timestamp = pa.timestamp("us", tz="UTC")
+    origin = datetime(2025, 1, 1, tzinfo=UTC)
+    records = pa.table(
+        {
+            "t0": pa.array([origin], type=timestamp),
+            "duration": pa.array([origin + timedelta(days=2)], type=timestamp),
+            "entry_time": pa.array([origin], type=timestamp),
+            "event": pa.array([True]),
+            "censor_reason": pa.array([None], type=pa.string()),
+        }
+    )
+    with pytest.raises(TerrineError) as error:
+        aggregate_life_table(records, interval_seconds=86_400, group_by=[], max_rows=1)
+    assert error.value.code == "terrine.budget.rows_exceeded"
