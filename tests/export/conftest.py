@@ -21,7 +21,9 @@ def frame():
         {
             "id": [1, 2],
             "anchor": [1, 2],
-            "t0": pa.array([datetime(2025, 1, 1, tzinfo=UTC)] * 2, type=pa.timestamp("us", tz="UTC")),
+            "t0": pa.array(
+                [datetime(2025, 1, 1, tzinfo=UTC)] * 2, type=pa.timestamp("us", tz="UTC")
+            ),
             "a": [0, 1],
             "x": [1.0, 2.0],
             "y": [1.0, 2.0],
@@ -48,7 +50,9 @@ def frame():
             "cross_section",
             "baseline_binary",
             expression_timings={
-                "y": ExpressionTiming("fixed_t0", None, None, (0, 28 * 86400), (), {}, "t0", None, None)
+                "y": ExpressionTiming(
+                    "fixed_t0", None, None, (0, 28 * 86400), (), {}, "t0", None, None
+                )
             },
             treatment_knowledge="recorded_at",
             treatment_known_at_t0=True,

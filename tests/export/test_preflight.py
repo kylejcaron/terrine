@@ -54,6 +54,7 @@ def test_repeated_independent_units_require_cluster_column(frame):
         preflight_export(replace(frame, table=table))
     assert error.value.code == "terrine.export.cluster_required"
 
+
 def test_repeated_units_reject_missing_declared_cluster_column(frame):
     table = frame.table.take(pa.array([0, 0]))
     roles = replace(frame.roles, cluster_unit="cluster_id")
@@ -63,7 +64,9 @@ def test_repeated_units_reject_missing_declared_cluster_column(frame):
 
 
 def test_grace_defined_baseline_treatment_has_shared_refusal(frame):
-    candidate = replace(frame, provenance=replace(frame.provenance, treatment_design="grace_initiation"))
+    candidate = replace(
+        frame, provenance=replace(frame.provenance, treatment_design="grace_initiation")
+    )
     with pytest.raises(TerrineError) as error:
         preflight_export(candidate)
     assert error.value.code == "terrine.export.grace_baseline_treatment"

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from collections.abc import Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
@@ -23,6 +23,7 @@ _INVALID = RefusalSpec(
 )
 _SURROGATE_METADATA_KEY = b"terrine.surrogate_arrow.v1"
 
+
 @dataclass(frozen=True, slots=True)
 class ArrowSurrogate:
     """Versioned Arrow surrogate projection and portable metadata."""
@@ -36,6 +37,7 @@ class ArrowSurrogate:
         if not isinstance(self.data, pa.Table):
             raise TypeError("data must be a pyarrow.Table")
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+
     @classmethod
     def from_arrow(cls, table: pa.Table) -> ArrowSurrogate:
         raw = (table.schema.metadata or {}).get(_SURROGATE_METADATA_KEY)
@@ -62,6 +64,7 @@ def to_surrogate_arrow(
 ) -> ArrowSurrogate:
     """Project Arrow training data with identity, missingness and provenance."""
     from terrine.data import MaterializedFrame
+
     if not isinstance(data, MaterializedFrame):
         raise _INVALID.error(reason="materialized_frame_required")
     table = data.table

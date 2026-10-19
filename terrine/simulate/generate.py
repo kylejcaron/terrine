@@ -41,6 +41,7 @@ def _baseline_values(config: WorldConfig, baseline) -> dict[str, np.ndarray]:
         **{name: array for name, array in arrays.items() if name != "x"},
     }
 
+
 def _raw_tables(config: WorldConfig, oracle, assigned, observed, timing):
     n = config.n_units
     ids = oracle["unit_id"]
@@ -140,7 +141,8 @@ def simulate(config: WorldConfig, seed: int) -> World:
     assigned = assignment.binomial(1, values["e"], config.n_units).astype(bool)
     plus = values["plan_tier"] == "plus"
     observed = (
-        values["mean"] + assigned * (2 + 0.75 * values["x"] + 0.5 * plus)
+        values["mean"]
+        + assigned * (2 + 0.75 * values["x"] + 0.5 * plus)
         + outcome.normal(0, config.outcome_noise_sd, config.n_units)
     )
     if not np.isfinite(observed).all():
@@ -178,5 +180,3 @@ def simulate(config: WorldConfig, seed: int) -> World:
         },
         event_ids={"world_events": "event_id"},
     )
-
-

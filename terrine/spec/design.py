@@ -208,7 +208,9 @@ class Design:
         ):
             raise ValueError("time-to-event shapes require one analysis entry per unit")
         if isinstance(time_to_event_shape, TimeToEvent) and outcomes:
-            raise ValueError("time-to-event shapes generate outcomes; explicit outcomes are not allowed")
+            raise ValueError(
+                "time-to-event shapes generate outcomes; explicit outcomes are not allowed"
+            )
         if isinstance(shape, LifeTable) and not set(shape.group_by).issubset(features or {}):
             raise ValueError("LifeTable group_by names must be declared design features")
         object.__setattr__(self, "administrative_cutoff", administrative_cutoff)

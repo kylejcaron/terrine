@@ -456,15 +456,14 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
     censor_reason = ibis.literal("source_coverage")
     if shape.exit is not None:
         censor_reason = ibis.ifelse(
-            retained._exit_time.notnull()
-            & (retained._exit_time == retained._followup_end),
+            retained._exit_time.notnull() & (retained._exit_time == retained._followup_end),
             ibis.literal("exit"),
             censor_reason,
         )
     if design.administrative_cutoff is not None:
-        cutoff = _utc_naive(
-            "UTC", ibis.literal(design.administrative_cutoff)
-        ).cast(retained._followup_end.type())
+        cutoff = _utc_naive("UTC", ibis.literal(design.administrative_cutoff)).cast(
+            retained._followup_end.type()
+        )
         censor_reason = ibis.ifelse(
             retained._followup_end == cutoff,
             ibis.literal("administrative_cutoff"),

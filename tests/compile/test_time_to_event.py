@@ -629,6 +629,8 @@ def test_survival_preserves_event_feature_timing_through_arrow_round_trip():
         assert timing.end_bound_column in arrow.column_names
     finally:
         con.disconnect()
+
+
 def test_life_table_matches_independent_pandas_risk_set_oracle():
     import pandas as pd
 
@@ -637,14 +639,13 @@ def test_life_table_matches_independent_pandas_risk_set_oracle():
     con, model = _model()
     try:
         con.raw_sql(
-            "DELETE FROM outcomes WHERE user_id = 'u1' AND ts = TIMESTAMPTZ '2025-01-01 00:00:00+00'"
+            "DELETE FROM outcomes WHERE user_id = 'u1' "
+            "AND ts = TIMESTAMPTZ '2025-01-01 00:00:00+00'"
         )
         frame = Design(
             "user",
             EventAnchor("signup", which="first"),
-            shape=LifeTable(
-                TimeToEvent("churn", entry="enrolled", delayed_entry=True), "1d"
-            ),
+            shape=LifeTable(TimeToEvent("churn", entry="enrolled", delayed_entry=True), "1d"),
             administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
         ).build(model)
         rows = frame.materialize().table.to_pylist()

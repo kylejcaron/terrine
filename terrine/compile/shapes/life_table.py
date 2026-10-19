@@ -4,10 +4,26 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from typing import Any, TypedDict
 
 import pyarrow as pa
 
+from terrine.errors import RefusalSpec
+
 __all__ = ["aggregate_life_table"]
+
+
+class _BinCounts(TypedDict):
+    at_risk: int
+    events: int
+    censored: int
+    delayed_entries: int
+    reasons: dict[str, int]
+
+
+_ROWS_EXCEEDED = RefusalSpec(
+    "terrine.budget.rows_exceeded", "Output exceeds the configured row limit {limit}."
+)
 
 
 _NS_PER_UNIT = {"s": 1_000_000_000, "ms": 1_000_000, "us": 1_000, "ns": 1}
@@ -59,20 +75,15 @@ def aggregate_life_table(
     group_supports = group_supports or {}
     if any(name not in records.column_names for name in group_supports):
         raise ValueError("life-table grouping support column is missing")
-    if any(
-        policy not in {"min", "max", "all", "reasons"}
-        for policy in group_supports.values()
-    ):
+    if any(policy not in {"min", "max", "all", "reasons"} for policy in group_supports.values()):
         raise ValueError("unsupported life-table grouping support policy")
     groups = [records[name].to_pylist() for name in group_by]
-    support_values = {
-        name: records[name].to_pylist() for name in group_supports
-    }
-    support_by_group: dict[tuple[object, ...], dict[str, list[object]]] = defaultdict(
+    support_values = {name: records[name].to_pylist() for name in group_supports}
+    support_by_group: dict[tuple[object, ...], dict[str, list[Any]]] = defaultdict(
         lambda: defaultdict(list)
     )
     width = interval_seconds * 1_000_000_000
-    bins_by_group: dict[tuple[object, ...], dict[int, dict[str, object]]] = defaultdict(dict)
+    bins_by_group: dict[tuple[object, ...], dict[int, _BinCounts]] = defaultdict(dict)
     output_bins = 0
 
     for index, origin in enumerate(t0):
@@ -95,10 +106,8 @@ def aggregate_life_table(
             if current is None:
                 output_bins += 1
                 if max_rows is not None and output_bins > max_rows:
-                    from terrine.compile.cost import _ROWS_EXCEEDED
-
                     raise _ROWS_EXCEEDED.error(limit=max_rows)
-                current = {
+                current: _BinCounts = {
                     "at_risk": 0,
                     "events": 0,
                     "censored": 0,
@@ -119,9 +128,7 @@ def aggregate_life_table(
         else:
             terminal_row["censored"] += 1
             reason = (
-                record_reasons[index]
-                if not is_complete
-                else censor_reasons[index]
+                record_reasons[index] if not is_complete else censor_reasons[index]
             ) or "unknown"
             reason_counts = terminal_row["reasons"]
             reason_counts[reason] = reason_counts.get(reason, 0) + 1

@@ -299,8 +299,6 @@ def test_unit_source_requires_named_table_and_key():
         UnitSource(table="users", key="")
 
 
-
-
 def test_state_panel_roles_and_metadata_survive_arrow_json_roundtrip():
     from dataclasses import replace
 

@@ -218,7 +218,6 @@ def test_time_to_event_design_round_trips_and_requires_matching_occurrence_ancho
         )
 
 
-
 def test_life_table_design_round_trips_and_binds_groups_to_features():
     from terrine.spec.trajectory import LifeTable, TimeToEvent
 
@@ -236,11 +235,13 @@ def test_life_table_design_round_trips_and_binds_groups_to_features():
             shape=LifeTable(TimeToEvent("churn"), "7d", group_by=("region",)),
         )
 
+
 def test_life_table_rejects_group_names_that_collide_with_output_columns():
     from terrine.spec.trajectory import LifeTable, TimeToEvent
 
     with pytest.raises(ValueError, match="life-table output columns"):
         LifeTable(TimeToEvent("churn"), "1d", group_by=("time_bin",))
+
 
 def test_submicrosecond_datetime_subclasses_are_rejected_at_construction():
     value = pd.Timestamp("2025-01-04T00:00:00.000000001Z")

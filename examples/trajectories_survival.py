@@ -86,8 +86,6 @@ def _model():
     return con, model
 
 
-
-
 def main() -> None:
     con, model = _model()
     try:
@@ -120,16 +118,18 @@ def main() -> None:
             sum(not row["cumulative_value_complete"] for row in later_rows),
         )
 
-        life = Design(
-            "user",
-            EventAnchor("purchase", which="first"),
-            shape=LifeTable(TimeToEvent("churn"), "7d"),
-            administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
-        ).build(model).materialize(budget=budget)
-        print("Risk-set table rows:", life.table.to_pylist())
-        surrogate = to_surrogate_arrow(
-            life, features=("time_bin",), outcomes=("at_risk", "events")
+        life = (
+            Design(
+                "user",
+                EventAnchor("purchase", which="first"),
+                shape=LifeTable(TimeToEvent("churn"), "7d"),
+                administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
+            )
+            .build(model)
+            .materialize(budget=budget)
         )
+        print("Risk-set table rows:", life.table.to_pylist())
+        surrogate = to_surrogate_arrow(life, features=("time_bin",), outcomes=("at_risk", "events"))
         restored = type(surrogate).from_arrow(surrogate.to_arrow())
         print("Surrogate metadata:", dict(restored.metadata))
     finally:

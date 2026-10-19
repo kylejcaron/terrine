@@ -260,7 +260,7 @@ class Frame:
             roles = compiled.roles
             columns = compiled.columns
             if isinstance(self._design.shape, LifeTable):
-                from terrine.compile.shapes.life_table import aggregate_life_table
+                from terrine.compile.dispatch import aggregate_life_table
 
                 life_table = self._design.shape
                 group_supports: dict[str, str] = {}
@@ -305,9 +305,7 @@ class Frame:
                         "censor_rate",
                     ),
                 )
-                columns = {
-                    name: compiled.columns[name] for name in life_table.group_by
-                }
+                columns = {name: compiled.columns[name] for name in life_table.group_by}
                 columns["time_bin"] = ColumnMeta(None, "feature", None, None, None, None)
                 columns.update(
                     {

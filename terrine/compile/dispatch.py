@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 import ibis
+import pyarrow as pa
 
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.spec.design import Design
@@ -16,7 +17,7 @@ from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
 if TYPE_CHECKING:
     from terrine.model import Model
 
-__all__ = ["compile_design"]
+__all__ = ["compile_design", "compile_cohort_summary", "aggregate_life_table"]
 
 
 def compile_design(
@@ -87,3 +88,23 @@ def compile_cohort_summary(study: CompiledStudy, *, grouping, value_column: str)
     from terrine.compile.shapes.cohorts import compile_cohorts
 
     return compile_cohorts(study, grouping=grouping, value_column=value_column)
+
+
+def aggregate_life_table(
+    records: pa.Table,
+    *,
+    interval_seconds: int,
+    group_by: Sequence[str],
+    group_supports: Mapping[str, str],
+    max_rows: int | None = None,
+) -> pa.Table:
+    """Aggregate compiled life-table records through the shape dispatcher."""
+    from terrine.compile.shapes.life_table import aggregate_life_table as aggregate
+
+    return aggregate(
+        records,
+        interval_seconds=interval_seconds,
+        group_by=group_by,
+        group_supports=group_supports,
+        max_rows=max_rows,
+    )

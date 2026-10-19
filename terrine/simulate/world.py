@@ -16,7 +16,6 @@ from terrine.data import Coverage, UnitSource
 from terrine.errors import freeze
 
 
-
 class WorldConfig(BaseModel):
     """Fixed-cohort data-generating parameters; durations are elapsed seconds."""
 

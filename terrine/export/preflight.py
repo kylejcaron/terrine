@@ -45,9 +45,7 @@ class ExportPreflight:
         object.__setattr__(self, "excluded_counts", MappingProxyType(dict(self.excluded_counts)))
 
 
-def preflight_export(
-    data: MaterializedFrame, *, drop_incomplete: bool = False
-) -> ExportPreflight:
+def preflight_export(data: MaterializedFrame, *, drop_incomplete: bool = False) -> ExportPreflight:
     """Check shared hand-off hazards without imputing or zero-filling outcomes."""
     from terrine.data import MaterializedFrame
 

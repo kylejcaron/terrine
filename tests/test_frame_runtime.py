@@ -233,7 +233,6 @@ def test_empty_cohort_has_zero_eligibility_totals(native_inputs):
     assert result.table.schema.equals(frame.expr.schema().to_pyarrow())
 
 
-
 def test_compiler_sql_refuses_shadowed_functions_before_schema_binding(native_inputs, tmp_path):
     catalog, con = native_inputs
     model = Model.from_catalog(
