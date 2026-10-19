@@ -78,6 +78,18 @@ def test_export_discards_unfinished_shard_and_rewrites_on_retry(
     destination = tmp_path / "resumable"
     partial = tmp_path / ".resumable.partial"
     original = dataset.to_arrow_batches
+    from terrine.dataset import export as export_module
+
+    original_partition_rows = export_module._partition_rows
+
+    def partition_first_batch(batch, partition_by):
+        if batch.num_rows < 2:
+            yield from original_partition_rows(batch, partition_by)
+            return
+        yield from original_partition_rows(batch.slice(0, 1), partition_by)
+        yield from original_partition_rows(batch.slice(1), partition_by)
+
+    monkeypatch.setattr(export_module, "_partition_rows", partition_first_batch)
 
     def interrupted(*, batch_size=65_536):
         batch = next(iter(original(batch_size=batch_size)))
@@ -89,12 +101,11 @@ def test_export_discards_unfinished_shard_and_rewrites_on_retry(
     )
     with pytest.raises(OSError, match="unfinished shard"):
         dataset.export_parquet(destination=str(destination), target_file_bytes=1)
-    assert list(partial.glob("**/*.parquet")) == []
+    assert len(list(partial.glob("**/*.parquet"))) == 1
 
     monkeypatch.setattr(
         type(dataset), "to_arrow_batches", lambda self, **kwargs: original(**kwargs)
     )
-    from terrine.dataset import export as export_module
 
     writers = 0
     original_writer = export_module.pq.ParquetWriter
