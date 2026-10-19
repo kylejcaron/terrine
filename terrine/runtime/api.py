@@ -329,6 +329,54 @@ def preflight_runtime_shape(design: Any, budget: Any = None) -> None:
     preflight_materialization_shape(design, budget)
 
 
+def _state_panel_provenance(design: Any, model: Any):
+    from datetime import UTC
+
+    from terrine.data import StatePanelMeta
+    from terrine.spec.anchors import Schedule
+    from terrine.spec.state_panel import BinnedMetricState, StatePanel, encode_cutpoint
+
+    if not isinstance(design.shape, StatePanel):
+        return None
+    schedule = design.anchor
+    assert isinstance(schedule, Schedule)
+    state = design.shape.state
+    if isinstance(state, BinnedMetricState):
+        source = {
+            "kind": "binned_metric",
+            "metric": state.metric,
+            "cutpoints": [encode_cutpoint(value) for value in state.cutpoints],
+        }
+        levels, ordered, absorbing = state.levels, True, ()
+        timing = "strict_period"
+    else:
+        source = {
+            "kind": "observations",
+            "property": state.property,
+            "point_time_columns": {"from_state": "from_time", "to_state": "to_time"},
+        }
+        levels, ordered, absorbing = state.levels, state.ordered, state.absorbing
+        timing = "at_origin"
+    return StatePanelMeta(
+        state_source=source,
+        levels=levels,
+        ordered=ordered,
+        absorbing=absorbing,
+        panel_start=model.day_boundary(schedule.start).astimezone(UTC),
+        administrative_end=model.day_boundary(schedule.end).astimezone(UTC),
+        period_seconds=schedule.every,
+        baseline_features=tuple(design.shape.baseline_features),
+        time_varying_features=tuple(design.features),
+        prior_state_timing=timing,
+        period_column="period_index",
+        from_time_column="from_time",
+        to_time_column="to_time",
+        scheduled_to_column="scheduled_to",
+        gap_column="gap",
+        terminal_column="terminal",
+    )
+
+
 class DesignExecutor:
     """Execute a Design through snapshot-bound compiler layers and atomic publication."""
 
@@ -336,12 +384,27 @@ class DesignExecutor:
         from threading import RLock
 
         from terrine.compile.layers import plan_layers
+        from terrine.model import Model
         from terrine.runtime.backends.duckdb import DuckDBBackend
+        from terrine.spec.validate import validate_design
 
-        self.model = model
+        required_sources = set(validate_design(design, model).required_sources)
+        scoped_model = Model._bind(
+            model.catalog,
+            con=model.con,
+            readiness=model.readiness,
+            units={design.unit: model.units[design.unit]} if design.unit in model.units else {},
+            event_ids={
+                name: value for name, value in model.event_ids.items() if name in required_sources
+            },
+            resolver=model._resolver,
+            input_binding=model.input_binding,
+            source_names=required_sources,
+        )
+        self.model = scoped_model
         self.design = design
         self._plan = plan
-        self._keys = plan_layers(design, model).keys
+        self._keys = plan_layers(design, scoped_model).keys
         self._backend = DuckDBBackend(con, namespace=namespace)
         self._layers: dict[str, dict[Any, Any]] = {}
         self._lock = RLock()
@@ -412,6 +475,11 @@ class DesignExecutor:
                 self.design, execution_model, persisted=persisted, budget=self._plan.budget
             )
             table = context.execute(compiled.table)
+            if type(self.design.shape).__name__ == "StatePanel":
+                gap_index = table.schema.get_field_index("gap")
+                table = table.set_column(
+                    gap_index, "gap", table.column(gap_index).cast(pa.duration("us"))
+                )
             shape = (
                 "state_panel"
                 if type(self.design.shape).__name__ == "StatePanel"
@@ -431,6 +499,7 @@ class DesignExecutor:
                     model_hash=execution_model.model_hash,
                     source_generations=context.snapshot.source_generations,
                     execution_snapshot=context.snapshot,
+                    state_panel=_state_panel_provenance(self.design, execution_model),
                     shape=shape,
                     treatment_design=None,
                     expression_timings=compiled.expression_timings,
