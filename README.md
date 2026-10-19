@@ -109,6 +109,14 @@ current. The durable DuckDB owner serializes publication and cancellation;
 separate processes must use owner IPC while that owner holds the database.
 Cancellation is a durable request, not proof that backend work stopped.
 
+## Optional orchestration triggers
+
+See the [orchestrator guide](docs/guides/orchestrators.md) for owner IPC,
+partition and retry behavior, and the local DuckDB dbt lifecycle. Runnable
+examples: [Airflow](examples/orchestrators/airflow_materialization.py),
+[Dagster](examples/orchestrators/dagster_materialization.py), and
+[dbt Core after-build](examples/orchestrators/dbt_core_after_build.py).
+
 ### Owned inputs for repeated builds
 
 Ordinary native builds use one private transaction without taking over a caller
