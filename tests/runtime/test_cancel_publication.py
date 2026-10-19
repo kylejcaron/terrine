@@ -10,6 +10,7 @@ from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.state import RuntimeStore
 from terrine.runtime.status import cancel_run
+from tests._timing import HANG_GUARD_SECONDS
 
 
 def test_durable_cancellation_before_publication_prevents_generation():
@@ -59,7 +60,7 @@ def test_cancel_waits_on_publication_boundary(monkeypatch):
 
     def publish(*args):
         publishing.set()
-        assert finish.wait(timeout=5)
+        assert finish.wait(timeout=HANG_GUARD_SECONDS)
         return "g1"
 
     real_lock = status_module.run_publication_lock
@@ -96,7 +97,7 @@ def test_cancel_waits_on_publication_boundary(monkeypatch):
 
     executor = threading.Thread(target=run)
     executor.start()
-    assert publishing.wait(timeout=5)
+    assert publishing.wait(timeout=HANG_GUARD_SECONDS)
     endpoint = ControlEndpoint(Path(f"/tmp/terrine-boundary-{os.getpid()}.sock"))
     server = ControlServer(
         RuntimeStore(con, namespace="owner"), namespace="owner", endpoint=endpoint
@@ -111,10 +112,10 @@ def test_cancel_waits_on_publication_boundary(monkeypatch):
         )
     )
     canceller.start()
-    assert cancel_at_boundary.wait(timeout=5)
+    assert cancel_at_boundary.wait(timeout=HANG_GUARD_SECONDS)
     finish.set()
-    executor.join(timeout=5)
-    canceller.join(timeout=5)
+    executor.join(timeout=HANG_GUARD_SECONDS)
+    canceller.join(timeout=HANG_GUARD_SECONDS)
     server.close()
     assert not executor.is_alive() and not canceller.is_alive()
     assert results[0].state == "succeeded"

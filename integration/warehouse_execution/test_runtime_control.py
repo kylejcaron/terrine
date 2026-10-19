@@ -9,6 +9,7 @@ import duckdb
 
 from terrine.runtime.control import ControlEndpoint, ControlServer
 from terrine.runtime.state import RuntimeStore
+from tests._timing import HANG_GUARD_SECONDS
 
 
 def test_separate_process_status_and_cancel_use_owner_connection(tmp_path):
@@ -53,7 +54,7 @@ def test_separate_process_status_and_cancel_use_owner_connection(tmp_path):
             "DestinationRef('out.duckdb','analytics','d')); "
             "assert receipt is not None and receipt.run_id=='r1', repr(receipt)"
         )
-        subprocess.run([sys.executable, "-c", script], check=True, timeout=20)
+        subprocess.run([sys.executable, "-c", script], check=True, timeout=HANG_GUARD_SECONDS)
         assert con.execute("SELECT state FROM owner.runtime_runs WHERE run_id='r1'").fetchone() == (
             "cancel_requested",
         )

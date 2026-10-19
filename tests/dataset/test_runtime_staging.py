@@ -11,6 +11,7 @@ from terrine.dataset.reference import Dataset
 from terrine.errors import TerrineError
 from terrine.runtime.api import run_serialized_plan
 from terrine.runtime.recipe import SavedPlanRecipe
+from tests._timing import HANG_GUARD_SECONDS
 from tests.dataset.test_staging import _durable_frame
 
 
@@ -94,7 +95,7 @@ def test_stage_renews_lease_during_snapshot_tasks(native_inputs, tmp_path, monke
         return result
 
     def run_task(executor, context, task, dependencies):
-        assert renewed.wait(timeout=5)
+        assert renewed.wait(timeout=HANG_GUARD_SECONDS)
         return original_task(executor, context, task, dependencies)
 
     monkeypatch.setattr(LeaseStore, "renew", renew)

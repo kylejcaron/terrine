@@ -2,6 +2,7 @@ import duckdb
 import pytest
 
 from terrine.runtime.events import read_run_events, record_run_event
+from tests._timing import HANG_GUARD_SECONDS
 
 
 def test_event_cursor_is_exclusive_bounded_and_run_bound():
@@ -112,7 +113,7 @@ def test_concurrent_lifecycle_emission_allocates_unique_sequences():
     def emit(sequence):
         connection = con.cursor()
         try:
-            start.wait(timeout=5)
+            start.wait(timeout=HANG_GUARD_SECONDS)
             record_run_event(
                 "r1",
                 "lifecycle",

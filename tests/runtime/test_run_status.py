@@ -3,6 +3,7 @@ import pytest
 
 from terrine.errors import TerrineError
 from terrine.runtime.status import get_run
+from tests._timing import HANG_GUARD_SECONDS
 
 
 def test_missing_run_has_typed_unavailable_status():
@@ -160,12 +161,12 @@ def test_status_cursor_and_state_share_a_consistent_snapshot(monkeypatch):
     def interleaved_cursor(run_id, *, con, namespace):
         writer = threading.Thread(target=publish_terminal_event)
         writer.start()
-        assert writer_started.wait(timeout=5)
+        assert writer_started.wait(timeout=HANG_GUARD_SECONDS)
         return original_cursor(run_id, con=con, namespace=namespace)
 
     monkeypatch.setattr(status_module, "_latest_event_cursor", interleaved_cursor)
     status = get_run("r1", con=con, namespace="owner")
-    assert writer_done.wait(timeout=5)
+    assert writer_done.wait(timeout=HANG_GUARD_SECONDS)
     resumed = read_run_events("r1", con=con, namespace="owner", after=status.latest_event_cursor)
 
     assert status.durable_state == "running"

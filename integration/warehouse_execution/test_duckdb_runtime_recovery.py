@@ -11,6 +11,7 @@ import pytest
 from terrine.runtime.backends.base import PublicationReceipt, StagedGeneration
 from terrine.runtime.backends.duckdb import DuckDBBackend
 from terrine.runtime.leases import LeaseStore
+from tests._timing import HANG_GUARD_SECONDS
 
 
 def _crash_writer(path: str, crash_at: str) -> None:
@@ -63,10 +64,10 @@ def test_duckdb_crash_boundary_retry_reconciles_manifest(
         target=_crash_writer, args=(path, boundary)
     )
     process.start()
-    process.join(timeout=30)
+    process.join(timeout=HANG_GUARD_SECONDS)
     if process.is_alive():
         process.kill()
-        process.join()
+        process.join(timeout=HANG_GUARD_SECONDS)
         raise AssertionError("crash-boundary process did not exit")
     assert process.exitcode == 91
 

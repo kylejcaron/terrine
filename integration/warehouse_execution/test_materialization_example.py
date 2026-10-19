@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests._timing import HANG_GUARD_SECONDS
+
 
 def test_model_design_example_publishes_exact_generation_and_declared_correction():
     script = Path(__file__).parents[2] / "examples" / "materialization_runtime.py"
@@ -13,7 +15,7 @@ def test_model_design_example_publishes_exact_generation_and_declared_correction
         check=True,
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=HANG_GUARD_SECONDS,
     )
     first, corrected = (json.loads(line) for line in result.stdout.splitlines())
     first["rows"].sort(key=lambda row: row["user_id"])

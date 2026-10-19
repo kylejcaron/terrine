@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._timing import HANG_GUARD_SECONDS
+
 
 @pytest.mark.parametrize("workflow", ["ml_staging", "batch_scoring"])
 def test_dataset_examples_complete_public_workflow(workflow):
@@ -16,7 +18,7 @@ def test_dataset_examples_complete_public_workflow(workflow):
         cwd=root,
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=HANG_GUARD_SECONDS,
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr

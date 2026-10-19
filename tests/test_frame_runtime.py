@@ -15,6 +15,7 @@ from terrine.model import Model
 from terrine.semantic.models import Catalog
 from terrine.spec import Design, EventAnchor, EventSequence, agg, gt
 from terrine.windows import Window
+from tests._timing import HANG_GUARD_SECONDS
 
 
 def _design(**kwargs):
@@ -71,7 +72,7 @@ def test_shared_model_concurrent_exports_keep_independent_results(native_inputs)
                 if event == "c_return" and operation is execute and not paused:
                     paused = True
                     executed.set()
-                    assert release.wait(timeout=30)
+                    assert release.wait(timeout=HANG_GUARD_SECONDS)
                 elif event == "c_return" and operation is fetchall:
                     fetched.set()
             elif not release.is_set() and (
@@ -81,7 +82,7 @@ def test_shared_model_concurrent_exports_keep_independent_results(native_inputs)
                 # Allow serialization, or force the competing result to be consumed
                 # before the first export fetches. No replacement database is used.
                 release.set()
-                assert fetched.wait(timeout=30)
+                assert fetched.wait(timeout=HANG_GUARD_SECONDS)
 
         sys.setprofile(interleave)
         try:
@@ -93,9 +94,9 @@ def test_shared_model_concurrent_exports_keep_independent_results(native_inputs)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         first = pool.submit(export, True)
-        assert executed.wait(timeout=30)
+        assert executed.wait(timeout=HANG_GUARD_SECONDS)
         second = pool.submit(export, False)
-        results = [future.result(timeout=120) for future in (first, second)]
+        results = [future.result(timeout=HANG_GUARD_SECONDS) for future in (first, second)]
     expected = [{"unit": unit, "t0": datetime(2025, 1, 3, tzinfo=UTC)} for unit in ("a", "b")]
     assert all(result.to_pylist() == expected for result in results)
 

@@ -1,6 +1,8 @@
 import subprocess
 import sys
 
+from tests._timing import HANG_GUARD_SECONDS
+
 
 def test_runtime_metadata_imports_do_not_require_duckdb_backend():
     code = """
@@ -17,4 +19,4 @@ assert callable(dependency_graph) and callable(resolve_plan)
 """
     # The timeout only guards against a hung interpreter; cold imports under a loaded
     # parallel run can take several seconds.
-    subprocess.run([sys.executable, "-c", code], check=True, timeout=120)
+    subprocess.run([sys.executable, "-c", code], check=True, timeout=HANG_GUARD_SECONDS)
