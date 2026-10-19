@@ -17,9 +17,11 @@ from terrine.data import (
     Budget,
     CalendarComparisonMeta,
     CohortOperationMeta,
+    ColumnMeta,
     MaterializedFrame,
     PanelMeta,
     Provenance,
+    Roles,
     SamplingMeta,
     StatePanelMeta,
     TreatmentHistoryMeta,
@@ -30,7 +32,7 @@ from terrine.execution.gates import enforce_shape_budget, validate_compiled_outp
 from terrine.spec.anchors import FixedDate
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import BinnedMetricState, StatePanel, encode_cutpoint
-from terrine.spec.trajectory import CohortGrouping, CohortSpec, TimeToEvent
+from terrine.spec.trajectory import CohortGrouping, CohortSpec, LifeTable, TimeToEvent
 
 if TYPE_CHECKING:
     from terrine.compile.columns import CompiledStudy
@@ -227,7 +229,8 @@ class Frame:
             summary = validate_compiled_output(compiled, context.execute)
             query = compiled.table
             chunk_size = 65_536
-            if budget is not None and budget.max_rows is not None:
+            is_life_table = isinstance(self._design.shape, LifeTable)
+            if budget is not None and budget.max_rows is not None and not is_life_table:
                 limit = min(budget.max_rows + 1, 2**63 - 1)
                 query = query.limit(limit)
                 chunk_size = min(chunk_size, limit)
@@ -242,7 +245,7 @@ class Frame:
                         batch = batch.cast(schema)
                     row_count += batch.num_rows
                     byte_count += batch.nbytes
-                    if budget is not None:
+                    if budget is not None and not is_life_table:
                         if budget.max_rows is not None and row_count > budget.max_rows:
                             raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
                         if (
@@ -254,6 +257,62 @@ class Frame:
                 table = pa.Table.from_batches(batches, schema=schema)
             finally:
                 reader.close()
+            roles = compiled.roles
+            columns = compiled.columns
+            if isinstance(self._design.shape, LifeTable):
+                from terrine.compile.dispatch import aggregate_life_table
+
+                life_table = self._design.shape
+                group_supports: dict[str, str] = {}
+                for name in life_table.group_by:
+                    meta = compiled.columns[name]
+                    for column, policy in (
+                        (meta.observed_from_column, "min"),
+                        (meta.observed_until_column, "max"),
+                        (meta.complete_column, "all"),
+                        (meta.reason_column, "reasons"),
+                        (meta.absolute_error_column, "max"),
+                    ):
+                        if column is not None:
+                            group_supports.setdefault(column, policy)
+                table = aggregate_life_table(
+                    table,
+                    interval_seconds=life_table.interval,
+                    group_by=life_table.group_by,
+                    group_supports=group_supports,
+                    max_rows=None if budget is None else budget.max_rows,
+                )
+                if budget is not None:
+                    if budget.max_rows is not None and table.num_rows > budget.max_rows:
+                        raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
+                    if (
+                        budget.max_output_bytes is not None
+                        and table.nbytes > budget.max_output_bytes
+                    ):
+                        raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
+                roles = Roles(
+                    "unit",
+                    "anchor_id",
+                    "t0",
+                    None,
+                    (*life_table.group_by, "time_bin"),
+                    (
+                        "at_risk",
+                        "events",
+                        "censored",
+                        "delayed_entries",
+                        "event_rate",
+                        "censor_rate",
+                    ),
+                )
+                columns = {name: compiled.columns[name] for name in life_table.group_by}
+                columns["time_bin"] = ColumnMeta(None, "feature", None, None, None, None)
+                columns.update(
+                    {
+                        name: ColumnMeta(None, "outcome", None, None, None, None)
+                        for name in roles.outcomes
+                    }
+                )
             if isinstance(self._design.shape, TimeToEvent):
                 for name in ("event_time", "censor_time", "duration", "entry_time"):
                     if name not in table.column_names:
@@ -292,14 +351,29 @@ class Frame:
                 shape_name = panel.shape
             elif isinstance(self._design.shape, CohortSpec):
                 shape_name = "ltv"
+            elif isinstance(self._design.shape, LifeTable):
+                shape_name = "life_table"
             elif isinstance(self._design.shape, TimeToEvent):
                 shape_name = "time_to_event"
             else:
                 shape_name = (
                     self._design.shape if isinstance(self._design.shape, str) else "cross_section"
                 )
+            feature_cutoffs = compiled.feature_cutoffs
+            expression_timings = compiled.expression_timings
+            if isinstance(self._design.shape, LifeTable):
+                feature_cutoffs = {
+                    name: cutoff
+                    for name, cutoff in compiled.feature_cutoffs.items()
+                    if name in self._design.shape.group_by
+                }
+                expression_timings = {
+                    name: timing
+                    for name, timing in compiled.expression_timings.items()
+                    if name in self._design.shape.group_by
+                }
             provenance = Provenance(
-                feature_cutoffs=compiled.feature_cutoffs,
+                feature_cutoffs=feature_cutoffs,
                 eligibility_cutoffs=compiled.eligibility_cutoffs,
                 design_hash=self._design.spec_hash,
                 model_hash=model.model_hash,
@@ -313,7 +387,7 @@ class Frame:
                 else None,
                 treatment_known_at_t0=treatment.known_at_t0 if treatment is not None else False,
                 state_panel=_state_panel_metadata(self._design, model),
-                expression_timings=compiled.expression_timings,
+                expression_timings=expression_timings,
                 sequence_meta=compiled.sequence_meta,
                 panel=panel,
                 sampling=(
@@ -329,7 +403,7 @@ class Frame:
                 administrative_cutoff=self._design.administrative_cutoff,
                 cohort_operation=cohort_operation,
             )
-            return MaterializedFrame(table, compiled.roles, compiled.columns, provenance)
+            return MaterializedFrame(table, roles, columns, provenance)
 
     def to_pyarrow(self, *, budget: Budget | None = None) -> pa.Table:
         """Execute once and attach portable study metadata to the Arrow schema."""

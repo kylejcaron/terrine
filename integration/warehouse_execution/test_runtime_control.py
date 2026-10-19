@@ -16,6 +16,9 @@ def test_separate_process_status_and_cancel_use_owner_connection(tmp_path):
     con = duckdb.connect(str(database))
     store = RuntimeStore(con, namespace="owner")
     store.initialize()
+    from terrine.runtime.leases import LeaseStore
+
+    LeaseStore(con, namespace="owner").initialize()
     con.execute(
         "CREATE TABLE owner.runtime_runs (run_id VARCHAR PRIMARY KEY, dataset VARCHAR NOT NULL, "
         "fingerprint VARCHAR NOT NULL, state VARCHAR NOT NULL, published_generation VARCHAR, "

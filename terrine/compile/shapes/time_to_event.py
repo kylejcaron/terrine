@@ -141,6 +141,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         "entry_time",
         "complete",
         "reason",
+        "censor_reason",
         "_entry_time",
         "_exit_time",
         "_followup_start",
@@ -452,6 +453,27 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
             *support_columns,
         )
     }
+    censor_reason = ibis.literal("source_coverage")
+    if shape.exit is not None:
+        censor_reason = ibis.ifelse(
+            retained._exit_time.notnull() & (retained._exit_time == retained._followup_end),
+            ibis.literal("exit"),
+            censor_reason,
+        )
+    if design.administrative_cutoff is not None:
+        cutoff = _utc_naive("UTC", ibis.literal(design.administrative_cutoff)).cast(
+            retained._followup_end.type()
+        )
+        censor_reason = ibis.ifelse(
+            retained._followup_end == cutoff,
+            ibis.literal("administrative_cutoff"),
+            censor_reason,
+        )
+    censor_reason = ibis.ifelse(
+        reason.notnull(),
+        reason,
+        ibis.ifelse(retained._event_time.notnull(), ibis.null().cast("string"), censor_reason),
+    )
     output_projection.update(
         unit=retained.unit,
         anchor_id=retained.anchor_id,
@@ -463,6 +485,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         entry_time=retained._followup_start,
         complete=complete,
         reason=reason,
+        censor_reason=censor_reason,
     )
     for timing in base.expression_timings.values():
         for column in (
@@ -477,8 +500,11 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
     columns = {name: meta for name, meta in base.columns.items() if name in output_projection}
     columns.update(
         {
-            name: ColumnMeta(None, "outcome", None, None, "complete", "reason")
-            for name in ("event", "event_time", "duration")
+            **{
+                name: ColumnMeta(None, "outcome", None, None, "complete", "reason")
+                for name in ("event", "event_time", "duration")
+            },
+            "censor_reason": ColumnMeta(None, "outcome", None, None, None, None),
         }
     )
     roles = Roles(

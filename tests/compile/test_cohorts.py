@@ -456,7 +456,7 @@ def test_cohort_float_total_enforces_final_tolerance():
 
 
 def test_cohort_summary_surrogate_export_retains_age_and_denominators():
-    from terrine.estimate.survival import to_surrogate_arrow
+    from terrine.export import to_surrogate_arrow
 
     con, model = _trajectory_model()
     try:

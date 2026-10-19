@@ -229,11 +229,6 @@ def boundary_world() -> World:
             "unit_id": pa.array([1, 2, 3], type=pa.int64()),
             "x": [0.25, -0.25, 0.5],
             "plan_tier": ["basic", "enterprise", "plus"],
-            "e": [0.5, 0.5, 0.5],
-            "mu0": [3.0, -2.0, 5.0],
-            "mu1": [5.0, 0.0, 7.0],
-            "y0": [3.0, -2.0, 5.0],
-            "y1": [5.0, 0.0, 7.0],
             "target_weight": [1.0, 1.0, 1.0],
         }
     )

@@ -114,18 +114,7 @@ def test_malformed_history_is_rejected_instead_of_arbitrarily_selected(malformat
         reference_rows(replace(world, attributes=table))
 
 
-def test_generated_analysis_matches_independent_raw_rows_without_oracle_leakage():
+def test_generated_analysis_matches_independent_raw_rows_and_expected_dataset_oracle():
     world = simulate(WorldConfig(n_units=16), seed=17)
     assert reference_rows(world).equals(world.analysis_table)
-    assert {"e", "mu0", "mu1", "y0", "y1"}.isdisjoint(world.analysis_table.column_names)
-    assert set(world.oracle.column_names) == {
-        "unit_id",
-        "x",
-        "plan_tier",
-        "e",
-        "mu0",
-        "mu1",
-        "y0",
-        "y1",
-        "target_weight",
-    }
+    assert world.oracle.equals(world.analysis_table)

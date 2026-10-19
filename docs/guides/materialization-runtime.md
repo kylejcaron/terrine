@@ -4,27 +4,15 @@ The materialization runtime persists plan/run state and publishes immutable outp
 
 ## Build and plan from a Model and Design
 
-Construct the ordinary `Model` and immutable `Design` as usual. The runtime dependency graph uses the model's declared sources and the design hash; choose bounded partition names appropriate for the workload. Supply a snapshot identity that represents the exact source snapshot the owner executor will read:
+The runnable [`examples/materialization_runtime.py`](../../examples/materialization_runtime.py) is the end-to-end workflow. It builds a real `Model` and immutable `Design`, captures a retained input snapshot, serializes and saves a `SavedPlanRecipe` bound to a destination, runs it through the owner resolver and snapshot authority, then queries the exact returned generation:
 
-```python
-from terrine.runtime.graph import dependency_graph
-from terrine.runtime.planner import plan_refresh
-from terrine.runtime.recipe import DestinationRef
-
-namespace = "analytics_owner"
-destination = DestinationRef("analytics.duckdb", "published", "orders")
-graph = dependency_graph(model, design, partitions=("2026-06", "2026-07"))
-plan = plan_refresh(
-    namespace=namespace,
-    dataset=destination.dataset,
-    definition_hash=design.spec_hash,
-    snapshot_id="orders-source-revision-42",
-    graph=graph,
-)
-saved_plan = plan.serialize()
+```console
+uv run python examples/materialization_runtime.py
 ```
 
-Persist `saved_plan` with the owner's job/configuration records before submitting execution. It is canonical, versioned JSON and contains no live connection, relation handle, or credentials. Keep the Model/Catalog, Design, source revision, and destination bound together in the owner application. The runtime graph and planner are metadata-only: they do not compile or execute source queries. An owner-provided `Executor` must implement bounded task reads against the named snapshot and produce the task outputs; its publisher writes those outputs through the backend. See [`examples/materialization_runtime.py`](../../examples/materialization_runtime.py) for a complete local DuckDB executor and Python API example.
+The example publishes per-user one-day event totals for a local DuckDB source and verifies each exact-receipt result against a fresh `compile_columns` rebuild of the same Model/Design and source state. It then inserts a declared correction, captures a new retained snapshot, saves a new recipe against the first generation, and queries that second receipt. The totals change from `3, 4` to `8, 4`; the first receipt remains bound to its original generation. The example's bounded executor translates its declared design's total feature to a task output; applications supply the equivalent computation for their own designs.
+
+For lower-level planning, `dependency_graph(model, design, partitions=...)` and `plan_refresh(...)` are metadata-only. A manually supplied `snapshot_id` is only an identity label; it does not freeze source rows. Persist and execute a saved recipe tied to `SnapshotAuthority.capture` when source inputs must be retained and reopened across partitions, retries, or process restarts. Saved recipes contain no live connection, relation handle, or credentials.
 
 A destination reference identifies `(database, schema, dataset)` for request-key isolation. It is not a provisioning command: arrange the customer-owned database and schema through the application before starting the owner. The owner uses its configured connection and namespace; do not put a connection string or secret in a plan or request key.
 

@@ -1,4 +1,4 @@
-"""Independent paired-outcome generators for baseline and repeated-trial worlds."""
+"""Independent raw-source generators for baseline and repeated-trial worlds."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pyarrow as pa
 
 from terrine.data import Coverage, UnitSource
 from terrine.errors import RefusalSpec
-from terrine.simulate.world import PanelWorld, PanelWorldConfig, World, WorldConfig
+from terrine.simulate.world import World, WorldConfig
 
 _INVALID_SEED = RefusalSpec("terrine.simulate.invalid_seed", "Use an integer seed in [0, 2**64).")
 _NONFINITE = RefusalSpec(
@@ -20,7 +20,7 @@ _NONFINITE = RefusalSpec(
 _TIMESTAMP = pa.timestamp("us", tz="UTC")
 
 
-def _potential_outcomes(config: WorldConfig, baseline, outcome) -> dict[str, np.ndarray]:
+def _baseline_values(config: WorldConfig, baseline) -> dict[str, np.ndarray]:
     x = baseline.uniform(-1, 1, config.n_units)
     tier = baseline.choice(["basic", "plus", "enterprise"], config.n_units, p=[0.5, 0.3, 0.2])
     plus, enterprise = tier == "plus", tier == "enterprise"
@@ -28,13 +28,9 @@ def _potential_outcomes(config: WorldConfig, baseline, outcome) -> dict[str, np.
     with np.errstate(over="ignore", invalid="ignore"):
         eta = -0.2 + 0.8 * x + 0.5 * plus - 0.4 * enterprise + config.propensity_quadratic * h
         e = np.exp(-np.logaddexp(0, -eta))
-        mu0 = 10 + 2 * x + 1.5 * plus - enterprise + config.outcome_quadratic * h
-        delta = 2 + 0.75 * x + 0.5 * plus
-        mu1 = mu0 + delta
-        shock = outcome.normal(0, config.outcome_noise_sd, config.n_units)
-        y0, y1 = mu0 + shock, mu1 + shock
+        mean = 10 + 2 * x + 1.5 * plus - enterprise + config.outcome_quadratic * h
         q = 1 + config.target_weight_slope * x
-    arrays = {"x": x, "e": e, "mu0": mu0, "mu1": mu1, "y0": y0, "y1": y1, "target_weight": q}
+    arrays = {"x": x, "e": e, "mean": mean, "target_weight": q}
     for name, array in arrays.items():
         if not np.isfinite(array).all():
             raise _NONFINITE.error(quantity=name)
@@ -134,36 +130,29 @@ def _analysis_table(config: WorldConfig, oracle, assigned, observed, coverage: C
 
 
 def simulate(config: WorldConfig, seed: int) -> World:
-    """Generate a fixed cohort using four versioned, independent PCG64 child streams.
-
-    SeedSequence(seed).spawn(4) assigns child indices 0=baseline, 1=assignment,
-    2=outcome shock, 3=event timing. Baseline draws X then tier; the outcome
-    stream draws one shared shock per pair before any treatment draw.
-
-    Args:
-        config: Fixed-cohort generating law and measurement windows.
-        seed: Unsigned 64-bit integer initializing the four child streams.
-
-    Returns:
-        Observed Arrow tables, native Catalog data, metadata, and a separate oracle.
-
-    Raises:
-        TerrineError: The seed is outside its domain or generated values are nonfinite.
-    """
+    """Generate a fixed-cohort raw-source world from independent PCG64 streams."""
     if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**64:
         raise _INVALID_SEED.error()
     children = np.random.SeedSequence(seed).spawn(4)
     baseline, assignment, outcome, timing = [
         np.random.Generator(np.random.PCG64(child)) for child in children
     ]
-    oracle = _potential_outcomes(config, baseline, outcome)
-    assigned = assignment.binomial(1, oracle["e"], config.n_units).astype(bool)
-    observed = np.where(assigned, oracle["y1"], oracle["y0"])
-    roster, events, attributes = _raw_tables(config, oracle, assigned, observed, timing)
+    values = _baseline_values(config, baseline)
+    assigned = assignment.binomial(1, values["e"], config.n_units).astype(bool)
+    plus = values["plan_tier"] == "plus"
+    observed = (
+        values["mean"]
+        + assigned * (2 + 0.75 * values["x"] + 0.5 * plus)
+        + outcome.normal(0, config.outcome_noise_sd, config.n_units)
+    )
+    if not np.isfinite(observed).all():
+        raise _NONFINITE.error(quantity="outcome")
+    roster, events, attributes = _raw_tables(config, values, assigned, observed, timing)
     coverage = Coverage(
         (config.t0 - timedelta(seconds=config.lookback_seconds)).date(),
         (config.t0 + timedelta(seconds=config.horizon_seconds)).date(),
     )
+    analysis_table = _analysis_table(config, values, assigned, observed, coverage)
     return World(
         config=config,
         metadata={
@@ -175,8 +164,8 @@ def simulate(config: WorldConfig, seed: int) -> World:
         roster=roster,
         events=events,
         attributes=attributes,
-        analysis_table=_analysis_table(config, oracle, assigned, observed, coverage),
-        oracle=pa.table(oracle),
+        analysis_table=analysis_table,
+        oracle=analysis_table,
         semantic_yaml=files("terrine.simulate")
         .joinpath("baseline.yaml")
         .read_text(encoding="utf-8"),
@@ -190,79 +179,4 @@ def simulate(config: WorldConfig, seed: int) -> World:
             )
         },
         event_ids={"world_events": "event_id"},
-    )
-
-
-def simulate_panel(config: PanelWorldConfig, seed: int) -> PanelWorld:
-    """Generate paired outcomes and treatment assignments for two repeated trials."""
-    if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**64:
-        raise _INVALID_SEED.error()
-    children = np.random.SeedSequence(seed).spawn(3)
-    baseline, assignment, outcome = [
-        np.random.Generator(np.random.PCG64(child)) for child in children
-    ]
-    shared_x = baseline.uniform(-1.0, 1.0, config.n_units)
-    masses = (0.5, 0.5) if config.trial_masses == "equal" else (0.25, 0.75)
-    propensity_intercepts = (-0.8, 0.9) if config.assignment_profile == "profile_a" else (0.6, -0.7)
-    propensity_slope = 0.7 if config.assignment_profile == "profile_a" else -0.55
-    observed_rows = []
-    oracle_rows = []
-    for trial_index, trial in enumerate(("early", "late")):
-        x = shared_x if config.overlap == "overlap" else baseline.uniform(-1.0, 1.0, config.n_units)
-        eta = propensity_intercepts[trial_index] + propensity_slope * x
-        propensity = 1.0 / (1.0 + np.exp(-eta))
-        assigned = assignment.binomial(1, propensity, config.n_units)
-        effect = (
-            np.zeros_like(x) if config.effect_kind == "zero" else (1.5, 4.5)[trial_index] + 0.6 * x
-        )
-        baseline_mean = (1.0, 7.0)[trial_index] + 1.3 * x
-        shock = outcome.normal(0.0, config.outcome_noise_sd, config.n_units)
-        y0 = baseline_mean + shock
-        y1 = baseline_mean + effect + shock
-        unit_ids = (
-            np.arange(config.n_units)
-            if config.overlap == "overlap"
-            else np.arange(config.n_units) + trial_index * config.n_units
-        )
-        if not all(np.isfinite(values).all() for values in (x, propensity, effect, y0, y1)):
-            raise _NONFINITE.error(quantity="panel outcome")
-        for index, unit in enumerate(unit_ids):
-            row = {
-                "unit": int(unit),
-                "trial": trial,
-                "a": int(assigned[index]),
-                "x": float(x[index]),
-                "y": float(y1[index] if assigned[index] else y0[index]),
-                "anchor_id": trial,
-                "t0": datetime(2025, 1, 1 + trial_index, tzinfo=UTC),
-                "complete": True,
-                "reason": None,
-                "q": 1.0,
-                "lambda": masses[trial_index],
-            }
-            observed_rows.append(row)
-            oracle_rows.append(
-                {
-                    "unit": int(unit),
-                    "trial": trial,
-                    "x": float(x[index]),
-                    "e": float(propensity[index]),
-                    "baseline": float(baseline_mean[index]),
-                    "effect": float(effect[index]),
-                    "y0": float(y0[index]),
-                    "y1": float(y1[index]),
-                    "target_weight": 1.0,
-                    "lambda": masses[trial_index],
-                }
-            )
-    return PanelWorld(
-        config,
-        {
-            "generator_version": 1,
-            "seed": seed,
-            "rng": "PCG64",
-            "streams": {"baseline": 0, "assignment": 1, "outcomes": 2},
-        },
-        pa.Table.from_pylist(observed_rows),
-        pa.Table.from_pylist(oracle_rows),
     )

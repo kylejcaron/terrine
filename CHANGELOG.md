@@ -1,4 +1,6 @@
 # Changelog
+## Removed
+- Native treatment-effect estimators, inferential/propensity diagnostics, and simulation truth/calibration claims. Terrine now delivers datasets and descriptive summaries; downstream libraries own estimation.
 
 ## 0.1.0
 
@@ -90,3 +92,5 @@
 - Add owner-planned Airflow and Dagster orchestration triggers with durable invocation replay, partition-scoped snapshots, and recipe-routed execution.
 - Add a Dagster same-root fenced-retry acceptance test and dbt Core after-build recipe with reviewed manifest relations, a local DuckDB owner handoff, and two-build snapshot replay coverage.
 - Document optional orchestrator installation, owner-side planning/status limits, retry semantics, partition scope, and dbt stop/build/restart lifecycle.
+- Demonstrate real Model/Design saved-recipe execution from retained DuckDB inputs, exact-generation reads, operator-declared corrections, and same-snapshot clean-rebuild parity; cover partition retries and owner-held lost-response lookup in warehouse integration tests.
+- Refuse fingerprint-valid serialized plans whose strict scan budget cannot be satisfied by known scan bounds, preserving the refusal code through saved recipes.
