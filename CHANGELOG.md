@@ -10,6 +10,7 @@
 - Add fixed roster-backed scoring snapshots with explicit eligibility, resolved `as_of`, feature-only source validation, and persisted scoring-view recipes.
 - Bind canonical dataset construction recipes into SavedPlanRecipe serialization for validated reconstruction.
 - Execute dataset staging through persisted saved Design recipes, renewable fenced leases, bounded durable Arrow task outputs, and metadata-preserving exact-generation reads.
+- Share ordinary Frame normalization with staged StatePanel outputs and keep long-stage leases renewable throughout snapshot-bound execution and publication.
 
 - Stage file-backed DuckDB Frames into immutable runtime-published generations through retained input snapshots, with bounded Arrow batch transfer and manifest-verified pinned reads.
 - Export pinned datasets to bounded Parquet shards with checksums, generation manifests, and verified completed-export replay.
