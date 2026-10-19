@@ -186,6 +186,19 @@ def test_dagster_historical_partitions_publish_distinct_owner_outputs(monkeypatc
         resource_concurrency_key="terrine-owner",
     )
     assert asset.node_def.tags["dagster/concurrency_key"] == "terrine-owner"
+    from dagster._utils.tags import TagConcurrencyLimitsCounter
+
+    queue_limit = TagConcurrencyLimitsCounter(
+        [
+            {
+                "key": "dagster/concurrency_key",
+                "value": "terrine-owner",
+                "limit": 1,
+            }
+        ],
+        [cast(Any, SimpleNamespace(tags=dict(asset.node_def.tags)))],
+    )
+    assert queue_limit.is_blocked(cast(Any, SimpleNamespace(tags=dict(asset.node_def.tags))))
     try:
         instance = DagsterInstance.ephemeral()
         results = [
@@ -460,3 +473,42 @@ def test_dagster_rejects_non_succeeded_owner_receipt(monkeypatch, tmp_path):
     )
     with pytest.raises(RuntimeError, match="finished as failed"):
         materialize([asset], partition_key="2025-01-15", instance=DagsterInstance.ephemeral())
+
+
+def test_dagster_cancelled_run_fails_without_materialization_retry(monkeypatch, tmp_path):
+    import terrine.orchestration.dagster as adapter
+
+    class Client:
+        def __init__(self, endpoint, *, namespace):
+            pass
+
+        def plan(self, request):
+            return SimpleNamespace(
+                invocation_id=request.invocation_id,
+                request_key="request-key",
+                destination=request.destination,
+                snapshot_id="snap",
+                recipe_json="saved-recipe",
+            )
+
+        def run(self, serialized, *, request_key, destination):
+            return SimpleNamespace(run_id="run-1", published_generation=None)
+
+        def get_run(self, run_id):
+            return SimpleNamespace(run_id=run_id, durable_state="cancelled")
+
+    monkeypatch.setattr(adapter, "ControlClient", Client)
+    asset = build_materialization_asset(
+        plan_request_provider=lambda context: _request(context["partition_key"]),
+        endpoint=ControlEndpoint(tmp_path / "owner.sock"),
+        namespace="owner",
+        partitions_start="2025-01-01",
+        resource_concurrency_key="terrine-owner",
+    )
+
+    from dagster import Failure
+
+    with pytest.raises(Failure, match="cancelled") as error:
+        materialize([asset], partition_key="2025-01-15", instance=DagsterInstance.ephemeral())
+
+    assert not error.value.allow_retries

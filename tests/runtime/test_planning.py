@@ -114,7 +114,26 @@ def test_plan_request_uses_owner_ipc_from_process_without_database_access(tmp_pa
     assert repeated == expected
 
 
-def test_owner_planner_persists_same_snapshot_and_manifest_by_invocation(tmp_path):
+def test_owner_planner_persists_same_snapshot_and_manifest_by_invocation(tmp_path, monkeypatch):
+    import terrine.runtime.planning as planning
+
+    captured = False
+    original_validate = planning.validate_compiled_output
+    original_capture = SnapshotAuthority.capture
+
+    def capture(*args, **kwargs):
+        nonlocal captured
+        snapshot = original_capture(*args, **kwargs)
+        captured = True
+        return snapshot
+
+    def validate_on_snapshot(compiled, execute):
+        assert captured
+        assert execute.__self__ is not model.con
+        return original_validate(compiled, execute)
+
+    monkeypatch.setattr(SnapshotAuthority, "capture", capture)
+    monkeypatch.setattr(planning, "validate_compiled_output", validate_on_snapshot)
     from tests.runtime.test_recipe import _model
 
     database = tmp_path / "catalog.duckdb"
@@ -167,7 +186,18 @@ def test_owner_planner_persists_same_snapshot_and_manifest_by_invocation(tmp_pat
                 con=raw_connection,
                 namespace="runtime",
             )
-        raw_connection.execute("INSERT INTO events VALUES ('2025-01-10', 1, 1)")
+        raw_connection.execute(
+            "CREATE TABLE runtime.runtime_manifests "
+            "(dataset VARCHAR PRIMARY KEY, generation VARCHAR NOT NULL, version BIGINT, "
+            "snapshot_id VARCHAR)"
+        )
+        raw_connection.execute(
+            "INSERT INTO runtime.runtime_manifests VALUES ('study', 'generation-current', 1, NULL)"
+        )
+        raw_connection.execute(
+            "DELETE FROM runtime.runtime_snapshot_manifests WHERE dataset='study'"
+        )
+
         fresh = planner.plan(
             PlanRequest(
                 "materialize-2",
@@ -195,7 +225,7 @@ def test_owner_planner_persists_same_snapshot_and_manifest_by_invocation(tmp_pat
 
     assert second == first
     assert second.snapshot_id == first.snapshot_id
-    assert second.expected_base_manifest is None
+    assert fresh.expected_base_manifest == "generation-current"
     assert conflict.value.code == "terrine.runtime.plan_invocation_conflict"
 
 

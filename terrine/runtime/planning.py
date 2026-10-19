@@ -223,7 +223,6 @@ class OwnerPlanner:
         _scan_policy(request.budget)
         enforce_shape_budget(request.design.shape, budget)
         compiled = compile_design(request.design, model)
-        validate_compiled_output(compiled, model.con.to_pyarrow)
         source_names, _, _ = _design_root_names(model, request.design)
         graph = dependency_graph(
             model,
@@ -241,10 +240,26 @@ class OwnerPlanner:
             run_id=request.invocation_id,
             budget=budget,
         )
-        expected = con.execute(
-            f"SELECT generation FROM {store._schema}.runtime_snapshot_manifests WHERE dataset=?",
-            [request.destination.dataset],
+        context = self.snapshot_authority.reopen(snapshot, con=con, namespace=namespace)
+        try:
+            execution_model = model._for_execution(context)
+            snapshot_compiled = compile_design(request.design, execution_model)
+            validate_compiled_output(snapshot_compiled, execution_model.con.to_pyarrow)
+        finally:
+            context.close()
+        manifest_table = con.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema=? AND table_name='runtime_manifests'",
+            [namespace],
         ).fetchone()
+        expected = (
+            con.execute(
+                f"SELECT generation FROM {store._schema}.runtime_manifests WHERE dataset=?",
+                [request.destination.dataset],
+            ).fetchone()
+            if manifest_table is not None
+            else None
+        )
         expected_manifest = expected[0] if expected is not None else None
         plan = plan_refresh(
             namespace=namespace,

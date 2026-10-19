@@ -48,7 +48,10 @@ class _MaterializationOperator(BaseOperator):
             destination=invocation.destination,
         )
         status = client.get_run(receipt.run_id)
-        while status.run_id == receipt.run_id and status.durable_state == "running":
+        while status.run_id == receipt.run_id and status.durable_state in {
+            "running",
+            "cancel_requested",
+        }:
             time.sleep(1)
             status = client.get_run(receipt.run_id)
         if status.durable_state == "cancelled":
@@ -62,7 +65,9 @@ class _MaterializationOperator(BaseOperator):
         return {
             "run_id": receipt.run_id,
             "state": status.durable_state,
-            "published_generation": receipt.published_generation,
+            "published_generation": (
+                getattr(status, "pinned_result_ref", None) or receipt.published_generation
+            ),
             "snapshot_id": invocation.snapshot_id,
         }
 

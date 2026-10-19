@@ -212,3 +212,130 @@ def test_airflow_operator_runs_and_retries_persisted_owner_invocation(tmp_path):
     finally:
         server.close()
         connection.disconnect()
+
+
+def test_airflow_reconnect_waits_through_pending_cancellation_then_fails_terminally(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    from airflow.sdk.exceptions import AirflowFailException
+
+    import terrine.orchestration.airflow as adapter
+
+    statuses = iter(("cancel_requested", "cancelled"))
+    sleeps = []
+
+    class Client:
+        def __init__(self, endpoint, *, namespace):
+            pass
+
+        def plan(self, request):
+            return SimpleNamespace(
+                invocation_id=request.invocation_id,
+                recipe_json="saved-recipe",
+                request_key="same-key",
+                destination=request.destination,
+                snapshot_id="snapshot",
+                to_dict=lambda: {},
+            )
+
+        def run(self, serialized, *, request_key, destination):
+            return SimpleNamespace(run_id="active-run", published_generation=None)
+
+        def get_run(self, run_id):
+            return SimpleNamespace(run_id=run_id, durable_state=next(statuses))
+
+    monkeypatch.setattr(adapter, "ControlClient", Client)
+    monkeypatch.setattr(adapter.time, "sleep", sleeps.append)
+    with DAG(dag_id="cancel-reconnect", schedule=None, start_date=None):
+        group = build_materialization_group(
+            plan_request_provider=lambda context: _plan_request(),
+            endpoint=ControlEndpoint(tmp_path / "owner.sock"),
+            namespace="owner",
+        )
+    task = cast(BaseOperator, next(iter(group.children.values())))
+
+    with pytest.raises(AirflowFailException, match="cancelled"):
+        task.execute(cast(Any, {"ti": SimpleNamespace(xcom_push=lambda **kwargs: None)}))
+
+    assert sleeps == [1]
+
+
+def test_airflow_response_loss_returns_final_authoritative_generation(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    import terrine.orchestration.airflow as adapter
+
+    class Client:
+        def __init__(self, endpoint, *, namespace):
+            pass
+
+        def plan(self, request):
+            return SimpleNamespace(
+                invocation_id=request.invocation_id,
+                recipe_json="saved-recipe",
+                request_key="same-key",
+                destination=request.destination,
+                snapshot_id="snapshot",
+                to_dict=lambda: {},
+            )
+
+        def run(self, serialized, *, request_key, destination):
+            return SimpleNamespace(run_id="active-run", published_generation=None)
+
+        def get_run(self, run_id):
+            return SimpleNamespace(
+                run_id=run_id, durable_state="succeeded", pinned_result_ref="generation-2"
+            )
+
+    monkeypatch.setattr(adapter, "ControlClient", Client)
+    with DAG(dag_id="generation-reconnect", schedule=None, start_date=None):
+        group = build_materialization_group(
+            plan_request_provider=lambda context: _plan_request(),
+            endpoint=ControlEndpoint(tmp_path / "owner.sock"),
+            namespace="owner",
+        )
+    task = cast(BaseOperator, next(iter(group.children.values())))
+    result = task.execute(cast(Any, {"ti": SimpleNamespace(xcom_push=lambda **kwargs: None)}))
+
+    assert result["published_generation"] == "generation-2"
+
+
+def test_airflow_cancel_transport_failure_does_not_claim_runtime_stopped(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    import terrine.orchestration.airflow as adapter
+
+    runtime_state = {"value": "running"}
+
+    class Client:
+        def __init__(self, endpoint, *, namespace):
+            pass
+
+        def find_run_by_request_key(self, request_key, *, destination):
+            return SimpleNamespace(run_id="still-running")
+
+        def cancel_run(self, run_id):
+            raise OSError("owner unavailable")
+
+        def get_run(self, run_id):
+            return SimpleNamespace(run_id=run_id, durable_state=runtime_state["value"])
+
+    monkeypatch.setattr(adapter, "ControlClient", Client)
+    with DAG(dag_id="cancel-transport-failure", schedule=None, start_date=None):
+        group = build_materialization_group(
+            plan_request_provider=lambda context: _plan_request(),
+            endpoint=ControlEndpoint(tmp_path / "owner.sock"),
+            namespace="owner",
+        )
+    task = cast(BaseOperator, next(iter(group.children.values())))
+    task._invocation = SimpleNamespace(
+        request_key="same-key", destination=_plan_request().destination
+    )
+
+    task.on_kill()
+
+    assert cast(Any, task)._invocation is not None
+    status = Client(None, namespace="owner").get_run("still-running")
+    assert status.durable_state == "running"

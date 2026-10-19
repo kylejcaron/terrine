@@ -203,3 +203,38 @@ def test_dbt_after_build_reconnects_to_active_run_until_terminal(monkeypatch):
     assert receipt.state == "succeeded"
     assert receipt.published_generation == "generation-2"
     assert sleeps == [1, 1]
+
+
+def test_dbt_after_build_treats_cancelled_runtime_status_as_terminal(monkeypatch):
+    import examples.orchestrators.dbt_core_after_build as recipe
+
+    request = _request("build-17")
+    invocation = SimpleNamespace(
+        invocation_id="build-17",
+        recipe_json="saved-recipe",
+        request_key="destination-key",
+        destination=object(),
+    )
+
+    class Client:
+        def __init__(self, endpoint, *, namespace):
+            pass
+
+        def plan(self, received):
+            return invocation
+
+        def run(self, serialized_plan, *, request_key, destination):
+            return SimpleNamespace(run_id="runtime-run", published_generation=None)
+
+        def get_run(self, run_id):
+            return SimpleNamespace(run_id=run_id, durable_state="cancelled")
+
+    monkeypatch.setattr(recipe, "ControlClient", Client)
+
+    with pytest.raises(RuntimeError, match="cancelled"):
+        recipe.run_after_dbt_build(
+            build_id="build-17",
+            plan_request_provider=lambda build_id: request,
+            endpoint=ControlEndpoint(Path("owner.sock")),
+            namespace="owner",
+        )
