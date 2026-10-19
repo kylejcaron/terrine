@@ -23,6 +23,7 @@ from terrine.spec.design import Design
 from terrine.spec.expressions import (
     _SKETCH_UNAVAILABLE,
     And,
+    ApproxMetricDistinct,
     ApproxMetricQuantile,
     AttributeAsOf,
     Eq,
@@ -254,7 +255,7 @@ def _selector_timing(selector: EventTime) -> tuple[tuple[int, int], tuple[tuple[
 def _expression_timing(expr: Expr) -> tuple[tuple[int, int], tuple[tuple[int, int], ...]]:
     if isinstance(expr, EventTime):
         return _selector_timing(expr)
-    if isinstance(expr, (MetricQuantile, ApproxMetricQuantile)):
+    if isinstance(expr, (MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct)):
         return (expr.window.start, expr.window.end), ()
     if expr.relative_to is None:
         if isinstance(expr, AttributeAsOf):
@@ -332,6 +333,14 @@ def _expression(
             dialect = model.sources[source_name].dialect
             if dialect.casefold() != "duckdb":
                 raise _QUANTILE_BACKEND.error(dialect=dialect)
+    if isinstance(expr, ApproxMetricDistinct):
+        for source_name in metric.source_names:
+            dialect = model.sources[source_name].dialect
+            if dialect.casefold() != "duckdb":
+                raise RefusalSpec(
+                    "terrine.metric.approx_backend_unavailable",
+                    "Approximate distinct is unavailable for backend {dialect!r}.",
+                ).error(dialect=dialect)
     for source_name in metric.source_names:
         _required(model, source_name, required)
     obligations.append("coverage_completeness")

@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from terrine.model import Model
     from terrine.spec import (
         AnchorRange,
+        ApproxMetricDistinct,
         ApproxMetricQuantile,
         BinnedMetricState,
         CohortGrouping,
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
         Treatment,
         agg,
         all_of,
+        approx_distinct,
         approx_quantile,
         asof,
         eq,
@@ -49,6 +51,7 @@ from terrine.windows import Window
 __all__ = [
     "AnchorRange",
     "ApproxMetricQuantile",
+    "ApproxMetricDistinct",
     "Budget",
     "EventSequence",
     "EventTime",
@@ -70,6 +73,7 @@ __all__ = [
     "agg",
     "all_of",
     "approx_quantile",
+    "approx_distinct",
     "asof",
     "eq",
     "from_yaml",

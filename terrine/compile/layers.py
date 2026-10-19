@@ -140,6 +140,7 @@ def plan_layers(design: Design, model) -> LayerPlan:
     from terrine.spec.expressions import (
         And,
         ApproxMetricQuantile,
+        ApproxMetricDistinct,
         AttributeAsOf,
         Eq,
         EventTime,
@@ -160,7 +161,10 @@ def plan_layers(design: Design, model) -> LayerPlan:
             expression(node.left if isinstance(node, Eq) else node.expr)
         elif isinstance(node, IsNull):
             expression(node.expr)
-        elif isinstance(node, (AttributeAsOf, EventTime, MetricQuantile, ApproxMetricQuantile)):
+        elif isinstance(
+            node,
+            (AttributeAsOf, EventTime, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct),
+        ):
             return
         elif isinstance(node, MetricAgg):
             metric = model.metrics[node.metric]

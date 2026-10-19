@@ -15,7 +15,7 @@ __all__ = [
     "MetricAgg",
     "MetricQuantile",
     "SketchRequest",
-    "ApproxMetricQuantile",
+    "ApproxMetricDistinct",
     "AttributeAsOf",
     "EventTime",
     "Gt",
@@ -25,6 +25,7 @@ __all__ = [
     "agg",
     "quantile",
     "approx_quantile",
+    "approx_distinct",
     "asof",
     "event_time",
     "gt",
@@ -104,6 +105,19 @@ class ApproxMetricQuantile:
         object.__setattr__(self, "probability", _probability(self.probability))
         if not isinstance(self.window, Window) or not isinstance(self.sketch, SketchRequest):
             raise TypeError("window and sketch must be typed specifications")
+
+
+@dataclass(frozen=True, slots=True)
+class ApproxMetricDistinct:
+    metric: str
+    window: Window
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "metric", _name(self.metric, "metric"))
+        if not isinstance(self.window, Window):
+            raise TypeError("window must be a Window")
+
+
 
 
 type JsonScalar = None | bool | int | float | str
@@ -223,7 +237,7 @@ class And:
         object.__setattr__(self, "terms", terms)
 
 
-type Expr = MetricAgg | MetricQuantile | ApproxMetricQuantile | AttributeAsOf | EventTime
+type Expr = MetricAgg | MetricQuantile | ApproxMetricQuantile | ApproxMetricDistinct | AttributeAsOf | EventTime
 type Predicate = Gt | Eq | IsNull | And
 
 
@@ -235,7 +249,7 @@ def _expression_support_seconds(expression: Expr) -> tuple[int, int]:
             else _expression_support_seconds(expression.relative_to)
         )
         return (origin[0] + expression.window.start, origin[1] + expression.window.end)
-    if isinstance(expression, (MetricAgg, MetricQuantile, ApproxMetricQuantile)):
+    if isinstance(expression, (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct)):
         origin = (
             (0, 0)
             if not isinstance(expression, MetricAgg) or expression.relative_to is None
@@ -254,7 +268,7 @@ def _expression_support_seconds(expression: Expr) -> tuple[int, int]:
 
 def _require_expr(value: object) -> None:
     if not isinstance(
-        value, (MetricAgg, MetricQuantile, ApproxMetricQuantile, AttributeAsOf, EventTime)
+        value, (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct, AttributeAsOf, EventTime)
     ):
         raise TypeError("expected a supported expression node")
 
@@ -294,6 +308,14 @@ def approx_quantile(
     return ApproxMetricQuantile(
         _name(metric, "metric"), _probability(probability), Window(*window), sketch
     )
+
+
+def approx_distinct(
+    metric: str, *, window: tuple[str | int, str | int]
+) -> ApproxMetricDistinct:
+    if not isinstance(window, (tuple, list)) or len(window) != 2:
+        raise ValueError("window must contain a start and exclusive end")
+    return ApproxMetricDistinct(_name(metric, "metric"), Window(*window))
 
 
 def asof(

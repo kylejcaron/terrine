@@ -79,3 +79,16 @@ def test_serialized_sketch_rank_error_rejects_numeric_and_boolean_json(malformed
     payload["design"]["outcomes"]["p50"]["sketch"]["rank_error"] = malformed
     with pytest.raises((TypeError, ValueError)):
         from_json(json.dumps(payload))
+
+
+def test_approximate_distinct_design_round_trips():
+    from terrine.spec.expressions import ApproxMetricDistinct, approx_distinct
+
+    design = Design(
+        unit="user",
+        anchor=FixedDate("2025-03-01"),
+        outcomes={"distinct": approx_distinct("users", window=("0d", "7d"))},
+    )
+    expression = from_json(to_json(design)).outcomes["distinct"]
+    assert isinstance(expression, ApproxMetricDistinct)
+    assert expression == design.outcomes["distinct"]

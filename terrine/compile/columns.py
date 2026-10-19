@@ -24,7 +24,8 @@ from terrine.compile.anchors import (
     compile_anchors,
 )
 from terrine.compile.layers import build_measure_layer, measure_identity
-from terrine.data import ColumnMeta, ExpressionTiming, FeatureCutoff, Roles, SequenceMeta
+from terrine.data import ApproximationMeta, ColumnMeta, ExpressionTiming, FeatureCutoff, Roles, SequenceMeta
+from importlib.metadata import version as package_version
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import BoundDimension
@@ -38,6 +39,7 @@ from terrine.spec.expressions import (
     EventTime,
     Expr,
     MetricAgg,
+    ApproxMetricDistinct,
     MetricQuantile,
 )
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE
@@ -648,6 +650,41 @@ def compile_columns(
             meta = result.columns[output]
             cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
             strategy = "sparse_range_join/exact_type7"
+            result_table = result.table
+        elif isinstance(node, ApproxMetricDistinct):
+            metric = model.metrics[node.metric]
+            if len(metric.measures) != 1:
+                raise RefusalSpec(
+                    "terrine.metric.approx_distinct_requires_single_measure",
+                    "Approximate distinct requires metric {metric!r} to have exactly one measure.",
+                ).error(metric=node.metric)
+            unresolved = metric.measures[0]
+            source = model.sources[unresolved.source_name]
+            events = events_for(source.name)
+            measure = resolve_measure(events, unresolved, source=source, allow_nonadditive=True)
+            result = aggregate_nonadditive_window(
+                expression_anchors,
+                events,
+                measure,
+                source,
+                node.window,
+                model.readiness,
+                output=output,
+                role="feature",
+                operation="approx_count_distinct",
+            )
+            meta = replace(
+                result.columns[output],
+                approximation=ApproximationMeta(
+                    algorithm="hll",
+                    implementation="DuckDB approx_count_distinct",
+                    version=package_version("duckdb"),
+                    parameters={},
+                    error_description="HLL relative standard error ≈ 1.04/√m",
+                ),
+            )
+            cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
+            strategy = "sparse_range_join/hll"
             result_table = result.table
         elif (
             isinstance(node, MetricAgg)

@@ -17,6 +17,7 @@ from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import (
     And,
     ApproxMetricQuantile,
+    ApproxMetricDistinct,
     AttributeAsOf,
     Eq,
     EventTime,
@@ -264,6 +265,12 @@ def _encode(value: Any) -> Any:
             "probability": str(value.probability),
             "window": _encode(value.window),
             "sketch": _encode(value.sketch),
+        }
+    if isinstance(value, ApproxMetricDistinct):
+        return {
+            "type": "ApproxMetricDistinct",
+            "metric": value.metric,
+            "window": _encode(value.window),
         }
     if isinstance(value, SketchRequest):
         return {
@@ -584,6 +591,9 @@ def _node(value: Any) -> Any:
             _node(item["window"]),
             _node(item["sketch"]),
         )
+    if tag == "ApproxMetricDistinct":
+        item = _object(value, {"type", "metric", "window"})
+        return ApproxMetricDistinct(item["metric"], _node(item["window"]))
     if tag == "MetricAgg":
         item = _object(
             value,
@@ -714,11 +724,11 @@ def _design(value: Any) -> Design:
         anchor,
         features=named(
             item["features"],
-            (MetricAgg, MetricQuantile, ApproxMetricQuantile, AttributeAsOf, EventTime),
+            (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct, AttributeAsOf, EventTime),
         ),
         outcomes=named(
             item["outcomes"],
-            (MetricAgg, MetricQuantile, ApproxMetricQuantile, AttributeAsOf, EventTime),
+            (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct, AttributeAsOf, EventTime),
         ),
         eligibility=named(item["eligibility"], (Gt, Eq, IsNull, And)),
         treatment=treatment,

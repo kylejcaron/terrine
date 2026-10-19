@@ -286,3 +286,23 @@ def test_persisted_quantile_uses_raw_events_without_prefix_layer(nonadditive_mod
     compiled = compose_materialized_frame(design, nonadditive_model, persisted={})
     rows = nonadditive_model.con.to_pyarrow(compiled.table).to_pylist()
     assert rows[0]["q"] == Decimal("1.75")
+
+
+def test_approximate_distinct_executes_in_duckdb_and_marks_column_metadata(nonadditive_model):
+    from terrine import Frame
+    from terrine.spec import approx_distinct
+
+    design = Design(
+        "user",
+        FixedDate("2025-01-03"),
+        features={"distinct": approx_distinct("amount_distinct", window=("-2d", "0d"))},
+    )
+    first = Frame(design, nonadditive_model).materialize()
+    second = Frame(design, nonadditive_model).materialize()
+
+    assert first.table.column("distinct").to_pylist() == [3, 0, 0]
+    assert first.table.column("distinct").to_pylist() == second.table.column("distinct").to_pylist()
+    meta = first.columns["distinct"].approximation
+    assert meta.algorithm == "hll"
+    assert meta.implementation == "DuckDB approx_count_distinct"
+    assert meta.error_description == "HLL relative standard error ≈ 1.04/√m"

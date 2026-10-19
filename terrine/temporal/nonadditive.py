@@ -87,6 +87,8 @@ def _exact_numeric_dtype(value_type: str, operation: str, probability: Decimal |
         if dtype.is_integer() or dtype.is_decimal() or dtype.is_floating():
             return dtype
         raise _UNSUPPORTED_TYPE.error(operation=operation, value_type=value_type)
+    if operation == "approx_count_distinct":
+        return dt.int64
     if not (dtype.is_integer() or isinstance(dtype, dt.Decimal)):
         raise _UNSUPPORTED_TYPE.error(operation=operation, value_type=value_type)
     probability_scale = (
@@ -125,7 +127,7 @@ def aggregate_nonadditive_window(
     *,
     output: str,
     role: str,
-    operation: Literal["min", "max", "count_distinct", "quantile"],
+    operation: Literal["min", "max", "count_distinct", "approx_count_distinct", "quantile"],
     probability: Decimal | None = None,
     unit_column: str = "unit",
 ) -> TemporalResult:
@@ -177,6 +179,8 @@ def aggregate_nonadditive_window(
         grouped = matched.group_by(*groups).aggregate(**{output: value.max()})
     elif operation == "count_distinct":
         grouped = matched.group_by(*groups).aggregate(**{output: value.nunique()})
+    elif operation == "approx_count_distinct":
+        grouped = matched.group_by(*groups).aggregate(**{output: value.approx_nunique()})
     else:
         assert probability is not None
         nonnull = matched.filter(value.notnull())
@@ -298,7 +302,7 @@ def aggregate_nonadditive_window(
     )
     event_count = joined.__terrine_nonadditive_event_count.fill_null(0)
     nonnull_count = joined.__terrine_nonadditive_nonnull_count.fill_null(0)
-    if operation == "count_distinct":
+    if operation in {"count_distinct", "approx_count_distinct"}:
         value = joined[output].fill_null(0).cast("int64")
     else:
         value = joined[output]
