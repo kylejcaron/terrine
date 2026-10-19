@@ -10,6 +10,7 @@ from threading import Event
 
 import duckdb
 import pyarrow as pa
+import pytest
 
 from terrine.runtime.control import ControlClient, ControlEndpoint, ControlServer
 from terrine.runtime.events import record_run_event
@@ -285,7 +286,8 @@ def test_cli_run_waits_for_long_owner_execution_receipt():
     )
     try:
         assert started.wait(timeout=HANG_GUARD_SECONDS)
-        assert process.poll() is None
+        with pytest.raises(subprocess.TimeoutExpired):
+            process.communicate(timeout=2.2)
     finally:
         release.set()
     stdout, _stderr = process.communicate(timeout=HANG_GUARD_SECONDS)
