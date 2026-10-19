@@ -2,6 +2,7 @@
 
 ## Added
 - Separate backend execution admission from runtime publication with shared immutable capability evidence; unverified connections refuse before source/schema access while native DuckDB keeps identity checks and private-session cleanup.
+- Gate Dataset staging, retained snapshots and Arrow/Parquet reads independently; unsupported publication leaves ordinary Frame materialization available, and strict unknown scan budgets refuse before export destination work.
 - Optional, preflight-backed DoubleML, DoWhy and same-connection duckreg recipes, with real integration examples and a dedicated CI job.
 - Snapshot-scoped warehouse export checks and exact per-reason exclusion counts; DoWhy refuses repeated-unit and declared-weight datasets rather than forwarding ignored arguments.
 - Add distinct lifelines KM-array and feature-only Cox-dataframe hand-offs, preserving elapsed entry times, declared weights/clusters, and exact exclusions; risk-set conversion retains coarsened counts and refuses delayed entry or incomplete trajectories.

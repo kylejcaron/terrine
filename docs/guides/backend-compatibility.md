@@ -35,9 +35,15 @@ Capabilities distinguish verified (`True`), unsupported (`False`), and unverifie
   support does not block an ordinary Frame materialization.
 - Generation publication requires both `table_publication` and
   `atomic_manifest_publish`, never merely writable SQL tables.
-- Strict scan budgets still require an actual verified scan bound. An output row
-  or byte limit does not certify source scan work. Explicit non-strict policy
-  permits execution with the existing warning.
+  Dataset staging checks these and retained capture before opening destination
+  state or reading sources. Losing publication evidence does not block existing
+  verified reads.
+- Dataset Arrow reads and local Parquet export require `arrow_batches` before
+  reading the generation or creating destination files. Native unload is not
+  required: local export uses bounded Arrow batches and PyArrow.
+- Strict scan budgets, including local Parquet export, still require an actual
+  verified scan bound. An output row or byte limit does not certify source scan
+  work. Explicit non-strict policy permits execution with the existing warning.
 - DuckDB has no native replay-snapshot claim (`snapshot=False`). Owner-retained
   immutable capture and its receipt are a separate verified protocol.
 - Native query cancellation, source change-feed evidence, scan estimates/limits

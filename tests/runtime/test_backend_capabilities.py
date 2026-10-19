@@ -145,3 +145,112 @@ def test_roster_only_compilation_requires_verified_timestamp_semantics(native_in
         Design("user", FixedDate("2025-01-02")).build(model)
     assert error.value.code == "terrine.backend.capability_unavailable"
     assert error.value.context["operation"] == "exact_timestamps"
+
+
+@pytest.fixture
+def publication_frame(tmp_path):
+    from terrine.spec import FixedDate
+
+    con = ibis.duckdb.connect(str(tmp_path / "capabilities.duckdb"))
+    try:
+        con.con.execute("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        con.con.execute("CREATE TABLE users AS SELECT 1 AS user_id")
+        model = Model.from_catalog(
+            _catalog(), con=con, readiness={}, units={"user": UnitSource("users", "user_id")}
+        )
+        yield Design("user", FixedDate("2025-01-02")).build(model), con
+    finally:
+        con.disconnect()
+
+
+@pytest.mark.parametrize(
+    ("operation", "value", "status"),
+    [
+        ("table_publication", None, "unverified"),
+        ("atomic_manifest_publish", False, "unsupported"),
+        ("retained_snapshot", None, "unverified"),
+    ],
+)
+def test_stage_refuses_only_missing_publication_evidence(
+    publication_frame, monkeypatch, operation, value, status
+):
+    frame, con = publication_frame
+    provider = backend_provider(con)
+    monkeypatch.setattr(
+        provider, "capabilities", replace(provider.capabilities, **{operation: value})
+    )
+    assert frame.materialize().table["unit"].to_pylist() == [1]
+    con.con.execute("DROP TABLE users")
+    with pytest.raises(TerrineError) as error:
+        frame.stage("dataset")
+    assert error.value.code == "terrine.backend.capability_unavailable"
+    assert error.value.context["operation"] == operation
+    assert error.value.context["status"] == status
+    assert con.con.execute(
+        "SELECT count(*) FROM information_schema.schemata WHERE schema_name='terrine_runtime'"
+    ).fetchone() == (0,)
+
+
+def test_dataset_arrow_gate_precedes_read_and_export_destination_work(
+    publication_frame, tmp_path, monkeypatch
+):
+    frame, con = publication_frame
+    dataset = frame.stage("dataset")
+    provider = backend_provider(con)
+    monkeypatch.setattr(
+        provider, "capabilities", replace(provider.capabilities, arrow_batches=None)
+    )
+    for operation in (
+        lambda: dataset.to_arrow_batches(),
+        lambda: dataset.export_parquet(destination=str(tmp_path / "refused")),
+    ):
+        with pytest.raises(TerrineError) as error:
+            operation()
+        assert error.value.code == "terrine.backend.capability_unavailable"
+        assert error.value.context["operation"] == "arrow_batches"
+    assert not (tmp_path / "refused").exists()
+    assert not (tmp_path / ".refused.lock").exists()
+    assert not (tmp_path / ".refused.partial").exists()
+
+
+def test_dataset_export_uses_arrow_without_native_unload_and_checks_scan_policy(
+    publication_frame, tmp_path, monkeypatch
+):
+    import pyarrow.parquet as pq
+
+    frame, con = publication_frame
+    dataset = frame.stage("dataset")
+    provider = backend_provider(con)
+    monkeypatch.setattr(
+        provider, "capabilities", replace(provider.capabilities, native_parquet_unload=False)
+    )
+    destination = tmp_path / "parquet"
+    with pytest.raises(TerrineError) as error:
+        dataset.export_parquet(destination=str(destination), budget=Budget(max_scan_bytes=1))
+    assert error.value.code == "terrine.budget.scan_unknown"
+    assert not (tmp_path / ".parquet.lock").exists()
+    with pytest.warns(RuntimeWarning):
+        export = dataset.export_parquet(
+            destination=str(destination), budget=Budget(max_scan_bytes=1, strict_scan=False)
+        )
+    assert export.row_count == 1
+    assert pq.ParquetFile(destination / export.shards[0].path).read()["unit"].to_pylist() == [1]
+
+
+def test_dataset_reopen_refuses_unverified_backend_before_native_attributes(publication_frame):
+    from terrine.dataset.reference import Dataset
+
+    frame, _ = publication_frame
+    dataset = frame.stage("dataset")
+
+    class Unverified:
+        name = "bigquery"
+
+        @property
+        def con(self):
+            raise AssertionError("unverified backend native resources accessed")
+
+    with pytest.raises(TerrineError) as error:
+        Dataset.from_manifest(dataset.manifest, con=Unverified())
+    assert error.value.code == "terrine.backend.capability_unavailable"
+    assert error.value.context["backend"] == "bigquery"

@@ -16,6 +16,7 @@ import pyarrow as pa
 from terrine.data import Budget, MaterializedFrame
 from terrine.dataset.manifest import DatasetManifest, ManifestColumn, ManifestGeneration
 from terrine.errors import RefusalSpec
+from terrine.execution.backend import backend_provider
 from terrine.runtime.api import run_serialized_plan
 from terrine.runtime.backends.base import PublicationReceipt
 from terrine.runtime.backends.duckdb import DuckDBBackend, _digest_relation, _digest_version
@@ -108,6 +109,7 @@ class Dataset:
     def __init__(self, manifest: DatasetManifest, *, con: Any, namespace: str) -> None:
         if not isinstance(manifest, DatasetManifest):
             raise TypeError("manifest must be a DatasetManifest")
+        backend_provider(con)
         self._con, self._raw = con, con.con
         self._namespace, self._manifest = namespace, manifest
         self._verify_publication()
@@ -179,9 +181,18 @@ class Dataset:
             self._receipt, self._receipt.partitions[0]
         )
 
+    def _require_arrow_batches(self) -> None:
+        provider = backend_provider(self._con)
+        provider.capabilities.require(
+            "arrow_batches",
+            backend=provider.dialect(self._con),
+            route="Read or export the Dataset with a backend supporting bounded Arrow batches.",
+        )
+
     def to_arrow_batches(self, *, batch_size: int = 65_536) -> Generator[pa.RecordBatch]:
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
             raise _INVALID_BATCH.error()
+        self._require_arrow_batches()
         return self._iter_arrow_batches(batch_size)
 
     def _iter_arrow_batches(self, batch_size: int) -> Generator[pa.RecordBatch]:
@@ -293,6 +304,13 @@ def stage_frame(
     from terrine.spec.validate import validate_design
 
     model = frame._model
+    provider = backend_provider(model.con)
+    for operation in ("table_publication", "atomic_manifest_publish", "retained_snapshot"):
+        provider.capabilities.require(
+            operation,
+            backend=model.catalog.dialect,
+            route="Materialize the Frame directly, or use verified local DuckDB staging.",
+        )
     budget = budget if budget is not None else Budget(strict_scan=False)
     preflight_runtime_shape(frame._design, budget)
     namespace = (
