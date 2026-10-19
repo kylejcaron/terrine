@@ -47,8 +47,8 @@ def dependency_graph(
 ) -> DependencyGraph:
     """Build stable logical layer dependencies; no runtime execution occurs."""
     source_names = tuple(sources) if sources is not None else _model_sources(model)
-    if not source_names:
-        raise ValueError("at least one source is required")
+    if not source_names and design is None:
+        raise ValueError("at least one source or a roster-backed Design is required")
     selector_nodes = _selector_nodes(model, design, expression_timings)
     source_names = tuple(sorted(set(source_names) | set(selector_nodes)))
     fingerprint = definition_hash or getattr(design, "spec_hash", None) or "unbound"
@@ -59,6 +59,20 @@ def dependency_graph(
 
     state_panel = isinstance(getattr(design, "shape", None), StatePanel)
     tracks_certificates = design is not None
+    if not source_names:
+        for partition in partition_names:
+            source = getattr(design, "unit", None)
+            if not isinstance(source, str):
+                raise ValueError("a roster-backed Design is required")
+            anchor = LayerNode("anchor", source, partition, fingerprint, "pending")
+            frame = LayerNode("frame", source, partition, fingerprint, "pending")
+            nodes.extend((anchor, frame))
+            edges.append((anchor, frame))
+            if include_exports:
+                export = LayerNode("export", source, partition, fingerprint, "pending")
+                nodes.append(export)
+                edges.append((frame, export))
+        return DependencyGraph(tuple(nodes), tuple(edges))
     for source in sorted(set(source_names)):
         for partition in partition_names:
             daily = LayerNode("daily", source, partition, fingerprint, "pending")

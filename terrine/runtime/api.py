@@ -453,6 +453,10 @@ class DesignExecutor:
         self._frame = (
             dataset_recipe.build(model) if dataset_recipe is not None else design.build(model)
         )
+        if output_root is None:
+            from terrine.runtime.owner import RuntimeOwner
+
+            output_root = RuntimeOwner.from_connection(con).snapshot_root / namespace / "outputs"
         self._output_root = output_root
 
     def run_snapshot_task(self, context: Any, task: Any, dependencies: Any):
@@ -518,6 +522,7 @@ class DesignExecutor:
             relation = _restore_persisted_layer(context, arrow, name)
             registered.append(name)
             persisted[key] = relation
+        spooled = None
         try:
             compiled = compose_runtime_frame(
                 self.design, execution_model, persisted=persisted, budget=self._plan.budget
@@ -542,7 +547,33 @@ class DesignExecutor:
             summary = _eligibility_summary(compiled.audit_table, context.execute)
             context._check_query(compiled.table)
             reader = context.con.to_pyarrow_batches(compiled.table, chunk_size=65_536)
+            from terrine.runtime.arrow import ArrowOutput
+
             table = self._frame._normalize_output(pa.Table.from_batches([], schema=reader.schema))
+            table, _ = self._frame._split_output(table, compiled)
+            view = self._frame._training_view
+            if view is not None and view.split is not None:
+                source_reader = reader
+
+                def split_batches():
+                    try:
+                        for batch in source_reader:
+                            normalized = self._frame._normalize_output(
+                                pa.Table.from_batches([batch])
+                            )
+                            normalized, counts = self._frame._split_output(normalized, compiled)
+                            for reason, count in counts.items():
+                                excluded_counts[reason] = excluded_counts.get(reason, 0) + count
+                            yield from normalized.cast(table.schema).to_batches()
+                    finally:
+                        source_reader.close()
+
+                spooled = ArrowOutput.write(
+                    pa.RecordBatchReader.from_batches(table.schema, split_batches()),
+                    root=self._output_root,
+                    budget=self._plan.budget,
+                )
+                reader = spooled.open()
             if isinstance(self.design.shape, StatePanel):
                 shape = "state_panel"
             elif isinstance(self.design.shape, EventSequence):
@@ -623,14 +654,14 @@ class DesignExecutor:
                 finally:
                     reader.close()
 
-            from terrine.runtime.arrow import ArrowOutput
-
             return ArrowOutput.write(
                 pa.RecordBatchReader.from_batches(metadata, batches()),
                 root=self._output_root,
                 budget=self._plan.budget,
             )
         finally:
+            if spooled is not None:
+                spooled.path.unlink(missing_ok=True)
             for name in registered:
                 context.con.drop_table(name, force=True)
 

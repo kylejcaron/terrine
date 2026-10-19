@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import uuid
 from collections.abc import Iterator
-from pathlib import Path
+from dataclasses import replace
 from typing import Any
 
 import pyarrow as pa
@@ -18,9 +19,10 @@ from terrine.errors import RefusalSpec
 from terrine.runtime.api import run_serialized_plan
 from terrine.runtime.backends.base import PublicationReceipt
 from terrine.runtime.backends.duckdb import DuckDBBackend, _digest_relation
+from terrine.runtime.changes import ChangeSet
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.owner import RuntimeOwner
-from terrine.runtime.planner import plan_refresh
+from terrine.runtime.planner import RefreshPlan, plan_refresh
 from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
@@ -38,21 +40,19 @@ _GENERATION_INVALID = RefusalSpec(
     "terrine.dataset.invalid_generation",
     "Dataset manifest does not identify a verified committed runtime generation.",
 )
+_STALE_BASE = RefusalSpec(
+    "terrine.dataset.stale_generation",
+    "Refresh requires the pinned generation to remain the current publication.",
+)
 
 
 def _owner_for(con: Any) -> RuntimeOwner:
     try:
-        raw = con.con
-        rows = raw.execute("PRAGMA database_list").fetchall()
-        current = raw.execute("SELECT current_database()").fetchone()[0]
-        database = next(Path(path).resolve() for _, name, path in rows if name == current and path)
+        return RuntimeOwner.from_connection(con)
     except Exception as error:
         raise _INVALID_DESTINATION.error(
             reason="staging requires a file-backed DuckDB connection"
         ) from error
-    root = os.environ.get("TERRINE_RUNTIME_SNAPSHOT_ROOT")
-    snapshot_root = Path(root).expanduser() if root else database.parent / ".terrine" / "snapshots"
-    return RuntimeOwner(database, snapshot_root)
 
 
 def _column_role(name: str, roles: Any) -> str:
@@ -140,7 +140,7 @@ class Dataset:
         if (
             record is None
             or record[2] != "succeeded"
-            or record[0].encode() != self._manifest.to_json()
+            or record[0].encode() != replace(self._manifest, recipe_reference=None).to_json()
         ):
             raise _GENERATION_INVALID.error()
         self._receipt = PublicationReceipt(
@@ -208,8 +208,82 @@ class Dataset:
             budget=budget,
         )
 
+    def plan_refresh(
+        self, model: Any, *, changes: ChangeSet | None = None, budget: Budget | None = None
+    ) -> RefreshPlan:
+        """Plan from the saved recipe without reading or staging source rows."""
+        if _owner_for(model.con).reference != self.manifest.source_snapshots["owner"]:
+            raise _GENERATION_INVALID.error()
+        if changes is not None and not isinstance(changes, ChangeSet):
+            raise TypeError("changes must be ChangeSet or None")
+        if model.model_hash != self.manifest.model_hash:
+            changes = ChangeSet((), "conservative_rebuild")
+        frame = self.manifest.recipe.build(model)
+        return _plan_frame(
+            frame,
+            namespace=self._namespace,
+            table=self.manifest.generation.dataset_id,
+            snapshot_id=self.manifest.source_snapshots["snapshot_id"],
+            budget=budget if budget is not None else Budget(strict_scan=False),
+            changes=changes,
+        )
 
-def stage_frame(frame: Any, table: str, *, budget: Budget | None = None) -> Dataset:
+    def refresh(
+        self, model: Any, *, changes: ChangeSet | None = None, budget: Budget | None = None
+    ) -> Dataset:
+        """Publish a recipe reconstruction while leaving this generation pinned."""
+        plan = self.plan_refresh(model, changes=changes, budget=budget)
+        if (
+            DuckDBBackend(model.con.con, namespace=self._namespace).current_generation(
+                self.manifest.generation.dataset_id
+            )
+            != self.manifest.generation.generation_id
+        ):
+            raise _STALE_BASE.error()
+        if not plan.tasks:
+            return Dataset.from_manifest(self.manifest, con=model.con, namespace=self._namespace)
+        return stage_frame(
+            self.manifest.recipe.build(model),
+            self.manifest.generation.dataset_id,
+            budget=budget,
+            _base=self,
+            _changes=(
+                ChangeSet((), "conservative_rebuild")
+                if model.model_hash != self.manifest.model_hash
+                else changes
+            ),
+        )
+
+
+def _plan_frame(frame, *, namespace, table, snapshot_id, budget, changes=None):
+    from terrine.spec.validate import validate_design
+
+    recipe = _recipe_for(frame)
+    definition = hashlib.sha256((recipe.digest + frame._model.model_hash).encode()).hexdigest()
+    return plan_refresh(
+        namespace=namespace,
+        dataset=table,
+        definition_hash=frame._design.spec_hash,
+        snapshot_id=snapshot_id,
+        budget=budget,
+        changes=changes,
+        graph=dependency_graph(
+            frame._model,
+            frame._design,
+            sources=validate_design(frame._design, frame._model).required_sources,
+            definition_hash=definition,
+        ),
+    )
+
+
+def stage_frame(
+    frame: Any,
+    table: str,
+    *,
+    budget: Budget | None = None,
+    _base: Dataset | None = None,
+    _changes: ChangeSet | None = None,
+) -> Dataset:
     if not isinstance(table, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table):
         raise _INVALID_DESTINATION.error(reason="table must be a simple SQL identifier")
     from terrine.runtime.api import preflight_runtime_shape
@@ -218,10 +292,23 @@ def stage_frame(frame: Any, table: str, *, budget: Budget | None = None) -> Data
     model = frame._model
     budget = budget if budget is not None else Budget(strict_scan=False)
     preflight_runtime_shape(frame._design, budget)
-    namespace = os.environ.get("TERRINE_RUNTIME_NAMESPACE", "terrine_runtime")
+    namespace = (
+        _base._namespace
+        if _base is not None
+        else os.environ.get("TERRINE_RUNTIME_NAMESPACE", "terrine_runtime")
+    )
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", namespace):
         raise _INVALID_DESTINATION.error(reason="runtime namespace must be a simple SQL identifier")
     owner = _owner_for(model.con)
+    raw = model.con.con
+    backend = DuckDBBackend(raw, namespace=namespace)
+    expected_base = (
+        backend.current_generation(table)
+        if _base is None
+        else _base.manifest.generation.generation_id
+    )
+    if _base is not None and backend.current_generation(table) != expected_base:
+        raise _STALE_BASE.error()
     authority = SnapshotAuthority(owner)
     request_key = uuid.uuid4().hex
     snapshot = authority.capture(
@@ -238,15 +325,13 @@ def stage_frame(frame: Any, table: str, *, budget: Budget | None = None) -> Data
     backend = DuckDBBackend(raw, namespace=namespace)
     recipe = _recipe_for(frame)
     required_sources = validate_design(frame._design, model).required_sources
-    plan = plan_refresh(
+    plan = _plan_frame(
+        frame,
         namespace=namespace,
-        dataset=table,
-        definition_hash=frame._design.spec_hash,
+        table=table,
         snapshot_id=snapshot.snapshot_id,
         budget=budget,
-        graph=dependency_graph(
-            model, frame._design, sources=required_sources, definition_hash=recipe.digest
-        ),
+        changes=_changes,
     )
     saved = SavedPlanRecipe.create(
         plan_json=plan.serialize(),
@@ -254,7 +339,7 @@ def stage_frame(frame: Any, table: str, *, budget: Budget | None = None) -> Data
         model=ModelReference.from_model(model, owner_key=owner.reference),
         destination=DestinationRef(str(owner.state_path), namespace, table),
         namespace=namespace,
-        expected_base_manifest=backend.current_generation(table),
+        expected_base_manifest=expected_base,
         dataset_recipe=recipe,
     )
     saved.pin_snapshot(store)
@@ -328,6 +413,7 @@ def stage_frame(frame: Any, table: str, *, budget: Budget | None = None) -> Data
         },
         coverage,
         None if recipe.view is None else recipe.view.get("split"),
+        frame_metadata=metadata.to_metadata(),
     )
     raw.execute(
         f'CREATE TABLE IF NOT EXISTS "{namespace}".runtime_dataset_recipes '

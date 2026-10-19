@@ -86,3 +86,46 @@ def test_invalid_arrow_batch_size_refuses_before_read(native_inputs, tmp_path):
         dataset.to_arrow_batches(batch_size=0)
     assert error.value.code == "terrine.dataset.invalid_batch_size"
     con.disconnect()
+
+
+def test_roster_only_stage_uses_executor_default_durable_outputs(
+    native_inputs, tmp_path, monkeypatch
+):
+    from terrine.runtime.api import DesignExecutor
+
+    frame, con = _durable_frame(native_inputs, tmp_path)
+    original = DesignExecutor.__init__
+
+    def initialize(self, *args, **kwargs):
+        kwargs.pop("output_root", None)
+        original(self, *args, **kwargs)
+
+    monkeypatch.setattr(DesignExecutor, "__init__", initialize)
+    con.drop_table("labels")
+    roster = Design("user", FixedDate("2025-01-05")).build(frame._model)
+    dataset = roster.stage("roster", budget=Budget(strict_scan=False))
+    assert dataset.manifest.generation.row_count == 2
+    assert set(dataset.manifest.source_coverage) == set()
+    assert sorted(
+        key for batch in dataset.to_arrow_batches() for key in batch["unit"].to_pylist()
+    ) == ["a", "b"]
+    con.disconnect()
+
+
+def test_reopen_accepts_resolved_owner_scoped_recipe_reference(native_inputs, tmp_path):
+    from dataclasses import replace
+
+    from terrine.dataset.manifest import DatasetManifest
+    from terrine.spec.dataset import DatasetRecipeStore
+
+    frame, con = _durable_frame(native_inputs, tmp_path)
+    dataset = frame.stage("training", budget=Budget(strict_scan=False))
+    recipes = DatasetRecipeStore(tmp_path / "recipes", owner="customer")
+    reference = recipes.put(dataset.manifest.recipe)
+    manifest = DatasetManifest.from_json(
+        replace(dataset.manifest, recipe_reference=reference).to_json(), recipe_store=recipes
+    )
+    reopened = Dataset.from_manifest(manifest, con=con)
+    assert reopened.manifest.recipe_reference == reference
+    assert sum(batch.num_rows for batch in reopened.to_arrow_batches()) == 2
+    con.disconnect()

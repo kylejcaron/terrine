@@ -8,7 +8,7 @@ import warnings
 from dataclasses import dataclass, replace
 from datetime import datetime
 from importlib import import_module
-from typing import TYPE_CHECKING, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import pyarrow as pa
 
@@ -402,11 +402,23 @@ class Frame:
                 "Frame export directly or construct a cross-sectional training Design"
             )
         if split is not None:
-            raise RefusalSpec(
-                "terrine.dataset.split_not_applied",
-                "Frame training views do not apply split assignments yet; omit split or apply "
-                "the policy with terrine.dataset.splits.assign_splits.",
-            ).error()
+            from terrine.semantic.time import boundary_timezone
+
+            policies = import_module("terrine.dataset.splits")
+            if not isinstance(split, (policies.TimeSplit, policies.GroupSplit)):
+                raise TypeError("split must be TimeSplit, GroupSplit, or None")
+            if isinstance(split, policies.TimeSplit):
+                split = split.bind(boundary_timezone(self._model.catalog.day_boundary))
+                groups = split.groups
+            else:
+                groups = split
+            if groups is not None and groups.group not in (
+                self.roles.unit,
+                self.roles.cluster_unit,
+            ):
+                raise ValueError("split groups must select the unit or cluster-unit identity")
+            if {"__terrine_split", "__terrine_split_reason"} & set(self._compiled.table.columns):
+                raise ValueError("split output names collide with Design columns")
 
         labels = (label,) if isinstance(label, str) else tuple(label)
         if not labels or any(not isinstance(name, str) or not name for name in labels):
@@ -587,6 +599,12 @@ class Frame:
                     }
                 )
             table = self._normalize_output(table)
+            table, split_counts = self._split_output(table, compiled)
+            for reason, count in split_counts.items():
+                excluded_counts[reason] = excluded_counts.get(reason, 0) + count
+            if budget is not None and budget.max_output_bytes is not None:
+                if table.nbytes > budget.max_output_bytes:
+                    raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
             treatment = self._design.treatment
             treatment_column = compiled.roles.treatment
             baseline_binary = (
@@ -709,6 +727,19 @@ class Frame:
                 ),
             )
         return provenance
+
+    def _split_output(self, table: pa.Table, compiled: CompiledStudy):
+        view = self._training_view
+        if view is None or view.split is None:
+            return table, {}
+        return import_module("terrine.dataset.training").assign_training_splits(
+            table,
+            compiled=compiled,
+            labels=view.labels,
+            policy=cast("Any", view.split),
+            binned_state=isinstance(self._design.shape, StatePanel)
+            and isinstance(self._design.shape.state, BinnedMetricState),
+        )
 
     def _normalize_output(self, table: pa.Table) -> pa.Table:
         if isinstance(self._design.shape, TimeToEvent):

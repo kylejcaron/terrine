@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from typing import Any
 
 import ibis
@@ -370,7 +370,7 @@ class DuckDBBackend:
 
     def read_batches(
         self, receipt: PublicationReceipt, partition: str, *, batch_size: int = 65_536
-    ) -> pa.RecordBatchReader:
+    ) -> Generator[pa.RecordBatch]:
         """Stream exact-generation data with its retained logical schema and metadata."""
         row = self.con.execute(
             f"SELECT table_name FROM {self._schema}.runtime_partitions "
@@ -380,13 +380,14 @@ class DuckDBBackend:
         if row is None or partition not in receipt.partitions:
             raise KeyError(partition)
         schema = self._partition_schema(receipt, partition)
-        cursor = self.con.cursor()
-        reader = cursor.execute(f"SELECT * FROM {self._schema}.{_quote(row[0])}").to_arrow_reader(
-            batch_size=batch_size
-        )
 
         def batches():
+            cursor = self.con.cursor()
+            reader = None
             try:
+                reader = cursor.execute(
+                    f"SELECT * FROM {self._schema}.{_quote(row[0])}"
+                ).to_arrow_reader(batch_size=batch_size)
                 for batch in reader:
                     for index, field in enumerate(schema):
                         if pa.types.is_null(field.type):
@@ -395,10 +396,11 @@ class DuckDBBackend:
                             batch = batch.set_column(index, field, pa.nulls(batch.num_rows))
                     yield batch.cast(schema)
             finally:
-                reader.close()
+                if reader is not None:
+                    reader.close()
                 cursor.close()
 
-        return pa.RecordBatchReader.from_batches(schema, batches())
+        return batches()
 
     def _partition_schema(self, receipt: PublicationReceipt, partition: str) -> pa.Schema:
         metadata = self.con.execute(

@@ -11,6 +11,7 @@
 - Bind canonical dataset construction recipes into SavedPlanRecipe serialization for validated reconstruction.
 - Execute dataset staging through persisted saved Design recipes, renewable fenced leases, bounded durable Arrow task outputs, and metadata-preserving exact-generation reads.
 - Share ordinary Frame normalization with staged StatePanel outputs and keep long-stage leases renewable throughout snapshot-bound execution and publication.
+- Refresh pinned datasets from their saved training/scoring recipes, apply leakage-aware split assignments in bounded batches, and retain complete view provenance in manifests.
 
 - Stage file-backed DuckDB Frames into immutable runtime-published generations through retained input snapshots, with bounded Arrow batch transfer and manifest-verified pinned reads.
 - Export pinned datasets to bounded Parquet shards with checksums, generation manifests, and verified completed-export replay.

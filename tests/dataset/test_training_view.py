@@ -239,13 +239,16 @@ def test_state_panel_feature_hash_distinguishes_baseline_evaluation(native_input
     ) != _feature_definition_hash(baseline_design, ("sessions_at_start",), model)
 
 
-def test_training_view_does_not_claim_unapplied_split(native_inputs):
+def test_training_view_binds_split_calendar_dates(native_inputs):
+    from datetime import UTC, datetime
+
     from terrine.dataset.splits import TimeSplit
 
-    frame = _frame(native_inputs)
-    with pytest.raises(TerrineError) as error:
-        frame.training_set(label="churn", split=TimeSplit(train_until="2025-01-05"))
-    assert error.value.code == "terrine.dataset.split_not_applied"
+    frame = _frame(native_inputs).training_set(
+        label="churn", split=TimeSplit(train_until="2025-01-05")
+    )
+    assert frame._training_view is not None
+    assert frame._training_view.split.train_until == datetime(2025, 1, 5, tzinfo=UTC)
 
 
 def test_downstream_vocabulary_is_fitted_only_from_training_rows():

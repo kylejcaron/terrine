@@ -73,6 +73,7 @@ class DatasetManifest:
     schema_version: int = 1
     compiler_version: str = "1"
     recipe_reference: DatasetRecipeReference | None = None
+    frame_metadata: Any = None
 
     def __post_init__(self) -> None:
         if self.schema_version != 1 or not isinstance(self.recipe, DatasetRecipe):
@@ -87,7 +88,13 @@ class DatasetManifest:
             raise TypeError("generation must be ManifestGeneration")
         if not self.design_hash or not self.model_hash:
             raise ValueError("design_hash and model_hash are required")
-        for name in ("source_coverage", "source_snapshots", "readiness", "split_policy"):
+        for name in (
+            "source_coverage",
+            "source_snapshots",
+            "readiness",
+            "split_policy",
+            "frame_metadata",
+        ):
             value = getattr(self, name)
             if value is not None:
                 object.__setattr__(self, name, freeze(value))
@@ -121,6 +128,7 @@ class DatasetManifest:
             "readiness": thaw(self.readiness),
             "split_policy": thaw(self.split_policy),
             "compiler_version": self.compiler_version,
+            "frame_metadata": thaw(self.frame_metadata),
         }
         if self.recipe_reference is not None:
             del payload["recipe"]
@@ -154,6 +162,7 @@ class DatasetManifest:
             "readiness",
             "split_policy",
             "compiler_version",
+            "frame_metadata",
         }
         is_reference = "recipe_reference" in payload if isinstance(payload, dict) else False
         expected = common | ({"recipe_reference"} if is_reference else {"recipe"})
@@ -193,4 +202,5 @@ class DatasetManifest:
             1,
             payload["compiler_version"],
             reference,
+            payload["frame_metadata"],
         )
