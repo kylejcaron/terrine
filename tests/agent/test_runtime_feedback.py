@@ -43,6 +43,11 @@ def test_status_events_and_cancel_require_run_destination_ownership(tools, tmp_p
             DestinationRef(str(tmp_path / "runtime.duckdb"), "agent", name)
             for name in ("allowed", "private")
         ]
+        planner.plan(
+            PlanRequest("other-spelling", reference, design, destinations[0]),
+            con=con.con,
+            namespace="AGENT",
+        )
         runs = []
         for index, destination in enumerate(destinations):
             invocation = planner.plan(

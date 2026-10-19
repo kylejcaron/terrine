@@ -32,6 +32,14 @@ SQL, Python expressions, callbacks and extra payload fields are not accepted.
 prevent an agent from following a symlink or choosing a different filesystem
 root. Saved definitions are validated again on load.
 
+`get_dataset_recipe_schema`, `propose_recipe` and `validate_recipe` use the
+existing `DatasetRecipe` codec. Training views record selected features, labels,
+label-completeness policy and a typed time/group split. Scoring views record
+feature selection, an explicit timezone-aware resolved `as_of`, eligibility and
+the parent Design hash. Proposals are metadata-only and never compile a frame;
+validation also checks the existing lazy dataset view contracts without reading
+source rows. Named storage accepts either canonical Design or recipe content.
+
 All responses use schema version 1 and `ok`, `refused` or `pending` status.
 Refusals include stable codes, immutable JSON context and an actionable route.
 Backend exception messages are not response fields. Non-refusal programming

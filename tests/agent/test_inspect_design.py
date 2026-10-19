@@ -111,3 +111,66 @@ def test_design_example_handles_event_only_and_multiple_entity_models(tools, ros
     assert result.output is not None
     design = from_json(result.output.serialized)
     assert design.unit == ("user" if roster else "account")
+
+
+def test_propose_design_and_recipe_from_discovered_schema(tools, monkeypatch):
+    from jsonschema import Draft202012Validator
+
+    from terrine.dataset.splits import TimeSplit
+    from terrine.errors import thaw
+    from terrine.spec.dataset import DatasetRecipe
+
+    example = tools.design_example().output
+    document = json.loads(example.serialized)["design"]
+    metric = tools.inspect_catalog().output.metrics[0].name
+    document["features"] = {
+        "history": {
+            "type": "MetricAgg",
+            "metric": metric,
+            "window": {"type": "Window", "start": -86400, "end": 0},
+        }
+    }
+    document["outcomes"] = {
+        "future": {
+            "type": "MetricAgg",
+            "metric": metric,
+            "window": {"type": "Window", "start": 0, "end": 86400},
+        }
+    }
+    recipe = {
+        "schema_version": 1,
+        "base_design": document,
+        "view": {
+            "kind": "training",
+            "features": ["history"],
+            "labels": ["future"],
+            "incomplete_labels": "keep",
+            "split": TimeSplit(train_until="2025-01-15").to_record(),
+        },
+    }
+    discovered = tools.get_dataset_recipe_schema()
+    assert discovered.output is not None
+    Draft202012Validator(thaw(discovered.output.document)).validate(recipe)
+    result = tools.propose_recipe(json.dumps(recipe))
+    assert result.status == "ok"
+    assert result.output.recipe_digest == DatasetRecipe.from_json(result.output.serialized).digest
+    recipe["view"]["split"] = TimeSplit(train_until="2025-01-16").to_record()
+    changed = tools.propose_recipe(json.dumps(recipe), base=result.output.serialized)
+    assert changed.output.changed_paths == ("/view/split/train_until",)
+    assert tools.save_design("training", changed.output.serialized).status == "ok"
+    assert tools.load_design("training").output.serialized == changed.output.serialized
+    recipe["view"]["split"]["callback"] = "builtins.eval"
+    assert tools.propose_recipe(json.dumps(recipe)).status == "refused"
+    del recipe["view"]["split"]["callback"]
+    document["outcomes"] = {}
+    recipe["view"] = {
+        "kind": "scoring",
+        "features": ["history"],
+        "as_of": "2025-01-01T00:00:00+00:00",
+        "eligibility": {},
+        "parent_design_hash": "a" * 64,
+    }
+    Draft202012Validator(thaw(discovered.output.document)).validate(recipe)
+    assert tools.validate_recipe(json.dumps(recipe)).status == "ok"
+    recipe["view"]["as_of"] = "2025-01-01"
+    assert tools.validate_recipe(json.dumps(recipe)).status == "refused"

@@ -246,3 +246,7 @@ class EventsOutput(Record):
     next_cursor: str | None
     has_more: bool
     cursor_gap: bool
+
+
+class RecipeOutput(DesignOutput):
+    recipe_digest: str

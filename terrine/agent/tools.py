@@ -13,6 +13,7 @@ from typing import Any
 
 from terrine.agent.design_schema import design_schema
 from terrine.agent.policy import _LIMIT, AgentPolicy, Permission
+from terrine.agent.recipes import parse_recipe, recipe_schema
 from terrine.agent.schemas import (
     CancelOutput,
     CapabilityOutput,
@@ -23,6 +24,7 @@ from terrine.agent.schemas import (
     EventsOutput,
     MetricMetadata,
     PropertyMetadata,
+    RecipeOutput,
     Response,
     RunOutput,
     SchemaOutput,
@@ -212,9 +214,12 @@ class DatasetTools:
                     "inspect_catalog",
                     "list_capabilities",
                     "get_design_schema",
+                    "get_dataset_recipe_schema",
                     "design_example",
                     "propose_design",
                     "validate_design",
+                    "propose_recipe",
+                    "validate_recipe",
                     "save_design",
                     "load_design",
                     "get_run_status",
@@ -275,9 +280,9 @@ class DatasetTools:
         except OSError as error:
             raise _STORAGE.error() from error
 
-    def save_design(self, name: str, serialized: str) -> Response[DesignOutput]:
+    def save_design(self, name: str, serialized: str) -> Response[DesignOutput | RecipeOutput]:
         def save():
-            output = self._design_output(serialized)
+            output = self._definition_output(serialized)
             root, filename = self._storage(name)
             temporary = f".design-{secrets.token_hex(12)}"
             try:
@@ -310,7 +315,7 @@ class DatasetTools:
 
         return self._call("validate", save)
 
-    def load_design(self, name: str) -> Response[DesignOutput]:
+    def load_design(self, name: str) -> Response[DesignOutput | RecipeOutput]:
         def load():
             root, filename = self._storage(name)
             try:
@@ -321,7 +326,7 @@ class DatasetTools:
                 raise _STORAGE.error() from error
             finally:
                 os.close(root)
-            return self._design_output(serialized)
+            return self._definition_output(serialized)
 
         return self._call("validate", load)
 
@@ -367,7 +372,7 @@ class DatasetTools:
             if invocation.destination != destination or not invocation.recipe_json:
                 continue
             recipe = SavedPlanRecipe.from_json(invocation.recipe_json)
-            if recipe.model != self.policy.model_reference:
+            if recipe.model != self.policy.model_reference or recipe.namespace != self.namespace:
                 continue
             if _bind_recipe_plan(recipe, namespace=self.namespace).recipe.fingerprint != row[1]:
                 continue
@@ -435,3 +440,49 @@ class DatasetTools:
             )
 
         return self._call("cancel", cancel)
+
+    def get_dataset_recipe_schema(self) -> Response[SchemaOutput]:
+        return self._call("inspect", lambda: SchemaOutput(document=recipe_schema()))
+
+    def _recipe_output(self, serialized: str, base: str | None = None) -> RecipeOutput:
+        recipe = parse_recipe(serialized)
+        valid = self._validated(recipe.base_design)
+        canonical = recipe.canonical_json().decode()
+        paths = (
+            ()
+            if base is None
+            else _diff(json.loads(parse_recipe(base).canonical_json()), json.loads(canonical))
+        )
+        return RecipeOutput(
+            **valid.model_dump(),
+            serialized=canonical,
+            changed_paths=paths,
+            recipe_digest=recipe.digest,
+        )
+
+    def propose_recipe(self, serialized: str, *, base: str | None = None) -> Response[RecipeOutput]:
+        return self._call("validate", lambda: self._recipe_output(serialized, base))
+
+    def validate_recipe(self, serialized: str) -> Response[RecipeOutput]:
+        def validate():
+            output = self._recipe_output(serialized)
+            try:
+                parse_recipe(serialized).build(self.model)
+            except (KeyError, TypeError, ValueError) as error:
+                if isinstance(error, TerrineError):
+                    raise
+                raise _INVALID.error(
+                    route="Use the recorded training or scoring view fields."
+                ) from error
+            return output
+
+        return self._call("validate", validate)
+
+    def _definition_output(self, serialized: str) -> DesignOutput | RecipeOutput:
+        try:
+            payload = json.loads(serialized)
+        except (TypeError, ValueError):
+            return self._design_output(serialized)
+        if isinstance(payload, dict) and "base_design" in payload:
+            return self._recipe_output(serialized)
+        return self._design_output(serialized)
