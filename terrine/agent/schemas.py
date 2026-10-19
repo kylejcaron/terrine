@@ -25,7 +25,7 @@ __all__ = [
 
 
 class Record(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, validate_default=True)
     schema_version: Literal[1] = 1
 
 
@@ -61,6 +61,52 @@ class ValidationOutput(Record):
 class DesignOutput(ValidationOutput):
     serialized: str
     changed_paths: tuple[str, ...] = ()
+
+
+class SourceMetadata(Record):
+    name: str
+    entities: tuple[str, ...]
+    facts: tuple[str, ...]
+    properties: tuple[str, ...]
+
+
+class MetricMetadata(Record):
+    name: str
+    entity: str
+    kind: str
+    sources: tuple[str, ...]
+
+
+class PropertyMetadata(Record):
+    name: str
+    source: str
+    dtype: str
+    as_of: str
+
+
+class CatalogOutput(Record):
+    sources: tuple[SourceMetadata, ...]
+    metrics: tuple[MetricMetadata, ...]
+    properties: tuple[PropertyMetadata, ...]
+    units: tuple[str, ...]
+
+
+class CapabilityOutput(Record):
+    operations: tuple[str, ...]
+    runtime_shapes: tuple[str, ...]
+
+
+class SchemaOutput(Record):
+    document: Mapping[str, JsonValue]
+
+    @field_validator("document", mode="after")
+    @classmethod
+    def _freeze_document(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        return freeze(value)
+
+    @field_serializer("document")
+    def _serialize_document(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        return thaw(value)
 
 
 class Response[T](Record):

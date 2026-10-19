@@ -37,6 +37,12 @@ def test_tool_schemas_are_versioned_strict_and_round_trip():
         Response(status="ok", context={"bad": float("nan")})
 
 
+def test_default_response_context_is_immutable():
+    response = Response(status="ok")
+    with pytest.raises(TypeError):
+        cast(Any, response.context)["secret"] = object()
+
+
 def test_refusal_does_not_serialize_exception_messages_or_unknown_context():
     response = refusal_response(
         TerrineError(
@@ -50,3 +56,21 @@ def test_refusal_does_not_serialize_exception_messages_or_unknown_context():
     assert response.suggested_route
     assert "secret" not in response.model_dump_json()
     assert response.context == {"kind": "metric", "name": "total"}
+
+
+def test_discovery_schema_accepts_canonical_temporal_nodes():
+    from jsonschema import Draft202012Validator
+
+    from terrine.agent.design_schema import design_schema
+    from terrine.spec import Design, EventAnchor, FixedDate, Schedule
+    from terrine.spec.io import to_json
+    from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent, Trajectory
+
+    validator = Draft202012Validator(design_schema())
+    for anchor, shape in (
+        (Schedule("1d", "2025-01-01", "2025-01-05"), "cross_section"),
+        (EventAnchor("start"), CohortSpec("start", Trajectory("total", "1d", 2))),
+        (FixedDate("2025-01-01"), LifeTable(TimeToEvent("end"), "1d")),
+    ):
+        design = Design("user", anchor, shape=shape)
+        validator.validate(json.loads(to_json(design)))
