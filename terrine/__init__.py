@@ -9,14 +9,11 @@ from terrine.windows import Window
 if TYPE_CHECKING:
     from terrine.compile.cost import preview
     from terrine.data import Budget, Coverage, UnitSource
-    from terrine.dataset.export import ExportManifest
     from terrine.dataset.reference import Dataset
-    from terrine.frame import CohortTable, Frame
+    from terrine.frame import Frame
     from terrine.model import Model
     from terrine.spec import (
         AnchorRange,
-        ApproxMetricDistinct,
-        ApproxMetricQuantile,
         BinnedMetricState,
         CohortGrouping,
         CohortSpec,
@@ -28,8 +25,6 @@ if TYPE_CHECKING:
         FixedDate,
         FunnelSpec,
         LifeTable,
-        MetricQuantile,
-        RetentionMetric,
         Schedule,
         SessionSpec,
         SketchRequest,
@@ -55,11 +50,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Dataset",
-    "ExportManifest",
     "DatasetRecipe",
     "AnchorRange",
-    "ApproxMetricQuantile",
-    "ApproxMetricDistinct",
     "Budget",
     "EventSequence",
     "EventTime",
@@ -70,8 +62,6 @@ __all__ = [
     "EventAnchor",
     "FixedDate",
     "Frame",
-    "MetricQuantile",
-    "RetentionMetric",
     "retention",
     "Model",
     "Schedule",
@@ -97,7 +87,6 @@ __all__ = [
     "CohortGrouping",
     "CohortSpec",
     "LifeTable",
-    "CohortTable",
     "Trajectory",
     "TimeToEvent",
     "to_yaml",
@@ -106,14 +95,12 @@ __all__ = [
 
 _LAZY_MODULES = {
     "Dataset": "terrine.dataset.reference",
-    "ExportManifest": "terrine.dataset.export",
     "Budget": "terrine.data",
     "Frame": "terrine.frame",
     "preview": "terrine.compile.cost",
     "Coverage": "terrine.data",
     "Model": "terrine.model",
     "UnitSource": "terrine.data",
-    "CohortTable": "terrine.frame",
 }
 
 

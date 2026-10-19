@@ -1,6 +1,8 @@
 # Changelog
 
 ## Added
+- Provide a self-contained Model → Design → Frame → Dataset tutorial with exact boundary/zero-activity checks and pinned-generation reopening.
+- Keep implementation records out of ordinary package facades and allow all public facades to import without optional backend, dataframe or modeling libraries.
 - Add strict versioned dataset-tool envelopes and immutable owner policy with separate operation grants, exact resource allowlists and intersected execution budgets.
 - Add destination- and owner-scoped run status, bounded event pages and separately authorized cancellation through the existing runtime APIs.
 - Add editable training/scoring recipe discovery, canonical proposals and named recipe storage, with strict split fields and resolved scoring instants.

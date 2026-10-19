@@ -4,11 +4,12 @@ import ibis
 import pyarrow as pa
 import pytest
 
-from terrine import Coverage, Design, FixedDate, RetentionMetric, UnitSource, retention
+from terrine import Coverage, Design, FixedDate, UnitSource, retention
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.models import Catalog
 from terrine.spec import EventAnchor, EventPanel, Schedule
+from terrine.spec.expressions import RetentionMetric
 from terrine.spec.io import from_json, from_yaml, to_json, to_yaml
 from tests.reference.retention import retention_rows
 

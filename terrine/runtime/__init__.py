@@ -29,37 +29,16 @@ from terrine.runtime.recipe import (
     resolve_plan,
 )
 from terrine.runtime.snapshot import ReopenableSnapshot, SnapshotAuthority
-from terrine.runtime.state import (
-    DefinitionVersion,
-    GenerationRecord,
-    GenerationRef,
-    LayerNode,
-    RuntimeStore,
-    SourceSnapshot,
-)
 from terrine.runtime.status import CancelReceipt, RunStatus
-
-
-def __getattr__(name: str):
-    if name == "translate_persisted_layers":
-        from terrine.runtime.layers import translate_persisted_layers
-
-        return translate_persisted_layers
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
 
 __all__ = [
     "CancelReceipt",
     "CostProvider",
-    "DefinitionVersion",
     "DependencyGraph",
     "DesignExecutor",
     "DestinationRef",
     "EventPage",
     "Executor",
-    "GenerationRecord",
-    "GenerationRef",
-    "LayerNode",
     "ModelReference",
     "ModelResolver",
     "OwnerPlanner",
@@ -70,7 +49,6 @@ __all__ = [
     "RunReceipt",
     "RunStatus",
     "RuntimeOwner",
-    "RuntimeStore",
     "SavedPlanRecipe",
     "ScanAuthorization",
     "ScanAuthorizingExecutor",
@@ -78,7 +56,6 @@ __all__ = [
     "ScanPhase",
     "SnapshotAuthority",
     "SnapshotRetention",
-    "SourceSnapshot",
     "cancel_run",
     "dependency_graph",
     "find_run_by_request_key",
@@ -90,5 +67,4 @@ __all__ = [
     "resolve_plan",
     "run_plan",
     "run_serialized_plan",
-    "translate_persisted_layers",
 ]

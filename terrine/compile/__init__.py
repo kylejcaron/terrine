@@ -1,14 +1,3 @@
-"""Concrete candidate compilation primitives."""
+"""Internal dataset compilation modules; build through Design."""
 
-from terrine.compile.anchors import AnchorTable, compile_anchors
-from terrine.compile.layers import LayerKey, LayerPlan, LayerSubstitution, build_layer, plan_layers
-
-__all__ = [
-    "AnchorTable",
-    "LayerKey",
-    "LayerPlan",
-    "LayerSubstitution",
-    "build_layer",
-    "compile_anchors",
-    "plan_layers",
-]
+__all__: list[str] = []

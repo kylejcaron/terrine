@@ -1,5 +1,3 @@
-"""Specialized bounded dataset-shape compilers."""
+"""Internal shape compilers; select shapes through Design."""
 
-from terrine.compile.shapes.state_panel import compile_state_panel
-
-__all__ = ["compile_state_panel"]
+__all__: list[str] = []

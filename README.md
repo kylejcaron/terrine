@@ -28,33 +28,100 @@ regressions and revisit the budget from measurements as capabilities grow.
 
 ## Build a study dataset
 
-Install the DuckDB extra. The [native catalog example](docs/guides/temporal-engine.md)
-defines a `sessions` source and metric. Connect it to an existing table with
-`occurred_at`, `user_id` and a stable `session_id`:
+Install the local execution extra with `uv pip install 'terrine[duckdb]'`
+(or `uv sync --extra duckdb` in this checkout). This complete example creates
+two users, including one with no events, and follows **Model → Design → Frame →
+Dataset**. It uses a temporary, file-backed DuckDB database; nothing is uploaded.
 
 ```python
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
 import ibis
 import terrine as tr
 
-con = ibis.duckdb.connect("analytics.duckdb", read_only=True)
-model = tr.Model.from_catalog(
-    "catalog.yaml",
-    con=con,
-    readiness={"sessions": tr.Coverage("2026-06-01", "2026-07-31")},
-    event_ids={"sessions": "session_id"},
-)
-design = tr.Design(
-    "user",
-    tr.EventAnchor("session"),
-    features={"sessions_before": tr.agg("sessions", window=("-7d", "0s"))},
-    outcomes={"sessions_after": tr.agg("sessions", window=("0s", "7d"))},
-)
-
-frame = design.build(model)          # Compile; do not read source rows.
-report = tr.preview(design, model)   # Metadata only; unknown costs stay unknown.
-budget = tr.Budget(max_rows=100_000, max_output_bytes=128 * 1024**2)
-arrow = frame.to_pyarrow(budget=budget)
+with TemporaryDirectory(prefix="terrine-first-") as directory:
+    root = Path(directory)
+    con = ibis.duckdb.connect(str(root / "analytics.duckdb"))
+    try:
+        con.raw_sql("CREATE TABLE users(user_id VARCHAR)")
+        con.raw_sql("INSERT INTO users VALUES ('a'), ('b')")
+        con.raw_sql("CREATE TABLE events(user_id VARCHAR, occurred_at TIMESTAMP)")
+        con.raw_sql(
+            "INSERT INTO events VALUES "
+            "('a', '2025-01-01 12:00:00'), "
+            "('a', '2025-01-02 00:00:00'), "
+            "('a', '2025-01-02 12:00:00')"
+        )
+        catalog = root / "catalog.yaml"
+        catalog.write_text(
+            """schema_version: 1
+day_boundary: UTC
+dialect: duckdb
+sources:
+  sessions:
+    relation: {kind: table, name: events}
+    timestamp: occurred_at
+    entities: {user: user_id}
+    facts: [session]
+    properties: []
+    dimensions: []
+facts:
+  session: {source: sessions, column: null}
+properties: {}
+dimensions: {}
+measures:
+  session_count: {fact: session, aggregation: count}
+metrics:
+  sessions: {kind: mean, entity: user, measure: session_count}
+""",
+            encoding="utf-8",
+        )
+        model = tr.Model.from_catalog(
+            catalog,
+            con=con,
+            units={"user": tr.UnitSource("users", "user_id")},
+            readiness={"sessions": tr.Coverage("2025-01-01", "2025-01-03")},
+        )
+        design = tr.Design(
+            "user",
+            tr.FixedDate("2025-01-02"),
+            features={"sessions_before": tr.agg("sessions", window=("-1d", "0s"))},
+            outcomes={"sessions_after": tr.agg("sessions", window=("0s", "1d"))},
+        )
+        frame = design.build(model)  # Compile; do not read source rows.
+        budget = tr.Budget(max_rows=10, max_output_bytes=1_000_000, strict_scan=False)
+        result = frame.materialize(budget)
+        dataset = frame.stage("first_dataset", budget=budget)
+        reopened = tr.Dataset.from_manifest(dataset.manifest, con=con)
+        columns = ["unit", "sessions_before", "sessions_after"]
+        rows = sorted(
+            (
+                row
+                for batch in reopened.to_arrow_batches(batch_size=2)
+                for row in batch.select(columns).to_pylist()
+            ),
+            key=lambda row: row["unit"],
+        )
+        assert rows == [
+            {"unit": "a", "sessions_before": 1, "sessions_after": 2},
+            {"unit": "b", "sessions_before": 0, "sessions_after": 0},
+        ]
+        assert sorted(
+            result.table.select(columns).to_pylist(), key=lambda row: row["unit"]
+        ) == rows
+        print(rows)
+    finally:
+        con.disconnect()
 ```
+
+The event at exactly midnight belongs to the outcome, not the feature.
+`materialize` collects this tiny Frame with typed metadata; `stage` publishes a
+pinned generation and `Dataset.from_manifest` reopens that same generation.
+Keep the database and retained snapshots for a persistent dataset instead of
+using a temporary directory. See the [first-dataset guide](docs/guides/first-dataset.md)
+for the next steps and the [catalog guide](docs/guides/temporal-engine.md) for
+source/SCD2 setup.
 
 `Coverage` asserts source completeness; it is not inferred from the latest event.
 Windows are half-open. An unavailable feature/outcome retains a numeric null and

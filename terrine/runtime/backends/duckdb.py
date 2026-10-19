@@ -11,7 +11,6 @@ import ibis
 import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
-from ibis.backends.duckdb import Backend as IbisDuckDBBackend
 
 from terrine.backends.capabilities import DUCKDB_CAPABILITIES
 from terrine.errors import RefusalSpec
@@ -457,6 +456,8 @@ class DuckDBBackend:
             backend = ibis_backend
         else:
             if self._ibis_backend is None:
+                from ibis.backends.duckdb import Backend as IbisDuckDBBackend
+
                 timezone = self.con.execute("SELECT current_setting('TimeZone')").fetchone()[0]
                 try:
                     self._ibis_backend = IbisDuckDBBackend.from_connection(self.con)
