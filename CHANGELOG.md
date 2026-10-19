@@ -15,6 +15,7 @@
 - Include selector dependencies in label split support, distinguish StatePanel semantics from column names, retain complete as-of labels, and reopen version-1 manifests without optional frame metadata.
 - Add executable local training and batch-scoring examples covering pinned Arrow reads, exact Decimal Parquet export, manifest reopening, and refresh after source corrections.
 - Verify fresh-process refresh and local export recovery/cancellation, normalize publication timestamp digests across session timezones, and explicitly release export batch readers on failure.
+- Verify historical unprefixed publication checksums using their original complete Arrow IPC stream encoding, while authenticating retry data against the immutable physical generation.
 
 - Stage file-backed DuckDB Frames into immutable runtime-published generations through retained input snapshots, with bounded Arrow batch transfer and manifest-verified pinned reads.
 - Export pinned datasets to bounded Parquet shards with checksums, generation manifests, and verified completed-export replay.

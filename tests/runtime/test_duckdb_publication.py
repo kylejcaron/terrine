@@ -373,8 +373,9 @@ def test_publication_digest_preserves_timestamp_instants_across_session_timezone
     con.close()
 
 
-def test_publication_retry_verifies_original_checksum_format():
-    from terrine.runtime.backends.duckdb import _digest_relation
+@pytest.mark.parametrize("reader", [False, True])
+def test_publication_retry_verifies_original_checksum_format(reader):
+    import hashlib
 
     con = duckdb.connect()
     backend = DuckDBBackend(con, namespace="owner")
@@ -382,10 +383,17 @@ def test_publication_retry_verifies_original_checksum_format():
     stage = StagedGeneration("orders", "g1", {"frame": table})
     lease = _lease(con, "owner")
     receipt = backend.publish_generation(stage, expected_manifest=None, lease=lease)
+    sink = pa.BufferOutputStream()
+    with pa.ipc.new_stream(sink, table.schema) as writer:
+        writer.write_table(table)
+    original = hashlib.sha256(sink.getvalue().to_pybytes()).hexdigest()
+    con.execute("UPDATE owner.runtime_partitions SET digest=?", [original])
+    retry = StagedGeneration("orders", "g1", {"frame": table.to_reader() if reader else table})
+    assert backend.publish_generation(retry, expected_manifest="g1", lease=lease) == receipt
+    assert backend.read_partition(receipt, "frame").equals(table)
     physical = con.execute("SELECT table_name FROM owner.runtime_partitions").fetchone()
     assert physical is not None
-    original = _digest_relation(con, "owner", physical[0], version=1)
-    con.execute("UPDATE owner.runtime_partitions SET digest=?", [original])
-    assert backend.publish_generation(stage, expected_manifest="g1", lease=lease) == receipt
-    assert backend.read_partition(receipt, "frame").equals(table)
+    con.execute(f'UPDATE owner."{physical[0]}" SET value=2 WHERE value=1')
+    with pytest.raises(ValueError, match="content does not match"):
+        backend.publish_generation(stage, expected_manifest="g1", lease=lease)
     con.close()
