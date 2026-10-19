@@ -349,6 +349,4 @@ def test_layer_identity_ignores_source_nullability_lost_in_snapshot(column_model
         source_names={"events"},
     )
 
-    assert plan_layers(_design(), from_not_null).keys == plan_layers(
-        _design(), column_model
-    ).keys
+    assert plan_layers(_design(), from_not_null).keys == plan_layers(_design(), column_model).keys
