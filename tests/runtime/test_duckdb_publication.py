@@ -163,6 +163,27 @@ def test_retry_reuses_only_matching_generation_partitions():
         )
 
 
+def test_retry_digest_ignores_arrow_chunk_boundaries():
+    con = duckdb.connect(":memory:")
+    backend = DuckDBBackend(con, namespace="owner")
+    lease = _lease(con, "owner")
+    first = pa.table({"id": pa.chunked_array([[1], [2]])})
+    retry = pa.table({"id": [1, 2]})
+    receipt = backend.publish_generation(
+        StagedGeneration("orders", "g1", {"p1": first}),
+        expected_manifest=None,
+        lease=lease,
+    )
+    assert (
+        backend.publish_generation(
+            StagedGeneration("orders", "g1", {"p1": retry}),
+            expected_manifest=None,
+            lease=lease,
+        )
+        == receipt
+    )
+
+
 def test_publication_without_snapshot_releases_previous_tracked_reference():
     con = duckdb.connect(":memory:")
     store = RuntimeStore(con, namespace="owner")
@@ -298,3 +319,81 @@ def _lease(con, namespace):
     return store.acquire(
         "dataset:orders", "writer", ttl=timedelta(minutes=1), now=datetime.now(UTC)
     )
+
+
+@pytest.mark.parametrize("change", ["duration_unit", "metadata"])
+def test_publication_retry_verifies_logical_schema_before_physical_digest(change):
+    con = duckdb.connect(":memory:")
+    backend = DuckDBBackend(con, namespace="owner")
+    lease = _lease(con, "owner")
+    table = pa.table({"gap": pa.array([1], type=pa.duration("us"))})
+    backend.publish_generation(
+        StagedGeneration("orders", "g1", {"frame": table}),
+        expected_manifest=None,
+        lease=lease,
+    )
+    changed = (
+        pa.table({"gap": pa.array([1], type=pa.duration("ns"))})
+        if change == "duration_unit"
+        else table.replace_schema_metadata({b"contract": b"changed"})
+    )
+    with pytest.raises(ValueError):
+        backend.publish_generation(
+            StagedGeneration("orders", "g1", {"frame": changed}),
+            expected_manifest="g1",
+            lease=lease,
+        )
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_publication_digest_preserves_timestamp_instants_across_session_timezones(nested):
+    from terrine.runtime.backends.duckdb import _digest_relation
+
+    con = duckdb.connect()
+    con.execute("SET timezone='UTC'")
+    backend = DuckDBBackend(con, namespace="owner")
+    dtype = pa.timestamp("us", "Pacific/Auckland")
+    values = [datetime(2025, 1, 1, tzinfo=UTC), None]
+    column = (
+        pa.array([[values[0], None], None], pa.list_(dtype)) if nested else pa.array(values, dtype)
+    )
+    table = pa.table({"value": column})
+    lease = _lease(con, "owner")
+    stage = StagedGeneration("orders", "g1", {"frame": table})
+    receipt = backend.publish_generation(stage, expected_manifest=None, lease=lease)
+    stored = con.execute(
+        "SELECT table_name,digest FROM owner.runtime_partitions WHERE partition='frame'"
+    ).fetchone()
+    assert stored is not None
+    physical, digest = stored
+    con.execute("SET timezone='America/New_York'")
+    assert _digest_relation(con, "owner", physical) == digest
+    assert backend.read_partition(receipt, "frame").equals(table)
+    assert backend.publish_generation(stage, expected_manifest="g1", lease=lease) == receipt
+    con.close()
+
+
+@pytest.mark.parametrize("reader", [False, True])
+def test_publication_retry_verifies_original_checksum_format(reader):
+    import hashlib
+
+    con = duckdb.connect()
+    backend = DuckDBBackend(con, namespace="owner")
+    table = pa.table({"value": [1, None]})
+    stage = StagedGeneration("orders", "g1", {"frame": table})
+    lease = _lease(con, "owner")
+    receipt = backend.publish_generation(stage, expected_manifest=None, lease=lease)
+    sink = pa.BufferOutputStream()
+    with pa.ipc.new_stream(sink, table.schema) as writer:
+        writer.write_table(table)
+    original = hashlib.sha256(sink.getvalue().to_pybytes()).hexdigest()
+    con.execute("UPDATE owner.runtime_partitions SET digest=?", [original])
+    retry = StagedGeneration("orders", "g1", {"frame": table.to_reader() if reader else table})
+    assert backend.publish_generation(retry, expected_manifest="g1", lease=lease) == receipt
+    assert backend.read_partition(receipt, "frame").equals(table)
+    physical = con.execute("SELECT table_name FROM owner.runtime_partitions").fetchone()
+    assert physical is not None
+    con.execute(f'UPDATE owner."{physical[0]}" SET value=2 WHERE value=1')
+    with pytest.raises(ValueError, match="content does not match"):
+        backend.publish_generation(stage, expected_manifest="g1", lease=lease)
+    con.close()

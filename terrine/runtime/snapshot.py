@@ -353,7 +353,7 @@ class SnapshotAuthority:
         finally:
             published.close()
 
-    def reopen(self, snapshot: ReopenableSnapshot, *, con: Any, namespace: str) -> ExecutionContext:
+    def reopen(self, snapshot: ReopenableSnapshot, *, con: Any, namespace: str) -> _SnapshotContext:
         if not isinstance(snapshot, ReopenableSnapshot):
             raise TypeError("snapshot must be ReopenableSnapshot")
         restored = ReopenableSnapshot.from_json(snapshot.to_json())
@@ -428,6 +428,12 @@ class _SnapshotContext(ExecutionContext):
         )
         self._manager = manager
         self._published = published
+
+    def __enter__(self) -> _SnapshotContext:
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.close()
 
     def close(self) -> None:
         manager, self._manager = self._manager, None

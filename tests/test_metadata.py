@@ -217,6 +217,44 @@ def test_metadata_mappings_are_deeply_immutable_and_detached():
         provenance.source_generations["events"] = "changed"  # ty: ignore[invalid-assignment] intentional mutation
 
 
+def test_dataset_view_resolved_instant_round_trips_json_and_arrow():
+    from terrine.data import DatasetViewMeta
+
+    provenance = replace(
+        _provenance(),
+        dataset_view=DatasetViewMeta(
+            "scoring",
+            ("revenue",),
+            (),
+            "view",
+            "features",
+            resolved_as_of=datetime(2025, 1, 1, tzinfo=UTC),
+        ),
+    )
+    frame = MaterializedFrame(
+        table=pa.table(
+            {
+                "unit": ["u"],
+                "anchor": ["a"],
+                "t0": pa.array(
+                    [datetime(2025, 1, 1, tzinfo=UTC)], type=pa.timestamp("us", tz="UTC")
+                ),
+            }
+        ),
+        roles=Roles("unit", "anchor", "t0", None, (), ()),
+        columns={},
+        provenance=provenance,
+    )
+    assert (
+        MaterializedFrame.from_json(frame.to_json()).provenance.dataset_view
+        == provenance.dataset_view
+    )
+    assert (
+        MaterializedFrame.from_arrow(frame.to_arrow()).provenance.dataset_view
+        == provenance.dataset_view
+    )
+
+
 def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values():
     table = pa.table(
         {

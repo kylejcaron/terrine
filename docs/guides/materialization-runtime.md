@@ -28,6 +28,8 @@ Runtime composition enters through the same `compile_design` dispatcher as ordin
 
 For persisted-layer staging, pass the resolved design, model, logical relations, and budget through `terrine.runtime.materialize.compose_runtime_frame`. This runtime entry point applies the same execution-owned shape-budget, integrity, and unknown-eligibility gates as `Frame.materialize` before returning the compiled relation for staging.
 
+The built-in executor transfers anchor, prefix, and final outputs in bounded Arrow batches to owner-retained IPC artifacts. Task state stores verified artifact references rather than full Arrow payloads; retry checks the artifact checksum before use. Final output budgets are enforced while writing batches. Publication streams these artifacts into generation-specific DuckDB tables and retains their logical Arrow schema, including duration ticks and Frame metadata. `DuckDBBackend.read_batches` reopens an exact partition with that schema and closes its cursor when the reader closes.
+
 ## Save, run, and follow runs
 
 An owner process keeps the database connection open, configures its executor, and serves a private local IPC endpoint:
