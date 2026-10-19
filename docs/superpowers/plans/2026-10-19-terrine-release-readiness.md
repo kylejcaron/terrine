@@ -35,10 +35,10 @@
 
 **Interfaces:** Consume existing Model/Design/Frame staging and Dataset reopening. Produce one self-contained README Python block using file-backed temporary DuckDB, a native Catalog, explicit coverage, bounded materialization and pinned Dataset reads.
 
-- [ ] Add a regression executing the README block in a temporary directory and asserting known feature/outcome rows, roles and reopened generation parity; run it red before replacing the incomplete quickstart.
-- [ ] Audit every facade against concrete documented workflows; remove accidental compiler/proof/runtime exports and migrate all callers to owning modules, retaining focused advanced APIs where earned. Record dispositions in the API guide.
-- [ ] Make the exact quickstart runnable both as a tested README block and as an example without duplicating the tutorial implementation. Extend optional-import isolation across the base and focused facades.
-- [ ] Run focused doc/import/API tests plus the per-commit gates below; commit this slice.
+- [x] Add a regression executing the README block in a temporary directory and asserting known feature/outcome rows, roles and reopened generation parity; run it red before replacing the incomplete quickstart.
+- [x] Audit every facade against concrete documented workflows; remove accidental compiler/proof/runtime exports and migrate all callers to owning modules, retaining focused advanced APIs where earned. Record dispositions in the API guide.
+- [x] Make the exact quickstart runnable both as a tested README block and as an example without duplicating the tutorial implementation. Extend optional-import isolation across the base and focused facades.
+- [x] Run focused doc/import/API tests plus the per-commit gates below; commit this slice.
 
 ### Task 2: Complete user documentation
 
@@ -46,21 +46,21 @@
 
 **Interfaces:** Consume module-owned `RefusalSpec` declarations, existing executable examples, integration/recovery tests and benchmark evidence. Produce a deterministic refusal reference with codes, message variants, template interpolation fields (not exhaustive context schemas), source links and linked recovery categories; a private docs generation/check command; complete navigable MkDocs guides. Discover every `RefusalSpec(...)` call through Python AST traversal, including branch/function-local declarations, without importing integrations or executing refusal branches. Preserve multiple declarations of one code. Emitted `TerrineError.context` remains the authoritative structured context; the reference must explicitly distinguish interpolation fields from additional per-request context.
 
-- [ ] Add a failing reference completeness check against every statically discovered declaration, and representative real emitted-error checks for template fields and documented recovery routes. Validate the generator on a small inline/duplicate-code fixture; refuse nonliteral declarations rather than silently omitting them. Recovery categories live in the documentation generator, keyed by code namespace with an explicit unknown-namespace failure, not in a second runtime registry.
-- [ ] Add MkDocs Material in an isolated docs dependency group. Connect first-dataset, source/SCD2/coverage, precise temporal semantics, metric × shape × backend capabilities, cost/residency, recovery and benchmark evidence through the guides index. Keep inherent limits separate from implementation support status.
-- [ ] Generate the refusal reference from declarations; document regeneration and actionable recovery categories. Consolidate CHANGELOG into one Unreleased section in product terms, removing superseded estimation claims.
-- [ ] Run focused documentation tests, strict MkDocs build and per-commit gates; commit this slice.
+- [x] Add a failing reference completeness check against every statically discovered declaration, and representative real emitted-error checks for template fields and documented recovery routes. Validate the generator on a small inline/duplicate-code fixture; refuse nonliteral declarations rather than silently omitting them. Recovery categories live in the documentation generator, keyed by code namespace with an explicit unknown-namespace failure, not in a second runtime registry.
+- [x] Add MkDocs Material in an isolated docs dependency group. Connect first-dataset, source/SCD2/coverage, precise temporal semantics, metric × shape × backend capabilities, cost/residency, recovery and benchmark evidence through the guides index. Keep inherent limits separate from implementation support status.
+- [x] Generate the refusal reference from declarations; document regeneration and actionable recovery categories. Consolidate CHANGELOG into one Unreleased section in product terms, removing superseded estimation claims.
+- [x] Run focused documentation tests, strict MkDocs build and per-commit gates; commit this slice.
 
 ### Task 3: Compatibility, notices and reproducible distributions
 
 **Files:** Modify `.github/workflows/ci.yml`, `pyproject.toml`, `uv.lock`, `THIRD_PARTY_NOTICES.txt`, `docs/guides/backend-compatibility.md`; create/extend distribution tests under `tests/integration/` and compatibility documentation under `docs/guides/`.
 
-**Interfaces:** Consume the tested README block, built wheel/sdist and project dependency declarations. Produce a reusable clean-wheel smoke command and sdist content/rebuild checks, used by CI on Python 3.13 and 3.14 with locked and `--resolution lowest-direct` environments.
+**Interfaces:** Consume the tested README block, built wheel/sdist and project dependency declarations. Produce a reusable clean-wheel smoke command and sdist content/rebuild checks, used by CI on Python 3.13 and 3.14 with highest and `--resolution lowest-direct --only-binary :all:` native environments, alongside locked Python 3.13 optional-integration checks.
 
-- [ ] Add distribution checks for package data (`py.typed`, simulator YAML), examples/docs/notices and clean-wheel first-dataset execution outside the source tree; exercise missing optional libraries without a sibling checkout.
-- [ ] Resolve/test supported floors with uv `--resolution lowest-direct` in isolated environments; raise only demonstrably incompatible dependency floors, documenting measured combinations and optional-extra Python restrictions. Do not weaken requirements to hide errors.
-- [ ] Complete direct-dependency and optional-extra third-party license/notice inventory from installed distribution metadata/upstream notices; leave Terrine's license choice to the owner.
-- [ ] Add CI for Python/dependency combinations, optional isolation, all top-level examples, docs and distribution checks. Run focused checks plus per-commit gates; commit.
+- [x] Add distribution checks for package data (`py.typed`, simulator YAML), examples/docs/notices and clean-wheel first-dataset execution outside the source tree; exercise missing optional libraries without a sibling checkout.
+- [x] Resolve/test supported floors with uv `--resolution lowest-direct` in isolated environments; raise only demonstrably incompatible dependency floors, documenting measured combinations and optional-extra Python restrictions. Do not weaken requirements to hide errors.
+- [x] Complete direct-dependency and optional-extra third-party license/notice inventory from installed distribution metadata/upstream notices; leave Terrine's license choice to the owner.
+- [x] Add CI for Python/dependency combinations, optional isolation, all top-level examples, docs and distribution checks. Run focused checks plus per-commit gates; commit.
 
 ### Task 4: Final evidence and review closure
 
@@ -68,9 +68,9 @@
 
 **Interfaces:** Consume all slices and roborev findings. Produce recorded commands, observed outputs, commit IDs, review dispositions and owner actions.
 
-- [ ] Run `roborev-plan-review docs/superpowers/plans/2026-10-19-terrine-release-readiness.md docs/superpowers/plans/2026-10-16-terrine-build.md AGENTS.md` once before implementation; fix valid findings and commit the plan after gates.
-- [ ] After commits use `roborev list --repo /Users/kylejcaron/terrine --branch feat/release-readiness --open --json --limit 20`, wait/show each review, fix valid findings with red regressions, comment as `roborev-fix` and close; at most three fix cycles.
-- [ ] Run `uv run pytest -q -n 8 tests`, `uv run pytest -q -n 4 integration`, `uv run python -m tests.integration.study_api_smoke`, every `examples/*.py`, `uv build`, sdist check/rebuild and the clean-venv wheel smoke. Record actual output and any credential-gated integration skips without claiming remote execution.
+- [x] Run `roborev-plan-review docs/superpowers/plans/2026-10-19-terrine-release-readiness.md docs/superpowers/plans/2026-10-16-terrine-build.md AGENTS.md` once before implementation; fix valid findings and commit the plan after gates.
+- [x] After commits use `roborev list --repo /Users/kylejcaron/terrine --branch feat/release-readiness --open --json --limit 20`, wait/show each review, fix valid findings with red regressions, comment as `roborev-fix` and close; at most three fix cycles.
+- [x] Run `uv run pytest -q -n 8 tests`, `uv run pytest -q -n 4 integration`, `uv run python -m tests.integration.study_api_smoke`, every `examples/*.py`, `uv build`, sdist check/rebuild and the clean-venv wheel smoke. Record actual output and any credential-gated integration skips without claiming remote execution.
 
 ## Per-commit gates
 
@@ -88,3 +88,13 @@
 Native execution in the existing release worktree is required by the assignment. Documentation generation and CI configuration use the TDD configuration/generated-output exceptions; executable code and behavior fixes receive red regressions. No numerical methods are changed; all dataset-value claims are checked by executed examples/tests.
 
 Plan review 9056: changes required. Accepted the obsolete-estimation finding and corrected the master roadmap's decision/coverage claims. Accepted the incomplete-refusal-contract finding: documentation now promises exact declaration/template coverage, explicitly not exhaustive emitted-context schemas, and tests inline declarations, duplicate code variants and representative emitted errors. Declined the additional-scope finding: the owner's binding datasets-only decision explicitly retains panel/trajectory/state/sequence families, simulator worlds, runtime, orchestration and dataset agent tools; this assignment authorizes readiness of already-merged features, not new capabilities. No scope expansion or re-review is required; the requested review ran once.
+
+Task 1: `90c13d7`; focused API/documentation/import selection passed 146 tests. The exact self-contained README code asserts feature/outcome rows and staged/reopened parity. Optional facade imports exposed and removed an eager runtime DuckDB backend import. Public API dispositions are recorded in the user guide.
+
+Task 2: `d397cfd`; focused docs/error/control selection passed 30 tests and the strict MkDocs Material build passed. The generated reference covers 161 codes and 179 declarations, including inline and duplicate variants. Review 9058's two documentation findings were fixed here, commented and closed; review 9061 passed with no findings.
+
+Task 3: `6f358c2`; focused distribution/docs/isolation selection passed 9 tests and the strict docs build passed. All per-commit gates passed. Clean wheel/sdist rebuild and tutorial/isolation acceptance passed on CPython 3.13.5 and 3.14.5, each with highest and lowest direct compatible wheels. The 3.13 minimum native combination additionally passed 186 semantic/spec/column tests. Measured versions and exact reproduction command are in the backend compatibility guide. Dependency declarations now match the existing DuckDB 1.5.6 capability contract and the demonstrated Ibis/SQLGlot requirements; no arithmetic implementation was changed.
+
+Final verification: `uv run pytest -q -n 8 tests` passed 1287 tests; `uv run pytest -q -n 4 integration` passed 64 tests, with no skips reported. The study API smoke passed (`pre=1`, `post=2`, concurrent write excluded; that smoke reports `replay_equivalence=unverified`). All 14 top-level examples completed successfully. Rebuilt the wheel/sdist and reran clean-environment installed-wheel tutorial, optional-import isolation and sdist rebuild checks successfully. Final Ruff formatting/checks, ty, Tach, focused docs/distribution tests and strict docs build passed. Full commands, warnings, measured versions and outputs are in the ignored local report; no remote warehouse execution or hosted CI result is claimed.
+
+Review closure: 9063 reviewed the distribution/compatibility commit and passed without findings. Reviews 9058, 9061 and 9063 are closed; the branch open-review query returned `[]`. The owner-reserved items above remain open deliberately; no publication, tag, push, release-version choice or Terrine licensing change occurred.
