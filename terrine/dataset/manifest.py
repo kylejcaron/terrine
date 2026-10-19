@@ -128,8 +128,9 @@ class DatasetManifest:
             "readiness": thaw(self.readiness),
             "split_policy": thaw(self.split_policy),
             "compiler_version": self.compiler_version,
-            "frame_metadata": thaw(self.frame_metadata),
         }
+        if self.frame_metadata is not None:
+            payload["frame_metadata"] = thaw(self.frame_metadata)
         if self.recipe_reference is not None:
             del payload["recipe"]
             payload["recipe_reference"] = {
@@ -162,13 +163,12 @@ class DatasetManifest:
             "readiness",
             "split_policy",
             "compiler_version",
-            "frame_metadata",
         }
         is_reference = "recipe_reference" in payload if isinstance(payload, dict) else False
         expected = common | ({"recipe_reference"} if is_reference else {"recipe"})
         if (
             not isinstance(payload, dict)
-            or set(payload) != expected
+            or set(payload) - {"frame_metadata"} != expected
             or payload["schema_version"] != 1
         ):
             raise ValueError("invalid dataset manifest")
@@ -202,5 +202,5 @@ class DatasetManifest:
             1,
             payload["compiler_version"],
             reference,
-            payload["frame_metadata"],
+            payload.get("frame_metadata"),
         )

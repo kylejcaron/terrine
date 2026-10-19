@@ -737,6 +737,7 @@ class Frame:
             compiled=compiled,
             labels=view.labels,
             policy=cast("Any", view.split),
+            state_panel=isinstance(self._design.shape, StatePanel),
             binned_state=isinstance(self._design.shape, StatePanel)
             and isinstance(self._design.shape.state, BinnedMetricState),
         )

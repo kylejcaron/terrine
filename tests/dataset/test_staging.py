@@ -129,3 +129,25 @@ def test_reopen_accepts_resolved_owner_scoped_recipe_reference(native_inputs, tm
     assert reopened.manifest.recipe_reference == reference
     assert sum(batch.num_rows for batch in reopened.to_arrow_batches()) == 2
     con.disconnect()
+
+
+def test_reopen_preserves_version_one_manifest_without_frame_metadata(native_inputs, tmp_path):
+    import json
+    from dataclasses import replace
+
+    from terrine.dataset.manifest import DatasetManifest
+
+    frame, con = _durable_frame(native_inputs, tmp_path)
+    dataset = frame.stage("training", budget=Budget(strict_scan=False))
+    old = replace(dataset.manifest, frame_metadata=None).to_json()
+    assert "frame_metadata" not in json.loads(old)
+    con.con.execute(
+        "UPDATE terrine_runtime.runtime_dataset_recipes SET manifest_json=? "
+        "WHERE dataset=? AND generation=?",
+        [old.decode(), "training", dataset.manifest.generation.generation_id],
+    )
+    restored = DatasetManifest.from_json(old)
+    assert restored.to_json() == old
+    reopened = Dataset.from_manifest(restored, con=con)
+    assert sum(batch.num_rows for batch in reopened.to_arrow_batches()) == 2
+    con.disconnect()

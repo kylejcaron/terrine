@@ -23,6 +23,8 @@ export = dataset.export_parquet(destination="./training-export")
 
 Pass a `TimeSplit` or `GroupSplit` from `terrine.dataset.splits` to `training_set(split=...)` to append `__terrine_split` and `__terrine_split_reason`. Calendar-date cutoffs resolve at the Catalog-local day boundary and persist as absolute instants. Time splits use the complete selected-label support, not merely the anchor: half-open interval labels may end at a cutoff, while observed point labels must precede it. Overlaps, embargoes, unavailable labels, and combined time/group mismatches remain `unassigned`; they are never reassigned to test. Group keys select unit or cluster-unit identity and use the versioned typed deterministic codec. Fit downstream preprocessing only on rows explicitly assigned to `train`.
 
+Relative labels also retain the selector origin as point support and the compiler's conservative selector-search intervals. A label window ending before a cutoff is insufficient when the event used to select that window depends on later observations. Group-only assignment tests label completeness independently of temporal endpoints. Version-1 manifests that predate optional frame metadata remain reopenable without changing their persisted encoding.
+
 The result is a pinned reference. It does not collect the full Frame into a client-side table. Export shards are checksummed and recorded in a manifest; a retry to the same destination resumes only verified shards for the same dataset generation and export layout. Existing destinations with a different generation, layout, or configuration are refused without overwriting them.
 
 ## Scoring snapshots

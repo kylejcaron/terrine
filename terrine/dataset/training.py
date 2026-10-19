@@ -24,16 +24,18 @@ def assign_training_splits(
     labels: tuple[str, ...],
     policy: TimeSplit | GroupSplit,
     binned_state: bool,
+    state_panel: bool = False,
 ) -> tuple[pa.Table, dict[str, int]]:
     records: list[dict[str, Any]] = []
     for index, row in enumerate(table.to_pylist()):
         origin = row[compiled.roles.t0]
-        support, reasons = {}, {}
+        support: dict[Any, Any] = {}
+        reasons: dict[Any, str] = {}
         for label in labels:
             metadata = compiled.columns[label]
             timing = compiled.expression_timings.get(label)
             point = False
-            if label == "to_state" and "to_time" in row:
+            if state_panel and label == "to_state" and "to_time" in row:
                 end = row["to_time"]
                 point = not binned_state
             elif timing is not None and timing.end_bound_column is not None:
@@ -48,15 +50,39 @@ def assign_training_splits(
                 point = True
             elif metadata.window is not None:
                 end = origin + timedelta(seconds=metadata.window.end)
+            elif timing is not None:
+                if timing.relative_offsets is not None and timing.point_time_column is not None:
+                    reference_time = row[timing.point_time_column]
+                    offset = timing.relative_offsets[1]
+                else:
+                    reference_time = origin
+                    offset = timing.support_seconds[1]
+                end = None if reference_time is None else reference_time + timedelta(seconds=offset)
+                point = True
             else:
                 end = None
-            available = (
-                row.get(metadata.complete_column) is True
-                and row[label] is not None
-                and end is not None
-            )
+            available = row.get(metadata.complete_column) is True and row[label] is not None
+            if isinstance(policy, TimeSplit):
+                available = available and end is not None
             support[label] = {"available": available, "end": end, "point": point}
             reasons[label] = row.get(metadata.reason_column) or "label_unavailable"
+            if isinstance(policy, TimeSplit) and timing is not None:
+                for reference, bounds in timing.selector_support_seconds.items():
+                    dependency = (label, "selector_interval", reference)
+                    support[dependency] = {
+                        "available": True,
+                        "end": origin + timedelta(seconds=bounds[1]),
+                        "point": False,
+                    }
+                if timing.relative_offsets is not None and timing.point_time_column is not None:
+                    dependency = (label, "selector_point")
+                    selector_time = row[timing.point_time_column]
+                    support[dependency] = {
+                        "available": selector_time is not None,
+                        "end": selector_time,
+                        "point": True,
+                    }
+                    reasons[dependency] = "label_unavailable"
         records.append(
             {
                 **row,
