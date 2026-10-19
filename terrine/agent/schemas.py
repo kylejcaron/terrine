@@ -275,3 +275,11 @@ class RowsOutput(Record):
     @field_serializer("rows")
     def _serialize_rows(self, value):
         return thaw(value)
+
+
+class AgentExportManifest(Record):
+    dataset: str
+    generation: str
+    row_count: Annotated[int, Field(ge=0)]
+    byte_count: Annotated[int, Field(ge=0)]
+    shard_count: Annotated[int, Field(ge=0)]

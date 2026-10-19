@@ -221,3 +221,40 @@ def test_refresh_preserves_owner_approved_destination_alias(owner_tools, tmp_pat
     assert refreshed.status == "ok" and refreshed.output is not None
     _, saved = owner_tools._resolve_receipt(refreshed.output, "prepare")
     assert saved.destination == approved
+
+
+@pytest.mark.parametrize("preview", [False, True])
+def test_partitioned_export_projects_no_partition_values(owner_tools, tmp_path, preview):
+    import json
+
+    from terrine.dataset.export import ExportManifest
+
+    reference = owner_tools.stage(_prepare(owner_tools), request_key="partitioned").output
+    destination = tmp_path / "partitioned"
+    owner_tools.policy = replace(
+        owner_tools.policy,
+        export=True,
+        allowed_exports=frozenset({destination}),
+        preview=preview,
+        preview_columns=frozenset({"unit"}),
+        redacted_columns=frozenset({"unit"}),
+    )
+    result = owner_tools.export_parquet(
+        reference, destination=str(destination), partition_by=("unit",)
+    )
+    assert result.status == "ok"
+    payload = json.loads(result.model_dump_json())["output"]
+    assert "shards" not in payload and "path" not in payload
+    assert set(payload) == {
+        "schema_version",
+        "dataset",
+        "generation",
+        "row_count",
+        "byte_count",
+        "shard_count",
+    }
+    manifest = ExportManifest.from_json((destination / "export-manifest.json").read_bytes())
+    assert any("unit=" in shard.path for shard in manifest.shards)
+    assert payload["row_count"] == manifest.row_count
+    assert payload["byte_count"] == manifest.byte_count
+    assert payload["shard_count"] == len(manifest.shards)

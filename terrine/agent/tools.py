@@ -22,6 +22,7 @@ from terrine.agent.policy import _LIMIT, _SCOPE, AgentPolicy, Permission, effect
 from terrine.agent.recipes import parse_recipe, recipe_schema
 from terrine.agent.schemas import (
     AgentDatasetReference,
+    AgentExportManifest,
     CancelOutput,
     CapabilityOutput,
     CatalogOutput,
@@ -43,7 +44,6 @@ from terrine.agent.schemas import (
     refusal_response,
 )
 from terrine.data import Budget, Preview
-from terrine.dataset.export import ExportManifest
 from terrine.dataset.manifest import DatasetManifest
 from terrine.dataset.reference import Dataset, dataset_from_run
 from terrine.errors import RefusalSpec, TerrineError
@@ -857,7 +857,7 @@ class DatasetTools:
         destination: str,
         partition_by: tuple[str, ...] = (),
         budget: Budget | None = None,
-    ) -> Response[ExportManifest]:
+    ) -> Response[AgentExportManifest]:
         def export():
             from terrine.compile.cost import _scan_policy
 
@@ -869,8 +869,15 @@ class DatasetTools:
             effective = effective_budget(self.policy.budget, budget)
             _scan_policy(effective)
             dataset, _ = self._resolve_dataset(reference, "export")
-            return dataset.export_parquet(
+            manifest = dataset.export_parquet(
                 destination=str(path), partition_by=partition_by, budget=effective
+            )
+            return AgentExportManifest(
+                dataset=manifest.dataset_id,
+                generation=manifest.generation_id,
+                row_count=manifest.row_count,
+                byte_count=manifest.byte_count,
+                shard_count=len(manifest.shards),
             )
 
         return self._call("export", export)

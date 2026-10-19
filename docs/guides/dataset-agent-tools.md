@@ -149,7 +149,10 @@ owner's fenced immutable publication rather than performing an unbounded scan.
 
 `export_parquet` additionally requires `export=True` and an exact resolved path in
 `allowed_exports`. An allowed runtime table is not an export grant. Export uses
-the existing dataset exporter and returns its file/count/checksum manifest.
+the existing dataset exporter and returns a versioned `AgentExportManifest` with
+dataset/generation identities and aggregate row, byte and shard counts only.
+Shard paths, partition values and per-shard metadata remain exclusively in the
+full owner-side `export-manifest.json`, including for partitioned exports.
 
 `preview_rows(reference, limit=..., columns=(... ,))` is denied by default.
 The limit must be positive and at most `max_preview_rows`; columns must be
