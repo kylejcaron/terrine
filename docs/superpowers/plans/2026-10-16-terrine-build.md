@@ -79,12 +79,12 @@ A read-only runtime probe constructed source/metric/SCD2 definitions in the exis
 | Censoring/readiness | Complete half-open source intervals; per-column completeness/null reasons; ratios intersect both sources. No use of maximum event time as completeness. Unknown source history cannot support a `never treated` lifetime claim. |
 | Attributes | Strict `before=` cutoff for features; reject ambiguous/overlapping SCD2 history. Effective-time correctness is not bitemporal knowledge-time correctness; disclose the distinction. |
 | Precision | Preserve exact integer/decimal types and scale. Float64 aggregation uses the temporal plan's fixed `checked_float64_v1` certificate/tolerance and explicit cancellation refusal; no blanket decimal cast or silent fallback. Certificates survive exports and uncertainty-aware eligibility comparisons. |
-| Grace-period treatment | Initiation-within-grace frames are descriptive until a valid landmark or clone-censor-weighting analysis is implemented. Delaying outcomes alone is insufficient. |
-| Sampling | Nuisance-training subsampling and analysis-population sampling are separate modes. The handoff says both “sample controls” and “estimate on every row”; specify which population every row belongs to, inclusion probabilities, estimand and variance. |
-| Diagnostics | Evidence/assumption checks, not proof of causal identification. Not every diagnostic applies to every estimator. Agent hard-fail policy must distinguish fail, warn, unavailable and not-applicable. |
+| Grace-period treatment | Initiation-within-grace frames are descriptive; library hand-offs refuse them as baseline treatment. Delaying outcomes alone does not establish baseline treatment. |
+| Sampling | Dataset sampling retains the selected population, unit identity, inclusion probabilities and declared weights. Nuisance-training and inferential sampling work is withdrawn. |
+| Descriptive reports | Eligibility, completeness, group summaries and observed-covariate summaries only; no inferential diagnostics or causal pass/fail gates. |
 | Runtime | Hash+watermark alone misses restatements; immutable source/table generations enter provenance. Plan-ID leases do not lock overlapping resources: use resource interval leases, renewal, fencing and publication recovery. |
 | Backend promises | DuckDB first. Compile-only SQL is not executed warehouse support. Cost/atomicity/lease capabilities are explicit per backend. |
-| Adapter acceptance | Compare to each library's equivalent estimator/estimand and supported uncertainty contract; a survival or LTV model should not be tested for equality to AIPW. |
+| Adapter acceptance | Verify dataset roles, preflight hazards and actual downstream-library calls; no estimate parity, calibration or coverage claims. |
 
 ## User workflow
 
@@ -173,7 +173,7 @@ Public surface is a deliberate subset of module-owned dataset symbols. Follow th
 | complexipy | Report per-function complexity initially; ratchet against reviewed baseline, no arbitrary failing threshold copied from a much larger package |
 | prek | Fast pre-commit formatting/lint and pre-push relevant static checks; hooks do not substitute for CI |
 | pytest/Hypothesis | Behavioral boundaries/invariants, no source-text or forwarding tests; xdist independent fixtures |
-| Calibration/mutation | Seeded coverage campaigns separate from ordinary suite; mutation testing targeted to temporal validator once stable |
+| Dataset oracles/mutation | Independent seeded dataset-row references; mutation testing targeted to temporal validation once stable. No estimator coverage campaigns. |
 
 Do not copy increment's custom timeout runners, verbosity auditor, notebook stack, release workflows or broad extras unless a real terrine task needs them.
 
@@ -407,9 +407,9 @@ Extend the same executed flow with reconnect/resume, stale heartbeat, cancellati
 
 ## Roadmap concurrency and handoff coverage
 
-After the near-term frame slice, panel/numerical work, cohort/survival, runtime and sequences can proceed on disjoint modules. Staging/ML exports follow runtime, then common-stack integrations and dataset-agent tools proceed without panel/estimator dependencies. Advanced estimation scaling still requires panel+runtime. Orchestrators depend only on runtime. Optional increment compatibility is an independent lane. Shared schema/validation changes have one integration owner.
+After the near-term frame slice, panels, cohorts/risk sets, runtime and sequences can proceed on disjoint modules. Staging/ML exports follow runtime, then common-stack integrations and dataset-agent tools proceed without estimation dependencies. Orchestrators depend only on runtime. Optional increment compatibility is an independent lane. Shared schema/validation changes have one integration owner.
 
-Handoff coverage: H1 workspace/extraction replaced by owner-approved standalone 0.1/0.2; H2→1.x/2.1; H3→3.x/4.x; H4→5.1; H5→6.1; H6→7.1; H7→8.1; H8→9.1; H9→10.1; H10→11.1; H11→12.1; H12→13.1. Native IPW/AIPW/regression adjustment, controls, diagnostics, optional caching, numerical precision, unit rosters and availability provenance are explicitly assigned, not omitted.
+Handoff coverage: H1 workspace/extraction replaced by owner-approved standalone 0.1/0.2; H2→1.x/2.1; H3→3.x/4.x; H4→5.1; H5→6.1; H6→7.1; H7→8.1; H8→9.1; H9→10.1; H10→11.1; H11→12.1; H12→13.1. Dataset controls, numerical precision, unit rosters and availability provenance remain assigned. Native effect estimation, inferential diagnostics and estimator scaling are withdrawn, not pending implementation.
 
 ## Durable execution record
 
