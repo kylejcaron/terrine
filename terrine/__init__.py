@@ -28,6 +28,7 @@ if TYPE_CHECKING:
         SessionSpec,
         SketchRequest,
         StateObservations,
+        StatePanel,
         TimeToEvent,
         Trajectory,
         Treatment,
