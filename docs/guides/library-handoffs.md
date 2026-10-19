@@ -188,6 +188,51 @@ first and reconstruct the risk set instead. Ordinary right-censoring with known
 follow-up is not an incomplete record and is retained. Cox always requires the
 per-unit records, never the count table.
 
+## diff-diff: encode observed first adoption, not initiation flags
+
+```python
+from diff_diff import CallawaySantAnna, SunAbraham
+from terrine.export import to_diff_diff
+
+panel = to_diff_diff(panel_records, period_col="t0", period_seconds=86400)
+arguments = dict(
+    outcome=panel_records.roles.outcomes[0],
+    unit=panel.unit_col, time=panel.time_col, first_treat=panel.first_treat_col,
+)
+cs = CallawaySantAnna(cluster=panel_records.roles.cluster_unit).fit(panel.df, **arguments)
+event_study = cs.aggregate("event_study").to_dataframe()
+sa = SunAbraham(cluster=panel_records.roles.cluster_unit).fit(panel.df, **arguments)
+sa_event_study = sa.event_study_effects
+```
+
+Only Callaway–Sant'Anna, Sun–Abraham and their event studies are covered here.
+The helper prepares data, not an estimator or causal identification gate.
+
+`first_treat` is constant within unit: first **observed** persistent-adoption
+period, or `0` for units untreated throughout the supplied history (diff-diff's
+never-treated encoding). This is not a lifetime never-treated claim. Validate
+sufficient history for your study. An initiation indicator that turns back off is
+not persistent adoption; treatment reversals, nonbinary/null treatment and duplicate
+unit-period rows are refused rather than repaired.
+
+The generated `__terrine_period` is positive so treatment in original period zero
+does not collide with the never-treated sentinel. Integer periods shift by a
+constant, preserving gaps. Timestamp/date periods require `period_seconds` or a
+retained panel cadence, and must align exactly to it. For example, source ticks
+`[-1, 0, 2]` encode as `[1, 2, 4]`, not `[1, 2, 3]`. This remains true after
+outcome exclusions. The immutable `period_mapping` records source values and codes.
+Keep calendar spacing, reference periods and anticipation choices consistent with
+the downstream method; a missing calendar period is not silently compressed away.
+
+Shared preflight runs first. The helper then validates treatment history and derives
+cohorts from the **original** supplied records, before applying its checked outcome
+projection. Dropping the first-adoption row or every treated row cannot relabel a
+unit as never-treated, nor hide a reversal. It preserves emitted row order and
+refuses pre-existing output-name collisions. `excluded_counts` retains exact reasons.
+The helper returns the other source columns unchanged; explicitly select outcomes
+and covariates for the downstream method. Weight roles are retained in the source,
+not silently interpreted as diff-diff survey weights by this recipe.
+
 ## API sources and executed examples
 
 - [DoubleMLData arguments](https://docs.doubleml.org/stable/api/generated/doubleml.data.DoubleMLData.html)
@@ -195,5 +240,7 @@ per-unit records, never the count table.
 - [duckreg connection and compression contracts](https://github.com/py-econometrics/duckreg)
 - [lifelines survival table conversion](https://lifelines.readthedocs.io/en/latest/lifelines.utils.html#lifelines.utils.survival_events_from_table)
 - [lifelines Cox fit arguments](https://lifelines.readthedocs.io/en/latest/fitters/regression/CoxPHFitter.html)
+- [diff-diff staggered treatment and never-treated convention](https://diff-diff.readthedocs.io/en/stable/tutorials/02_staggered_did.html)
+- [Callaway–Sant'Anna and event-study aggregation](https://diff-diff.readthedocs.io/en/stable/api/_autosummary/diff_diff.CallawaySantAnna.html)
 - Executable counterparts: `integration/handoffs/`; these exercise real libraries,
   skip only if that library is absent, and make no estimate-parity claims.
