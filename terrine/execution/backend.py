@@ -96,7 +96,6 @@ class _DuckDBProvider:
 
         raw = _native.raw_connection(con)
         with _native.connection_lock(raw):
-            admit_read_query(sql, "duckdb", "duckdb")
             _native.check_native_functions(raw, sql, None)
             return con.sql(sql)
 
