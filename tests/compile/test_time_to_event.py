@@ -629,3 +629,36 @@ def test_survival_preserves_event_feature_timing_through_arrow_round_trip():
         assert timing.end_bound_column in arrow.column_names
     finally:
         con.disconnect()
+def test_life_table_matches_independent_pandas_risk_set_oracle():
+    import pandas as pd
+
+    from terrine.spec.trajectory import LifeTable
+
+    con, model = _model()
+    try:
+        con.raw_sql(
+            "DELETE FROM outcomes WHERE user_id = 'u1' AND ts = TIMESTAMPTZ '2025-01-01 00:00:00+00'"
+        )
+        frame = Design(
+            "user",
+            EventAnchor("signup", which="first"),
+            shape=LifeTable(
+                TimeToEvent("churn", entry="enrolled", delayed_entry=True), "1d"
+            ),
+            administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
+        ).build(model)
+        rows = frame.materialize().table.to_pylist()
+        expected = pd.DataFrame(
+            [
+                {"time_bin": 0, "at_risk": 1, "events": 0, "censored": 0, "delayed_entries": 0},
+                {"time_bin": 1, "at_risk": 2, "events": 0, "censored": 0, "delayed_entries": 1},
+                {"time_bin": 2, "at_risk": 2, "events": 1, "censored": 1, "delayed_entries": 0},
+            ]
+        )
+        actual = pd.DataFrame(rows).sort_values("time_bin").reset_index(drop=True)
+        pd.testing.assert_frame_equal(
+            actual[expected.columns], expected, check_dtype=False, check_exact=True
+        )
+        assert rows[-1]["censored_by_reason"] == [("administrative_cutoff", 1)]
+    finally:
+        con.disconnect()

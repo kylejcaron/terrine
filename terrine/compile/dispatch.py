@@ -11,7 +11,7 @@ from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.spec.design import Design
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import StatePanel
-from terrine.spec.trajectory import CohortSpec, TimeToEvent
+from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -52,11 +52,25 @@ def compile_design(
         from terrine.compile.shapes.calendar_comparison import compile_calendar_comparison
 
         return compile_calendar_comparison(design, model)
-    if isinstance(design.shape, (CohortSpec, TimeToEvent)):
+    if isinstance(design.shape, (CohortSpec, TimeToEvent, LifeTable)):
         if isinstance(design.shape, CohortSpec):
             from terrine.compile.shapes.ltv import compile_ltv
 
             return compile_ltv(design, model)
+        if isinstance(design.shape, LifeTable):
+            shape = design.shape.time_to_event
+            design = Design(
+                design.unit,
+                design.anchor,
+                features=design.features,
+                eligibility=design.eligibility,
+                treatment=design.treatment,
+                gap=design.gap,
+                shape=shape,
+                anchor_range=design.anchor_range,
+                sample=design.sample,
+                administrative_cutoff=design.administrative_cutoff,
+            )
         from terrine.compile.shapes.time_to_event import compile_time_to_event
 
         return compile_time_to_event(design, model)

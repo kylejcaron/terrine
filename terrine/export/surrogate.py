@@ -69,6 +69,7 @@ def to_surrogate_arrow(
         "time_to_event": ("entry_time",),
         "ltv": ("age",),
         "cohort_table": ("age", "at_risk", "observable"),
+        "life_table": ("time_bin", "censored_by_reason"),
     }.get(data.provenance.shape, ())
     requested = (*features, *outcomes)
     if len(set(requested)) != len(requested):

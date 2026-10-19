@@ -17,9 +17,11 @@ from terrine.data import (
     Budget,
     CalendarComparisonMeta,
     CohortOperationMeta,
+    ColumnMeta,
     MaterializedFrame,
     PanelMeta,
     Provenance,
+    Roles,
     SamplingMeta,
     StatePanelMeta,
     TreatmentHistoryMeta,
@@ -30,7 +32,7 @@ from terrine.execution.gates import enforce_shape_budget, validate_compiled_outp
 from terrine.spec.anchors import FixedDate
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import BinnedMetricState, StatePanel, encode_cutpoint
-from terrine.spec.trajectory import CohortGrouping, CohortSpec, TimeToEvent
+from terrine.spec.trajectory import CohortGrouping, CohortSpec, LifeTable, TimeToEvent
 
 if TYPE_CHECKING:
     from terrine.compile.columns import CompiledStudy
@@ -254,6 +256,40 @@ class Frame:
                 table = pa.Table.from_batches(batches, schema=schema)
             finally:
                 reader.close()
+            roles = compiled.roles
+            columns = compiled.columns
+            if isinstance(self._design.shape, LifeTable):
+                from terrine.compile.shapes.life_table import aggregate_life_table
+
+                life_table = self._design.shape
+                table = aggregate_life_table(
+                    table,
+                    interval_seconds=life_table.interval,
+                    group_by=life_table.group_by,
+                )
+                roles = Roles(
+                    "unit",
+                    "anchor_id",
+                    "t0",
+                    None,
+                    (*life_table.group_by, "time_bin"),
+                    (
+                        "at_risk",
+                        "events",
+                        "censored",
+                        "delayed_entries",
+                        "event_rate",
+                        "censor_rate",
+                    ),
+                )
+                columns = {name: compiled.columns[name] for name in life_table.group_by}
+                columns["time_bin"] = ColumnMeta(None, "feature", None, None, None, None)
+                columns.update(
+                    {
+                        name: ColumnMeta(None, "outcome", None, None, None, None)
+                        for name in roles.outcomes
+                    }
+                )
             if isinstance(self._design.shape, TimeToEvent):
                 for name in ("event_time", "censor_time", "duration", "entry_time"):
                     if name not in table.column_names:
@@ -292,6 +328,8 @@ class Frame:
                 shape_name = panel.shape
             elif isinstance(self._design.shape, CohortSpec):
                 shape_name = "ltv"
+            elif isinstance(self._design.shape, LifeTable):
+                shape_name = "life_table"
             elif isinstance(self._design.shape, TimeToEvent):
                 shape_name = "time_to_event"
             else:
@@ -329,7 +367,7 @@ class Frame:
                 administrative_cutoff=self._design.administrative_cutoff,
                 cohort_operation=cohort_operation,
             )
-            return MaterializedFrame(table, compiled.roles, compiled.columns, provenance)
+            return MaterializedFrame(table, roles, columns, provenance)
 
     def to_pyarrow(self, *, budget: Budget | None = None) -> pa.Table:
         """Execute once and attach portable study metadata to the Arrow schema."""

@@ -3,23 +3,12 @@
 from datetime import UTC, datetime
 
 import ibis
-import pyarrow as pa
 
-from terrine.data import (
-    Budget,
-    ColumnMeta,
-    Coverage,
-    ExecutionSnapshot,
-    FeatureCutoff,
-    MaterializedFrame,
-    Provenance,
-    Roles,
-    UnitSource,
-)
+from terrine.data import Budget, Coverage, UnitSource
 from terrine.export import to_surrogate_arrow
 from terrine.model import Model
 from terrine.semantic.models import Catalog
-from terrine.spec import CohortSpec, Design, EventAnchor
+from terrine.spec import CohortSpec, Design, EventAnchor, LifeTable, TimeToEvent
 from terrine.spec.trajectory import CohortGrouping, Trajectory
 
 
@@ -30,10 +19,13 @@ def _model():
             ('u1', TIMESTAMPTZ '2025-01-01 00:00:00+00', 'purchase', 0::BIGINT),
             ('u1', TIMESTAMPTZ '2025-01-03 00:00:00+00', 'revenue', 10::BIGINT),
             ('u1', TIMESTAMPTZ '2025-01-10 00:00:00+00', 'revenue', 5::BIGINT),
+            ('u1', TIMESTAMPTZ '2025-01-11 00:00:00+00', 'churn', 0::BIGINT),
             ('u2', TIMESTAMPTZ '2025-01-01 00:00:00+00', 'purchase', 0::BIGINT),
-            ('u3', TIMESTAMPTZ '2025-01-15 00:00:00+00', 'purchase', 0::BIGINT)
+            ('u3', TIMESTAMPTZ '2025-01-15 00:00:00+00', 'purchase', 0::BIGINT),
+            ('u3', TIMESTAMPTZ '2025-01-18 00:00:00+00', 'churn', 0::BIGINT)
         ) AS e(user_id, ts, kind, amount)
     """)
+    con.raw_sql("CREATE TABLE churn_events AS SELECT user_id, ts FROM events WHERE kind = 'churn'")
     con.raw_sql("CREATE TABLE users AS SELECT * FROM (VALUES ('u1'), ('u2'), ('u3')) AS u(id)")
     catalog = Catalog.model_validate(
         {
@@ -48,11 +40,20 @@ def _model():
                     "facts": ["purchase", "revenue"],
                     "properties": ["kind"],
                     "dimensions": [],
-                }
+                },
+                "churn_events": {
+                    "relation": {"kind": "table", "name": "churn_events"},
+                    "timestamp": "ts",
+                    "entities": {"user": "user_id"},
+                    "facts": ["churn"],
+                    "properties": [],
+                    "dimensions": [],
+                },
             },
             "facts": {
                 "purchase": {"source": "events", "column": None},
                 "revenue": {"source": "events", "column": "amount"},
+                "churn": {"source": "churn_events", "column": None},
             },
             "properties": {
                 "kind": {
@@ -77,58 +78,14 @@ def _model():
         catalog,
         con=con,
         units={"user": UnitSource("users", "id")},
-        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
+        readiness={
+            "events": Coverage("2025-01-01", "2025-01-31"),
+            "churn_events": Coverage("2025-01-01", "2025-01-31"),
+        },
     )
     return con, model
 
 
-def _survival_data() -> MaterializedFrame:
-    table = pa.table(
-        {
-            "user": pa.array(["u1", "u2"]),
-            "t0": pa.array(
-                [datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 2, tzinfo=UTC)],
-                type=pa.timestamp("ns", tz="UTC"),
-            ),
-            "entry": pa.array(
-                [datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 2, tzinfo=UTC)],
-                type=pa.timestamp("ns", tz="UTC"),
-            ),
-            "entry_time": pa.array(
-                [datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 1, 2, tzinfo=UTC)],
-                type=pa.timestamp("ns", tz="UTC"),
-            ),
-            "duration": pa.array(
-                [datetime(2025, 1, 3, tzinfo=UTC), datetime(2025, 1, 8, tzinfo=UTC)],
-                type=pa.timestamp("ns", tz="UTC"),
-            ),
-            "event": pa.array([True, True]),
-            "late_corrected_feature": pa.array([7, 9], type=pa.int64()),
-            "feature_complete": pa.array([True, True]),
-            "feature_reason": pa.array([None, None], type=pa.string()),
-        }
-    )
-    return MaterializedFrame(
-        table,
-        Roles(
-            "user", "user", "t0", None, ("late_corrected_feature",), ("duration", "event", "entry")
-        ),
-        {
-            "late_corrected_feature": ColumnMeta(
-                None, "feature", None, None, "feature_complete", "feature_reason"
-            )
-        },
-        Provenance(
-            {"late_corrected_feature": FeatureCutoff(0, True, "retrospective_effective_time")},
-            {},
-            "local-backtest-design",
-            "local-backtest-model",
-            {"events": "fixture-v1"},
-            ExecutionSnapshot("local-fixture", "arrow", {}, None, "verified"),
-            "time_to_event",
-            None,
-        ),
-    )
 
 
 def main() -> None:
@@ -163,9 +120,15 @@ def main() -> None:
             sum(not row["cumulative_value_complete"] for row in later_rows),
         )
 
-        source = _survival_data()
+        life = Design(
+            "user",
+            EventAnchor("purchase", which="first"),
+            shape=LifeTable(TimeToEvent("churn"), "7d"),
+            administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
+        ).build(model).materialize(budget=budget)
+        print("Risk-set table rows:", life.table.to_pylist())
         surrogate = to_surrogate_arrow(
-            source, features=("late_corrected_feature",), outcomes=("duration", "event")
+            life, features=("time_bin",), outcomes=("at_risk", "events")
         )
         restored = type(surrogate).from_arrow(surrogate.to_arrow())
         print("Surrogate metadata:", dict(restored.metadata))

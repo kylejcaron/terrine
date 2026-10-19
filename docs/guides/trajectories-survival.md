@@ -18,20 +18,20 @@ interval survival probabilities, assume independent censoring, or attach
 intervals; these are dataset summaries only.
 
 ```python
-from terrine.spec import Design, EventAnchor, LifeTable
+from terrine.spec import Design, EventAnchor, LifeTable, TimeToEvent
 
 life = Design(
     "user",
     EventAnchor("signup", which="first"),
-    shape=LifeTable(event="churn", interval="7d", delayed_entry=False),
+    shape=LifeTable(TimeToEvent(event="churn"), interval="7d"),
 ).build(model).materialize()
 ```
 
 Bins are half-open elapsed-time intervals from each row's analysis origin.
-Entry contributes to the risk set only from its actual entry bin; events and
-censoring are recorded in their exact terminal-time bin. Missing follow-up
-retains null completeness and its reason rather than becoming an event or
-zero-duration row.
+Delayed entry contributes to the risk set starting at its actual entry bin;
+events and censoring are recorded in their terminal-time bin. Censor reasons
+remain explicit counts in `censored_by_reason`; no incomplete record is
+zero-filled or reclassified as an event.
 
 Arrow dataset export is available independently of any survival calculation:
 `to_surrogate_arrow(frame, features=..., outcomes=...)` returns an
