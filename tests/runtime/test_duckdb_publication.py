@@ -4,6 +4,7 @@ import duckdb
 import pyarrow as pa
 import pytest
 
+from terrine.errors import TerrineError
 from terrine.runtime.backends.duckdb import DuckDBBackend, StagedGeneration
 from terrine.runtime.leases import LeaseStore
 from terrine.runtime.state import RuntimeStore
@@ -43,6 +44,27 @@ def test_publication_preserves_arrow_schema_and_values():
     restored = backend.read_partition(receipt, "frame")
     assert restored.schema.equals(source.schema, check_metadata=True)
     assert restored.to_pylist() == source.to_pylist()
+
+
+def test_lazy_read_refuses_nanosecond_duration_without_losing_exact_arrow_values():
+    con = duckdb.connect(":memory:")
+    backend = DuckDBBackend(con, namespace="owner")
+    source = pa.table({"gap": pa.array([1, None, -3], type=pa.duration("ns"))})
+    receipt = backend.publish_generation(
+        StagedGeneration("orders", "g1", {"frame": source}),
+        expected_manifest=None,
+        lease=_lease(con, "owner"),
+    )
+
+    assert backend.read_partition(receipt, "frame").equals(source)
+    with pytest.raises(TerrineError) as error:
+        backend.read_relation(receipt, "frame", ibis_backend=None)
+    assert error.value.code == "terrine.runtime.lazy_duration_unsupported"
+    assert error.value.context == {
+        "column": "gap",
+        "unit": "ns",
+        "route": "DuckDBBackend.read_partition or open_published_frame",
+    }
 
 
 def test_manifest_publication_atomically_moves_snapshot_reference():

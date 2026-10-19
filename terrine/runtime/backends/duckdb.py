@@ -10,6 +10,7 @@ import ibis
 import pyarrow as pa
 from ibis.backends.duckdb import Backend as IbisDuckDBBackend
 
+from terrine.errors import RefusalSpec
 from terrine.runtime.backends.base import (
     BackendCapabilities,
     PublicationReceipt,
@@ -20,6 +21,11 @@ from terrine.runtime.leases import LeaseStore
 from terrine.runtime.state import RuntimeStore, snapshot_manifest_reference
 
 __all__ = ["DuckDBBackend"]
+
+_LAZY_DURATION_UNSUPPORTED = RefusalSpec(
+    "terrine.runtime.lazy_duration_unsupported",
+    "DuckDB lazy reads cannot represent duration unit {unit!r} in column {column!r}; use {route}.",
+)
 
 
 class DuckDBBackend:
@@ -339,6 +345,14 @@ class DuckDBBackend:
         ).fetchone()
         if row is None:
             raise KeyError(partition)
+        schema = self._partition_schema(receipt, partition)
+        for field in schema:
+            if pa.types.is_duration(field.type) and field.type.unit == "ns":
+                raise _LAZY_DURATION_UNSUPPORTED.error(
+                    column=field.name,
+                    unit=field.type.unit,
+                    route="DuckDBBackend.read_partition or open_published_frame",
+                )
         model_connection = getattr(ibis_backend, "con", None)
         if model_connection is self.con:
             backend = ibis_backend
@@ -353,7 +367,7 @@ class DuckDBBackend:
             backend = self._ibis_backend
         relation = backend.table(row[0], database=self.namespace)
         restored = {}
-        for field in self._partition_schema(receipt, partition):
+        for field in schema:
             if pa.types.is_duration(field.type):
                 restored[field.name] = relation[field.name].as_interval(field.type.unit)
             elif pa.types.is_null(field.type):
