@@ -230,10 +230,11 @@ def last_event_value(
     if backend_name != "duckdb" or candidate_backend is not backend:
         raise _UNSUPPORTED_BACKEND.error(backend=backend_name)
 
+    candidate_names = {name.casefold() for name in candidates.columns}
     used = {name.casefold() for name in (*events.columns, *candidates.columns)}
     names = ("last_value", "last_timestamp", "last_event_id", "no_event")
     for name in names:
-        if name.casefold() in used:
+        if name.casefold() in candidate_names:
             raise _INVALID.error(reason=f"output_column_collision_{name}")
 
     def fresh_name(base: str) -> str:

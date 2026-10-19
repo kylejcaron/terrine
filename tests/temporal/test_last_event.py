@@ -81,6 +81,28 @@ def test_last_event_value_preserves_value_named_like_internal_rank():
         con.disconnect()
 
 
+def test_last_event_allows_output_named_like_event_value():
+    con = ibis.duckdb.connect()
+    try:
+        _, events, candidates = _relations(con)
+        events = events.mutate(last_value=events.value).drop("value")
+        result = last_event_value(
+            events,
+            candidates,
+            unit="unit",
+            timestamp="event_time",
+            value="last_value",
+            lower="lower",
+            upper="upper",
+            event_id="event_id",
+        )
+        result.validate(con.to_pyarrow)
+        actual = con.to_pyarrow(result.table).sort_by("anchor_id").to_pylist()
+        assert [row["last_value"] for row in actual] == [20, 30, None]
+    finally:
+        con.disconnect()
+
+
 def test_last_event_lookup_rejects_ambiguous_event_ids():
     con = ibis.duckdb.connect()
     try:
