@@ -157,7 +157,7 @@ class _HistoryValidation:
 
 @dataclass(frozen=True, slots=True)
 class SketchSidecar:
-    output: str
+    outputs: tuple[str, ...]
     rows: ibis.Table
     probability: Decimal
     request: SketchRequest
@@ -213,23 +213,24 @@ def resolve_sketch_sidecars(table: pa.Table, compiled: CompiledStudy, con) -> pa
             )
         finally:
             reader.close()
-        meta = compiled.columns[sidecar.output]
-        complete = (
-            table.column(meta.complete_column).to_pylist()
-            if meta.complete_column is not None
-            else [True] * table.num_rows
-        )
-        keys = zip(
-            table.column("unit").to_pylist(),
-            table.column("anchor_id").to_pylist(),
-            strict=True,
-        )
-        values = [
-            estimates.get(key) if is_complete else None
-            for key, is_complete in zip(keys, complete, strict=True)
-        ]
-        index = table.schema.get_field_index(sidecar.output)
-        table = table.set_column(index, sidecar.output, pa.array(values, type=pa.float64()))
+        for output in sidecar.outputs:
+            meta = compiled.columns[output]
+            complete = (
+                table.column(meta.complete_column).to_pylist()
+                if meta.complete_column is not None
+                else [True] * table.num_rows
+            )
+            keys = zip(
+                table.column("unit").to_pylist(),
+                table.column("anchor_id").to_pylist(),
+                strict=True,
+            )
+            values = [
+                estimates.get(key) if is_complete else None
+                for key, is_complete in zip(keys, complete, strict=True)
+            ]
+            index = table.schema.get_field_index(output)
+            table = table.set_column(index, output, pa.array(values, type=pa.float64()))
     return table
 
 
@@ -737,7 +738,7 @@ def compile_columns(
             result = summary
             sketches.append(
                 SketchSidecar(
-                    output,
+                    (output,),
                     approximate_quantile_window_values(
                         expression_anchors, events, measure, source, node.window
                     ),
@@ -1011,7 +1012,7 @@ def compile_columns(
         for name, node in named.items():
             value = expression(node)
             public[name] = value.name
-            if any(sidecar.output == value.name for sidecar in sketches):
+            if any(value.name in sidecar.outputs for sidecar in sketches):
                 sketch_aliases.setdefault(value.name, []).append(name)
             columns[name] = replace(value.meta, role=role)
             relative = getattr(node, "relative_to", None)
@@ -1133,8 +1134,8 @@ def compile_columns(
         tuple(checks),
         expression_timings,
         sketches=tuple(
-            replace(sidecar, output=alias)
+            replace(sidecar, outputs=tuple(sketch_aliases.get(sidecar_output, ())))
             for sidecar in sketches
-            for alias in sketch_aliases.get(sidecar.output, ())
+            for sidecar_output in sidecar.outputs
         ),
     )

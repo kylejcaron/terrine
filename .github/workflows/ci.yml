@@ -34,7 +34,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: uv sync --group dev --extra duckdb --extra pandas --extra sketches
-      - run: uv run pytest tests/temporal/test_sketches.py tests/spec/test_sketch_refusal.py -q
+      - run: uv run pytest tests/temporal/test_sketches.py tests/spec/test_sketch_refusal.py tests/compile/test_nonadditive.py -q
 
   warehouse-runtime:
     if: github.event_name == 'workflow_dispatch'

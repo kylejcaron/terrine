@@ -359,7 +359,7 @@ def test_approximate_quantile_preserves_incomplete_window_nulls(nonadditive_mode
             "q": approx_quantile(
                 "amount",
                 "0.5",
-                window=("-1d", "0d"),
+                window=("-2d", "0d"),
                 sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
             )
         },
@@ -367,8 +367,9 @@ def test_approximate_quantile_preserves_incomplete_window_nulls(nonadditive_mode
     frame = Frame(design, nonadditive_model).materialize()
     meta = frame.columns["q"]
     rows = frame.table.to_pylist()
-    assert all(row["q"] is None for row in rows)
+    assert all(row[meta.reason_column] == "incomplete_coverage" for row in rows)
     assert all(not row[meta.complete_column] for row in rows)
+    assert all(row["q"] is None for row in rows)
 
 
 def test_approximate_quantile_populates_reused_expression_aliases(nonadditive_model):
@@ -387,6 +388,10 @@ def test_approximate_quantile_populates_reused_expression_aliases(nonadditive_mo
         FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),
         features={"q1": expression, "q2": expression},
     )
+    from terrine.compile.columns import compile_columns
+
+    compiled = compile_columns(design, nonadditive_model)
+    assert len(compiled.sketches) == 1
     rows = Frame(design, nonadditive_model).materialize().table.to_pylist()
     row_a = next(row for row in rows if row["unit"] == "a")
     assert row_a["q1"] is not None
