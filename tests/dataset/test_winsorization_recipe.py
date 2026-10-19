@@ -216,3 +216,130 @@ def test_fitted_transform_refuses_same_typed_rebound_metric(model, kind):
     with pytest.raises(TerrineError) as error:
         rebound.winsorize(fitted)
     assert error.value.code == "terrine.transform.winsorization_identity_mismatch"
+
+
+@pytest.mark.parametrize(
+    ("binding", "nested", "feature_kind"),
+    (
+        ("source", False, "aggregate"),
+        ("fact", True, "aggregate"),
+        ("property", True, "attribute"),
+        ("dimension", True, "aggregate"),
+    ),
+)
+def test_frozen_limits_refuse_rebound_selector_dependencies(model, binding, nested, feature_kind):
+    from dataclasses import replace
+
+    from terrine import Coverage, Model, UnitSource
+    from terrine.frame import _feature_definition_hash
+    from terrine.semantic.models import Catalog
+    from terrine.spec import Schedule, agg, asof, event_time
+
+    model.con.raw_sql(
+        "CREATE TABLE selection_events AS SELECT user_id,ts,1::BIGINT AS selected,"
+        "NULL::BIGINT AS alternate,'keep' AS kind,'drop' AS other_kind FROM events; "
+        "CREATE TABLE alternate_selection_events AS "
+        "SELECT * REPLACE(ts+INTERVAL 6 HOUR AS ts) FROM selection_events"
+    )
+    definitions = model.catalog.model_dump(mode="python")
+    definitions["sources"]["selection"] = {
+        "relation": {"kind": "table", "name": "selection_events"},
+        "timestamp": "ts",
+        "entities": {"user": "user_id"},
+        "facts": ("selection",),
+        "properties": ("selection_kind",),
+        "dimensions": (),
+    }
+    definitions["facts"]["selection"] = {"source": "selection", "column": "selected"}
+    definitions["properties"]["selection_kind"] = {
+        "source": "selection",
+        "column": "kind",
+        "dtype": "string",
+        "as_of": "event_time",
+    }
+    definitions["sources"]["events"]["properties"] = ("category", "amount_value")
+    definitions["properties"]["amount_value"] = {
+        "source": "events",
+        "column": "amount",
+        "dtype": "int",
+        "as_of": "event_time",
+    }
+    if binding == "dimension":
+        model.con.raw_sql(
+            "CREATE TABLE selection_history AS SELECT user_id,'keep' AS kind,"
+            "TIMESTAMPTZ '2025-01-01' AS starts,TIMESTAMPTZ '2025-01-12' AS ends FROM users; "
+            "CREATE TABLE alternate_selection_history AS "
+            "SELECT * REPLACE('drop' AS kind) FROM selection_history"
+        )
+        definitions["sources"]["selection"]["dimensions"] = ("selection_history",)
+        definitions["properties"]["selection_kind"]["dimension"] = "selection_history"
+        definitions["dimensions"]["selection_history"] = {
+            "relation": {"kind": "table", "name": "selection_history"},
+            "source_entity": "user",
+            "entity_column": "user_id",
+            "properties": ("selection_kind",),
+            "validity": {"valid_from": "starts", "valid_to": "ends"},
+        }
+
+    def bind():
+        return Model.from_catalog(
+            Catalog.model_validate(definitions),
+            con=model.con,
+            units={"user": UnitSource("users", "user_id")},
+            readiness={
+                name: Coverage("2025-01-01", "2025-01-12") for name in definitions["sources"]
+            },
+        )
+
+    selector = event_time(
+        "selection", window=("-2d", "-1d"), label_property="selection_kind", equals="keep"
+    )
+    if nested:
+        selector = event_time("amount", window=("0s", "1h"), relative_to=selector)
+    expression = (
+        agg("total", window=("-1d", "0s"), relative_to=selector)
+        if feature_kind == "aggregate"
+        else asof("amount_value", before="0s", relative_to=selector)
+    )
+    study = replace(
+        design(), anchor=Schedule("1d", "2025-01-05", "2025-01-08"), features={"value": expression}
+    )
+    split = TimeSplit(train_until="2025-01-07", validation_until="2025-01-08")
+    original = bind()
+    frame = study.build(original).training_set(label="label", split=split)
+    fitted = frame.fit_winsorization("value", lower="0.25", upper="0.75")
+    assert fitted.fit.non_null_count == 2
+    original_score = study.snapshot(
+        original, as_of="2025-01-08", features=("value",), eligibility={}
+    )
+    original_score.winsorize(fitted)
+    assert fitted.fit.feature_definition_hash == _feature_definition_hash(
+        original_score._design, ("value",), original
+    )
+    if binding == "source":
+        definitions["sources"]["selection"]["relation"]["name"] = "alternate_selection_events"
+    elif binding == "fact":
+        definitions["facts"]["selection"]["column"] = "alternate"
+    elif binding == "property":
+        definitions["properties"]["selection_kind"]["column"] = "other_kind"
+    else:
+        definitions["dimensions"]["selection_history"]["relation"]["name"] = (
+            "alternate_selection_history"
+        )
+    rebound = bind()
+    candidates = (
+        study.build(rebound).training_set(label="label", split=split),
+        study.snapshot(rebound, as_of="2025-01-08", features=("value",), eligibility={}),
+    )
+    for candidate in candidates:
+        assert candidate.expr.schema()["value"] == frame.expr.schema()["value"]
+        with pytest.raises(TerrineError) as error:
+            candidate.winsorize(fitted)
+        assert error.value.code == "terrine.transform.winsorization_identity_mismatch"
+        assert _feature_definition_hash(candidate._design, ("value",), rebound) != (
+            fitted.fit.feature_definition_hash
+        )
+    timestamp_study = replace(study, features={"selected_at": selector})
+    assert _feature_definition_hash(timestamp_study, ("selected_at",), original) != (
+        _feature_definition_hash(timestamp_study, ("selected_at",), rebound)
+    )

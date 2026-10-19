@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from terrine.compile.columns import CompiledStudy
     from terrine.model import Model
     from terrine.spec.design import Design
+    from terrine.spec.expressions import EventTime
     from terrine.spec.transforms import Winsorization
 
 __all__ = ["Frame", "CohortTable"]
@@ -143,6 +144,18 @@ def _metric_definition(metric: object, model: Model) -> object:
     }
 
 
+def _selector_definition(selector: EventTime, model: Model) -> object:
+    fact = model.catalog.facts[selector.fact]
+    return {
+        "fact": _definition_record(fact),
+        "source": _definition_record(model.sources[fact.source]),
+        "event_id": model.event_ids.get(fact.source),
+        "relative_to": None
+        if selector.relative_to is None
+        else _selector_definition(selector.relative_to, model),
+    }
+
+
 def _feature_definition_hash(design: Design, features: tuple[str, ...], model: Model) -> str:
     from terrine.compile._asof import resolve_attribute
     from terrine.spec.expressions import (
@@ -227,18 +240,13 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
                     "validity": _definition_record(dimension.validity),
                 },
             }
-        elif isinstance(expression, EventTime):
-            resolved["facts"] = [
-                {
-                    "source": source_name,
-                    "relation": _definition_record(source.relation),
-                    "day_boundary": source.day_boundary,
-                    "timestamp_column": source.timestamp_column,
-                    "column": source.facts[expression.fact],
-                }
-                for source_name, source in sorted(model.sources.items())
-                if expression.fact in source.facts
-            ]
+        selector = (
+            expression
+            if isinstance(expression, EventTime)
+            else getattr(expression, "relative_to", None)
+        )
+        if selector is not None:
+            resolved["selector"] = _selector_definition(selector, model)
         if name not in semantic:
             semantic[name] = resolved
     payload = {
