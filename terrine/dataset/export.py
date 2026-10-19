@@ -405,6 +405,9 @@ def _export_dataset_locked(
                     writer.write_table(table)
                 current_estimate += estimated
                 current_rows += table.num_rows
+        if row_count == 0 and not records and active_path is None:
+            active_path = _shard_path(partial, (), (), 0)
+            writer = pq.ParquetWriter(active_path, schema, compression="zstd")
         close_writer()
         byte_count = sum(shard.byte_count for shard in records)
         if (

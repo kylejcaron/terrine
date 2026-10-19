@@ -18,6 +18,7 @@
 - Verify historical unprefixed publication checksums using their original complete Arrow IPC stream encoding, while authenticating retry data against the immutable physical generation.
 - Fingerprint as-of features with the resolved dimension relation, entity identity, validity, and selected property definition, using the same resolution rules as execution.
 - Fsync closed Parquet shards and their directory hierarchy before checkpointing; durably publish the final manifest and destination directory rename.
+- Retain the complete Arrow schema and provenance in a zero-row Parquet shard when training or scoring exports have no eligible rows, including partitioned exports.
 
 - Stage file-backed DuckDB Frames into immutable runtime-published generations through retained input snapshots, with bounded Arrow batch transfer and manifest-verified pinned reads.
 - Export pinned datasets to bounded Parquet shards with checksums, generation manifests, and verified completed-export replay.

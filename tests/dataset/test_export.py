@@ -10,7 +10,7 @@ from terrine.model import Model
 from terrine.spec import Design, FixedDate, agg
 
 
-def _staged_dataset(native_inputs, tmp_path):
+def _staged_dataset(native_inputs, tmp_path, *, empty_training=False):
     from terrine.dataset.reference import stage_frame
 
     catalog, source_con = native_inputs
@@ -23,7 +23,7 @@ def _staged_dataset(native_inputs, tmp_path):
         units={"user": UnitSource("users", "user_id")},
         readiness={
             "events": Coverage("2025-01-01", "2025-01-31"),
-            "labels": Coverage("2025-01-01", "2025-01-31"),
+            "labels": Coverage("2025-01-01", "2025-01-01" if empty_training else "2025-01-31"),
         },
     )
     frame = Design(
@@ -32,6 +32,8 @@ def _staged_dataset(native_inputs, tmp_path):
         features={"sessions": agg("sessions", window=("-7d", "0s"))},
         outcomes={"churn": agg("churned", window=("0s", "7d"))},
     ).build(model)
+    if empty_training:
+        frame = frame.training_set(label="churn")
     return stage_frame(frame, "training", budget=Budget(strict_scan=False)), con
 
 
@@ -245,4 +247,42 @@ def test_export_retry_resyncs_parent_after_interrupted_publication(
     result = dataset.export_parquet(destination=str(destination))
     assert result.row_count == 2
     assert parent_syncs == 2
+    con.disconnect()
+
+
+@pytest.mark.parametrize("partition_by", [(), ("sessions",)])
+def test_empty_training_export_preserves_complete_arrow_metadata(
+    native_inputs, tmp_path, partition_by
+):
+    from terrine.data import MaterializedFrame
+
+    dataset, con = _staged_dataset(native_inputs, tmp_path, empty_training=True)
+    assert dataset.manifest.generation.row_count == 0
+    schema = dataset._arrow_schema()
+    assert schema.metadata and b"terrine.materialized_frame.v1" in schema.metadata
+    destination = tmp_path / "empty"
+    export = dataset.export_parquet(
+        destination=str(destination),
+        partition_by=partition_by,
+        budget=Budget(max_rows=0, strict_scan=False),
+    )
+    assert export.row_count == 0
+    assert len(export.shards) == 1
+    shard = destination / export.shards[0].path
+    restored = pq.read_table(shard)
+    assert restored.num_rows == 0
+    assert restored.schema.equals(schema, check_metadata=True)
+    frame = MaterializedFrame.from_arrow(restored)
+    assert frame.roles.features == ("sessions",)
+    assert frame.roles.outcomes == ("churn",)
+    assert frame.provenance.dataset_view is not None
+    assert frame.provenance.dataset_view.counts_by_reason == {"incomplete_coverage": 2}
+    assert (
+        dataset.export_parquet(
+            destination=str(destination),
+            partition_by=partition_by,
+            budget=Budget(max_rows=0, strict_scan=False),
+        )
+        == export
+    )
     con.disconnect()
