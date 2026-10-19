@@ -35,7 +35,7 @@ from terrine.spec.expressions import (
 )
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import StatePanel
-from terrine.spec.trajectory import CohortSpec, TimeToEvent
+from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
 from terrine.windows import seconds
 
 __all__ = ["Treatment", "Design"]
@@ -92,6 +92,7 @@ class Design:
         | CalendarComparisonSpec
         | CohortSpec
         | TimeToEvent
+        | LifeTable
     )
     anchor_range: AnchorRange | None
     sample: MatchedT0Sample | None
@@ -114,7 +115,8 @@ class Design:
         | EventPanelSpec
         | CalendarComparisonSpec
         | CohortSpec
-        | TimeToEvent = "cross_section",
+        | TimeToEvent
+        | LifeTable = "cross_section",
         anchor_range: AnchorRange | None = None,
         sample: MatchedT0Sample | None = None,
         administrative_cutoff: datetime | None = None,
@@ -148,6 +150,7 @@ class Design:
                 CalendarComparisonSpec,
                 CohortSpec,
                 TimeToEvent,
+                LifeTable,
             ),
         ) or (isinstance(shape, str) and not shape.strip()):
             raise ValueError("shape must be a supported design shape")
@@ -198,15 +201,18 @@ class Design:
             raise ValueError("CohortSpec requires its matching first-event anchor")
         if isinstance(shape, CohortSpec) and outcomes:
             raise ValueError("CohortSpec generates outcomes; explicit outcomes are not allowed")
-        if isinstance(shape, TimeToEvent) and (
+        time_to_event_shape = shape.time_to_event if isinstance(shape, LifeTable) else shape
+        if isinstance(time_to_event_shape, TimeToEvent) and (
             isinstance(anchor, Schedule)
             or (isinstance(anchor, EventAnchor) and anchor.which == "each")
         ):
-            raise ValueError("TimeToEvent requires one analysis entry per unit")
-        if isinstance(shape, TimeToEvent) and outcomes:
+            raise ValueError("time-to-event shapes require one analysis entry per unit")
+        if isinstance(time_to_event_shape, TimeToEvent) and outcomes:
             raise ValueError(
-                "TimeToEvent has generated outcomes; explicit outcomes are not allowed"
+                "time-to-event shapes generate outcomes; explicit outcomes are not allowed"
             )
+        if isinstance(shape, LifeTable) and not set(shape.group_by).issubset(features or {}):
+            raise ValueError("LifeTable group_by names must be declared design features")
         object.__setattr__(self, "administrative_cutoff", administrative_cutoff)
 
     def validate(self, model: Model) -> None:

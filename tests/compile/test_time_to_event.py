@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import ibis
 import pytest
@@ -150,9 +150,7 @@ def test_prevalent_events_are_excluded_and_cutoff_equality_is_censored():
         con.disconnect()
 
 
-def test_unobserved_initial_history_is_explained_and_excluded_from_km():
-    from terrine.estimate.survival import kaplan_meier
-
+def test_unobserved_initial_history_is_explained_and_excluded():
     con, model = _model(outcome_start="2025-01-02")
     try:
         design = Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
@@ -160,9 +158,6 @@ def test_unobserved_initial_history_is_explained_and_excluded_from_km():
         rows = {row["unit"]: row for row in result.table.to_pylist()}
         assert rows["u1"]["complete"] is False
         assert rows["u1"]["reason"] == "incomplete_initial_history"
-        curve = kaplan_meier(result, duration="duration", event="event", entry="entry_time")
-        assert curve.at_risk == (1,)
-        assert curve.events == (1,)
     finally:
         con.disconnect()
 
@@ -231,8 +226,6 @@ def test_administrative_cutoff_changes_followup_without_changing_readiness():
 
 
 def test_cutoff_before_anchor_is_not_emitted_as_complete_followup():
-    from terrine.estimate.survival import kaplan_meier
-
     con, model = _model()
     try:
         design = Design(
@@ -243,8 +236,6 @@ def test_cutoff_before_anchor_is_not_emitted_as_complete_followup():
         )
         result = design.build(model).materialize()
         assert all(row["complete"] is False for row in result.table.to_pylist())
-        curve = kaplan_meier(result, duration="duration", event="event", entry="entry_time")
-        assert curve.time == ()
     finally:
         con.disconnect()
 
@@ -541,8 +532,7 @@ def test_internal_timestamp_aliases_are_reserved_feature_names():
         con.disconnect()
 
 
-def test_nanosecond_events_survive_compile_and_estimation_in_any_session_timezone():
-    from terrine.estimate.survival import ElapsedTime, kaplan_meier
+def test_nanosecond_events_survive_time_to_event_compilation_in_any_session_timezone():
 
     con, model = _model(nanosecond_outcomes=True)
     try:
@@ -552,11 +542,8 @@ def test_nanosecond_events_survive_compile_and_estimation_in_any_session_timezon
             .build(model)
             .materialize()
         )
-        curve = kaplan_meier(result, duration="duration", event="event")
-        assert curve.time == (ElapsedTime(0, 1), ElapsedTime(0, 2))
     finally:
         con.disconnect()
-    from terrine.estimate.survival import kaplan_meier
 
     con, model = _model(naive_outcomes=True)
     try:
@@ -566,7 +553,6 @@ def test_nanosecond_events_survive_compile_and_estimation_in_any_session_timezon
             .materialize()
         )
         assert result.table.schema.field("duration").type.tz == "UTC"
-        assert kaplan_meier(result, duration="duration", event="event").events
     finally:
         con.disconnect()
 
@@ -643,3 +629,145 @@ def test_survival_preserves_event_feature_timing_through_arrow_round_trip():
         assert timing.end_bound_column in arrow.column_names
     finally:
         con.disconnect()
+
+
+def test_life_table_matches_independent_pandas_risk_set_oracle():
+    import pandas as pd
+
+    from terrine.spec.trajectory import LifeTable
+
+    con, model = _model()
+    try:
+        con.raw_sql(
+            "DELETE FROM outcomes WHERE user_id = 'u1' "
+            "AND ts = TIMESTAMPTZ '2025-01-01 00:00:00+00'"
+        )
+        frame = Design(
+            "user",
+            EventAnchor("signup", which="first"),
+            shape=LifeTable(TimeToEvent("churn", entry="enrolled", delayed_entry=True), "1d"),
+            administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
+        ).build(model)
+        rows = frame.materialize().table.to_pylist()
+        expected = pd.DataFrame(
+            [
+                {"time_bin": 0, "at_risk": 1, "events": 0, "censored": 0, "delayed_entries": 0},
+                {"time_bin": 1, "at_risk": 2, "events": 0, "censored": 0, "delayed_entries": 1},
+                {"time_bin": 2, "at_risk": 2, "events": 1, "censored": 1, "delayed_entries": 0},
+            ]
+        )
+        actual = pd.DataFrame(rows).sort_values("time_bin").reset_index(drop=True)
+        pd.testing.assert_frame_equal(
+            actual[expected.columns], expected, check_dtype=False, check_exact=True
+        )
+        assert rows[-1]["censored_by_reason"] == [("administrative_cutoff", 1)]
+    finally:
+        con.disconnect()
+
+
+def test_life_table_delayed_entries_and_incomplete_records_preserve_reason():
+    import pyarrow as pa
+
+    from terrine.compile.shapes.life_table import aggregate_life_table
+
+    timestamp = pa.timestamp("us", tz="UTC")
+    origin = datetime(2025, 1, 1, tzinfo=UTC)
+    records = pa.table(
+        {
+            "t0": pa.array([origin], type=timestamp),
+            "duration": pa.array([origin + timedelta(hours=18)], type=timestamp),
+            "entry_time": pa.array([origin + timedelta(hours=12)], type=timestamp),
+            "event": pa.array([True]),
+            "complete": pa.array([False]),
+            "reason": pa.array(["incomplete_initial_history"]),
+            "censor_reason": pa.array([None], type=pa.string()),
+        }
+    )
+    rows = aggregate_life_table(records, interval_seconds=86_400, group_by=[]).to_pylist()
+    assert len(rows) == 1
+    assert rows[0]["at_risk"] == 1
+    assert rows[0]["delayed_entries"] == 1
+    assert rows[0]["events"] == 0
+    assert rows[0]["censored"] == 1
+    assert rows[0]["censored_by_reason"] == [("incomplete_initial_history", 1)]
+
+
+def test_life_table_row_budget_applies_to_expanded_output():
+    import pyarrow as pa
+
+    from terrine.compile.shapes.life_table import aggregate_life_table
+
+    timestamp = pa.timestamp("us", tz="UTC")
+    origin = datetime(2025, 1, 1, tzinfo=UTC)
+    records = pa.table(
+        {
+            "t0": pa.array([origin], type=timestamp),
+            "duration": pa.array([origin + timedelta(days=2)], type=timestamp),
+            "entry_time": pa.array([origin], type=timestamp),
+            "event": pa.array([True]),
+            "censor_reason": pa.array([None], type=pa.string()),
+        }
+    )
+    with pytest.raises(TerrineError) as error:
+        aggregate_life_table(records, interval_seconds=86_400, group_by=[], max_rows=1)
+    assert error.value.code == "terrine.budget.rows_exceeded"
+
+
+def test_life_table_keeps_boundary_censor_at_risk_and_group_support():
+    import pyarrow as pa
+
+    from terrine.compile.shapes.life_table import aggregate_life_table
+
+    timestamp = pa.timestamp("us", tz="UTC")
+    origin = datetime(2025, 1, 1, tzinfo=UTC)
+    records = pa.table(
+        {
+            "t0": pa.array([origin, origin, origin], type=timestamp),
+            "duration": pa.array(
+                [
+                    origin + timedelta(days=1),
+                    origin + timedelta(days=1),
+                    origin - timedelta(days=1),
+                ],
+                type=timestamp,
+            ),
+            "entry_time": pa.array([origin, origin, origin], type=timestamp),
+            "event": pa.array([False, False, False]),
+            "censor_reason": pa.array(
+                ["administrative_cutoff", "administrative_cutoff", "invalid_record"]
+            ),
+            "region": pa.array([None, None, None], type=pa.string()),
+            "region_complete": pa.array([False, False, True]),
+            "region_reason": pa.array(["coverage_gap", "source_missing", "invalid_reason"]),
+            "region_observed_until": pa.array(
+                [
+                    origin + timedelta(days=1),
+                    origin + timedelta(days=2),
+                    origin + timedelta(days=3),
+                ],
+                type=timestamp,
+            ),
+        }
+    )
+    result = aggregate_life_table(
+        records,
+        interval_seconds=86_400,
+        group_by=["region"],
+        group_supports={
+            "region_complete": "all",
+            "region_reason": "reasons",
+            "region_observed_until": "max",
+        },
+    )
+    assert result.num_rows == 2
+    row = result.to_pylist()[-1]
+    assert row["region_complete"] is False
+    assert row["region_reason"] == "coverage_gap;source_missing"
+    assert row["region_observed_until"] == origin + timedelta(days=2)
+    assert row["at_risk"] == 2
+    assert row["censored"] == 2
+    assert row["censor_rate"] == 1
+    without_support_metadata = aggregate_life_table(
+        records, interval_seconds=86_400, group_by=["region"]
+    )
+    assert without_support_metadata.num_rows == 2

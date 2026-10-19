@@ -73,6 +73,53 @@ def _design():
     )
 
 
+def test_build_layer_composition_matches_direct_compilation(column_model):
+    from terrine.compile.columns import compile_columns
+    from terrine.compile.layers import build_layer
+    from terrine.compile.materialize import compose_materialized_frame
+
+    design = _design()
+    persisted = {
+        replace(key, snapshot_id="snapshot"): build_layer(design, column_model, key)
+        for key in plan_layers(design, column_model).keys
+    }
+    actual = compose_materialized_frame(design, column_model, persisted=persisted)
+    expected = compile_columns(design, column_model)
+    assert column_model.con.to_pyarrow(actual.table.order_by("unit")).equals(
+        column_model.con.to_pyarrow(expected.table.order_by("unit"))
+    )
+    assert actual.roles == expected.roles
+    assert actual.columns == expected.columns
+    assert actual.expression_timings == expected.expression_timings
+
+
+def test_build_layer_composition_matches_state_panel_compilation(column_model):
+    from terrine.compile.dispatch import compile_design
+    from terrine.compile.layers import build_layer
+    from terrine.compile.materialize import compose_materialized_frame
+    from terrine.spec import BinnedMetricState, Schedule, StatePanel
+
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-02", "2025-01-03"),
+        shape=StatePanel(
+            BinnedMetricState("total", cutpoints=(0,), levels=("none", "some")), max_periods=2
+        ),
+    )
+    persisted = {
+        replace(key, snapshot_id="snapshot"): build_layer(design, column_model, key)
+        for key in plan_layers(design, column_model).keys
+    }
+    actual = compose_materialized_frame(design, column_model, persisted=persisted)
+    expected = compile_design(design, column_model)
+    assert column_model.con.to_pyarrow(actual.table.order_by("unit")).equals(
+        column_model.con.to_pyarrow(expected.table.order_by("unit"))
+    )
+    assert actual.roles == expected.roles
+    assert actual.columns == expected.columns
+    assert actual.expression_timings == expected.expression_timings
+
+
 def test_runtime_translates_verified_physical_partition_to_compiler_layer_key(column_model):
     design = _design()
     con, store, backend, ref, receipt, key = _published_generation(column_model, design)

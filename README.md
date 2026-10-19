@@ -2,7 +2,7 @@
 
 Terrine builds typed analytical datasets from semantic definitions, with
 point-in-time features, post-anchor outcomes and explicit observation coverage.
-It also includes independent synthetic worlds and baseline-treatment ATE estimation.
+It includes independent synthetic worlds whose oracle describes expected dataset rows.
 
 ## Install and develop
 
@@ -13,19 +13,18 @@ uv sync --group dev --extra duckdb --extra pandas
 make check
 ```
 
-The ordinary suite excludes tests marked `slow` or `parameter_recovery`. Run a
+The ordinary suite excludes tests marked `slow`. Run a
 focused selection with `make test TESTS="tests/test_windows.py"`. The `lint`,
 `typecheck`, and `fmt` targets run Ruff/Vulture/pydoclint/Tach, ty, and Ruff
 formatting respectively. `make complexity` reports complexity and is
 informational, not part of the gate. `make check` runs static checks and the
 ordinary test suite.
 
-Explicit expensive tiers use `make test-slow TESTS=...` and
-`make test-calibration TESTS=...`. Keep the ordinary feedback loop under
-10 seconds on a warm local environment as an initial development budget,
-not a per-test assertion. The foundation selection measured 0.94 seconds
-(21 cases) on Python 3.13/macOS; investigate sustained regressions and
-revisit the budget from measurements as capabilities grow.
+The explicit expensive tier uses `make test-slow TESTS=...`. Keep the
+ordinary feedback loop under 10 seconds on a warm local environment as an
+initial development budget, not a per-test assertion. The foundation selection
+measured 0.94 seconds (21 cases) on Python 3.13/macOS; investigate sustained
+regressions and revisit the budget from measurements as capabilities grow.
 
 ## Build a study dataset
 
@@ -177,8 +176,6 @@ Window endpoints represent elapsed durations, not calendar dates.
 
 ## Guides
 
-- [Synthetic worlds and independent truth](docs/guides/synthetic-worlds.md)
-- [Native baseline ATE estimation](docs/guides/baseline-estimation.md)
-- [Baseline recovery and calibration](docs/guides/baseline-recovery.md) ([calibration record](docs/validation/baseline-calibration.md))
+- [Synthetic dataset worlds and reference rows](docs/guides/synthetic-worlds.md)
 - [Shared dataset contract with increment](docs/guides/shared-dataset-contract.md)
 - [Bounded state panels](docs/guides/state-panels.md)

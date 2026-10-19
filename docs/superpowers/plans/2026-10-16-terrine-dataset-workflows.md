@@ -8,7 +8,9 @@
 
 **Tech Stack:** The master plan's Python/Ibis/Arrow/DuckDB stack. Existing R/Python modeling tools consume exported data. OpenTelemetry is an optional integration, not a core dependency or required service.
 
-**Spec:** [Master plan and user decisions](2026-10-16-terrine-build.md). Approved scope: a state-panel dataset shape without a MOST estimator; training/scoring convenience workflows; useful live execution feedback without hosted customer data. The [Study API](2026-10-16-terrine-study-api.md) and [Temporal](2026-10-16-terrine-temporal.md) contracts remain authoritative except for the explicit amendments below.
+**Spec:** [Datasets-only scope decision](../specs/2026-10-18-terrine-scope-datasets-only.md), plus the [master dataset plan](2026-10-16-terrine-build.md). State-panel, training/scoring and operational workflows produce datasets only.
+
+**Current scope:** [Datasets-only scope decision](../specs/2026-10-18-terrine-scope-datasets-only.md) supersedes any estimation or causal-analysis implication in the historical roadmap. Training/scoring and operational workflows produce datasets only; downstream analysis is outside terrine.
 
 ## Global constraints
 

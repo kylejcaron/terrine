@@ -15,6 +15,7 @@ def test_same_seed_reproduces_all_tables_and_metadata():
     for name in ("roster", "events", "attributes", "analysis_table", "oracle"):
         assert getattr(left, name).equals(getattr(right, name))
     assert left.metadata == right.metadata
+    assert left.oracle.equals(left.analysis_table)
     assert left.readiness == right.readiness
     assert left.units == right.units
     assert left.event_ids == right.event_ids == {"world_events": "event_id"}
@@ -36,28 +37,22 @@ def test_same_seed_reproduces_all_tables_and_metadata():
         config.n_units = 4  # ty: ignore[invalid-assignment]
 
 
-def test_child_streams_keep_assignment_and_baselines_independent_of_outcome_noise_and_timing():
+def test_child_streams_keep_baselines_and_assignment_independent_of_outcome_noise_and_timing():
     config = WorldConfig(n_units=16, outcome_noise_sd=0)
     base = simulate(config, seed=31)
     noisy = simulate(config.model_copy(update={"outcome_noise_sd": 3}), seed=31)
     moved = simulate(config.model_copy(update={"horizon_seconds": 50}), seed=31)
     assert base.attributes.equals(noisy.attributes)
     assert base.attributes.equals(moved.attributes)
-    for name in ("x", "plan_tier", "e", "mu0", "mu1", "target_weight"):
-        assert base.oracle[name].equals(noisy.oracle[name])
+    for name in ("x", "plan_tier", "baseline_enabled"):
+        assert base.analysis_table[name].equals(noisy.analysis_table[name])
+        assert base.analysis_table[name].equals(moved.analysis_table[name])
     seeds = np.random.SeedSequence(31).spawn(4)
     baseline = np.random.Generator(np.random.PCG64(seeds[0]))
     x = baseline.uniform(-1, 1, config.n_units)
-    c = baseline.choice(["basic", "plus", "enterprise"], config.n_units, p=[0.5, 0.3, 0.2])
-    np.testing.assert_array_equal(base.oracle["x"], x)
-    np.testing.assert_array_equal(base.oracle["plan_tier"], c)
-    assignment = np.random.Generator(np.random.PCG64(seeds[1]))
-    expected = assignment.binomial(1, np.asarray(base.oracle["e"]), config.n_units).astype(bool)
-    np.testing.assert_array_equal(base.analysis_table["baseline_enabled"], expected)
-    outcome = np.random.Generator(np.random.PCG64(seeds[2]))
-    shock = outcome.normal(0, 3, config.n_units)
-    np.testing.assert_allclose(np.asarray(noisy.oracle["y0"]) - noisy.oracle["mu0"], shock)
-    np.testing.assert_allclose(np.asarray(noisy.oracle["y1"]) - noisy.oracle["mu1"], shock)
+    tier = baseline.choice(["basic", "plus", "enterprise"], config.n_units, p=[0.5, 0.3, 0.2])
+    np.testing.assert_array_equal(base.analysis_table["x"], x)
+    np.testing.assert_array_equal(base.analysis_table["plan_tier"], tier)
     assert not base.oracle.equals(simulate(config, seed=32).oracle)
 
 
@@ -82,6 +77,13 @@ def test_child_streams_keep_assignment_and_baselines_independent_of_outcome_nois
 def test_invalid_world_config_is_rejected(changes):
     with pytest.raises(ValidationError):
         WorldConfig(**changes)
+
+
+def test_nonfinite_observed_outcomes_refuse():
+    config = WorldConfig(n_units=256, outcome_noise_sd=1.7e308)
+    with pytest.raises(TerrineError) as error:
+        simulate(config, seed=31)
+    assert error.value.code == "terrine.simulate.nonfinite"
 
 
 @pytest.mark.parametrize("seed", [-1, 2**64, True, 1.5])
