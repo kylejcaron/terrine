@@ -22,6 +22,7 @@ from terrine.runtime.recipe import (
 from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog
 from terrine.spec import Design, FixedDate
+from terrine.spec.dataset import DatasetRecipe
 
 
 def _model(con):
@@ -78,6 +79,17 @@ def test_saved_plan_recipe_reconstructs_design_and_verifies_owner_model_in_fresh
                 design=design, sources=("events",), definition_hash=design.spec_hash
             ),
         )
+        dataset_recipe = DatasetRecipe(
+            schema_version=1,
+            base_design=design,
+            view={
+                "kind": "training",
+                "features": ["x"],
+                "labels": ["y"],
+                "incomplete_labels": "drop",
+                "split": None,
+            },
+        )
         recipe = SavedPlanRecipe.create(
             plan_json=plan.serialize(),
             design=design,
@@ -85,6 +97,7 @@ def test_saved_plan_recipe_reconstructs_design_and_verifies_owner_model_in_fresh
             destination=destination,
             namespace="runtime",
             expected_base_manifest="manifest-1",
+            dataset_recipe=dataset_recipe,
         )
         store = RuntimeStore(con.con, namespace="runtime")
         store.initialize()
@@ -98,6 +111,9 @@ def test_saved_plan_recipe_reconstructs_design_and_verifies_owner_model_in_fresh
         assert release_error.value.code == "terrine.runtime.plan_recipe_mismatch"
         assert recipe.pin_snapshot(store) == "snapshot-1"
         restored = SavedPlanRecipe.from_json(recipe.to_json())
+        restored_dataset_recipe = restored.restore_dataset_recipe()
+        assert restored_dataset_recipe is not None
+        assert restored_dataset_recipe.digest == dataset_recipe.digest
         resolved_plan, resolved_model, resolved_design, resolved_destination = resolve_plan(
             restored, resolver=_Resolver(model), namespace="runtime"
         )

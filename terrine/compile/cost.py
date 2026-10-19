@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from terrine.data import Budget, CoverageSummary, Preview
+from terrine.data import (
+    _OUTPUT_BYTES_EXCEEDED,
+    _ROWS_EXCEEDED,
+    Budget,
+    CoverageSummary,
+    Preview,
+)
 from terrine.errors import RefusalSpec
 from terrine.execution.gates import _eligibility_summary
 
@@ -12,14 +18,8 @@ if TYPE_CHECKING:
     from terrine.model import Model
     from terrine.spec.design import Design
 
-__all__ = ["preview"]
+__all__ = ["preview", "_OUTPUT_BYTES_EXCEEDED", "_ROWS_EXCEEDED"]
 
-_ROWS_EXCEEDED = RefusalSpec(
-    "terrine.budget.rows_exceeded", "Output exceeds the configured row limit {limit}."
-)
-_OUTPUT_BYTES_EXCEEDED = RefusalSpec(
-    "terrine.budget.output_bytes_exceeded", "Output exceeds the configured byte limit {limit}."
-)
 _SCAN_UNKNOWN = RefusalSpec(
     "terrine.budget.scan_unknown",
     "A strict scan-byte budget requires a verified scan bound; this backend has none. "

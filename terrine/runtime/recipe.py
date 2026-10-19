@@ -11,6 +11,7 @@ from terrine.errors import RefusalSpec, TerrineError
 from terrine.model import Model
 from terrine.runtime.planner import RefreshPlan
 from terrine.runtime.state import RuntimeStore
+from terrine.spec.dataset import DatasetRecipe
 from terrine.spec.design import Design
 from terrine.spec.io import canonical_json, from_json, to_json
 
@@ -119,6 +120,7 @@ class SavedPlanRecipe:
     namespace: str
     expected_base_manifest: str | None
     recipe_hash: str
+    dataset_recipe_json: str | None = None
 
     @classmethod
     def create(
@@ -130,6 +132,7 @@ class SavedPlanRecipe:
         destination: DestinationRef,
         namespace: str,
         expected_base_manifest: str | None,
+        dataset_recipe: DatasetRecipe | None = None,
     ) -> SavedPlanRecipe:
         if not isinstance(model, ModelReference) or not isinstance(destination, DestinationRef):
             raise TypeError("model and destination must be verified references")
@@ -142,6 +145,14 @@ class SavedPlanRecipe:
         canonical_plan = json.dumps(parsed_plan, sort_keys=True, separators=(",", ":"))
         design_json = to_json(design)
         design_hash = hashlib.sha256(canonical_json(design)).hexdigest()
+        if dataset_recipe is not None and (
+            not isinstance(dataset_recipe, DatasetRecipe)
+            or canonical_json(dataset_recipe.base_design) != canonical_json(design)
+        ):
+            raise TypeError("dataset_recipe must describe the saved Design")
+        dataset_recipe_json = (
+            dataset_recipe.canonical_json().decode() if dataset_recipe is not None else None
+        )
         provisional = cls(
             1,
             canonical_plan,
@@ -152,6 +163,7 @@ class SavedPlanRecipe:
             namespace,
             expected_base_manifest,
             "",
+            dataset_recipe_json,
         )
         recipe_hash = hashlib.sha256(_canonical(provisional._data(include_hash=False))).hexdigest()
         return cls(
@@ -164,6 +176,7 @@ class SavedPlanRecipe:
             provisional.namespace,
             provisional.expected_base_manifest,
             recipe_hash,
+            dataset_recipe_json,
         )
 
     def _data(self, *, include_hash: bool) -> dict[str, Any]:
@@ -177,12 +190,20 @@ class SavedPlanRecipe:
             "namespace": self.namespace,
             "expected_base_manifest": self.expected_base_manifest,
         }
+        if self.dataset_recipe_json is not None:
+            data["dataset_recipe_json"] = self.dataset_recipe_json
         if include_hash:
             data["recipe_hash"] = self.recipe_hash
         return data
 
     def to_json(self) -> str:
         return json.dumps(self._data(include_hash=True), sort_keys=True, separators=(",", ":"))
+
+    def restore_dataset_recipe(self) -> DatasetRecipe | None:
+        """Return the validated complete dataset construction recipe, if present."""
+        if self.dataset_recipe_json is None:
+            return None
+        return DatasetRecipe.from_json(self.dataset_recipe_json)
 
     def pin_snapshot(
         self,
@@ -237,6 +258,7 @@ class SavedPlanRecipe:
                 data["namespace"],
                 data["expected_base_manifest"],
                 data["recipe_hash"],
+                data.get("dataset_recipe_json"),
             )
         except (ValueError, TypeError, KeyError) as exc:
             raise _INVALID.error(reason="recipe is malformed") from exc
@@ -256,6 +278,13 @@ class SavedPlanRecipe:
             raise _INVALID.error(reason="plan or Design payload is invalid") from exc
         if hashlib.sha256(canonical_json(design)).hexdigest() != recipe.design_hash:
             raise _INVALID.error(reason="Design hash mismatch")
+        if recipe.dataset_recipe_json is not None:
+            try:
+                dataset_recipe = DatasetRecipe.from_json(recipe.dataset_recipe_json)
+            except (ValueError, TypeError) as exc:
+                raise _INVALID.error(reason="dataset recipe is invalid") from exc
+            if canonical_json(dataset_recipe.base_design) != canonical_json(design):
+                raise _INVALID.error(reason="dataset recipe Design differs")
         return recipe
 
 

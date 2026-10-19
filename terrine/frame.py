@@ -5,9 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime
 from importlib import import_module
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import pyarrow as pa
 
@@ -17,6 +18,7 @@ from terrine.data import (
     Budget,
     CohortOperationMeta,
     ColumnMeta,
+    DatasetViewMeta,
     MaterializedFrame,
     Provenance,
     Roles,
@@ -26,7 +28,7 @@ from terrine.errors import RefusalSpec
 from terrine.execution.gates import enforce_shape_budget, validate_compiled_output
 from terrine.spec.anchors import FixedDate
 from terrine.spec.sequence import EventSequence
-from terrine.spec.state_panel import StatePanel
+from terrine.spec.state_panel import BinnedMetricState, StatePanel
 from terrine.spec.trajectory import CohortGrouping, CohortSpec, LifeTable, TimeToEvent
 
 if TYPE_CHECKING:
@@ -49,6 +51,299 @@ def _optional_dependency(name: str):
         raise _MISSING_DEPENDENCY.error(extra=name) from exc
 
 
+class _SplitPolicy(Protocol):
+    def to_record(self) -> dict: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _TrainingView:
+    features: tuple[str, ...]
+    labels: tuple[str, ...]
+    incomplete_labels: Literal["drop", "keep"]
+    split: object | None
+
+
+@dataclass(frozen=True, slots=True)
+class _ScoringView:
+    parent_design_hash: str
+    features: tuple[str, ...]
+    resolved_as_of: datetime
+
+
+def _scoring_view_digest(view: _ScoringView, scoring_design_hash: str) -> str:
+    payload = {
+        "kind": "scoring",
+        "parent_design": view.parent_design_hash,
+        "scoring_design": scoring_design_hash,
+        "features": view.features,
+        "resolved_as_of": view.resolved_as_of.isoformat(),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _view_digest(
+    features: tuple[str, ...],
+    labels: tuple[str, ...],
+    policy: Literal["drop", "keep"],
+    split: object | None,
+    design_hash: str,
+) -> str:
+    payload = {
+        "kind": "training",
+        "design": design_hash,
+        "features": features,
+        "labels": labels,
+        "incomplete_labels": policy,
+        "split": None if split is None else cast(_SplitPolicy, split).to_record(),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _definition_record(value: object) -> object:
+    from collections.abc import Mapping
+    from dataclasses import fields, is_dataclass
+    from datetime import date, datetime
+    from enum import Enum
+
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        return _definition_record(model_dump(mode="json"))
+    if is_dataclass(value):
+        return {
+            field.name: _definition_record(getattr(value, field.name)) for field in fields(value)
+        }
+    if isinstance(value, Mapping):
+        return {str(key): _definition_record(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_definition_record(item) for item in value]
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, Enum):
+        return value.value
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    raise TypeError(f"Unsupported feature definition value: {type(value).__name__}")
+
+
+def _metric_definition(metric: object, model: Model) -> object:
+    if metric is None:
+        return None
+    return {
+        "metric": _definition_record(metric),
+        "sources": {
+            name: _definition_record(model.sources[name])
+            for name in getattr(metric, "source_names", ())
+        },
+    }
+
+
+def _feature_definition_hash(design: Design, features: tuple[str, ...], model: Model) -> str:
+    from terrine.compile._asof import resolve_attribute
+    from terrine.spec.expressions import AttributeAsOf, EventTime, MetricAgg
+    from terrine.spec.io import canonical_json
+
+    record = json.loads(canonical_json(design))["design"]
+    semantic: dict[str, object] = {}
+    selected_records: dict[str, object] = {}
+    for name in features:
+        expression = design.features.get(name)
+        evaluation_reference = "row_t0"
+        if expression is not None:
+            selected_records[name] = record["features"][name]
+        elif isinstance(design.shape, StatePanel):
+            if name in design.shape.baseline_features:
+                selected_records[name] = record["shape"]["baseline_features"][name]
+                expression = design.shape.baseline_features[name]
+                evaluation_reference = "panel_start"
+            elif name == "from_state":
+                state = design.shape.state
+                selected_records[name] = {"prior_state": record["shape"]["state"]}
+                if isinstance(state, BinnedMetricState):
+                    metric = model.metrics.get(state.metric)
+                    semantic[name] = {
+                        "state": record["shape"]["state"],
+                        "metric": _metric_definition(metric, model),
+                    }
+                else:
+                    semantic[name] = {
+                        "state": record["shape"]["state"],
+                        "property_bindings": [
+                            {
+                                "source": source_name,
+                                "relation": _definition_record(source.relation),
+                                "day_boundary": source.day_boundary,
+                                "timestamp_column": source.timestamp_column,
+                                "binding": _definition_record(source.properties[state.property]),
+                            }
+                            for source_name, source in sorted(model.sources.items())
+                            if state.property in source.properties
+                        ],
+                    }
+            else:
+                raise ValueError(f"Unknown selected feature {name!r}")
+        else:
+            raise ValueError(f"Unknown selected feature {name!r}")
+        if expression is not None:
+            selected_records[name] = {
+                "expression": selected_records[name],
+                "evaluation_reference": evaluation_reference,
+            }
+        resolved: dict[str, object] = {}
+        if isinstance(expression, MetricAgg):
+            metric = model.metrics.get(expression.metric)
+            if metric is not None:
+                resolved["metric"] = _metric_definition(metric, model)
+        elif isinstance(expression, AttributeAsOf):
+            source, prop, dimension = resolve_attribute(model, expression.attribute)
+            resolved["attribute"] = {
+                "source": source.name,
+                "relation": _definition_record(source.relation),
+                "entity_column": source.entities.get(design.unit),
+                "day_boundary": source.day_boundary,
+                "timestamp_column": source.timestamp_column,
+                "binding": _definition_record(prop),
+                "dimension": None
+                if dimension is None
+                else {
+                    "name": dimension.name,
+                    "relation": _definition_record(dimension.relation),
+                    "source_entity": dimension.source_entity,
+                    "entity_column": dimension.entity_column,
+                    "validity": _definition_record(dimension.validity),
+                },
+            }
+        elif isinstance(expression, EventTime):
+            resolved["facts"] = [
+                {
+                    "source": source_name,
+                    "relation": _definition_record(source.relation),
+                    "day_boundary": source.day_boundary,
+                    "timestamp_column": source.timestamp_column,
+                    "column": source.facts[expression.fact],
+                }
+                for source_name, source in sorted(model.sources.items())
+                if expression.fact in source.facts
+            ]
+        if name not in semantic:
+            semantic[name] = resolved
+    payload = {
+        "unit": record["unit"],
+        "unit_binding": _definition_record(model.units.get(design.unit)),
+        "gap": record["gap"],
+        "features": selected_records,
+        "semantic": semantic,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _apply_training_view(compiled: CompiledStudy, view: _TrainingView) -> CompiledStudy:
+    table = compiled.table
+    roles = compiled.roles
+    label_metadata = [compiled.columns[name] for name in view.labels]
+    if view.incomplete_labels == "drop":
+        for name, metadata in zip(view.labels, label_metadata, strict=True):
+            assert metadata.complete_column is not None
+            usable = table[metadata.complete_column].fill_null(False) & table[name].notnull()
+            table = table.filter(usable)
+    role_columns = (
+        roles.treatment,
+        roles.weight,
+        roles.cluster_unit,
+        roles.prior_state,
+        roles.trial,
+        roles.assignment_probability,
+        roles.target_weight,
+        roles.trial_weight,
+    )
+    structural = (
+        "period",
+        "period_index",
+        "from_time",
+        "to_time",
+        "scheduled_to",
+        "gap",
+        "terminal",
+    )
+    names = list(dict.fromkeys((roles.unit, roles.anchor, roles.t0, *view.features, *view.labels)))
+    for name in (*role_columns, *structural):
+        if name is not None and name in compiled.table.columns and name not in names:
+            names.append(name)
+    timings = {
+        name: compiled.expression_timings[name]
+        for name in (*view.features, *view.labels)
+        if name in compiled.expression_timings
+    }
+    for timing in timings.values():
+        for support in (
+            timing.point_time_column,
+            timing.start_bound_column,
+            timing.end_bound_column,
+            *timing.selector_dependencies,
+        ):
+            if support is not None and support in compiled.table.columns and support not in names:
+                names.append(support)
+    for name in tuple(names):
+        if name not in compiled.columns:
+            continue
+        metadata = compiled.columns[name]
+        for support in (
+            metadata.observed_from_column,
+            metadata.observed_until_column,
+            metadata.complete_column,
+            metadata.reason_column,
+            metadata.absolute_error_column,
+        ):
+            if support is not None and support not in names:
+                names.append(support)
+    table = table.select(*names)
+    selected_columns = {name: compiled.columns[name] for name in names if name in compiled.columns}
+    selected_roles = replace(
+        roles,
+        features=view.features,
+        outcomes=view.labels,
+        treatment=roles.treatment if roles.treatment in names else None,
+        weight=roles.weight if roles.weight in names else None,
+        cluster_unit=roles.cluster_unit if roles.cluster_unit in names else None,
+        prior_state=roles.prior_state if roles.prior_state in names else None,
+        trial=roles.trial if roles.trial in names else None,
+        assignment_probability=(
+            roles.assignment_probability if roles.assignment_probability in names else None
+        ),
+        target_weight=roles.target_weight if roles.target_weight in names else None,
+        trial_weight=roles.trial_weight if roles.trial_weight in names else None,
+    )
+    return replace(
+        compiled,
+        table=table,
+        roles=selected_roles,
+        columns=selected_columns,
+        expression_timings=timings,
+    )
+
+
+def _excluded_label_counts(compiled: CompiledStudy, view: _TrainingView, execute) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for name in view.labels:
+        metadata = compiled.columns[name]
+        assert metadata.complete_column is not None and metadata.reason_column is not None
+        excluded = compiled.table.filter(
+            ~compiled.table[metadata.complete_column].fill_null(False)
+            | compiled.table[name].isnull()
+        )
+        grouped = excluded.group_by(metadata.reason_column).aggregate(rows=excluded.count())
+        for row in execute(grouped).to_pylist():
+            reason = row[metadata.reason_column]
+            key = "unknown" if reason is None else reason
+            counts[key] = counts.get(key, 0) + row["rows"]
+    return dict(sorted(counts.items()))
+
+
 @dataclass(frozen=True, slots=True, init=False, repr=False, eq=False)
 class Frame:
     """A compiled study, not executed data.
@@ -61,6 +356,8 @@ class Frame:
     _design: Design
     _model: Model
     _compiled: CompiledStudy
+    _training_view: _TrainingView | None
+    _scoring_view: _ScoringView | None
 
     def __init__(self, design: Design, model: Model) -> None:
         from terrine.compile.dispatch import compile_design
@@ -68,19 +365,115 @@ class Frame:
         object.__setattr__(self, "_design", design)
         object.__setattr__(self, "_model", model)
         object.__setattr__(self, "_compiled", compile_design(design, model))
+        object.__setattr__(self, "_training_view", None)
+        object.__setattr__(self, "_scoring_view", None)
+
+    def _active_compiled(self, compiled: CompiledStudy | None = None) -> CompiledStudy:
+        active = self._compiled if compiled is None else compiled
+        if self._training_view is None:
+            return active
+        return _apply_training_view(active, self._training_view)
 
     @property
     def expr(self):
         """Return the Ibis graph; direct execution bypasses all export safeguards."""
-        return self._compiled.table
+        return self._active_compiled().table
 
     @property
     def roles(self):
-        return self._compiled.roles
+        return self._active_compiled().roles
 
     @property
     def columns(self):
-        return self._compiled.columns
+        return self._active_compiled().columns
+
+    def training_set(
+        self,
+        *,
+        label: str | tuple[str, ...],
+        features: tuple[str, ...] | None = None,
+        incomplete_labels: Literal["drop", "keep"] = "drop",
+        split: object | None = None,
+    ) -> Frame:
+        """Return a lazy feature/label projection with explicit label completeness."""
+        if self._training_view is not None or self._scoring_view is not None:
+            from terrine.spec.dataset import INVALID_VIEW
+
+            raise INVALID_VIEW.error(
+                reason="views cannot be composed; start from the original Design"
+            )
+        if isinstance(self._design.shape, (LifeTable, EventSequence)):
+            from terrine.spec.dataset import UNSUPPORTED_VIEW
+
+            raise UNSUPPORTED_VIEW.error(
+                reason="training selections require row-oriented values; use the specialized "
+                "Frame export directly or construct a cross-sectional training Design"
+            )
+        if split is not None:
+            from terrine.semantic.time import boundary_timezone
+
+            policies = import_module("terrine.dataset.splits")
+            if not isinstance(split, (policies.TimeSplit, policies.GroupSplit)):
+                raise TypeError("split must be TimeSplit, GroupSplit, or None")
+            if isinstance(split, policies.TimeSplit):
+                split = split.bind(boundary_timezone(self._model.catalog.day_boundary))
+                groups = split.groups
+            else:
+                groups = split
+            if groups is not None and groups.group not in (
+                self.roles.unit,
+                self.roles.cluster_unit,
+            ):
+                raise ValueError("split groups must select the unit or cluster-unit identity")
+            if {"__terrine_split", "__terrine_split_reason"} & set(self._compiled.table.columns):
+                raise ValueError("split output names collide with Design columns")
+
+        labels = (label,) if isinstance(label, str) else tuple(label)
+        if not labels or any(not isinstance(name, str) or not name for name in labels):
+            raise ValueError("label must select one or more non-empty outcome names")
+        if len(set(labels)) != len(labels):
+            raise ValueError("label names must be unique")
+        unknown = set(labels) - set(self.roles.outcomes)
+        if unknown:
+            raise RefusalSpec(
+                "terrine.dataset.invalid_selection",
+                "Unknown training label selection: {names}",
+            ).error(names=tuple(sorted(unknown)))
+        selected_features = self.roles.features if features is None else tuple(features)
+        if any(not isinstance(name, str) or not name for name in selected_features):
+            raise ValueError("features must contain non-empty column names")
+        if len(set(selected_features)) != len(selected_features):
+            raise ValueError("feature names must be unique")
+        available_features = set(self.roles.features)
+        if self.roles.prior_state is not None:
+            available_features.add(self.roles.prior_state)
+        unknown = set(selected_features) - available_features
+        if unknown:
+            raise RefusalSpec(
+                "terrine.dataset.invalid_selection",
+                "Unknown training feature selection: {names}",
+            ).error(names=tuple(sorted(unknown)))
+        if incomplete_labels not in ("drop", "keep"):
+            raise ValueError("incomplete_labels must be 'drop' or 'keep'")
+        for name in labels:
+            metadata = self.columns[name]
+            if metadata.complete_column is None or metadata.reason_column is None:
+                raise RefusalSpec(
+                    "terrine.dataset.invalid_label_support",
+                    "Selected label lacks completeness and reason metadata: {label}",
+                ).error(label=name)
+        result = Frame(self._design, self._model)
+        object.__setattr__(
+            result,
+            "_training_view",
+            _TrainingView(selected_features, labels, incomplete_labels, split),
+        )
+        return result
+
+    def stage(self, table: str, *, budget: Budget | None = None):
+        """Publish this Frame as a pinned, bounded-stream Dataset generation."""
+        stage_frame = import_module("terrine.dataset.reference").stage_frame
+        return stage_frame(self, table, budget=budget)
 
     def materialize(self, budget: Budget | None = None) -> MaterializedFrame:
         return self._materialize(budget)
@@ -116,6 +509,14 @@ class Frame:
                 unit_name=self._design.unit,
             )
             compiled = compile_design(self._design, execution_model)
+            excluded_counts = {}
+            if self._training_view is not None:
+                compiled.validate(execute=context.execute)
+                if self._training_view.incomplete_labels == "drop":
+                    excluded_counts = _excluded_label_counts(
+                        compiled, self._training_view, context.execute
+                    )
+                compiled = _apply_training_view(compiled, self._training_view)
             if transform is not None:
                 compiled = transform(compiled)
             summary = validate_compiled_output(compiled, context.execute)
@@ -205,20 +606,13 @@ class Frame:
                         for name in roles.outcomes
                     }
                 )
-            if isinstance(self._design.shape, TimeToEvent):
-                for name in ("event_time", "censor_time", "duration", "entry_time"):
-                    if name not in table.column_names:
-                        continue
-                    dtype = table.schema.field(name).type
-                    if pa.types.is_timestamp(dtype) and dtype.tz is None:
-                        timestamp = table[name].cast(pa.timestamp(dtype.unit, tz="UTC"))
-                        table = table.set_column(
-                            table.schema.get_field_index(name), name, timestamp
-                        )
-            if isinstance(self._design.shape, StatePanel):
-                gap_index = table.schema.get_field_index("gap")
-                gap = table.column(gap_index).cast(pa.duration("us"))
-                table = table.set_column(gap_index, "gap", gap)
+            table = self._normalize_output(table)
+            table, split_counts = self._split_output(table, compiled)
+            for reason, count in split_counts.items():
+                excluded_counts[reason] = excluded_counts.get(reason, 0) + count
+            if budget is not None and budget.max_output_bytes is not None:
+                if table.nbytes > budget.max_output_bytes:
+                    raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
             treatment = self._design.treatment
             treatment_column = compiled.roles.treatment
             baseline_binary = (
@@ -295,7 +689,82 @@ class Frame:
                 administrative_cutoff=self._design.administrative_cutoff,
                 cohort_operation=cohort_operation,
             )
+            provenance = self._view_provenance(provenance, excluded_counts)
             return MaterializedFrame(table, roles, columns, provenance)
+
+    def _view_provenance(self, provenance: Provenance, excluded_counts: dict[str, int]):
+        model = self._model
+        if self._training_view is not None:
+            view = self._training_view
+            provenance = replace(
+                provenance,
+                dataset_view=DatasetViewMeta(
+                    kind="training",
+                    selected_features=view.features,
+                    selected_labels=view.labels,
+                    view_hash=_view_digest(
+                        view.features,
+                        view.labels,
+                        view.incomplete_labels,
+                        view.split,
+                        self._design.spec_hash,
+                    ),
+                    feature_definition_hash=_feature_definition_hash(
+                        self._design, view.features, model
+                    ),
+                    incomplete_labels=view.incomplete_labels,
+                    split_policy=None
+                    if view.split is None
+                    else cast(_SplitPolicy, view.split).to_record(),
+                    counts_by_reason=excluded_counts,
+                ),
+            )
+        elif self._scoring_view is not None:
+            scoring = self._scoring_view
+            provenance = replace(
+                provenance,
+                dataset_view=DatasetViewMeta(
+                    kind="scoring",
+                    selected_features=scoring.features,
+                    selected_labels=(),
+                    view_hash=_scoring_view_digest(scoring, self._design.spec_hash),
+                    feature_definition_hash=_feature_definition_hash(
+                        self._design, scoring.features, model
+                    ),
+                    resolved_as_of=scoring.resolved_as_of,
+                ),
+            )
+        return provenance
+
+    def _split_output(self, table: pa.Table, compiled: CompiledStudy):
+        view = self._training_view
+        if view is None or view.split is None:
+            return table, {}
+        return import_module("terrine.dataset.training").assign_training_splits(
+            table,
+            compiled=compiled,
+            labels=view.labels,
+            policy=cast("Any", view.split),
+            state_panel=isinstance(self._design.shape, StatePanel),
+            binned_state=isinstance(self._design.shape, StatePanel)
+            and isinstance(self._design.shape.state, BinnedMetricState),
+        )
+
+    def _normalize_output(self, table: pa.Table) -> pa.Table:
+        if isinstance(self._design.shape, TimeToEvent):
+            for name in ("event_time", "censor_time", "duration", "entry_time"):
+                if name in table.column_names:
+                    dtype = table.schema.field(name).type
+                    if pa.types.is_timestamp(dtype) and dtype.tz is None:
+                        table = table.set_column(
+                            table.schema.get_field_index(name),
+                            name,
+                            table[name].cast(pa.timestamp(dtype.unit, tz="UTC")),
+                        )
+        if isinstance(self._design.shape, StatePanel):
+            index = table.schema.get_field_index("gap")
+            table = table.set_column(index, "gap", table.column(index).cast(pa.duration("us")))
+        return table
 
     def to_pyarrow(self, *, budget: Budget | None = None) -> pa.Table:
         """Execute once and attach portable study metadata to the Arrow schema."""

@@ -31,7 +31,7 @@ class BackendCapabilities:
 class StagedGeneration:
     dataset: str
     generation: str
-    partitions: Mapping[str, pa.Table]
+    partitions: Mapping[str, pa.Table | pa.RecordBatchReader]
     run_id: str | None = None
     snapshot_id: str | None = None
 
