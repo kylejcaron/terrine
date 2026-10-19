@@ -133,10 +133,67 @@ predictors can yield many aggregate groups; no bound on compression is implied.
 The recipe disables bootstrap, so no unit-ID lists are collected. It does not apply
 declared weight roles; weighted method selection is explicitly downstream.
 
+## lifelines: distinguish KM arrays from Cox predictors
+
+Start from `TimeToEvent` per-unit records, not a general outcome dataframe:
+
+```python
+from lifelines import KaplanMeierFitter, CoxPHFitter
+from terrine.export import to_lifelines_km, to_lifelines_cox
+
+km = to_lifelines_km(survival_records, drop_incomplete=True)
+curve = KaplanMeierFitter().fit(
+    km.durations, event_observed=km.event_observed, entry=km.entry, weights=km.weights,
+)
+
+cox = to_lifelines_cox(survival_records)
+model = CoxPHFitter().fit(
+    cox.df, duration_col=cox.duration_col, event_col=cox.event_col,
+    entry_col=cox.entry_col, weights_col=cox.weights_col, cluster_col=cox.cluster_col,
+)
+```
+
+Terrine's `duration` field is a **timestamp endpoint**. The helper computes
+`(duration - t0)` and `(entry_time - t0)` in elapsed seconds, subtracting integer
+timestamps before float conversion. Valid records satisfy `0 <= entry <= duration`;
+Cox additionally requires strict `entry < duration`. Conversion rounds elapsed
+seconds, not epoch timestamps; it introduces no statistical error model. The unit
+test pins nanosecond-scale elapsed differences at modern calendar dates.
+
+The KM result carries only durations, event flags, entry and declared row weights,
+plus immutable exclusion counts. KM's fit interface has no cluster argument:
+retaining repeated-unit cluster metadata in the source does not give this fit
+cluster-adjusted inference. Weight meaning and censoring assumptions remain the
+analyst's responsibility. Cox maps the declared weight and cluster roles to
+`weights_col` and `cluster_col`. Its dataframe contains **only declared features**
+plus assigned duration/event/entry/weight/cluster fields. Treatment is not
+automatically a predictor; neither are unit IDs, other outcomes, event timestamps,
+or completeness/support columns. Choose covariates deliberately in the design.
+
+For a single-group `LifeTable` **without delayed entry**, `to_lifelines_km` instead
+returns compressed event and censor observations at `time_bin`, with frequency
+weights; `entry` is `None`. This is coarsened bin-index time, not the original
+event time or seconds. It has the same event/censor count mapping as lifelines'
+`survival_events_from_table`; no individual rows are reconstructed. Apply the
+helper separately to a selected group, retaining its metadata. Multiple pooled
+groups or any delayed entries are refused with a route to per-unit records
+(`terrine.lifelines.unsupported_shape` / `terrine.lifelines.delayed_entry`).
+
+Risk-set counts carry completeness evidence and exact reason lists for their
+group's trajectory. Group IDs repeated across bins are aggregate grain, not
+repeated independent subjects, and do not require a fictitious cluster role.
+Incomplete risk trajectories are refused even with `drop_incomplete=True`:
+dropping bins cannot repair unknown history. Drop incomplete **per-unit records**
+first and reconstruct the risk set instead. Ordinary right-censoring with known
+follow-up is not an incomplete record and is retained. Cox always requires the
+per-unit records, never the count table.
+
 ## API sources and executed examples
 
 - [DoubleMLData arguments](https://docs.doubleml.org/stable/api/generated/doubleml.data.DoubleMLData.html)
 - [DoWhy CausalModel source](https://github.com/py-why/dowhy/blob/main/dowhy/causal_model.py)
 - [duckreg connection and compression contracts](https://github.com/py-econometrics/duckreg)
+- [lifelines survival table conversion](https://lifelines.readthedocs.io/en/latest/lifelines.utils.html#lifelines.utils.survival_events_from_table)
+- [lifelines Cox fit arguments](https://lifelines.readthedocs.io/en/latest/fitters/regression/CoxPHFitter.html)
 - Executable counterparts: `integration/handoffs/`; these exercise real libraries,
   skip only if that library is absent, and make no estimate-parity claims.

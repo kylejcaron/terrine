@@ -130,7 +130,7 @@ def preflight_export(
     roles, table = data.roles, data.table
     units = table[roles.unit].to_pylist() if roles.unit in table.column_names else []
     repeated = len(set(units)) != len(units)
-    _check_identity(roles, table.column_names, repeated)
+    _check_identity(roles, table.column_names, repeated and data.provenance.shape != "life_table")
     excluded_rows: set[int] = set()
     reason_rows: dict[str, set[int]] = defaultdict(set)
     for complete_name, reason_name in _supports(roles, data.columns, table.column_names):
@@ -140,15 +140,15 @@ def preflight_export(
             if value is True:
                 continue
             reason = reasons[index]
-            reason = (
-                "completeness_evidence_missing"
-                if complete_name is None
-                else reason
-                if isinstance(reason, str) and reason
-                else "reason_unavailable"
-            )
+            if complete_name is None:
+                row_reasons = ["completeness_evidence_missing"]
+            elif isinstance(reason, list):
+                row_reasons = [item for item in reason if isinstance(item, str) and item]
+            else:
+                row_reasons = [reason] if isinstance(reason, str) and reason else []
             excluded_rows.add(index)
-            reason_rows[reason].add(index)
+            for exact_reason in row_reasons or ["reason_unavailable"]:
+                reason_rows[exact_reason].add(index)
     excluded = {reason: len(rows) for reason, rows in reason_rows.items()}
     _check_exclusions(excluded, drop=drop_incomplete)
     if consumer == "dowhy":
@@ -192,7 +192,7 @@ def preflight_warehouse(
         raise _SNAPSHOT_REQUIRED.error() from exc
     try:
         repeated = False
-        if roles.unit in table.columns:
+        if roles.unit in table.columns and provenance.shape != "life_table":
             counts = table.aggregate(
                 n=table.count(), units=table[roles.unit].nunique()
             ).to_pyarrow()
@@ -206,16 +206,26 @@ def preflight_warehouse(
             )
             keep.append(cast("ir.BooleanValue", complete))
             if complete_name is None:
-                reason = ibis.literal("completeness_evidence_missing")
+                reason = ibis.array(["completeness_evidence_missing"])
             elif reason_name is None:
-                reason = ibis.literal("reason_unavailable")
+                reason = ibis.array(["reason_unavailable"])
             else:
                 value = table[reason_name]
-                reason = ibis.ifelse(value.isnull() | (value == ""), "reason_unavailable", value)
-            reasons.append(ibis.ifelse(complete, ibis.null().cast("string"), reason))
+                if value.type().is_array():
+                    values = cast("ir.ArrayValue", value).filter(
+                        lambda item: item.notnull() & (item != "")
+                    )
+                    reason = ibis.ifelse(
+                        values.isnull() | (values.length() == 0), ["reason_unavailable"], values
+                    )
+                else:
+                    reason = ibis.array(
+                        [ibis.ifelse(value.isnull() | (value == ""), "reason_unavailable", value)]
+                    )
+            reasons.append(ibis.ifelse(complete, ibis.literal([], type="array<string>"), reason))
         excluded = {}
         if reasons:
-            evidence = table.select(reason=ibis.array(reasons).unique().unnest())
+            evidence = table.select(reason=ibis.array(reasons).flatten().unique().unnest())
             evidence = evidence.filter(evidence.reason.notnull())
             counts = evidence.group_by("reason").aggregate(n=ibis._.count()).to_pyarrow()
             excluded = {row["reason"]: row["n"] for row in counts.to_pylist()}

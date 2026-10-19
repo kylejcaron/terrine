@@ -9,9 +9,16 @@ from terrine.export import preflight
 
 
 @pytest.mark.parametrize("drop", [False, True])
-def test_warehouse_preflight_matches_arrow_exclusions(frame, drop):
+@pytest.mark.parametrize(
+    "reasons",
+    [
+        ["incomplete_coverage", None],
+        [["incomplete_coverage", "incomplete_observation", "incomplete_coverage"], []],
+    ],
+)
+def test_warehouse_preflight_matches_arrow_exclusions(frame, drop, reasons):
     table = frame.table.set_column(6, "complete", pa.array([False, True])).set_column(
-        7, "reason", pa.array(["incomplete_coverage", None])
+        7, "reason", pa.array(reasons)
     )
     frame = replace(
         frame,

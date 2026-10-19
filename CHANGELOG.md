@@ -3,6 +3,7 @@
 ## Added
 - Optional, preflight-backed DoubleML, DoWhy and same-connection duckreg recipes, with real integration examples and a dedicated CI job.
 - Snapshot-scoped warehouse export checks and exact per-reason exclusion counts; DoWhy refuses repeated-unit and declared-weight datasets rather than forwarding ignored arguments.
+- Add distinct lifelines KM-array and feature-only Cox-dataframe hand-offs, preserving elapsed entry times, declared weights/clusters, and exact exclusions; risk-set conversion retains coarsened counts and refuses delayed entry or incomplete trajectories.
 ## Removed
 - Native treatment-effect estimators, inferential/propensity diagnostics, and simulation truth/calibration claims. Terrine now delivers datasets and descriptive summaries; downstream libraries own estimation.
 
