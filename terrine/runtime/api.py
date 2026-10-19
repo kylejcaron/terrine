@@ -176,8 +176,8 @@ def run_serialized_plan(
                 "Saved plan reconstruction failed verification "
                 "(retained snapshot Model declaration differs).",
             ).error()
-        preflight_runtime_shape(design, plan.budget)
         if executor is None:
+            preflight_runtime_shape(design, plan.budget)
             executor = DesignExecutor(model, design, plan, con, namespace=namespace)
         if not callable(getattr(executor, "run_snapshot_task", None)):
             raise ValueError("saved recipes require an executor with run_snapshot_task")

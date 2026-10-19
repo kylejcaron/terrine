@@ -216,6 +216,99 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
     assert executor.observed == [3] * len(plan.tasks)
 
 
+def test_custom_saved_recipe_executor_is_not_limited_by_builtin_shape_preflight(tmp_path):
+    from terrine.data import Budget, Coverage
+    from terrine.model import Model
+    from terrine.runtime.owner import RuntimeOwner
+    from terrine.runtime.recipe import ModelReference, SavedPlanRecipe
+    from terrine.runtime.snapshot import SnapshotAuthority
+    from terrine.runtime.state import RuntimeStore
+    from terrine.semantic.models import Catalog
+    from terrine.spec import Design, FixedDate, agg
+
+    path = tmp_path / "owner.duckdb"
+    con = ibis.duckdb.connect(str(path))
+    con.raw_sql("CREATE TABLE events(ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+    con.raw_sql("INSERT INTO events VALUES ('2025-01-01', 1, 3)")
+    catalog = Catalog.model_validate(
+        {
+            "schema_version": 1,
+            "day_boundary": "UTC",
+            "dialect": "duckdb",
+            "sources": {
+                "events": {
+                    "relation": {"kind": "table", "name": "events"},
+                    "timestamp": "ts",
+                    "entities": {"user": "user_id"},
+                    "facts": ["value"],
+                    "properties": [],
+                    "dimensions": [],
+                }
+            },
+            "facts": {"value": {"source": "events", "column": "value"}},
+            "properties": {},
+            "dimensions": {},
+            "measures": {"total": {"fact": "value", "aggregation": "sum"}},
+            "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
+        }
+    )
+    model = Model.from_catalog(
+        catalog, con=con, readiness={"events": Coverage("2025-01-01", "2025-02-01")}
+    )
+    design = Design(
+        "user",
+        FixedDate("2025-01-02T00:00:00+00:00"),
+        features={"total": agg("total", window=("-1d", "0s"))},
+        shape="unsupported-test-shape",
+    )
+    owner = RuntimeOwner(state_path=path, snapshot_root=tmp_path / "snapshots")
+    authority = SnapshotAuthority(owner)
+    store = RuntimeStore(con.con, namespace="runtime")
+    store.initialize()
+    snapshot = authority.capture(
+        model, design=design, con=con, namespace="runtime", run_id="custom", budget=Budget()
+    )
+    plan = plan_refresh(
+        namespace="runtime",
+        dataset="orders",
+        definition_hash=design.spec_hash,
+        snapshot_id=snapshot.snapshot_id,
+        graph=dependency_graph(
+            model, design, sources=("events",), definition_hash=design.spec_hash
+        ),
+    )
+    recipe = SavedPlanRecipe.create(
+        plan_json=plan.serialize(),
+        design=design,
+        model=ModelReference.from_model(model, owner_key="model"),
+        destination=DestinationRef("output.duckdb", "analytics", "orders"),
+        namespace="runtime",
+        expected_base_manifest=None,
+    )
+    recipe.pin_snapshot(store)
+
+    class Resolver:
+        def resolve(self, reference):
+            return model
+
+    class CustomExecutor:
+        def run_snapshot_task(self, context, task, dependencies):
+            return pa.table({"id": [task.task_id]})
+
+        def publish(self, plan, outputs, lease, run_id):
+            return "custom-generation"
+
+    result = runtime.run_serialized_plan(
+        recipe.to_json(),
+        con=con.con,
+        namespace="runtime",
+        executor=CustomExecutor(),
+        resolver=Resolver(),
+        snapshot_authority=authority,
+    )
+    assert result.state == "succeeded"
+
+
 def test_published_generation_uses_receipt_generation_not_current_manifest():
     from terrine.runtime.backends.base import StagedGeneration
     from terrine.runtime.backends.duckdb import DuckDBBackend
