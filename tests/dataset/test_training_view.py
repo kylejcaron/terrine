@@ -329,3 +329,74 @@ def test_training_rejects_non_tabular_shapes_before_execution(native_inputs, kin
             label=("duration", "event") if kind == "life_table" else "churn"
         )
     assert error.value.code == "terrine.dataset.unsupported_view"
+
+
+@pytest.mark.parametrize(
+    "field", ["relation", "source_entity", "entity_column", "validity", "property"]
+)
+def test_asof_feature_hash_tracks_resolved_dimension_definition(native_inputs, field):
+    from dataclasses import replace
+
+    from terrine.frame import _feature_definition_hash
+    from terrine.semantic.models import (
+        BoundDimension,
+        BoundValidity,
+        Property,
+        PropertyBinding,
+        TableRef,
+    )
+    from terrine.spec import FixedDate, asof
+
+    model = _frame(native_inputs)._model
+    prop = PropertyBinding("tier", "tier", "string", "event_time", "tier_history")
+    dimension = BoundDimension(
+        "tier_history",
+        TableRef(kind="table", name="tiers"),
+        "user",
+        "user_id",
+        BoundValidity("valid_from", "valid_to", None),
+        {"tier": prop},
+    )
+    shadow = replace(dimension, name="other_history")
+    declaration = Property(
+        source="events",
+        column="tier",
+        dtype="string",
+        as_of="event_time",
+        dimension="tier_history",
+    )
+    catalog = model.catalog.model_copy(update={"properties": {"tier": declaration}})
+
+    def bound(selected, ignored=shadow):
+        sources = dict(model.sources)
+        sources["events"] = replace(
+            sources["events"], dimensions=(ignored, selected), properties={"tier": prop}
+        )
+        return Model(
+            catalog=catalog,
+            con=model.con,
+            readiness=model.readiness,
+            units=model.units,
+            event_ids=model.event_ids,
+            sources=sources,
+            metrics=model.metrics,
+            resolver=model._resolver,
+            input_binding=model.input_binding,
+        )
+
+    changes = {
+        "relation": TableRef(kind="table", name="corrected_tiers"),
+        "source_entity": "account",
+        "entity_column": "account_id",
+        "validity": BoundValidity(None, None, "changed_at"),
+        "property": {"tier": replace(prop, column="corrected_tier")},
+    }
+    changed = replace(
+        dimension, **{("properties" if field == "property" else field): changes[field]}
+    )
+    design = Design("user", FixedDate("2025-01-04"), features={"tier": asof("tier", before="0s")})
+    original = _feature_definition_hash(design, ("tier",), bound(dimension))
+    assert original != _feature_definition_hash(design, ("tier",), bound(changed))
+    assert original == _feature_definition_hash(
+        design, ("tier",), bound(dimension, replace(shadow, relation=changes["relation"]))
+    )

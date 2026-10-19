@@ -142,6 +142,7 @@ def _metric_definition(metric: object, model: Model) -> object:
 
 
 def _feature_definition_hash(design: Design, features: tuple[str, ...], model: Model) -> str:
+    from terrine.compile._asof import resolve_attribute
     from terrine.spec.expressions import AttributeAsOf, EventTime, MetricAgg
     from terrine.spec.io import canonical_json
 
@@ -197,17 +198,24 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
             if metric is not None:
                 resolved["metric"] = _metric_definition(metric, model)
         elif isinstance(expression, AttributeAsOf):
-            resolved["attributes"] = [
-                {
-                    "source": source_name,
-                    "relation": _definition_record(source.relation),
-                    "day_boundary": source.day_boundary,
-                    "timestamp_column": source.timestamp_column,
-                    "binding": _definition_record(source.properties[expression.attribute]),
-                }
-                for source_name, source in sorted(model.sources.items())
-                if expression.attribute in source.properties
-            ]
+            source, prop, dimension = resolve_attribute(model, expression.attribute)
+            resolved["attribute"] = {
+                "source": source.name,
+                "relation": _definition_record(source.relation),
+                "entity_column": source.entities.get(design.unit),
+                "day_boundary": source.day_boundary,
+                "timestamp_column": source.timestamp_column,
+                "binding": _definition_record(prop),
+                "dimension": None
+                if dimension is None
+                else {
+                    "name": dimension.name,
+                    "relation": _definition_record(dimension.relation),
+                    "source_entity": dimension.source_entity,
+                    "entity_column": dimension.entity_column,
+                    "validity": _definition_record(dimension.validity),
+                },
+            }
         elif isinstance(expression, EventTime):
             resolved["facts"] = [
                 {
