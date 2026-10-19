@@ -543,9 +543,8 @@ def test_known_null_after_absorption_does_not_count_as_recovery(observed_model_f
 
 
 def test_float_bin_certificate_rounds_upper_endpoint_outward():
-    import math
-
     import ibis
+    import pandas as pd
     import pyarrow as pa
 
     from terrine.compile.shapes.state_panel import _label
@@ -574,7 +573,7 @@ def test_float_bin_certificate_rounds_upper_endpoint_outward():
     con = ibis.duckdb.connect()
     try:
         value = con.execute(relation.select(label=_label(relation, state, meta)))["label"].iloc[0]
-        assert math.isnan(value)
+        assert pd.isna(value)
     finally:
         con.disconnect()
 
@@ -1232,9 +1231,8 @@ def test_binned_classifier_preserves_huge_decimal_cuts_and_lower_equality():
 
 
 def test_binned_classifier_refuses_a_float_certificate_spanning_a_cut():
-    import math
-
     import ibis
+    import pandas as pd
     import pyarrow as pa
 
     from terrine.compile.shapes.state_panel import _state_value
@@ -1266,7 +1264,7 @@ def test_binned_classifier_refuses_a_float_certificate_spanning_a_cut():
     con = ibis.duckdb.connect()
     try:
         result = con.execute(classified).iloc[0]
-        assert math.isnan(result["value"])
+        assert pd.isna(result["value"])
         assert not result["complete"]
         assert result["reason"] == "ambiguous_state_bin"
     finally:

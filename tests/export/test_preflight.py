@@ -70,3 +70,46 @@ def test_grace_defined_baseline_treatment_has_shared_refusal(frame):
     with pytest.raises(TerrineError) as error:
         preflight_export(candidate)
     assert error.value.code == "terrine.export.grace_baseline_treatment"
+
+
+@pytest.mark.parametrize("weight_role", ["weight", "target_weight", "trial_weight"])
+def test_dowhy_refuses_declared_weights_even_if_column_missing(frame, weight_role):
+    candidate = replace(frame, roles=replace(frame.roles, **{weight_role: "w"}))
+    with pytest.raises(TerrineError) as error:
+        preflight_export(candidate, consumer="dowhy")
+    assert error.value.code == "terrine.export.unsupported_weights"
+    assert error.value.context["consumer"] == "dowhy"
+
+
+def test_dowhy_refuses_repeated_units_even_with_clusters(frame):
+    candidate = replace(
+        frame, table=frame.table.take([0, 0]), roles=replace(frame.roles, cluster_unit="id")
+    )
+    with pytest.raises(TerrineError) as error:
+        preflight_export(candidate, consumer="dowhy")
+    assert error.value.code == "terrine.export.repeated_units_unsupported"
+
+
+def test_shared_preflight_precedes_consumer_limitations(frame):
+    candidate = replace(
+        frame,
+        roles=replace(frame.roles, weight="missing"),
+        provenance=replace(frame.provenance, treatment_design="grace_initiation"),
+    )
+    with pytest.raises(TerrineError) as error:
+        preflight_export(candidate, consumer="dowhy")
+    assert error.value.code == "terrine.export.grace_baseline_treatment"
+
+
+def test_exclusions_count_rows_per_reason_not_duplicate_outcomes(frame):
+    candidate = replace(
+        frame,
+        table=frame.table.set_column(6, "complete", pa.array([False, True])).set_column(
+            7, "reason", pa.array(["incomplete_coverage", None])
+        ),
+        roles=replace(frame.roles, outcomes=("y", "x")),
+        columns={**frame.columns, "x": frame.columns["y"]},
+    )
+    result = preflight_export(candidate, drop_incomplete=True)
+    assert result.table["id"].to_pylist() == [2]
+    assert result.excluded_counts == {"incomplete_coverage": 1}
