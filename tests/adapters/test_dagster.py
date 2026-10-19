@@ -216,6 +216,168 @@ def test_dagster_historical_partitions_publish_distinct_owner_outputs(monkeypatc
         connection.disconnect()
 
 
+def test_dagster_same_root_failed_retry_reuses_fence_scoped_outputs(monkeypatch, tmp_path):
+    import ibis
+    import pyarrow as pa
+
+    from terrine.data import Coverage, UnitSource
+    from terrine.model import Model
+    from terrine.runtime.api import (
+        find_run_by_request_key,
+        get_run,
+        run_serialized_plan,
+    )
+    from terrine.runtime.control import ControlEndpoint
+    from terrine.runtime.owner import RuntimeOwner
+    from terrine.runtime.planning import OwnerPlanner
+    from terrine.runtime.snapshot import SnapshotAuthority
+    from terrine.spec import agg
+    from tests.runtime.test_recipe import _model
+
+    database = tmp_path / "retry.duckdb"
+    connection = ibis.duckdb.connect(database=str(database))
+    connection.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+    connection.raw_sql("INSERT INTO events VALUES ('2025-01-15', 1, 4)")
+    connection.raw_sql("CREATE TABLE users (id INTEGER)")
+    connection.raw_sql("INSERT INTO users VALUES (1)")
+    model = Model.from_catalog(
+        _model(connection).catalog,
+        con=connection,
+        units={"user": UnitSource("users", "id")},
+        readiness={"events": Coverage("2025-01-01", "2025-02-01")},
+    )
+    reference_model = ModelReference.from_model(model, owner_key="owner-model")
+
+    class Resolver:
+        def resolve(self, reference):
+            assert reference == reference_model
+            return model
+
+    class FailsOnce:
+        def __init__(self):
+            self.completed = []
+            self.failed = False
+
+        def _run(self, task):
+            if len(self.completed) == 1 and not self.failed:
+                self.failed = True
+                raise RuntimeError("transient task failure")
+            self.completed.append(task.task_id)
+            return pa.table({"task_id": [task.task_id]})
+
+        def run_task(self, task, dependencies):
+            return self._run(task)
+
+        def run_snapshot_task(self, context, task, dependencies):
+            return self._run(task)
+
+        def publish(self, plan, outputs, lease, run_id):
+            return "generation-1"
+
+    executor = FailsOnce()
+    authority = SnapshotAuthority(RuntimeOwner(database, tmp_path / "snapshots"))
+    planner = OwnerPlanner(
+        resolver=Resolver(),
+        snapshot_authority=authority,
+    )
+    invocations = []
+    receipts = []
+
+    class LocalOwnerClient:
+        def __init__(self, endpoint, *, namespace):
+            assert namespace == "owner"
+
+        def plan(self, request):
+            invocation = planner.plan(request, con=connection.con, namespace="owner")
+            invocations.append(invocation)
+            return invocation
+
+        def run(self, serialized_plan, *, request_key, destination):
+            receipt = run_serialized_plan(
+                serialized_plan,
+                con=connection.con,
+                namespace="owner",
+                request_key=request_key,
+                destination=destination,
+                executor=executor,
+                resolver=Resolver(),
+                snapshot_authority=authority,
+            )
+            receipts.append(receipt)
+            return receipt
+
+        def get_run(self, run_id):
+            return get_run(run_id, con=connection.con, namespace="owner")
+
+    import terrine.orchestration.dagster as adapter
+
+    monkeypatch.setattr(adapter, "ControlClient", LocalOwnerClient)
+    asset = build_materialization_asset(
+        plan_request_provider=lambda context: PlanRequest(
+            "provider-id",
+            reference_model,
+            Design(
+                "user",
+                FixedDate(context["partition_key"]),
+                features={"total": agg("total", window=("-1d", "0s"))},
+                outcomes={},
+            ),
+            DestinationRef(str(database), "published", "study"),
+        ),
+        endpoint=ControlEndpoint(tmp_path / "local-owner.sock"),
+        namespace="owner",
+        partitions_start="2025-01-01",
+        resource_concurrency_key="terrine-owner",
+    )
+
+    class Context:
+        partition_key = "2025-01-15"
+        run = SimpleNamespace(run_id="retry-run", root_run_id="same-root")
+
+        class Instance:
+            def add_run_tags(self, run_id, tags):
+                pass
+
+        instance = Instance()
+
+        def add_output_metadata(self, metadata):
+            pass
+
+    compute = asset.node_def.compute_fn.decorated_fn
+    try:
+        with pytest.raises(RuntimeError, match="transient task failure"):
+            compute(Context())
+        failed = find_run_by_request_key(
+            invocations[0].request_key,
+            destination=invocations[0].destination,
+            con=connection.con,
+            namespace="owner",
+        )
+        assert failed is not None
+        first_fence = connection.con.execute(
+            "SELECT attempt_fence FROM owner.runtime_runs WHERE run_id=?",
+            [failed.run_id],
+        ).fetchone()[0]
+        completed_before_retry = tuple(executor.completed)
+
+        compute(Context())
+
+        advanced_fence = connection.con.execute(
+            "SELECT attempt_fence FROM owner.runtime_runs WHERE run_id=?",
+            [failed.run_id],
+        ).fetchone()[0]
+        assert len(invocations) == 2
+        assert invocations[0].invocation_id == invocations[1].invocation_id
+        assert invocations[0].request_key == invocations[1].request_key
+        assert receipts[0].run_id == failed.run_id
+        assert advanced_fence > first_fence
+        assert completed_before_retry
+        assert executor.completed[: len(completed_before_retry)] == list(completed_before_retry)
+        assert len(executor.completed) == len(set(executor.completed))
+    finally:
+        connection.disconnect()
+
+
 def test_dagster_waits_for_cancel_request_and_reports_final_generation(monkeypatch, tmp_path):
     import terrine.orchestration.dagster as adapter
 
