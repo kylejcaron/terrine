@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 import re
@@ -179,7 +178,7 @@ class DuckDBBackend:
                         raise ValueError("retry partition content does not match staged generation")
                     table_name = existing[1]
                 else:
-                    self.con.register("__terrine_partition", table)
+                    self.con.register("__terrine_partition", _storage_table(table))
                     self.con.execute(
                         f"CREATE TABLE {self._schema}.{_quote(table_name)} AS "
                         "SELECT * FROM __terrine_partition"
@@ -189,23 +188,22 @@ class DuckDBBackend:
                         f"INSERT INTO {self._schema}.runtime_partitions VALUES (?, ?, ?, ?, ?)",
                         [stage.dataset, stage.generation, partition, table_name, digest],
                     )
-                metadata = _encode_schema_metadata(table.schema.metadata)
-                if metadata is not None:
-                    saved_metadata = self.con.execute(
-                        f"SELECT schema_metadata FROM {self._schema}.runtime_partition_metadata "
-                        "WHERE dataset=? AND generation=? AND partition=?",
-                        [stage.dataset, stage.generation, partition],
-                    ).fetchone()
-                    if saved_metadata is None:
-                        self.con.execute(
-                            f"INSERT INTO {self._schema}.runtime_partition_metadata "
-                            "VALUES (?, ?, ?, ?)",
-                            [stage.dataset, stage.generation, partition, metadata],
-                        )
-                    elif bytes(saved_metadata[0]) != metadata:
-                        raise ValueError(
-                            "retry partition schema metadata does not match staged generation"
-                        )
+                metadata = table.schema.serialize().to_pybytes()
+                saved_metadata = self.con.execute(
+                    f"SELECT schema_metadata FROM {self._schema}.runtime_partition_metadata "
+                    "WHERE dataset=? AND generation=? AND partition=?",
+                    [stage.dataset, stage.generation, partition],
+                ).fetchone()
+                if saved_metadata is None:
+                    self.con.execute(
+                        f"INSERT INTO {self._schema}.runtime_partition_metadata "
+                        "VALUES (?, ?, ?, ?)",
+                        [stage.dataset, stage.generation, partition, metadata],
+                    )
+                elif bytes(saved_metadata[0]) != metadata:
+                    raise ValueError(
+                        "retry partition Arrow schema does not match staged generation"
+                    )
                 stored.append(partition)
             self.con.execute(
                 f"INSERT INTO {self._schema}.runtime_publications VALUES (?, ?, ?) "
@@ -317,9 +315,9 @@ class DuckDBBackend:
             "WHERE dataset=? AND generation=? AND partition=?",
             [receipt.dataset, receipt.generation, partition],
         ).fetchone()
-        if metadata is not None:
-            table = table.replace_schema_metadata(_decode_schema_metadata(bytes(metadata[0])))
-        return table
+        if metadata is None:
+            raise ValueError("published partition has no retained Arrow schema")
+        return table.cast(pa.ipc.read_schema(pa.BufferReader(bytes(metadata[0]))))
 
     def read_relation(
         self, receipt: PublicationReceipt, partition: str, *, ibis_backend: Any
@@ -383,19 +381,13 @@ def _digest(table: pa.Table) -> str:
     return hashlib.sha256(sink.getvalue().to_pybytes()).hexdigest()
 
 
-def _encode_schema_metadata(metadata: dict[bytes, bytes] | None) -> bytes | None:
-    if metadata is None:
-        return None
-    value = {
-        base64.b64encode(key).decode("ascii"): base64.b64encode(item).decode("ascii")
-        for key, item in metadata.items()
-    }
-    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
-
-
-def _decode_schema_metadata(payload: bytes) -> dict[bytes, bytes]:
-    value = json.loads(payload.decode("utf-8"))
-    return {
-        base64.b64decode(key, validate=True): base64.b64decode(item, validate=True)
-        for key, item in value.items()
-    }
+def _storage_table(table: pa.Table) -> pa.Table:
+    """Keep duration ticks exact instead of converting them to DuckDB calendar intervals."""
+    durations = [
+        index for index, field in enumerate(table.schema) if pa.types.is_duration(field.type)
+    ]
+    for index in durations:
+        table = table.set_column(
+            index, table.schema.field(index).name, table.column(index).cast(pa.int64())
+        )
+    return table
