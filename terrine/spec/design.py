@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, date, datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
@@ -220,6 +220,73 @@ class Design:
         from terrine.frame import Frame
 
         return Frame(self, model)
+
+    def snapshot(
+        self,
+        model: Model,
+        *,
+        as_of: date | datetime | str,
+        eligibility: Mapping[str, Predicate],
+        features: tuple[str, ...] | None = None,
+    ) -> Frame:
+        """Build a roster-backed feature-only scoring view at one fixed instant."""
+        from terrine.semantic.time import boundary_timezone
+        from terrine.spec.anchors import FixedDate
+        from terrine.spec.dataset import INVALID_VIEW, UNSUPPORTED_VIEW
+
+        if self.shape != "cross_section":
+            raise UNSUPPORTED_VIEW.error(
+                reason="scoring snapshots require a cross-sectional Design"
+            )
+        if eligibility is None:
+            raise INVALID_VIEW.error(reason="explicit scoring eligibility is required")
+        if features is not None and not isinstance(features, tuple):
+            raise INVALID_VIEW.error(reason="features must be a tuple of names")
+        selected = tuple(self.features) if features is None else features
+        if (
+            any(not isinstance(name, str) or not name for name in selected)
+            or len(set(selected)) != len(selected)
+            or not set(selected) <= set(self.features)
+        ):
+            raise INVALID_VIEW.error(reason="features must be a unique subset of Design features")
+        if not isinstance(eligibility, Mapping):
+            raise INVALID_VIEW.error(reason="eligibility must be a named predicate mapping")
+        try:
+            if isinstance(as_of, str) and as_of == "today":
+                now = datetime.now(UTC)
+                zone = boundary_timezone(model.catalog.day_boundary)
+                resolved = model.day_boundary(now.astimezone(zone).date())
+            elif isinstance(as_of, str):
+                if "T" in as_of or " " in as_of:
+                    resolved = utc_instant(datetime.fromisoformat(as_of))
+                else:
+                    resolved = model.day_boundary(date.fromisoformat(as_of))
+            elif isinstance(as_of, datetime):
+                if as_of.tzinfo is None or as_of.utcoffset() is None:
+                    raise ValueError("timestamp must be timezone-aware")
+                resolved = utc_instant(as_of)
+            elif isinstance(as_of, date):
+                resolved = model.day_boundary(as_of)
+            else:
+                raise ValueError("as_of must be a date, aware datetime, ISO string, or 'today'")
+        except (TypeError, ValueError, OverflowError) as error:
+            raise INVALID_VIEW.error(reason="as_of is invalid") from error
+        scoring_design = Design(
+            self.unit,
+            FixedDate(resolved),
+            features={name: self.features[name] for name in selected},
+            eligibility=eligibility,
+            gap=self.gap,
+        )
+        frame = scoring_design.build(model)
+        from terrine.frame import _ScoringView
+
+        object.__setattr__(
+            frame,
+            "_scoring_view",
+            _ScoringView(self.spec_hash, selected, resolved),
+        )
+        return frame
 
     @property
     def spec_hash(self) -> str:

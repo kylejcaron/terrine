@@ -20,9 +20,16 @@ __all__ = [
     "DatasetRecipeReference",
     "DatasetRecipeStore",
     "INVALID_RECIPE",
+    "INVALID_VIEW",
+    "UNSUPPORTED_VIEW",
 ]
 
 INVALID_RECIPE = RefusalSpec("terrine.dataset.invalid_recipe", "Invalid dataset recipe: {reason}")
+INVALID_VIEW = RefusalSpec("terrine.dataset.invalid_view", "Invalid dataset view: {reason}.")
+UNSUPPORTED_VIEW = RefusalSpec(
+    "terrine.dataset.unsupported_view",
+    "Unsupported dataset view: {reason}.",
+)
 
 
 def _canonical(value: Any) -> bytes:

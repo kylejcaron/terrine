@@ -6,7 +6,7 @@ import hashlib
 import json
 import warnings
 from dataclasses import dataclass, replace
-from datetime import UTC
+from datetime import UTC, datetime
 from importlib import import_module
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
@@ -63,6 +63,26 @@ class _TrainingView:
     labels: tuple[str, ...]
     incomplete_labels: Literal["drop", "keep"]
     split: object | None
+
+
+@dataclass(frozen=True, slots=True)
+class _ScoringView:
+    parent_design_hash: str
+    features: tuple[str, ...]
+    resolved_as_of: datetime
+
+
+def _scoring_view_digest(view: _ScoringView, scoring_design_hash: str) -> str:
+    payload = {
+        "kind": "scoring",
+        "parent_design": view.parent_design_hash,
+        "scoring_design": scoring_design_hash,
+        "features": view.features,
+        "resolved_as_of": view.resolved_as_of.isoformat(),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def _view_digest(
@@ -382,6 +402,7 @@ class Frame:
     _model: Model
     _compiled: CompiledStudy
     _training_view: _TrainingView | None
+    _scoring_view: _ScoringView | None
 
     def __init__(self, design: Design, model: Model) -> None:
         from terrine.compile.dispatch import compile_design
@@ -390,6 +411,7 @@ class Frame:
         object.__setattr__(self, "_model", model)
         object.__setattr__(self, "_compiled", compile_design(design, model))
         object.__setattr__(self, "_training_view", None)
+        object.__setattr__(self, "_scoring_view", None)
 
     def _active_compiled(self, compiled: CompiledStudy | None = None) -> CompiledStudy:
         active = self._compiled if compiled is None else compiled
@@ -419,6 +441,12 @@ class Frame:
         split: object | None = None,
     ) -> Frame:
         """Return a lazy feature/label projection with explicit label completeness."""
+        if self._training_view is not None or self._scoring_view is not None:
+            from terrine.spec.dataset import INVALID_VIEW
+
+            raise INVALID_VIEW.error(
+                reason="views cannot be composed; start from the original Design"
+            )
         if split is not None:
             raise RefusalSpec(
                 "terrine.dataset.split_not_applied",
@@ -646,6 +674,21 @@ class Frame:
                         incomplete_labels=view.incomplete_labels,
                         split_policy=split_policy,
                         counts_by_reason=excluded_counts,
+                    ),
+                )
+            elif self._scoring_view is not None:
+                view = self._scoring_view
+                provenance = replace(
+                    provenance,
+                    dataset_view=DatasetViewMeta(
+                        kind="scoring",
+                        selected_features=view.features,
+                        selected_labels=(),
+                        view_hash=_scoring_view_digest(view, self._design.spec_hash),
+                        feature_definition_hash=_feature_definition_hash(
+                            self._design, view.features, model
+                        ),
+                        resolved_as_of=view.resolved_as_of,
                     ),
                 )
             return MaterializedFrame(table, compiled.roles, compiled.columns, provenance)

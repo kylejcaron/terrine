@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import uuid
@@ -317,6 +318,17 @@ def stage_frame(frame: Any, table: str, *, budget: Budget | None = None) -> Data
                     "labels": list(training.labels),
                     "incomplete_labels": training.incomplete_labels,
                     "split": None if training.split is None else training.split.to_record(),
+                }
+            elif frame._scoring_view is not None:
+                from terrine.spec.io import canonical_json
+
+                scoring = frame._scoring_view
+                design_record = json.loads(canonical_json(frame._design))["design"]
+                view = {
+                    "kind": "scoring",
+                    "features": list(scoring.features),
+                    "as_of": scoring.resolved_as_of.isoformat(),
+                    "eligibility": design_record["eligibility"],
                 }
             digests = raw.execute(
                 f'SELECT digest FROM "{namespace}".runtime_partitions '
