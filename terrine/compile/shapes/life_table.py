@@ -81,12 +81,12 @@ def aggregate_life_table(
         if origin is None or terminal is None or entered is None:
             continue
         key = tuple(column[index] for column in groups)
-        for name, values in support_values.items():
-            support_by_group[key][name].append(values[index])
         terminal_elapsed = terminal - origin
         entry_elapsed = entered - origin
         if terminal_elapsed < 0 or entry_elapsed < 0:
             continue
+        for name, values in support_values.items():
+            support_by_group[key][name].append(values[index])
         terminal_bin = terminal_elapsed // width
         delayed_bin = entry_elapsed // width if entry_elapsed > 0 else None
         group_bins = bins_by_group[key]
@@ -125,6 +125,21 @@ def aggregate_life_table(
             ) or "unknown"
             reason_counts = terminal_row["reasons"]
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    reduced_support_by_group = {}
+    for group_key, support in support_by_group.items():
+        reduced = {}
+        for name, policy in group_supports.items():
+            values = support[name]
+            present = [value for value in values if value is not None]
+            if policy == "min":
+                reduced[name] = min(present) if present else None
+            elif policy == "max":
+                reduced[name] = max(present) if present else None
+            elif policy == "all":
+                reduced[name] = all(value is True for value in values)
+            else:
+                reduced[name] = ";".join(sorted(set(present))) or None
+        reduced_support_by_group[group_key] = reduced
 
     schema_fields = [records.schema.field(name) for name in group_by]
     schema_fields.extend(records.schema.field(name) for name in group_supports)
@@ -151,17 +166,7 @@ def aggregate_life_table(
             events_count = counts["events"]
             censored_count = counts["censored"]
             row = dict(zip(group_by, group_key, strict=True))
-            for name, policy in group_supports.items():
-                values = support_by_group[group_key][name]
-                present = [value for value in values if value is not None]
-                if policy == "min":
-                    row[name] = min(present) if present else None
-                elif policy == "max":
-                    row[name] = max(present) if present else None
-                elif policy == "all":
-                    row[name] = all(value is True for value in values)
-                else:
-                    row[name] = ";".join(sorted(set(present))) or None
+            row.update(reduced_support_by_group[group_key])
             row.update(
                 unit=unit,
                 anchor_id=time_bin,
