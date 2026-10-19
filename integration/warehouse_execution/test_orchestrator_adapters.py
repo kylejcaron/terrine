@@ -12,14 +12,14 @@ import pytest
 pytest.importorskip("dbt")
 
 
-def test_two_dbt_build_cycles_stop_owner_and_replay_from_separate_processes(tmp_path):
+def test_two_dbt_build_cycles_stop_owner_and_replay_from_separate_processes(tmp_path, monkeypatch):
     import ibis
 
     from terrine.data import Coverage, UnitSource
     from terrine.model import Model
-    from terrine.runtime.backends.base import StagedGeneration
-    from terrine.runtime.backends.duckdb import DuckDBBackend
+    from terrine.runtime.api import DesignExecutor, open_published_frame
     from terrine.runtime.control import ControlClient, ControlEndpoint, ControlServer
+    from terrine.runtime.execute import RunReceipt
     from terrine.runtime.owner import RuntimeOwner
     from terrine.runtime.planning import OwnerPlanner, PlanInvocation, PlanRequest
     from terrine.runtime.recipe import DestinationRef, ModelReference
@@ -60,48 +60,24 @@ def test_two_dbt_build_cycles_stop_owner_and_replay_from_separate_processes(tmp_
     executed_task_ids = []
     fail_once = True
 
-    class Executor:
-        def __init__(self, backend):
-            self.backend = backend
+    original_run = DesignExecutor.run_snapshot_task
 
-        def _run(self, task):
-            nonlocal fail_once
-            import pyarrow as pa
+    def run_snapshot_task(self, context, task, dependencies):
+        nonlocal fail_once
+        if fail_once and len(executed_task_ids) == 1:
+            fail_once = False
+            raise RuntimeError("transient dbt-triggered task failure")
+        result = original_run(self, context, task, dependencies)
+        executed_task_ids.append(task.task_id)
+        return result
 
-            if fail_once and len(executed_task_ids) == 1:
-                fail_once = False
-                raise RuntimeError("transient dbt-triggered task failure")
-            executed_task_ids.append(task.task_id)
-            return pa.table({"task_id": [task.task_id]})
-
-        def run_task(self, task, dependencies):
-            raise AssertionError("dbt recipe must reopen the saved owner snapshot")
-
-        def run_snapshot_task(self, context, task, dependencies):
-            return self._run(task)
-
-        def publish(self, plan, outputs, lease, run_id):
-            dependencies = {dependency for task in plan.tasks for dependency in task.dependencies}
-            terminal = [task for task in plan.tasks if task.task_id not in dependencies]
-            stage = StagedGeneration(
-                plan.dataset,
-                f"generation-{run_id}",
-                {"all": outputs[terminal[-1].task_id]},
-                run_id=run_id,
-                snapshot_id=plan.snapshot_id,
-            )
-            return self.backend.publish_generation(
-                stage,
-                expected_manifest=plan.expected_base_manifest,
-                lease=lease,
-            )
+    monkeypatch.setattr(DesignExecutor, "run_snapshot_task", run_snapshot_task)
 
     def start_owner():
         connection = ibis.duckdb.connect(database=str(database))
         raw_connection = connection.con
         store = RuntimeStore(raw_connection, namespace="owner")
         store.initialize()
-        backend = DuckDBBackend(raw_connection, namespace="owner")
         authority = SnapshotAuthority(RuntimeOwner(database, snapshots))
 
         class Resolver:
@@ -121,7 +97,6 @@ def test_two_dbt_build_cycles_stop_owner_and_replay_from_separate_processes(tmp_
             namespace="owner",
             endpoint=endpoint,
             plan_planner=planner,
-            executor=Executor(backend),
             resolver=Resolver(),
             snapshot_authority=authority,
         )
@@ -130,6 +105,7 @@ def test_two_dbt_build_cycles_stop_owner_and_replay_from_separate_processes(tmp_
 
     connection, server = start_owner()
     plan_invocations = []
+    receipts = []
     try:
         for cycle, value in enumerate((4, 9), start=1):
             server.close()
@@ -152,6 +128,10 @@ def test_two_dbt_build_cycles_stop_owner_and_replay_from_separate_processes(tmp_
                 capture_output=True,
                 text=True,
             )
+            connection, server = start_owner()
+            if receipts:
+                previous = open_published_frame(receipts[0], con=connection.con, namespace="owner")
+                assert previous.table["total"].to_pylist() == [4]
             from examples.orchestrators.dbt_core_after_build import (
                 reviewed_dbt_relation_names,
             )
@@ -167,7 +147,6 @@ def test_two_dbt_build_cycles_stop_owner_and_replay_from_separate_processes(tmp_
                 '"dbt-shared"."main"."events"',
                 '"dbt-shared"."main"."users"',
             )
-            connection, server = start_owner()
             model = Model.from_catalog(
                 _model(connection).catalog,
                 con=connection,
@@ -179,7 +158,7 @@ def test_two_dbt_build_cycles_stop_owner_and_replay_from_separate_processes(tmp_
                 ModelReference.from_model(model, owner_key="dbt-fixture"),
                 Design(
                     "user",
-                    FixedDate("2025-01-15"),
+                    FixedDate("2025-01-16"),
                     features={"total": agg("total", window=("-1d", "0s"))},
                     outcomes={},
                 ),
@@ -241,6 +220,13 @@ def test_two_dbt_build_cycles_stop_owner_and_replay_from_separate_processes(tmp_
                 text=True,
             )
             receipt = json.loads(completed.stdout)
+            receipts.append(RunReceipt(**receipt))
+            published = open_published_frame(receipts[-1], con=connection.con, namespace="owner")
+            assert published.table.select(["unit", "total"]).to_pylist() == [
+                {"unit": 1, "total": value}
+            ]
+            assert published.provenance.eligibility_summary.retained == 1
+            assert published.provenance.model_hash == model.model_hash
             if cycle == 1:
                 assert receipt["run_id"] == failed_receipt.run_id
                 advanced_fence = connection.con.execute(
@@ -269,6 +255,10 @@ def test_two_dbt_build_cycles_stop_owner_and_replay_from_separate_processes(tmp_
             ).fetchone()
             assert row is not None
             plan_invocations.append(PlanInvocation.from_dict(json.loads(row[0])))
+            assert (
+                published.provenance.execution_snapshot.snapshot_id
+                == plan_invocations[-1].snapshot_id
+            )
     finally:
         server.close()
         connection.disconnect()

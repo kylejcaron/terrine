@@ -30,12 +30,12 @@ Airflow connection URI to Ibis or give scheduler workers direct access to the
 owner's database.
 
 
-Each owner process must install the fresh-planning service as well as its
-execution callbacks; constructing a `ControlServer` without `plan_planner`
-cannot accept orchestration `PlanRequest`s. The model resolver and executor
-below are the real implementations supplied by the owning application: the
-resolver returns the referenced `Model`, and the executor implements both
-`run_snapshot_task` (using the retained source snapshot) and fenced publication.
+Each owner process must install the fresh-planning service; constructing a
+`ControlServer` without `plan_planner` cannot accept orchestration `PlanRequest`s.
+The application's model resolver returns the referenced `Model`. The owner
+persists a `SavedPlanRecipe` in the invocation and runs that exact recipe through
+the built-in `DesignExecutor` by default, reopening retained inputs for compiler
+layers and fenced publication. No application executor is required.
 
 ```python
 from pathlib import Path
@@ -59,17 +59,18 @@ server = ControlServer(
     namespace=namespace,
     endpoint=endpoint,
     plan_planner=planner,
-    executor=runtime_executor,
     resolver=model_resolver,
     snapshot_authority=snapshot_authority,
 )
 server.start()
 ```
 
-`owner_connection`, `model_resolver`, and `runtime_executor` are configured by
-the application that owns the model/catalog and backend. Keep the connection
-open only in the owner process. Restart the owner with the same namespace and
-snapshot root so its persisted invocation and retained recipes remain readable.
+`owner_connection` and `model_resolver` are configured by the application that
+owns the model/catalog and backend. Keep the connection open only in the owner
+process. Restart the owner with the same namespace and snapshot root so its
+persisted invocation and retained recipes remain readable. Applications with
+custom execution requirements may supply an executor implementing
+`run_snapshot_task` and fenced publication instead of the built-in executor.
 A `PlanRequest` contains a stable invocation ID, owner-resolvable
 `ModelReference`, `Design`, destination, and optional changes, budget, and output
 scope. The owner resolves the current source revision and expected base manifest,
@@ -145,10 +146,9 @@ invocation ID equals that build ID. The caller creates the ID before the build
 and preserves it across response-loss retries or a fresh client process. A
 failed run can be retried with the same ID after the owner is available; the
 runtime advances its fence and reuses completed outputs. A new dbt build uses a
-new ID. The helper submits the owner plan, runs the exact returned serialized
-plan with its destination-scoped key, and checks authoritative status. It does
-not create generated dbt models, write state from a post-hook, or manage owner
-processes.
+new ID. The helper submits the owner plan, runs the exact persisted recipe with
+its destination-scoped key, and checks authoritative status. It does not create
+generated dbt models, write state from a post-hook, or manage owner processes.
 
 ## Planning boundary and guarantees
 

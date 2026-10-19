@@ -77,16 +77,13 @@ def test_dagster_partition_reaches_owner_plan_and_receipt_metadata(monkeypatch, 
 
 
 def test_dagster_historical_partitions_publish_distinct_owner_outputs(monkeypatch, tmp_path):
-    from datetime import date
+    from datetime import UTC, datetime
 
     import ibis
-    import pyarrow as pa
 
     from terrine.data import Coverage, UnitSource
     from terrine.model import Model
-    from terrine.runtime.api import get_run, open_published_generation, run_serialized_plan
-    from terrine.runtime.backends.base import StagedGeneration
-    from terrine.runtime.backends.duckdb import DuckDBBackend
+    from terrine.runtime.api import get_run, open_published_frame, run_serialized_plan
     from terrine.runtime.control import ControlEndpoint
     from terrine.runtime.owner import RuntimeOwner
     from terrine.runtime.planning import OwnerPlanner
@@ -97,7 +94,9 @@ def test_dagster_historical_partitions_publish_distinct_owner_outputs(monkeypatc
     database = tmp_path / "historical.duckdb"
     connection = ibis.duckdb.connect(database=str(database))
     connection.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
-    connection.raw_sql("INSERT INTO events VALUES ('2025-01-14', 1, 3), ('2025-01-15', 1, 4)")
+    connection.raw_sql(
+        "INSERT INTO events VALUES ('2025-01-13 12:00:00', 1, 3), ('2025-01-14 12:00:00', 1, 4)"
+    )
     connection.raw_sql("CREATE TABLE users (id INTEGER)")
     connection.raw_sql("INSERT INTO users VALUES (1)")
     model = Model.from_catalog(
@@ -107,52 +106,12 @@ def test_dagster_historical_partitions_publish_distinct_owner_outputs(monkeypatc
         readiness={"events": Coverage("2025-01-01", "2025-02-01")},
     )
     reference_model = ModelReference.from_model(model, owner_key="owner-model")
-    from terrine.semantic.models import TableRef
 
     class Resolver:
         def resolve(self, reference):
             assert reference == reference_model
             return model
 
-    class Executor:
-        def __init__(self):
-            self.generations = 0
-            self.layers = []
-
-        def _run(self, task):
-            self.layers.append(task.layer)
-            if task.layer == "daily":
-                return pa.table({"task_id": pa.array([], type=pa.string())})
-            return pa.table({"task_id": [task.task_id]})
-
-        def run_task(self, task, dependencies):
-            return self._run(task)
-
-        def run_snapshot_task(self, context, task, dependencies):
-            self.layers.append(task.layer)
-            if task.layer != "frame":
-                return self._run(task)
-            events = context.resolve(TableRef(kind="table", name="events"))
-            partition_date = date.fromisoformat(task.partition)
-            selected = events.filter(events.ts.cast("date") == partition_date)
-            value = int(selected.value.sum().execute())
-            return pa.table({"partition": [task.partition], "value": [value]})
-
-        def publish(self, plan, outputs, lease, run_id):
-            self.generations += 1
-            return DuckDBBackend(connection.con, namespace="owner").publish_generation(
-                StagedGeneration(
-                    plan.dataset,
-                    f"generation-{self.generations}",
-                    outputs,
-                    run_id=run_id,
-                    snapshot_id=plan.snapshot_id,
-                ),
-                expected_manifest=plan.expected_base_manifest,
-                lease=lease,
-            )
-
-    executor = Executor()
     authority = SnapshotAuthority(RuntimeOwner(database, tmp_path / "snapshots"))
     planner = OwnerPlanner(resolver=Resolver(), snapshot_authority=authority)
     planned = []
@@ -176,7 +135,6 @@ def test_dagster_historical_partitions_publish_distinct_owner_outputs(monkeypatc
                 namespace="owner",
                 request_key=request_key,
                 destination=destination,
-                executor=executor,
                 resolver=Resolver(),
                 snapshot_authority=authority,
             )
@@ -228,7 +186,7 @@ def test_dagster_historical_partitions_publish_distinct_owner_outputs(monkeypatc
             for partition in ("2025-01-14", "2025-01-15")
         ]
         assert all(result.success for result in results)
-        assert executor.generations == 2
+        assert len({receipt.published_generation for receipt in receipts}) == 2
         assert [request.requested_scope for request in planned] == [
             "2025-01-14",
             "2025-01-15",
@@ -241,21 +199,22 @@ def test_dagster_historical_partitions_publish_distinct_owner_outputs(monkeypatc
             "study_p2025_01_14",
             "study_p2025_01_15",
         ]
-        assert {"daily", "prefix", "frame"}.issubset(executor.layers)
         assert len({invocation.snapshot_id for invocation in invocations}) == 2
         assert len(receipts) == 2
         assert all(
             receipt.state == "succeeded" and receipt.published_generation for receipt in receipts
         )
         published = [
-            open_published_generation(receipt, con=connection.con, namespace="owner")
-            .execute()
-            .to_dict(orient="records")
+            open_published_frame(receipt, con=connection.con, namespace="owner")
             for receipt in receipts
         ]
-        assert published == [
-            [{"partition": "2025-01-14", "value": 3}],
-            [{"partition": "2025-01-15", "value": 4}],
+        assert [frame.table.select(["unit", "t0", "total"]).to_pylist() for frame in published] == [
+            [{"unit": 1, "t0": datetime(2025, 1, 14, tzinfo=UTC), "total": 3}],
+            [{"unit": 1, "t0": datetime(2025, 1, 15, tzinfo=UTC), "total": 4}],
+        ]
+        assert all(frame.provenance.eligibility_summary.retained == 1 for frame in published)
+        assert [frame.provenance.execution_snapshot.snapshot_id for frame in published] == [
+            invocation.snapshot_id for invocation in invocations
         ]
     finally:
         connection.disconnect()
