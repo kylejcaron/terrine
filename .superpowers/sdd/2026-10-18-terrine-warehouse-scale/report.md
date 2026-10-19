@@ -7,7 +7,7 @@
 - Added exact Hyndman–Fan type-7 window execution for the verified DuckDB backend, using exact Decimal rank/interpolation arithmetic for integer and Decimal facts; unsupported backends, source types and output precision refuse with stable codes before query execution.
 - Added exact sparse range-window min/max/distinct-count execution through Catalog/Design/Frame; distinct values deduplicate across dates, and incomplete, empty, and all-null results retain distinct completeness/reason metadata. Nonadditive measure resolution is opt-in so the additive prefix-state resolver continues to refuse these operations.
 - Added an independent NumPy type-7 oracle and ordinary Frame integration coverage, including cross-day duplicates, an intraday anchor, and half-open window edges.
-- Kept approximate quantiles explicitly refused (`terrine.metric.sketch_unavailable`); no sketch package or algorithm was introduced because approval is owner-gated.
+- Added the optional DataSketches 5.2.0 extra and adapter-only t-digest/HLL operations in `terrine/temporal/sketches.py`. T-digest records `k`, version, canonical partition merge order, approximate exactness and no guaranteed error bound; HLL records its published relative-error bound. These helpers are not yet wired into Design validation or compilation, which still refuses approximate execution.
 - Added `examples/nonadditive_metrics.py`; updated the temporal guide and changelog with supported execution and refusal contracts.
 
 ## Acceptance coverage
@@ -23,8 +23,8 @@
 | Sparse exact min/max/count-distinct windows, deduplication, null/empty distinction and half-open intraday edges | Covered by `tests/compile/test_nonadditive.py`, including collision-safe fact projection and naive-UTC behavior under non-UTC session timezone |
 | Nonadditive requests do not alter additive sparse-state resolver admission | Covered by `tests/temporal/test_sparse_state.py`; persisted quantile composition uses raw events without additive prefix layers |
 | Sequential/calendar outcome horizons and nonadditive metric-kind compatibility | Covered by `tests/spec/test_validate.py` and calendar-comparison quantile integration |
-| Task 2 bounded range/last-event/retention/winsorization | Not started; its training-fitted winsorization dependency (Task 7.2 dataset recipe interfaces) is not present in this worktree. |
-| Sketch merge/adapter implementation | Not implemented; remains owner-gated by the plan. |
+| Task 2 bounded range/last-event/retention/winsorization | Deterministic last-event ordering and temporal-layer retention bands are implemented; bounded shape/range strategy selection and compiler integration remain. Fitted winsorization depends on Task 7.2 dataset recipe interfaces, which are absent. |
+| Sketch merge/adapter implementation | Adapter tests cover t-digest accuracy/determinism across a fresh process and HLL bound/merge behavior. Public Design validation/compile execution remains refused; no end-to-end approximate request is complete. |
 
 ## Verification
 
@@ -46,7 +46,7 @@
 
 ## Remaining
 
-Task 1 execution is complete on the verified DuckDB backend; exact quantiles refuse on other backends/types/precision limits, and approximate sketches remain refused pending owner approval. Task 2 includes deterministic last-event ordering and temporal-layer retention bands, but bounded shape/range strategy selection and compiler integration remain. The current runtime safely keeps unsupported scan-cost estimates unknown and refuses strict unknown-scan budgets; no backend provides a verified bound/cap here, so estimate authorization beyond that safe refusal remains. The scale generator and an opt-in DuckDB count benchmark were added, but broad compiler-operation benchmarks and a live harness remain. Fitted winsorization depends on absent Task 7.2 training/scoring recipe contracts. No estimator/sampling work or paid warehouse action is in scope.
+Task 1 exact execution is complete on verified DuckDB. Optional t-digest/HLL adapter helpers are implemented and tested, but approximate sketch requests still refuse in Design validation/compilation; the adapter-only work must not be described as end-to-end execution. Task 2 includes deterministic last-event ordering and temporal-layer retention bands, but bounded shape/range strategy selection and compiler integration remain. Runtime scan-cost estimates remain unknown and strict unknown-scan budgets safely refuse; no verified cap/bounds exist here. The scalable generator and DuckDB count benchmark were added, but broad compiler-operation benchmarks and a live harness remain. Fitted winsorization depends on absent Task 7.2 training/scoring interfaces.
 
 - `ee47d5f` — Added deterministic last-event ordering by timestamp then event ID, with duplicate-ID refusal. Focused last-event tests passed; required quality gates passed.
 - `359a53e` — Fixed an internal alias collision; regression failed before fix. Roborev finding 8890 fixed and closed.

@@ -32,10 +32,11 @@ __all__ = [
     "is_null",
     "all_of",
 ]
+
 _SKETCH_UNAVAILABLE = RefusalSpec(
     "terrine.metric.sketch_unavailable",
-    "Sketch {algorithm!r} version {version!r} is unavailable or not owner-approved; "
-    "use exact quantile or obtain explicit sketch approval and capability support.",
+    "Sketch {algorithm!r} version {version!r} is unavailable; install terrine[sketches] "
+    "or use the exact form.",
 )
 
 
@@ -290,9 +291,9 @@ def approx_quantile(
 ) -> ApproxMetricQuantile:
     if not isinstance(window, (tuple, list)) or len(window) != 2:
         raise ValueError("window must contain a start and exclusive end")
-    if not isinstance(sketch, SketchRequest):
-        raise TypeError("sketch must be a SketchRequest")
-    raise _SKETCH_UNAVAILABLE.error(algorithm=sketch.algorithm, version=sketch.version)
+    return ApproxMetricQuantile(
+        _name(metric, "metric"), _probability(probability), Window(*window), sketch
+    )
 
 
 def asof(

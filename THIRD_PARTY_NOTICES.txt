@@ -1,0 +1,13 @@
+Apache DataSketches Python
+
+Package: datasketches 5.2.0 (optional `sketches` extra)
+License: Apache License 2.0
+Upstream: https://github.com/apache/datasketches-python
+
+The Apache DataSketches Python project is Copyright 2025 The Apache Software
+Foundation. Its upstream NOTICE also records historical copyrights to Yahoo
+Inc. (2015-2018), Verizon Media (2019-2020), and Yahoo Inc. (2021). The
+upstream NOTICE states that the product includes software developed at the
+Apache Software Foundation. See the package's LICENSE and NOTICE files for the
+complete terms and notices. PyPI further notes that bundled precompiled
+binaries include nanobind code distributed under a BSD license.
