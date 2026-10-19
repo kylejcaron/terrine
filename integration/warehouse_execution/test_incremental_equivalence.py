@@ -74,7 +74,7 @@ class _Resolver:
         ("update", [3], [7]),
         ("delete", [8], [3]),
         ("late_arrival", [3], [3]),
-        ("readiness_advance", [3], [3]),
+        ("readiness_advance", [None], [3]),
         ("no_op", [3], [3]),
         ("roster_exit_and_reentry", [3], []),
         ("strict_asof_dimension", [3], [3]),
@@ -137,7 +137,7 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
             con.raw_sql("INSERT INTO statuses VALUES ('2024-12-31 10:30:00', 1, 1)")
         catalog = _catalog()
         units = {"user": UnitSource(table="users", key="user_id", exited_at="exited")}
-        readiness_end = "2025-01-03" if scenario == "readiness_advance" else "2025-02-01"
+        readiness_end = "2024-12-31" if scenario == "readiness_advance" else "2025-02-01"
         readiness = {
             "events": Coverage("2024-12-30", readiness_end),
             "statuses": Coverage("2024-12-30", "2025-02-01"),
@@ -230,6 +230,10 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
 
         initial_receipt, initial_rows = run_generation(name="initial", model=model)
         assert [row["total"] for row in initial_rows] == initial_totals
+        if scenario == "readiness_advance":
+            total = frames["initial"].columns["total"]
+            assert initial_rows[0][total.complete_column] is False
+            assert initial_rows[0][total.reason_column] == "incomplete_coverage"
         if scenario == "strict_asof_dimension":
             assert initial_rows[0]["tier"] == "gold"
         elif scenario == "nested_selector":
@@ -291,6 +295,10 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
         else:
             assert corrected_receipt.published_generation != initial_receipt.published_generation
         assert [row["total"] for row in corrected_rows] == corrected_totals
+        if scenario == "readiness_advance":
+            total = frames["correction"].columns["total"]
+            assert corrected_rows[0][total.complete_column] is True
+            assert corrected_rows[0][total.reason_column] is None
         if scenario == "strict_asof_dimension":
             assert corrected_rows[0]["tier"] == "bronze"
         elif scenario == "nested_selector":
