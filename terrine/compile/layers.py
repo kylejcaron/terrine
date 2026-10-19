@@ -3,38 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal
 
 import ibis
 
-from terrine.errors import RefusalSpec
 from terrine.spec.design import Design
 
 LayerResolution = Literal["day", "event", "point", "period"]
 LayerName = Literal["daily", "prefix", "anchor", "state_point", "state_period"]
-
-_RUNTIME_SHAPE_UNSUPPORTED = RefusalSpec(
-    "terrine.compile.runtime_shape_unsupported",
-    "Persisted-layer runtime does not support shape {shape!r}; use ordinary Frame "
-    "materialization or a full rebuild.",
-)
-
-
-def validate_persisted_shape(design: Design, *, has_substitutions: bool) -> None:
-    """Admit the explicit substitution matrix before resolving source relations."""
-    from terrine.spec.panels import EventPanelSpec, SequentialSpec
-    from terrine.spec.state_panel import StatePanel
-
-    if design.shape == "cross_section" or isinstance(
-        design.shape, (SequentialSpec, EventPanelSpec)
-    ):
-        return
-    if isinstance(design.shape, StatePanel) and not has_substitutions:
-        return
-    shape = design.shape if isinstance(design.shape, str) else type(design.shape).__name__
-    raise _RUNTIME_SHAPE_UNSUPPORTED.error(
-        shape=shape, route="ordinary Frame materialization or a full rebuild"
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,23 +87,24 @@ def build_layer(design: Design, model, key: LayerKey, *, relation_resolver=None)
     if relation_resolver is None:
         bound_model = model
     else:
+        from terrine.model import Model
 
-        class _ResolvedModel:
-            def __getattr__(self, name):
-                return getattr(model, name)
-
-            def _relation(self, relation):
-                return relation_resolver(relation)
-
-            def _resolver(self, relation):
-                return relation_resolver(relation)
-
-        bound_model = _ResolvedModel()
+        bound_model = Model._bind(
+            model.catalog,
+            con=model.con,
+            readiness=model.readiness,
+            units=model.units,
+            event_ids=model.event_ids,
+            resolver=relation_resolver,
+            input_binding=model.input_binding,
+            source_names=set(model.sources),
+        )
     expected = plan_layers(design, bound_model).keys
+
     if replace(key, snapshot_id="unbound") not in expected:
         raise ValueError("layer key does not belong to this Design and Model")
     if key.layer == "anchor":
-        return compile_anchors(design, cast(Model, bound_model)).table
+        return compile_anchors(design, bound_model).table
     if key.resolution not in {"day", "event"}:
         raise ValueError("prefix layer resolution must be day or event")
 
@@ -173,7 +150,9 @@ def plan_layers(design: Design, model) -> LayerPlan:
         MetricAgg,
         MetricQuantile,
         RetentionMetric,
+        agg,
     )
+    from terrine.spec.state_panel import BinnedMetricState, StatePanel
     from terrine.spec.validate import _fixed_anchors
 
     measures: dict[tuple[str, str, str, LayerResolution], None] = {}
@@ -232,9 +211,15 @@ def plan_layers(design: Design, model) -> LayerPlan:
         *design.eligibility.values(),
     ):
         expression(node)
+    if isinstance(design.shape, StatePanel):
+        for node in design.shape.baseline_features.values():
+            expression(node)
+        if isinstance(design.shape.state, BinnedMetricState):
+            assert isinstance(design.anchor, Schedule)
+            expression(agg(design.shape.state.metric, window=(-design.anchor.every, 0)))
     source_schema = {
         name: {
-            column: str(dtype)
+            column: str(dtype.copy(nullable=True))
             for column, dtype in model._resolver(source.relation).schema().items()
         }
         for name, source in model.sources.items()

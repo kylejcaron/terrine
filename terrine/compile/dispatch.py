@@ -9,11 +9,11 @@ import ibis
 import pyarrow as pa
 
 from terrine.compile.columns import CompiledStudy, compile_columns
-from terrine.compile.layers import validate_persisted_shape
 from terrine.spec.design import Design
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import StatePanel
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
+from terrine.spec.validate import ensure_runtime_shape_supported
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -30,9 +30,7 @@ def compile_design(
 ) -> CompiledStudy:
     """Compile a shape, propagating supported verified logical substitutions."""
     if persisted_prefixes is not None or persisted_anchors is not None:
-        validate_persisted_shape(
-            design, has_substitutions=bool(persisted_prefixes) or persisted_anchors is not None
-        )
+        ensure_runtime_shape_supported(design.shape)
     if isinstance(design.shape, EventSequence):
         from terrine.compile.shapes.event_sequence import compile_event_sequence
 
@@ -40,7 +38,12 @@ def compile_design(
     if isinstance(design.shape, StatePanel):
         from terrine.compile.shapes.state_panel import compile_state_panel
 
-        return compile_state_panel(design, model)
+        return compile_state_panel(
+            design,
+            model,
+            persisted_prefixes=persisted_prefixes,
+            persisted_anchors=persisted_anchors,
+        )
     from terrine.spec.panels import EventPanelSpec, SequentialSpec
 
     if isinstance(design.shape, SequentialSpec):

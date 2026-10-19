@@ -13,6 +13,9 @@ from terrine.runtime.events import read_run_events
 from terrine.runtime.execute import RunReceipt, execute_plan
 from terrine.runtime.planner import RefreshPlan, plan_refresh
 from terrine.runtime.recipe import (
+    _INVALID as _RECIPE_MISMATCH,
+)
+from terrine.runtime.recipe import (
     DestinationRef,
     ModelResolver,
     SavedPlanRecipe,
@@ -25,6 +28,7 @@ from terrine.runtime.status import cancel_run, get_run
 
 __all__ = [
     "CostProvider",
+    "DesignExecutor",
     "Executor",
     "RunReceipt",
     "ScanAuthorization",
@@ -34,6 +38,7 @@ __all__ = [
     "cancel_run",
     "find_run_by_request_key",
     "get_run",
+    "open_published_frame",
     "open_published_generation",
     "plan_refresh",
     "read_run_events",
@@ -131,7 +136,7 @@ def run_serialized_plan(
     namespace: str,
     request_key: str | None = None,
     destination: DestinationRef | None = None,
-    executor: Executor | None = None,
+    executor: Any | None = None,
     resolver: ModelResolver | None = None,
     snapshot_authority: SnapshotAuthority | None = None,
 ) -> RunReceipt:
@@ -142,7 +147,7 @@ def run_serialized_plan(
         embedded_plan = _bind_recipe_plan(recipe, namespace=namespace)
         recipe_destination = recipe.destination
         if destination is not None and destination != recipe_destination:
-            raise ValueError("destination differs from saved recipe")
+            raise _RECIPE_MISMATCH.error(reason="supplied destination differs from saved recipe")
         if request_key is not None:
             destination = recipe_destination
             existing = find_run_by_request_key(
@@ -177,9 +182,7 @@ def run_serialized_plan(
             raise ValueError("destination is only used with a request_key")
         if resolver is None or snapshot_authority is None:
             raise ValueError("saved recipes require an owner resolver and snapshot authority")
-        if executor is None or not callable(getattr(executor, "run_snapshot_task", None)):
-            raise ValueError("saved recipes require an executor with run_snapshot_task")
-        plan, model, _design, recipe_destination = resolve_plan(
+        plan, model, design, _recipe_destination = resolve_plan(
             recipe, resolver=resolver, namespace=namespace
         )
         receipt = snapshot_authority.find_retained(plan.snapshot_id, namespace=namespace)
@@ -189,6 +192,15 @@ def run_serialized_plan(
                 "Saved plan reconstruction failed verification "
                 "(retained snapshot Model declaration differs).",
             ).error()
+        from terrine.execution.gates import enforce_shape_budget
+
+        enforce_shape_budget(design.shape, plan.budget)
+        if executor is None:
+            _preflight_design_partitions(plan)
+            preflight_runtime_shape(design, plan.budget)
+            executor = DesignExecutor(model, design, plan, con, namespace=namespace)
+        if not callable(getattr(executor, "run_snapshot_task", None)):
+            raise ValueError("saved recipes require an executor with run_snapshot_task")
         executor = _SnapshotBoundExecutor(executor, snapshot_authority, receipt, con, namespace)
     else:
         plan = RefreshPlan.deserialize(serialized)
@@ -330,3 +342,318 @@ def open_published_generation(receipt: RunReceipt, *, con: Any, namespace: str) 
         for (partition,) in partitions
     ]
     return relations[0] if len(relations) == 1 else ibis.union(*relations, distinct=False)
+
+
+def preflight_runtime_shape(design: Any, budget: Any = None) -> None:
+    from terrine.compile.materialize import preflight_materialization_shape
+    from terrine.execution.gates import enforce_shape_budget
+
+    enforce_shape_budget(design.shape, budget)
+    preflight_materialization_shape(design, budget)
+
+
+def _preflight_design_partitions(plan: RefreshPlan) -> None:
+    partitions = {task.partition for task in plan.tasks if task.layer == "frame"}
+    if len(partitions) > 1:
+        raise RefusalSpec(
+            "terrine.runtime.design_partition_unsupported",
+            "The built-in Design executor supports one output partition; use a "
+            "single-partition plan or a custom executor with per-partition bounds.",
+        ).error()
+
+
+_EXACT_LAYER_COLUMNS_KEY = b"terrine.runtime.exact_layer_columns"
+
+
+def _persistable_layer(relation: Any, execute: Any):
+
+    exact_columns = tuple(
+        name
+        for name, dtype in relation.schema().items()
+        if dtype.is_unknown() and str(dtype.raw_type).upper() == "BIGNUM"
+    )
+    serializable = (
+        relation.mutate(**{name: relation[name].cast("string") for name in exact_columns})
+        if exact_columns
+        else relation
+    )
+    result = execute(serializable)
+    if exact_columns:
+        result = result.replace_schema_metadata(
+            {_EXACT_LAYER_COLUMNS_KEY: json.dumps(exact_columns).encode()}
+        )
+    return result
+
+
+def _restore_persisted_layer(context: Any, arrow: Any, name: str):
+    from ibis.expr import datatypes as dt
+    from sqlglot import exp as sge
+
+    exact_dtype = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
+
+    relation = context.con.create_table(name, obj=arrow, temp=True)
+    metadata = arrow.schema.metadata or {}
+    exact_columns = json.loads(metadata.get(_EXACT_LAYER_COLUMNS_KEY, b"[]"))
+    return (
+        relation.mutate(**{column: relation[column].cast(exact_dtype) for column in exact_columns})
+        if exact_columns
+        else relation
+    )
+
+
+class DesignExecutor:
+    """Execute a Design through snapshot-bound compiler layers and atomic publication."""
+
+    def __init__(self, model: Any, design: Any, plan: Any, con: Any, *, namespace: str) -> None:
+        from threading import RLock
+
+        from terrine.runtime.backends.duckdb import DuckDBBackend
+
+        self._model = model
+        self.design = design
+        self._plan = plan
+        self._keys: tuple[Any, ...] | None = None
+        self._backend = DuckDBBackend(con, namespace=namespace)
+        self._layers: dict[str, dict[Any, Any]] = {}
+        self._lock = RLock()
+
+    def run_snapshot_task(self, context: Any, task: Any, dependencies: Any):
+        import uuid
+
+        import pyarrow as pa
+
+        from terrine.compile.layers import build_layer, plan_layers
+        from terrine.data import MaterializedFrame, Provenance
+
+        if task.layer in {
+            "daily",
+            "roster",
+            "prefix_certificate",
+            "selector",
+            "state_point",
+            "state_period",
+            "baseline",
+        }:
+            return pa.table({"_terrine_empty": pa.array([], type=pa.int8())})
+        execution_model = self._execution_model(context)
+        with self._lock:
+            if self._keys is None:
+                self._keys = plan_layers(self.design, execution_model).keys
+            layer_keys = self._keys
+        if task.layer == "prefix":
+            keys = [
+                self._with_snapshot(key, self._plan.snapshot_id)
+                for key in layer_keys
+                if key.layer == "prefix" and key.source == task.source
+            ]
+            results = {
+                key: _persistable_layer(
+                    build_layer(
+                        self.design, execution_model, key, relation_resolver=context.resolve
+                    ),
+                    context.execute,
+                )
+                for key in keys
+            }
+            with self._lock:
+                self._layers.setdefault(task.partition, {}).update(results)
+            return (
+                next(iter(results.values()))
+                if results
+                else pa.table({"_terrine_empty": pa.array([], type=pa.int8())})
+            )
+        if task.layer == "anchor":
+            key = self._with_snapshot(layer_keys[0], self._plan.snapshot_id)
+            result = context.execute(
+                build_layer(self.design, execution_model, key, relation_resolver=context.resolve)
+            )
+            with self._lock:
+                self._layers.setdefault(task.partition, {})[key] = result
+            return result
+        if task.layer != "frame":
+            raise ValueError(f"unsupported runtime task layer: {task.layer}")
+
+        from terrine.runtime.materialize import compose_runtime_frame
+
+        persisted = {}
+        registered = []
+        with self._lock:
+            layer_outputs = dict(self._layers.get(task.partition, {}))
+        for key, arrow in layer_outputs.items():
+            name = f"_terrine_runtime_layer_{uuid.uuid4().hex}"
+            relation = _restore_persisted_layer(context, arrow, name)
+            registered.append(name)
+            persisted[key] = relation
+        try:
+            compiled = compose_runtime_frame(
+                self.design, execution_model, persisted=persisted, budget=self._plan.budget
+            )
+            import terrine.compile.provenance as _provenance
+            from terrine.data import SamplingMeta
+            from terrine.execution.gates import _eligibility_summary
+            from terrine.spec.anchors import FixedDate
+            from terrine.spec.sequence import EventSequence
+            from terrine.spec.state_panel import StatePanel
+            from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
+
+            table = context.execute(compiled.table)
+            if isinstance(self.design.shape, StatePanel):
+                gap_index = table.schema.get_field_index("gap")
+                table = table.set_column(
+                    gap_index, "gap", table.column(gap_index).cast(pa.duration("us"))
+                )
+            if isinstance(self.design.shape, StatePanel):
+                shape = "state_panel"
+            elif isinstance(self.design.shape, EventSequence):
+                shape = "event_sequence"
+            elif _provenance.calendar_comparison_metadata(self.design) is not None:
+                shape = "calendar_comparison"
+            elif isinstance(self.design.shape, CohortSpec):
+                shape = "ltv"
+            elif isinstance(self.design.shape, LifeTable):
+                shape = "life_table"
+            elif isinstance(self.design.shape, TimeToEvent):
+                shape = "time_to_event"
+            else:
+                shape = self.design.shape if isinstance(self.design.shape, str) else "cross_section"
+
+            treatment = self.design.treatment
+            treatment_column = compiled.roles.treatment
+            baseline_binary = (
+                treatment is not None
+                and treatment_column is not None
+                and isinstance(self.design.anchor, FixedDate)
+                and self.design.shape == "cross_section"
+                and treatment.at == 0
+                and treatment.known_at_t0
+                and pa.types.is_boolean(table.schema.field(treatment_column).type)
+            )
+            return MaterializedFrame(
+                table,
+                compiled.roles,
+                compiled.columns,
+                Provenance(
+                    feature_cutoffs=compiled.feature_cutoffs,
+                    eligibility_cutoffs=compiled.eligibility_cutoffs,
+                    eligibility_summary=_eligibility_summary(compiled.audit_table, context.execute),
+                    design_hash=self.design.spec_hash,
+                    model_hash=self._model.model_hash,
+                    source_generations=context.snapshot.source_generations,
+                    execution_snapshot=context.snapshot,
+                    state_panel=_provenance.state_panel_metadata(self.design, self._model),
+                    shape=shape,
+                    treatment_design="baseline_binary" if baseline_binary else None,
+                    treatment_knowledge=(
+                        "retrospective_effective_time" if treatment is not None else None
+                    ),
+                    treatment_known_at_t0=treatment.known_at_t0 if treatment is not None else False,
+                    expression_timings=compiled.expression_timings,
+                    sequence_meta=compiled.sequence_meta,
+                    panel=_provenance.panel_metadata(self.design),
+                    sampling=(
+                        SamplingMeta(
+                            self.design.sample.strata,
+                            self.design.sample.controls_per_treated,
+                            self.design.sample.seed,
+                        )
+                        if self.design.sample is not None
+                        else None
+                    ),
+                    calendar_comparison=_provenance.calendar_comparison_metadata(self.design),
+                    administrative_cutoff=self.design.administrative_cutoff,
+                ),
+            ).to_arrow()
+        finally:
+            for name in registered:
+                context.con.drop_table(name, force=True)
+
+    def _execution_model(self, context: Any):
+        from terrine.spec.validate import validate_design
+
+        required_sources = set(validate_design(self.design, self._model).required_sources)
+        return self._model._for_execution(
+            context, source_names=required_sources, unit_name=self.design.unit
+        )
+
+    @staticmethod
+    def _with_snapshot(key: Any, snapshot_id: str):
+        from dataclasses import replace
+
+        return replace(key, snapshot_id=snapshot_id)
+
+    def publish(self, plan: Any, outputs: Any, lease: Any, run_id: str):
+        from terrine.runtime.backends.base import StagedGeneration
+
+        if not plan.tasks:
+            return self._backend.reuse_generation(
+                plan.dataset,
+                expected_manifest=plan.expected_base_manifest,
+                lease=lease,
+                run_id=run_id,
+            )
+
+        stage = StagedGeneration(
+            plan.dataset,
+            f"generation-{run_id}",
+            outputs,
+            run_id=run_id,
+            snapshot_id=plan.snapshot_id,
+        )
+        return self._backend.publish_generation(
+            stage, expected_manifest=plan.expected_base_manifest, lease=lease
+        )
+
+
+def open_published_frame(receipt: RunReceipt, *, con: Any, namespace: str):
+    """Read metadata-preserving Arrow output from the exact published run generation."""
+    import pyarrow as pa
+
+    if not isinstance(receipt, RunReceipt) or receipt.state != "succeeded":
+        raise ValueError("a succeeded run receipt is required")
+    if receipt.published_generation is None:
+        raise ValueError("run receipt has no published generation")
+    store = RuntimeStore(con, namespace=namespace)
+    store.initialize()
+    schema = store._schema
+    run = con.execute(
+        f"SELECT dataset,state,published_generation FROM {schema}.runtime_runs WHERE run_id=?",
+        [receipt.run_id],
+    ).fetchone()
+    if run is None or run[1] != "succeeded" or run[2] != receipt.published_generation:
+        raise ValueError("run receipt does not match authoritative runtime state")
+    publication = con.execute(
+        f"SELECT dataset,generation,version FROM {schema}.runtime_run_publications WHERE run_id=?",
+        [receipt.run_id],
+    ).fetchone()
+    if publication is None or (publication[0], publication[1]) != (run[0], run[2]):
+        raise ValueError("run has no matching durable publication receipt")
+    partitions = con.execute(
+        f"SELECT p.partition FROM {schema}.runtime_run_results p "
+        f"JOIN {schema}.runtime_partitions r ON r.partition=p.partition "
+        "WHERE p.run_id=? AND r.dataset=? AND r.generation=? ORDER BY p.partition",
+        [receipt.run_id, run[0], run[2]],
+    ).fetchall()
+    if not partitions:
+        raise ValueError("published generation has no retained partitions")
+    from terrine.data import MaterializedFrame
+    from terrine.runtime.backends.base import PublicationReceipt
+    from terrine.runtime.backends.duckdb import DuckDBBackend
+
+    publication_receipt = PublicationReceipt(
+        run[0], run[2], publication[2], tuple(item[0] for item in partitions)
+    )
+    backend = DuckDBBackend(con, namespace=namespace)
+    frames = [
+        MaterializedFrame.from_arrow(backend.read_partition(publication_receipt, partition[0]))
+        for partition in partitions
+    ]
+    first = frames[0]
+    if any(
+        frame.roles != first.roles
+        or frame.columns != first.columns
+        or frame.provenance != first.provenance
+        for frame in frames[1:]
+    ):
+        raise ValueError("published Arrow partitions do not share one Frame metadata contract")
+    table = pa.concat_tables([frame.table for frame in frames])
+    return MaterializedFrame(table, first.roles, first.columns, first.provenance)

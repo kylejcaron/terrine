@@ -62,6 +62,290 @@ def test_run_serialized_plan_executes_through_python_facade():
 
 
 def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path):
+    from pathlib import Path
+
+    from terrine.data import Budget, Coverage
+    from terrine.model import Model, UnitSource
+    from terrine.runtime.owner import RuntimeOwner
+    from terrine.runtime.recipe import ModelReference, SavedPlanRecipe
+    from terrine.runtime.snapshot import SnapshotAuthority
+    from terrine.runtime.state import RuntimeStore
+    from terrine.semantic.models import Catalog
+    from terrine.spec import Design, FixedDate, agg
+
+    path = tmp_path / "owner.duckdb"
+    con = ibis.duckdb.connect(str(path))
+    con.raw_sql("CREATE TABLE events(ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+    con.raw_sql("INSERT INTO events VALUES ('2025-01-01', 1, 3)")
+    con.raw_sql("CREATE TABLE unused_events(ts TIMESTAMP, other_id INTEGER)")
+    con.raw_sql("CREATE TABLE users(id INTEGER)")
+    con.raw_sql("INSERT INTO users VALUES (1)")
+    con.raw_sql("CREATE TABLE other_users(id INTEGER)")
+    con.raw_sql("INSERT INTO other_users VALUES (999)")
+    catalog = Catalog.model_validate(
+        {
+            "schema_version": 1,
+            "day_boundary": "UTC",
+            "dialect": "duckdb",
+            "sources": {
+                "events": {
+                    "relation": {"kind": "table", "name": "events"},
+                    "timestamp": "ts",
+                    "entities": {"user": "user_id"},
+                    "facts": ["value"],
+                    "properties": [],
+                    "dimensions": [],
+                },
+                "unused": {
+                    "relation": {"kind": "table", "name": "unused_events"},
+                    "timestamp": "ts",
+                    "entities": {"other": "other_id"},
+                    "facts": [],
+                    "properties": [],
+                    "dimensions": [],
+                },
+            },
+            "facts": {"value": {"source": "events", "column": "value"}},
+            "properties": {},
+            "dimensions": {},
+            "measures": {"total": {"fact": "value", "aggregation": "sum"}},
+            "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
+        }
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        units={
+            "user": UnitSource("users", "id"),
+            "other": UnitSource("other_users", "id"),
+        },
+        readiness={
+            "events": Coverage("2025-01-01", "2025-02-01"),
+            "unused": Coverage("2025-01-01", "2025-02-01"),
+        },
+    )
+    design = Design(
+        "user",
+        FixedDate("2025-01-02T00:00:00+00:00"),
+        features={"total": agg("total", window=("-1d", "0s"))},
+    )
+    ordinary = design.build(model).materialize()
+    owner = RuntimeOwner(state_path=path, snapshot_root=tmp_path / "snapshots")
+    authority = SnapshotAuthority(owner)
+    store = RuntimeStore(con.con, namespace="runtime")
+    store.initialize()
+    snapshot = authority.capture(
+        model, design=design, con=con, namespace="runtime", run_id="saved", budget=Budget()
+    )
+    graph = dependency_graph(
+        model,
+        design,
+        sources=("events",),
+        definition_hash=design.spec_hash,
+        partitions=("all",),
+    )
+    plan = plan_refresh(
+        namespace="runtime",
+        dataset="orders",
+        definition_hash=design.spec_hash,
+        snapshot_id=snapshot.snapshot_id,
+        graph=graph,
+    )
+    recipe = SavedPlanRecipe.create(
+        plan_json=plan.serialize(),
+        design=design,
+        model=ModelReference.from_model(model, owner_key="model"),
+        destination=DestinationRef("output.duckdb", "analytics", "orders"),
+        namespace="runtime",
+        expected_base_manifest=None,
+    )
+    recipe.pin_snapshot(store)
+    with pytest.raises(TerrineError) as destination_error:
+        runtime.run_serialized_plan(
+            recipe.to_json(),
+            con=con.con,
+            namespace="runtime",
+            destination=DestinationRef("other.duckdb", "analytics", "orders"),
+            request_key="wrong-destination",
+        )
+    assert destination_error.value.code == "terrine.runtime.plan_recipe_mismatch"
+
+    class Resolver:
+        def resolve(self, reference):
+            return model
+
+    class SnapshotExecutor:
+        def __init__(self):
+            self.observed = []
+            self.fail_first = True
+
+        def run_snapshot_task(self, context, task, dependencies):
+            if self.fail_first:
+                self.fail_first = False
+                raise RuntimeError("retry saved recipe")
+            relation = context.resolve(catalog.sources["events"].relation)
+            self.observed.append(context.execute(relation).to_pylist()[0]["value"])
+            if len(self.observed) == 1:
+                con.con.execute("UPDATE events SET value=99")
+            return pa.table({"id": [task.task_id]})
+
+        def publish(self, plan, outputs, lease, run_id):
+            return "generation-1"
+
+    executor = SnapshotExecutor()
+    with pytest.raises(RuntimeError, match="retry saved recipe"):
+        runtime.run_serialized_plan(
+            recipe.to_json(),
+            con=con.con,
+            namespace="runtime",
+            request_key="saved-run",
+            executor=cast(Any, executor),
+            resolver=Resolver(),
+            snapshot_authority=authority,
+        )
+    failed = runtime.find_run_by_request_key(
+        "saved-run",
+        destination=DestinationRef("output.duckdb", "analytics", "orders"),
+        con=con.con,
+        namespace="runtime",
+    )
+    assert failed is not None
+    failed_status = runtime.get_run(failed.run_id, con=con.con, namespace="runtime")
+    assert failed_status.phase == "failed"
+    assert failed_status.error_code == "terrine.runtime.execution_failed"
+    assert failed_status.progress == {
+        "completed_tasks": 0,
+        "running_tasks": 0,
+        "total_tasks": len(plan.tasks),
+    }
+    conflicting_plan = plan
+    conflicting_recipe = SavedPlanRecipe.create(
+        plan_json=conflicting_plan.serialize(),
+        design=design,
+        model=ModelReference.from_model(model, owner_key="model"),
+        destination=DestinationRef("output.duckdb", "analytics", "orders"),
+        namespace="runtime",
+        expected_base_manifest="different-base",
+    )
+    with pytest.raises(TerrineError) as error:
+        runtime.run_serialized_plan(
+            conflicting_recipe.to_json(),
+            con=con.con,
+            namespace="runtime",
+            request_key="saved-run",
+        )
+    assert error.value.code == "terrine.runtime.request_key_conflict"
+
+    result = runtime.run_serialized_plan(
+        recipe.to_json(),
+        con=con.con,
+        namespace="runtime",
+        request_key="saved-run",
+        executor=cast(Any, executor),
+        resolver=Resolver(),
+        snapshot_authority=authority,
+    )
+    replay = runtime.run_serialized_plan(
+        recipe.to_json(),
+        con=con.con,
+        namespace="runtime",
+        request_key="saved-run",
+    )
+    assert replay == result
+    assert result.state == "succeeded"
+    assert executor.observed == [3] * len(plan.tasks)
+
+    from dataclasses import replace
+
+    for binding in ModelReference.__dataclass_fields__:
+        changed_reference = replace(recipe.model, **{binding: f"changed-{binding}"})
+        changed_recipe = SavedPlanRecipe.create(
+            plan_json=recipe.plan_json,
+            design=design,
+            model=changed_reference,
+            destination=recipe.destination,
+            namespace="runtime",
+            expected_base_manifest=None,
+        )
+        with pytest.raises(TerrineError) as changed_error:
+            runtime.run_serialized_plan(
+                changed_recipe.to_json(), con=con.con, namespace="runtime", request_key="saved-run"
+            )
+        assert changed_error.value.code == "terrine.runtime.request_key_conflict"
+
+    built_in = runtime.run_serialized_plan(
+        recipe.to_json(),
+        con=con.con,
+        namespace="runtime",
+        request_key="built-in-scoped-model",
+        resolver=Resolver(),
+        snapshot_authority=authority,
+    )
+    published = runtime.open_published_frame(built_in, con=con.con, namespace="runtime")
+    assert built_in.state == "succeeded"
+    assert published.table.num_rows == 1
+    assert published.table["total"].to_pylist() == [3.0]
+    status = runtime.get_run(built_in.run_id, con=con.con, namespace="runtime")
+    assert status.phase == "succeeded"
+    assert status.error_code is None
+    assert status.progress == {
+        "completed_tasks": len(plan.tasks),
+        "running_tasks": 0,
+        "total_tasks": len(plan.tasks),
+    }
+    assert status.cost["capture"] == {
+        "snapshot_id": snapshot.snapshot_id,
+        "artifact_bytes": Path(snapshot.artifact_path).stat().st_size,
+        "root_count": 2,
+        "scan_bytes": None,
+    }
+    assert status.cost["status"] == "observed"
+    assert status.cost["scope"] == "completed_task_artifacts"
+    assert status.cost["attempts"] == len(plan.tasks)
+    assert status.cost["output_rows"] == published.table.num_rows
+    assert status.cost["output_bytes"] == published.table.nbytes
+    assert status.cost["intermediate_output_bytes"] > 0
+    assert status.cost["scan_bytes"] is None
+    assert status.readiness == {
+        "events": {
+            "start": "2025-01-01T00:00:00+00:00",
+            "end_exclusive": "2025-02-02T00:00:00+00:00",
+        }
+    }
+
+    from sqlglot import exp, parse_one
+
+    class RuntimeQuerySpy:
+        def __init__(self):
+            self.queries = []
+
+        def execute(self, sql, *args, **kwargs):
+            self.queries.append(sql)
+            for table in parse_one(sql, read="duckdb").find_all(exp.Table):
+                assert table.db == "information_schema" or (
+                    table.db == "runtime" and (not table.name or table.name.startswith("runtime_"))
+                )
+            return con.con.execute(sql, *args, **kwargs)
+
+    query_spy = RuntimeQuerySpy()
+    assert runtime.get_run(built_in.run_id, con=query_spy, namespace="runtime") == status
+    assert runtime.read_run_events(built_in.run_id, con=query_spy, namespace="runtime").events
+    assert query_spy.queries
+
+    from dataclasses import fields
+
+    assert {
+        field.name: getattr(published.provenance, field.name)
+        for field in fields(published.provenance)
+        if field.name not in {"source_generations", "execution_snapshot"}
+    } == {
+        field.name: getattr(ordinary.provenance, field.name)
+        for field in fields(ordinary.provenance)
+        if field.name not in {"source_generations", "execution_snapshot"}
+    }
+
+
+def test_custom_saved_recipe_executor_is_not_limited_by_builtin_shape_preflight(tmp_path):
     from terrine.data import Budget, Coverage
     from terrine.model import Model
     from terrine.runtime.owner import RuntimeOwner
@@ -104,27 +388,23 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
         "user",
         FixedDate("2025-01-02T00:00:00+00:00"),
         features={"total": agg("total", window=("-1d", "0s"))},
+        shape="unsupported-test-shape",
     )
     owner = RuntimeOwner(state_path=path, snapshot_root=tmp_path / "snapshots")
     authority = SnapshotAuthority(owner)
     store = RuntimeStore(con.con, namespace="runtime")
     store.initialize()
     snapshot = authority.capture(
-        model, design=design, con=con, namespace="runtime", run_id="saved", budget=Budget()
-    )
-    graph = dependency_graph(
-        model,
-        design,
-        sources=("events",),
-        definition_hash=design.spec_hash,
-        partitions=("p1", "p2"),
+        model, design=design, con=con, namespace="runtime", run_id="custom", budget=Budget()
     )
     plan = plan_refresh(
         namespace="runtime",
         dataset="orders",
         definition_hash=design.spec_hash,
         snapshot_id=snapshot.snapshot_id,
-        graph=graph,
+        graph=dependency_graph(
+            model, design, sources=("events",), definition_hash=design.spec_hash
+        ),
     )
     recipe = SavedPlanRecipe.create(
         plan_json=plan.serialize(),
@@ -140,80 +420,22 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
         def resolve(self, reference):
             return model
 
-    class SnapshotExecutor:
-        def __init__(self):
-            self.observed = []
-            self.fail_first = True
-
+    class CustomExecutor:
         def run_snapshot_task(self, context, task, dependencies):
-            if self.fail_first:
-                self.fail_first = False
-                raise RuntimeError("retry saved recipe")
-            relation = context.resolve(catalog.sources["events"].relation)
-            self.observed.append(context.execute(relation).to_pylist()[0]["value"])
-            if len(self.observed) == 1:
-                con.con.execute("UPDATE events SET value=99")
             return pa.table({"id": [task.task_id]})
 
         def publish(self, plan, outputs, lease, run_id):
-            return "generation-1"
-
-    executor = SnapshotExecutor()
-    with pytest.raises(RuntimeError, match="retry saved recipe"):
-        runtime.run_serialized_plan(
-            recipe.to_json(),
-            con=con.con,
-            namespace="runtime",
-            request_key="saved-run",
-            executor=cast(Any, executor),
-            resolver=Resolver(),
-            snapshot_authority=authority,
-        )
-    assert (
-        runtime.find_run_by_request_key(
-            "saved-run",
-            destination=DestinationRef("output.duckdb", "analytics", "orders"),
-            con=con.con,
-            namespace="runtime",
-        )
-        is not None
-    )
-    conflicting_plan = plan
-    conflicting_recipe = SavedPlanRecipe.create(
-        plan_json=conflicting_plan.serialize(),
-        design=design,
-        model=ModelReference.from_model(model, owner_key="model"),
-        destination=DestinationRef("output.duckdb", "analytics", "orders"),
-        namespace="runtime",
-        expected_base_manifest="different-base",
-    )
-    with pytest.raises(TerrineError) as error:
-        runtime.run_serialized_plan(
-            conflicting_recipe.to_json(),
-            con=con.con,
-            namespace="runtime",
-            request_key="saved-run",
-        )
-    assert error.value.code == "terrine.runtime.request_key_conflict"
+            return "custom-generation"
 
     result = runtime.run_serialized_plan(
         recipe.to_json(),
         con=con.con,
         namespace="runtime",
-        request_key="saved-run",
-        executor=cast(Any, executor),
+        executor=CustomExecutor(),
         resolver=Resolver(),
         snapshot_authority=authority,
     )
-    replay = runtime.run_serialized_plan(
-        recipe.to_json(),
-        con=con.con,
-        namespace="runtime",
-        request_key="saved-run",
-    )
-    assert replay == result
     assert result.state == "succeeded"
-    assert executor.observed == [3] * len(plan.tasks)
 
 
 def test_published_generation_uses_receipt_generation_not_current_manifest():
@@ -250,6 +472,59 @@ def test_published_generation_uses_receipt_generation_not_current_manifest():
     assert isinstance(exact, ibis.Table)
     assert exact.execute().to_dict(orient="records") == [{"id": len(_plan().tasks)}]
     assert second.published_generation == "g2"
+
+
+def test_published_frame_reader_roundtrips_exact_generation_metadata():
+    from datetime import UTC, datetime
+
+    from terrine.data import ColumnMeta, MaterializedFrame, Roles
+    from terrine.runtime.backends.base import StagedGeneration
+    from terrine.runtime.backends.duckdb import DuckDBBackend
+    from tests.test_metadata import _provenance
+
+    con = duckdb.connect(":memory:")
+    clean = MaterializedFrame(
+        pa.table(
+            {
+                "unit": ["u"],
+                "anchor": ["a"],
+                "t0": pa.array(
+                    [datetime(2025, 1, 1, tzinfo=UTC)], type=pa.timestamp("us", tz="UTC")
+                ),
+                "revenue": [3],
+                "revenue_complete": [True],
+                "revenue_reason": [None],
+            }
+        ),
+        Roles("unit", "anchor", "t0", None, (), ("revenue",)),
+        {"revenue": ColumnMeta(None, "outcome", None, None, "revenue_complete", "revenue_reason")},
+        _provenance(),
+    )
+
+    class Publisher(_Executor):
+        def run_task(self, task, dependencies):
+            return clean.to_arrow()
+
+        def publish(self, plan, outputs, lease, run_id):
+            return DuckDBBackend(con, namespace="owner").publish_generation(
+                StagedGeneration(
+                    plan.dataset,
+                    "g1",
+                    outputs,
+                    run_id=run_id,
+                    snapshot_id=plan.snapshot_id,
+                ),
+                expected_manifest=None,
+                lease=lease,
+            )
+
+    receipt = runtime.run_plan(_plan(), con=con, namespace="owner", executor=Publisher())
+    restored = runtime.open_published_frame(receipt, con=con, namespace="owner")
+
+    assert restored.roles == clean.roles
+    assert restored.columns == clean.columns
+    assert restored.provenance == clean.provenance
+    assert restored.table.column("revenue").to_pylist() == clean.table.column("revenue").to_pylist()
 
 
 def test_request_key_replay_is_available_without_executor():
@@ -449,3 +724,157 @@ def test_empty_plan_with_string_publisher_remains_successful():
 
     assert receipt.state == "succeeded"
     assert receipt.published_generation == "g0"
+
+
+def test_design_executor_refuses_multiple_output_partitions():
+    from terrine.runtime.api import _preflight_design_partitions
+
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="definition",
+        snapshot_id="snapshot",
+        graph=dependency_graph(
+            sources=("events",), definition_hash="definition", partitions=("p1", "p2")
+        ),
+    )
+
+    with pytest.raises(TerrineError) as error:
+        _preflight_design_partitions(plan)
+
+    assert error.value.code == "terrine.runtime.design_partition_unsupported"
+
+
+def test_custom_saved_recipe_executor_keeps_state_panel_budget_refusal():
+    from types import SimpleNamespace
+
+    from terrine.runtime.recipe import ModelReference, SavedPlanRecipe
+    from terrine.spec import Design, Schedule
+    from terrine.spec.state_panel import StateObservations, StatePanel
+    from tests.runtime.test_recipe import _model
+
+    con = ibis.duckdb.connect()
+    con.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+    model = _model(con)
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-02", "2025-01-04"),
+        shape=StatePanel(StateObservations("status", ("new", "old")), max_periods=3),
+    )
+    plan = plan_refresh(
+        namespace="runtime",
+        dataset="study",
+        definition_hash=design.spec_hash,
+        snapshot_id="snapshot",
+        graph=dependency_graph(
+            model, design, sources=("events",), definition_hash=design.spec_hash
+        ),
+    )
+    recipe = SavedPlanRecipe.create(
+        plan_json=plan.serialize(),
+        design=design,
+        model=ModelReference.from_model(model, owner_key="model"),
+        destination=DestinationRef("output.duckdb", "analytics", "study"),
+        namespace="runtime",
+        expected_base_manifest=None,
+    )
+
+    class Resolver:
+        def resolve(self, reference):
+            return model
+
+    class SnapshotAuthority:
+        def find_retained(self, snapshot_id, *, namespace):
+            return SimpleNamespace(model_hash=model.model_hash)
+
+    class CustomExecutor:
+        def run_snapshot_task(self, context, task, dependencies):
+            raise AssertionError("budget refusal must precede custom execution")
+
+    with pytest.raises(TerrineError) as error:
+        runtime.run_serialized_plan(
+            recipe.to_json(),
+            con=con.con,
+            namespace="runtime",
+            executor=CustomExecutor(),
+            resolver=Resolver(),
+            snapshot_authority=cast(Any, SnapshotAuthority()),
+        )
+
+    assert error.value.code == "terrine.state_panel.budget_required"
+    con.disconnect()
+
+
+def test_failed_run_retry_reuses_run_id_outputs_and_advances_fence():
+    con = duckdb.connect(":memory:")
+    destination = DestinationRef("out.duckdb", "analytics", "orders")
+    plan = plan_refresh(
+        namespace="owner",
+        dataset="orders",
+        definition_hash="definition",
+        snapshot_id="snapshot",
+        graph=dependency_graph(
+            sources=("events",), definition_hash="definition", partitions=("p1",)
+        ),
+    )
+
+    class FailsOnce(_Executor):
+        def __init__(self):
+            super().__init__()
+            self.fail = True
+
+        def run_task(self, task, dependencies):
+            if self.fail and self.calls == 1:
+                self.fail = False
+                raise RuntimeError("transient task failure")
+            self.calls += 1
+            return pa.table({"id": [self.calls]})
+
+    executor = FailsOnce()
+    with pytest.raises(RuntimeError, match="transient task failure"):
+        runtime.run_plan(
+            plan,
+            con=con,
+            namespace="owner",
+            request_key="stable-request",
+            destination=destination,
+            executor=executor,
+        )
+    failed_receipt = runtime.find_run_by_request_key(
+        "stable-request", destination=destination, con=con, namespace="owner"
+    )
+    assert failed_receipt is not None
+    first = failed_receipt
+    failed_row = con.execute(
+        "SELECT state, attempt_fence FROM owner.runtime_runs WHERE run_id=?", [first.run_id]
+    ).fetchone()
+    assert failed_row is not None
+    failed = failed_row
+
+    second = runtime.run_plan(
+        plan,
+        con=con,
+        namespace="owner",
+        request_key="stable-request",
+        destination=destination,
+        executor=executor,
+    )
+    after = runtime.get_run(second.run_id, con=con, namespace="owner")
+    task_results_row = con.execute(
+        "SELECT count(*) FROM owner.runtime_tasks WHERE run_id=? AND status='complete'",
+        [first.run_id],
+    ).fetchone()
+    advanced_fence_row = con.execute(
+        "SELECT attempt_fence FROM owner.runtime_runs WHERE run_id=?", [first.run_id]
+    ).fetchone()
+    assert task_results_row is not None
+    assert advanced_fence_row is not None
+    task_results = task_results_row[0]
+    advanced_fence = advanced_fence_row[0]
+
+    assert first.run_id == second.run_id
+    assert failed[0] == "failed"
+    assert after.durable_state == "succeeded"
+    assert advanced_fence > failed[1]
+    assert task_results == len(plan.tasks)
+    assert executor.calls == len(plan.tasks)

@@ -5,21 +5,30 @@ from collections.abc import Mapping
 import ibis
 
 from terrine.compile.columns import CompiledStudy
-from terrine.compile.layers import LayerKey, plan_layers, validate_persisted_shape
+from terrine.compile.layers import LayerKey, plan_layers
 from terrine.data import Budget
 from terrine.errors import RefusalSpec
 from terrine.model import Model
 from terrine.spec.design import Design
+from terrine.spec.validate import ensure_runtime_shape_supported
 
 _STRICT_SCAN_UNKNOWN = RefusalSpec(
     "terrine.budget.scan_unknown",
     "A strict scan-byte budget requires a verified scan bound; this backend has none. "
     "Explicitly choose non-strict scan policy after reviewing upstream work.",
 )
+
 _ANCHOR_LAYER_INVALID = RefusalSpec(
     "terrine.compile.persisted_anchor_invalid",
     "Persisted anchor layer identity does not match compiler requirements.",
 )
+
+
+def preflight_materialization_shape(design: Design, budget: Budget | None = None) -> None:
+    """Refuse unsupported persisted-layer shapes and strict unknown scan budgets."""
+    ensure_runtime_shape_supported(design.shape)
+    if budget is not None and budget.max_scan_bytes is not None and budget.strict_scan:
+        raise _STRICT_SCAN_UNKNOWN.error()
 
 
 def compose_materialized_frame(
@@ -34,9 +43,7 @@ def compose_materialized_frame(
     Persisted relations are compiler logical inputs, never final frame partitions.
     The caller verifies physical generation provenance before crossing this boundary.
     """
-    validate_persisted_shape(design, has_substitutions=bool(persisted))
-    if budget is not None and budget.max_scan_bytes is not None and budget.strict_scan:
-        raise _STRICT_SCAN_UNKNOWN.error()
+    preflight_materialization_shape(design, budget)
     from terrine.compile.dispatch import compile_design
 
     definition_hash = plan_layers(design, model).keys[0].definition_hash

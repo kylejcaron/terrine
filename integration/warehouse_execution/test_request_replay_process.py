@@ -5,9 +5,8 @@ import os
 import socket
 import subprocess
 import sys
-from pathlib import Path
-
 import time
+from pathlib import Path
 
 import duckdb
 import pyarrow as pa
@@ -30,8 +29,25 @@ from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.recipe import DestinationRef
 con=duckdb.connect(os.environ['TERRINE_DB'])
-plan=plan_refresh(namespace='owner', dataset='orders', definition_hash='def', snapshot_id='s', graph=dependency_graph(sources=('events',), definition_hash='def', partitions=('p1',)))
-execute_plan(plan, con=con, namespace='owner', run_id='lost-response-run', request_key='lost-key', destination=DestinationRef('out.duckdb','analytics','orders'), run_task=lambda task,deps: pa.table({'id':[1]}), publish=lambda plan,outputs,lease:'g1')
+plan=plan_refresh(
+    namespace='owner',
+    dataset='orders',
+    definition_hash='def',
+    snapshot_id='s',
+    graph=dependency_graph(
+        sources=('events',), definition_hash='def', partitions=('p1',)
+    ),
+)
+execute_plan(
+    plan,
+    con=con,
+    namespace='owner',
+    run_id='lost-response-run',
+    request_key='lost-key',
+    destination=DestinationRef('out.duckdb','analytics','orders'),
+    run_task=lambda task,deps: pa.table({'id':[1]}),
+    publish=lambda plan,outputs,lease:'g1',
+)
 os._exit(73)
 """
     first_result = subprocess.run(
@@ -46,8 +62,17 @@ import json, os, duckdb
 from terrine.runtime.api import find_run_by_request_key
 from terrine.runtime.recipe import DestinationRef
 con=duckdb.connect(os.environ['TERRINE_DB'])
-receipt=find_run_by_request_key('lost-key', destination=DestinationRef('out.duckdb','analytics','orders'), con=con, namespace='owner')
-print(json.dumps(None if receipt is None else {'run_id':receipt.run_id,'state':receipt.state,'generation':receipt.published_generation}))
+receipt=find_run_by_request_key(
+    'lost-key',
+    destination=DestinationRef('out.duckdb','analytics','orders'),
+    con=con,
+    namespace='owner',
+)
+print(json.dumps(None if receipt is None else {
+    'run_id':receipt.run_id,
+    'state':receipt.state,
+    'generation':receipt.published_generation,
+}))
 """
     result = subprocess.run(
         [sys.executable, "-c", second],
@@ -81,9 +106,13 @@ def test_lost_response_lookup_routes_through_owner_holding_duckdb(tmp_path):
     server = ControlServer(store, namespace="owner", endpoint=endpoint, executor=Executor())
     server.start()
     plan = plan_refresh(
-        namespace="owner", dataset="orders", definition_hash="definition",
+        namespace="owner",
+        dataset="orders",
+        definition_hash="definition",
         snapshot_id="snapshot",
-        graph=dependency_graph(sources=("events",), definition_hash="definition", partitions=("p1",)),
+        graph=dependency_graph(
+            sources=("events",), definition_hash="definition", partitions=("p1",)
+        ),
     )
     destination = DestinationRef("out.duckdb", "analytics", "orders")
     try:

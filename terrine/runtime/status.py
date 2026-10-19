@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -74,8 +75,12 @@ def get_run(run_id: str, *, con: Any, namespace: str) -> RunStatus:
         }
         updated_at = "updated_at" if "updated_at" in columns else "NULL"
         heartbeat_at = "heartbeat_at" if "heartbeat_at" in columns else "NULL"
+        snapshot_id = "snapshot_id" if "snapshot_id" in columns else "NULL"
+        task_count = "task_count" if "task_count" in columns else "NULL"
+        error_code = "error_code" if "error_code" in columns else "NULL"
         row = con.execute(
-            f"SELECT state, attempt_fence, {updated_at}, {heartbeat_at}, published_generation "
+            f"SELECT state, attempt_fence, {updated_at}, {heartbeat_at}, published_generation, "
+            f"{snapshot_id}, {task_count}, {error_code} "
             f"FROM {schema}.runtime_runs WHERE run_id=?",
             [run_id],
         ).fetchone()
@@ -87,14 +92,58 @@ def get_run(run_id: str, *, con: Any, namespace: str) -> RunStatus:
             "AND l.owner=r.run_id AND l.fence=r.attempt_fence WHERE r.run_id=?",
             [run_id],
         ).fetchone()
+        lease_expires_at = _utc(lease[0]) if lease else None
+        progress = None
+        if row[6] is not None:
+            counts = con.execute(
+                f"SELECT count(*) FILTER (WHERE status='complete'), "
+                "count(*) FILTER (WHERE status='running') "
+                f"FROM {schema}.runtime_tasks WHERE run_id=?",
+                [run_id],
+            ).fetchone()
+            progress = {
+                "completed_tasks": counts[0],
+                "running_tasks": counts[1] if row[0] in {"running", "cancel_requested"} else 0,
+                "total_tasks": row[6],
+            }
+        capture = con.execute(
+            f"SELECT cost_json,readiness_json FROM {schema}.runtime_snapshot_captures "
+            "WHERE snapshot_id=?",
+            [row[5]],
+        ).fetchone()
+        phase = row[0]
+        if row[0] == "running" and progress is not None:
+            phase = (
+                "publishing"
+                if progress["completed_tasks"] == progress["total_tasks"]
+                else "executing"
+            )
+        freshness = None
+        if "heartbeat_at" in columns:
+            freshness = (
+                "terminal"
+                if row[0] in {"succeeded", "failed", "cancelled"}
+                else "current"
+                if lease_expires_at is not None and lease_expires_at > datetime.now(UTC)
+                else "stale"
+            )
+        cost = json.loads(capture[0]) if capture is not None else {}
+        observed = _observed_costs(run_id, con=con, namespace=namespace, schema=schema)
+        if observed is not None:
+            cost.update(observed)
         return RunStatus(
             run_id,
             row[0],
             row[1],
             _utc(row[2]),
             _utc(row[3]),
-            _utc(lease[0]) if lease else None,
-            cost=_observed_costs(run_id, con=con, namespace=namespace, schema=schema),
+            lease_expires_at,
+            freshness=freshness,
+            phase=phase,
+            progress=progress,
+            cost=cost or None,
+            readiness=json.loads(capture[1]) if capture is not None else None,
+            error_code=row[7],
             pinned_result_ref=row[4],
             latest_event_cursor=_latest_event_cursor(run_id, con=con, namespace=namespace),
         )

@@ -1,4 +1,15 @@
 # Changelog
+
+## Added
+- Optional, preflight-backed DoubleML, DoWhy and same-connection duckreg recipes, with real integration examples and a dedicated CI job.
+- Snapshot-scoped warehouse export checks and exact per-reason exclusion counts; DoWhy refuses repeated-unit and declared-weight datasets rather than forwarding ignored arguments.
+- Add distinct lifelines KM-array and feature-only Cox-dataframe hand-offs, preserving elapsed entry times, declared weights/clusters, and exact exclusions; risk-set conversion retains coarsened counts and refuses delayed entry or incomplete trajectories.
+- Add diff-diff first-treatment encoding for observed persistent-adoption panels, with never-treated zero, preserved calendar gaps, and treatment-history validation before outcome exclusions; exercise Callaway–Sant'Anna, Sun–Abraham and event studies.
+
+## Fixed
+- Refuse missing pandas with the coded optional-dependency error before decoding diff-diff timestamp periods, including nanosecond values.
+- Keep state-classification null assertions valid across the supported pandas 2.x and 3.x representations.
+
 ## Removed
 - Native treatment-effect estimators, inferential/propensity diagnostics, and simulation truth/calibration claims. Terrine now delivers datasets and descriptive summaries; downstream libraries own estimation.
 
@@ -104,5 +115,12 @@
 - Add version-2 bounded synthetic event/anchor/roster/correction streams, independent exact histogram references, opt-in real compiler/retained-runtime DuckDB benchmarks, sanitized measurements, and an explicitly owner-gated live warehouse tier without running paid resources.
 - Preserve sanitized scan/spend observations after authorized live workload failures and cleanup, retain over-cap evidence in immutable error context, and aggregate failed/refused benchmark records without inventing unavailable measurements.
 - Preserve native nanosecond range and finite-retention endpoints under nonzero elapsed offsets, including exact follow-up completeness and virtual endpoints beyond native timestamp storage.
+- Add owner-planned Airflow and Dagster orchestration triggers with durable invocation replay, partition-scoped snapshots, and recipe-routed execution.
+- Add a Dagster same-root fenced-retry acceptance test and dbt Core after-build recipe with reviewed manifest relations, a local DuckDB owner handoff, and two-build snapshot replay coverage.
+- Document optional orchestrator installation, owner-side planning/status limits, retry semantics, partition scope, and dbt stop/build/restart lifecycle.
 - Demonstrate real Model/Design saved-recipe execution from retained DuckDB inputs, exact-generation reads, operator-declared corrections, and same-snapshot clean-rebuild parity; cover partition retries and owner-held lost-response lookup in warehouse integration tests.
-- Refuse fingerprint-valid serialized plans whose strict scan budget cannot be satisfied by known scan bounds, preserving the refusal code through saved recipes.
+- Validate orchestrator row-dependent gates on reopened pinned snapshots with only selected sources and units, bind current published generations case-insensitively from the authoritative manifest, and wait through Airflow cancellation requests while returning final generation metadata; cover terminal cancellation at adapter boundaries.
+- Use the built-in Design executor for owner-planned Dagster partitions and dbt build cycles; verify compiled values and exact-generation metadata, and refuse unknown eligibility on pinned inputs before staging or publication.
+- Derive runtime layer identities from retained input schemas and execute roster-only owner recipes without accessing unused fact relations or exporting redundant roster payloads.
+- Unify retained shape admission and saved-recipe identity with verified scan evidence, while exposing snapshot capture accounting alongside separately observed completed-task artifacts.
+- Reuse verified scheduled anchors and additive prefixes in binned and observed StatePanel composition, including terminal metric endpoints and baseline features, without discarding supplied logical inputs.

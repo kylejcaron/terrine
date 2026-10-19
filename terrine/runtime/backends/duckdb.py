@@ -10,6 +10,7 @@ import ibis
 import pyarrow as pa
 from ibis.backends.duckdb import Backend as IbisDuckDBBackend
 
+from terrine.errors import RefusalSpec
 from terrine.runtime.backends.base import (
     BackendCapabilities,
     PublicationReceipt,
@@ -22,6 +23,11 @@ from terrine.runtime.planner import TaskSpec
 from terrine.runtime.state import RuntimeStore, snapshot_manifest_reference
 
 __all__ = ["DuckDBBackend"]
+
+_LAZY_DURATION_UNSUPPORTED = RefusalSpec(
+    "terrine.runtime.lazy_duration_unsupported",
+    "DuckDB lazy reads cannot represent duration unit {unit!r} in column {column!r}; use {route}.",
+)
 
 
 class DuckDBBackend:
@@ -78,6 +84,11 @@ class DuckDBBackend:
             "dataset VARCHAR NOT NULL, generation VARCHAR NOT NULL, "
             "partition VARCHAR NOT NULL, table_name VARCHAR NOT NULL, "
             "digest VARCHAR NOT NULL, PRIMARY KEY(dataset, generation, partition))"
+        )
+        self.con.execute(
+            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_partition_metadata ("
+            "dataset VARCHAR NOT NULL, generation VARCHAR NOT NULL, partition VARCHAR NOT NULL, "
+            "schema_metadata BLOB NOT NULL, PRIMARY KEY(dataset, generation, partition))"
         )
         self.con.execute(
             f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_references ("
@@ -182,7 +193,7 @@ class DuckDBBackend:
                         raise ValueError("retry partition content does not match staged generation")
                     table_name = existing[1]
                 else:
-                    self.con.register("__terrine_partition", table)
+                    self.con.register("__terrine_partition", _storage_table(table))
                     self.con.execute(
                         f"CREATE TABLE {self._schema}.{_quote(table_name)} AS "
                         "SELECT * FROM __terrine_partition"
@@ -191,6 +202,22 @@ class DuckDBBackend:
                     self.con.execute(
                         f"INSERT INTO {self._schema}.runtime_partitions VALUES (?, ?, ?, ?, ?)",
                         [stage.dataset, stage.generation, partition, table_name, digest],
+                    )
+                metadata = table.schema.serialize().to_pybytes()
+                saved_metadata = self.con.execute(
+                    f"SELECT schema_metadata FROM {self._schema}.runtime_partition_metadata "
+                    "WHERE dataset=? AND generation=? AND partition=?",
+                    [stage.dataset, stage.generation, partition],
+                ).fetchone()
+                if saved_metadata is None:
+                    self.con.execute(
+                        f"INSERT INTO {self._schema}.runtime_partition_metadata "
+                        "VALUES (?, ?, ?, ?)",
+                        [stage.dataset, stage.generation, partition, metadata],
+                    )
+                elif bytes(saved_metadata[0]) != metadata:
+                    raise ValueError(
+                        "retry partition Arrow schema does not match staged generation"
                     )
                 stored.append(partition)
             self.con.execute(
@@ -260,6 +287,39 @@ class DuckDBBackend:
             self.fault_injector("after_commit")
         return PublicationReceipt(stage.dataset, stage.generation, version, tuple(stored))
 
+    def reuse_generation(
+        self, dataset: str, *, expected_manifest: str | None, lease: Any, run_id: str
+    ) -> PublicationReceipt:
+        """Record a no-change run against the current immutable publication."""
+        if lease.resource != f"dataset:{dataset}":
+            raise ValueError("lease resource does not match dataset")
+        leases = LeaseStore(self.con, namespace=self.namespace)
+        self.con.execute("BEGIN TRANSACTION")
+        try:
+            leases.guard_publication(lease)
+            current = self.con.execute(
+                f"SELECT generation,version,snapshot_id FROM {self._schema}.runtime_manifests "
+                "WHERE dataset=?",
+                [dataset],
+            ).fetchone()
+            if current is None or current[0] != expected_manifest:
+                raise ValueError("no-change refresh requires the current base publication")
+            generation, version, snapshot_id = current
+            self._record_run_publication(
+                StagedGeneration(dataset, generation, {}, run_id=run_id, snapshot_id=snapshot_id),
+                version,
+            )
+            partitions = self.con.execute(
+                f"SELECT partition FROM {self._schema}.runtime_partitions "
+                "WHERE dataset=? AND generation=? ORDER BY partition",
+                [dataset, generation],
+            ).fetchall()
+            self.con.execute("COMMIT")
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise
+        return PublicationReceipt(dataset, generation, version, tuple(row[0] for row in partitions))
+
     def current_generation(self, dataset: str) -> str | None:
         return self._current_generation(dataset)
 
@@ -297,12 +357,29 @@ class DuckDBBackend:
         ).fetchone()
         if row is None:
             raise KeyError(partition)
-        return self.con.execute(f"SELECT * FROM {self._schema}.{_quote(row[0])}").to_arrow_table()
+        table = self.con.execute(f"SELECT * FROM {self._schema}.{_quote(row[0])}").to_arrow_table()
+        schema = self._partition_schema(receipt, partition)
+        for index, field in enumerate(schema):
+            if pa.types.is_null(field.type):
+                if table.column(index).null_count != table.num_rows:
+                    raise ValueError("published null column contains non-null values")
+                table = table.set_column(index, field, pa.nulls(table.num_rows))
+        return table.cast(schema)
+
+    def _partition_schema(self, receipt: PublicationReceipt, partition: str) -> pa.Schema:
+        metadata = self.con.execute(
+            f"SELECT schema_metadata FROM {self._schema}.runtime_partition_metadata "
+            "WHERE dataset=? AND generation=? AND partition=?",
+            [receipt.dataset, receipt.generation, partition],
+        ).fetchone()
+        if metadata is None:
+            raise ValueError("published partition has no retained Arrow schema")
+        return pa.ipc.read_schema(pa.BufferReader(bytes(metadata[0])))
 
     def read_relation(
         self, receipt: PublicationReceipt, partition: str, *, ibis_backend: Any
     ) -> ibis.Table:
-        """Resolve a committed physical partition as a lazy Ibis table relation."""
+        """Resolve a committed partition with its logical types as a lazy Ibis relation."""
         row = self.con.execute(
             f"SELECT table_name FROM {self._schema}.runtime_partitions "
             "WHERE dataset=? AND generation=? AND partition=?",
@@ -310,17 +387,34 @@ class DuckDBBackend:
         ).fetchone()
         if row is None:
             raise KeyError(partition)
+        schema = self._partition_schema(receipt, partition)
+        for field in schema:
+            if pa.types.is_duration(field.type) and field.type.unit == "ns":
+                raise _LAZY_DURATION_UNSUPPORTED.error(
+                    column=field.name,
+                    unit=field.type.unit,
+                    route="DuckDBBackend.read_partition or open_published_frame",
+                )
         model_connection = getattr(ibis_backend, "con", None)
         if model_connection is self.con:
-            return ibis_backend.table(row[0], database=self.namespace)
-        if self._ibis_backend is None:
-            timezone = self.con.execute("SELECT current_setting('TimeZone')").fetchone()[0]
-            try:
-                self._ibis_backend = IbisDuckDBBackend.from_connection(self.con)
-            finally:
-                escaped_timezone = timezone.replace("'", "''")
-                self.con.execute(f"SET TimeZone = '{escaped_timezone}'")
-        return self._ibis_backend.table(row[0], database=self.namespace)
+            backend = ibis_backend
+        else:
+            if self._ibis_backend is None:
+                timezone = self.con.execute("SELECT current_setting('TimeZone')").fetchone()[0]
+                try:
+                    self._ibis_backend = IbisDuckDBBackend.from_connection(self.con)
+                finally:
+                    escaped_timezone = timezone.replace("'", "''")
+                    self.con.execute(f"SET TimeZone = '{escaped_timezone}'")
+            backend = self._ibis_backend
+        relation = backend.table(row[0], database=self.namespace)
+        restored = {}
+        for field in schema:
+            if pa.types.is_duration(field.type):
+                restored[field.name] = relation[field.name].as_interval(field.type.unit)
+            elif pa.types.is_null(field.type):
+                restored[field.name] = ibis.null()
+        return relation.mutate(**restored) if restored else relation
 
     def reconcile(self, run_id: str) -> Reconciliation:
         row = self.con.execute(
@@ -359,3 +453,15 @@ def _digest(table: pa.Table) -> str:
     with pa.ipc.new_stream(sink, table.schema) as writer:
         writer.write_table(table)
     return hashlib.sha256(sink.getvalue().to_pybytes()).hexdigest()
+
+
+def _storage_table(table: pa.Table) -> pa.Table:
+    """Keep duration ticks exact instead of converting them to DuckDB calendar intervals."""
+    durations = [
+        index for index, field in enumerate(table.schema) if pa.types.is_duration(field.type)
+    ]
+    for index in durations:
+        table = table.set_column(
+            index, table.schema.field(index).name, table.column(index).cast(pa.int64())
+        )
+    return table

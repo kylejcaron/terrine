@@ -68,6 +68,11 @@ Arrow-backed types; `to_polars` and `to_pandas` require their respective extras.
 Arrow exports carry the same metadata. `frame.expr` is an explicitly unsafe Ibis
 escape hatch: executing it directly bypasses validation, budgets and provenance.
 
+See [library hand-offs](docs/guides/library-handoffs.md) for preflight-backed
+DoubleML, DoWhy and same-connection duckreg recipes, plus lifelines and diff-diff
+dataset conversions. Downstream libraries are optional; Terrine makes no causal
+estimates or identification claims.
+
 Output row/byte limits abort instead of returning truncated success. They do
 **not** bound source scans, query work or peak memory. Native scan costs are
 unknown; a strict `max_scan_bytes` therefore refuses before integrity reads.
@@ -107,6 +112,14 @@ bound to the receipt's exact generation even after a newer generation becomes
 current. The durable DuckDB owner serializes publication and cancellation;
 separate processes must use owner IPC while that owner holds the database.
 Cancellation is a durable request, not proof that backend work stopped.
+
+## Optional orchestration triggers
+
+See the [orchestrator guide](docs/guides/orchestrators.md) for owner IPC,
+partition and retry behavior, and the local DuckDB dbt lifecycle. Runnable
+examples: [Airflow](examples/orchestrators/airflow_materialization.py),
+[Dagster](examples/orchestrators/dagster_materialization.py), and
+[dbt Core after-build](examples/orchestrators/dbt_core_after_build.py).
 
 ### Owned inputs for repeated builds
 

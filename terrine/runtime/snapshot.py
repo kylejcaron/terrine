@@ -325,6 +325,37 @@ class SnapshotAuthority:
             temporary_receipt = receipt_path.with_suffix(".json.tmp")
             temporary_receipt.write_text(receipt.to_json(), encoding="utf-8")
             temporary_receipt.replace(receipt_path)
+            store = RuntimeStore(_native.raw_connection(con), namespace=namespace)
+            store.initialize()
+            store.con.execute(
+                f"INSERT INTO {store._schema}.runtime_snapshot_captures VALUES (?, ?, ?)",
+                [
+                    snapshot_id,
+                    json.dumps(
+                        {
+                            "capture": {
+                                "snapshot_id": snapshot_id,
+                                "artifact_bytes": artifact.stat().st_size,
+                                "root_count": len(entries),
+                                "scan_bytes": None,
+                            }
+                        },
+                        sort_keys=True,
+                    ),
+                    json.dumps(
+                        {
+                            name: {
+                                "start": model.readiness.for_fact(name).start.isoformat(),
+                                "end_exclusive": model.readiness.for_fact(
+                                    name
+                                ).end_exclusive.isoformat(),
+                            }
+                            for name in sorted(source_names)
+                        },
+                        sort_keys=True,
+                    ),
+                ],
+            )
             return receipt
         finally:
             published.close()

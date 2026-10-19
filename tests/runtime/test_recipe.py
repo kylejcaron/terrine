@@ -103,7 +103,12 @@ def test_saved_plan_recipe_reconstructs_design_and_verifies_owner_model_in_fresh
         )
         assert resolved_plan.expected_base_manifest == "manifest-1"
         assert resolved_plan.expected_base_manifest_bound
+        assert resolved_plan.recipe.reconstruction_hash == restored.recipe_hash
+        assert resolved_plan.recipe.schema_version == 2
+        assert resolved_plan.tasks == plan.tasks
+        assert resolved_plan.scan_bytes == plan.scan_bytes
         restored_plan = type(resolved_plan).deserialize(resolved_plan.serialize())
+        assert restored_plan == resolved_plan
         assert restored_plan.expected_base_manifest == "manifest-1"
         assert restored_plan.expected_base_manifest_bound
         assert resolved_model is model
@@ -231,13 +236,20 @@ def test_saved_recipe_preserves_strict_unknown_scan_refusal():
         con.disconnect()
 
 
-def test_saved_plan_rejects_owner_model_declaration_mismatch():
+@pytest.mark.parametrize(
+    "binding", ("catalog_hash", "units_hash", "event_ids_hash", "readiness_hash", "model_hash")
+)
+def test_saved_plan_rejects_owner_model_declaration_mismatch(binding):
+    from dataclasses import replace
+
     con = ibis.duckdb.connect()
     try:
         con.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
         model = _model(con)
         design = Design("user", FixedDate("2025-01-15"))
-        reference = ModelReference.from_model(model, owner_key="owner-model")
+        reference = replace(
+            ModelReference.from_model(model, owner_key="owner-model"), **{binding: "changed"}
+        )
         plan = plan_refresh(
             namespace="runtime",
             dataset="study",
@@ -255,19 +267,8 @@ def test_saved_plan_rejects_owner_model_declaration_mismatch():
             namespace="runtime",
             expected_base_manifest=None,
         )
-        changed = ModelReference(
-            **{
-                **reference.to_dict(),
-                "catalog_hash": "changed",
-            }
-        )
-
-        class ChangedResolver:
-            def resolve(self, reference):
-                return type("Resolved", (), {"catalog_hash": changed.catalog_hash})()
-
         with pytest.raises(TerrineError) as error:
-            resolve_plan(recipe, resolver=ChangedResolver(), namespace="runtime")
+            resolve_plan(recipe, resolver=_Resolver(model), namespace="runtime")
         assert error.value.code == "terrine.runtime.plan_recipe_mismatch"
     finally:
         con.disconnect()

@@ -246,8 +246,14 @@ class Model:
             *(TableRef(kind="table", name=unit.table) for unit in units.values()),
         )
         for relation in relations:
-            if self._relation(relation).schema() != context.resolve(relation).schema():
-                raise _SCHEMA.error(field="execution schema", column="<relation>")
+            declared = self._relation(relation).schema()
+            retained = context.resolve(relation).schema()
+            compatible = declared.names == retained.names and all(
+                declared[name].copy(nullable=True) == retained[name].copy(nullable=True)
+                for name in declared.names
+            )
+            if not compatible:
+                raise _SCHEMA.error(field="execution schema", column=repr(relation))
         return self._bind(
             self.catalog,
             con=context.con,

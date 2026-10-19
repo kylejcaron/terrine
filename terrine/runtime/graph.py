@@ -47,9 +47,19 @@ def dependency_graph(
 ) -> DependencyGraph:
     """Build stable logical layer dependencies; no runtime execution occurs."""
     source_names = tuple(sources) if sources is not None else _model_sources(model)
-    if not source_names:
-        raise ValueError("at least one source is required")
     selector_nodes = _selector_nodes(model, design, expression_timings)
+    if not source_names and not selector_nodes:
+        units = getattr(model, "units", None) or {}
+        unit_name = getattr(design, "unit", None)
+        if not isinstance(unit_name, str) or unit_name not in units:
+            raise ValueError("at least one source is required")
+        return _roster_only_graph(
+            unit_name,
+            design,
+            definition_hash=definition_hash,
+            partitions=partitions,
+            include_exports=include_exports,
+        )
     source_names = tuple(sorted(set(source_names) | set(selector_nodes)))
     fingerprint = definition_hash or getattr(design, "spec_hash", None) or "unbound"
     partition_names = tuple(partitions)
@@ -64,7 +74,8 @@ def dependency_graph(
             daily = LayerNode("daily", source, partition, fingerprint, "pending")
             prefix = LayerNode("prefix", source, partition, fingerprint, "pending")
             anchor = LayerNode("anchor", source, partition, fingerprint, "pending")
-            frame = LayerNode("frame", source, partition, fingerprint, "pending")
+            frame_source = source_names[0] if design is not None else source
+            frame = LayerNode("frame", frame_source, partition, fingerprint, "pending")
             nodes.extend((daily, prefix, anchor))
             edges.append((daily, prefix))
             if tracks_certificates:
@@ -87,14 +98,17 @@ def dependency_graph(
                     nodes.append(baseline)
                     edges.append((anchor, baseline))
                     dependencies.append(baseline)
-                nodes.append(frame)
+                if frame not in nodes:
+                    nodes.append(frame)
                 edges.extend((dependency, frame) for dependency in dependencies)
             else:
-                nodes.append(frame)
+                if frame not in nodes:
+                    nodes.append(frame)
                 edges.append((anchor, frame))
             if include_exports:
-                export = LayerNode("export", source, partition, fingerprint, "pending")
-                nodes.append(export)
+                export = LayerNode("export", frame_source, partition, fingerprint, "pending")
+                if export not in nodes:
+                    nodes.append(export)
                 edges.append((frame, export))
             for selector_source in sorted(selector_nodes):
                 selector = LayerNode("selector", selector_source, partition, fingerprint, "pending")
@@ -102,6 +116,30 @@ def dependency_graph(
                     nodes.append(selector)
                 edges.append((selector, frame))
     return DependencyGraph(tuple(nodes), tuple(dict.fromkeys(edges)))
+
+
+def _roster_only_graph(
+    unit: str,
+    design: object,
+    *,
+    definition_hash: str | None,
+    partitions: Iterable[str],
+    include_exports: bool,
+) -> DependencyGraph:
+    fingerprint = definition_hash or getattr(design, "spec_hash", None) or "unbound"
+    nodes: list[LayerNode] = []
+    edges: list[tuple[LayerNode, LayerNode]] = []
+    for partition in partitions:
+        roster = LayerNode("roster", unit, partition, fingerprint, "pending")
+        anchor = LayerNode("anchor", unit, partition, fingerprint, "pending")
+        frame = LayerNode("frame", unit, partition, fingerprint, "pending")
+        nodes.extend((roster, anchor, frame))
+        edges.extend(((roster, anchor), (anchor, frame)))
+        if include_exports:
+            export = LayerNode("export", unit, partition, fingerprint, "pending")
+            nodes.append(export)
+            edges.append((frame, export))
+    return DependencyGraph(tuple(nodes), tuple(edges))
 
 
 def _selector_nodes(

@@ -1,5 +1,6 @@
 from terrine.runtime.api import (
     CostProvider,
+    DesignExecutor,
     Executor,
     RunReceipt,
     ScanAuthorization,
@@ -9,6 +10,7 @@ from terrine.runtime.api import (
     cancel_run,
     find_run_by_request_key,
     get_run,
+    open_published_frame,
     open_published_generation,
     plan_refresh,
     read_run_events,
@@ -18,6 +20,7 @@ from terrine.runtime.api import (
 from terrine.runtime.events import EventPage, RunEvent
 from terrine.runtime.graph import DependencyGraph, dependency_graph
 from terrine.runtime.owner import RuntimeOwner, SnapshotRetention
+from terrine.runtime.planning import OwnerPlanner, PlanInvocation, PlanRequest
 from terrine.runtime.recipe import (
     DestinationRef,
     ModelReference,
@@ -50,6 +53,7 @@ __all__ = [
     "CostProvider",
     "DefinitionVersion",
     "DependencyGraph",
+    "DesignExecutor",
     "DestinationRef",
     "EventPage",
     "Executor",
@@ -58,6 +62,9 @@ __all__ = [
     "LayerNode",
     "ModelReference",
     "ModelResolver",
+    "OwnerPlanner",
+    "PlanInvocation",
+    "PlanRequest",
     "ReopenableSnapshot",
     "RunEvent",
     "RunReceipt",
@@ -76,6 +83,7 @@ __all__ = [
     "dependency_graph",
     "find_run_by_request_key",
     "get_run",
+    "open_published_frame",
     "open_published_generation",
     "plan_refresh",
     "read_run_events",

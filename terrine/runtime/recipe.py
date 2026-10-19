@@ -197,7 +197,13 @@ class SavedPlanRecipe:
     def to_json(self) -> str:
         return json.dumps(self._data(include_hash=True), sort_keys=True, separators=(",", ":"))
 
-    def pin_snapshot(self, store: RuntimeStore, *, reference: str | None = None) -> str:
+    def pin_snapshot(
+        self,
+        store: RuntimeStore,
+        *,
+        reference: str | None = None,
+        _in_transaction: bool = False,
+    ) -> str:
         """Retain this verified recipe's exact input snapshot."""
         verified = SavedPlanRecipe.from_json(self.to_json())
         plan = RefreshPlan.deserialize(verified.plan_json)
@@ -211,6 +217,7 @@ class SavedPlanRecipe:
             plan.snapshot_id,
             kind="saved_plan",
             reference=reference or verified.recipe_hash,
+            _in_transaction=_in_transaction,
         )
         return plan.snapshot_id
 
@@ -277,7 +284,9 @@ def _bind_recipe_plan(recipe: SavedPlanRecipe, *, namespace: str) -> RefreshPlan
         or not plan.snapshot_id
     ):
         raise _INVALID.error(reason="plan identity differs from owner-bound references")
-    return plan.bind_base_manifest(restored.expected_base_manifest)
+    return plan.bind_base_manifest(
+        restored.expected_base_manifest, reconstruction_hash=restored.recipe_hash
+    )
 
 
 def resolve_plan(

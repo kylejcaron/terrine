@@ -59,7 +59,7 @@ def _named_nodes(
         if not isinstance(value, allowed):
             raise TypeError(f"{field_name} values must be typed specification nodes")
         copied[key] = value
-    return MappingProxyType(copied)
+    return MappingProxyType({key: copied[key] for key in sorted(copied)})
 
 
 @dataclass(frozen=True, slots=True, init=False)

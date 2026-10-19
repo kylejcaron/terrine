@@ -598,6 +598,7 @@ def test_expired_attempt_cannot_fail_or_overwrite_successful_retry():
 def test_existing_runtime_budget_refusal_codes_are_used():
     from terrine.data import Budget
     from terrine.errors import TerrineError
+    from terrine.runtime.status import get_run
 
     con = duckdb.connect(":memory:")
     plan = plan_refresh(
@@ -618,6 +619,10 @@ def test_existing_runtime_budget_refusal_codes_are_used():
             publish=lambda plan, outputs, lease: "g1",
         )
     assert error.value.code == "terrine.budget.rows_exceeded"
+    status = get_run("coded-budget", con=con, namespace="owner")
+    assert status.phase == "failed"
+    assert status.error_code == error.value.code
+    assert status.progress["running_tasks"] == 0
 
     byte_limited_plan = plan_refresh(
         namespace="owner",
@@ -627,16 +632,20 @@ def test_existing_runtime_budget_refusal_codes_are_used():
         graph=dependency_graph(sources=("events",), definition_hash="def", partitions=("p1",)),
         budget=Budget(max_output_bytes=0),
     )
+    byte_con = duckdb.connect(":memory:")
     with pytest.raises(TerrineError) as byte_error:
         execute_plan(
             byte_limited_plan,
-            con=duckdb.connect(":memory:"),
+            con=byte_con,
             namespace="owner",
             run_id="coded-byte-budget",
             run_task=lambda task, dependencies: pa.table({"id": [1]}),
             publish=lambda plan, outputs, lease: "g1",
         )
     assert byte_error.value.code == "terrine.budget.output_bytes_exceeded"
+    assert get_run("coded-byte-budget", con=byte_con, namespace="owner").error_code == (
+        byte_error.value.code
+    )
 
 
 def test_invalid_namespace_is_rejected_before_sql_execution():

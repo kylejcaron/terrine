@@ -1,5 +1,6 @@
 # ruff: noqa: F811
 from dataclasses import replace
+from decimal import Decimal
 
 import ibis
 import pytest
@@ -506,3 +507,89 @@ def test_reanchored_layer_plan_uses_event_resolution(column_model):
     )
     keys = plan_layers(design, column_model).keys
     assert {key.resolution for key in keys if key.layer == "prefix"} == {"event"}
+
+
+@pytest.mark.parametrize("state_kind", ["binned", "observed"])
+def test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors(column_model, state_kind):
+    from terrine.compile.dispatch import compile_design
+    from terrine.compile.layers import build_layer
+    from terrine.data import Coverage
+    from terrine.spec import BinnedMetricState, Schedule, StateObservations, StatePanel
+
+    con = column_model.con
+    con.raw_sql(
+        "INSERT INTO events VALUES "
+        "('a', '2025-01-01 12:00:00+00', 5, 'old'), "
+        "('a', '2025-01-03 12:00:00+00', 6, 'new')"
+    )
+    definition = column_model.catalog.model_dump(mode="python")
+    readiness = {"events": Coverage("2025-01-01", "2025-01-05")}
+    state: BinnedMetricState | StateObservations = BinnedMetricState(
+        "total", cutpoints=(20,), levels=("low", "high")
+    )
+    if state_kind == "observed":
+        con.raw_sql(
+            "CREATE TABLE statuses AS SELECT user_id, ts::TIMESTAMPTZ AS ts, state "
+            "FROM (VALUES "
+            "('a', '2025-01-02 00:00:00+00', 'active'), "
+            "('a', '2025-01-03 00:00:00+00', 'active'), "
+            "('a', '2025-01-04 00:00:00+00', 'closed')) AS points(user_id, ts, state)"
+        )
+        definition["sources"]["statuses"] = {
+            "relation": {"kind": "table", "name": "statuses"},
+            "timestamp": "ts",
+            "entities": {"user": "user_id"},
+            "facts": [],
+            "properties": ["state"],
+            "dimensions": [],
+        }
+        definition["properties"]["state"] = {
+            "source": "statuses",
+            "column": "state",
+            "dtype": "string",
+            "as_of": "event_time",
+        }
+        readiness["statuses"] = Coverage("2025-01-01", "2025-01-05")
+        state = StateObservations("state", ("active", "closed"), absorbing=("closed",))
+    model = Model.from_catalog(
+        Catalog.model_validate(definition),
+        con=con,
+        units=column_model.units,
+        readiness=readiness,
+    )
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-02", "2025-01-04"),
+        features={"total": agg("total", window=("-1d", "0s"))},
+        shape=StatePanel(
+            state,
+            max_periods=2,
+            baseline_features={"baseline_total": agg("total", window=("-1d", "0s"))},
+        ),
+    )
+    ordinary = compile_design(design, model)
+    expected = con.to_pyarrow(ordinary.table.filter(ordinary.table.unit == "a").order_by("t0"))
+    assert expected["total"].to_pylist() == [Decimal(5), Decimal(10)]
+    assert expected["baseline_total"].to_pylist() == [Decimal(5), Decimal(5)]
+    persisted = {
+        replace(key, snapshot_id="frozen"): con.create_table(
+            f"frozen_state_layer_{index}", obj=build_layer(design, model, key)
+        )
+        for index, key in enumerate(plan_layers(design, model).keys)
+    }
+    anchor_key = next(key for key in persisted if key.layer == "anchor")
+    anchors = persisted[anchor_key]
+    persisted[anchor_key] = anchors.filter(anchors.unit == "a")
+    con.raw_sql("UPDATE events SET amount=amount+100")
+
+    cached = compose_materialized_frame(design, model, persisted=persisted)
+    actual = con.to_pyarrow(cached.table.order_by("t0"))
+    assert actual.equals(expected)
+    assert cached._anchors.table is persisted[anchor_key]
+    assert cached.roles == ordinary.roles
+    assert cached.columns == ordinary.columns
+    assert cached.expression_timings == ordinary.expression_timings
+    fresh = compile_design(design, model)
+    assert con.to_pyarrow(fresh.table.filter(fresh.table.unit == "a").order_by("t0"))[
+        "total"
+    ].to_pylist() == [Decimal(105), Decimal(210)]

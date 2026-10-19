@@ -102,6 +102,8 @@ def test_cancel_waits_on_publication_boundary(monkeypatch):
         RuntimeStore(con, namespace="owner"), namespace="owner", endpoint=endpoint
     )
     server.start()
+    status = ControlClient(endpoint, namespace="owner").get_run("cancel-boundary")
+    assert status.durable_state == "running"
     cancellation = []
     canceller = threading.Thread(
         target=lambda: cancellation.append(

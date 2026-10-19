@@ -355,3 +355,18 @@ def test_scan_grant_must_name_exact_plan(owner):
         )
     assert error.value.code == "terrine.budget.scan_authority_unavailable"
     assert owner.calls == []
+
+
+def test_reconstruction_binding_preserves_scan_evidence_and_canonical_fingerprint(owner):
+    plan = make_plan(owner)
+    identity = "a" * 64
+    bound = plan.bind_base_manifest("generation-1", reconstruction_hash=identity)
+    assert bound.recipe.reconstruction_hash == identity
+    assert bound.scan_bytes == plan.scan_bytes
+    assert bound.tasks == plan.tasks
+    assert bound.recipe.fingerprint != plan.recipe.fingerprint
+    assert RefreshPlan.deserialize(bound.serialize()) == bound
+    rebound = bound.bind_base_manifest("generation-2")
+    assert rebound.recipe.reconstruction_hash == identity
+    assert RefreshPlan.deserialize(rebound.serialize()) == rebound
+    assert owner.calls == []

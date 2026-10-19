@@ -47,25 +47,25 @@ class PlanRecipe:
     fingerprint: str
     expected_base_manifest: str | None = None
     expected_base_manifest_bound: bool = False
+    reconstruction_hash: str | None = None
 
     def to_json(self) -> str:
-        return json.dumps(
-            {
-                "schema_version": self.schema_version,
-                "namespace": self.namespace,
-                "dataset": self.dataset,
-                "definition_hash": self.definition_hash,
-                "snapshot_id": self.snapshot_id,
-                "tasks": self.tasks,
-                "budget": self.budget,
-                "change_evidence": self.change_evidence,
-                "expected_base_manifest": self.expected_base_manifest,
-                "expected_base_manifest_bound": self.expected_base_manifest_bound,
-                "fingerprint": self.fingerprint,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
+        payload = {
+            "schema_version": self.schema_version,
+            "namespace": self.namespace,
+            "dataset": self.dataset,
+            "definition_hash": self.definition_hash,
+            "snapshot_id": self.snapshot_id,
+            "tasks": self.tasks,
+            "budget": self.budget,
+            "change_evidence": self.change_evidence,
+            "expected_base_manifest": self.expected_base_manifest,
+            "expected_base_manifest_bound": self.expected_base_manifest_bound,
+            "fingerprint": self.fingerprint,
+        }
+        if self.reconstruction_hash is not None:
+            payload["reconstruction_hash"] = self.reconstruction_hash
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +157,7 @@ class RefreshPlan:
             change_evidence = data.get("change_evidence")
             expected_base_manifest = data.get("expected_base_manifest")
             expected_base_manifest_bound = data.get("expected_base_manifest_bound", False)
+            reconstruction_hash = data.get("reconstruction_hash")
             fingerprint = data["fingerprint"]
             if (
                 type(schema_version) is not int
@@ -197,6 +198,10 @@ class RefreshPlan:
                 "expected_base_manifest": expected_base_manifest,
                 "expected_base_manifest_bound": expected_base_manifest_bound,
             }
+            if reconstruction_hash is not None:
+                if not isinstance(reconstruction_hash, str) or len(reconstruction_hash) != 64:
+                    raise ValueError("serialized reconstruction binding is invalid")
+                payload["reconstruction_hash"] = reconstruction_hash
             expected = hashlib.sha256(
                 json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
@@ -223,6 +228,7 @@ class RefreshPlan:
             fingerprint,
             expected_base_manifest,
             expected_base_manifest_bound,
+            reconstruction_hash,
         )
         return cls(
             namespace,
@@ -241,14 +247,23 @@ class RefreshPlan:
     def serialize(self) -> bytes:
         return self.recipe.to_json().encode("utf-8")
 
-    def bind_base_manifest(self, generation: str | None) -> RefreshPlan:
+    def bind_base_manifest(
+        self, generation: str | None, *, reconstruction_hash: str | None = None
+    ) -> RefreshPlan:
         """Bind publication preconditions into the canonical plan fingerprint."""
         if generation is not None and (not isinstance(generation, str) or not generation):
             raise ValueError("expected base manifest must be a nonempty generation or None")
         if RefreshPlan.deserialize(self.serialize()) != self:
             raise ValueError("runtime plan fields differ from its canonical recipe")
         recipe = replace(
-            self.recipe, expected_base_manifest=generation, expected_base_manifest_bound=True
+            self.recipe,
+            expected_base_manifest=generation,
+            expected_base_manifest_bound=True,
+            reconstruction_hash=(
+                self.recipe.reconstruction_hash
+                if reconstruction_hash is None
+                else reconstruction_hash
+            ),
         )
         payload = json.loads(recipe.to_json())
         del payload["fingerprint"]
