@@ -45,7 +45,15 @@ def build_materialization_asset(
         request = plan_request_provider({"partition_key": partition, "run_id": run.run_id})
         if not isinstance(request, PlanRequest):
             raise RuntimeError("Terrine planning provider must return PlanRequest")
-        request = replace(request, invocation_id=invocation_id, requested_scope=partition)
+        request = replace(
+            request,
+            invocation_id=invocation_id,
+            requested_scope=partition,
+            destination=replace(
+                request.destination,
+                dataset=f"{request.destination.dataset}_p{partition.replace('-', '_')}",
+            ),
+        )
         client = ControlClient(endpoint, namespace=namespace)
         invocation = client.plan(request)
         context.instance.add_run_tags(
@@ -64,7 +72,10 @@ def build_materialization_asset(
         )
         context.instance.add_run_tags(run.run_id, {"terrine/run_id": receipt.run_id})
         status = client.get_run(receipt.run_id)
-        while status.run_id == receipt.run_id and status.durable_state == "running":
+        while status.run_id == receipt.run_id and status.durable_state in {
+            "running",
+            "cancel_requested",
+        }:
             time.sleep(1)
             status = client.get_run(receipt.run_id)
         if status.durable_state == "cancelled":
@@ -76,12 +87,15 @@ def build_materialization_asset(
             raise RuntimeError(
                 f"Terrine runtime run {receipt.run_id} finished as {status.durable_state}"
             )
+        published_generation = (
+            getattr(status, "pinned_result_ref", None) or receipt.published_generation
+        )
         context.add_output_metadata(
             {
                 "run_id": receipt.run_id,
                 "partition": partition,
                 "snapshot_id": invocation.snapshot_id,
-                "published_generation": receipt.published_generation,
+                "published_generation": published_generation,
                 "state": status.durable_state,
             }
         )
