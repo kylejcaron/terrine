@@ -139,8 +139,8 @@ def plan_layers(design: Design, model) -> LayerPlan:
     from terrine.spec.anchors import FixedDate, Schedule
     from terrine.spec.expressions import (
         And,
-        ApproxMetricQuantile,
         ApproxMetricDistinct,
+        ApproxMetricQuantile,
         AttributeAsOf,
         Eq,
         EventTime,

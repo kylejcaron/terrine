@@ -257,6 +257,9 @@ class Frame:
                 table = pa.Table.from_batches(batches, schema=schema)
             finally:
                 reader.close()
+            from terrine.compile.columns import resolve_sketch_sidecars
+
+            table = resolve_sketch_sidecars(table, compiled, context.con)
             roles = compiled.roles
             columns = compiled.columns
             if isinstance(self._design.shape, LifeTable):

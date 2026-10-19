@@ -32,3 +32,32 @@ def test_unavailable_explicit_sketch_uses_same_refusal_for_all_design_paths(roun
         validate_design(design, model())
     assert error.value.code == "terrine.metric.sketch_unavailable"
     assert error.value.context == {"algorithm": "tdigest", "version": "1"}
+
+
+def test_missing_optional_extra_refuses_approx_quantile_before_source_query(monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def import_without_sketches(name, *args, **kwargs):
+        if name == "datasketches":
+            raise ImportError("unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_sketches)
+    design = Design(
+        "user",
+        EventAnchor("session"),
+        features={
+            "p50": ApproxMetricQuantile(
+                "sessions",
+                Decimal("0.5"),
+                Window("-7d", "0d"),
+                SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
+            )
+        },
+    )
+    with pytest.raises(TerrineError) as error:
+        validate_design(design, model())
+    assert error.value.code == "terrine.metric.sketch_unavailable"
+    assert "install terrine[sketches]" in str(error.value)

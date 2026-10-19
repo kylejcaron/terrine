@@ -5,6 +5,8 @@ from __future__ import annotations
 import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
+from importlib.metadata import version as package_version
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
@@ -24,8 +26,14 @@ from terrine.compile.anchors import (
     compile_anchors,
 )
 from terrine.compile.layers import build_measure_layer, measure_identity
-from terrine.data import ApproximationMeta, ColumnMeta, ExpressionTiming, FeatureCutoff, Roles, SequenceMeta
-from importlib.metadata import version as package_version
+from terrine.data import (
+    ApproximationMeta,
+    ColumnMeta,
+    ExpressionTiming,
+    FeatureCutoff,
+    Roles,
+    SequenceMeta,
+)
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import BoundDimension
@@ -34,13 +42,15 @@ from terrine.spec.anchors import FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.expressions import (
     And,
+    ApproxMetricDistinct,
+    ApproxMetricQuantile,
     AttributeAsOf,
     Eq,
     EventTime,
     Expr,
     MetricAgg,
-    ApproxMetricDistinct,
     MetricQuantile,
+    SketchRequest,
 )
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE
 from terrine.spec.validate import _fixed_anchors
@@ -51,12 +61,15 @@ from terrine.temporal.attributes import (
     validate_history,
 )
 from terrine.temporal.daily import resolve_measure
-from terrine.temporal.nonadditive import aggregate_nonadditive_window
+from terrine.temporal.nonadditive import (
+    aggregate_nonadditive_window,
+    approximate_quantile_window_values,
+)
 
 if TYPE_CHECKING:
     from terrine.model import Model
 
-__all__ = ["CompiledStudy", "compile_columns"]
+__all__ = ["CompiledStudy", "compile_columns", "resolve_sketch_sidecars"]
 
 _NAME_CONFLICT = RefusalSpec(
     "terrine.spec.output_name_conflict",
@@ -143,6 +156,14 @@ class _HistoryValidation:
 
 
 @dataclass(frozen=True, slots=True)
+class SketchSidecar:
+    output: str
+    rows: ibis.Table
+    probability: Decimal
+    request: SketchRequest
+
+
+@dataclass(frozen=True, slots=True)
 class CompiledStudy:
     table: ibis.Table
     audit_table: ibis.Table
@@ -155,6 +176,7 @@ class CompiledStudy:
     _checks: tuple[_DeferredCheck, ...]
     expression_timings: Mapping[str, ExpressionTiming] = field(default_factory=dict)
     sequence_meta: SequenceMeta | None = None
+    sketches: tuple[SketchSidecar, ...] = ()
 
     def __post_init__(self) -> None:
         for name in (
@@ -166,12 +188,40 @@ class CompiledStudy:
         ):
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
         object.__setattr__(self, "_checks", tuple(self._checks))
+        object.__setattr__(self, "sketches", tuple(self.sketches))
 
     def validate(self, *, execute: Callable[[ibis.Table], pa.Table]) -> None:
         """Run every deferred integrity check before audit or output leaves its view."""
         self._anchors.validate(execute=execute)
         for check in self._checks:
             check.validate(execute)
+
+
+def resolve_sketch_sidecars(table: pa.Table, compiled: CompiledStudy, con) -> pa.Table:
+    """Execute optional t-digest sidecars inside the owning execution context."""
+    if not compiled.sketches:
+        return table
+    from terrine.temporal.sketches import approximate_quantiles_by_key
+
+    for sidecar in compiled.sketches:
+        reader = con.to_pyarrow_batches(sidecar.rows, chunk_size=65_536)
+        try:
+            estimates, _ = approximate_quantiles_by_key(
+                reader,
+                sidecar.probability,
+                sidecar.request,
+            )
+        finally:
+            reader.close()
+        keys = zip(
+            table.column("unit").to_pylist(),
+            table.column("anchor_id").to_pylist(),
+            strict=True,
+        )
+        values = [estimates.get(key) for key in keys]
+        index = table.schema.get_field_index(sidecar.output)
+        table = table.set_column(index, sidecar.output, pa.array(values, type=pa.float64()))
+    return table
 
 
 def compile_columns(
@@ -193,6 +243,7 @@ def compile_columns(
     values: dict[Expr, CompiledValue] = {}
     checks: list[_DeferredCheck] = []
     normalized_sources, sources, selector_sources, source_histories, states = {}, {}, {}, {}, {}
+    sketches: list[SketchSidecar] = []
     selector_identity_checks = []
     checked_selector_sources = set()
     for (source_name, measure_key, unit, resolution), relation in (
@@ -651,6 +702,55 @@ def compile_columns(
             cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
             strategy = "sparse_range_join/exact_type7"
             result_table = result.table
+        elif isinstance(node, ApproxMetricQuantile):
+            metric = model.metrics[node.metric]
+            if len(metric.measures) != 1:
+                raise RefusalSpec(
+                    "terrine.metric.quantile_requires_single_measure",
+                    "Approximate quantile requires metric {metric!r} to have exactly one measure.",
+                ).error(metric=node.metric)
+            unresolved = metric.measures[0]
+            source = model.sources[unresolved.source_name]
+            events = events_for(source.name)
+            measure = resolve_measure(events, unresolved, source=source, allow_nonadditive=True)
+            summary = aggregate_nonadditive_window(
+                expression_anchors,
+                events,
+                measure,
+                source,
+                node.window,
+                model.readiness,
+                output=output,
+                role="feature",
+                operation="min",
+            )
+            sketches.append(
+                SketchSidecar(
+                    output,
+                    approximate_quantile_window_values(
+                        expression_anchors, events, measure, source, node.window
+                    ),
+                    node.probability,
+                    node.sketch,
+                )
+            )
+            from terrine.temporal.sketches import quantile_request_metadata
+
+            sketch_metadata = quantile_request_metadata(node.sketch)
+            meta = replace(
+                summary.columns[output],
+                numeric_policy=None,
+                approximation=ApproximationMeta(
+                    algorithm=sketch_metadata.algorithm,
+                    implementation="DataSketches t-digest",
+                    version=sketch_metadata.version,
+                    parameters=dict(sketch_metadata.parameters),
+                    error_description="t-digest empirical, no guaranteed bound",
+                ),
+            )
+            cutoff = FeatureCutoff(node.window.end, True, "retrospective_effective_time")
+            strategy = "sparse_range_join/tdigest_sidecar"
+            result_table = summary.table.mutate(**{output: ibis.null().cast("float64")})
         elif isinstance(node, ApproxMetricDistinct):
             metric = model.metrics[node.metric]
             if len(metric.measures) != 1:
@@ -675,11 +775,12 @@ def compile_columns(
             )
             meta = replace(
                 result.columns[output],
+                numeric_policy=None,
                 approximation=ApproximationMeta(
                     algorithm="hll",
                     implementation="DuckDB approx_count_distinct",
                     version=package_version("duckdb"),
-                    parameters={},
+                    parameters={"precision": "engine-default"},
                     error_description="HLL relative standard error ≈ 1.04/√m",
                 ),
             )
@@ -899,6 +1000,10 @@ def compile_columns(
         for name, node in named.items():
             value = expression(node)
             public[name] = value.name
+            sketches[:] = [
+                replace(sidecar, output=name) if sidecar.output == value.name else sidecar
+                for sidecar in sketches
+            ]
             columns[name] = replace(value.meta, role=role)
             relative = getattr(node, "relative_to", None)
             if isinstance(node, EventTime):
@@ -1018,4 +1123,5 @@ def compile_columns(
         anchors,
         tuple(checks),
         expression_timings,
+        sketches=tuple(sketches),
     )

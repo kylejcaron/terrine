@@ -16,8 +16,8 @@ from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import (
     And,
-    ApproxMetricQuantile,
     ApproxMetricDistinct,
+    ApproxMetricQuantile,
     AttributeAsOf,
     Eq,
     EventTime,
@@ -724,11 +724,25 @@ def _design(value: Any) -> Design:
         anchor,
         features=named(
             item["features"],
-            (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct, AttributeAsOf, EventTime),
+            (
+                MetricAgg,
+                MetricQuantile,
+                ApproxMetricQuantile,
+                ApproxMetricDistinct,
+                AttributeAsOf,
+                EventTime,
+            ),
         ),
         outcomes=named(
             item["outcomes"],
-            (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct, AttributeAsOf, EventTime),
+            (
+                MetricAgg,
+                MetricQuantile,
+                ApproxMetricQuantile,
+                ApproxMetricDistinct,
+                AttributeAsOf,
+                EventTime,
+            ),
         ),
         eligibility=named(item["eligibility"], (Gt, Eq, IsNull, And)),
         treatment=treatment,

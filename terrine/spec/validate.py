@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from typing import TYPE_CHECKING
 
 from terrine.errors import RefusalSpec
@@ -317,9 +319,31 @@ def _expression(
         _check_expression_timing(expr, role, design)
         return
     if isinstance(expr, ApproxMetricQuantile):
-        raise _SKETCH_UNAVAILABLE.error(
-            algorithm=expr.sketch.algorithm, version=expr.sketch.version
-        )
+        if design.shape != "cross_section":
+            raise RefusalSpec(
+                "terrine.metric.approx_shape_unavailable",
+                "Approximate quantile supports cross_section only; "
+                "use exact quantile or cross_section.",
+            ).error()
+        try:
+            from importlib import import_module
+
+            import_module("datasketches")
+            installed_version = package_version("datasketches")
+        except (ImportError, PackageNotFoundError) as exc:
+            raise _SKETCH_UNAVAILABLE.error(
+                algorithm=expr.sketch.algorithm, version=expr.sketch.version
+            ) from exc
+        if expr.sketch.algorithm != "tdigest" or expr.sketch.version != installed_version:
+            raise _SKETCH_UNAVAILABLE.error(
+                algorithm=expr.sketch.algorithm, version=expr.sketch.version
+            )
+        if role == "eligibility":
+            raise RefusalSpec(
+                "terrine.metric.approx_eligibility_unavailable",
+                "Approximate quantiles cannot determine eligibility; use exact quantile or "
+                "a non-approximate predicate.",
+            ).error()
     if isinstance(expr, MetricAgg):
         _check_expression_timing(expr, role, design)
     metric = _metric(model, expr.metric)
@@ -328,7 +352,7 @@ def _expression(
     win = expr.window
     if not isinstance(win, Window) or win.start >= win.end:
         raise _WINDOW.error(name=expr.metric)
-    if isinstance(expr, MetricQuantile):
+    if isinstance(expr, (MetricQuantile, ApproxMetricQuantile)):
         for source_name in metric.source_names:
             dialect = model.sources[source_name].dialect
             if dialect.casefold() != "duckdb":

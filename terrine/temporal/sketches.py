@@ -11,7 +11,9 @@ import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
+
+import pyarrow as pa
 
 from terrine.errors import RefusalSpec
 
@@ -33,6 +35,9 @@ __all__ = [
     "approximate_count_distinct",
     "approximate_quantile",
     "merge_count_distinct_partitions",
+    "approximate_quantiles_by_key",
+    "validate_sketch_request",
+    "quantile_request_metadata",
     "merge_quantile_partitions",
 ]
 
@@ -41,6 +46,17 @@ _UNAVAILABLE = RefusalSpec(
     "Sketch {algorithm!r} version {version!r} is unavailable or cannot meet its declared "
     "error bound; install terrine[sketches] or use the exact form.",
 )
+
+
+def validate_sketch_request(request: SketchRequestLike) -> str:
+    """Verify the requested optional t-digest package/version before source queries."""
+    _, version = _package(request, "tdigest")
+    return version
+
+
+def quantile_request_metadata(request: SketchRequestLike) -> SketchMetadata:
+    _, version = _package(request, "tdigest")
+    return _tdigest_metadata(version, _tdigest_k(request), "tdigest_stream_update")
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,6 +220,58 @@ def merge_quantile_partitions(
         merged.get_quantile(float(probability)),
         _tdigest_metadata(version, k, "tdigest_merge_sorted_partition_id"),
     )
+
+
+def approximate_quantiles_by_key(
+    batches: Iterable[pa.RecordBatch],
+    probability: Decimal,
+    request: SketchRequestLike,
+    *,
+    key_columns: tuple[str, str] = ("unit", "anchor_id"),
+    value_column: str = "value",
+) -> tuple[dict[tuple[object, object], float], SketchMetadata]:
+    """Update one t-digest at a time from canonical-order Arrow batches."""
+    if (
+        not isinstance(probability, Decimal)
+        or not probability.is_finite()
+        or not 0 <= probability <= 1
+    ):
+        raise ValueError("probability must be a Decimal in [0, 1]")
+    datasketches, version = _package(request, "tdigest")
+    k = _tdigest_k(request)
+    import numpy
+
+    results = {}
+    current_key = None
+    sketch: Any = None
+    pending = []
+
+    def finish():
+        if sketch is not None and current_key is not None and not sketch.is_empty():
+            results[current_key] = sketch.get_quantile(float(probability))
+
+    for batch in batches:
+        for row in batch.to_pylist():
+            key = (row[key_columns[0]], row[key_columns[1]])
+            if current_key is not None and key != current_key:
+                if pending:
+                    sketch.update(numpy.asarray(pending, dtype=numpy.float64))
+                    pending.clear()
+                finish()
+                sketch = None
+            if sketch is None:
+                current_key = key
+                sketch = datasketches.tdigest_double(k)
+            value = row[value_column]
+            if value is not None:
+                pending.append(float(value))
+                if len(pending) == 4096:
+                    sketch.update(numpy.asarray(pending, dtype=numpy.float64))
+                    pending.clear()
+    if pending and sketch is not None:
+        sketch.update(numpy.asarray(pending, dtype=numpy.float64))
+    finish()
+    return results, _tdigest_metadata(version, k, "tdigest_stream_update")
 
 
 def _hll_sketch(values, request: SketchRequestLike, *, unioned: bool):

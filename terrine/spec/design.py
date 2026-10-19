@@ -24,8 +24,8 @@ if TYPE_CHECKING:
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.expressions import (
     And,
-    ApproxMetricQuantile,
     ApproxMetricDistinct,
+    ApproxMetricQuantile,
     AttributeAsOf,
     Eq,
     EventTime,
@@ -175,7 +175,14 @@ class Design:
             "features",
             _named_nodes(
                 features,
-                (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct, AttributeAsOf, EventTime),
+                (
+                    MetricAgg,
+                    MetricQuantile,
+                    ApproxMetricQuantile,
+                    ApproxMetricDistinct,
+                    AttributeAsOf,
+                    EventTime,
+                ),
                 "features",
             ),
         )
@@ -184,7 +191,14 @@ class Design:
             "outcomes",
             _named_nodes(
                 outcomes,
-                (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct, AttributeAsOf, EventTime),
+                (
+                    MetricAgg,
+                    MetricQuantile,
+                    ApproxMetricQuantile,
+                    ApproxMetricDistinct,
+                    AttributeAsOf,
+                    EventTime,
+                ),
                 "outcomes",
             ),
         )

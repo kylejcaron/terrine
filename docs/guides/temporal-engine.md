@@ -108,12 +108,24 @@ windows, and incomplete coverage. Min, max, and distinct-count operations use
 the same sparse range join; distinct values are counted once across the full
 window rather than by adding daily counts.
 
-Exact quantiles are capability-gated to DuckDB until other backend behavior is
-verified. Approximate requests are never selected implicitly. The optional
-`terrine[sketches]` extra provides adapter-level t-digest and HLL operations;
-approximate Design expressions still refuse until the compiler integration is
-available. T-digest reports empirical accuracy without a guaranteed rank bound,
-while HLL reports its published relative-error bound.
+Exact quantiles and approximate distinct are capability-gated to DuckDB until
+other backend behavior is verified. `approx_distinct(metric, window=...)` uses
+DuckDB's native HLL aggregate and records its algorithm, engine version and
+relative-error description in the output column metadata. Exact distinct
+remains the default when requested through `agg`; approximation is explicit.
+
+`approx_quantile(metric, probability, window=..., sketch=SketchRequest(...))`
+uses DataSketches t-digest on `cross_section` designs only. It is available with
+the optional `terrine[sketches]` extra; otherwise the request refuses before
+source queries and points to `uv add 'terrine[sketches]'` or exact `quantile`.
+The compiler streams canonical `(unit, anchor, event time, value)` Arrow batches
+to the client, updating t-digests in sorted anchor order. This transfers all
+matched window values out of DuckDB and can cost more than in-database exact
+work; t-digest accuracy is empirical and has no guaranteed rank bound. Both
+approximate results record algorithm, implementation/version, parameters, and
+error description in `ColumnMeta` and preserve that record through Frame Arrow
+and JSON metadata serialization. Other shapes and runtime composition refuse
+approximate quantiles; ordinary `Frame.materialize()` is the supported route.
 
 Catalog records and bound Models are immutable, including nested definition maps.
 Create a new definition and bind a new Model when semantics change; an existing

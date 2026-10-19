@@ -92,7 +92,7 @@
 - Add `terrine plan|run|status|events|cancel` commands over owner IPC with destination-scoped request-key replay.
 - Document Model/Design materialization plans, owner CLI workflows, exact-generation reads, and backend consistency limits.
 - Add an opt-in OpenTelemetry lifecycle projection with redacted attributes and bounded nonblocking export.
-- Add a canonical Decimal type-7 quantile expression and exact in-memory order-statistic primitive; keep approximate sketch requests explicitly refused until an owner-approved adapter is available.
-- Execute exact Decimal type-7 quantiles and sparse min/max/distinct windows on DuckDB, preserving null reasons and refusing unsupported quantile capabilities; keep owner-gated sketches coded as unavailable.
+- Add canonical Decimal exact quantiles, explicit DataSketches t-digest quantile expressions, and DuckDB HLL approximate-distinct expressions; retain exact quantile as default and publish approximation algorithm/version/error metadata through Frame Arrow serialization.
+- Execute t-digest sidecars from canonical-ordered bounded Arrow batches on cross-section Frames, refuse unavailable sketch extras before source queries, and refuse unsupported runtime composition with an ordinary-Frame route.
 - Demonstrate real Model/Design saved-recipe execution from retained DuckDB inputs, exact-generation reads, operator-declared corrections, and same-snapshot clean-rebuild parity; cover partition retries and owner-held lost-response lookup in warehouse integration tests.
 - Refuse fingerprint-valid serialized plans whose strict scan budget cannot be satisfied by known scan bounds, preserving the refusal code through saved recipes.

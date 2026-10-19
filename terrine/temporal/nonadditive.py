@@ -361,3 +361,44 @@ def aggregate_nonadditive_window(
         numeric_policy="exact",
     )
     return TemporalResult(result, {output: meta}, checks)
+
+
+def approximate_quantile_window_values(
+    anchors: ibis.Table,
+    events: ibis.Table,
+    measure: BoundMeasure,
+    source: BoundSource,
+    window: Window,
+    *,
+    unit_column: str = "unit",
+) -> ibis.Table:
+    """Return canonical-ordered event values per anchor for sketch sidecar execution."""
+    value_column = source.facts[measure.fact]
+    if value_column is None:
+        raise _UNSUPPORTED_TYPE.error(operation="quantile", value_type="event_count")
+    predicate, *_ = _predicate(events, measure, source)
+    selected = events.filter(predicate.fill_null(False)).select(
+        __sketch_unit=events._unit,
+        __sketch_time=events._timestamp,
+        __sketch_value=events[value_column],
+    )
+    start = anchors.t0 + ibis.interval(seconds=window.start)
+    end = anchors.t0 + ibis.interval(seconds=window.end)
+    matched = anchors.inner_join(
+        selected,
+        [
+            anchors[unit_column] == selected.__sketch_unit,
+            compare_timestamps(selected.__sketch_time, start, "ge"),
+            compare_timestamps(selected.__sketch_time, end, "lt"),
+        ],
+    )
+    return (
+        matched.filter(matched.__sketch_value.notnull())
+        .select(
+            unit=matched[unit_column],
+            anchor_id=matched.anchor_id,
+            timestamp=matched.__sketch_time,
+            value=matched.__sketch_value,
+        )
+        .order_by("unit", "anchor_id", "timestamp", "value")
+    )

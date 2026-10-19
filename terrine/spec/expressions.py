@@ -118,8 +118,6 @@ class ApproxMetricDistinct:
             raise TypeError("window must be a Window")
 
 
-
-
 type JsonScalar = None | bool | int | float | str
 
 
@@ -237,7 +235,14 @@ class And:
         object.__setattr__(self, "terms", terms)
 
 
-type Expr = MetricAgg | MetricQuantile | ApproxMetricQuantile | ApproxMetricDistinct | AttributeAsOf | EventTime
+type Expr = (
+    MetricAgg
+    | MetricQuantile
+    | ApproxMetricQuantile
+    | ApproxMetricDistinct
+    | AttributeAsOf
+    | EventTime
+)
 type Predicate = Gt | Eq | IsNull | And
 
 
@@ -249,7 +254,9 @@ def _expression_support_seconds(expression: Expr) -> tuple[int, int]:
             else _expression_support_seconds(expression.relative_to)
         )
         return (origin[0] + expression.window.start, origin[1] + expression.window.end)
-    if isinstance(expression, (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct)):
+    if isinstance(
+        expression, (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct)
+    ):
         origin = (
             (0, 0)
             if not isinstance(expression, MetricAgg) or expression.relative_to is None
@@ -268,7 +275,15 @@ def _expression_support_seconds(expression: Expr) -> tuple[int, int]:
 
 def _require_expr(value: object) -> None:
     if not isinstance(
-        value, (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct, AttributeAsOf, EventTime)
+        value,
+        (
+            MetricAgg,
+            MetricQuantile,
+            ApproxMetricQuantile,
+            ApproxMetricDistinct,
+            AttributeAsOf,
+            EventTime,
+        ),
     ):
         raise TypeError("expected a supported expression node")
 
@@ -310,9 +325,7 @@ def approx_quantile(
     )
 
 
-def approx_distinct(
-    metric: str, *, window: tuple[str | int, str | int]
-) -> ApproxMetricDistinct:
+def approx_distinct(metric: str, *, window: tuple[str | int, str | int]) -> ApproxMetricDistinct:
     if not isinstance(window, (tuple, list)) or len(window) != 2:
         raise ValueError("window must contain a start and exclusive end")
     return ApproxMetricDistinct(_name(metric, "metric"), Window(*window))
