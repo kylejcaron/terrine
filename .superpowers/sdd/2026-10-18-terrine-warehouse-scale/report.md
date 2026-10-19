@@ -1,0 +1,54 @@
+# Warehouse scale implementation report
+
+## Work completed
+
+- Added immutable `MetricQuantile`, `SketchRequest`, and `ApproxMetricQuantile` expression records; `quantile()` canonicalizes Decimal/string probabilities without context rounding and rejects binary floats or values outside `[0, 1]`.
+- Added canonical Design JSON/YAML serialization and root/spec facade exports for quantile declarations. Serialized quantile probabilities and sketch rank-error values must be decimal strings.
+- Added exact Hyndman–Fan type-7 window execution for the verified DuckDB backend, using exact Decimal rank/interpolation arithmetic for integer and Decimal facts; unsupported backends, source types and output precision refuse with stable codes before query execution.
+- Added exact sparse range-window min/max/distinct-count execution through Catalog/Design/Frame; distinct values deduplicate across dates, and incomplete, empty, and all-null results retain distinct completeness/reason metadata. Nonadditive measure resolution is opt-in so the additive prefix-state resolver continues to refuse these operations.
+- Added an independent NumPy type-7 oracle and ordinary Frame integration coverage, including cross-day duplicates, an intraday anchor, and half-open window edges.
+- Kept approximate quantiles explicitly refused (`terrine.metric.sketch_unavailable`); no sketch package or algorithm was introduced because approval is owner-gated.
+- Added `examples/nonadditive_metrics.py`; updated the temporal guide and changelog with supported execution and refusal contracts.
+
+## Acceptance coverage
+
+| Plan Task 1 criterion | Status |
+| --- | --- |
+| Decimal probability canonicalization, range validation, and binary-float refusal | Covered by `tests/temporal/test_nonadditive.py` |
+| Exact type-7 rank/interpolation and exact integer/Decimal arithmetic | Covered by `tests/temporal/test_nonadditive.py` and DuckDB execution test |
+| Design JSON/YAML round-trip and canonical hash | Covered by `tests/spec/test_nonadditive_spec.py` |
+| Approximation explicit; no fallback; stable owner-gated sketch refusal | Covered by `tests/spec/test_sketch_refusal.py` and temporal refusal test |
+| Exact quantile through Catalog/Design/Frame and independent NumPy oracle | Covered by `tests/compile/test_nonadditive.py` and `tests/reference/nonadditive.py`; regression coverage also checks sub-mill probability precision, fractional-cent interpolation, UInt64, nonadditive source facts, and explicit precision refusals |
+| DuckDB backend capability gate and coded unsupported-backend refusal | Covered by `tests/spec/test_validate.py`, including mixed-case DuckDB acceptance |
+| Sparse exact min/max/count-distinct windows, deduplication, null/empty distinction and half-open intraday edges | Covered by `tests/compile/test_nonadditive.py`, including collision-safe fact projection and naive-UTC behavior under non-UTC session timezone |
+| Nonadditive requests do not alter additive sparse-state resolver admission | Covered by `tests/temporal/test_sparse_state.py`; persisted quantile composition uses raw events without additive prefix layers |
+| Sequential/calendar outcome horizons and nonadditive metric-kind compatibility | Covered by `tests/spec/test_validate.py` and calendar-comparison quantile integration |
+| Task 2 bounded range/last-event/retention/winsorization | Not started; its training-fitted winsorization dependency (Task 7.2 dataset recipe interfaces) is not present in this worktree. |
+| Sketch merge/adapter implementation | Not implemented; remains owner-gated by the plan. |
+
+## Verification
+
+- `uv run ruff format terrine tests examples` — passed.
+- `uv run ruff check terrine tests examples` — passed.
+- `uv run ty check terrine tests` — passed.
+- `uv run tach check` — passed.
+- Focused nonadditive regressions after review fixes (`tests/compile/test_nonadditive.py`, `tests/spec/test_validate.py`, `tests/temporal/test_nonadditive.py`, and calendar-comparison quantile integration) — 67 passed.
+- Focused precision regressions (`tests/temporal/test_nonadditive.py` and `tests/compile/test_nonadditive.py`) — 18 passed, including DECIMAL(29,25) refusal at probability 0.12345678.
+- Required quality gates on `f78ae9f` and `a663ab3`: `uv run ruff format terrine tests examples`, `uv run ruff check terrine tests examples`, `uv run ty check terrine tests`, and `uv run tach check` — passed.
+
+## Commits and review dispositions
+
+- `57d1d85` — `Add exact quantile specification contracts`; roborev job `8773` found three medium findings.
+- `e6655ab` — `Harden quantile probability specifications`; fixed all three findings with regression tests. roborev job `8778` passed; job `8773` was disposition-commented with the fix SHA and closed.
+- `bfbbb9a` — `Execute exact nonadditive metric windows`; roborev job `8796` found ten exactness/temporal/compiler-integration findings.
+- `f78ae9f` — `Harden exact nonadditive window execution`; fixed all ten `8796` findings, added regressions, and disposition-commented job `8796` with the fix SHA before closing it. Job `8812` then found an incomplete high-scale interpolation budget.
+- `a663ab3` — `Refuse unsafe exact quantile arithmetic`; budgeted every interpolation intermediate and added high-scale precision-refusal tests. Job `8812` was disposition-commented with the fix SHA and closed; job `8815` passed and was disposition-commented/closed.
+
+## Remaining
+
+Task 1 execution is complete on the verified DuckDB backend; exact quantiles refuse on other backends/types/precision limits, and approximate sketches remain refused pending owner approval. The earlier Task 2 deferral is superseded by this follow-up: deterministic last-event ordering is implemented, and occurrence-based retention threshold bands are implemented at the temporal operation layer. Bounded shape/range strategy selection and compiler integration remain. No owner-gated warehouse/sketch action was introduced.
+ 
+- `ee47d5f` — Added deterministic last-event ordering by timestamp then event ID, with duplicate-ID refusal. Focused test: `tests/temporal/test_last_event.py` (2 passed); required Ruff format/check, ty, and tach gates passed.
+- `359a53e` — Fixed internal alias collision for event values named like a temporary rank column; added a regression that failed before the fix. Focused test: `tests/temporal/test_last_event.py` (3 passed); required quality gates passed. Roborev finding 8890 was fixed and dispositioned; review 8891 is pending.
+- Added `terrine.temporal.retention.retention_threshold_bands`: distinct target-event occurrence counts, exact threshold bands, finite-horizon follow-up, and open-ended source-cutoff completeness. Focused tests cover duplicate input rows, event filtering, finite incompleteness, and complete open-ended cutoff.
+- Range-strategy selection/scaling, winsorization, Task 5 cost/budget evidence, and Task 6 generator/benchmark harness remain. Fitted winsorization depends on absent Task 7.2 dataset training/scoring recipe contracts and was not implemented. No estimator/sampling work is in scope after the datasets-only cutover.
