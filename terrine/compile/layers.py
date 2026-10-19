@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal
 
 import ibis
 
@@ -87,23 +87,23 @@ def build_layer(design: Design, model, key: LayerKey, *, relation_resolver=None)
     if relation_resolver is None:
         bound_model = model
     else:
+        from terrine.model import Model
 
-        class _ResolvedModel:
-            def __getattr__(self, name):
-                return getattr(model, name)
-
-            def _relation(self, relation):
-                return relation_resolver(relation)
-
-            def _resolver(self, relation):
-                return relation_resolver(relation)
-
-        bound_model = _ResolvedModel()
+        bound_model = Model._bind(
+            model.catalog,
+            con=model.con,
+            readiness=model.readiness,
+            units=model.units,
+            event_ids=model.event_ids,
+            resolver=relation_resolver,
+            input_binding=model.input_binding,
+        )
     expected = plan_layers(design, bound_model).keys
+
     if replace(key, snapshot_id="unbound") not in expected:
         raise ValueError("layer key does not belong to this Design and Model")
     if key.layer == "anchor":
-        return compile_anchors(design, cast(Model, bound_model)).table
+        return compile_anchors(design, bound_model).table
     if key.resolution not in {"day", "event"}:
         raise ValueError("prefix layer resolution must be day or event")
 

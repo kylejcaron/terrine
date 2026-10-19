@@ -93,6 +93,24 @@ def test_build_layer_composition_matches_direct_compilation(column_model):
     assert actual.expression_timings == expected.expression_timings
 
 
+def test_build_anchor_layer_accepts_snapshot_relation_resolver(column_model):
+    from terrine.compile.layers import build_layer
+
+    design = _design()
+    key = plan_layers(design, column_model).keys[0]
+
+    anchor = build_layer(
+        design,
+        column_model,
+        replace(key, snapshot_id="snapshot"),
+        relation_resolver=column_model._relation,
+    )
+
+    rows = anchor.execute().to_dict("records")
+    assert {row["unit"] for row in rows} == {"a", "b"}
+    assert all(row["anchor_id"] == "fixed" for row in rows)
+
+
 def test_build_layer_composition_matches_state_panel_compilation(column_model):
     from terrine.compile.dispatch import compile_design
     from terrine.compile.layers import build_layer
