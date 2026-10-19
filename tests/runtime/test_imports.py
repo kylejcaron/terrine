@@ -15,4 +15,6 @@ import terrine.runtime
 from terrine.runtime import dependency_graph, resolve_plan
 assert callable(dependency_graph) and callable(resolve_plan)
 """
-    subprocess.run([sys.executable, "-c", code], check=True, timeout=10)
+    # The timeout only guards against a hung interpreter; cold imports under a loaded
+    # parallel run can take several seconds.
+    subprocess.run([sys.executable, "-c", code], check=True, timeout=120)

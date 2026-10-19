@@ -64,7 +64,8 @@ def dependency_graph(
             daily = LayerNode("daily", source, partition, fingerprint, "pending")
             prefix = LayerNode("prefix", source, partition, fingerprint, "pending")
             anchor = LayerNode("anchor", source, partition, fingerprint, "pending")
-            frame = LayerNode("frame", source, partition, fingerprint, "pending")
+            frame_source = source_names[0] if design is not None else source
+            frame = LayerNode("frame", frame_source, partition, fingerprint, "pending")
             nodes.extend((daily, prefix, anchor))
             edges.append((daily, prefix))
             if tracks_certificates:
@@ -87,14 +88,17 @@ def dependency_graph(
                     nodes.append(baseline)
                     edges.append((anchor, baseline))
                     dependencies.append(baseline)
-                nodes.append(frame)
+                if frame not in nodes:
+                    nodes.append(frame)
                 edges.extend((dependency, frame) for dependency in dependencies)
             else:
-                nodes.append(frame)
+                if frame not in nodes:
+                    nodes.append(frame)
                 edges.append((anchor, frame))
             if include_exports:
-                export = LayerNode("export", source, partition, fingerprint, "pending")
-                nodes.append(export)
+                export = LayerNode("export", frame_source, partition, fingerprint, "pending")
+                if export not in nodes:
+                    nodes.append(export)
                 edges.append((frame, export))
             for selector_source in sorted(selector_nodes):
                 selector = LayerNode("selector", selector_source, partition, fingerprint, "pending")

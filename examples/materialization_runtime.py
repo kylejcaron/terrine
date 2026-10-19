@@ -7,14 +7,11 @@ import tempfile
 from pathlib import Path
 
 import ibis
-import pyarrow as pa
 
 from terrine.compile.columns import compile_columns
 from terrine.data import Budget, Coverage, UnitSource
 from terrine.model import Model
-from terrine.runtime import open_published_generation, run_serialized_plan
-from terrine.runtime.backends.base import StagedGeneration
-from terrine.runtime.backends.duckdb import DuckDBBackend
+from terrine.runtime import open_published_frame, run_serialized_plan
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.planner import plan_refresh
@@ -22,7 +19,7 @@ from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanReci
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog
-from terrine.spec import Design, FixedDate, agg
+from terrine.spec import Design, FixedDate, agg, asof
 
 
 def _catalog() -> Catalog:
@@ -37,57 +34,33 @@ def _catalog() -> Catalog:
                     "timestamp": "occurred_at",
                     "entities": {"user": "user_id"},
                     "facts": ["amount"],
-                    "properties": [],
-                    "dimensions": [],
+                    "properties": ["tier"],
+                    "dimensions": ["history"],
                 }
             },
             "facts": {"amount": {"source": "events", "column": "amount"}},
-            "properties": {},
-            "dimensions": {},
+            "properties": {
+                "tier": {
+                    "source": "events",
+                    "column": "tier",
+                    "dtype": "string",
+                    "as_of": "event_time",
+                    "dimension": "history",
+                }
+            },
+            "dimensions": {
+                "history": {
+                    "relation": {"kind": "table", "name": "user_tier"},
+                    "source_entity": "user",
+                    "entity_column": "user_id",
+                    "properties": ["tier"],
+                    "validity": {"valid_from": "starts", "valid_to": "ends"},
+                }
+            },
             "measures": {"total": {"fact": "amount", "aggregation": "sum"}},
             "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
         }
     )
-
-
-class DesignExecutor:
-    """Execute this example's declared one-day total from the retained event input."""
-
-    def __init__(self, con, catalog: Catalog, design: Design, namespace: str) -> None:
-        self.con = con
-        self.catalog = catalog
-        self.design = design
-        self.backend = DuckDBBackend(con, namespace=namespace)
-        self.expected_manifest: str | None = None
-
-    def run_snapshot_task(self, context, task, dependencies):
-        if task.layer != "frame":
-            return pa.table(
-                {"user_id": pa.array([], type=pa.int64()), "total": pa.array([], type=pa.int64())}
-            )
-        events = context.resolve(self.catalog.sources["events"].relation)
-        anchor = ibis.timestamp("2025-01-02 00:00:00")
-        selected = events.filter(
-            (events.occurred_at >= anchor - ibis.interval(days=1)) & (events.occurred_at < anchor)
-        )
-        result = selected.group_by("user_id").aggregate(total=selected.amount.sum())
-        return context.execute(result)
-
-    def publish(self, plan, outputs, lease, run_id):
-        next_generation = "generation-1" if self.expected_manifest is None else "generation-2"
-        publication = self.backend.publish_generation(
-            StagedGeneration(
-                plan.dataset,
-                next_generation,
-                outputs,
-                run_id=run_id,
-                snapshot_id=plan.snapshot_id,
-            ),
-            expected_manifest=self.expected_manifest,
-            lease=lease,
-        )
-        self.expected_manifest = publication.generation
-        return publication
 
 
 class ModelResolver:
@@ -98,12 +71,12 @@ class ModelResolver:
         return self.model
 
 
-def _clean_rebuild_rows(model: Model, design: Design) -> list[dict[str, int]]:
+def _clean_rebuild_rows(model: Model, design: Design) -> list[dict[str, object]]:
     compiled = compile_columns(design, model)
     compiled.validate(execute=model.con.to_pyarrow)
     rows = model.con.to_pyarrow(compiled.table).to_pylist()
     return sorted(
-        [{"user_id": row["unit"], "total": row["total"]} for row in rows],
+        [{"user_id": row["unit"], "total": row["total"], "tier": row["tier"]} for row in rows],
         key=lambda row: row["user_id"],
     )
 
@@ -158,6 +131,15 @@ def main() -> None:
             )
             con.raw_sql("CREATE TABLE users(user_id BIGINT PRIMARY KEY)")
             con.raw_sql("INSERT INTO users VALUES (1), (2)")
+            con.raw_sql(
+                "CREATE TABLE user_tier("
+                "user_id BIGINT, tier VARCHAR, starts TIMESTAMP, ends TIMESTAMP)"
+            )
+            con.raw_sql(
+                "INSERT INTO user_tier VALUES "
+                "(1, 'gold', '2024-01-01', '2026-01-01'), "
+                "(2, 'gold', '2024-01-01', '2026-01-01')"
+            )
             catalog = _catalog()
             model = Model.from_catalog(
                 catalog,
@@ -168,14 +150,16 @@ def main() -> None:
             design = Design(
                 "user",
                 FixedDate("2025-01-02T00:00:00+00:00"),
-                features={"total": agg("total", window=("-1d", "0s"))},
+                features={
+                    "total": agg("total", window=("-1d", "0s")),
+                    "tier": asof("tier", before="0s"),
+                },
             )
             owner = RuntimeOwner(state_path=state_path, snapshot_root=Path(directory) / "snapshots")
             authority = SnapshotAuthority(owner)
             store = RuntimeStore(con.con, namespace="analytics_owner")
             store.initialize()
             destination = DestinationRef(str(state_path), "published", "orders")
-            executor = DesignExecutor(con.con, catalog, design, namespace="analytics_owner")
             resolver = ModelResolver(model)
 
             recipe = _saved_recipe(
@@ -195,12 +179,18 @@ def main() -> None:
                 con=con.con,
                 namespace="analytics_owner",
                 request_key="orders:initial",
-                executor=executor,
                 resolver=resolver,
                 snapshot_authority=authority,
             )
-            initial = open_published_generation(receipt, con=con.con, namespace="analytics_owner")
-            initial_rows = initial.execute().to_dict("records")
+            initial = open_published_frame(receipt, con=con.con, namespace="analytics_owner")
+            initial_rows = [
+                {
+                    "user_id": row["unit"],
+                    "total": int(row["total"]),
+                    "tier": row["tier"],
+                }
+                for row in initial.to_arrow().to_pylist()
+            ]
             assert sorted(initial_rows, key=lambda row: row["user_id"]) == _clean_rebuild_rows(
                 model, design
             )
@@ -215,6 +205,7 @@ def main() -> None:
 
             # This correction is explicit: capture a new input receipt and bind it to a new recipe.
             con.raw_sql("INSERT INTO events VALUES ('2025-01-01 11:00:00', 1, 5)")
+            con.raw_sql("UPDATE user_tier SET tier='silver'")
             corrected_recipe = _saved_recipe(
                 con=con,
                 model=model,
@@ -231,17 +222,23 @@ def main() -> None:
                 con=con.con,
                 namespace="analytics_owner",
                 request_key="orders:correction-1",
-                executor=executor,
                 resolver=resolver,
                 snapshot_authority=authority,
             )
-            published = open_published_generation(
-                corrected, con=con.con, namespace="analytics_owner"
-            )
-            corrected_rows = published.execute().to_dict("records")
+            published = open_published_frame(corrected, con=con.con, namespace="analytics_owner")
+            corrected_rows = [
+                {
+                    "user_id": row["unit"],
+                    "total": int(row["total"]),
+                    "tier": row["tier"],
+                }
+                for row in published.to_arrow().to_pylist()
+            ]
             assert sorted(corrected_rows, key=lambda row: row["user_id"]) == _clean_rebuild_rows(
                 model, design
             )
+            retained = open_published_frame(receipt, con=con.con, namespace="analytics_owner")
+            assert retained.to_arrow().equals(initial.to_arrow())
             print(
                 json.dumps(
                     {

@@ -13,7 +13,7 @@ from typing import Any
 import pyarrow as pa
 
 from terrine.compile.cost import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.runtime.events import event_transaction, record_run_event
 from terrine.runtime.leases import Lease, LeaseStore
 from terrine.runtime.planner import RefreshPlan, TaskSpec
@@ -26,6 +26,14 @@ _REQUEST_KEY_CONFLICT = RefusalSpec(
     "terrine.runtime.request_key_conflict",
     "Request key is already bound to a different plan or destination.",
 )
+_EXECUTION_FAILED = RefusalSpec(
+    "terrine.runtime.execution_failed",
+    "Runtime execution failed outside a coded Terrine refusal.",
+)
+
+
+def _error_code(error: Exception) -> str:
+    return error.code if isinstance(error, TerrineError) else _EXECUTION_FAILED.code
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +97,8 @@ def execute_plan(
     con.execute(
         f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP"
     )
+    for column in ("snapshot_id VARCHAR", "task_count BIGINT", "error_code VARCHAR"):
+        con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS {column}")
     con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS request_key VARCHAR")
     con.execute(
         f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS destination_json VARCHAR"
@@ -144,7 +154,8 @@ def execute_plan(
             con.execute(
                 f"INSERT INTO {schema}.runtime_runs "
                 "(run_id, dataset, fingerprint, state, published_generation, request_key, "
-                "destination_json, updated_at) VALUES (?, ?, ?, 'queued', NULL, ?, ?, ?)",
+                "destination_json, updated_at, snapshot_id, task_count) "
+                "VALUES (?, ?, ?, 'queued', NULL, ?, ?, ?, ?, ?)",
                 [
                     run_id,
                     plan.dataset,
@@ -152,6 +163,8 @@ def execute_plan(
                     request_key,
                     destination_json,
                     datetime.now(UTC).replace(tzinfo=None),
+                    plan.snapshot_id,
+                    len(plan.tasks),
                 ],
             )
             record_run_event(
@@ -212,7 +225,7 @@ def execute_plan(
         return RunReceipt(run_id, current[0], current[1])
     try:
         _check_expected_base_manifest(plan, con=con, namespace=namespace)
-    except Exception:
+    except Exception as error:
         try:
             reconciled = _reconcile_committed_publication(
                 plan,
@@ -229,11 +242,12 @@ def execute_plan(
             with event_transaction(con, namespace=namespace):
                 rejected = con.execute(
                     f"UPDATE {schema}.runtime_runs SET state='failed', attempt_fence=?, "
-                    "updated_at=? WHERE run_id=? AND state IN ('queued','running') "
+                    "updated_at=?, error_code=? WHERE run_id=? AND state IN ('queued','running') "
                     "AND (attempt_fence IS NULL OR attempt_fence<?) RETURNING run_id",
                     [
                         lease.fence,
                         datetime.now(UTC).replace(tzinfo=None),
+                        _error_code(error),
                         run_id,
                         lease.fence,
                     ],
@@ -254,7 +268,8 @@ def execute_plan(
         with event_transaction(con, namespace=namespace):
             transition = con.execute(
                 f"UPDATE {schema}.runtime_runs SET state='running', attempt_fence=?, "
-                "updated_at=? WHERE run_id=? AND state IN ('queued','running','failed') "
+                "updated_at=?, error_code=NULL WHERE run_id=? "
+                "AND state IN ('queued','running','failed') "
                 "AND (attempt_fence IS NULL OR attempt_fence<?) AND EXISTS ("
                 f"SELECT 1 FROM {schema}.runtime_leases WHERE resource=? AND owner=? "
                 "AND fence=? AND expires_at>?) RETURNING run_id",
@@ -293,14 +308,15 @@ def execute_plan(
     active_reference = json.dumps((run_id, lease.fence), separators=(",", ":"))
     try:
         runtime_store.pin_snapshot(plan.snapshot_id, kind="active_run", reference=active_reference)
-    except Exception:
+    except Exception as error:
         with event_transaction(con, namespace=namespace):
             failed = con.execute(
                 f"UPDATE {schema}.runtime_runs SET state=CASE "
                 "WHEN state='cancel_requested' THEN 'cancelled' ELSE 'failed' END, "
-                "updated_at=? WHERE run_id=? AND state IN ('running','cancel_requested') "
+                "updated_at=?, error_code=? WHERE run_id=? "
+                "AND state IN ('running','cancel_requested') "
                 "AND attempt_fence=? RETURNING state",
-                [datetime.now(UTC).replace(tzinfo=None), run_id, lease.fence],
+                [datetime.now(UTC).replace(tzinfo=None), _error_code(error), run_id, lease.fence],
             ).fetchone()
             if failed is not None:
                 record_run_event(
@@ -460,7 +476,7 @@ def execute_plan(
                 runtime_store=runtime_store,
                 leases=leases,
             )
-    except Exception:
+    except Exception as error:
         publication_table = con.execute(
             "SELECT 1 FROM information_schema.tables "
             "WHERE lower(table_schema)=lower(?) AND table_name='runtime_run_publications'",
@@ -476,9 +492,10 @@ def execute_plan(
         )
         if publication is not None:
             generation = publication[0]
-            runtime_store.replace_published_snapshot(
-                plan.dataset, generation, plan.snapshot_id, lease=lease
-            )
+            if plan.tasks:
+                runtime_store.replace_published_snapshot(
+                    plan.dataset, generation, plan.snapshot_id, lease=lease
+                )
             with event_transaction(con, namespace=namespace):
                 dependencies = {
                     dependency for task in plan.tasks for dependency in task.dependencies
@@ -513,11 +530,17 @@ def execute_plan(
             terminal = con.execute(
                 f"UPDATE {schema}.runtime_runs SET state=CASE "
                 "WHEN state='cancel_requested' THEN 'cancelled' ELSE 'failed' END, "
-                "updated_at=? WHERE run_id=? AND state IN ('running','cancel_requested') "
+                "updated_at=?, error_code=? WHERE run_id=? "
+                "AND state IN ('running','cancel_requested') "
                 "AND published_generation IS NULL AND attempt_fence=? RETURNING state",
-                [datetime.now(UTC).replace(tzinfo=None), run_id, lease.fence],
+                [datetime.now(UTC).replace(tzinfo=None), _error_code(error), run_id, lease.fence],
             ).fetchone()
             if terminal is not None:
+                con.execute(
+                    f"UPDATE {schema}.runtime_tasks SET status=? "
+                    "WHERE run_id=? AND task_fence=? AND status='running'",
+                    [terminal[0], run_id, lease.fence],
+                )
                 record_run_event(
                     run_id,
                     "lifecycle",
@@ -567,7 +590,7 @@ def _reconcile_committed_publication(
         f"SELECT generation FROM {schema}.runtime_manifests WHERE dataset=?", [plan.dataset]
     ).fetchone()
     generation = publication[0]
-    if manifest is not None and manifest[0] == generation:
+    if plan.tasks and manifest is not None and manifest[0] == generation:
         runtime_store.replace_published_snapshot(
             plan.dataset, generation, plan.snapshot_id, lease=lease
         )
@@ -755,7 +778,7 @@ def _finish_run(
     published = publish(plan, MappingProxyType(dict(outputs)), lease)
     generation = getattr(published, "generation", published)
     generation_text = str(generation) if generation is not None else None
-    if generation_text is not None:
+    if generation_text is not None and plan.tasks:
         runtime_store.replace_published_snapshot(
             plan.dataset, generation_text, plan.snapshot_id, lease=lease
         )

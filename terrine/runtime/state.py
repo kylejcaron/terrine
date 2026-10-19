@@ -127,6 +127,11 @@ class RuntimeStore:
             f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_manifests ("
             "dataset VARCHAR PRIMARY KEY, generation VARCHAR NOT NULL, snapshot_id VARCHAR)"
         )
+        self.con.execute(
+            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_captures ("
+            "snapshot_id VARCHAR PRIMARY KEY, cost_json VARCHAR NOT NULL, "
+            "readiness_json VARCHAR NOT NULL)"
+        )
 
     def write_generation(
         self,
@@ -305,6 +310,17 @@ class RuntimeStore:
                 [self.namespace],
             ).fetchone()
             if partition_catalog is not None:
+                metadata_catalog = self.con.execute(
+                    "SELECT 1 FROM information_schema.tables "
+                    "WHERE table_schema=? AND table_name='runtime_partition_metadata'",
+                    [self.namespace],
+                ).fetchone()
+                if metadata_catalog is not None:
+                    self.con.execute(
+                        f"DELETE FROM {self._schema}.runtime_partition_metadata "
+                        "WHERE dataset=? AND generation=?",
+                        [ref.dataset, ref.generation],
+                    )
                 partitions = self.con.execute(
                     f"SELECT table_name FROM {self._schema}.runtime_partitions "
                     "WHERE dataset=? AND generation=?",
