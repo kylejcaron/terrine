@@ -27,6 +27,7 @@
 - Resolve owner-prepared dataset views before source discovery, compilation and retained capture, preserving feature-only scoring without unused label readiness or reads.
 - Replay retained preparation receipts before compiling live inputs, so a lost preparation response remains recoverable after a source or roster is removed.
 - Return only aggregate export metadata through agent tools; retain partition-value-bearing shard paths in the owner-side manifest rather than disclosing them in responses.
+- Recover matching refresh preparation receipts before live preflight or current-generation checks; new invocations still validate their pinned base before capturing inputs.
 - Refuse unsupported approximate-quantile runtime requests before source validation or retained snapshot capture, while preserving ordinary Frame sidecars.
 - Preserve native relation-discovery, input-binding and transaction-ownership regression coverage through the verified Ibis execution boundary.
 - Reject non-read and multi-statement compiled queries before native schema resolution, while preserving compiler built-ins and source-relation function admission.

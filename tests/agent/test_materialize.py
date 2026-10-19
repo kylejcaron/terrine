@@ -258,3 +258,26 @@ def test_partitioned_export_projects_no_partition_values(owner_tools, tmp_path, 
     assert payload["row_count"] == manifest.row_count
     assert payload["byte_count"] == manifest.byte_count
     assert payload["shard_count"] == len(manifest.shards)
+
+
+@pytest.mark.parametrize("advance", [False, True])
+def test_refresh_preparation_replays_before_live_inputs_or_current_base_checks(
+    owner_tools, advance
+):
+    reference = owner_tools.stage(_prepare(owner_tools), request_key="base").output
+    changes = ChangeSet((), "conservative_rebuild")
+    prepared = owner_tools.prepare_refresh(reference, invocation_id="lost-refresh", changes=changes)
+    assert prepared.status == "ok" and prepared.output is not None
+    if advance:
+        owner_tools.model.con.raw_sql("INSERT INTO users VALUES (3)")
+        published = owner_tools.refresh(reference, prepared.output, request_key="refresh")
+        assert published.status == "ok" and published.output.generation != reference.generation
+    owner_tools.model.con.drop_table("events")
+    owner_tools.model.con.drop_table("users")
+    replay = owner_tools.prepare_refresh(reference, invocation_id="lost-refresh", changes=changes)
+    assert replay.status == "ok" and replay.output == prepared.output
+    changed = owner_tools.prepare_refresh(reference, invocation_id="lost-refresh", changes=None)
+    assert changed.code == "terrine.runtime.plan_invocation_conflict"
+    if advance:
+        stale = owner_tools.prepare_refresh(reference, invocation_id="new-refresh", changes=changes)
+        assert stale.code == "terrine.runtime.plan_request_invalid"

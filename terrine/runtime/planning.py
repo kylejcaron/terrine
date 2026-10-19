@@ -236,6 +236,22 @@ class OwnerPlanner:
                 raise _INVOCATION_CONFLICT.error()
             return PlanInvocation.from_dict(json.loads(prior[1]))
 
+        manifest_table = con.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE lower(table_schema)=lower(?) AND lower(table_name)='runtime_manifests'",
+            [namespace],
+        ).fetchone()
+        expected = (
+            con.execute(
+                f"SELECT generation FROM {store._schema}.runtime_manifests WHERE dataset=?",
+                [request.destination.dataset],
+            ).fetchone()
+            if manifest_table is not None
+            else None
+        )
+        expected_manifest = expected[0] if expected is not None else None
+        if request.bind_base_manifest and expected_manifest != request.expected_base_manifest:
+            raise _INVALID_REQUEST.error(reason="pinned base generation is no longer current")
         ensure_runtime_shape_supported(request.design.shape)
         ensure_runtime_expressions_supported(request.design)
         model = self.resolver.resolve(request.model)
@@ -299,22 +315,6 @@ class OwnerPlanner:
             validate_compiled_output(snapshot_compiled, execution_model.con.to_pyarrow)
         finally:
             context.close()
-        manifest_table = con.execute(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE lower(table_schema)=lower(?) AND lower(table_name)='runtime_manifests'",
-            [namespace],
-        ).fetchone()
-        expected = (
-            con.execute(
-                f"SELECT generation FROM {store._schema}.runtime_manifests WHERE dataset=?",
-                [request.destination.dataset],
-            ).fetchone()
-            if manifest_table is not None
-            else None
-        )
-        expected_manifest = expected[0] if expected is not None else None
-        if request.bind_base_manifest and expected_manifest != request.expected_base_manifest:
-            raise _INVALID_REQUEST.error(reason="pinned base generation is no longer current")
         plan = plan_refresh(
             namespace=namespace,
             dataset=request.destination.dataset,

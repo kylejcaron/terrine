@@ -809,23 +809,12 @@ class DatasetTools:
         budget: Budget | None = None,
     ) -> Response[PlanReceipt]:
         def prepare():
-            from terrine.runtime.backends.duckdb import DuckDBBackend
-
             dataset, saved = self._resolve_dataset(reference, "prepare")
-            if (
-                DuckDBBackend(self.model.con.con, namespace=self.namespace).current_generation(
-                    reference.dataset
-                )
-                != reference.generation
-            ):
-                raise _RECEIPT.error(route="Prepare refresh from the current publication.")
-            effective = effective_budget(self.policy.budget, budget)
-            dataset.plan_refresh(self.model, changes=changes, budget=effective)
             return self._prepare(
                 dataset.manifest.recipe,
                 destination=saved.destination,
                 invocation_id=invocation_id,
-                budget=effective,
+                budget=budget,
                 changes=changes,
                 expected_base_manifest=reference.generation,
                 bind_base_manifest=True,

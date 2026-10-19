@@ -135,6 +135,9 @@ generation; missing change evidence means a conservative rebuild. `refresh`
 requires that exact base/receipt pair. Publishing a refresh does not mutate old
 references, and replaying an already-successful refresh still returns its pinned
 generation.
+Matching refresh-preparation invocations replay their retained receipt before
+live preflight and current-base checks, even after a subsequent publication or
+source removal. New invocations check the pinned base before capturing inputs.
 
 References contain dataset/generation identities, hashes, row count and typed
 column roles/types with completeness/reason-column links. They omit internal
