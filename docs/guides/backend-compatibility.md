@@ -19,3 +19,25 @@ PostgreSQL, Snowflake and BigQuery execution are unverified. No paid warehouse,
 credentials or remote resources are accessed by the local workflow. Named dbt
 relation binding is owner-gated; an existing dbt recipe is not evidence of a
 reviewed relation-to-Catalog bridge.
+
+## Operation evidence
+
+Capabilities distinguish verified (`True`), unsupported (`False`), and unverified
+(`None`). A missing capability refuses only its own operation with structured
+`backend`, `operation`, `status`, and `route` context.
+
+- Query admission requires a verified dialect; transaction-scoped execution and
+  Arrow materialization have independent gates.
+- Retained input capture requires `retained_snapshot`; unknown retained snapshot
+  support does not block an ordinary Frame materialization.
+- Generation publication requires both `table_publication` and
+  `atomic_manifest_publish`, never merely writable SQL tables.
+- Strict scan budgets still require an actual verified scan bound. An output row
+  or byte limit does not certify source scan work. Explicit non-strict policy
+  permits execution with the existing warning.
+- DuckDB has no native replay-snapshot claim (`snapshot=False`). Owner-retained
+  immutable capture and its receipt are a separate verified protocol.
+- Native query cancellation, source change-feed evidence, scan estimates/limits
+  and native Parquet unload are not inferred from the driver API. Cooperative
+  runtime cancellation and closing owned sessions do not establish native query
+  cancellation support.

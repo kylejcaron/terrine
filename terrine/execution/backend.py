@@ -6,8 +6,12 @@ from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, Any, Protocol
 
-from terrine.backends.capabilities import DUCKDB_CAPABILITIES, BackendCapabilities
-from terrine.errors import RefusalSpec, TerrineError
+from terrine.backends.capabilities import (
+    _CAPABILITY_UNAVAILABLE,
+    DUCKDB_CAPABILITIES,
+    BackendCapabilities,
+)
+from terrine.errors import TerrineError
 from terrine.semantic.models import Catalog, RelationSpec, TableRef
 from terrine.semantic.sql import admit_read_query
 
@@ -17,11 +21,6 @@ if TYPE_CHECKING:
     from terrine.execution.inputs import ExecutionContext, PhysicalRelationId, VerifiedInputBinding
 
 __all__ = ["BackendProvider", "backend_provider"]
-
-_CAPABILITY_UNAVAILABLE = RefusalSpec(
-    "terrine.backend.capability_unavailable",
-    "Backend {backend!r} cannot provide {operation!r}: {status}. {route}",
-)
 
 
 class BackendProvider(Protocol):
@@ -100,6 +99,11 @@ class _DuckDBProvider:
             return con.sql(sql)
 
     def open_execution(self, catalog, con, *, units=None, input_binding=None):
+        self.capabilities.require(
+            "transaction_view",
+            backend="duckdb",
+            route="Use a backend with verified transaction-scoped input identity.",
+        )
         from terrine.execution.inputs import _open_native_execution
 
         return _open_native_execution(catalog, con, units=units, input_binding=input_binding)
@@ -111,6 +115,11 @@ _DUCKDB_PROVIDER = _DuckDBProvider()
 def backend_provider(con: Any) -> BackendProvider:
     """Resolve verified native execution before schema or source access."""
     if _DUCKDB_PROVIDER.matches(con):
+        _DUCKDB_PROVIDER.capabilities.require(
+            "dialect_admission",
+            backend="duckdb",
+            route="Use a native backend with verified read-only dialect admission.",
+        )
         return _DUCKDB_PROVIDER
     raise _CAPABILITY_UNAVAILABLE.error(
         backend=str(getattr(con, "name", type(con).__name__)).casefold(),

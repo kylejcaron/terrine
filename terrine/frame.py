@@ -102,8 +102,14 @@ class Frame:
         for warning in _scan_policy(budget):
             warnings.warn(warning, RuntimeWarning, stacklevel=2)
         from terrine.compile.dispatch import compile_design
+        from terrine.execution.backend import backend_provider
         from terrine.execution.inputs import open_execution
 
+        backend_provider(self._model.con).capabilities.require(
+            "arrow_batches",
+            backend=self._model.catalog.dialect,
+            route="Materialize with a backend that supports bounded Arrow batches.",
+        )
         model = self._model
         with open_execution(
             model.catalog, model.con, units=model.units, input_binding=model.input_binding

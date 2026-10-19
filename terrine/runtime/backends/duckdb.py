@@ -101,6 +101,12 @@ class DuckDBBackend:
         expected_manifest: str | None,
         lease,
     ) -> PublicationReceipt:
+        for operation in ("table_publication", "atomic_manifest_publish"):
+            self.capabilities.require(
+                operation,
+                backend="duckdb",
+                route="Materialize a Frame directly instead of publishing a Dataset generation.",
+            )
         if not stage.partitions:
             raise ValueError("generation must contain at least one partition")
         if lease.resource != f"dataset:{stage.dataset}":

@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from terrine.errors import RefusalSpec
+
 __all__ = ["BackendCapabilities", "DUCKDB_CAPABILITIES", "UNVERIFIED_CAPABILITIES"]
+
+_CAPABILITY_UNAVAILABLE = RefusalSpec(
+    "terrine.backend.capability_unavailable",
+    "Backend {backend!r} cannot provide {operation!r}: {status}. {route}",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -12,10 +19,30 @@ class BackendCapabilities:
     """True is verified, False is unsupported, and None is unverified."""
 
     snapshot: bool | None = None
-    change_evidence: frozenset[str] = frozenset()
+    change_evidence: frozenset[str] | None = None
     atomic_manifest_publish: bool | None = None
     scan_estimate: bool | None = None
     cancellation: bool | None = None
+    dialect_admission: bool | None = None
+    exact_timestamps: bool | None = None
+    exact_decimals: bool | None = None
+    transaction_view: bool | None = None
+    retained_snapshot: bool | None = None
+    table_publication: bool | None = None
+    arrow_batches: bool | None = None
+    native_parquet_unload: bool | None = None
+    scan_limit: bool | None = None
+
+    def require(self, operation: str, *, backend: str, route: str) -> None:
+        """Refuse only the requested operation when its evidence is absent."""
+        value = getattr(self, operation)
+        if value is not True:
+            raise _CAPABILITY_UNAVAILABLE.error(
+                backend=backend,
+                operation=operation,
+                status="unsupported" if value is False else "unverified",
+                route=route,
+            )
 
 
 DUCKDB_CAPABILITIES = BackendCapabilities(
@@ -24,5 +51,12 @@ DUCKDB_CAPABILITIES = BackendCapabilities(
     atomic_manifest_publish=True,
     scan_estimate=None,
     cancellation=None,
+    dialect_admission=True,
+    exact_timestamps=True,
+    exact_decimals=True,
+    transaction_view=True,
+    retained_snapshot=True,
+    table_publication=True,
+    arrow_batches=True,
 )
 UNVERIFIED_CAPABILITIES = BackendCapabilities()

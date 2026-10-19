@@ -95,4 +95,4 @@ depends_on = ["terrine.data", "terrine.errors", "terrine.spec"]
 
 [[modules]]
 path = "terrine.backends"
-depends_on = []
+depends_on = ["terrine.errors"]
