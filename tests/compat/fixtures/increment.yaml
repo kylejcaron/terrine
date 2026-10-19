@@ -1,0 +1,109 @@
+dialect: duckdb
+day_boundary: UTC+05:30
+week_start: sunday
+fact_sources:
+  - name: events
+    sql: >-
+      SELECT * FROM (VALUES
+      (1, 101, TIMESTAMP '2025-01-01', 4.0, 'mobile'),
+      (2, 202, TIMESTAMP '2025-01-02', 8.0, 'web')
+      ) AS t(user_id, account_id, occurred_at, amount, platform)
+    timestamp_column: occurred_at
+    entities: [user_id, account_id]
+    facts:
+      - {name: spend, column: amount}
+      - {name: purchase, column: amount}
+      - {name: visit}
+    properties:
+      - {name: platform, column: platform, dtype: string, as_of: event_time}
+    dims: [region]
+  - name: other_events
+    sql: >-
+      SELECT * FROM (VALUES
+      (3, TIMESTAMP '2025-01-03', 2.0, 'paid')
+      ) AS t(user_id, occurred_at, amount, channel)
+    timestamp_column: occurred_at
+    entities: [user_id]
+    facts:
+      - {name: other_spend, column: amount}
+    properties:
+      - {name: platform, column: channel, dtype: string, as_of: pre_exposure}
+    dims: [region, lifecycle, changes]
+dim_sources:
+  - name: region
+    sql: >-
+      SELECT * FROM (VALUES
+      (1, TIMESTAMP '2024-01-01', TIMESTAMP '2026-01-01', 'west'),
+      (2, TIMESTAMP '2024-01-01', TIMESTAMP '2026-01-01', 'east')
+      ) AS t(user_id, valid_from, valid_to, region)
+    entity: user_id
+    validity: {valid_from: valid_from, valid_to: valid_to}
+    properties:
+      - {name: region, column: region, dtype: string, as_of: event_time}
+  - name: lifecycle
+    sql: SELECT * FROM (VALUES (3, 'active')) AS t(user_id, status)
+    entity: user_id
+    properties:
+      - {name: status, column: status, dtype: string, as_of: static}
+  - name: changes
+    sql: SELECT * FROM (VALUES (3, TIMESTAMP '2025-01-01', 'gold')) AS t(user_id, changed_at, level)
+    entity: user_id
+    validity: {changed_at: changed_at}
+    properties:
+      - {name: level, column: level, dtype: string, as_of: event_time}
+  - name: unused
+    sql: SELECT 1 AS user_id, 'inert' AS region
+    entity: user_id
+    properties:
+      - {name: region, column: region, dtype: string, as_of: static}
+metrics:
+  - name: revenue
+    type: mean
+    entity: user_id
+    fact: spend
+    aggregation: sum
+    window_days: 30
+    filters:
+      - {property: region, op: equals, values: [west]}
+    winsorization: {lower_value: 0.0, upper_percentile: 0.99}
+  - name: purchases
+    type: conversion
+    entity: account_id
+    fact: purchase
+    window_days: 7
+    filters:
+      - {property: region, op: in, values: [west, east]}
+  - name: ratio
+    type: ratio
+    entity: user_id
+    numerator:
+      fact: spend
+      aggregation: sum
+      window_days: 30
+      filters:
+        - {property: region, op: equals, values: [west]}
+    denominator:
+      fact: purchase
+      aggregation: count
+      window_days: 30
+  - name: other_revenue
+    type: mean
+    entity: user_id
+    fact: other_spend
+    aggregation: avg_event
+    window_days: 30
+    filters:
+      - {property: platform, op: equals, values: [paid]}
+      - {property: status, op: equals, values: [active]}
+      - {property: level, op: equals, values: [gold]}
+      - {property: region, op: equals, values: [west]}
+exposures:
+  - name: assignment
+    sql: SELECT 1 AS user_id
+experiments:
+  - name: unprojected
+    exposure: assignment
+    unit: user_id
+    start: '2025-01-01'
+    control_group: control
+    plan: {alpha: 0.05, q: 0.1}

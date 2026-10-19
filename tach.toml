@@ -1,0 +1,105 @@
+source_roots = ["."]
+
+[[modules]]
+path = "terrine"
+depends_on = ["terrine.errors", "terrine.windows", "terrine.spec", "terrine.data", "terrine.model", "terrine.frame", "terrine.compile.cost", "terrine.dataset"]
+
+[[modules]]
+path = "terrine.errors"
+depends_on = []
+
+[[modules]]
+path = "terrine.windows"
+depends_on = ["terrine.errors"]
+
+[[modules]]
+path = "terrine._time"
+depends_on = []
+
+[[modules]]
+path = "terrine.data"
+depends_on = ["terrine.errors", "terrine.windows"]
+
+
+[[modules]]
+path = "terrine.spec"
+depends_on = ["terrine._time", "terrine.errors", "terrine.semantic", "terrine.windows", "terrine.frame"]
+
+[[modules]]
+path = "terrine.semantic"
+depends_on = ["terrine._time", "terrine.errors", "terrine.windows", "terrine.execution"]
+
+[[modules]]
+path = "terrine.temporal"
+depends_on = ["terrine.data", "terrine.errors", "terrine.semantic", "terrine.windows"]
+
+[[modules]]
+path = "terrine.model"
+depends_on = ["terrine.data", "terrine.errors", "terrine.semantic", "terrine.temporal", "terrine.adapters", "terrine.execution"]
+
+[[modules]]
+path = "terrine.simulate"
+depends_on = ["terrine._time", "terrine.data", "terrine.errors"]
+
+
+[[modules]]
+path = "terrine.adapters"
+depends_on = ["terrine.errors", "terrine.semantic"]
+
+[[modules]]
+path = "terrine.compile"
+depends_on = ["terrine.errors", "terrine.execution", "terrine.model", "terrine.spec", "terrine.data", "terrine.semantic", "terrine.temporal"]
+
+[[modules]]
+path = "terrine.compile.cost"
+depends_on = ["terrine.compile", "terrine.compile.dispatch", "terrine.data", "terrine.errors", "terrine.execution", "terrine.spec"]
+
+[[modules]]
+path = "terrine.compile.shapes"
+depends_on = ["terrine.compile", "terrine.data", "terrine.errors", "terrine.model", "terrine.semantic", "terrine.spec", "terrine.temporal", "terrine.windows"]
+
+[[modules]]
+path = "terrine.compile.dispatch"
+depends_on = ["terrine.compile", "terrine.compile.shapes", "terrine.spec"]
+
+
+[[modules]]
+path = "terrine.compile.materialize"
+depends_on = ["terrine.compile", "terrine.compile.dispatch", "terrine.data", "terrine.errors", "terrine.model", "terrine.spec"]
+
+[[modules]]
+path = "terrine.dataset"
+depends_on = ["terrine.errors", "terrine.semantic", "terrine.spec", "terrine.data", "terrine.compile.cost", "terrine.compile.dispatch", "terrine.execution", "terrine.runtime", "terrine.export", "terrine.temporal"]
+[[modules]]
+path = "terrine.runtime.materialize"
+depends_on = ["terrine.compile", "terrine.compile.cost", "terrine.compile.materialize", "terrine.data", "terrine.errors", "terrine.execution", "terrine.model", "terrine.spec"]
+[[modules]]
+path = "terrine.execution"
+depends_on = ["terrine.backends", "terrine.data", "terrine.errors", "terrine.semantic"]
+
+[[modules]]
+path = "terrine.frame"
+depends_on = ["terrine.compile", "terrine.compile.cost", "terrine.compile.dispatch", "terrine.data", "terrine.errors", "terrine.execution", "terrine.semantic", "terrine.spec"]
+
+
+# Dependency direction: runtime may consume compiler APIs; compiler never imports runtime.
+[[modules]]
+
+path = "terrine.runtime"
+depends_on = ["terrine.backends", "terrine.compile", "terrine.compile.cost", "terrine.compile.dispatch", "terrine.compile.materialize", "terrine.data", "terrine.errors", "terrine.execution", "terrine.frame", "terrine.model", "terrine.runtime.materialize", "terrine.semantic", "terrine.spec"]
+
+[[modules]]
+path = "terrine.orchestration"
+depends_on = ["terrine.runtime"]
+
+[[modules]]
+path = "terrine.export"
+depends_on = ["terrine.data", "terrine.errors", "terrine.spec"]
+
+[[modules]]
+path = "terrine.agent"
+depends_on = ["terrine.errors", "terrine.data", "terrine.runtime", "terrine.model", "terrine.spec", "terrine.dataset", "terrine._time", "terrine.compile.cost"]
+
+[[modules]]
+path = "terrine.backends"
+depends_on = ["terrine.errors"]

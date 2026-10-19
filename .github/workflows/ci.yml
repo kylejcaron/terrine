@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # Type checking and adapter tests need the optional integrations installed.
+      - run: uv sync --locked --group dev --group docs --all-extras
+      - run: make check TESTS="tests"
+      - run: uv run pytest tests/temporal/test_window_aggregates.py tests/compile/test_columns.py tests/compile/test_state_panel.py tests/spec/test_state_panel.py tests/test_frame_runtime.py -m slow
+      - run: uv run python -m tests.integration.study_api_smoke
+      - run: uv run pytest -q -n 4 integration
+      - run: |
+          for example in examples/*.py; do
+            uv run python "$example"
+          done
+      - run: uv run --group docs python -m tests.documentation --build
+      - run: uv build
+  distributions:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.13", "3.14"]
+        resolution: [highest, lowest-direct]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv build
+      - run: >-
+          uv run --no-project --python "${{ matrix.python }}" python
+          -m tests.integration.distribution_smoke
+          --wheel dist/*.whl --sdist dist/*.tar.gz
+          --python "${{ matrix.python }}" --resolution "${{ matrix.resolution }}"
+  sketches:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: uv sync --group dev --extra duckdb --extra pandas --extra sketches
+      - run: uv run pytest tests/temporal/test_sketches.py tests/spec/test_sketch_refusal.py tests/compile/test_nonadditive.py -q
+
+  warehouse-runtime:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: uv sync --group dev --extra duckdb --extra pandas
+      - run: uv run pytest integration/warehouse_execution -q
+
+  increment-compatibility:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: uv sync --locked --group dev --extra duckdb --extra increment
+      - run: make check TESTS="tests/compat tests/parity"
+      - run: uv run pytest tests/compat tests/parity -m slow
+
+  library-handoffs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: uv sync --locked --group dev --extra duckdb --extra doubleml --extra dowhy --extra duckreg --extra lifelines --extra diff-diff
+      - run: uv run pytest -q integration/handoffs

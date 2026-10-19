@@ -1,0 +1,19 @@
+dialect: duckdb
+fact_sources:
+  - name: shared
+    sql: SELECT 1 AS id, TIMESTAMP '2025-01-01' AS ts, 'fact' AS region
+    timestamp_column: ts
+    entities: [id]
+    facts: [{name: activity, column: id}]
+    properties: [{name: region, column: region, dtype: string, as_of: event_time}]
+  - name: consumer
+    sql: SELECT 1 AS id, TIMESTAMP '2025-01-01' AS ts
+    timestamp_column: ts
+    entities: [id]
+    facts: [{name: event_consumer, column: id}]
+    dims: [shared]
+dim_sources:
+  - name: shared
+    sql: SELECT 1 AS id, 'dimension' AS region
+    entity: id
+    properties: [{name: region, column: region, dtype: string, as_of: static}]

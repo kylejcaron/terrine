@@ -1,0 +1,218 @@
+Terrine third-party dependency notices
+=====================================
+
+This inventory covers every direct runtime dependency and every optional extra
+in pyproject.toml, plus the documentation builder. Versions below identify the
+installed distributions inspected, not an additional release/version promise.
+Dependencies are installed as separate upstream distributions; Terrine does not
+vendor their source or binary wheels. Their full license, bundled-component and
+transitive dependency notices remain in those distributions and must be retained
+when redistributing them. Platform-specific binaries can carry additional terms.
+This file records third-party attribution only; it does not set Terrine's license.
+
+Base dependencies
+-----------------
+
+Package: ibis-framework
+Version inspected: 12.0.0
+License: Apache-2.0
+Source: https://github.com/ibis-project/ibis
+License artifacts: LICENSE.txt in the installed distribution.
+
+Package: pydantic
+Version inspected: 2.14.1
+License: MIT
+Source: https://github.com/pydantic/pydantic
+License artifacts: LICENSE; pydantic-core is separately distributed.
+
+Package: PyYAML
+Version inspected: 6.0.3
+License: MIT
+Source: https://github.com/yaml/pyyaml
+License artifacts: LICENSE in the installed distribution.
+
+Package: sqlglot
+Version inspected: 29.0.1
+License: MIT
+Source: https://github.com/tobymao/sqlglot
+License artifacts: LICENSE in the installed distribution.
+
+Package: pyarrow
+Version inspected: 23.0.1
+License: Apache-2.0
+Source: https://github.com/apache/arrow
+License artifacts: LICENSE.txt and NOTICE.txt, including bundled components.
+Apache Arrow is Copyright 2016-2026 The Apache Software Foundation.
+This product includes software developed at The Apache Software Foundation
+(http://www.apache.org/). Its upstream NOTICE also attributes SFrame, Feather,
+DyND, LLVM, mman-win32, LevelDB, CMake, multibuild, Ibis, Dremio, Google Guava,
+Apache Kudu and Apache ORC. Preserve the complete upstream NOTICE and license
+artifacts with any redistributed PyArrow binaries.
+
+Package: numpy
+Version inspected: 2.5.4
+License expression: BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0
+Source: https://github.com/numpy/numpy
+License artifacts: LICENSE.txt and component licenses recorded by the installed
+wheel, including libdivide, pythoncapi-compat, Highway, dragon4, x86-simd-sort,
+SVML, pocketfft, lapack_lite and random-number implementations. Retain the
+platform wheel's complete bundled-library notices; the project license alone
+is not a replacement for those terms.
+
+Optional execution and dataframe dependencies
+--------------------------------------------
+
+Package: duckdb
+Extra: duckdb
+Version inspected: 1.5.6
+License: MIT
+Source: https://github.com/duckdb/duckdb-python
+License artifacts: upstream Python/engine licensing in the DuckDB distribution.
+
+Package: pandas
+Extra: pandas (also required by the Ibis DuckDB backend)
+Version inspected: 2.3.3
+License: BSD-3-Clause, with bundled-component notices in the distribution
+Source: https://github.com/pandas-dev/pandas
+License artifacts: full pandas and bundled-component license text in distribution
+metadata, including independently licensed code identified there.
+
+Package: polars
+Extra: polars
+Version inspected: 1.44.2
+License: MIT
+Source: https://github.com/pola-rs/polars
+License artifacts: LICENSE and the selected platform runtime's notices.
+Copyright (c) 2025 Ritchie Vink; Copyright (c) 2024 (Some portions) NVIDIA
+CORPORATION & AFFILIATES. All rights reserved.
+
+Optional orchestration dependencies
+----------------------------------
+
+Package: apache-airflow
+Extra: airflow
+Version inspected: 3.3.2
+License: Apache-2.0
+Source: https://github.com/apache/airflow
+License artifacts: LICENSE and NOTICE, plus separately installed core/SDK/provider
+artifacts. Apache Airflow is Copyright 2016-2026 The Apache Software Foundation.
+This product includes software developed at The Apache Software Foundation
+(http://www.apache.org/).
+
+Package: apache-airflow-providers-standard
+Extra: airflow
+Version inspected: 1.20.1
+License: Apache-2.0
+Source: https://github.com/apache/airflow
+License artifacts: LICENSE and NOTICE. Apache Airflow is Copyright 2016-2026
+The Apache Software Foundation. This product includes software developed at
+The Apache Software Foundation (http://www.apache.org/).
+
+Package: dagster
+Extra: dagster
+Version inspected: 1.13.26
+License: Apache-2.0
+Source: https://github.com/dagster-io/dagster
+License artifacts: COPYING and LICENSE in the installed distribution.
+
+Package: dbt-core
+Extra: dbt
+Version inspected: 1.10.13
+License: Apache-2.0
+Source: https://github.com/dbt-labs/dbt-core
+License artifacts: upstream distribution license and bundled notices.
+
+Package: dbt-duckdb
+Extra: dbt
+Version inspected: 1.9.6
+License: Apache-2.0
+Source: https://github.com/jwills/dbt-duckdb
+License artifacts: LICENSE and AUTHORS in the installed distribution.
+
+Optional definitions and sketches
+---------------------------------
+
+Package: increment
+Extra: increment
+Version inspected: 0.1.0a2
+License: Apache-2.0
+Source: https://github.com/kylejcaron/increment
+License artifacts: LICENSE and NOTICE in the installed distribution.
+Upstream NOTICE: increment, Copyright 2026 Kyle Caron. This product includes
+software developed by Kyle Caron (https://github.com/kylejcaron/increment).
+
+Package: datasketches
+Extra: sketches
+Version inspected: 5.2.0
+License: Apache-2.0
+Source: https://github.com/apache/datasketches-python
+License artifacts: LICENSE and NOTICE. Precompiled binaries additionally include
+nanobind code under BSD terms; retain the binary distribution's notices.
+
+Upstream NOTICE:
+Apache DataSketches Python
+Copyright 2025 The Apache Software Foundation
+Copyright 2015-2018 Yahoo Inc.
+Copyright 2019-2020 Verizon Media
+Copyright 2021- Yahoo Inc.
+This product includes software developed at
+The Apache Software Foundation (http://www.apache.org/).
+Prior to moving to ASF, the software for this project was developed at
+Yahoo Inc. (https://developer.yahoo.com).
+
+Optional downstream library dependencies
+----------------------------------------
+
+Package: doubleml
+Extra: doubleml
+Version inspected: 0.11.4
+License: BSD-3-Clause
+Source: https://github.com/DoubleML/doubleml-for-py
+License artifacts: LICENSE. Copyright (c) 2019-2023 Philipp Bach, Victor
+Chernozhukov, Sven Klaassen, Malte S. Kurz, Martin Spindler. All rights reserved.
+
+Package: dowhy
+Extra: dowhy (Python below 3.14 only)
+Version inspected: 0.14
+License: MIT
+Source: https://github.com/py-why/dowhy
+License artifacts: LICENSE in the installed distribution.
+
+Package: duckreg
+Extra: duckreg
+Version inspected: 0.4.1
+License: MIT
+Source: https://github.com/py-econometrics/duckreg
+License artifacts: LICENSE in the installed distribution.
+
+Package: lifelines
+Extra: lifelines
+Version inspected: 0.30.3
+License: MIT
+Source: https://github.com/CamDavidsonPilon/lifelines
+License artifacts: LICENSE in the installed distribution.
+
+Package: diff-diff
+Extra: diff-diff
+Version inspected: 3.13.0
+License: MIT
+Source: https://github.com/igerber/diff-diff
+License artifacts: LICENSE in the installed distribution.
+
+Documentation dependencies (not runtime requirements)
+----------------------------------------------------
+
+Package: mkdocs
+Dependency group: docs
+Version inspected: 1.6.1
+License: BSD-2-Clause
+Source: https://github.com/mkdocs/mkdocs
+License artifacts: LICENSE in the installed distribution.
+
+Package: mkdocs-material
+Dependency group: docs
+Version inspected: 9.7.7
+License: MIT
+Source: https://github.com/squidfunk/mkdocs-material
+License artifacts: LICENSE in the installed distribution; preserve theme assets'
+licenses with a distributed documentation site.

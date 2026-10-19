@@ -1,0 +1,13 @@
+dialect: duckdb
+fact_sources:
+  - name: events
+    sql: SELECT 1 AS user_id, TIMESTAMP '2025-01-01' AS occurred_at, 1 AS event
+    timestamp_column: occurred_at
+    entities: [user_id]
+    facts: [{name: event, column: event}]
+metrics:
+  - name: return_rate
+    type: retention
+    entity: user_id
+    fact: event
+    threshold_days: 7

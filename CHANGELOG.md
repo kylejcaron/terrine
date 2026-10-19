@@ -1,0 +1,84 @@
+# Changelog
+
+## Unreleased
+
+### Dataset construction
+
+- Build typed, point-in-time analytical and ML datasets with a standalone native
+  Model → Design → Frame → Dataset workflow and a complete executable tutorial.
+- Describe sources, entities, dimensions, facts and metrics in a strict native
+  Catalog; bind existing tables or admitted read-only SQL without requiring a
+  semantic adapter or sibling checkout.
+- Preserve exact fixed, scheduled and event anchors, stable event identities,
+  roster membership and independent observation bounds. First/nth events are
+  selected before cohort range filtering.
+- Construct named half-open features/outcomes, strict as-of attributes,
+  three-valued eligibility and descriptive treatment/cluster/weight roles.
+- Preserve source-specific completeness, numeric nulls and exact unavailable
+  reasons; distinguish fully observed zero activity from missing follow-up.
+- Build sequential/calendar/event panels, bounded state pairs, LTV trajectories,
+  cohort summaries, per-unit time-to-event records and risk-set counts/plain
+  rates. Retain row identity, temporal support and typed shape provenance.
+- Build deterministic bounded event sequences, sessions, funnels, transitions
+  and event-relative selectors with explicit tie, missing-predecessor and
+  temporal-leakage rules.
+- Support exact retention occurrence bands and deterministic last-event values,
+  exact min/max/distinct/type-7 quantiles, explicit native approximate distinct,
+  and optional cross-sectional DataSketches quantile sidecars.
+
+### Reproducibility and ML
+
+- Stage immutable DuckDB generations with bounded Arrow transfers and pinned
+  reads. Preserve logical types, column roles, coverage, completeness, precision
+  metadata and construction recipes through manifests and Arrow serialization.
+- Reopen and refresh saved training/scoring recipes in a fresh process. Explicit
+  source corrections publish a new generation without mutating existing readers.
+- Select training features/labels with exact incomplete-label exclusions and
+  leakage-aware group/time splits, purging, embargo and unassigned-row reasons.
+- Resolve scoring instants once, select an explicit eligible roster and omit
+  unused labels, treatment and label-source reads.
+- Apply fixed or train-only fitted post-aggregation winsorization, retain exact
+  frozen limits and require matching feature/recipe/snapshot identities on reuse.
+- Export resumable checksum-verified local Parquet shards with semantic metadata,
+  exact decimal/timestamp/null values and typed empty outputs.
+
+### Execution and integrations
+
+- Execute in owned private transaction sessions or retained immutable inputs;
+  keep caller connections open and preserve exact UTC output instants under
+  non-UTC SQL sessions.
+- Save destination-bound plans and track authoritative run status, bounded event
+  pages, request-key replay, cancellation requests, renewable fences and atomic
+  generation publication through Python, CLI and owner-local IPC.
+- Keep scan estimates, owner authorization and observed completed-artifact costs
+  distinct. Unknown strict scan bounds refuse before source work; output limits
+  abort rather than returning truncated success.
+- Provide optional Airflow/Dagster triggers and a local dbt Core after-build
+  recipe over the same owner planning, execution and publication contracts.
+- Preserve Arrow metadata through optional pandas/Polars conversions. Add
+  preflight-backed DoubleML, DoWhy and same-connection duckreg recipes, and
+  lifelines/diff-diff dataset conversions with real integration examples.
+- Keep increment as an optional semantic-definition adapter with explicit
+  compatibility and shared-dataset evidence, never a native dependency.
+- Offer separately authorized dataset agent discovery, Design/recipe edits,
+  preparation, staging/refresh, pinned run reads, redacted previews and exports.
+  Bound requests and budgets without exposing raw SQL or granting permissions
+  through inspection. Telemetry is an optional owner-configured projection.
+
+### Correctness and support
+
+- Preserve integer/decimal scale and checked Float64 arithmetic; reject
+  unrepresentable temporal/numeric results instead of narrowing or overflowing.
+- Retain snapshot-scoped integrity, exact boundary, source-identity and treatment
+  history checks across ordinary, retained and downstream export paths.
+- Share export refusals for incomplete outcomes, unknown eligibility, missing
+  repeated-unit clusters and grace-defined baseline treatment. DoWhy additionally
+  refuses repeated units and declared weights rather than forwarding ignored
+  arguments.
+- Keep implementation records out of ordinary public facades and isolate all
+  optional backend, dataframe, orchestration and modeling imports.
+- Document capability/compatibility evidence, inherent information limits,
+  recovery routes and data residency. Supply independent expected-row worlds,
+  bounded local scale measurements and an owner-gated live warehouse tier.
+- Terrine delivers datasets and descriptive summaries, not native effect
+  estimators, inferential diagnostics, survival curves or causal guarantees.
