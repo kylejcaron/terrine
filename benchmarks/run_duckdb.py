@@ -30,8 +30,10 @@ def run(config: ScaleConfig) -> dict[str, object]:
             else:
                 con.execute(f"INSERT INTO events SELECT * FROM {relation}")
             con.unregister(relation)
-        query = """SELECT unit_id, count(*)::BIGINT AS target_event_count
-                   FROM events WHERE event_type = 'target' GROUP BY unit_id"""
+        query = """SELECT unit_id,
+                          count(*) FILTER (WHERE event_type = 'target')::BIGINT
+                              AS target_event_count
+                   FROM events GROUP BY unit_id"""
         actual = con.execute(query).to_arrow_table().sort_by("unit_id")
         expected = pa.concat_tables(list(oracle_batches(config))).sort_by("unit_id")
         if not actual.equals(expected):

@@ -40,3 +40,11 @@ def test_generator_respects_configured_batch_bound():
     batches = list(event_batches(config))
     assert all(batch.num_rows <= config.batch_size for batch in batches)
     assert sum(batch.num_rows for batch in batches) == 130
+
+
+def test_duckdb_benchmark_preserves_units_with_zero_target_events():
+    from benchmarks.run_duckdb import run
+
+    result = run(ScaleConfig(units=1, events_per_unit=1, batch_size=1, seed=1))
+    assert result["oracle_match"] is True
+    assert result["emitted_rows"] == 1
