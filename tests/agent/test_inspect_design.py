@@ -249,3 +249,16 @@ def test_recipe_split_overflow_is_a_coded_refusal(tools):
         result = operation(json.dumps(recipe))
         assert result.status == "refused"
         assert result.code == "terrine.dataset.invalid_recipe"
+
+
+def test_scoring_recipe_malformed_eligibility_is_a_coded_refusal(tools):
+    recipe = _scoring_record(tools)
+    recipe["view"]["eligibility"] = {"bad": {"type": "Unknown"}}
+    for operation in (
+        tools.propose_recipe,
+        tools.validate_recipe,
+        lambda value: tools.save_design("malformed", value),
+    ):
+        result = operation(json.dumps(recipe))
+        assert result.status == "refused"
+        assert result.code == "terrine.dataset.invalid_recipe"

@@ -107,7 +107,14 @@ def parse_recipe(serialized: str, model: Model) -> DatasetRecipe:
                 )
             document = json.loads(recipe.canonical_json())["base_design"]
             document["eligibility"] = thaw(recipe.view["eligibility"])
-            eligibility_design = from_json(json.dumps({"schema_version": 1, "design": document}))
+            try:
+                eligibility_design = from_json(
+                    json.dumps({"schema_version": 1, "design": document})
+                )
+            except (KeyError, TypeError, ValueError, OverflowError) as error:
+                raise INVALID_RECIPE.error(
+                    reason="scoring eligibility must use typed predicates"
+                ) from error
             if eligibility_design.eligibility != design.eligibility:
                 raise INVALID_RECIPE.error(reason="scoring eligibility must match its base Design")
     return recipe
