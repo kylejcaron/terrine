@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Callable
 from typing import Any, Protocol
 
 import ibis
@@ -62,6 +63,8 @@ def run_plan(
     request_key: str | None = None,
     destination: DestinationRef | None = None,
     executor: Executor | None = None,
+    max_active_runs: int | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> RunReceipt:
     """Run a plan under owner execution callbacks, replaying destination-scoped keys."""
     if request_key is not None:
@@ -107,6 +110,8 @@ def run_plan(
         run_id=run_id,
         request_key=request_key,
         destination=destination,
+        max_active_runs=max_active_runs,
+        cancelled=cancelled,
         run_task=executor.run_task,
         publish=lambda current_plan, outputs, lease: executor.publish(
             current_plan, outputs, lease, run_id
@@ -126,6 +131,8 @@ def run_serialized_plan(
     executor: Any | None = None,
     resolver: ModelResolver | None = None,
     snapshot_authority: SnapshotAuthority | None = None,
+    max_active_runs: int | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> RunReceipt:
     """Verify and execute a plan, reopening owner-retained inputs for saved recipes."""
     document = json.loads(serialized)
@@ -211,6 +218,8 @@ def run_serialized_plan(
         request_key=request_key,
         destination=destination,
         executor=executor,
+        max_active_runs=max_active_runs,
+        cancelled=cancelled,
     )
 
 

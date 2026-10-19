@@ -190,3 +190,50 @@ def test_receipt_binds_dataset_recipe_change_evidence_and_base_generation(owner_
         owner_tools.execute_plan(forged, request_key="forged").code
         == "terrine.agent.receipt_unavailable"
     )
+
+
+def test_prepare_refuses_invalid_group_identity_without_leaking_exception(owner_tools):
+    from terrine.dataset.splits import GroupSplit
+    from terrine.spec import agg
+
+    base = recipe_for(owner_tools)
+    metric = owner_tools.inspect_catalog().output.metrics[0].name
+    design = replace(
+        base.base_design,
+        features={"history": agg(metric, window=("-1d", "0s"))},
+        outcomes={"label": agg(metric, window=("0s", "1d"))},
+    )
+    recipe = DatasetRecipe(
+        schema_version=1,
+        base_design=design,
+        view={
+            "kind": "training",
+            "features": ["history"],
+            "labels": ["label"],
+            "incomplete_labels": "keep",
+            "split": GroupSplit(group="customer_segment").to_record(),
+        },
+    )
+    result = owner_tools.prepare_dataset(
+        recipe,
+        destination=next(iter(owner_tools.policy.allowed_destinations)),
+        invocation_id="bad-group",
+    )
+    assert result.code == "terrine.dataset.invalid_recipe"
+
+
+def test_prepare_requires_the_connected_dataset_owner_configuration(owner_tools, tmp_path):
+    from terrine.runtime.owner import RuntimeOwner
+    from terrine.runtime.snapshot import SnapshotAuthority
+
+    authority = owner_tools.policy.snapshot_authority
+    mismatched = SnapshotAuthority(
+        RuntimeOwner(authority.owner.state_path, tmp_path / "other-root")
+    )
+    owner_tools.policy = replace(owner_tools.policy, snapshot_authority=mismatched)
+    result = owner_tools.prepare_dataset(
+        recipe_for(owner_tools),
+        destination=next(iter(owner_tools.policy.allowed_destinations)),
+        invocation_id="mismatched-owner",
+    )
+    assert result.code == "terrine.agent.owner_configuration"

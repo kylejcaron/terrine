@@ -57,6 +57,7 @@ class AgentPolicy:
     allowed_sources: frozenset[str] = frozenset()
     allowed_catalogs: frozenset[str] = frozenset()
     allowed_destinations: frozenset[DestinationRef] = frozenset()
+    allowed_exports: frozenset[Path] = frozenset()
     design_root: Path | None = None
     budget: Budget = field(default_factory=Budget)
     max_run_seconds: int = 300
@@ -105,6 +106,8 @@ class AgentPolicy:
         if any(not isinstance(item, DestinationRef) for item in destinations):
             raise TypeError("allowed_destinations must contain DestinationRef values")
         object.__setattr__(self, "allowed_destinations", destinations)
+        exports = frozenset(Path(path).expanduser().resolve() for path in self.allowed_exports)
+        object.__setattr__(self, "allowed_exports", exports)
         if not isinstance(self.budget, Budget):
             raise TypeError("budget must be Budget")
         if self.design_root is not None:

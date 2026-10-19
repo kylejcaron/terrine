@@ -16,19 +16,24 @@ import pyarrow as pa
 from terrine.data import Budget, MaterializedFrame
 from terrine.dataset.manifest import DatasetManifest, ManifestColumn, ManifestGeneration
 from terrine.errors import RefusalSpec
-from terrine.runtime.api import run_serialized_plan
+from terrine.runtime.api import RunReceipt, run_serialized_plan
 from terrine.runtime.backends.base import PublicationReceipt
 from terrine.runtime.backends.duckdb import DuckDBBackend, _digest_relation, _digest_version
 from terrine.runtime.changes import ChangeSet
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.planner import RefreshPlan, plan_refresh
-from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
+from terrine.runtime.recipe import (
+    DestinationRef,
+    ModelReference,
+    SavedPlanRecipe,
+    _bind_recipe_plan,
+)
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.dataset import DatasetRecipe
 
-__all__ = ["Dataset", "stage_frame"]
+__all__ = ["Dataset", "stage_frame", "dataset_from_run"]
 
 _INVALID_DESTINATION = RefusalSpec(
     "terrine.dataset.invalid_destination", "Dataset destination is invalid: {reason}."
@@ -290,7 +295,6 @@ def stage_frame(
     if not isinstance(table, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table):
         raise _INVALID_DESTINATION.error(reason="table must be a simple SQL identifier")
     from terrine.runtime.api import preflight_runtime_shape
-    from terrine.spec.validate import validate_design
 
     model = frame._model
     budget = budget if budget is not None else Budget(strict_scan=False)
@@ -325,9 +329,7 @@ def stage_frame(
     raw = model.con.con
     store = RuntimeStore(raw, namespace=namespace)
     store.initialize()
-    backend = DuckDBBackend(raw, namespace=namespace)
     recipe = _recipe_for(frame)
-    required_sources = validate_design(frame._design, model).required_sources
     plan = _plan_frame(
         frame,
         namespace=namespace,
@@ -362,8 +364,70 @@ def stage_frame(
         resolver=_ModelResolver(model),
         snapshot_authority=authority,
     )
-    if receipt.state != "succeeded" or receipt.published_generation is None:
+    return dataset_from_run(
+        saved,
+        receipt,
+        model=model,
+        namespace=namespace,
+        request_key=request_key,
+        snapshot_authority=authority,
+    )
+
+
+def dataset_from_run(
+    saved: SavedPlanRecipe,
+    receipt: RunReceipt,
+    *,
+    model: Any,
+    namespace: str,
+    request_key: str,
+    snapshot_authority: SnapshotAuthority,
+) -> Dataset:
+    """Record and reopen the exact committed generation of a saved dataset run."""
+    from terrine.spec.validate import validate_design
+
+    if (
+        namespace != saved.namespace
+        or receipt.state != "succeeded"
+        or receipt.published_generation is None
+    ):
         raise _GENERATION_INVALID.error()
+    if snapshot_authority.owner.reference != _owner_for(model.con).reference:
+        raise _GENERATION_INVALID.error()
+    table, raw = saved.destination.dataset, model.con.con
+    plan = _bind_recipe_plan(saved, namespace=namespace)
+    record = raw.execute(
+        f"SELECT dataset,state,published_generation,request_key,fingerprint,destination_json "
+        f'FROM "{namespace}".runtime_runs WHERE run_id=?',
+        [receipt.run_id],
+    ).fetchone()
+    if record is None or (
+        record[:5]
+        != (table, "succeeded", receipt.published_generation, request_key, plan.recipe.fingerprint)
+        or json.loads(record[5]) != saved.destination.to_dict()
+        or ModelReference.from_model(model, owner_key=saved.model.owner_key) != saved.model
+    ):
+        raise _GENERATION_INVALID.error()
+    exists = raw.execute(
+        "SELECT 1 FROM information_schema.tables WHERE lower(table_schema)=lower(?) "
+        "AND table_name='runtime_dataset_recipes'",
+        [namespace],
+    ).fetchone()
+    if exists is not None:
+        prior = raw.execute(
+            f'SELECT manifest_json FROM "{namespace}".runtime_dataset_recipes '
+            "WHERE dataset=? AND generation=?",
+            [table, receipt.published_generation],
+        ).fetchone()
+        if prior is not None:
+            return Dataset(DatasetManifest.from_json(prior[0]), con=model.con, namespace=namespace)
+    recipe = saved.restore_dataset_recipe()
+    if recipe is None:
+        raise _GENERATION_INVALID.error()
+    snapshot = snapshot_authority.find_retained(plan.snapshot_id, namespace=namespace)
+    owner = snapshot_authority.owner
+    backend = DuckDBBackend(raw, namespace=namespace)
+    required_sources = validate_design(recipe.base_design, model).required_sources
     partitions = raw.execute(
         f'SELECT p.partition,p.digest,p.table_name FROM "{namespace}".runtime_partitions p '
         f'JOIN "{namespace}".runtime_run_results r ON r.partition=p.partition '
@@ -405,7 +469,7 @@ def stage_frame(
             )
             for field in schema
         ),
-        frame._design.spec_hash,
+        recipe.base_design.spec_hash,
         model.model_hash,
         coverage,
         {
@@ -424,7 +488,8 @@ def stage_frame(
         "manifest_json VARCHAR,PRIMARY KEY(dataset,generation))"
     )
     raw.execute(
-        f'INSERT INTO "{namespace}".runtime_dataset_recipes VALUES (?,?,?,?,?)',
+        f'INSERT INTO "{namespace}".runtime_dataset_recipes VALUES (?,?,?,?,?) '
+        "ON CONFLICT DO NOTHING",
         [
             table,
             receipt.published_generation,

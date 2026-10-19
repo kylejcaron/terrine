@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from terrine.data import Budget
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.execution.gates import enforce_shape_budget, validate_compiled_output
 from terrine.model import Model
 from terrine.runtime.changes import Change, ChangeSet
@@ -23,7 +23,7 @@ from terrine.runtime.recipe import (
 )
 from terrine.runtime.snapshot import SnapshotAuthority, _design_root_names
 from terrine.runtime.state import RuntimeStore
-from terrine.spec.dataset import DatasetRecipe
+from terrine.spec.dataset import INVALID_RECIPE, DatasetRecipe
 from terrine.spec.design import Design
 from terrine.spec.io import from_json, to_json
 from terrine.spec.validate import ensure_runtime_shape_supported
@@ -250,7 +250,12 @@ class OwnerPlanner:
         enforce_shape_budget(request.design.shape, budget)
         compiled = compile_design(request.design, model)
         if request.dataset_recipe is not None:
-            request.dataset_recipe.build(model)
+            try:
+                request.dataset_recipe.build(model)
+            except TerrineError:
+                raise
+            except (KeyError, TypeError, ValueError, OverflowError) as error:
+                raise INVALID_RECIPE.error(reason="dataset view cannot be constructed") from error
         source_names, _, _ = _design_root_names(model, request.design)
         graph = dependency_graph(
             model,

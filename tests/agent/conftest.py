@@ -51,7 +51,7 @@ def owner_tools(tmp_path):
         readiness={"events": Coverage("2024-12-01", "2025-02-01")},
         units={"user": UnitSource("users", "id")},
     )
-    owner = RuntimeOwner(database, tmp_path / "snapshots")
+    owner = RuntimeOwner.from_connection(con)
     model_reference = ModelReference.from_model(model, owner_key=owner.reference)
 
     class Resolver:

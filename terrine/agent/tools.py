@@ -1,4 +1,4 @@
-"""Metadata-only discovery and safe typed Design editing."""
+"""Owner-authorized dataset discovery, pinned execution and bounded reads."""
 
 from __future__ import annotations
 
@@ -12,15 +12,20 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
+from time import monotonic
 from typing import Any
+
+from pydantic_core import to_jsonable_python
 
 from terrine.agent.design_schema import design_schema
 from terrine.agent.policy import _LIMIT, _SCOPE, AgentPolicy, Permission, effective_budget
 from terrine.agent.recipes import parse_recipe, recipe_schema
 from terrine.agent.schemas import (
+    AgentDatasetReference,
     CancelOutput,
     CapabilityOutput,
     CatalogOutput,
+    DatasetColumn,
     DesignOutput,
     DesignRequest,
     EventOutput,
@@ -30,6 +35,7 @@ from terrine.agent.schemas import (
     PropertyMetadata,
     RecipeOutput,
     Response,
+    RowsOutput,
     RunOutput,
     SchemaOutput,
     SourceMetadata,
@@ -37,6 +43,9 @@ from terrine.agent.schemas import (
     refusal_response,
 )
 from terrine.data import Budget, Preview
+from terrine.dataset.export import ExportManifest
+from terrine.dataset.manifest import DatasetManifest
+from terrine.dataset.reference import Dataset, dataset_from_run
 from terrine.errors import RefusalSpec, TerrineError
 from terrine.model import Model
 from terrine.runtime.api import Executor, cancel_run, get_run, read_run_events, run_serialized_plan
@@ -238,6 +247,11 @@ class DatasetTools:
                     "preview_dataset",
                     "prepare_dataset",
                     "execute_plan",
+                    "stage",
+                    "prepare_refresh",
+                    "refresh",
+                    "export_parquet",
+                    "preview_rows",
                     "get_run_status",
                     "get_run_events",
                     "request_cancel",
@@ -549,6 +563,18 @@ class DatasetTools:
         authority = self.policy.snapshot_authority
         if authority is None or self.policy.resolver is None or self.policy.model_reference is None:
             raise _OWNER.error(route="Configure an owner resolver and retained snapshot authority.")
+        from terrine.runtime.owner import RuntimeOwner
+
+        try:
+            connected_owner = RuntimeOwner.from_connection(self.model.con)
+        except (TypeError, ValueError) as error:
+            raise _OWNER.error(
+                route="Use an owner-configured file-backed DuckDB connection."
+            ) from error
+        if connected_owner.reference != authority.owner.reference:
+            raise _OWNER.error(
+                route="Align the owner's configured snapshot root with the connected dataset owner."
+            )
         if (
             destination.schema != self.namespace
             or Path(destination.database).resolve() != authority.owner.state_path.resolve()
@@ -658,6 +684,7 @@ class DatasetTools:
         if not isinstance(request_key, str) or not request_key.strip() or len(request_key) > 256:
             raise _INVALID.error(route="Use a nonempty request key of at most 256 characters.")
         invocation, saved = self._resolve_receipt(receipt, "write")
+        deadline = monotonic() + self.policy.max_run_seconds
         return run_serialized_plan(
             invocation.recipe_json,
             con=self.model.con.con,
@@ -667,6 +694,8 @@ class DatasetTools:
             executor=self.policy.executor,
             resolver=self.policy.resolver,
             snapshot_authority=self.policy.snapshot_authority,
+            max_active_runs=self.policy.max_concurrency,
+            cancelled=lambda: monotonic() >= deadline,
         )
 
     def execute_plan(self, receipt: PlanReceipt, *, request_key: str) -> Response[RunOutput]:
@@ -683,3 +712,210 @@ class DatasetTools:
             )
 
         return self._call("write", execute)
+
+    @staticmethod
+    def _dataset_reference(dataset: Dataset) -> AgentDatasetReference:
+        manifest = dataset.manifest
+        return AgentDatasetReference(
+            dataset=manifest.generation.dataset_id,
+            generation=manifest.generation.generation_id,
+            definition_hash=manifest.design_hash,
+            model_hash=manifest.model_hash,
+            manifest_hash=hashlib.sha256(manifest.to_json()).hexdigest(),
+            recipe_reference=manifest.recipe.digest,
+            row_count=manifest.generation.row_count,
+            columns=tuple(
+                DatasetColumn(
+                    name=column.name,
+                    data_type=column.data_type,
+                    role=column.role,
+                    complete_column=column.metadata.get("complete_column"),
+                    reason_column=column.metadata.get("reason_column"),
+                )
+                for column in manifest.columns
+            ),
+        )
+
+    def _resolve_dataset(self, reference: AgentDatasetReference, permission: Permission) -> Dataset:
+        if not isinstance(reference, AgentDatasetReference):
+            raise _RECEIPT.error(route="Use the unchanged reference returned by stage or refresh.")
+        con = self.model.con.con
+        exists = con.execute(
+            "SELECT 1 FROM information_schema.tables WHERE lower(table_schema)=lower(?) "
+            "AND table_name='runtime_dataset_recipes'",
+            [self.namespace],
+        ).fetchone()
+        if exists is None:
+            raise _RECEIPT.error()
+        record = con.execute(
+            f'SELECT recipe_json,manifest_json FROM "{self.namespace}".runtime_dataset_recipes '
+            "WHERE dataset=? AND generation=?",
+            [reference.dataset, reference.generation],
+        ).fetchone()
+        if record is None:
+            raise _RECEIPT.error()
+        saved = SavedPlanRecipe.from_json(record[0])
+        if saved.namespace != self.namespace or saved.model != self.policy.model_reference:
+            raise _SCOPE.error()
+        valid = validate_design(from_json(saved.design_json), self.model)
+        self.policy.authorize(
+            permission, sources=valid.required_sources, destination=saved.destination
+        )
+        manifest = DatasetManifest.from_json(record[1])
+        if manifest.recipe.digest != reference.recipe_reference:
+            raise _RECEIPT.error()
+        dataset = Dataset.from_manifest(manifest, con=self.model.con, namespace=self.namespace)
+        if self._dataset_reference(dataset) != reference:
+            raise _RECEIPT.error()
+        return dataset
+
+    def _stage(self, receipt: PlanReceipt, *, request_key: str) -> AgentDatasetReference:
+        _, saved = self._resolve_receipt(receipt, "write")
+        result = self._execute(receipt, request_key=request_key)
+        authority = self.policy.snapshot_authority
+        if result.state != "succeeded" or authority is None:
+            raise _RUN.error(route="Inspect the run state before requesting a committed dataset.")
+        return self._dataset_reference(
+            dataset_from_run(
+                saved,
+                result,
+                model=self.model,
+                namespace=self.namespace,
+                request_key=request_key,
+                snapshot_authority=authority,
+            )
+        )
+
+    def stage(self, receipt: PlanReceipt, *, request_key: str) -> Response[AgentDatasetReference]:
+        return self._call("write", lambda: self._stage(receipt, request_key=request_key))
+
+    def prepare_refresh(
+        self,
+        reference: AgentDatasetReference,
+        *,
+        invocation_id: str,
+        changes: ChangeSet | None = None,
+        budget: Budget | None = None,
+    ) -> Response[PlanReceipt]:
+        def prepare():
+            from terrine.runtime.backends.duckdb import DuckDBBackend
+
+            dataset = self._resolve_dataset(reference, "prepare")
+            if (
+                DuckDBBackend(self.model.con.con, namespace=self.namespace).current_generation(
+                    reference.dataset
+                )
+                != reference.generation
+            ):
+                raise _RECEIPT.error(route="Prepare refresh from the current publication.")
+            effective = effective_budget(self.policy.budget, budget)
+            dataset.plan_refresh(self.model, changes=changes, budget=effective)
+            destination = (
+                DestinationRef(
+                    str(self.policy.snapshot_authority.owner.state_path),
+                    self.namespace,
+                    reference.dataset,
+                )
+                if self.policy.snapshot_authority is not None
+                else None
+            )
+            if destination is None:
+                raise _OWNER.error()
+            return self._prepare(
+                dataset.manifest.recipe,
+                destination=destination,
+                invocation_id=invocation_id,
+                budget=effective,
+                changes=changes,
+                expected_base_manifest=reference.generation,
+                bind_base_manifest=True,
+            )
+
+        return self._call("prepare", prepare)
+
+    def refresh(
+        self, reference: AgentDatasetReference, receipt: PlanReceipt, *, request_key: str
+    ) -> Response[AgentDatasetReference]:
+        def refresh():
+            self._resolve_dataset(reference, "write")
+            _, saved = self._resolve_receipt(receipt, "write")
+            if (
+                saved.expected_base_manifest != reference.generation
+                or saved.destination.dataset != reference.dataset
+            ):
+                raise _RECEIPT.error(
+                    route="Use a refresh receipt prepared from this exact generation."
+                )
+            return self._stage(receipt, request_key=request_key)
+
+        return self._call("write", refresh)
+
+    def export_parquet(
+        self,
+        reference: AgentDatasetReference,
+        *,
+        destination: str,
+        partition_by: tuple[str, ...] = (),
+        budget: Budget | None = None,
+    ) -> Response[ExportManifest]:
+        def export():
+            from terrine.compile.cost import _scan_policy
+
+            if not isinstance(destination, str) or not destination:
+                raise _INVALID.error()
+            path = Path(destination).expanduser().resolve()
+            if path not in self.policy.allowed_exports:
+                raise _SCOPE.error(route="Use an exact owner-approved export destination.")
+            effective = effective_budget(self.policy.budget, budget)
+            _scan_policy(effective)
+            dataset = self._resolve_dataset(reference, "export")
+            return dataset.export_parquet(
+                destination=str(path), partition_by=partition_by, budget=effective
+            )
+
+        return self._call("export", export)
+
+    def preview_rows(
+        self, reference: AgentDatasetReference, *, limit: int, columns: tuple[str, ...]
+    ) -> Response[RowsOutput]:
+        def preview():
+            if (
+                isinstance(limit, bool)
+                or not isinstance(limit, int)
+                or not 0 < limit <= self.policy.max_preview_rows
+            ):
+                raise _INVALID.error(route="Use a positive row limit within the owner preview cap.")
+            if (
+                not isinstance(columns, tuple)
+                or not columns
+                or any(not isinstance(name, str) for name in columns)
+                or len(set(columns)) != len(columns)
+                or not set(columns) <= self.policy.preview_columns
+            ):
+                raise _SCOPE.error(route="Request only unique owner-approved preview columns.")
+            dataset = self._resolve_dataset(reference, "preview")
+            if not set(columns) <= {column.name for column in dataset.manifest.columns}:
+                raise _SCOPE.error()
+            iterator = dataset.to_arrow_batches(batch_size=min(limit, self.policy.batch_cap))
+            rows = []
+            try:
+                for batch in iterator:
+                    projected = batch.select(columns).slice(0, limit - len(rows))
+                    for row in projected.to_pylist():
+                        rows.append(
+                            tuple(
+                                None
+                                if name in self.policy.redacted_columns
+                                else to_jsonable_python(
+                                    row[name], bytes_mode="base64", inf_nan_mode="strings"
+                                )
+                                for name in columns
+                            )
+                        )
+                    if len(rows) >= limit:
+                        break
+            finally:
+                iterator.close()
+            return RowsOutput(columns=columns, rows=tuple(rows))
+
+        return self._call("preview", preview)

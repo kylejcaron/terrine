@@ -5,6 +5,7 @@
 - Add destination- and owner-scoped run status, bounded event pages and separately authorized cancellation through the existing runtime APIs.
 - Add editable training/scoring recipe discovery, canonical proposals and named recipe storage, with strict split fields and resolved scoring instants.
 - Prepare complete dataset recipes through owner-retained snapshots and execute immutable opaque receipts with destination-scoped replay and renewed authorization.
+- Stage and refresh pinned datasets through separately authorized agent receipts, expose safe manifest summaries and bounded redacted previews, and restrict Parquet exports to exact owner-approved paths.
 - Optional, preflight-backed DoubleML, DoWhy and same-connection duckreg recipes, with real integration examples and a dedicated CI job.
 - Snapshot-scoped warehouse export checks and exact per-reason exclusion counts; DoWhy refuses repeated-unit and declared-weight datasets rather than forwarding ignored arguments.
 - Add distinct lifelines KM-array and feature-only Cox-dataframe hand-offs, preserving elapsed entry times, declared weights/clusters, and exact exclusions; risk-set conversion retains coarsened counts and refuses delayed entry or incomplete trajectories.
@@ -15,6 +16,7 @@
 - Ignore unrelated case-distinct saved-plan namespaces when authorizing dataset run feedback.
 - Validate scoring recipe anchor, feature and eligibility consistency, reject inexact scoring instants, and return coded refusals for overflowing split durations.
 - Refuse malformed scoring eligibility through the shared dataset recipe error contract before named persistence or frame construction.
+- Enforce owner run deadlines at cancellation/publication checkpoints and admit concurrent runs atomically, preserving terminal replay and failed-run fence renewal.
 - Refuse missing pandas with the coded optional-dependency error before decoding diff-diff timestamp periods, including nanosecond values.
 - Keep state-classification null assertions valid across the supported pandas 2.x and 3.x representations.
 

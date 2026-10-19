@@ -99,3 +99,33 @@ def test_status_events_and_cancel_require_run_destination_ownership(tools, tmp_p
         assert "recipe_json" not in str(safe) and "database" not in str(safe)
     finally:
         con.disconnect()
+
+
+def test_dataset_preview_resolves_persisted_destination_before_reading(owner_tools):
+    from terrine.spec.dataset import DatasetRecipe
+
+    allowed = owner_tools.policy.allowed_destinations
+    destination = next(iter(allowed))
+    private = DestinationRef(destination.database, destination.schema, "private")
+    owner_tools.policy = replace(owner_tools.policy, allowed_destinations=allowed | {private})
+    recipe = DatasetRecipe(
+        schema_version=1,
+        base_design=from_json(owner_tools.design_example().output.serialized),
+        view=None,
+    )
+    receipt = owner_tools.prepare_dataset(
+        recipe, destination=private, invocation_id="private"
+    ).output
+    reference = owner_tools.stage(receipt, request_key="private").output
+    assert reference is not None
+    unit = next(column.name for column in reference.columns if column.role == "unit")
+    owner_tools.policy = replace(
+        owner_tools.policy,
+        allowed_destinations=allowed,
+        preview=True,
+        preview_columns=frozenset({unit}),
+    )
+    assert (
+        owner_tools.preview_rows(reference, limit=1, columns=(unit,)).code
+        == "terrine.agent.scope_denied"
+    )

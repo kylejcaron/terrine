@@ -31,6 +31,9 @@ _EXECUTION_FAILED = RefusalSpec(
     "terrine.runtime.execution_failed",
     "Runtime execution failed outside a coded Terrine refusal.",
 )
+_CONCURRENCY = RefusalSpec(
+    "terrine.runtime.concurrency_limit", "Owner concurrent run limit has been reached."
+)
 
 
 def _error_code(error: Exception) -> str:
@@ -57,6 +60,7 @@ def execute_plan(
     cancelled: Callable[[], bool] | None = None,
     max_tasks: int = 4096,
     max_concurrency: int = 1,
+    max_active_runs: int | None = None,
     lease_ttl: timedelta = timedelta(minutes=5),
 ) -> RunReceipt:
     """Execute a bounded DAG; callbacks must isolate connections when concurrency exceeds one."""
@@ -68,6 +72,12 @@ def execute_plan(
         raise ValueError("plan task count exceeds configured max_tasks")
     if isinstance(max_concurrency, bool) or max_concurrency < 1:
         raise ValueError("max_concurrency must be positive")
+    if max_active_runs is not None and (
+        isinstance(max_active_runs, bool)
+        or not isinstance(max_active_runs, int)
+        or max_active_runs < 1
+    ):
+        raise ValueError("max_active_runs must be positive")
     if request_key is not None and (
         not isinstance(request_key, str) or not request_key.strip() or len(request_key) > 256
     ):
@@ -146,6 +156,16 @@ def execute_plan(
             f"destination_json FROM {schema}.runtime_runs WHERE run_id=?",
             [run_id],
         ).fetchone()
+        if max_active_runs is not None and (
+            run is None or run[2] not in {"succeeded", "cancelled"}
+        ):
+            active = con.execute(
+                f"SELECT COUNT(*) FROM {schema}.runtime_runs "
+                "WHERE state IN ('queued','running','cancel_requested') AND run_id<>?",
+                [run_id],
+            ).fetchone()[0]
+            if active >= max_active_runs:
+                raise _CONCURRENCY.error(limit=max_active_runs)
         if run is not None:
             if run[0] != plan.dataset or run[1] != plan.recipe.fingerprint:
                 raise ValueError("run_id is already bound to a different plan")

@@ -89,3 +89,42 @@ policy. Matching destination-scoped request keys replay the existing run before
 reopening retained inputs; a conflicting plan fingerprint refuses. Failed runs
 retry with the same run identity and a newer fence, while succeeded and cancelled
 runs stay terminal.
+
+## Pinned datasets and row privacy
+
+`stage(receipt, request_key=...)` records the exact successful runtime generation
+as a pinned dataset. It does not restage or replan. Replays recover the same
+generation, including after a lost response. `prepare_refresh(reference,
+invocation_id=..., changes=...)` uses the saved recipe and binds the current
+generation; missing change evidence means a conservative rebuild. `refresh`
+requires that exact base/receipt pair. Publishing a refresh does not mutate old
+references, and replaying an already-successful refresh still returns its pinned
+generation.
+
+References contain dataset/generation identities, hashes, row count and typed
+column roles/types with completeness/reason-column links. They omit internal
+recipes, coverage literals, snapshots, SQL, database paths and arbitrary Frame
+metadata. Lookups compare the complete reference to persisted owner metadata and
+authorize the operation before opening the pinned dataset.
+
+`export_parquet` additionally requires `export=True` and an exact resolved path in
+`allowed_exports`. An allowed runtime table is not an export grant. Export uses
+the existing dataset exporter and returns its file/count/checksum manifest.
+
+`preview_rows(reference, limit=..., columns=(... ,))` is denied by default.
+The limit must be positive and at most `max_preview_rows`; columns must be
+explicitly listed in `preview_columns`. Names in `redacted_columns` produce null
+cells. Reads use Arrow batches bounded by `min(limit, batch_cap)`, stop at the
+limit, and close the iterator. No other columns are returned.
+
+`max_concurrency` admits new runs atomically against active runs in the runtime
+namespace; matching request-key replays do not consume another slot.
+`max_run_seconds` requests cancellation at runtime checkpoints, including before
+publication, independently of renewable leases. It does not forcibly terminate an
+owner callback in the middle of an external operation. `max_requests` separately
+limits all tool calls, including refused calls.
+
+Use `RuntimeOwner.from_connection(model.con)` when configuring the trusted
+snapshot authority. Custom retained roots must also be configured as the
+connected owner's `TERRINE_RUNTIME_SNAPSHOT_ROOT`; mismatched owner identities
+refuse before preparation.

@@ -47,12 +47,23 @@ class PlanReceipt(Record):
     recipe_hash: str
 
 
+class DatasetColumn(Record):
+    name: str
+    data_type: str
+    role: str
+    complete_column: str | None = None
+    reason_column: str | None = None
+
+
 class AgentDatasetReference(Record):
     dataset: str
     generation: str
     definition_hash: str
     recipe_reference: str
-    columns: tuple[str, ...] = ()
+    model_hash: str
+    manifest_hash: str
+    row_count: Annotated[int, Field(ge=0)]
+    columns: tuple[DatasetColumn, ...] = ()
 
 
 class BudgetRequest(Record):
@@ -250,3 +261,17 @@ class EventsOutput(Record):
 
 class RecipeOutput(DesignOutput):
     recipe_digest: str
+
+
+class RowsOutput(Record):
+    columns: tuple[str, ...]
+    rows: tuple[tuple[Any, ...], ...]
+
+    @field_validator("rows", mode="after")
+    @classmethod
+    def _rows(cls, value):
+        return freeze(value)
+
+    @field_serializer("rows")
+    def _serialize_rows(self, value):
+        return thaw(value)
