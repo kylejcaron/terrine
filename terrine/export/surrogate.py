@@ -62,9 +62,9 @@ def to_surrogate_arrow(
 ) -> ArrowSurrogate:
     """Project Arrow training data with identity, missingness and provenance."""
     from terrine.data import MaterializedFrame
-
     if not isinstance(data, MaterializedFrame):
         raise _INVALID.error(reason="materialized_frame_required")
+    table = data.table
     structural = {
         "time_to_event": ("entry_time",),
         "ltv": ("age",),
@@ -73,7 +73,7 @@ def to_surrogate_arrow(
     requested = (*features, *outcomes)
     if len(set(requested)) != len(requested):
         raise _INVALID.error(reason="duplicate_surrogate_column")
-    if any(name not in data.table.column_names for name in requested):
+    if any(name not in table.column_names for name in requested):
         raise _INVALID.error(reason="missing_surrogate_column")
     identity = tuple(
         dict.fromkeys(
@@ -101,10 +101,10 @@ def to_surrogate_arrow(
     retained = tuple(
         dict.fromkeys((*identity, *requested, *data.roles.outcomes, *structural, *support))
     )
-    missing = [name for name in retained if name not in data.table.column_names]
+    missing = [name for name in retained if name not in table.column_names]
     if missing:
         raise _INVALID.error(reason=f"missing_surrogate_support_{missing[0]}")
-    projected = data.table.select(retained)
+    projected = table.select(retained)
     serialized = data.to_metadata()
     role_metadata = dict(serialized["roles"])
     projected_outcomes = [
