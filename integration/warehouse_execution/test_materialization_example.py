@@ -20,5 +20,11 @@ def test_model_design_example_publishes_exact_generation_and_declared_correction
     corrected["rows"].sort(key=lambda row: row["user_id"])
     assert first["generation"]
     assert corrected["generation"] != first["generation"]
-    assert first["rows"] == [{"user_id": 1, "total": 3}, {"user_id": 2, "total": 4}]
-    assert corrected["rows"] == [{"user_id": 1, "total": 8}, {"user_id": 2, "total": 4}]
+    assert first["rows"] == [
+        {"user_id": 1, "total": 3, "tier": "gold"},
+        {"user_id": 2, "total": 4, "tier": "gold"},
+    ]
+    assert corrected["rows"] == [
+        {"user_id": 1, "total": 8, "tier": "silver"},
+        {"user_id": 2, "total": 4, "tier": "silver"},
+    ]

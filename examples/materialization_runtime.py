@@ -19,7 +19,7 @@ from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanReci
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog
-from terrine.spec import Design, FixedDate, agg
+from terrine.spec import Design, FixedDate, agg, asof
 
 
 def _catalog() -> Catalog:
@@ -34,13 +34,29 @@ def _catalog() -> Catalog:
                     "timestamp": "occurred_at",
                     "entities": {"user": "user_id"},
                     "facts": ["amount"],
-                    "properties": [],
-                    "dimensions": [],
+                    "properties": ["tier"],
+                    "dimensions": ["history"],
                 }
             },
             "facts": {"amount": {"source": "events", "column": "amount"}},
-            "properties": {},
-            "dimensions": {},
+            "properties": {
+                "tier": {
+                    "source": "events",
+                    "column": "tier",
+                    "dtype": "string",
+                    "as_of": "event_time",
+                    "dimension": "history",
+                }
+            },
+            "dimensions": {
+                "history": {
+                    "relation": {"kind": "table", "name": "user_tier"},
+                    "source_entity": "user",
+                    "entity_column": "user_id",
+                    "properties": ["tier"],
+                    "validity": {"valid_from": "starts", "valid_to": "ends"},
+                }
+            },
             "measures": {"total": {"fact": "amount", "aggregation": "sum"}},
             "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
         }
@@ -55,12 +71,12 @@ class ModelResolver:
         return self.model
 
 
-def _clean_rebuild_rows(model: Model, design: Design) -> list[dict[str, int]]:
+def _clean_rebuild_rows(model: Model, design: Design) -> list[dict[str, object]]:
     compiled = compile_columns(design, model)
     compiled.validate(execute=model.con.to_pyarrow)
     rows = model.con.to_pyarrow(compiled.table).to_pylist()
     return sorted(
-        [{"user_id": row["unit"], "total": row["total"]} for row in rows],
+        [{"user_id": row["unit"], "total": row["total"], "tier": row["tier"]} for row in rows],
         key=lambda row: row["user_id"],
     )
 
@@ -115,6 +131,15 @@ def main() -> None:
             )
             con.raw_sql("CREATE TABLE users(user_id BIGINT PRIMARY KEY)")
             con.raw_sql("INSERT INTO users VALUES (1), (2)")
+            con.raw_sql(
+                "CREATE TABLE user_tier("
+                "user_id BIGINT, tier VARCHAR, starts TIMESTAMP, ends TIMESTAMP)"
+            )
+            con.raw_sql(
+                "INSERT INTO user_tier VALUES "
+                "(1, 'gold', '2024-01-01', '2026-01-01'), "
+                "(2, 'gold', '2024-01-01', '2026-01-01')"
+            )
             catalog = _catalog()
             model = Model.from_catalog(
                 catalog,
@@ -125,7 +150,10 @@ def main() -> None:
             design = Design(
                 "user",
                 FixedDate("2025-01-02T00:00:00+00:00"),
-                features={"total": agg("total", window=("-1d", "0s"))},
+                features={
+                    "total": agg("total", window=("-1d", "0s")),
+                    "tier": asof("tier", before="0s"),
+                },
             )
             owner = RuntimeOwner(state_path=state_path, snapshot_root=Path(directory) / "snapshots")
             authority = SnapshotAuthority(owner)
@@ -156,7 +184,11 @@ def main() -> None:
             )
             initial = open_published_frame(receipt, con=con.con, namespace="analytics_owner")
             initial_rows = [
-                {"user_id": row["unit"], "total": int(row["total"])}
+                {
+                    "user_id": row["unit"],
+                    "total": int(row["total"]),
+                    "tier": row["tier"],
+                }
                 for row in initial.to_arrow().to_pylist()
             ]
             assert sorted(initial_rows, key=lambda row: row["user_id"]) == _clean_rebuild_rows(
@@ -173,6 +205,7 @@ def main() -> None:
 
             # This correction is explicit: capture a new input receipt and bind it to a new recipe.
             con.raw_sql("INSERT INTO events VALUES ('2025-01-01 11:00:00', 1, 5)")
+            con.raw_sql("UPDATE user_tier SET tier='silver'")
             corrected_recipe = _saved_recipe(
                 con=con,
                 model=model,
@@ -194,12 +227,18 @@ def main() -> None:
             )
             published = open_published_frame(corrected, con=con.con, namespace="analytics_owner")
             corrected_rows = [
-                {"user_id": row["unit"], "total": int(row["total"])}
+                {
+                    "user_id": row["unit"],
+                    "total": int(row["total"]),
+                    "tier": row["tier"],
+                }
                 for row in published.to_arrow().to_pylist()
             ]
             assert sorted(corrected_rows, key=lambda row: row["user_id"]) == _clean_rebuild_rows(
                 model, design
             )
+            retained = open_published_frame(receipt, con=con.con, namespace="analytics_owner")
+            assert retained.to_arrow().equals(initial.to_arrow())
             print(
                 json.dumps(
                     {
