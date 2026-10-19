@@ -158,6 +158,15 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
         expected_base_manifest=None,
     )
     recipe.pin_snapshot(store)
+    with pytest.raises(TerrineError) as destination_error:
+        runtime.run_serialized_plan(
+            recipe.to_json(),
+            con=con.con,
+            namespace="runtime",
+            destination=DestinationRef("other.duckdb", "analytics", "orders"),
+            request_key="wrong-destination",
+        )
+    assert destination_error.value.code == "terrine.runtime.plan_recipe_mismatch"
 
     class Resolver:
         def resolve(self, reference):
@@ -237,6 +246,24 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
     assert replay == result
     assert result.state == "succeeded"
     assert executor.observed == [3] * len(plan.tasks)
+
+    from dataclasses import replace
+
+    for binding in ModelReference.__dataclass_fields__:
+        changed_reference = replace(recipe.model, **{binding: f"changed-{binding}"})
+        changed_recipe = SavedPlanRecipe.create(
+            plan_json=recipe.plan_json,
+            design=design,
+            model=changed_reference,
+            destination=recipe.destination,
+            namespace="runtime",
+            expected_base_manifest=None,
+        )
+        with pytest.raises(TerrineError) as changed_error:
+            runtime.run_serialized_plan(
+                changed_recipe.to_json(), con=con.con, namespace="runtime", request_key="saved-run"
+            )
+        assert changed_error.value.code == "terrine.runtime.request_key_conflict"
 
     built_in = runtime.run_serialized_plan(
         recipe.to_json(),

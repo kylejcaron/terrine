@@ -274,6 +274,7 @@ def _bind_recipe_plan(recipe: SavedPlanRecipe, *, namespace: str) -> RefreshPlan
         "budget": plan.recipe.budget,
         "expected_base_manifest": restored.expected_base_manifest,
         "expected_base_manifest_bound": True,
+        "reconstruction_hash": restored.recipe_hash,
     }
     fingerprint = hashlib.sha256(
         json.dumps(bound_payload, sort_keys=True, separators=(",", ":")).encode()
@@ -283,6 +284,7 @@ def _bind_recipe_plan(recipe: SavedPlanRecipe, *, namespace: str) -> RefreshPlan
         fingerprint=fingerprint,
         expected_base_manifest=restored.expected_base_manifest,
         expected_base_manifest_bound=True,
+        reconstruction_hash=restored.recipe_hash,
     )
     return replace(
         plan,

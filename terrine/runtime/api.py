@@ -12,6 +12,9 @@ from terrine.runtime.events import read_run_events
 from terrine.runtime.execute import RunReceipt, execute_plan
 from terrine.runtime.planner import RefreshPlan, plan_refresh
 from terrine.runtime.recipe import (
+    _INVALID as _RECIPE_MISMATCH,
+)
+from terrine.runtime.recipe import (
     DestinationRef,
     ModelResolver,
     SavedPlanRecipe,
@@ -131,7 +134,7 @@ def run_serialized_plan(
         embedded_plan = _bind_recipe_plan(recipe, namespace=namespace)
         recipe_destination = recipe.destination
         if destination is not None and destination != recipe_destination:
-            raise ValueError("destination differs from saved recipe")
+            raise _RECIPE_MISMATCH.error(reason="supplied destination differs from saved recipe")
         if request_key is not None:
             destination = recipe_destination
             existing = find_run_by_request_key(
