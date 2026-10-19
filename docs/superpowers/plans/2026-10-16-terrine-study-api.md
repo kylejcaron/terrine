@@ -8,7 +8,9 @@
 
 **Tech Stack:** Python, Pydantic models, PyYAML, Ibis expressions, Apache Arrow (required); Polars and Pandas as optional conversion extras; pytest.
 
-**Spec:** `docs/superpowers/specs/2026-10-16-terrine-handoff.md` and `docs/superpowers/plans/2026-10-16-terrine-build.md`; coordinate interfaces with the temporal and estimation companion plans linked by the master plan.
+**Spec:** [Datasets-only scope decision](../specs/2026-10-18-terrine-scope-datasets-only.md) and [dataset build plan](2026-10-16-terrine-build.md); the scope decision controls wherever older plan language conflicts.
+
+**Current scope:** [Datasets-only scope decision](../specs/2026-10-18-terrine-scope-datasets-only.md) is authoritative and supersedes every estimator eligibility gate, inferential result/diagnostic, effect estimate and calibration statement in this historical plan. Preserve dataset construction, metadata, shared export preflight, and descriptive reporting only.
 
 ## Global Constraints
 

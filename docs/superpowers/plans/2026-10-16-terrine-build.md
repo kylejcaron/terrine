@@ -4,11 +4,13 @@
 
 **Goal:** Let data scientists, data engineers and AI agents safely create reproducible analytical and ML datasets from existing tables/semantic definitions, with explicit anchors, pre-treatment covariates and post-treatment outcomes.
 
-**Architecture:** Standalone Python distribution with its own minimal typed Catalog, loader and coded errors. Native definitions and optional semantic adapters produce one normalized descriptor layer; the temporal engine compiles that layer into lazy Ibis frames. Dataset staging, studies, estimation and orchestration reuse the same compiler. Increment is optional compatibility, never a core dependency or an editable prerequisite.
+**Architecture:** Standalone Python distribution with its own minimal typed Catalog, loader and coded errors. Native definitions and optional semantic adapters produce one normalized descriptor layer; the temporal engine compiles that layer into lazy Ibis frames. Dataset staging, descriptive reporting and orchestration reuse the same compiler. Increment is optional compatibility, never a core dependency or an editable prerequisite.
 
-**Tech Stack:** Python `>=3.13,<3.15` target (verify supported versions), uv, hatchling/hatch-vcs, Ibis, Pydantic 2, PyYAML, SQLGlot, Arrow, NumPy/SciPy; DuckDB reference backend. Increment, dataframe conversions, warehouse drivers and heavier methods are isolated extras. Ruff, ty, tach, Vulture, pydoclint, complexipy, prek; pytest/Hypothesis with focused xdist-safe tests.
+**Tech Stack:** Python `>=3.13,<3.15` target (verify supported versions), uv, hatchling/hatch-vcs, Ibis, Pydantic 2, PyYAML, SQLGlot, Arrow and NumPy; DuckDB reference backend. Increment, dataframe conversions, warehouse drivers and heavier methods are isolated extras. Ruff, ty, tach, Vulture, pydoclint, complexipy, prek; pytest/Hypothesis with focused xdist-safe tests.
 
 **Spec:** [Original handoff](../specs/2026-10-16-terrine-handoff.md) is historical reference, not an approved specification. Latest user instructions supersede its monorepo/extraction assumption and the earlier mandatory increment dependency: no increment edits, independently usable terrine, compatible common stacks, scalable ML staging and incremental materialization. Deliver a reviewed detailed near-term plan plus complete roadmap, not product implementation in this session.
+
+**Current scope:** [Datasets-only scope decision](../specs/2026-10-18-terrine-scope-datasets-only.md) supersedes estimation, inference, causal diagnostics, and effect-truth work below. Treat those roadmap sections as withdrawn; retain only dataset, export, descriptive-report and risk-set work.
 
 ## Global constraints
 
@@ -16,15 +18,15 @@
 - No release before increment's public launch. Packaging, local wheels and private benchmarks are allowed; publishing requires explicit authorization.
 - Borrow only generic contributor guidance from increment. Do not transplant experiment-specific architecture, make targets before they exist, or its entire tooling infrastructure.
 - Never edit, reorganize, patch, vendor wholesale or release increment. Only optional `terrine/adapters/increment.py` may import `increment.semantics`; broader test-only imports remain in `tests/parity/`. Native core, errors, generator and dataset workflow must work with increment absent.
-- Temporal engine consumes normalized descriptors, not experiment models. It never imports study specs, estimates, diagnostics or simulation. Estimators never import Ibis/query modules. Specs never import Ibis.
+- Temporal engine consumes normalized descriptors, not experiment models. It never imports study specs, inferential diagnostics or simulation. Specs never import Ibis.
 - Strict `[start,end)` event windows; exact timestamp time zero. No flooring event anchors. Catalog day boundaries are explicit UTC fixed offsets, compatible with increment's vocabulary; no unannounced DST semantics.
 - Additive windows use sparse prefix lookups, never anchor × all events/window joins or hidden dense unit × day intermediates. Explicitly requested bounded panel output is different and must be costed. Prefix subtraction does not apply to min/max, distinct or quantiles.
 - Preserve integer/decimal types and scale; no blanket float conversion. Missing/unobserved differs from observed zero, per column and per source.
 - Declared source completeness is required. `max(event_timestamp)` is not evidence that earlier data is complete.
-- Static temporal checks enforce declared measurement windows, not unmeasured-confounding assumptions, truth of source contracts, or historical availability of retrospectively corrected data.
+- Static temporal checks enforce declared measurement windows, not truth of source contracts or historical availability of retrospectively corrected data.
 - Customer rows, derived data and warehouse state stay in the customer's execution environment. Explicit local exports or partitioned ML exports to customer-owned object storage are allowed; no data routed through hosted terrine services and no payload/secret logging. Warehouse-only derived tables remain the default; exported training artifacts are an explicit owner-requested extension.
-- A descriptive frame need not have a treatment or controls. Causal estimation requires its own identification/eligibility contract; moving outcomes past grace end does not establish it.
-- Focused checks only at coherent milestones. No network/warehouse in unit tests; live checks under `integration/warehouse_execution/`. Calibration campaigns are not part of ordinary pytest collection.
+- Terrine makes no causal claims and does not ship effect estimators. Treatment/cluster roles and grace-window metadata describe datasets; causal analysis is downstream.
+- Focused checks only at coherent milestones. No network/warehouse in unit tests; live checks under `integration/warehouse_execution/`. Estimation/calibration work is withdrawn by the datasets-only scope.
 - Apply [contributor API/test restraint](../../../AGENTS.md#tests-and-validation) across this master and every companion. Named test lists specify required behavior, not test-function quotas: consolidate where coverage stays traceable and update command selectors. Do not weaken numerical, temporal, serialization or cross-path contracts to shrink the suite.
 
 ## Review focus
@@ -32,7 +34,7 @@
 1. Intraday equality boundaries, simultaneous events and strict pre-treatment attributes: Tasks 1.3/1.4 and 4.2 prove exclusion/inclusion; 4.1 tests anchor identity/time only.
 2. Coverage starts late or differs across sources; inactivity must not masquerade as missing data: Tasks 1.1/1.3 and 4.2 prove null reasons and per-column completeness.
 3. Event-free units and entry/exit dates: Task 4.1 preserves a declared roster and never invents it from activity.
-4. Postbaseline treatment classification, censoring and all-treated event cohorts: Tasks 3.2/4.3 reject invalid causal estimation without blocking descriptive frames.
+4. Treatment classification, censoring and event cohorts are descriptive dataset semantics; do not gate them with causal assumptions.
 5. Precision, SQL/source identity and cost claims: Tasks 0.2/1.2/4.2 exercise version compatibility, exact amounts, admitted SQL and unknown scan costs; never call output bytes a scan budget.
 
 ## Plan map and authoritative interfaces
@@ -42,7 +44,7 @@
 | This master plan | 0.1, 0.2, 4.5 | Foundation, compatibility, integration evidence; full roadmap |
 | [Temporal](2026-10-16-terrine-temporal.md) | 1.1–1.4 | Binding, readiness, sparse states/prefixes, attributes |
 | [Study API](2026-10-16-terrine-study-api.md) | 3.1, 3.2, 4.1, 4.2 | Serializable expressions, validation, anchors/population, frames/preview |
-| [Estimation](2026-10-16-terrine-estimation.md) | 2.1, 4.3, 4.4 | Independent synthetic oracle, native methods/diagnostics, recovery |
+| [Datasets-only scope](../specs/2026-10-18-terrine-scope-datasets-only.md) | — | Supersedes estimation, inference, causal-diagnostics and effect-truth roadmap sections |
 | [Dataset workflows](2026-10-16-terrine-dataset-workflows.md) | 6.2; amendments to 7.1/7.2/12.1 | State panels, training/scoring conveniences, safe live run observations |
 
 Shared pure metric rules/refusals belong to Task 1.1's `semantic/rules.py`, available before Task 3.2. Validation never imports temporal/compiler modules for error constants. Task 4.2 commits its execution verifier and all native facade/export changes together and verifies the committed tree, not leftover working files.
@@ -122,7 +124,7 @@ rows = frame.to_polars(budget=tr.Budget(max_rows=100_000, max_output_bytes=134_2
 Path("feature_adoption.yaml").write_text(to_yaml(design))
 ```
 
-This is an adopter dataset, not an effect estimate. Event at exactly t0 is excluded from features and included in `[0d,28d)` outcomes. If the anchoring event itself contributes to a metric, that inclusion is intentional and documented. FixedDate/Schedule additionally bind `units={"user": tr.UnitSource(table="users", key="user_id", entered_at="created_at")}` once on Model. Source coverage for every referenced fact source must be provided. Baseline binary treatment at a common t0 can feed native ATE methods; lack of a valid comparison affects estimation, not frame construction.
+This is an adopter dataset. Event at exactly t0 is excluded from features and included in `[0d,28d)` outcomes. If the anchoring event itself contributes to a metric, that inclusion is intentional and documented. FixedDate/Schedule additionally bind `units={"user": tr.UnitSource(table="users", key="user_id", entered_at="created_at")}` once on Model. Source coverage for every referenced fact source must be provided. Treatment is a descriptive dataset role; terrine makes no effect estimate or causal claim.
 
 The anchor range selects a cohort AFTER first-event selection; it never replaces an excluded early adoption with a later event. “First” is within declared source history, not an unsupported lifetime claim. Local collection above caps output, not warehouse scans; large datasets use the staging/batch APIs in Task 7.2.
 
@@ -141,7 +143,7 @@ All rows below are planned targets, not present support claims. Users keep their
 | Orchestrators | CLI/Python runtime is authoritative; thin Airflow/Dagster integrations and dbt after-build recipe. | 9.1: retries, dependencies and state parity on actual local examples. |
 | AI tooling | Versioned JSON Schema and structured result/error envelope over the same Python operations; optional MCP wrapper. No agent-only SQL/compiler path. | 12.1: local end-to-end dataset tool evaluations under restricted credentials and resource policy. |
 
-First useful milestones: (a) native pre/post dataset and bounded local export at 4.2; (b) immutable incremental/ML datasets at 7.2; (c) safe dataset-agent tools at 12.1, independent of optional causal methods. Native ATE calibration proceeds independently and gates estimation claims, not descriptive dataset usefulness.
+First useful milestones: (a) native pre/post dataset and bounded local export at 4.2; (b) immutable incremental/ML datasets at 7.2; (c) safe dataset-agent tools at 12.1.
 
 ## File ownership and dependencies
 
@@ -150,13 +152,13 @@ First useful milestones: (a) native pre/post dataset and bounded local export at
 - `spec/`: pure Pydantic expression/anchor/design models, validation, serialization; compile integration through a lazy facade import only.
 - `temporal/`: resolved event/daily/prefix/lookup/attribute operations; no increment or other vendor dependency.
 - `compile/`, `frame.py`, `execution/inputs.py`: frame composition, snapshot/immutable-input verification, metadata, conversions and budgets. Serialized provenance carries safe receipt IDs, never live verified bindings.
-- `estimate/`, `diagnostics/`: consume `data.MaterializedFrame`, share result contracts; diagnostics never import estimator implementations.
+- No `estimate/` or inferential `diagnostics/` package is part of the current product surface; simulation oracles describe expected dataset rows.
 - `simulate/`: independent DGP and oracle; integration examples may build real frames but oracle must not call production compiler.
 - `runtime/`, `dataset/`, `adapters/`: incremental execution, staged dataset manifests/exports and thin optional compatibility/orchestration. No speculative plugin framework.
 
 Source paths use a top-level `terrine/` layout matching increment. Tests follow owning modules. Schema/version/provenance formats are versioned on first serialization; no compatibility aliases or duplicated public entry points introduced pre-release.
 
-Public surface is a deliberate subset of these module-owned symbols. Follow the [API guidance](../../../AGENTS.md#public-api-and-refusals): the everyday concepts are Model, Design, Frame and Dataset, with supporting constructors only where the documented workflow needs them. Estimation, orchestration and telemetry retain focused module APIs; do not promote internal metadata/compiler/runtime types wholesale. Convenience APIs reuse existing AST/compiler paths rather than introducing aliases or parallel implementations.
+Public surface is a deliberate subset of module-owned dataset symbols. Follow the [API guidance](../../../AGENTS.md#public-api-and-refusals): the everyday concepts are Model, Design, Frame and Dataset, with supporting constructors only where documented workflows need them. Runtime and telemetry retain focused module APIs; do not promote internal metadata/compiler/runtime types wholesale. Convenience APIs reuse existing AST/compiler paths rather than introducing aliases or parallel implementations.
 
 ## Static checking plan
 
@@ -338,15 +340,14 @@ Also execute the amendment's training/scoring parity and state-metadata scenario
 
 ### Task 8.1: Nonadditive capabilities and warehouse scale
 
-**Depends:** 5.1 and 7.1. **Files:** `temporal/{nonadditive,sketches}.py`, `estimate/{streaming,sampling}.py`, `benchmarks/`, warehouse fixtures.
+**Depends:** 5.1 and 7.1. **Files:** `temporal/{nonadditive,sketches}.py`, `benchmarks/`, warehouse fixtures.
 
 **Deliver:** Exact min/max and distinct/quantile capability matrix, optional mergeable sketches with declared error and merge semantics; daily distinct counts cannot be summed, HLL cannot be prefix-subtracted. Choose per-kind bounded sparse/block algorithms, not unconstrained anchor×window fanout. `last` attributes and last-event value are not synonyms; declare ordering/tie policy for event-value last. Add increment RetentionMetric threshold-band interpretation, including finite versus open-ended horizon and completeness, with independent event-occurrence references. Keep report-only metric output grain explicit.
 
-Add fixed-bound winsorization with exact transformation placement and percentile-derived thresholds fitted only on declared training data, then frozen for validation/test/production scoring. Adapter transform declarations remain refused until their whole meaning is supported; never silently discard them.
+Add fixed-bound data transformations only where they serve dataset construction or downstream ML staging; persist declared parameters and preserve source/output roles. Do not fit or score nuisance models, select analysis samples, compute inferential scores, or perform warehouse estimator reductions.
 
-Separate nuisance-training subsample from analysis-row sampling. First train on weighted/hash-stratified subsample, score full analysis population, aggregate AIPW scores and clustered influence sums in warehouse. A later sampled-analysis mode records inclusion law, unit-consistent selection, inclusion probabilities, estimand and sampling-aware uncertainty. Retaining all treatment events/units must not use future information to select a control at earlier trials without a documented sampling law. All diagnostics obey applicable analysis weights. Batch Arrow scoring bounds memory; warehouse sufficient-statistic linear models/IRLS where numerically justified; distributed trainer extras require explicit tested adapter contracts.
 
-**Acceptance:** full vs sampled-target designs compared with their own variance; multiple batch partitions reproduce totals; rare arms/groups retained as declared; precision and rank failure explicit. Publish measured DuckDB and one real warehouse benchmark, raw-event/anchor counts, plan/cardinality, peak memory, execution bytes/cost and budget. Owner selects warehouse and affordable target scale before paid run; no unmeasured billion-event claim or universal “5% wider” promise.
+**Acceptance:** independent row-oracle parity for descriptive dataset metrics; multiple batch partitions reproduce exact dataset totals; null reasons and completeness remain exact. Publish measured DuckDB and, once owner-authorized, one real warehouse benchmark with raw-event/anchor counts, plan/cardinality, peak memory, execution bytes/cost and budget. No unmeasured billion-event claim or universal “5% wider” promise.
 
 ### Task 8.2: Backend and common-stack interoperability
 
@@ -369,16 +370,13 @@ Expose the runtime's run ID and bounded status/events to observers; retain its s
 
 **Acceptance:** run real local adapter examples against DuckDB including empty daily layer with downstream work, task failure, retry, expired lease, byte-budget rejection and secret redaction. Dagster asset materializations agree with CLI state.
 
-### Task 10.1: Estimator adapters and applicable sensitivity
+### Task 10.1: Library hand-off recipes
 
-**Depends:** 4.4; survival/forecast adapters also 6.1; distributed trainers also 8.1. **Files:** isolated optional extras for econml, DoubleML, lifelines, NumPyro and trainer backends; `diagnostics/sensitivity.py`.
+**Spec:** The datasets-only decision at `docs/superpowers/specs/2026-10-18-terrine-scope-datasets-only.md` defines each integration. Start as documentation recipes; write helpers only for mappings with a real gotcha.
 
-**Deliver:** minimal roles-to-library adapters with estimand, weights, cross-fitting/grouping, uncertainty and seed contracts. No heavy import from base install. E-values only for appropriate effect scales/assumptions; Cinelli–Hazlett only applicable linear-regression settings. Unsupported method×weight×shape combinations refuse narrowly, not silently drop inputs. Native and library estimators need not be identical to each other when estimands/models differ.
+**Deliver:** Document and test DoubleML cluster-role mapping, DoWhy refusal for repeated units/declared weights, duckreg same-connection aggregate execution, lifelines per-unit and risk-table conversions, diff-diff first-treatment encoding, and downstream hand-off limits. No native effect estimators, inferential diagnostics, sensitivity estimators, or calibration/recovery claims.
 
-Named adapter scope: econml LinearDML, CausalForestDML and DRLearner; DoubleML equivalent partially linear/interactive-regression targets; lifelines hazard/survival models; NumPyro cohort/value extrapolation. Heterogeneous-effect outputs need their own schema, subgroup/population target, held-out calibration and uncertainty support—not an ATE-shaped value presented as a CATE. Warehouse-scale DR pseudo-outcomes/final-stage training belongs to 8.1 and must retain fold/cluster/target-weight meaning.
-
-**Acceptance:** compare against direct calls to each library on identical data/settings, plus known-ground-truth recovery for its target; missing-extra message identifies install path; censoring/weights not silently lost; model-specific diagnostics and limitations attached.
-
+**Acceptance:** one tiny integration-tier example actually invokes each adopted library contract; unsupported shapes fail through the shared export preflight. Increment remains one optional recipe among integrations, never a requirement.
 ### Task 11.1: Bounded event sequences, re-anchoring and sessions
 
 **Depends:** 4.2. **Files:** `spec/sequence.py`, `temporal/{sequence,sessionize}.py`, `compile/shapes/event_sequence.py` and validator extensions.

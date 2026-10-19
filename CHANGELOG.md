@@ -1,4 +1,6 @@
 # Changelog
+## Removed
+- Native treatment-effect estimators, inferential/propensity diagnostics, and simulation truth/calibration claims. Terrine now delivers datasets and descriptive summaries; downstream libraries own estimation.
 
 ## 0.1.0
 
