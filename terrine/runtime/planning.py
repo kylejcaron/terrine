@@ -14,6 +14,7 @@ from terrine.execution.gates import enforce_shape_budget, validate_compiled_outp
 from terrine.model import Model
 from terrine.runtime.changes import Change, ChangeSet
 from terrine.runtime.graph import dependency_graph
+from terrine.runtime.materialize import ensure_runtime_expressions_supported
 from terrine.runtime.planner import RefreshPlan, plan_refresh
 from terrine.runtime.recipe import (
     DestinationRef,
@@ -210,6 +211,7 @@ class OwnerPlanner:
             return PlanInvocation.from_dict(json.loads(prior[1]))
 
         ensure_runtime_shape_supported(request.design.shape)
+        ensure_runtime_expressions_supported(request.design)
         model = self.resolver.resolve(request.model)
         if (
             not isinstance(model, Model)

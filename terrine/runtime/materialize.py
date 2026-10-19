@@ -18,9 +18,19 @@ from terrine.spec.expressions import ApproxMetricQuantile
 
 _RUNTIME_SKETCH_UNAVAILABLE = RefusalSpec(
     "terrine.runtime.sketch_sidecar_unavailable",
-    "Approximate quantile sidecars are unavailable in runtime composition; "
+    "Approximate quantile sidecars are unavailable in runtime planning and composition; "
     "use ordinary Frame materialization.",
 )
+
+
+def ensure_runtime_expressions_supported(design: Design) -> None:
+    """Refuse unsupported runtime expressions before resolving source inputs."""
+    if any(
+        isinstance(expression, ApproxMetricQuantile)
+        for expressions in (design.features, design.outcomes)
+        for expression in expressions.values()
+    ):
+        raise _RUNTIME_SKETCH_UNAVAILABLE.error()
 
 
 def compose_runtime_frame(
@@ -32,12 +42,7 @@ def compose_runtime_frame(
 ) -> CompiledStudy:
     """Compose and validate a runtime frame before it can enter publication staging."""
     enforce_shape_budget(design.shape, budget)
-    if any(
-        isinstance(expression, ApproxMetricQuantile)
-        for expressions in (design.features, design.outcomes)
-        for expression in expressions.values()
-    ):
-        raise _RUNTIME_SKETCH_UNAVAILABLE.error()
+    ensure_runtime_expressions_supported(design)
     compiled = compose_materialized_frame(design, model, persisted=persisted, budget=budget)
     validate_compiled_output(compiled, model.con.to_pyarrow)
     return compiled

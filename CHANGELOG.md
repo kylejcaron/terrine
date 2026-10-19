@@ -10,6 +10,8 @@
 - Add diff-diff first-treatment encoding for observed persistent-adoption panels, with never-treated zero, preserved calendar gaps, and treatment-history validation before outcome exclusions; exercise Callaway–Sant'Anna, Sun–Abraham and event studies.
 
 ## Fixed
+- Refuse unsupported approximate-quantile runtime requests before source validation or retained snapshot capture, while preserving ordinary Frame sidecars.
+- Preserve native relation-discovery, input-binding and transaction-ownership regression coverage through the verified Ibis execution boundary.
 - Reject non-read and multi-statement compiled queries before native schema resolution, while preserving compiler built-ins and source-relation function admission.
 - Refuse raw driver connections at the Ibis execution-provider boundary instead of advertising relation methods they do not implement; native runtime connection verification is unchanged.
 - Refuse missing pandas with the coded optional-dependency error before decoding diff-diff timestamp periods, including nanosecond values.

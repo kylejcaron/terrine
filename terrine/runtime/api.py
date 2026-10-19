@@ -355,8 +355,10 @@ def open_published_generation(receipt: RunReceipt, *, con: Any, namespace: str) 
 def preflight_runtime_shape(design: Any, budget: Any = None) -> None:
     from terrine.compile.materialize import preflight_materialization_shape
     from terrine.execution.gates import enforce_shape_budget
+    from terrine.runtime.materialize import ensure_runtime_expressions_supported
 
     enforce_shape_budget(design.shape, budget)
+    ensure_runtime_expressions_supported(design)
     preflight_materialization_shape(design, budget)
 
 

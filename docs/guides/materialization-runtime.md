@@ -44,6 +44,11 @@ prefix layer. Nested event selectors reuse the existing selector-dependency
 invalidation contract, and re-anchored additive metrics require event-resolution
 prefixes rather than assuming calendar alignment.
 
+Approximate quantile sidecars remain available only through ordinary Frame
+materialization. Dataset staging, owner planning and saved recipes refuse them
+with `terrine.runtime.sketch_sidecar_unavailable` before source validation or
+snapshot capture; use exact quantiles for retained runtime outputs.
+
 For persisted-layer staging, pass the resolved design, model, logical relations, and budget through `terrine.runtime.materialize.compose_runtime_frame`. This runtime entry point applies the same execution-owned shape-budget, integrity, and unknown-eligibility gates as `Frame.materialize` before returning the compiled relation for staging.
 
 The built-in executor transfers anchor, prefix, and final outputs in bounded Arrow batches to owner-retained IPC artifacts. Task state stores verified artifact references rather than full Arrow payloads; retry checks the artifact checksum before use. Final output budgets are enforced while writing batches. Publication streams these artifacts into generation-specific DuckDB tables and retains their logical Arrow schema, including duration ticks and Frame metadata. `DuckDBBackend.read_batches` reopens an exact partition with that schema and closes its cursor when the reader closes.

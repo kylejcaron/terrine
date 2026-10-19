@@ -9,11 +9,11 @@ from typing import Any, Protocol
 
 from terrine.errors import RefusalSpec, TerrineError
 from terrine.model import Model
+from terrine.runtime.materialize import ensure_runtime_expressions_supported
 from terrine.runtime.planner import RefreshPlan
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.dataset import DatasetRecipe
 from terrine.spec.design import Design
-from terrine.spec.expressions import ApproxMetricQuantile
 from terrine.spec.io import canonical_json, from_json, to_json
 
 __all__ = [
@@ -27,12 +27,6 @@ __all__ = [
 _INVALID = RefusalSpec(
     "terrine.runtime.plan_recipe_mismatch",
     "Saved plan reconstruction failed verification ({reason}).",
-)
-
-_RUNTIME_SKETCH_UNAVAILABLE = RefusalSpec(
-    "terrine.runtime.sketch_sidecar_unavailable",
-    "Approximate quantile sidecars are unavailable in runtime planning and composition; "
-    "use ordinary Frame materialization.",
 )
 
 
@@ -141,12 +135,7 @@ class SavedPlanRecipe:
         expected_base_manifest: str | None,
         dataset_recipe: DatasetRecipe | None = None,
     ) -> SavedPlanRecipe:
-        if any(
-            isinstance(expression, ApproxMetricQuantile)
-            for expressions in (design.features, design.outcomes)
-            for expression in expressions.values()
-        ):
-            raise _RUNTIME_SKETCH_UNAVAILABLE.error()
+        ensure_runtime_expressions_supported(design)
         if not isinstance(model, ModelReference) or not isinstance(destination, DestinationRef):
             raise TypeError("model and destination must be verified references")
         if not namespace:

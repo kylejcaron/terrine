@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import duckdb
+import ibis
 import pytest
 
 from terrine.data import Budget, UnitSource
@@ -102,7 +103,7 @@ def test_public_binding_rejects_foreign_backend_before_schema_lookup():
             binding = verify_immutable_inputs(catalog, published.con, relations=published.relations)
             foreign.execute("CREATE TABLE input_0 (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
             with pytest.raises(TerrineError) as error:
-                bind_resolver(catalog, foreign, input_binding=binding)
+                bind_resolver(catalog, ibis.duckdb.from_connection(foreign), input_binding=binding)
             assert error.value.code == "terrine.execution.invalid_input_binding"
     finally:
         foreign.close()
@@ -175,7 +176,7 @@ def test_required_relations_treats_a_quoted_dotted_name_as_one_identifier():
         con.execute('CREATE TABLE "literal.dot" (ts TIMESTAMP, user_id INTEGER, value INTEGER)')
         catalog = _catalog(table="literal.dot")
 
-        relations = required_relations(catalog, con)
+        relations = required_relations(catalog, ibis.duckdb.from_connection(con))
 
         assert len(relations) == 1
         assert relations[0].kind == "table"
@@ -194,7 +195,7 @@ def test_required_relations_includes_empty_physical_leaf_behind_nested_views():
         con.execute("CREATE VIEW v2 AS WITH used AS (SELECT * FROM v1) SELECT * FROM used")
         catalog = _catalog(table="v2")
 
-        relations = required_relations(catalog, con)
+        relations = required_relations(catalog, ibis.duckdb.from_connection(con))
 
         assert [(r.kind, r.name.casefold()) for r in relations] == [("table", "events")]
     finally:
@@ -210,7 +211,7 @@ def test_partial_table_reference_with_multiple_matches_is_refused():
         con.execute("CREATE TABLE two.events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
 
         with pytest.raises(TerrineError) as error:
-            required_relations(_catalog(), con)
+            required_relations(_catalog(), ibis.duckdb.from_connection(con))
         assert error.value.code == "terrine.execution.snapshot_unavailable"
     finally:
         con.close()
@@ -228,7 +229,9 @@ def test_sql_query_factors_are_admitted_as_structured_names():
             "sql": "WITH used AS (SELECT * FROM source.events) SELECT * FROM used",
         }
 
-        relations = required_relations(Catalog.model_validate(data), con)
+        relations = required_relations(
+            Catalog.model_validate(data), ibis.duckdb.from_connection(con)
+        )
 
         assert [(r.schema, r.name.casefold()) for r in relations] == [("source", "events")]
     finally:
@@ -255,7 +258,7 @@ def test_required_relations_covers_dimension_and_supplied_roster_roots():
 
         relations = required_relations(
             Catalog.model_validate(definition),
-            con,
+            ibis.duckdb.from_connection(con),
             units={"user": UnitSource("roster", "user_id")},
         )
 
@@ -322,7 +325,7 @@ def test_model_rejects_data_dependent_view_before_calling_path_function(tmp_path
         calls.clear()
 
         with pytest.raises(TerrineError):
-            Model.from_catalog(_catalog(), con=con, readiness={})
+            Model.from_catalog(_catalog(), con=ibis.duckdb.from_connection(con), readiness={})
 
         assert calls == []
     finally:
@@ -379,7 +382,6 @@ def test_changed_view_is_rejected_by_build_and_preview_without_running_its_funct
 
 
 def test_open_execution_preserves_origin_timezone_after_ibis_wrap():
-    import ibis
 
     con = ibis.duckdb.connect()
     raw = con.con
@@ -408,7 +410,7 @@ def test_execution_refuses_persistent_aggregate_macro_shadow_before_query():
         con.execute("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
         con.execute("INSERT INTO events VALUES ('2025-01-01', 1, 1), ('2025-01-02', 2, 2)")
         con.execute("CREATE MACRO sum(x) AS first(x)")
-        with open_execution(_catalog(), con) as execution:
+        with open_execution(_catalog(), ibis.duckdb.from_connection(con)) as execution:
             query = execution.con.sql("SELECT SUM(value) AS total FROM events")
             with pytest.raises(TerrineError) as error:
                 execution.execute(query)
@@ -419,13 +421,14 @@ def test_execution_refuses_persistent_aggregate_macro_shadow_before_query():
 
 def test_open_execution_refuses_but_does_not_finish_a_caller_transaction():
     con = duckdb.connect()
+    backend = ibis.duckdb.from_connection(con)
     try:
         con.execute("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
         con.execute("BEGIN")
         transaction_id = con.execute("SELECT system.main.current_transaction_id()").fetchall()[0][0]
 
         with pytest.raises(TerrineError) as error:
-            with open_execution(_catalog(), con):
+            with open_execution(_catalog(), backend):
                 pass
 
         assert error.value.code == "terrine.execution.snapshot_unavailable"
