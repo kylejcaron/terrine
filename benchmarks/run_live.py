@@ -8,7 +8,7 @@ import importlib
 import json
 import time
 import tracemalloc
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Strict
 
 from benchmarks.workloads import _json, content_digest, designs, load_model, row_bound, run_case
 from terrine import Budget
-from terrine.errors import RefusalSpec, TerrineError
+from terrine.errors import RefusalSpec, TerrineError, thaw
 from terrine.runtime.cost import ScanAuthorization, authorize_plan_scan
 from terrine.runtime.graph import DependencyGraph
 from terrine.runtime.planner import RefreshPlan, plan_refresh
@@ -32,6 +32,11 @@ _SCOPE = RefusalSpec(
     "terrine.benchmark.live_scope_mismatch",
     "The owner session differs from the approved backend/account/workspace; "
     "configure the matching owner adapter.",
+)
+_EXECUTION = RefusalSpec(
+    "terrine.benchmark.live_execution_failed",
+    "Live execution did not verify; inspect the sanitized report and repair the owner adapter "
+    "or resource policy before rerunning.",
 )
 
 
@@ -89,29 +94,120 @@ class LiveSession(Protocol):
     def close(self) -> None: ...
 
 
+def _empty_report() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "status": "failed",
+        "backend": None,
+        "workload": None,
+        "input_events": None,
+        "anchors": None,
+        "emitted_rows": None,
+        "oracle_match": None,
+        "source_digest": None,
+        "cases": [],
+        "scan_bytes": None,
+        "scan_cost": None,
+        "scan_cost_status": "not_executed",
+        "client_peak_memory_bytes": None,
+        "process_peak_memory_bytes": None,
+        "process_memory_scope": "owner_process_measurement_unavailable",
+        "elapsed_seconds": None,
+        "cancellation": {"status": "not_executed", "physically_cancelled": None},
+    }
+
+
+def failure_report(error: Exception, record: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Recover sanitized immutable failure evidence, including startup failures."""
+    if record is None and isinstance(error, TerrineError) and "report" in error.context:
+        return thaw(error.context["report"])
+    result = _empty_report() if record is None else record
+    result.update(
+        {
+            "status": "refused" if isinstance(error, TerrineError) else "failed",
+            "code": error.code if isinstance(error, TerrineError) else _EXECUTION.code,
+            "error_type": type(error).__name__,
+        }
+    )
+    return result
+
+
+def _observe_cost(session: LiveSession, approval: LiveApproval, record: dict[str, Any]) -> None:
+    observed = session.observed_cost()
+    raw_scan, raw_cost = observed.get("scan_bytes"), observed.get("scan_cost")
+    invalid = False
+    if raw_scan is not None:
+        if type(raw_scan) is int:
+            record["scan_bytes"] = raw_scan
+            invalid = raw_scan < 0
+        else:
+            invalid = True
+    if raw_cost is not None:
+        try:
+            cost = Decimal(str(raw_cost))
+        except InvalidOperation:
+            invalid = True
+        else:
+            if cost.is_finite():
+                record["scan_cost"] = cost
+                invalid = invalid or cost < 0
+            else:
+                invalid = True
+    if invalid:
+        record["scan_cost_status"] = "invalid_measurement"
+        raise ValueError("owner scan/cost observations are invalid")
+    scan, cost = record["scan_bytes"], record["scan_cost"]
+    if (scan is not None and scan > approval.max_scan_bytes) or (
+        cost is not None and cost > approval.max_cost
+    ):
+        record["scan_cost_status"] = "observed_cap_exceeded"
+        raise ValueError("observed scan or spend exceeded the approved ceiling")
+    record["scan_cost_status"] = (
+        "observed" if scan is not None and cost is not None else "partly_unavailable"
+    )
+
+
 def run_approved(document: dict[str, Any]) -> dict[str, Any]:
-    """Execute actual production Frames only within the owner-authorized session."""
-    try:
-        approval = LiveApproval.model_validate(document)
-        config = approval.workload
-        if (
-            not approval.approved
-            or not approval.cases
-            or len(set(approval.cases)) != len(approval.cases)
-        ):
-            raise ValueError("explicit unique cases and approval are required")
-        if not set(approval.cases).issubset(
-            {"frame", "schedule", "sequential", "event_panel", "sketch"}
-        ):
-            raise ValueError("unsupported live test slice")
-    except (TypeError, ValueError) as exc:
-        raise _GATE.error() from exc
-    module, function = approval.factory.split(":")
-    factory = getattr(importlib.import_module(module), function)
-    session: LiveSession = factory(approval)
+    """Execute authorized Frames; failures carry sanitized evidence in immutable error context."""
+    record = _empty_report()
+    session: LiveSession | None = None
+    approval: LiveApproval | None = None
+    authorized = False
+    primary: Exception | None = None
     started = time.perf_counter()
     tracemalloc.start()
     try:
+        try:
+            approval = LiveApproval.model_validate(document)
+            config = approval.workload
+            if (
+                not approval.approved
+                or not approval.cases
+                or len(set(approval.cases)) != len(approval.cases)
+                or not set(approval.cases).issubset(
+                    {"frame", "schedule", "sequential", "event_panel", "sketch"}
+                )
+            ):
+                raise ValueError("explicit supported unique cases and approval are required")
+        except (TypeError, ValueError) as error:
+            raise _GATE.error() from error
+        record.update(
+            {
+                "backend": approval.backend,
+                "workload": config.to_dict(),
+                "account_ref_digest": hashlib.sha256(approval.account_ref.encode()).hexdigest(),
+                "currency": approval.currency,
+                "budget": {
+                    "max_scan_bytes": approval.max_scan_bytes,
+                    "max_cost": approval.max_cost,
+                    "currency": approval.currency,
+                    "fingerprint": None,
+                },
+            }
+        )
+        module, function = approval.factory.split(":")
+        factory = getattr(importlib.import_module(module), function)
+        session = factory(approval)
         if session.remote is not True or (
             session.backend,
             session.account_ref,
@@ -121,14 +217,14 @@ def run_approved(document: dict[str, Any]) -> dict[str, Any]:
         definition = hashlib.sha256(
             json.dumps(
                 {
-                    "harness_version": 1,
+                    "harness_version": 2,
                     "backend": approval.backend,
                     "account_ref": approval.account_ref,
                     "workspace_ref": approval.workspace_ref,
                     "workload": config.to_dict(),
                     "cases": approval.cases,
                     "max_scan_bytes": approval.max_scan_bytes,
-                    "max_cost": format(approval.max_cost, "f"),
+                    "max_cost": str(approval.max_cost),
                     "currency": approval.currency,
                 },
                 sort_keys=True,
@@ -151,6 +247,7 @@ def run_approved(document: dict[str, Any]) -> dict[str, Any]:
             budget=budget,
             cost_provider=session.cost_provider,
         )
+        record["budget"]["fingerprint"] = plan.recipe.fingerprint
         if any(
             task.scan_evidence is None or task.scan_evidence.max_attempts != 1
             for task in plan.tasks
@@ -162,78 +259,79 @@ def run_approved(document: dict[str, Any]) -> dict[str, Any]:
                 current, max_cost=approval.max_cost, currency=approval.currency
             ),
         )
-        # The budget scope is the whole invocation, not merely the final SELECT.
+        authorized = True
+        # The budget scope includes source work, observation and workspace cleanup.
         with session.isolated_workspace() as con:
             if con.name != approval.backend:
                 raise _SCOPE.error()
             model, counts = load_model(con, config, dialect=approval.backend)
+            record.update(counts)
             cases = designs(config)
-            results = [run_case(model, config, name, cases[name]) for name in approval.cases]
-            source_digest = content_digest(
-                con.to_pyarrow_batches(
-                    con.table("events").order_by("unit_id", "event_id"),
-                    chunk_size=config.batch_size,
+            for name in approval.cases:
+                result = run_case(model, config, name, cases[name])
+                # Sanitize completed cases before any later case can fail.
+                physical = result.pop("physical_plan")
+                result["physical_plan_digest"] = (
+                    hashlib.sha256(json.dumps(physical, sort_keys=True).encode()).hexdigest()
+                    if physical is not None
+                    else None
                 )
+                record["cases"].append(result)
+            record.update(
+                {
+                    "anchors": sum(result["anchors"] for result in record["cases"]),
+                    "emitted_rows": sum(result["emitted_rows"] for result in record["cases"]),
+                    "source_digest": content_digest(
+                        con.to_pyarrow_batches(
+                            con.table("events").order_by("unit_id", "event_id"),
+                            chunk_size=config.batch_size,
+                        )
+                    ),
+                    "oracle_match": True,
+                }
             )
             if session.cost_provider.capabilities.cancellation is True:
                 if session.probe_cancellation() is not True:
                     raise ValueError("backend did not confirm physical query cancellation")
-                cancellation = {"status": "observed", "physically_cancelled": True}
+                record["cancellation"] = {"status": "observed", "physically_cancelled": True}
             else:
-                cancellation = {"status": "unverified_capability", "physically_cancelled": None}
-        observed = session.observed_cost()
-        scan = observed.get("scan_bytes")
-        cost = observed.get("scan_cost")
-        if scan is not None and (
-            type(scan) is not int or scan < 0 or scan > approval.max_scan_bytes
-        ):
-            raise ValueError("observed scan exceeded the approved cap or is invalid")
-        if cost is not None:
-            cost = Decimal(str(cost))
-            if not cost.is_finite() or not 0 <= cost <= approval.max_cost:
-                raise ValueError("observed cost exceeded the approved spend cap or is invalid")
-        _, peak = tracemalloc.get_traced_memory()
-        # Remote plans can contain account identifiers; retain a digest, not raw SQL or rows.
-        for result in results:
-            physical = result.pop("physical_plan")
-            result["physical_plan_digest"] = (
-                hashlib.sha256(json.dumps(physical, sort_keys=True).encode()).hexdigest()
-                if physical is not None
-                else None
-            )
-        return {
-            "schema_version": 1,
-            "status": "verified",
-            "backend": approval.backend,
-            "account_ref_digest": hashlib.sha256(approval.account_ref.encode()).hexdigest(),
-            "source_digest": source_digest,
-            "workload": config.to_dict(),
-            **counts,
-            "oracle_match": True,
-            "cases": results,
-            "anchors": sum(result["anchors"] for result in results),
-            "emitted_rows": sum(result["emitted_rows"] for result in results),
-            "scan_bytes": scan,
-            "scan_cost": cost,
-            "currency": approval.currency,
-            "scan_cost_status": "observed"
-            if scan is not None and cost is not None
-            else "partly_unavailable",
-            "cancellation": cancellation,
-            "client_peak_memory_bytes": peak,
-            "process_peak_memory_bytes": None,
-            "process_memory_scope": "owner_process_measurement_unavailable",
-            "elapsed_seconds": time.perf_counter() - started,
-            "budget": {
-                "max_scan_bytes": approval.max_scan_bytes,
-                "max_cost": approval.max_cost,
-                "currency": approval.currency,
-                "fingerprint": plan.recipe.fingerprint,
-            },
-        }
+                record["cancellation"] = {
+                    "status": "unverified_capability",
+                    "physically_cancelled": None,
+                }
+    except Exception as error:
+        primary = error
     finally:
+        if session is not None:
+            if authorized:
+                assert approval is not None
+                try:
+                    _observe_cost(session, approval, record)
+                except Exception as error:
+                    record["cost_observation_error_type"] = type(error).__name__
+                    if record["scan_cost_status"] == "not_executed":
+                        record["scan_cost_status"] = "unavailable_observation_error"
+                    if primary is None:
+                        primary = error
+            try:
+                session.close()
+            except Exception as error:
+                record["close_error_type"] = type(error).__name__
+                if primary is None:
+                    primary = error
+        _, record["client_peak_memory_bytes"] = tracemalloc.get_traced_memory()
+        record["elapsed_seconds"] = time.perf_counter() - started
         tracemalloc.stop()
-        session.close()
+    if primary is not None:
+        record = failure_report(primary, record)
+        portable = json.loads(json.dumps(record, default=_json, allow_nan=False))
+        raise TerrineError(
+            _EXECUTION.template,
+            code=record["code"],
+            context={"report": portable},
+        ) from primary
+    record["status"] = "verified"
+    return record
 
 
 def main() -> None:
@@ -243,10 +341,8 @@ def main() -> None:
     args = parser.parse_args()
     try:
         record = run_approved(json.loads(args.approval.read_text(encoding="utf-8")))
-    except TerrineError as error:
-        record = {"schema_version": 1, "status": "refused", "code": error.code}
     except Exception as error:
-        record = {"schema_version": 1, "status": "failed", "error_type": type(error).__name__}
+        record = failure_report(error)
     with args.output.open("x", encoding="utf-8") as stream:
         stream.write(
             json.dumps(record, sort_keys=True, separators=(",", ":"), default=_json) + "\n"

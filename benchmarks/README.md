@@ -70,7 +70,7 @@ There is no billion-event or universal scale claim from local calibration.
 
 ```sh
 # Fast deterministic generator/reference and no-connection owner-gate checks.
-uv run pytest -q tests/simulate/test_scale_generator.py tests/integration/test_live_scale_gate.py
+uv run pytest -q tests/simulate/test_scale_generator.py tests/integration/test_live_scale_gate.py tests/integration/test_benchmark_failure_reporting.py
 # Instrumented compiler benchmarks are excluded from ordinary pytest by slow.
 uv run pytest -q -m slow tests/integration/test_duckdb_scale.py
 # Local DuckDB integration lies outside ordinary testpaths; this is NOT live.
@@ -118,3 +118,12 @@ Reports contain aggregates/digests, not customer rows, credentials, raw SQL or
 raw backend errors. A failed/refused live invocation exits unsuccessfully;
 missing measurements remain unavailable. A local DuckDB result must not be
 relabelled as evidence for an unexercised remote warehouse.
+
+After any authorized attempt, the runner observes available scan/spend metadata
+after workspace cleanup and before closing the owner session, even on query,
+oracle, cancellation or cleanup failure. Over-cap observations are retained as
+failed evidence. Observation/close failures are explicit and do not erase the
+primary failure. Programmatic failures raise a coded `TerrineError` with a
+sanitized immutable report in `context["report"]`; the CLI and live test save
+that report before reporting failure. Aggregation preserves failed/refused runs
+and unavailable fields instead of treating them as successful or zero-cost.

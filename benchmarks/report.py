@@ -14,8 +14,11 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
         measurements.append(
             {
                 "status": record["status"],
-                "backend": record["backend"],
-                "workload": record["workload"],
+                "backend": record.get("backend"),
+                "workload": record.get("workload"),
+                "code": record.get("code"),
+                "error_type": record.get("error_type"),
+                "scan_cost_status": record.get("scan_cost_status"),
                 "input_events": record.get("input_events"),
                 "anchors": record.get("anchors"),
                 "emitted_rows": record.get("emitted_rows"),

@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from benchmarks.run_live import run_approved
+from benchmarks.run_live import failure_report, run_approved
+from terrine.errors import TerrineError
 
 pytestmark = pytest.mark.slow
 
@@ -16,9 +17,10 @@ def test_owner_approved_live_compiler_workload():
     if reference is None:
         pytest.skip("UNVERIFIED: no owner-approved backend/account/workload/spend configuration")
     approval = json.loads(Path(reference).read_text(encoding="utf-8"))
-    record = run_approved(approval)
-    assert record["status"] == "verified" and record["oracle_match"]
-    assert all(case["oracle_match"] for case in record["cases"])
+    try:
+        record = run_approved(approval)
+    except TerrineError as error:
+        record = failure_report(error)
     output = os.environ.get("TERRINE_LIVE_REPORT")
     if output is not None:
         from benchmarks.workloads import _json
@@ -27,3 +29,5 @@ def test_owner_approved_live_compiler_workload():
             stream.write(
                 json.dumps(record, sort_keys=True, separators=(",", ":"), default=_json) + "\n"
             )
+    assert record["status"] == "verified", (record.get("code"), record.get("error_type"))
+    assert record["oracle_match"] and all(case["oracle_match"] for case in record["cases"])

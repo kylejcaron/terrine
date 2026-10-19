@@ -137,6 +137,9 @@ def test_exact_owner_authorization_precedes_any_workspace_source_work(monkeypatc
             self.entered = True
             raise StoppedBeforeSourceWork
 
+        def observed_cost(self):
+            return {"scan_bytes": None, "scan_cost": None}
+
         def close(self):
             self.closed = True
 
@@ -153,8 +156,10 @@ def test_exact_owner_authorization_precedes_any_workspace_source_work(monkeypatc
             "cases": ["frame", "schedule", "sequential", "event_panel", "sketch"],
         }
         if authorized:
-            with pytest.raises(StoppedBeforeSourceWork):
+            with pytest.raises(TerrineError) as error:
                 run_approved(document)
+            assert error.value.code == "terrine.benchmark.live_execution_failed"
+            assert error.value.context["report"]["error_type"] == "StoppedBeforeSourceWork"
         else:
             with pytest.raises(TerrineError) as error:
                 run_approved(document)
