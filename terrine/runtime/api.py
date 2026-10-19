@@ -176,6 +176,9 @@ def run_serialized_plan(
                 "Saved plan reconstruction failed verification "
                 "(retained snapshot Model declaration differs).",
             ).error()
+        from terrine.execution.gates import enforce_shape_budget
+
+        enforce_shape_budget(design.shape, plan.budget)
         if executor is None:
             preflight_runtime_shape(design, plan.budget)
             executor = DesignExecutor(model, design, plan, con, namespace=namespace)
