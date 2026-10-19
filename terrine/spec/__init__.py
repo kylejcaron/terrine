@@ -48,6 +48,7 @@ from terrine.spec.panels import (
 from terrine.spec.sequence import EventSequence, FunnelSpec, SessionSpec
 from terrine.spec.state_panel import BinnedMetricState, StateObservations, StatePanel
 from terrine.spec.trajectory import CohortGrouping, CohortSpec, LifeTable, TimeToEvent, Trajectory
+from terrine.spec.transforms import Winsorization
 
 __all__ = [
     "DatasetRecipe",
@@ -96,6 +97,7 @@ __all__ = [
     "Trajectory",
     "Treatment",
     "TrialWeight",
+    "Winsorization",
     "agg",
     "all_of",
     "asof",

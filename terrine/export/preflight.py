@@ -111,6 +111,35 @@ def _check_exclusions(excluded: Mapping[str, int], *, drop: bool) -> None:
         raise _INCOMPLETE_OUTCOME.error(excluded_counts=dict(excluded))
 
 
+def _complete_outcomes(
+    data: MaterializedFrame, *, drop_incomplete: bool = False
+) -> ExportPreflight:
+    table = data.table
+    excluded_rows: set[int] = set()
+    reason_rows: dict[str, set[int]] = defaultdict(set)
+    for complete_name, reason_name in _supports(data.roles, data.columns, table.column_names):
+        complete = table[complete_name].to_pylist() if complete_name else [False] * table.num_rows
+        reasons = table[reason_name].to_pylist() if reason_name else [None] * table.num_rows
+        for index, value in enumerate(complete):
+            if value is True:
+                continue
+            reason = reasons[index]
+            if complete_name is None:
+                row_reasons = ["completeness_evidence_missing"]
+            elif isinstance(reason, list):
+                row_reasons = [item for item in reason if isinstance(item, str) and item]
+            else:
+                row_reasons = [reason] if isinstance(reason, str) and reason else []
+            excluded_rows.add(index)
+            for exact_reason in row_reasons or ["reason_unavailable"]:
+                reason_rows[exact_reason].add(index)
+    excluded = {reason: len(rows) for reason, rows in reason_rows.items()}
+    _check_exclusions(excluded, drop=drop_incomplete)
+    if excluded_rows:
+        table = table.filter(pa.array([i not in excluded_rows for i in range(table.num_rows)]))
+    return ExportPreflight(table, excluded)
+
+
 def preflight_export(
     data: MaterializedFrame,
     *,
@@ -131,26 +160,7 @@ def preflight_export(
     units = table[roles.unit].to_pylist() if roles.unit in table.column_names else []
     repeated = len(set(units)) != len(units)
     _check_identity(roles, table.column_names, repeated and data.provenance.shape != "life_table")
-    excluded_rows: set[int] = set()
-    reason_rows: dict[str, set[int]] = defaultdict(set)
-    for complete_name, reason_name in _supports(roles, data.columns, table.column_names):
-        complete = table[complete_name].to_pylist() if complete_name else [False] * table.num_rows
-        reasons = table[reason_name].to_pylist() if reason_name else [None] * table.num_rows
-        for index, value in enumerate(complete):
-            if value is True:
-                continue
-            reason = reasons[index]
-            if complete_name is None:
-                row_reasons = ["completeness_evidence_missing"]
-            elif isinstance(reason, list):
-                row_reasons = [item for item in reason if isinstance(item, str) and item]
-            else:
-                row_reasons = [reason] if isinstance(reason, str) and reason else []
-            excluded_rows.add(index)
-            for exact_reason in row_reasons or ["reason_unavailable"]:
-                reason_rows[exact_reason].add(index)
-    excluded = {reason: len(rows) for reason, rows in reason_rows.items()}
-    _check_exclusions(excluded, drop=drop_incomplete)
+    checked = _complete_outcomes(data, drop_incomplete=drop_incomplete)
     if consumer == "dowhy":
         if repeated:
             raise _REPEATED_UNITS_UNSUPPORTED.error(consumer=consumer)
@@ -158,9 +168,7 @@ def preflight_export(
             getattr(roles, name) is not None for name in ("weight", "target_weight", "trial_weight")
         ):
             raise _UNSUPPORTED_WEIGHTS.error(consumer=consumer)
-    if excluded_rows:
-        table = table.filter(pa.array([i not in excluded_rows for i in range(table.num_rows)]))
-    return ExportPreflight(table, excluded)
+    return checked
 
 
 @contextmanager

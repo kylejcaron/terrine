@@ -455,7 +455,13 @@ def _expression(
     if metric.kind not in {"mean", "conversion", "ratio"}:
         raise UNSUPPORTED_TEMPORAL_KIND.error(kind=metric.kind)
     if metric.transforms:
-        raise UNSUPPORTED_TRANSFORM.error(transform=type(metric.transforms[0]).__name__)
+        raise UNSUPPORTED_TRANSFORM.error(
+            transform=type(metric.transforms[0]).__name__,
+            route=(
+                "Remove the adapter transform declaration. For winsorization, use "
+                "explicit post-aggregation Frame.winsorize limits or training-fitted limits."
+            ),
+        )
     if isinstance(expr, MetricQuantile) and len(metric.measures) != 1:
         raise RefusalSpec(
             "terrine.metric.quantile_requires_single_measure",

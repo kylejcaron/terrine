@@ -67,7 +67,7 @@ def _column_role(name: str, roles: Any) -> str:
     return "support"
 
 
-def _recipe_for(frame: Any) -> DatasetRecipe:
+def _recipe_for(frame: Any, *, include_transforms: bool = True) -> DatasetRecipe:
     view = None
     if frame._training_view is not None:
         training = frame._training_view
@@ -90,7 +90,12 @@ def _recipe_for(frame: Any) -> DatasetRecipe:
             "eligibility": design_record["eligibility"],
             "parent_design_hash": scoring.parent_design_hash,
         }
-    return DatasetRecipe(schema_version=1, base_design=frame._design, view=view)
+    return DatasetRecipe(
+        schema_version=1,
+        base_design=frame._design,
+        view=view,
+        transforms=frame._winsorizations if include_transforms else (),
+    )
 
 
 class _ModelResolver:

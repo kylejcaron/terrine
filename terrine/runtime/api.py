@@ -552,7 +552,7 @@ class DesignExecutor:
                     excluded_counts = _excluded_label_counts(
                         compiled, self._frame._training_view, context.execute
                     )
-                compiled = self._frame._active_compiled(compiled)
+            compiled = self._frame._active_compiled(compiled)
             summary = _eligibility_summary(compiled.audit_table, context.execute)
             context._check_query(compiled.table)
             reader = context.con.to_pyarrow_batches(compiled.table, chunk_size=65_536)
@@ -612,6 +612,7 @@ class DesignExecutor:
                 and treatment.known_at_t0
                 and pa.types.is_boolean(table.schema.field(treatment_column).type)
             )
+            table = self._frame._winsorize_output(table)
             metadata = MaterializedFrame(
                 table,
                 compiled.roles,
@@ -662,6 +663,7 @@ class DesignExecutor:
                 try:
                     for batch in reader:
                         normalized = self._frame._normalize_output(pa.Table.from_batches([batch]))
+                        normalized = self._frame._winsorize_output(normalized)
                         yield from normalized.cast(metadata).to_batches()
                 finally:
                     reader.close()

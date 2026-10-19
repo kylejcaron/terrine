@@ -92,6 +92,12 @@ instants, or choose aligned anchors and endpoints. Unsupported temporal kinds
 and declared transforms retain their meaning and are refused rather than
 silently approximated.
 
+Explicit fixed and training-fitted winsorization is available on dataset
+Frames at a serialized post-aggregation stage; it does not change the source
+metric or silently reinterpret adapter declarations. See
+[frozen winsorization](ml-staging.md#frozen-winsorization) for train-only exact
+thresholds, immutable artifacts, supported types, and scoring reuse.
+
 ## Quantile declarations
 
 `quantile(metric, probability, window=...)` is a typed, canonical specification:
