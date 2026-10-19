@@ -35,16 +35,9 @@ def test_unavailable_explicit_sketch_uses_same_refusal_for_all_design_paths(roun
 
 
 def test_missing_optional_extra_refuses_approx_quantile_before_source_query(monkeypatch):
-    import builtins
+    import sys
 
-    real_import = builtins.__import__
-
-    def import_without_sketches(name, *args, **kwargs):
-        if name == "datasketches":
-            raise ImportError("unavailable")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", import_without_sketches)
+    monkeypatch.setitem(sys.modules, "datasketches", None)
     design = Design(
         "user",
         EventAnchor("session"),

@@ -29,7 +29,13 @@ from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog
 from terrine.spec.design import Design
-from terrine.spec.expressions import AttributeAsOf, EventTime, MetricAgg, MetricQuantile
+from terrine.spec.expressions import (
+    ApproxMetricDistinct,
+    AttributeAsOf,
+    EventTime,
+    MetricAgg,
+    MetricQuantile,
+)
 
 __all__ = ["ReopenableSnapshot", "SnapshotAuthority"]
 
@@ -432,7 +438,7 @@ def _design_root_names(
             properties.add(value.attribute)
             if value.relative_to is not None:
                 visit(value.relative_to)
-        elif isinstance(value, (MetricAgg, MetricQuantile)):
+        elif isinstance(value, (MetricAgg, MetricQuantile, ApproxMetricDistinct)):
             metric = model.catalog.metrics.get(value.metric)
             if metric is not None:
                 for measure_name in (metric.measure, metric.numerator, metric.denominator):

@@ -213,12 +213,21 @@ def resolve_sketch_sidecars(table: pa.Table, compiled: CompiledStudy, con) -> pa
             )
         finally:
             reader.close()
+        meta = compiled.columns[sidecar.output]
+        complete = (
+            table.column(meta.complete_column).to_pylist()
+            if meta.complete_column is not None
+            else [True] * table.num_rows
+        )
         keys = zip(
             table.column("unit").to_pylist(),
             table.column("anchor_id").to_pylist(),
             strict=True,
         )
-        values = [estimates.get(key) for key in keys]
+        values = [
+            estimates.get(key) if is_complete else None
+            for key, is_complete in zip(keys, complete, strict=True)
+        ]
         index = table.schema.get_field_index(sidecar.output)
         table = table.set_column(index, sidecar.output, pa.array(values, type=pa.float64()))
     return table
@@ -244,6 +253,7 @@ def compile_columns(
     checks: list[_DeferredCheck] = []
     normalized_sources, sources, selector_sources, source_histories, states = {}, {}, {}, {}, {}
     sketches: list[SketchSidecar] = []
+    sketch_aliases: dict[str, list[str]] = {}
     selector_identity_checks = []
     checked_selector_sources = set()
     for (source_name, measure_key, unit, resolution), relation in (
@@ -724,6 +734,7 @@ def compile_columns(
                 role="feature",
                 operation="min",
             )
+            result = summary
             sketches.append(
                 SketchSidecar(
                     output,
@@ -1000,10 +1011,8 @@ def compile_columns(
         for name, node in named.items():
             value = expression(node)
             public[name] = value.name
-            sketches[:] = [
-                replace(sidecar, output=name) if sidecar.output == value.name else sidecar
-                for sidecar in sketches
-            ]
+            if any(sidecar.output == value.name for sidecar in sketches):
+                sketch_aliases.setdefault(value.name, []).append(name)
             columns[name] = replace(value.meta, role=role)
             relative = getattr(node, "relative_to", None)
             if isinstance(node, EventTime):
@@ -1123,5 +1132,9 @@ def compile_columns(
         anchors,
         tuple(checks),
         expression_timings,
-        sketches=tuple(sketches),
+        sketches=tuple(
+            replace(sidecar, output=alias)
+            for sidecar in sketches
+            for alias in sketch_aliases.get(sidecar.output, ())
+        ),
     )

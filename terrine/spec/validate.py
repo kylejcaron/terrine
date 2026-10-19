@@ -520,7 +520,7 @@ def _validate_shape(
         outcome_horizons = [
             _expression_support_seconds(expression)[1]
             for expression in design.outcomes.values()
-            if isinstance(expression, (MetricAgg, MetricQuantile))
+            if isinstance(expression, (MetricAgg, MetricQuantile, ApproxMetricDistinct))
         ]
         anticipation = design.shape.anticipation_seconds
         if outcome_horizons:
@@ -571,7 +571,7 @@ def _validate_shape(
         outcome_horizons = [
             _expression_support_seconds(expression)[1]
             for expression in design.outcomes.values()
-            if isinstance(expression, (MetricAgg, MetricQuantile))
+            if isinstance(expression, (MetricAgg, MetricQuantile, ApproxMetricDistinct))
         ]
         outcome_window_end = max(outcome_horizons, default=0)
         horizon = model.day_boundary(schedule.start) + timedelta(

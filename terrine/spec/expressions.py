@@ -16,6 +16,7 @@ __all__ = [
     "MetricQuantile",
     "SketchRequest",
     "ApproxMetricDistinct",
+    "ApproxMetricQuantile",
     "AttributeAsOf",
     "EventTime",
     "Gt",

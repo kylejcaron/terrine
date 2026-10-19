@@ -919,6 +919,28 @@ def test_panel_history_validation_covers_exact_quantile_outcome(shape_name):
     assert error.value.code == "terrine.design.incomplete_treatment_history"
 
 
+@pytest.mark.parametrize("shape_name", ["sequential", "calendar"])
+def test_approximate_distinct_outcome_contributes_to_panel_followup_horizon(shape_name):
+    from terrine.spec.expressions import approx_distinct
+    from terrine.spec.panels import CalendarComparisonSpec, Initiation, SequentialSpec
+
+    initiation = Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC))
+    shape = (
+        SequentialSpec(initiation)
+        if shape_name == "sequential"
+        else CalendarComparisonSpec(initiation, "not_yet_treated", -1, (0,))
+    )
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-01", "2025-01-02"),
+        outcomes={"distinct": approx_distinct("sessions", window=("0d", "7d"))},
+        shape=shape,
+    )
+    with pytest.raises(TerrineError) as error:
+        design.validate(model(aggregation="count_distinct"))
+    assert error.value.code == "terrine.design.incomplete_treatment_history"
+
+
 def test_unknown_string_shape_is_rejected():
     design = Design("user", FixedDate(date(2025, 1, 1)), shape="ltv")
     with pytest.raises(TerrineError) as error:

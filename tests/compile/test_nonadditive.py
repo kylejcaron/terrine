@@ -300,8 +300,10 @@ def test_approximate_distinct_executes_in_duckdb_and_marks_column_metadata(nonad
     first = Frame(design, nonadditive_model).materialize()
     second = Frame(design, nonadditive_model).materialize()
 
-    assert first.table.column("distinct").to_pylist() == [3, 0, 0]
-    assert first.table.column("distinct").to_pylist() == second.table.column("distinct").to_pylist()
+    first_rows = sorted(first.table.to_pylist(), key=lambda row: row["unit"])
+    second_rows = sorted(second.table.to_pylist(), key=lambda row: row["unit"])
+    assert [row["distinct"] for row in first_rows] == [3, 0, 0]
+    assert [row["distinct"] for row in first_rows] == [row["distinct"] for row in second_rows]
     meta = first.columns["distinct"].approximation
     assert meta is not None
     assert meta.algorithm == "hll"
@@ -312,6 +314,7 @@ def test_approximate_distinct_executes_in_duckdb_and_marks_column_metadata(nonad
 def test_approximate_quantile_frame_matches_type7_tolerance_and_is_reproducible(
     nonadditive_model,
 ):
+    pytest.importorskip("datasketches")
     from terrine import Frame
     from terrine.spec import SketchRequest, approx_quantile
 
@@ -330,8 +333,10 @@ def test_approximate_quantile_frame_matches_type7_tolerance_and_is_reproducible(
     first = Frame(design, nonadditive_model).materialize()
     second = Frame(design, nonadditive_model).materialize()
 
-    assert first.table.column("q").to_pylist()[0] == pytest.approx(2.0, abs=0.1)
-    assert first.table.column("q").to_pylist() == second.table.column("q").to_pylist()
+    first_rows = sorted(first.table.to_pylist(), key=lambda row: row["unit"])
+    second_rows = sorted(second.table.to_pylist(), key=lambda row: row["unit"])
+    assert first_rows[0]["q"] == pytest.approx(2.0, abs=0.1)
+    assert [row["q"] for row in first_rows] == [row["q"] for row in second_rows]
     metadata = first.columns["q"].approximation
     assert metadata is not None
     assert metadata.algorithm == "tdigest"
@@ -340,3 +345,49 @@ def test_approximate_quantile_frame_matches_type7_tolerance_and_is_reproducible(
 
     assert MaterializedFrame.from_arrow(first.to_arrow()).columns == first.columns
     assert metadata.version == "5.2.0"
+
+
+def test_approximate_quantile_preserves_incomplete_window_nulls(nonadditive_model):
+    pytest.importorskip("datasketches")
+    from terrine import Frame
+    from terrine.spec import SketchRequest, approx_quantile
+
+    design = Design(
+        "user",
+        FixedDate("2025-01-04"),
+        features={
+            "q": approx_quantile(
+                "amount",
+                "0.5",
+                window=("-1d", "0d"),
+                sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
+            )
+        },
+    )
+    frame = Frame(design, nonadditive_model).materialize()
+    meta = frame.columns["q"]
+    rows = frame.table.to_pylist()
+    assert all(row["q"] is None for row in rows)
+    assert all(not row[meta.complete_column] for row in rows)
+
+
+def test_approximate_quantile_populates_reused_expression_aliases(nonadditive_model):
+    pytest.importorskip("datasketches")
+    from terrine import Frame
+    from terrine.spec import SketchRequest, approx_quantile
+
+    expression = approx_quantile(
+        "amount",
+        "0.5",
+        window=("-1d", "0d"),
+        sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
+    )
+    design = Design(
+        "user",
+        FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),
+        features={"q1": expression, "q2": expression},
+    )
+    rows = Frame(design, nonadditive_model).materialize().table.to_pylist()
+    row_a = next(row for row in rows if row["unit"] == "a")
+    assert row_a["q1"] is not None
+    assert row_a["q1"] == row_a["q2"]
