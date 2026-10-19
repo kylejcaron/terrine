@@ -8,6 +8,32 @@ terrine helps people and agents quickly and safely build well-constructed, point
 
 Reasons: the owner's stated intent; increment already ships observational IPTW/DML/AIPW with clustered variance; mature downstream libraries exist for every estimator terrine was reimplementing.
 
+## Scope ledger
+
+The authoritative scope for terrine's plans. Owner-confirmed 2026-10-18; rows without an owner quote were confirmed by the owner's answer to a direct question that date. A capability not listed here is out of scope until the owner confirms it.
+
+| Capability | Source | Confirmed |
+| --- | --- | --- |
+| Datasets from source data and semantic definitions: anchors, windows, aggregates, as-of attributes, pre-treatment covariates, post-treatment outcomes, static temporal validation, null-not-zero censoring | owner: "is it easy for users to make a dataset from their semantic layer? sometimes even including pre-treatment covariates and post treatment outcomes?"; "its meant to help users and agents quickly make datasets more safely from source data" | yes |
+| Standalone package, usable with no relationship to increment | owner: "we should still be supporting datasets irrelevant of their relationship to increment. this is its own package at the end of the day" | yes |
+| Optional increment compatibility adapter | owner: "if needed, make our own semantic layer and longer term increment can become a dependency of this" | yes |
+| Scale and ML staging | owner: "will this scale to massive datasets if needed? ml style workflows where they need to stage data?" | yes |
+| Training and scoring views: label role with censoring policy, time/unit splits, batch-scoring snapshots | owner-pasted proposal ("Keep training-set and snapshot export"), confirmed 2026-10-18 | yes |
+| Incremental materialization runtime | owner: "also consider incremental materialization, etc" | yes |
+| Common-stack integration (warehouses via Ibis, dbt, local files) | owner: "and works well with common existing stacks" | yes |
+| Orchestrator adapters: Airflow, Dagster, dbt after-build recipe | handoff §14; confirmed 2026-10-18 | yes |
+| Agent dataset tools (no causal mode) | owner: "even a tool for AI agents to easily and safely create datasets" | yes |
+| Live run telemetry: status, event paging, cancellation, optional OpenTelemetry export | owner asked "are there any opportunities for live telemetry for agents as they use this and this runs?"; confirmed 2026-10-18 | yes |
+| State-panel dataset shape | owner: "I dont think we need to add the MOST estimator here right now, but support the dataset builder shape seems useful" | yes |
+| Panel dataset shapes: sequential (repeated time zeros), calendar comparison, event panels | handoff §5, §7; confirmed 2026-10-18 | yes |
+| Cohort, LTV trajectory and time-to-event dataset shapes | handoff §7; confirmed 2026-10-18 | yes |
+| Risk-set (life) table | owner: "for kaplan meier what do you think? we should definitely atleast have the table" | yes |
+| Event sequences, funnels, sessions, re-anchoring | handoff §5.2; confirmed 2026-10-18 | yes |
+| Nonadditive metrics (exact distinct, min/max, quantiles) and optional approximate sketches | handoff §11; confirmed 2026-10-18 | yes |
+| Descriptive dataset reports (attrition, completeness, group summaries, raw SMD) | agent-proposed; owner: "your recs sound good too!" | yes |
+| Library hand-offs: export preflight, recipes, lifelines and diff-diff helpers | owner: "potentially integration / contract support for popular packages like dowhy"; "maybe dowhy and diff-diff as well"; "lets start with lighter idea as a starting point" | yes |
+| Native causal estimators, inferential diagnostics, estimator calibration, agent causal mode | handoff §2, §12, §16 | no: removed ("we shouldnt be claiming causality, just well constructed datasets") |
+
 ## In scope (unchanged unless noted)
 
 - Anchors, windows, aggregates, as-of attributes, expansion, all frame shapes (cross-section, sequential/scheduled, calendar and event panels, cohorts, LTV, time-to-event, state panels, sequences), static temporal validation, null-not-zero censoring, coverage/readiness, materialization runtime, ML staging, orchestrators, dataset agent tools.
