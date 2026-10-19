@@ -251,7 +251,7 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
             "WHERE r.state IN ('queued','running','cancel_requested') "
             "AND (r.state<>'queued' OR "
             "(r.attempt_fence IS NOT NULL AND r.updated_at IS NOT NULL)) "
-            "AND (l.resource IS NULL OR l.expires_at<=current_timestamp) "
+            "AND (l.resource IS NULL OR l.expires_at<=(current_timestamp AT TIME ZONE 'UTC')) "
             "ORDER BY r.run_id"
         ).fetchall()
         for run_id, old_state, fence in stale:
@@ -299,7 +299,8 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
                 f"SELECT 1 FROM {schema}.runtime_leases l "
                 "WHERE l.resource='dataset:' || runtime_runs.dataset "
                 "AND l.owner=runtime_runs.run_id "
-                "AND l.fence=runtime_runs.attempt_fence AND l.expires_at>current_timestamp) "
+                "AND l.fence=runtime_runs.attempt_fence "
+                "AND l.expires_at>(current_timestamp AT TIME ZONE 'UTC')) "
                 "RETURNING state",
                 [
                     state,

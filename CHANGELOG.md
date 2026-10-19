@@ -19,6 +19,7 @@
 - Enforce owner run deadlines at cancellation/publication checkpoints and admit concurrent runs atomically, preserving terminal replay and failed-run fence renewal.
 - Reserve failed retries and their leases together, recover interrupted runs before request-key replay and admission, and stop scheduling further tasks after cancellation or owner deadline.
 - Open authorized pinned generations through owner publication metadata so a bounded row preview does not rehash the entire dataset; explicit manifest reopening retains full integrity verification.
+- Compare admission and recovery lease expirations in UTC regardless of the owner's session timezone, and retain the exact approved destination when preparing refreshes.
 - Refuse missing pandas with the coded optional-dependency error before decoding diff-diff timestamp periods, including nanosecond values.
 - Keep state-classification null assertions valid across the supported pandas 2.x and 3.x representations.
 

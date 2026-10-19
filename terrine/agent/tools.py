@@ -736,7 +736,9 @@ class DatasetTools:
             ),
         )
 
-    def _resolve_dataset(self, reference: AgentDatasetReference, permission: Permission) -> Dataset:
+    def _resolve_dataset(
+        self, reference: AgentDatasetReference, permission: Permission
+    ) -> tuple[Dataset, SavedPlanRecipe]:
         if not isinstance(reference, AgentDatasetReference):
             raise _RECEIPT.error(route="Use the unchanged reference returned by stage or refresh.")
         con = self.model.con.con
@@ -769,7 +771,7 @@ class DatasetTools:
         )
         if self._dataset_reference(dataset) != reference:
             raise _RECEIPT.error()
-        return dataset
+        return dataset, saved
 
     def _stage(self, receipt: PlanReceipt, *, request_key: str) -> AgentDatasetReference:
         _, saved = self._resolve_receipt(receipt, "write")
@@ -802,7 +804,7 @@ class DatasetTools:
         def prepare():
             from terrine.runtime.backends.duckdb import DuckDBBackend
 
-            dataset = self._resolve_dataset(reference, "prepare")
+            dataset, saved = self._resolve_dataset(reference, "prepare")
             if (
                 DuckDBBackend(self.model.con.con, namespace=self.namespace).current_generation(
                     reference.dataset
@@ -812,20 +814,9 @@ class DatasetTools:
                 raise _RECEIPT.error(route="Prepare refresh from the current publication.")
             effective = effective_budget(self.policy.budget, budget)
             dataset.plan_refresh(self.model, changes=changes, budget=effective)
-            destination = (
-                DestinationRef(
-                    str(self.policy.snapshot_authority.owner.state_path),
-                    self.namespace,
-                    reference.dataset,
-                )
-                if self.policy.snapshot_authority is not None
-                else None
-            )
-            if destination is None:
-                raise _OWNER.error()
             return self._prepare(
                 dataset.manifest.recipe,
-                destination=destination,
+                destination=saved.destination,
                 invocation_id=invocation_id,
                 budget=effective,
                 changes=changes,
@@ -870,7 +861,7 @@ class DatasetTools:
                 raise _SCOPE.error(route="Use an exact owner-approved export destination.")
             effective = effective_budget(self.policy.budget, budget)
             _scan_policy(effective)
-            dataset = self._resolve_dataset(reference, "export")
+            dataset, _ = self._resolve_dataset(reference, "export")
             return dataset.export_parquet(
                 destination=str(path), partition_by=partition_by, budget=effective
             )
@@ -895,7 +886,7 @@ class DatasetTools:
                 or not set(columns) <= self.policy.preview_columns
             ):
                 raise _SCOPE.error(route="Request only unique owner-approved preview columns.")
-            dataset = self._resolve_dataset(reference, "preview")
+            dataset, _ = self._resolve_dataset(reference, "preview")
             if not set(columns) <= {column.name for column in dataset.manifest.columns}:
                 raise _SCOPE.error()
             iterator = dataset.to_arrow_batches(batch_size=min(limit, self.policy.batch_cap))

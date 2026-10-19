@@ -168,7 +168,7 @@ def execute_plan(
                 f"JOIN {schema}.runtime_leases l ON l.resource='dataset:' || r.dataset "
                 "AND l.owner=r.run_id AND l.fence=r.attempt_fence "
                 "WHERE r.state IN ('queued','running','cancel_requested') "
-                "AND l.expires_at>current_timestamp AND r.run_id<>?",
+                "AND l.expires_at>(current_timestamp AT TIME ZONE 'UTC') AND r.run_id<>?",
                 [run_id],
             ).fetchone()[0]
             if active >= max_active_runs:

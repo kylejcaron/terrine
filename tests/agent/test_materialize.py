@@ -206,3 +206,18 @@ def test_preview_reads_only_bounded_batches_without_rehashing_output(owner_tools
     result = owner_tools.preview_rows(reference, limit=1, columns=(name,))
     assert result.status == "ok"
     assert len(result.output.rows) == 1
+
+
+def test_refresh_preserves_owner_approved_destination_alias(owner_tools, tmp_path):
+    destination = next(iter(owner_tools.policy.allowed_destinations))
+    alias = tmp_path / "owner-alias.duckdb"
+    alias.symlink_to(destination.database)
+    approved = replace(destination, database=str(alias))
+    owner_tools.policy = replace(owner_tools.policy, allowed_destinations=frozenset({approved}))
+    receipt = _prepare(owner_tools)
+    first = owner_tools.stage(receipt, request_key="alias")
+    assert first.status == "ok" and first.output is not None
+    refreshed = owner_tools.prepare_refresh(first.output, invocation_id="alias-refresh")
+    assert refreshed.status == "ok" and refreshed.output is not None
+    _, saved = owner_tools._resolve_receipt(refreshed.output, "prepare")
+    assert saved.destination == approved

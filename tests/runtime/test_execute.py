@@ -1213,3 +1213,45 @@ def test_cancellation_stops_submitting_tasks_after_current_callback():
         assert len(calls) == 1
     finally:
         con.close()
+
+
+def test_non_utc_owner_preserves_active_admission_and_recovery():
+    from datetime import UTC, datetime, timedelta
+
+    from terrine.errors import TerrineError
+    from terrine.runtime.leases import LeaseStore
+
+    con = duckdb.connect(":memory:")
+    try:
+        with pytest.raises(RuntimeError):
+            execute_plan(
+                _plan(),
+                con=con,
+                namespace="owner",
+                run_id="active",
+                run_task=lambda *args: (_ for _ in ()).throw(RuntimeError("interrupted")),
+                publish=lambda *args: "g1",
+            )
+        lease = LeaseStore(con, namespace="owner").acquire(
+            "dataset:orders", "active", ttl=timedelta(minutes=5), now=datetime.now(UTC)
+        )
+        con.execute(
+            "UPDATE owner.runtime_runs SET state='running',attempt_fence=? WHERE run_id='active'",
+            [lease.fence],
+        )
+        con.execute("SET TimeZone='Asia/Tokyo'")
+        with pytest.raises(TerrineError) as error:
+            execute_plan(
+                _plan(),
+                con=con,
+                namespace="owner",
+                run_id="next",
+                max_active_runs=1,
+                run_task=lambda *args: pa.table({"unexpected": [True]}),
+                publish=lambda *args: "unexpected",
+            )
+        assert error.value.code == "terrine.runtime.concurrency_limit"
+        row = con.execute("SELECT state FROM owner.runtime_runs WHERE run_id='active'").fetchone()
+        assert row is not None and row[0] == "running"
+    finally:
+        con.close()
