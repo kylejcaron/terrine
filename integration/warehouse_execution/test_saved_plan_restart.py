@@ -7,15 +7,12 @@ import sys
 
 import ibis
 
-import pyarrow as pa
-
-from terrine.semantic.models import Catalog
 from terrine.data import Budget, Coverage
 from terrine.model import Model
-from terrine.runtime.execute import execute_plan
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
+from terrine.semantic.models import Catalog
 from terrine.spec import Design, FixedDate, agg
 
 

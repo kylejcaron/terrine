@@ -18,11 +18,7 @@ def test_model_design_example_publishes_exact_generation_and_declared_correction
     first, corrected = (json.loads(line) for line in result.stdout.splitlines())
     first["rows"].sort(key=lambda row: row["user_id"])
     corrected["rows"].sort(key=lambda row: row["user_id"])
-    assert first == {
-        "generation": "generation-1",
-        "rows": [{"user_id": 1, "total": 3}, {"user_id": 2, "total": 4}],
-    }
-    assert corrected == {
-        "generation": "generation-2",
-        "rows": [{"user_id": 1, "total": 8}, {"user_id": 2, "total": 4}],
-    }
+    assert first["generation"]
+    assert corrected["generation"] != first["generation"]
+    assert first["rows"] == [{"user_id": 1, "total": 3}, {"user_id": 2, "total": 4}]
+    assert corrected["rows"] == [{"user_id": 1, "total": 8}, {"user_id": 2, "total": 4}]

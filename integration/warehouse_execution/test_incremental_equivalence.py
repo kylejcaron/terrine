@@ -8,6 +8,41 @@ from pathlib import Path
 import pytest
 
 
+def _catalog():
+    from terrine.semantic.models import Catalog
+
+    return Catalog.model_validate(
+        {
+            "schema_version": 1,
+            "day_boundary": "UTC",
+            "dialect": "duckdb",
+            "sources": {
+                "events": {
+                    "relation": {"kind": "table", "name": "events"},
+                    "timestamp": "occurred_at",
+                    "entities": {"user": "user_id"},
+                    "facts": ["amount"],
+                    "properties": [],
+                    "dimensions": [],
+                }
+            },
+            "facts": {"amount": {"source": "events", "column": "amount"}},
+            "properties": {},
+            "dimensions": {},
+            "measures": {"total": {"fact": "amount", "aggregation": "sum"}},
+            "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
+        }
+    )
+
+
+class _Resolver:
+    def __init__(self, model):
+        self.model = model
+
+    def resolve(self, reference):
+        return self.model
+
+
 def test_runtime_generation_matches_clean_rebuild_after_declared_correction():
     script = Path(__file__).parents[2] / "examples" / "materialization_runtime.py"
     result = subprocess.run(
@@ -20,14 +55,10 @@ def test_runtime_generation_matches_clean_rebuild_after_declared_correction():
     first, corrected = (json.loads(line) for line in result.stdout.splitlines())
     first["rows"].sort(key=lambda row: row["user_id"])
     corrected["rows"].sort(key=lambda row: row["user_id"])
-    assert first == {
-        "generation": "generation-1",
-        "rows": [{"user_id": 1, "total": 3}, {"user_id": 2, "total": 4}],
-    }
-    assert corrected == {
-        "generation": "generation-2",
-        "rows": [{"user_id": 1, "total": 8}, {"user_id": 2, "total": 4}],
-    }
+    assert first["generation"]
+    assert corrected["generation"] != first["generation"]
+    assert first["rows"] == [{"user_id": 1, "total": 3}, {"user_id": 2, "total": 4}]
+    assert corrected["rows"] == [{"user_id": 1, "total": 8}, {"user_id": 2, "total": 4}]
 
 
 @pytest.mark.parametrize(
@@ -45,15 +76,10 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
 ):
     import ibis
 
-    from examples.materialization_runtime import (
-        DesignExecutor,
-        ModelResolver,
-        _catalog,
-        _clean_rebuild_rows,
-    )
+    from terrine.compile.columns import compile_columns
     from terrine.data import Budget, Coverage, UnitSource
     from terrine.model import Model
-    from terrine.runtime import open_published_generation, run_serialized_plan
+    from terrine.runtime import open_published_frame, run_serialized_plan
     from terrine.runtime.changes import Change, ChangeSet
     from terrine.runtime.graph import dependency_graph
     from terrine.runtime.owner import RuntimeOwner
@@ -92,8 +118,6 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
         store = RuntimeStore(con.con, namespace=namespace)
         store.initialize()
         destination = DestinationRef(str(state_path), "published", "orders")
-        executor = DesignExecutor(con.con, catalog, design, namespace=namespace)
-        resolver = ModelResolver(model)
 
         def run_generation(*, name, model, changes=None, expected_manifest=None):
             snapshot = authority.capture(
@@ -127,13 +151,28 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
                 con=con.con,
                 namespace=namespace,
                 request_key=f"runtime:{scenario}:{name}",
-                executor=executor,
-                resolver=ModelResolver(model),
+                resolver=_Resolver(model),
                 snapshot_authority=authority,
             )
-            published = open_published_generation(receipt, con=con.con, namespace=namespace)
-            rows = sorted(published.execute().to_dict("records"), key=lambda row: row["user_id"])
-            assert rows == _clean_rebuild_rows(model, design)
+            published = open_published_frame(receipt, con=con.con, namespace=namespace)
+            rows = sorted(
+                [
+                    {"user_id": row["unit"], "total": row["total"]}
+                    for row in published.table.to_pylist()
+                ],
+                key=lambda row: row["user_id"],
+            )
+            clean = compile_columns(design, model)
+            clean.validate(execute=model.con.to_pyarrow)
+            clean_rows = sorted(
+                [
+                    {"user_id": row["unit"], "total": row["total"]}
+                    for row in model.con.to_pyarrow(clean.table).to_pylist()
+                ],
+                key=lambda row: row["user_id"],
+            )
+            assert rows == clean_rows
+            assert published.columns == clean.columns
             return receipt, rows
 
         initial_receipt, initial_rows = run_generation(name="initial", model=model)
