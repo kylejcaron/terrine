@@ -36,9 +36,9 @@ def retention_threshold_bands(
 ) -> ibis.Table:
     """Count distinct target-event occurrences after each anchor.
 
-    Finite horizons require coverage through the horizon end. Open-ended
-    horizons require an explicit complete-through timestamp. Null
-    ``observed_until`` means no narrower anchor-specific coverage bound.
+    Finite horizons require a non-null observation endpoint through the
+    horizon end. Open-ended horizons require an explicit complete-through
+    timestamp; a null ``observed_until`` means no narrower bound in that mode.
     Incomplete results carry a null count/band and ``reason`` of
     ``insufficient_followup`` or ``horizon_unavailable``.
     """
