@@ -26,9 +26,9 @@ Each integration maps frame roles to the library's arguments on top of the expor
 | Library | Form | Notes |
 | --- | --- | --- |
 | DoubleML | Recipe | `DoubleMLData(..., cluster_cols=...)` for repeated rows |
-| DoWhy | Recipe | `CausalModel` has no cluster or weight arguments: one-row-per-unit frames only |
-| duckreg | Recipe | Runs on the same Ibis connection against the materialized frame table; no row export |
-| lifelines | Helper | Converts censoring, delayed entry and the risk-set table into `duration_col` / `event_col` / `entry_col` / weights |
+| DoWhy | Recipe | One-row-per-unit, unweighted frames only. `CausalModel` has no cluster or weight arguments (extra keywords are stored, not applied), so the recipe refuses repeated units and declared weights |
+| duckreg | Recipe | Runs on the same Ibis connection against the materialized frame table; only compressed aggregates leave the warehouse, never rows |
+| lifelines | Helper | Two contracts. Kaplan–Meier: per-unit time-to-event records map to `KaplanMeierFitter.fit(durations, event_observed, entry=..., weights=...)`. Cox: a dataframe with `duration_col`, `event_col`, `entry_col`, `weights_col`, `cluster_col`. The risk-set table converts to lifelines input only without delayed entry (lifelines' table conversion reads event and censor counts only); with delayed entry, use per-unit records |
 | diff-diff | Helper | Derives `first_treat` (including never-treated encoding per diff-diff's convention). Document and test only Callaway–Sant'Anna, Sun–Abraham and event studies; never SynthDiD (owner guardrail) |
 | sklearn / Arrow | Existing ML staging | Labeled datasets, not causal hand-offs |
 | increment | Optional recipe | One integration among others; never a requirement |
@@ -44,7 +44,7 @@ Tests: preflight refusals as unit tests; per library, one tiny integration-tier 
 
 ## Cutover
 
-1. Preserve before removing: tag the current heads of the branches that carry estimation code (`archive/native-estimation-2026-10-18`) and commit in-progress estimation work to a `parked/` branch. No history rewrites; removal is a forward commit.
+1. Preserve before removing, at the moment of cutover: tag the head of every branch that contains `terrine/estimate/` as `archive/native-estimation-2026-10-18/<branch>` (one tag per branch; a tag can point to only one commit) and record each SHA in a comment on kata `v0j6`. Commit in-progress estimation work (e.g. `terrine/estimate/sampling.py` in `.worktrees/warehouse-scale`) to a separate `parked/` branch. No history rewrites; removal is a forward commit on the integration branch `feat/dataset-engine` (`.worktrees/build`, per kata `k909`), then propagated to the branches stacked on it.
 2. Move noncausal helpers out of `estimate/` first: `to_surrogate_arrow` / `ArrowSurrogate` go to the dataset export module; keep `backtest_survival` only if it is a pure cutoff-split dataset utility.
 3. Update every surface in the same change (AGENTS.md "Complete changes"): plans (delete the estimation companion; amend build, study-api, dataset-workflows, warehouse-scale), refusal registries (`terrine.estimate.*` codes replaced by preflight codes), `__all__` facades, examples, guides, CHANGELOG, fixtures, tests.
 4. Rescope kata: 10.1 becomes library hand-offs; 12.1 drops causal mode; 8.1 drops step 3 and estimator reductions.
