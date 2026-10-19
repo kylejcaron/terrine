@@ -233,47 +233,6 @@ def test_empty_cohort_has_zero_eligibility_totals(native_inputs):
     assert result.table.schema.equals(frame.expr.schema().to_pyarrow())
 
 
-@pytest.mark.slow
-def test_declared_boolean_baseline_reaches_estimator_admission(native_inputs):
-    from terrine.estimate._data import prepare
-
-    catalog, con = native_inputs
-    con.raw_sql("ALTER TABLE events ADD COLUMN enabled BOOLEAN")
-    con.raw_sql("UPDATE events SET enabled = (user_id = 'a')")
-    definitions = catalog.model_dump(mode="json")
-    definitions["sources"]["events"]["properties"] = ["enabled"]
-    definitions["properties"]["enabled"] = {
-        "source": "events",
-        "column": "enabled",
-        "dtype": "bool",
-        "as_of": "event_time",
-    }
-    model = Model.from_catalog(
-        Catalog.model_validate(definitions),
-        con=con,
-        units={"user": tr.UnitSource("users", "user_id")},
-        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
-    )
-
-    def build(known_at_t0):
-        return (
-            Design(
-                "user",
-                tr.FixedDate("2025-01-04"),
-                treatment=tr.Treatment("enabled", known_at_t0=known_at_t0),
-                outcomes={"future": agg("sessions", window=("0s", "1d"))},
-            )
-            .build(model)
-            .materialize()
-        )
-
-    declared = prepare(build(True))
-    assert dict(zip(declared.units, declared.a, strict=True)) == {"a": 1.0, "b": 0.0}
-    assert declared.y.tolist() == [0.0, 0.0]
-    with pytest.raises(TerrineError) as error:
-        prepare(build(False))
-    assert error.value.code == "terrine.estimate.unsupported_design"
-
 
 def test_compiler_sql_refuses_shadowed_functions_before_schema_binding(native_inputs, tmp_path):
     catalog, con = native_inputs

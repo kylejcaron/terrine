@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -38,7 +39,7 @@ class ExportPreflight:
     """Filtered export rows and exact incomplete-outcome exclusion counts."""
 
     table: pa.Table
-    excluded_counts: dict[str, int]
+    excluded_counts: Mapping[str, int]
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "excluded_counts", MappingProxyType(dict(self.excluded_counts)))
@@ -85,10 +86,11 @@ def preflight_export(
             incomplete = [i for i, value in enumerate(complete) if value is not True]
             if reason_name is not None and reason_name in data.table.column_names:
                 reason_values = data.table[reason_name].to_pylist()
+                incomplete_rows = set(incomplete)
                 reasons = [
                     value if isinstance(value, str) and value else "reason_unavailable"
                     for i, value in enumerate(reason_values)
-                    if i in set(incomplete)
+                    if i in incomplete_rows
                 ]
             else:
                 reasons = ["reason_unavailable"] * len(incomplete)

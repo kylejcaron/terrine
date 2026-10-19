@@ -150,9 +150,7 @@ def test_prevalent_events_are_excluded_and_cutoff_equality_is_censored():
         con.disconnect()
 
 
-def test_unobserved_initial_history_is_explained_and_excluded_from_km():
-    from terrine.estimate.survival import kaplan_meier
-
+def test_unobserved_initial_history_is_explained_and_excluded():
     con, model = _model(outcome_start="2025-01-02")
     try:
         design = Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
@@ -160,9 +158,6 @@ def test_unobserved_initial_history_is_explained_and_excluded_from_km():
         rows = {row["unit"]: row for row in result.table.to_pylist()}
         assert rows["u1"]["complete"] is False
         assert rows["u1"]["reason"] == "incomplete_initial_history"
-        curve = kaplan_meier(result, duration="duration", event="event", entry="entry_time")
-        assert curve.at_risk == (1,)
-        assert curve.events == (1,)
     finally:
         con.disconnect()
 
@@ -231,8 +226,6 @@ def test_administrative_cutoff_changes_followup_without_changing_readiness():
 
 
 def test_cutoff_before_anchor_is_not_emitted_as_complete_followup():
-    from terrine.estimate.survival import kaplan_meier
-
     con, model = _model()
     try:
         design = Design(
@@ -243,8 +236,6 @@ def test_cutoff_before_anchor_is_not_emitted_as_complete_followup():
         )
         result = design.build(model).materialize()
         assert all(row["complete"] is False for row in result.table.to_pylist())
-        curve = kaplan_meier(result, duration="duration", event="event", entry="entry_time")
-        assert curve.time == ()
     finally:
         con.disconnect()
 
@@ -541,8 +532,7 @@ def test_internal_timestamp_aliases_are_reserved_feature_names():
         con.disconnect()
 
 
-def test_nanosecond_events_survive_compile_and_estimation_in_any_session_timezone():
-    from terrine.estimate.survival import ElapsedTime, kaplan_meier
+def test_nanosecond_events_survive_time_to_event_compilation_in_any_session_timezone():
 
     con, model = _model(nanosecond_outcomes=True)
     try:
@@ -552,11 +542,8 @@ def test_nanosecond_events_survive_compile_and_estimation_in_any_session_timezon
             .build(model)
             .materialize()
         )
-        curve = kaplan_meier(result, duration="duration", event="event")
-        assert curve.time == (ElapsedTime(0, 1), ElapsedTime(0, 2))
     finally:
         con.disconnect()
-    from terrine.estimate.survival import kaplan_meier
 
     con, model = _model(naive_outcomes=True)
     try:
@@ -566,7 +553,6 @@ def test_nanosecond_events_survive_compile_and_estimation_in_any_session_timezon
             .materialize()
         )
         assert result.table.schema.field("duration").type.tz == "UTC"
-        assert kaplan_meier(result, duration="duration", event="event").events
     finally:
         con.disconnect()
 

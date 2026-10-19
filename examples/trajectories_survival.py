@@ -1,4 +1,4 @@
-"""Local DuckDB walkthrough for cohort collection and survival backtests."""
+"""Local DuckDB walkthrough for cohort datasets and portable Arrow export."""
 
 from datetime import UTC, datetime
 
@@ -16,8 +16,6 @@ from terrine.data import (
     Roles,
     UnitSource,
 )
-from terrine.errors import TerrineError
-from terrine.estimate.survival import backtest_survival
 from terrine.export import to_surrogate_arrow
 from terrine.model import Model
 from terrine.semantic.models import Catalog
@@ -166,35 +164,6 @@ def main() -> None:
         )
 
         source = _survival_data()
-        cutoffs = (datetime(2025, 1, 4, tzinfo=UTC), datetime(2025, 1, 6, tzinfo=UTC))
-        fits = backtest_survival(
-            source,
-            duration="duration",
-            event="event",
-            entry="entry",
-            prediction_cutoffs=cutoffs,
-            fitter=lambda frame: frame.table.select(
-                ["user", "late_corrected_feature", "duration", "event"]
-            ).to_pylist(),
-        )
-        print("Earlier-only measurement-time fits:", fits)
-        print(
-            "The pre-cutoff effective-time feature includes a late correction; it is labeled "
-            "retrospective_effective_time, not historically recorded/known."
-        )
-        try:
-            backtest_survival(
-                source,
-                duration="duration",
-                event="event",
-                entry="entry",
-                prediction_cutoffs=cutoffs,
-                fitter=lambda frame: frame,
-                knowledge="recorded_at",
-            )
-        except TerrineError as error:
-            print("Recorded-at request refused:", error.code)
-
         surrogate = to_surrogate_arrow(
             source, features=("late_corrected_feature",), outcomes=("duration", "event")
         )

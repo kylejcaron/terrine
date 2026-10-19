@@ -24,7 +24,6 @@ from terrine.data import (
     UnitSource,
 )
 from terrine.errors import TerrineError
-from terrine.results import Diagnostic, DiagnosticPolicy, Estimate
 
 
 def _provenance():
@@ -300,35 +299,6 @@ def test_unit_source_requires_named_table_and_key():
         UnitSource(table="users", key="")
 
 
-def test_estimation_result_models_reject_nonfinite_values_and_preserve_status():
-    diagnostic = Diagnostic(
-        "balance",
-        "unavailable",
-        {"smd": None},
-        {"warn": 0.1},
-        {"reason": "feature has no observed values"},
-    )
-    assert diagnostic.status == "unavailable"
-    with pytest.raises(ValueError):
-        Diagnostic("overlap", "pass", {"ess": float("inf")}, {}, {})
-    with pytest.raises(ValueError):
-        DiagnosticPolicy(overlap_fail=0.1, overlap_warn=0.05)
-    with pytest.raises(ValueError):
-        Estimate(
-            "ipw",
-            "ATE",
-            "outcome",
-            float("nan"),
-            0.2,
-            (-1, 1),
-            0.05,
-            10,
-            10,
-            "unit",
-            "crossfit_parametric_sandwich",
-            (diagnostic,),
-            {},
-        )
 
 
 def test_state_panel_roles_and_metadata_survive_arrow_json_roundtrip():
