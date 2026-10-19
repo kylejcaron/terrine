@@ -155,6 +155,8 @@ class RefreshPlan:
                 raise ValueError("serialized plan fingerprint does not match")
         except (ValueError, TypeError, KeyError) as exc:
             raise ValueError("serialized plan is malformed or unverifiable") from exc
+        if budget is not None:
+            _scan_policy(budget, scan_bytes=0 if not tasks else None)
         if not isinstance(expected_base_manifest_bound, bool) or (
             expected_base_manifest is not None and not isinstance(expected_base_manifest, str)
         ):

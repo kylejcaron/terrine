@@ -9,7 +9,7 @@ from typing import Literal
 from terrine._time import utc_instant
 from terrine.windows import seconds
 
-__all__ = ["Trajectory", "CohortSpec", "CohortGrouping", "TimeToEvent"]
+__all__ = ["Trajectory", "CohortSpec", "CohortGrouping", "TimeToEvent", "LifeTable"]
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -95,3 +95,50 @@ class TimeToEvent:
             raise TypeError("delayed_entry must be bool")
         if self.delayed_entry and self.entry is None:
             raise ValueError("delayed_entry requires an entry fact")
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class LifeTable:
+    """Bin observed time-to-event records into descriptive risk-set summaries."""
+
+    time_to_event: TimeToEvent
+    interval: int
+    group_by: tuple[str, ...]
+
+    def __init__(
+        self,
+        time_to_event: TimeToEvent,
+        interval: str | int,
+        group_by: tuple[str, ...] = (),
+    ) -> None:
+        if not isinstance(time_to_event, TimeToEvent):
+            raise TypeError("time_to_event must be TimeToEvent")
+        width = seconds(interval)
+        if width <= 0:
+            raise ValueError("interval must be positive")
+        if (
+            isinstance(group_by, (str, bytes))
+            or not isinstance(group_by, tuple)
+            or any(not isinstance(name, str) or not name.strip() for name in group_by)
+        ):
+            raise TypeError("group_by must be a tuple of non-empty feature names")
+        if len(set(group_by)) != len(group_by):
+            raise ValueError("group_by names must be unique")
+        reserved = {
+            "unit",
+            "anchor_id",
+            "t0",
+            "time_bin",
+            "at_risk",
+            "events",
+            "censored",
+            "censored_by_reason",
+            "delayed_entries",
+            "event_rate",
+            "censor_rate",
+        }
+        if reserved.intersection(group_by):
+            raise ValueError("group_by names cannot collide with life-table output columns")
+        object.__setattr__(self, "time_to_event", time_to_event)
+        object.__setattr__(self, "interval", width)
+        object.__setattr__(self, "group_by", group_by)

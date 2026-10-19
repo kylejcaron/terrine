@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 
 import ibis
@@ -128,6 +129,63 @@ def test_saved_plan_recipe_reconstructs_design_and_verifies_owner_model_in_fresh
         )
         assert recipe.release_snapshot(store) == "snapshot-1"
         assert run.state == "succeeded"
+    finally:
+        con.disconnect()
+
+
+def test_saved_recipe_preserves_strict_unknown_scan_refusal():
+    con = ibis.duckdb.connect()
+    try:
+        con.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        model = _model(con)
+        design = Design("user", FixedDate("2025-01-15"), outcomes={})
+        plan = plan_refresh(
+            namespace="runtime",
+            dataset="study",
+            definition_hash=design.spec_hash,
+            snapshot_id="snapshot",
+            graph=dependency_graph(
+                design=design,
+                sources=("events",),
+                definition_hash=design.spec_hash,
+                partitions=("all",),
+            ),
+        )
+        payload = json.loads(plan.serialize())
+        payload["budget"] = {
+            "max_output_bytes": None,
+            "max_scan_bytes": 1,
+            "max_rows": None,
+            "strict_scan": True,
+        }
+        fingerprint_body = {
+            key: payload[key]
+            for key in (
+                "namespace",
+                "dataset",
+                "definition_hash",
+                "snapshot_id",
+                "tasks",
+                "change_evidence",
+                "budget",
+                "expected_base_manifest",
+                "expected_base_manifest_bound",
+            )
+        }
+        payload["fingerprint"] = hashlib.sha256(
+            json.dumps(fingerprint_body, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        recipe = SavedPlanRecipe.create(
+            plan_json=json.dumps(payload, sort_keys=True, separators=(",", ":")),
+            design=design,
+            model=ModelReference.from_model(model, owner_key="owner-model"),
+            destination=DestinationRef("output.duckdb", "analytics", "study"),
+            namespace="runtime",
+            expected_base_manifest=None,
+        )
+        with pytest.raises(TerrineError) as error:
+            SavedPlanRecipe.from_json(recipe.to_json())
+        assert error.value.code == "terrine.budget.scan_unknown"
     finally:
         con.disconnect()
 

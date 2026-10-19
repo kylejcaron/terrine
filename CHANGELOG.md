@@ -1,4 +1,6 @@
 # Changelog
+## Removed
+- Native treatment-effect estimators, inferential/propensity diagnostics, and simulation truth/calibration claims. Terrine now delivers datasets and descriptive summaries; downstream libraries own estimation.
 
 ## 0.1.0
 
@@ -89,3 +91,5 @@
 - Add an opt-in OpenTelemetry lifecycle projection with redacted attributes and bounded nonblocking export.
 - Add a canonical Decimal type-7 quantile expression and exact in-memory order-statistic primitive; keep approximate sketch requests explicitly refused until an owner-approved adapter is available.
 - Execute exact Decimal type-7 quantiles and sparse min/max/distinct windows on DuckDB, preserving null reasons and refusing unsupported quantile capabilities; keep owner-gated sketches coded as unavailable.
+- Demonstrate real Model/Design saved-recipe execution from retained DuckDB inputs, exact-generation reads, operator-declared corrections, and same-snapshot clean-rebuild parity; cover partition retries and owner-held lost-response lookup in warehouse integration tests.
+- Refuse fingerprint-valid serialized plans whose strict scan budget cannot be satisfied by known scan bounds, preserving the refusal code through saved recipes.

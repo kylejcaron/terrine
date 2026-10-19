@@ -23,7 +23,7 @@ from terrine.compile.anchors import (
     _utc_column,
     compile_anchors,
 )
-from terrine.compile.layers import measure_identity
+from terrine.compile.layers import build_measure_layer, measure_identity
 from terrine.data import ColumnMeta, ExpressionTiming, FeatureCutoff, Roles, SequenceMeta
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
@@ -48,9 +48,8 @@ from terrine.temporal.attributes import (
     enrich_events,
     validate_history,
 )
-from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
+from terrine.temporal.daily import resolve_measure
 from terrine.temporal.nonadditive import aggregate_nonadditive_window
-from terrine.temporal.prefix import sparse_prefix
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -704,20 +703,13 @@ def compile_columns(
                 measure = resolve_measure(events, measure, source=source)
                 key = (measure.source_name, measure_identity(measure), design.unit, resolution)
                 if key not in states:
-                    grouped = (
-                        sparse_daily(
-                            events, measure, model.catalog.day_boundary, "_unit", source=source
-                        )
-                        if resolution == "day"
-                        else _sparse_group(
-                            events,
-                            measure,
-                            {"_timestamp": events._timestamp},
-                            "_unit",
-                            source=source,
-                        )
+                    states[key] = build_measure_layer(
+                        events,
+                        measure,
+                        source,
+                        boundary=model.catalog.day_boundary,
+                        resolution=resolution,
                     )
-                    states[key] = sparse_prefix(grouped, measure, resolution=resolution)
                 resolved.append(measure)
                 supplied[measure] = states[key]
             result = aggregate_window(

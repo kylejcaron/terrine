@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 import ibis
 
@@ -46,6 +46,91 @@ def measure_identity(measure) -> str:
         measure.window_days,
     )
     return hashlib.sha256(repr(fields).encode()).hexdigest()
+
+
+def build_measure_layer(
+    events: ibis.Table,
+    measure,
+    source,
+    *,
+    boundary: str,
+    resolution: Literal["day", "event"],
+) -> ibis.Table:
+    """Build one canonical sparse measure prefix from normalized source events."""
+    from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
+    from terrine.temporal.prefix import sparse_prefix
+
+    measure = resolve_measure(events, measure, source=source)
+    grouped = (
+        sparse_daily(events, measure, boundary, "_unit", source=source)
+        if resolution == "day"
+        else _sparse_group(
+            events,
+            measure,
+            {"_timestamp": events._timestamp},
+            "_unit",
+            source=source,
+        )
+    )
+    return sparse_prefix(grouped, measure, resolution=resolution)
+
+
+def build_layer(design: Design, model, key: LayerKey, *, relation_resolver=None) -> ibis.Table:
+    """Build one compiler-planned anchor or measure-prefix relation."""
+    from dataclasses import replace
+
+    from terrine.compile.anchors import compile_anchors
+    from terrine.model import Model
+    from terrine.semantic.bind import normalize_events
+    from terrine.temporal.attributes import enrich_events
+
+    if relation_resolver is None:
+        bound_model = model
+    else:
+
+        class _ResolvedModel:
+            def __getattr__(self, name):
+                return getattr(model, name)
+
+            def _relation(self, relation):
+                return relation_resolver(relation)
+
+            def _resolver(self, relation):
+                return relation_resolver(relation)
+
+        bound_model = _ResolvedModel()
+    expected = plan_layers(design, bound_model).keys
+    if replace(key, snapshot_id="unbound") not in expected:
+        raise ValueError("layer key does not belong to this Design and Model")
+    if key.layer == "anchor":
+        return compile_anchors(design, cast(Model, bound_model)).table
+    if key.resolution not in {"day", "event"}:
+        raise ValueError("prefix layer resolution must be day or event")
+
+    measure = next(
+        (
+            measure
+            for metric in model.metrics.values()
+            for measure in metric.measures
+            if measure_identity(measure) == key.measure and measure.source_name == key.source
+        ),
+        None,
+    )
+    if measure is None:
+        raise ValueError("layer measure is absent from the bound Model")
+    source = model.sources[key.source]
+    resolve = relation_resolver or model._relation
+    raw = resolve(source.relation)
+    events = normalize_events(raw, source, source.entities[design.unit])
+    histories = {dimension.name: resolve(dimension.relation) for dimension in source.dimensions}
+    events = enrich_events(events, source, histories)
+    return build_measure_layer(
+        events,
+        measure,
+        source,
+        boundary=model.catalog.day_boundary,
+        resolution=key.resolution,
+    )
 
 
 def plan_layers(design: Design, model) -> LayerPlan:

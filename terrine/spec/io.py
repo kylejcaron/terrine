@@ -43,7 +43,7 @@ from terrine.spec.state_panel import (
     decode_cutpoint,
     encode_cutpoint,
 )
-from terrine.spec.trajectory import CohortSpec, TimeToEvent, Trajectory
+from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent, Trajectory
 from terrine.windows import Window
 
 __all__ = ["SCHEMA_VERSION", "canonical_json", "to_json", "from_json", "to_yaml", "from_yaml"]
@@ -233,6 +233,13 @@ def _encode(value: Any) -> Any:
             "exit": value.exit,
             "entry": value.entry,
             "delayed_entry": value.delayed_entry,
+        }
+    if isinstance(value, LifeTable):
+        return {
+            "type": "LifeTable",
+            "time_to_event": _encode(value.time_to_event),
+            "interval": value.interval,
+            "group_by": list(value.group_by),
         }
     if isinstance(value, Trajectory):
         return {
@@ -547,6 +554,12 @@ def _node(value: Any) -> Any:
             entry=item["entry"],
             delayed_entry=item["delayed_entry"],
         )
+    if tag == "LifeTable":
+        item = _object(value, {"type", "time_to_event", "interval", "group_by"})
+        groups = item["group_by"]
+        if not isinstance(groups, list) or any(not isinstance(name, str) for name in groups):
+            raise ValueError("LifeTable group_by must be a list of feature names")
+        return LifeTable(_node(item["time_to_event"]), item["interval"], tuple(groups))
     if tag == "Window":
         item = _object(value, {"type", "start", "end"})
         return Window(item["start"], item["end"])

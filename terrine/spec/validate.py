@@ -36,7 +36,7 @@ from terrine.spec.expressions import (
     _expression_support_seconds,
 )
 from terrine.spec.sequence import EventSequence
-from terrine.spec.trajectory import CohortSpec, TimeToEvent
+from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
 from terrine.windows import Window
 
 if TYPE_CHECKING:
@@ -575,8 +575,9 @@ def _validate_shape(
             raise _INVALID.error(reason="trajectory_metric_must_be_additive")
         for source_name in metric.source_names:
             _required(model, source_name, required)
-    elif isinstance(design.shape, TimeToEvent):
-        for name in (design.shape.event, design.shape.exit, design.shape.entry):
+    elif isinstance(design.shape, (TimeToEvent, LifeTable)):
+        shape = design.shape.time_to_event if isinstance(design.shape, LifeTable) else design.shape
+        for name in (shape.event, shape.exit, shape.entry):
             if name is None:
                 continue
             fact = model.catalog.facts.get(name)

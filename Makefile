@@ -1,16 +1,13 @@
-.PHONY: test test-slow test-calibration lint typecheck fmt check complexity
+.PHONY: test test-slow lint typecheck fmt check complexity
 
 TESTS ?= tests
 
-# Ordinary suite excludes explicitly marked slow and parameter-recovery tests.
+# Ordinary suite excludes explicitly marked slow tests.
 test:
 	uv run pytest $(TESTS)
 
 test-slow:
-	uv run pytest $(TESTS) -m "slow and not parameter_recovery"
-
-test-calibration:
-	uv run pytest -n auto $(TESTS) -m parameter_recovery
+	uv run pytest $(TESTS) -m slow
 
 lint:
 	uv run ruff check terrine tests
