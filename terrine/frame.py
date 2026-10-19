@@ -156,12 +156,12 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
                 if isinstance(state, BinnedMetricState):
                     metric = model.metrics.get(state.metric)
                     semantic[name] = {
-                        "state": _definition_record(state),
+                        "state": record["shape"]["state"],
                         "metric": _definition_record(metric) if metric is not None else None,
                     }
                 else:
                     semantic[name] = {
-                        "state": _definition_record(state),
+                        "state": record["shape"]["state"],
                         "property_bindings": [
                             {
                                 "source": source_name,

@@ -133,6 +133,8 @@ def test_training_view_hashes_selected_feature_definition_and_parent_design(nati
 
 
 def test_state_panel_training_view_hashes_baseline_and_prior_state(native_inputs):
+    from decimal import Decimal
+
     from terrine.data import Budget
     from terrine.spec import BinnedMetricState, Schedule, StatePanel
 
@@ -147,7 +149,7 @@ def test_state_panel_training_view_hashes_baseline_and_prior_state(native_inputs
         "user",
         Schedule("1d", "2025-01-03", "2025-01-05"),
         shape=StatePanel(
-            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
+            BinnedMetricState("sessions", (Decimal("0"),), ("none", "some")),
             max_periods=2,
             baseline_features={"baseline": agg("sessions", window=("-1d", "0d"))},
         ),
