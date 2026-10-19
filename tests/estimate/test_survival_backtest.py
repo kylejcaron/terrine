@@ -14,11 +14,8 @@ from terrine.data import (
     Roles,
 )
 from terrine.errors import TerrineError
-from terrine.estimate.survival import (
-    ElapsedTime,
-    backtest_survival,
-    to_surrogate_arrow,
-)
+from terrine.estimate.survival import ElapsedTime, backtest_survival
+from terrine.export import to_surrogate_arrow
 
 
 def _frame(*, later_event=datetime(2025, 1, 5, tzinfo=UTC)):

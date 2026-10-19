@@ -17,7 +17,8 @@ from terrine.data import (
     UnitSource,
 )
 from terrine.errors import TerrineError
-from terrine.estimate.survival import backtest_survival, to_surrogate_arrow
+from terrine.estimate.survival import backtest_survival
+from terrine.export import to_surrogate_arrow
 from terrine.model import Model
 from terrine.semantic.models import Catalog
 from terrine.spec import CohortSpec, Design, EventAnchor
