@@ -94,9 +94,43 @@ def get_run(run_id: str, *, con: Any, namespace: str) -> RunStatus:
             _utc(row[2]),
             _utc(row[3]),
             _utc(lease[0]) if lease else None,
+            cost=_observed_costs(run_id, con=con, namespace=namespace, schema=schema),
             pinned_result_ref=row[4],
             latest_event_cursor=_latest_event_cursor(run_id, con=con, namespace=namespace),
         )
+
+
+def _observed_costs(run_id: str, *, con: Any, namespace: str, schema: str) -> dict[str, Any] | None:
+    columns = {
+        row[0]
+        for row in con.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE lower(table_schema)=lower(?) AND table_name='runtime_tasks'",
+            [namespace],
+        ).fetchall()
+    }
+    if not {"layer", "attempts", "output_rows", "output_bytes"}.issubset(columns):
+        return None
+    row = con.execute(
+        "SELECT COALESCE(SUM(attempts),0), "
+        "COUNT(*) FILTER (WHERE status='complete' AND "
+        "(layer IS NULL OR output_rows IS NULL OR output_bytes IS NULL)), "
+        "COALESCE(SUM(output_rows) FILTER (WHERE status='complete' AND layer='frame'),0), "
+        "COALESCE(SUM(output_bytes) FILTER (WHERE status='complete' AND layer='frame'),0), "
+        "COALESCE(SUM(output_bytes) FILTER (WHERE status='complete' AND layer!='frame'),0) "
+        f"FROM {schema}.runtime_tasks WHERE run_id=?",
+        [run_id],
+    ).fetchone()
+    return {
+        "status": "observed",
+        "scope": "completed_task_artifacts",
+        "attempts": row[0],
+        "output_rows": None if row[1] else row[2],
+        "output_bytes": None if row[1] else row[3],
+        "intermediate_output_bytes": None if row[1] else row[4],
+        "scan_bytes": None,
+        "scan_reason": "executor_scan_observation_unavailable",
+    }
 
 
 def _utc(value: datetime | None) -> datetime | None:

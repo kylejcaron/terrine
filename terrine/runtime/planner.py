@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from terrine.compile.cost import _scan_policy
 from terrine.data import Budget
 from terrine.runtime.changes import ChangeSet
+from terrine.runtime.cost import ScanEvidence, estimate_task_cost, evaluate_costs
 from terrine.runtime.graph import DependencyGraph
 from terrine.runtime.state import LayerNode
+
+if TYPE_CHECKING:
+    from terrine.runtime.backends.base import CostProvider
 
 __all__ = ["Invalidation", "PartitionSpec", "PlanRecipe", "RefreshPlan", "TaskSpec", "plan_refresh"]
 
@@ -75,6 +78,38 @@ class TaskSpec:
     estimated_scan_bytes: int | None = None
     estimated_output_bytes: int | None = None
     estimated_rows: int | None = None
+    scan_evidence: ScanEvidence | None = None
+    estimate_basis: str = "estimate_unavailable"
+
+    def __post_init__(self) -> None:
+        for value in (self.estimated_scan_bytes, self.estimated_output_bytes, self.estimated_rows):
+            if value is not None and (type(value) is not int or value < 0):
+                raise ValueError("cost estimates must be nonnegative integers or None")
+        if not isinstance(self.estimate_basis, str) or not self.estimate_basis.strip():
+            raise ValueError("cost estimates require a nonempty basis")
+        if self.scan_evidence is not None and (
+            not isinstance(self.scan_evidence, ScanEvidence)
+            or self.estimated_scan_bytes != self.scan_evidence.total()
+        ):
+            raise ValueError("scan estimate must agree with its phase evidence")
+
+    def with_estimate(
+        self,
+        *,
+        scan: ScanEvidence,
+        output_bytes: int | None = None,
+        rows: int | None = None,
+        basis: str,
+    ) -> TaskSpec:
+        """Attach metadata forecasts without promoting them to execution bounds."""
+        return replace(
+            self,
+            estimated_scan_bytes=scan.total(),
+            estimated_output_bytes=output_bytes,
+            estimated_rows=rows,
+            scan_evidence=scan,
+            estimate_basis=basis,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,6 +121,10 @@ class TaskSpec:
             "estimated_scan_bytes": self.estimated_scan_bytes,
             "estimated_output_bytes": self.estimated_output_bytes,
             "estimated_rows": self.estimated_rows,
+            "scan_evidence": self.scan_evidence.to_dict()
+            if self.scan_evidence is not None
+            else None,
+            "estimate_basis": self.estimate_basis,
         }
 
 
@@ -101,6 +140,7 @@ class RefreshPlan:
     scan_bytes: int | None = None
     expected_base_manifest: str | None = None
     expected_base_manifest_bound: bool = False
+    budget_warnings: tuple[str, ...] = ()
 
     @classmethod
     def deserialize(cls, serialized: bytes | str) -> RefreshPlan:
@@ -118,7 +158,11 @@ class RefreshPlan:
             expected_base_manifest = data.get("expected_base_manifest")
             expected_base_manifest_bound = data.get("expected_base_manifest_bound", False)
             fingerprint = data["fingerprint"]
-            if schema_version != 1 or not isinstance(raw_tasks, list):
+            if (
+                type(schema_version) is not int
+                or schema_version != 2
+                or not isinstance(raw_tasks, list)
+            ):
                 raise ValueError("unsupported serialized plan")
             tasks = tuple(
                 TaskSpec(
@@ -130,6 +174,10 @@ class RefreshPlan:
                     item["estimated_scan_bytes"],
                     item["estimated_output_bytes"],
                     item["estimated_rows"],
+                    ScanEvidence.from_dict(item["scan_evidence"])
+                    if item["scan_evidence"] is not None
+                    else None,
+                    item["estimate_basis"],
                 )
                 for item in raw_tasks
             )
@@ -138,6 +186,7 @@ class RefreshPlan:
                 raise ValueError("serialized plan task fields are not canonical")
             budget = Budget(**budget_record) if budget_record is not None else None
             payload = {
+                "schema_version": schema_version,
                 "namespace": namespace,
                 "dataset": dataset,
                 "definition_hash": definition_hash,
@@ -155,8 +204,9 @@ class RefreshPlan:
                 raise ValueError("serialized plan fingerprint does not match")
         except (ValueError, TypeError, KeyError) as exc:
             raise ValueError("serialized plan is malformed or unverifiable") from exc
-        if budget is not None:
-            _scan_policy(budget, scan_bytes=0 if not tasks else None)
+        scan_bytes, warnings = evaluate_costs(
+            tasks, budget, definition_hash=definition_hash, snapshot_id=snapshot_id
+        )
         if not isinstance(expected_base_manifest_bound, bool) or (
             expected_base_manifest is not None and not isinstance(expected_base_manifest, str)
         ):
@@ -182,12 +232,35 @@ class RefreshPlan:
             tasks,
             plan_recipe,
             budget,
+            scan_bytes=scan_bytes,
             expected_base_manifest=expected_base_manifest,
             expected_base_manifest_bound=expected_base_manifest_bound,
+            budget_warnings=warnings,
         )
 
     def serialize(self) -> bytes:
         return self.recipe.to_json().encode("utf-8")
+
+    def bind_base_manifest(self, generation: str | None) -> RefreshPlan:
+        """Bind publication preconditions into the canonical plan fingerprint."""
+        if generation is not None and (not isinstance(generation, str) or not generation):
+            raise ValueError("expected base manifest must be a nonempty generation or None")
+        if RefreshPlan.deserialize(self.serialize()) != self:
+            raise ValueError("runtime plan fields differ from its canonical recipe")
+        recipe = replace(
+            self.recipe, expected_base_manifest=generation, expected_base_manifest_bound=True
+        )
+        payload = json.loads(recipe.to_json())
+        del payload["fingerprint"]
+        fingerprint = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        return replace(
+            self,
+            recipe=replace(recipe, fingerprint=fingerprint),
+            expected_base_manifest=generation,
+            expected_base_manifest_bound=True,
+        )
 
 
 def plan_refresh(
@@ -200,6 +273,7 @@ def plan_refresh(
     changes: ChangeSet | None = None,
     budget: Budget | None = None,
     max_tasks: int = 4096,
+    cost_provider: CostProvider | None = None,
 ) -> RefreshPlan:
     """Create a deterministic metadata-only plan with explicit unknown costs."""
     if not all((namespace, dataset, definition_hash, snapshot_id)):
@@ -245,10 +319,8 @@ def plan_refresh(
             ordered = tuple(node for node in ordered if node in selected)
     if len(ordered) > max_tasks:
         raise ValueError("planned task count exceeds max_tasks")
-    if budget is not None:
-        if not isinstance(budget, Budget):
-            raise TypeError("budget must be Budget or None")
-        _scan_policy(budget, scan_bytes=0 if not ordered else None)
+    if budget is not None and not isinstance(budget, Budget):
+        raise TypeError("budget must be Budget or None")
     change_evidence = (
         None
         if changes is None
@@ -270,8 +342,18 @@ def plan_refresh(
         task_id = hashlib.sha256(key.encode()).hexdigest()[:24]
         ids[node] = task_id
         dependencies = tuple(ids[parent] for parent in graph.dependencies(node))
-        tasks.append(TaskSpec(task_id, node.layer, node.source, node.partition, dependencies))
+        tasks.append(
+            estimate_task_cost(
+                TaskSpec(task_id, node.layer, node.source, node.partition, dependencies),
+                provider=cost_provider,
+                definition_hash=definition_hash,
+                snapshot_id=snapshot_id,
+            )
+        )
     bodies = tuple(task.to_dict() for task in tasks)
+    scan_bytes, warnings = evaluate_costs(
+        tasks, budget, definition_hash=definition_hash, snapshot_id=snapshot_id
+    )
     budget_record = (
         {
             "max_rows": budget.max_rows,
@@ -283,6 +365,7 @@ def plan_refresh(
         else None
     )
     fingerprint_payload = {
+        "schema_version": 2,
         "namespace": namespace,
         "dataset": dataset,
         "definition_hash": definition_hash,
@@ -297,7 +380,7 @@ def plan_refresh(
         json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     recipe = PlanRecipe(
-        1,
+        2,
         namespace,
         dataset,
         definition_hash,
@@ -308,7 +391,15 @@ def plan_refresh(
         fingerprint,
     )
     return RefreshPlan(
-        namespace, dataset, definition_hash, snapshot_id, tuple(tasks), recipe, budget
+        namespace,
+        dataset,
+        definition_hash,
+        snapshot_id,
+        tuple(tasks),
+        recipe,
+        budget,
+        scan_bytes=scan_bytes,
+        budget_warnings=warnings,
     )
 
 

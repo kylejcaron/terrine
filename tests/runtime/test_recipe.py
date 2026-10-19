@@ -201,6 +201,7 @@ def test_saved_recipe_preserves_strict_unknown_scan_refusal():
         fingerprint_body = {
             key: payload[key]
             for key in (
+                "schema_version",
                 "namespace",
                 "dataset",
                 "definition_hash",

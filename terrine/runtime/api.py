@@ -7,7 +7,8 @@ from typing import Any, Protocol
 import ibis
 
 from terrine.errors import RefusalSpec
-from terrine.runtime.backends.base import PublicationReceipt
+from terrine.runtime.backends.base import CostProvider, PublicationReceipt
+from terrine.runtime.cost import _AUTHORITY, ScanAuthorization, ScanEvidence, ScanPhase
 from terrine.runtime.events import read_run_events
 from terrine.runtime.execute import RunReceipt, execute_plan
 from terrine.runtime.planner import RefreshPlan, plan_refresh
@@ -23,8 +24,13 @@ from terrine.runtime.state import RuntimeStore
 from terrine.runtime.status import cancel_run, get_run
 
 __all__ = [
+    "CostProvider",
     "Executor",
     "RunReceipt",
+    "ScanAuthorization",
+    "ScanAuthorizingExecutor",
+    "ScanEvidence",
+    "ScanPhase",
     "cancel_run",
     "find_run_by_request_key",
     "get_run",
@@ -47,6 +53,12 @@ class Executor(Protocol):
     def run_task(self, task: Any, dependencies: Any) -> Any: ...
 
     def publish(self, plan: RefreshPlan, outputs: Any, lease: Any, run_id: str) -> Any: ...
+
+
+class ScanAuthorizingExecutor(Executor, Protocol):
+    """Owner executor that attests all reads, including snapshot reopening and retries."""
+
+    def authorize_scan(self, plan: RefreshPlan) -> ScanAuthorization: ...
 
 
 def run_plan(
@@ -103,6 +115,7 @@ def run_plan(
         request_key=request_key,
         destination=destination,
         run_task=executor.run_task,
+        authorize_scan=getattr(executor, "authorize_scan", None),
         publish=lambda current_plan, outputs, lease: executor.publish(
             current_plan, outputs, lease, run_id
         ),
@@ -198,6 +211,12 @@ class _SnapshotBoundExecutor:
         self.receipt = receipt
         self.con = con
         self.namespace = namespace
+
+    def authorize_scan(self, plan: RefreshPlan) -> ScanAuthorization:
+        authorize = getattr(self.executor, "authorize_scan", None)
+        if not callable(authorize):
+            raise _AUTHORITY.error()
+        return authorize(plan)
 
     def run_task(self, task: Any, dependencies: Any) -> Any:
         context = self.authority.reopen(self.receipt, con=self.con, namespace=self.namespace)

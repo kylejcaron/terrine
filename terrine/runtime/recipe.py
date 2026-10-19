@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from terrine.errors import RefusalSpec, TerrineError
@@ -277,32 +277,7 @@ def _bind_recipe_plan(recipe: SavedPlanRecipe, *, namespace: str) -> RefreshPlan
         or not plan.snapshot_id
     ):
         raise _INVALID.error(reason="plan identity differs from owner-bound references")
-    bound_payload = {
-        "namespace": plan.namespace,
-        "dataset": plan.dataset,
-        "definition_hash": plan.definition_hash,
-        "snapshot_id": plan.snapshot_id,
-        "tasks": plan.recipe.tasks,
-        "change_evidence": plan.recipe.change_evidence,
-        "budget": plan.recipe.budget,
-        "expected_base_manifest": restored.expected_base_manifest,
-        "expected_base_manifest_bound": True,
-    }
-    fingerprint = hashlib.sha256(
-        json.dumps(bound_payload, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    plan_recipe = replace(
-        plan.recipe,
-        fingerprint=fingerprint,
-        expected_base_manifest=restored.expected_base_manifest,
-        expected_base_manifest_bound=True,
-    )
-    return replace(
-        plan,
-        recipe=plan_recipe,
-        expected_base_manifest=restored.expected_base_manifest,
-        expected_base_manifest_bound=True,
-    )
+    return plan.bind_base_manifest(restored.expected_base_manifest)
 
 
 def resolve_plan(

@@ -93,10 +93,11 @@ def test_build_layer_composition_matches_direct_compilation(column_model):
     assert actual.expression_timings == expected.expression_timings
 
 
-def test_build_layer_composition_matches_state_panel_compilation(column_model):
+def test_state_panel_refuses_substitutions_and_preserves_full_rebuild(column_model):
     from terrine.compile.dispatch import compile_design
     from terrine.compile.layers import build_layer
     from terrine.compile.materialize import compose_materialized_frame
+    from terrine.errors import TerrineError
     from terrine.spec import BinnedMetricState, Schedule, StatePanel
 
     design = Design(
@@ -110,7 +111,10 @@ def test_build_layer_composition_matches_state_panel_compilation(column_model):
         replace(key, snapshot_id="snapshot"): build_layer(design, column_model, key)
         for key in plan_layers(design, column_model).keys
     }
-    actual = compose_materialized_frame(design, column_model, persisted=persisted)
+    with pytest.raises(TerrineError) as error:
+        compose_materialized_frame(design, column_model, persisted=persisted)
+    assert error.value.code == "terrine.compile.runtime_shape_unsupported"
+    actual = compose_materialized_frame(design, column_model, persisted={})
     expected = compile_design(design, column_model)
     assert column_model.con.to_pyarrow(actual.table.order_by("unit")).equals(
         column_model.con.to_pyarrow(expected.table.order_by("unit"))
