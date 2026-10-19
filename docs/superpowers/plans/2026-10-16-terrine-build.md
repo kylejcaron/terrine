@@ -8,9 +8,9 @@
 
 **Tech Stack:** Python `>=3.13,<3.15` target (verify supported versions), uv, hatchling/hatch-vcs, Ibis, Pydantic 2, PyYAML, SQLGlot, Arrow and NumPy; DuckDB reference backend. Increment, dataframe conversions, warehouse drivers and heavier methods are isolated extras. Ruff, ty, tach, Vulture, pydoclint, complexipy, prek; pytest/Hypothesis with focused xdist-safe tests.
 
-**Spec:** [Original handoff](../specs/2026-10-16-terrine-handoff.md) is historical reference, not an approved specification. Latest user instructions supersede its monorepo/extraction assumption and the earlier mandatory increment dependency: no increment edits, independently usable terrine, compatible common stacks, scalable ML staging and incremental materialization. Deliver a reviewed detailed near-term plan plus complete roadmap, not product implementation in this session.
+**Spec:** The original handoff is historical reference, not an approved specification. [Datasets-only scope decision](../specs/2026-10-18-terrine-scope-datasets-only.md) is binding and supersedes its estimation, inference, causal-diagnostics and effect-truth content. Retain only dataset, export, descriptive-report and risk-set work authorized there.
 
-**Current scope:** [Datasets-only scope decision](../specs/2026-10-18-terrine-scope-datasets-only.md) supersedes estimation, inference, causal diagnostics, and effect-truth work below. Treat those roadmap sections as withdrawn; retain only dataset, export, descriptive-report and risk-set work.
+**Current scope:** Treat withdrawn content as history only; this plan's executable roadmap follows the datasets-only decision.
 
 ## Global constraints
 
@@ -195,16 +195,11 @@ flowchart LR
   T13 --> T42[4.2 frames and preview]
   T14 --> T42
   T41 --> T42
-  T01 --> T43[4.3 native estimates and diagnostics]
-  T21 --> T43
-  T21 --> T44[4.4 end-to-end recovery]
-  T42 --> T44
-  T43 --> T44
-  T42 --> T45[4.5 increment parity pilot]
+  T42 --> T44[4.4 dataset validation: Frame compilation + dataset-row oracle acceptance]
   T02 --> T45
 ```
 
-Independent work after Task 0.1: native semantic/temporal lane, independent synthetic then numeric lane, and pure-spec lane. Optional increment compatibility branches after native binding and never blocks core frames. Validation joins binding/spec contracts; numeric integration waits for oracle fixtures. Only 0.1 owns shared data/results/errors/windows; route shared changes through that owner.
+Independent work after Task 0.1: native semantic/temporal lane and pure-spec lane. Optional increment compatibility branches after native binding and never block core frames. Validation joins binding/spec contracts; dataset validation requires Frame compilation and dataset-row oracle acceptance. Only 0.1 owns shared data/errors/windows; route shared changes through that owner.
 
 Every dispatch records absolute worktree, repository, branch, immutable base and owned review IDs. Separate worktrees for implementation; the present parallel planning workers edit disjoint documents in one checkout. Review/merge each tested slice, then run only relevant integration checks once the wave lands. Do not let unowned repository reviews or an empty branch-filtered inventory substitute for task review evidence.
 
@@ -212,9 +207,9 @@ Every dispatch records absolute worktree, repository, branch, immutable base and
 
 ### Task 0.1: Package contracts and enforceable development gates
 
-**Files:** Modify existing `pyproject.toml` and `README.md`; create `terrine/__init__.py`, `terrine/errors.py`, `terrine/windows.py`, `terrine/data.py`, `terrine/results.py`, `Makefile`, `tach.toml`, `.pre-commit-config.yaml`, `.github/workflows/ci.yml`, `tests/test_windows.py`, `tests/test_errors.py`, `tests/test_metadata.py`, `tests/conftest.py`, `CHANGELOG.md`. Extend `.gitignore` as needed; document executable commands in AGENTS only after verifying they exist. Reconcile any further preexisting work before edits. Public licensing is a release decision, not inferred from increment's license.
+**Files:** Modify existing `pyproject.toml` and `README.md`; create `terrine/__init__.py`, `terrine/errors.py`, `terrine/windows.py`, `terrine/data.py`, `Makefile`, `tach.toml`, `.pre-commit-config.yaml`, `.github/workflows/ci.yml`, `tests/test_windows.py`, `tests/test_errors.py`, `tests/test_metadata.py`, `tests/conftest.py`, `CHANGELOG.md`. Extend `.gitignore` as needed; document executable commands in AGENTS only after verifying they exist. Reconcile any further preexisting work before edits. Public licensing is a release decision, not inferred from increment's license.
 
-**Interfaces:** Own shared Coverage, BoundCoverage, UnitSource, Window, Roles, ColumnMeta, MaterializedFrame, FeatureCutoff, EligibilitySummary, ExecutionSnapshot, Provenance, Estimate and Diagnostic. Read exact companion signatures first. Native `TerrineError(message: str, *, code: str, context: Mapping[str, JsonValue])` exposes immutable code/context and survives pickle/deepcopy. Frozen `RefusalSpec(code: str, template: str).error(**context) -> TerrineError` gives module-owned namespaced refusals; no mutable registry or upstream import. Metadata owns `terrine.metadata.invalid_eligibility_summary` for negative/inconsistent accounting; consumer-level unsupported designs remain distinct.
+**Interfaces:** Own shared Coverage, BoundCoverage, UnitSource, Window, Roles, ColumnMeta, MaterializedFrame, FeatureCutoff, EligibilitySummary, ExecutionSnapshot and Provenance. Read exact companion signatures first. Native `TerrineError(message: str, *, code: str, context: Mapping[str, JsonValue])` exposes immutable code/context and survives pickle/deepcopy. Frozen `RefusalSpec(code: str, template: str).error(**context) -> TerrineError` gives module-owned namespaced refusals; no mutable registry or upstream import. Metadata owns `terrine.metadata.invalid_eligibility_summary` for negative/inconsistent accounting; consumer-level unsupported designs remain distinct.
 
 Task 0.1 owns the elapsed-duration grammar: ASCII `[+-]?[0-9]+[smhdw]`, integral signed seconds after conversion, with s=1, m=60, h=3600, d=86400 and w=604800. Reject fractional/compound/calendar-month durations, surrounding whitespace, unknown units and signed-Int64 overflow. Window endpoints permit zero but require start < end; Schedule step must be positive. Equivalent spellings normalize to the same seconds and spec hash. This adds subday syntax, not bucket rounding.
 
@@ -223,10 +218,10 @@ Task 0.1 owns the elapsed-duration grammar: ASCII `[+-]?[0-9]+[smhdw]`, integral
 - [ ] Write boundary tests: `-2w == -14d`; reject reversed/empty windows; Coverage retains dates until binding supplies a boundary, whereas BoundCoverage validates aware half-open instants; Arrow decimal/null metadata preserved; error code/context survives mutation attempts, pickle and deepcopy.
 - [ ] Add duration equivalence/boundary cases: `60s == 1m`, `60m == 1h`, `24h == 1d`, negative/subday offsets, leading sign/zero normalization, overflow and invalid compound/month inputs. Hour/minute windows preserve exact intraday anchors; calendar-day averages retain their narrower domain.
 - [ ] Run `uv run pytest tests/test_windows.py tests/test_errors.py tests/test_metadata.py -q` and confirm failures concern missing behavior, not an unrelated environment error.
-- [ ] Implement pure contracts/exports and packaging, using only public required dependencies—no increment install or git pin. Direct dependencies include Ibis/Pydantic/PyYAML/SQLGlot/Arrow/NumPy/SciPy; DuckDB, pandas/Polars and adapters use extras. Implement the small coded-error contract natively instead of copying increment's infrastructure. Confirm the SciPy `special.ndtri_exp` API needed by estimation at the declared floor.
+- [ ] Implement pure contracts/exports and packaging, using only public required dependencies—no increment install or git pin. Direct dependencies include Ibis/Pydantic/PyYAML/SQLGlot/Arrow/NumPy; DuckDB, pandas/Polars and adapters use extras. Implement the small coded-error contract natively.
 - [ ] Maintain explicit `__all__` in the root and public module facades, limited to implemented, documented user entry points. Shared internal contracts are not automatically root exports. As later tasks add APIs, extend these lists deliberately and exercise the real documented workflow in the existing clean-wheel smoke; do not add source-text/export-list equality tests.
 - [ ] Add executable `make test TESTS=...`, `make lint`, `make typecheck`, `make fmt`, `make check`. `check` performs static checks plus focused tests specified by `TESTS`; CI selects affected module/contracts, and release tier owns broader compatibility. Make complexity reporting non-gating initially. Add an import/code lint boundary check only if existing configuration cannot express it; use throwaway fixtures to prove accepted/rejected imports.
-- [ ] Make the ordinary test selection exclude `slow` and `parameter_recovery`; provide explicit commands for those tiers. Use pytest duration reporting at coherent milestones to record a representative fast-suite baseline and set a documented feedback-time budget from measurements, not guessed per-test deadlines. Investigate regressions rather than automatically relaxing the budget. Keep fixtures/property cases small; add no test-count or blanket coverage target and no tests of this policy's wording.
+- [ ] Make the ordinary test selection exclude `slow`; provide explicit commands for those tiers. Use pytest duration reporting at coherent milestones to record a representative fast-suite baseline and set a documented feedback-time budget from measurements, not guessed per-test deadlines. Investigate regressions rather than automatically relaxing the budget. Keep fixtures/property cases small; add no test-count or blanket coverage target and no tests of this policy's wording.
 - [ ] Verify focused tests/static gates, `uv build`, and clean wheel install/import/Window construction with increment absent. Record versions/import closure. Dataset import smoke is extended after Task 4.2, not satisfied by an empty package import. Nothing is published.
 - [ ] Document setup and first pure-contract usage, update changelog, then commit the coherent foundation. Do not promise dataset behavior until Task 4.2 exists.
 
@@ -257,31 +252,28 @@ Task 4.2 later adds the optional `input_binding` keyword to both Model facades, 
 
 ## Full-package roadmap
 
-Each roadmap Task below becomes a tracked child now, then a reviewed detailed plan before its implementation. All original handoff phases remain represented. CrossSection+native baseline ATE is the first complete vertical slice, not the whole project's definition of done.
+Each retained roadmap Task below becomes a tracked child now, then a reviewed detailed plan before its implementation. Withdrawn estimation and causal-inference work is not an executable task; see the binding scope decision above.
 
 ### Task 5.1: Sequential trials and panel family
 
-**Depends:** 4.4 (validated dataset + estimation contracts). **Files:** `compile/shapes/{sequential,calendar,event_panel}.py`, `estimate/panel.py`, `diagnostics/{pretrends,placebo}.py`, panel fixtures/reference builders.
+**Depends:** 4.4 (Frame compilation and dataset-row oracle acceptance). **Files:** `compile/shapes/{sequential,calendar,event_panel}.py`, panel fixtures/reference builders.
 
-**Deliver:** Schedule trials with eligibility known at t0; “not previously treated” uses declared sufficient history, never future-treated status. CalendarPanel is a documented Sequential composition; EventPanel expands explicit relative periods. Both treatment initiation and persistent-adoption state are distinct encodings. Repeated rows retain unit cluster identity and trial weights. EventAnchor descriptives do not synthesize a comparison group.
+**Deliver:** Schedule trials with eligibility known at t0; “not previously treated” uses declared sufficient history, never future-treated status. CalendarPanel is a documented Sequential composition; EventPanel expands explicit relative periods. Both treatment initiation and persistent-adoption state are distinct descriptive encodings. Repeated rows retain unit cluster identity and trial weights. EventAnchor descriptives do not synthesize a comparison group.
 
-**Methods:** pooled per-trial AIPW only after target population/aggregation weights and repeated-trial inference are specified; stacked DiD/event studies with admissible not-yet-treated/never-treated controls, no already-treated contamination; heterogeneous cohort-time effects, anticipation and reference-period contracts. Naive staggered TWFE warns, not silently presented as a robust staggered estimator. Matched t0 samples from contemporaneous at-risk strata and retains assignment probability/provenance. Pretrends/placebo/negative-control diagnostics report power limitations; insignificant pretrends is not proof of parallel trends.
+**Acceptance:** independent dataset-row oracle for all panel shapes; repeated trial rows retain their unit identity and declared weights. Named comparison to equivalent Sequential construction proves CalendarPanel composition.
 
-**Grace decision:** a legitimate landmark estimand or clone-censor-weighting is a prerequisite for causal grace-window initiation analyses, not for descriptive frames. Ask owner before adopting/vendorizing Callaway–Sant'Anna; record license and estimand choice. Until then robust stacked/event-study methods remain distinct capabilities.
+### Task 6.1: Trajectories, cohorts, LTV and risk-set tables
 
-**Acceptance:** pandas row oracle for all panel shapes; duplicate trial appearances cannot cross nuisance folds; known heterogeneous cohort effects recovered across calibration seeds; anticipation/contaminated controls refused; joint pretrend test and placebo examples run. Named comparison to equivalent Sequential construction proves CalendarPanel composition.
+**Depends:** 4.2. **Files:** `compile/shapes/{ltv,cohorts,time_to_event}.py`, `temporal/first.py`, trajectory/risk-set examples and references.
 
-### Task 6.1: Trajectories, cohorts, LTV and survival
+**Deliver:** Expanded period outcomes, cumulative value, event-defined entry, independent administrative cutoff and exit/event states. CohortTable aggregates the same LTV frame with explicit at-risk/observable denominator, not a second query. First-occurrence aggregate carries timestamp and no-event censor flag. Risk-set tables report counts and plain rates by group/time bin: at risk, events, censoring by reason and delayed entry; do not produce survival curves or intervals.
 
-**Depends:** 4.2; estimator integration requires 4.3. **Files:** `compile/shapes/{ltv,cohorts,time_to_event}.py`, `temporal/first.py`, `estimate/survival.py`, trajectory/survival examples and references.
+**Acceptance:** hand-computed cohort/retention/risk-set tables; young cohorts' unavailable ages null, not zero; known all-zero observed cohorts stay zero; changing cutoff consistently updates completeness and denominators. Define Arrow data+metadata export for surrogate training with unit identity, cutoffs, outcomes, missingness and provenance; no runtime cross-import of increment.
 
-**Deliver:** Expanded period outcomes, cumulative value, event-defined entry, independent administrative cutoff and exit/event states. CohortTable aggregates the same LTV frame with explicit at-risk/observable denominator, not a second query. First-occurrence aggregate carries timestamp and no-event censor flag. Kaplan–Meier handles tied events/censors, time-zero events and delayed entry where declared. Churn may be an outcome, not automatically a censoring event; survival×value requires a stated model, not an identity valid under arbitrary dependence.
-
-**Acceptance:** hand-computed cohort/retention curves and KM; young cohorts' unavailable ages null, not zero; known all-zero observed cohorts stay zero; changing cutoff consistently updates completeness and denominators; backtests fit only earlier data. Define Arrow data+metadata export for surrogate training with unit identity, cutoffs, outcomes, missingness and provenance; no runtime cross-import of increment.
 
 ### Task 6.2: Bounded state-panel datasets
 
-**Depends:** 4.2, not estimators or 6.1/11.1. **Files and exact contracts:** [Dataset workflows](2026-10-16-terrine-dataset-workflows.md#task-62-bounded-state-panel-datasets). Add one typed shape over existing Schedule/Frame machinery, with exact observation and binned-period-metric state sources, baseline/per-origin covariates, retained stays, missingness, ordinal metadata and terminal-state handling. No MOST estimator, generic transformation DSL or new semantic registry.
+**Depends:** 4.2, not 6.1/11.1. **Files and exact contracts:** [Dataset workflows](2026-10-16-terrine-dataset-workflows.md#task-62-bounded-state-panel-datasets). Add one typed shape over existing Schedule/Frame machinery, with exact observation and binned-period-metric state sources, baseline/per-origin covariates, retained stays, missingness, ordinal metadata and terminal-state handling. No generic transformation DSL or new semantic registry.
 
 **Acceptance:** independent paired-row/threshold oracle, actual DuckDB state-panel example and metadata round-trip, strict temporal/observation boundaries, bounded requested expansion and correction-dependency evidence. Existing R/Python modeling tools consume the dataset; no occupancy forecasts or causal guarantees are builder outputs.
 
@@ -340,11 +332,11 @@ Also execute the amendment's training/scoring parity and state-metadata scenario
 
 ### Task 8.1: Nonadditive capabilities and warehouse scale
 
-**Depends:** 5.1 and 7.1. **Files:** `temporal/{nonadditive,sketches}.py`, `benchmarks/`, warehouse fixtures.
+**Depends:** 4.4 and 7.1. **Files:** `temporal/{nonadditive,sketches}.py`, `benchmarks/`, warehouse fixtures.
 
-**Deliver:** Exact min/max and distinct/quantile capability matrix, optional mergeable sketches with declared error and merge semantics; daily distinct counts cannot be summed, HLL cannot be prefix-subtracted. Choose per-kind bounded sparse/block algorithms, not unconstrained anchor×window fanout. `last` attributes and last-event value are not synonyms; declare ordering/tie policy for event-value last. Add increment RetentionMetric threshold-band interpretation, including finite versus open-ended horizon and completeness, with independent event-occurrence references. Keep report-only metric output grain explicit.
+**Deliver:** Exact min/max and distinct/quantile capability matrix, optional mergeable sketches with declared error and merge semantics; daily distinct counts cannot be summed, HLL cannot be prefix-subtracted. Choose per-kind bounded sparse/block algorithms, not unconstrained anchor×window fanout. `last` attributes and last-event value are not synonyms; declare ordering/tie policy for event-value last. Keep report-only metric output grain explicit.
 
-Add fixed-bound data transformations only where they serve dataset construction or downstream ML staging; persist declared parameters and preserve source/output roles. Do not fit or score nuisance models, select analysis samples, compute inferential scores, or perform warehouse estimator reductions.
+Add fixed-bound data transformations only where they serve dataset construction or downstream ML staging; persist declared parameters and preserve source/output roles. No inferential scores or model-based reductions.
 
 
 **Acceptance:** independent row-oracle parity for descriptive dataset metrics; multiple batch partitions reproduce exact dataset totals; null reasons and completeness remain exact. Publish measured DuckDB and, once owner-authorized, one real warehouse benchmark with raw-event/anchor counts, plan/cardinality, peak memory, execution bytes/cost and budget. No unmeasured billion-event claim or universal “5% wider” promise.
@@ -370,24 +362,27 @@ Expose the runtime's run ID and bounded status/events to observers; retain its s
 
 **Acceptance:** run real local adapter examples against DuckDB including empty daily layer with downstream work, task failure, retry, expired lease, byte-budget rejection and secret redaction. Dagster asset materializations agree with CLI state.
 
-### Task 10.1: Library hand-off recipes
+### Task 10.1: Library hand-offs
 
 **Spec:** The datasets-only decision at `docs/superpowers/specs/2026-10-18-terrine-scope-datasets-only.md` defines each integration. Start as documentation recipes; write helpers only for mappings with a real gotcha.
 
+**Depends:** 4.4 (Frame compilation and dataset-row oracle acceptance).
+
 **Deliver:** Document and test DoubleML cluster-role mapping, DoWhy refusal for repeated units/declared weights, duckreg same-connection aggregate execution, lifelines per-unit and risk-table conversions, diff-diff first-treatment encoding, and downstream hand-off limits. No native effect estimators, inferential diagnostics, sensitivity estimators, or calibration/recovery claims.
 
-**Acceptance:** one tiny integration-tier example actually invokes each adopted library contract; unsupported shapes fail through the shared export preflight. Increment remains one optional recipe among integrations, never a requirement.
+**Acceptance:** one tiny integration-tier example actually invokes each adopted library contract; unsupported shapes fail through the shared export preflight. Increment remains one optional recipe among integrations.
 ### Task 11.1: Bounded event sequences, re-anchoring and sessions
 
 **Depends:** 4.2. **Files:** `spec/sequence.py`, `temporal/{sequence,sessionize}.py`, `compile/shapes/event_sequence.py` and validator extensions.
 
-**Deliver:** stable event IDs, deterministic tie order, max length/row/byte budgets, sequence arrays or position rows, gap sessions, funnels and transitions. Re-anchored time-valued expressions propagate conservative interval bounds; reject leaking chains rather than silently clip/changing the question. Define null predecessor and tied-time behavior. `first` exists from survival where needed, not exclusively here. Bounded raw access is permitted; this is not the first code path allowed to read events.
+**Deliver:** stable event IDs, deterministic tie order, max length/row/byte budgets, sequence arrays or position rows, gap sessions, funnels and transitions. Re-anchored time-valued expressions propagate conservative interval bounds; reject leaking chains rather than silently clip/changing the question. Define null predecessor and tied-time behavior. Bounded raw access is permitted; this is not the first code path allowed to read events.
 
 **Acceptance:** independent pandas sequence/funnel/session oracle; shuffle input leaves tied ordering unchanged; session exactly-at-gap behavior pinned; missing predecessor propagates; injected re-anchor leak rejected; budgets fail before unbounded sequence materialization.
 
-### Task 12.1: Spec-editing agent interface
+### Task 12.1: Dataset agent tools
 
-**Depends:** 4.2, 7.1 and 7.2 for dataset tools. Estimation/diagnostic tools additionally require their method gates (4.4, 5.1 or 6.1). **Files:** `terrine/agent/{schemas,tools,policy}.py`, optional MCP adapter extra, eval fixtures, privacy/cost policy. No edits to or mandatory dependency on increment; no separate renamed package required before one is useful.
+**Depends:** 4.2, 7.1 and 7.2. **Files:** `terrine/agent/{schemas,tools,policy}.py`, optional MCP adapter extra, eval fixtures, privacy/cost policy. No edits to or mandatory dependency on increment; no separate renamed package required before one is useful.
+
 
 **Deliver:** discover allowed entities/metrics and dataset capabilities; propose/validate/save/load typed Design; compile a no-data preview; plan/stage/refresh a dataset; return pinned references/manifests. Reuse Python/CLI operations and versioned JSON Schema/result envelopes (`status`, `code`, immutable context, suggested route, output reference); no arbitrary SQL, Python expressions or importable callbacks accepted from an agent. Read-only SQL already in owner-approved definitions still passes dialect admission and runs with least-privilege source credentials. Trusted configuration, not the agent, controls source/catalog/export-destination allowlists and permissions.
 
@@ -397,9 +392,8 @@ Separate inspect/validate permission from warehouse writes and exports. `plan` c
 
 Default tool responses expose metadata, aggregates and references only, not customer rows or secrets. Row previews require separate explicit permission and bounded/redacted columns; prompt content, catalog descriptions and tool output are untrusted data and cannot change permissions. No hosted customer rows/raw SQL in telemetry; safe error envelopes strip backend connection details while retaining stable actionable codes. Idempotent replay under the same request key returns the same generation/result, not duplicate writes.
 
-Causal gate reports assumptions, diagnostic applicability and population. `fail` gives diagnostics/design-change suggestions without effect; `warn` attaches issues; passing checks never claims identification is proven. Grace/censoring/control-time-zero validity gates precede statistical diagnostics. Budget checks apply to previews too; unsupported strict warehouse byte limits refuse.
 
-**Acceptance:** execute a local agent-tool flow discover→Design→validate→plan→stage→manifest→refresh under a restricted policy; the produced dataset matches the direct Python path. Eval invalid windows, unknown eligibility, unbounded previews, stale plan hashes, source/destination escalation, credential exfiltration, SQL/callback injection, repeated budget exhaustion and cancellation/retry. Core validation must still refuse when an agent omits optional preflight calls. Method evals add overlap/pretrends/time-zero/censoring failures only when those tools are enabled. Tool-schema tests alone are not execution evidence.
+**Acceptance:** execute a local agent-tool flow discover→Design→validate→plan→stage→manifest→refresh under a restricted policy; the produced dataset matches the direct Python path. Eval invalid windows, unknown eligibility, unbounded previews, stale plan hashes, source/destination escalation, credential exfiltration, SQL/callback injection, repeated budget exhaustion and cancellation/retry. Core validation must still refuse when an agent omits optional preflight calls. Tool-schema tests alone are not execution evidence.
 
 Extend the same executed flow with reconnect/resume, stale heartbeat, cancellation/publication races, retention gaps, namespace access refusal and telemetry-export failure. A caller timeout must not cause duplicate writes; absent cost metrics and unavailable historical knowledge remain explicit. No auto retry/budget escalation policy is added.
 
@@ -407,7 +401,7 @@ Extend the same executed flow with reconnect/resume, stale heartbeat, cancellati
 
 **Depends:** all claimed native roadmap capabilities and their real integration evidence; optional adapter release claims additionally require 0.2/4.5. Unsupported upstream variants never force edits to increment or block independently useful native datasets. **Files:** MkDocs+Material guides/reference, executable examples, CI/release workflow, package metadata.
 
-**Deliver:** first-dataset tutorial, source/SCD2/coverage setup, precise temporal semantics, capability matrix (metric×shape×backend×estimator), refusal guidance, cost/data residency docs, statistical assumptions and method-specific limitations. Execute documentation examples; no tooling jargon in shipped code/prose. Reconcile lock/dependency sources; wheel installs without a sibling checkout, all optional extras isolated; tag/version/license/notice checks.
+**Deliver:** first-dataset tutorial, source/SCD2/coverage setup, precise temporal semantics, capability matrix (metric×shape×backend), refusal guidance, cost/data residency docs. Execute documentation examples; no tooling jargon in shipped code/prose. Reconcile lock/dependency sources; wheel installs without a sibling checkout, all optional extras isolated; tag/version/license/notice checks.
 
 **Acceptance:** supported backend claims backed by actual integration; examples match references; recovery/benchmark evidence linked; no placeholders. Owner approval after increment's launch precedes any public push/tag/publish. Confirm terrine's license and open-core boundary before creating release LICENSE/notices; do not inherit those decisions from increment. Callaway–Sant'Anna implementation choice, paid benchmark limits and shared-engine extraction remain separately authorized, not implicit permissions.
 

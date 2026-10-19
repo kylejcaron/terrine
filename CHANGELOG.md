@@ -1,4 +1,15 @@
 # Changelog
+
+## Added
+- Optional, preflight-backed DoubleML, DoWhy and same-connection duckreg recipes, with real integration examples and a dedicated CI job.
+- Snapshot-scoped warehouse export checks and exact per-reason exclusion counts; DoWhy refuses repeated-unit and declared-weight datasets rather than forwarding ignored arguments.
+- Add distinct lifelines KM-array and feature-only Cox-dataframe hand-offs, preserving elapsed entry times, declared weights/clusters, and exact exclusions; risk-set conversion retains coarsened counts and refuses delayed entry or incomplete trajectories.
+- Add diff-diff first-treatment encoding for observed persistent-adoption panels, with never-treated zero, preserved calendar gaps, and treatment-history validation before outcome exclusions; exercise Callaway–Sant'Anna, Sun–Abraham and event studies.
+
+## Fixed
+- Refuse missing pandas with the coded optional-dependency error before decoding diff-diff timestamp periods, including nanosecond values.
+- Keep state-classification null assertions valid across the supported pandas 2.x and 3.x representations.
+
 ## Removed
 - Native treatment-effect estimators, inferential/propensity diagnostics, and simulation truth/calibration claims. Terrine now delivers datasets and descriptive summaries; downstream libraries own estimation.
 
@@ -107,5 +118,10 @@
 - Add `terrine plan|run|status|events|cancel` commands over owner IPC with destination-scoped request-key replay.
 - Document Model/Design materialization plans, owner CLI workflows, exact-generation reads, and backend consistency limits.
 - Add an opt-in OpenTelemetry lifecycle projection with redacted attributes and bounded nonblocking export.
+- Add owner-planned Airflow and Dagster orchestration triggers with durable invocation replay, partition-scoped snapshots, and recipe-routed execution.
+- Add a Dagster same-root fenced-retry acceptance test and dbt Core after-build recipe with reviewed manifest relations, a local DuckDB owner handoff, and two-build snapshot replay coverage.
+- Document optional orchestrator installation, owner-side planning/status limits, retry semantics, partition scope, and dbt stop/build/restart lifecycle.
 - Demonstrate real Model/Design saved-recipe execution from retained DuckDB inputs, exact-generation reads, operator-declared corrections, and same-snapshot clean-rebuild parity; cover partition retries and owner-held lost-response lookup in warehouse integration tests.
-- Refuse fingerprint-valid serialized plans whose strict scan budget cannot be satisfied by known scan bounds, preserving the refusal code through saved recipes.
+- Validate orchestrator row-dependent gates on reopened pinned snapshots with only selected sources and units, bind current published generations case-insensitively from the authoritative manifest, and wait through Airflow cancellation requests while returning final generation metadata; cover terminal cancellation at adapter boundaries.
+- Use the built-in Design executor for owner-planned Dagster partitions and dbt build cycles; verify compiled values and exact-generation metadata, and refuse unknown eligibility on pinned inputs before staging or publication.
+- Derive runtime layer identities from retained input schemas and execute roster-only owner recipes without accessing unused fact relations or exporting redundant roster payloads.

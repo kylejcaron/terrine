@@ -602,7 +602,7 @@ class Frame:
                 columns["time_bin"] = ColumnMeta(None, "feature", None, None, None, None)
                 columns.update(
                     {
-                        name: ColumnMeta(None, "outcome", None, None, None, None)
+                        name: ColumnMeta(None, "outcome", None, None, "complete", "reason")
                         for name in roles.outcomes
                     }
                 )

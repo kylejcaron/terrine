@@ -424,29 +424,12 @@ class DesignExecutor:
     ) -> None:
         from threading import RLock
 
-        from terrine.compile.layers import plan_layers
-        from terrine.model import Model
         from terrine.runtime.backends.duckdb import DuckDBBackend
-        from terrine.spec.validate import validate_design
 
-        required_sources = set(validate_design(design, model).required_sources)
-        scoped_model = Model._bind(
-            model.catalog,
-            con=model.con,
-            readiness=model.readiness,
-            units={design.unit: model.units[design.unit]} if design.unit in model.units else {},
-            event_ids={
-                name: value for name, value in model.event_ids.items() if name in required_sources
-            },
-            resolver=model._resolver,
-            input_binding=model.input_binding,
-            source_names=required_sources,
-        )
         self._model = model
-        self.model = scoped_model
         self.design = design
         self._plan = plan
-        self._keys = plan_layers(design, scoped_model).keys
+        self._keys: tuple[Any, ...] | None = None
         self._backend = DuckDBBackend(con, namespace=namespace)
         self._layers: dict[str, dict[Any, Any]] = {}
         self._lock = RLock()
@@ -464,11 +447,12 @@ class DesignExecutor:
 
         import pyarrow as pa
 
-        from terrine.compile.layers import build_layer
+        from terrine.compile.layers import build_layer, plan_layers
         from terrine.data import MaterializedFrame, Provenance
 
         if task.layer in {
             "daily",
+            "roster",
             "prefix_certificate",
             "selector",
             "state_point",
@@ -477,10 +461,14 @@ class DesignExecutor:
         }:
             return pa.table({"_terrine_empty": pa.array([], type=pa.int8())})
         execution_model = self._execution_model(context)
+        with self._lock:
+            if self._keys is None:
+                self._keys = plan_layers(self.design, execution_model).keys
+            layer_keys = self._keys
         if task.layer == "prefix":
             keys = [
                 self._with_snapshot(key, self._plan.snapshot_id)
-                for key in self._keys
+                for key in layer_keys
                 if key.layer == "prefix" and key.source == task.source
             ]
             results = {
@@ -500,7 +488,7 @@ class DesignExecutor:
                 else pa.table({"_terrine_empty": pa.array([], type=pa.int8())})
             )
         if task.layer == "anchor":
-            key = self._with_snapshot(self._keys[0], self._plan.snapshot_id)
+            key = self._with_snapshot(layer_keys[0], self._plan.snapshot_id)
             result = self._stream_layer(
                 build_layer(self.design, execution_model, key, relation_resolver=context.resolve),
                 context,

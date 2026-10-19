@@ -19,8 +19,16 @@ terrine = "terrine.runtime.cli:main"
 [project.optional-dependencies]
 duckdb = ["ibis-framework[duckdb]>=10,<13", "duckdb>=1,<2"]
 pandas = ["pandas>=2.2,<4"]
-polars = ["polars>=1,<2"]
+polars = ["polars>=1.21,<2"]
+airflow = ["apache-airflow==3.3.2", "apache-airflow-providers-standard==1.20.1"]
+dagster = ["dagster==1.13.26"]
+dbt = ["dbt-core==1.10.13", "dbt-duckdb==1.9.6"]
 increment = ["increment==0.1.0a2"]
+doubleml = ["doubleml==0.11.4"]
+dowhy = ["dowhy==0.14; python_version < '3.14'"]
+duckreg = ["duckreg==0.4.1"]
+lifelines = ["lifelines==0.30.3"]
+diff-diff = ["diff-diff==3.13.0"]
 
 [dependency-groups]
 dev = [
@@ -48,6 +56,7 @@ testpaths = ["tests"]
 addopts = "-ra --strict-markers --durations=10 -m 'not slow'"
 markers = [
     "slow: tests excluded from the ordinary suite",
+    "handoffs: optional downstream library integration examples",
 ]
 
 [tool.ruff]

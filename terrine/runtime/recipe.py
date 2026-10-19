@@ -205,7 +205,13 @@ class SavedPlanRecipe:
             return None
         return DatasetRecipe.from_json(self.dataset_recipe_json)
 
-    def pin_snapshot(self, store: RuntimeStore, *, reference: str | None = None) -> str:
+    def pin_snapshot(
+        self,
+        store: RuntimeStore,
+        *,
+        reference: str | None = None,
+        _in_transaction: bool = False,
+    ) -> str:
         """Retain this verified recipe's exact input snapshot."""
         verified = SavedPlanRecipe.from_json(self.to_json())
         plan = RefreshPlan.deserialize(verified.plan_json)
@@ -219,6 +225,7 @@ class SavedPlanRecipe:
             plan.snapshot_id,
             kind="saved_plan",
             reference=reference or verified.recipe_hash,
+            _in_transaction=_in_transaction,
         )
         return plan.snapshot_id
 

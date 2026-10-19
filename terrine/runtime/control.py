@@ -10,7 +10,10 @@ import threading
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, overload
+
+if TYPE_CHECKING:
+    from terrine.runtime.planning import PlanInvocation, PlanRequest
 
 from terrine.errors import RefusalSpec, TerrineError
 from terrine.runtime.events import (
@@ -154,6 +157,7 @@ class ControlServer:
         namespace: str,
         endpoint: ControlEndpoint,
         executor: Any | None = None,
+        plan_planner: Any | None = None,
         resolver: Any | None = None,
         snapshot_authority: Any | None = None,
     ) -> None:
@@ -163,6 +167,7 @@ class ControlServer:
         self.namespace = namespace
         self.endpoint = endpoint
         self.executor = executor
+        self.plan_planner = plan_planner
         self.resolver = resolver
         self.snapshot_authority = snapshot_authority
         self._server: socketserver.UnixStreamServer | None = None
@@ -190,7 +195,7 @@ class ControlServer:
                 try:
                     request = json.loads(line)
                     self.connection.settimeout(
-                        None if request.get("operation") in {"cancel", "run"} else 2
+                        None if request.get("operation") in {"cancel", "run", "plan"} else 2
                     )
                     response = server._dispatch(request, con=con)
                     response_bytes = json.dumps(
@@ -263,6 +268,16 @@ class ControlServer:
         operation = request.get("operation")
         run_id = request.get("run_id")
         if operation == "plan":
+            if "plan_request" in request:
+                if self.plan_planner is None:
+                    raise ValueError("owner fresh-planning service is unavailable")
+                from terrine.runtime.planning import PlanRequest
+
+                planning_request = PlanRequest.from_dict(request["plan_request"])
+                invocation = self.plan_planner.plan(
+                    planning_request, con=con, namespace=self.namespace
+                )
+                return invocation.to_dict()
             from terrine.runtime.planner import RefreshPlan
 
             plan = RefreshPlan.deserialize(request["serialized"])
@@ -352,7 +367,7 @@ class ControlClient:
                 context={},
             )
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.settimeout(None if operation in {"cancel", "run"} else 2)
+            client.settimeout(None if operation in {"cancel", "run", "plan"} else 2)
             client.connect(str(self.endpoint.path))
             client.sendall(encoded + b"\n")
             with client.makefile("rb") as response_stream:
@@ -368,7 +383,18 @@ class ControlClient:
             )
         return response["value"]
 
-    def plan(self, serialized: bytes | str) -> str:
+    @overload
+    def plan(self, serialized: bytes | str) -> str: ...
+
+    @overload
+    def plan(self, serialized: PlanRequest) -> PlanInvocation: ...
+
+    def plan(self, serialized: bytes | str | PlanRequest) -> str | PlanInvocation:
+        from terrine.runtime.planning import PlanInvocation, PlanRequest
+
+        if isinstance(serialized, PlanRequest):
+            value = self._request("plan", plan_request=serialized.to_dict())
+            return PlanInvocation.from_dict(value)
         payload = serialized.decode("utf-8") if isinstance(serialized, bytes) else serialized
         return self._request("plan", serialized=payload)
 

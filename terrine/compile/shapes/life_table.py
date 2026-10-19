@@ -83,15 +83,18 @@ def aggregate_life_table(
         lambda: defaultdict(list)
     )
     width = interval_seconds * 1_000_000_000
+    incomplete_by_group: dict[tuple[object, ...], set[str]] = defaultdict(set)
     bins_by_group: dict[tuple[object, ...], dict[int, _BinCounts]] = defaultdict(dict)
     output_bins = 0
 
     for index, origin in enumerate(t0):
+        key = tuple(column[index] for column in groups)
+        if complete[index] is not True:
+            incomplete_by_group[key].add(record_reasons[index] or "reason_unavailable")
         terminal = duration[index]
         entered = entry[index]
         if origin is None or terminal is None or entered is None:
             continue
-        key = tuple(column[index] for column in groups)
         terminal_elapsed = terminal - origin
         entry_elapsed = entered - origin
         if terminal_elapsed < 0 or entry_elapsed < 0:
@@ -162,6 +165,8 @@ def aggregate_life_table(
             pa.field("censored", pa.int64(), nullable=False),
             pa.field("censored_by_reason", pa.map_(pa.string(), pa.int64()), nullable=False),
             pa.field("delayed_entries", pa.int64(), nullable=False),
+            pa.field("complete", pa.bool_(), nullable=False),
+            pa.field("reason", pa.list_(pa.string()), nullable=False),
             pa.field("event_rate", pa.float64()),
             pa.field("censor_rate", pa.float64()),
         ]
@@ -183,6 +188,8 @@ def aggregate_life_table(
                 at_risk=at_risk,
                 events=events_count,
                 censored=censored_count,
+                complete=not incomplete_by_group[group_key],
+                reason=sorted(incomplete_by_group[group_key]),
                 censored_by_reason=sorted(counts["reasons"].items()),
                 delayed_entries=counts["delayed_entries"],
                 event_rate=events_count / at_risk if at_risk else None,
