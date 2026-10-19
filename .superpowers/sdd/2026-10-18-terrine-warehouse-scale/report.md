@@ -32,6 +32,8 @@
 - `uv run ruff check terrine tests examples` — passed.
 - `uv run ty check terrine tests` — passed.
 - `uv run tach check` — passed.
+- Optional sketch adapter tests (`tests/temporal/test_sketches.py`) — 5 passed, including fixed-seed type-7 accuracy tolerance, canonical t-digest merge across a fresh process, HLL published error bound and partition-union order independence.
+- After the adapter commit, `tests/spec/test_sketch_refusal.py` and `tests/spec/test_validate.py` — 52 passed. Ruff format/check, ty and tach gates — passed.
 - Focused nonadditive regressions after review fixes (`tests/compile/test_nonadditive.py`, `tests/spec/test_validate.py`, `tests/temporal/test_nonadditive.py`, and calendar-comparison quantile integration) — 67 passed.
 - Focused precision regressions (`tests/temporal/test_nonadditive.py` and `tests/compile/test_nonadditive.py`) — 18 passed, including DECIMAL(29,25) refusal at probability 0.12345678.
 - Required quality gates on `f78ae9f` and `a663ab3`: `uv run ruff format terrine tests examples`, `uv run ruff check terrine tests examples`, `uv run ty check terrine tests`, and `uv run tach check` — passed.
