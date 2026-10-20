@@ -69,8 +69,12 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   `make fmt` formats source/tests; `uv build` builds local distributions.
 - `make test-slow TESTS=...` selects the expensive tier; `make complexity`
   reports without gating.
-- Initial warm fast-test feedback budget: 10 seconds; investigate sustained
-  regressions rather than adding wall-clock assertions. Measure at milestones.
+- Before a commit, run `make check TESTS="<affected paths>"`. The slow and
+  integration tiers, the smoke script and examples run in CI and before merges,
+  not after each fix.
+- The ordinary suite lists every test slower than 5 s; a healthy run lists
+  none, even on a busy machine. Treat any listed test as a regression to fix,
+  not as noise.
 
 ## Tests and validation
 
@@ -81,22 +85,36 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
 - Test each behavior at the lowest useful boundary; retain targeted cross-path
   and end-to-end checks where composition matters. Do not repeat every edge
   case at every layer. Prefer targeted parameterization over Cartesian matrices.
+- A unit test checks one rule through the function that owns it, with a few
+  rows of input. A test that builds a Model, snapshots, stages, publishes and
+  reads back, or starts processes, to check one narrow rule is an integration
+  test: rewrite it at the owning function, or keep it as one end-to-end check
+  per workflow under `integration/` or `@pytest.mark.slow`.
 - Use tiny deterministic fixtures and bounded property-based cases. Avoid sleeps
   and dependence on the real clock; use controlled clocks or synchronization.
   Source-text assertions, forwarding-only checks and mock echoes are not useful
   regression tests. Use throwaway checks for one-off verification instead.
-- Unit tests must stay fast. Measure suite/test durations at coherent milestones
-  and investigate regressions; keep genuinely expensive integration, benchmark
-  and calibration work in explicit tiers. Do not use brittle wall-clock
-  assertions as unit-test performance gates.
+- Unit tests must stay fast, under about 2 s each when run alone. A new or
+  changed test that the duration report lists is rewritten or re-tiered before
+  commit. Profile a slow test on tiny fixtures first: fixed per-run overhead in
+  terrine also costs users. Make tests do less before tuning worker counts or
+  threads. Do not use brittle wall-clock assertions as unit-test performance
+  gates.
+- Time tests only when no other test run shares the machine, and compare
+  in-suite times with standalone (`-n 0`) times before blaming contention.
 - Plan acceptance lists and suggested test names specify required behaviors,
-  not a quota of test functions. Consolidate without losing acceptance coverage,
-  and update any affected command selectors.
+  not a quota of test functions. Each acceptance check names the function that
+  owns the rule and its tier (unit, slow or integration). Consolidate without
+  losing acceptance coverage, and update any affected command selectors. Delete
+  a test as a duplicate only after comparing its assertions with its twin's;
+  when they differ, move it instead.
 - Unit tests MUST NOT use the network or a real warehouse. Live warehouse
   checks belong under `integration/warehouse_execution/`.
 - Tests MUST be independent under `pytest-xdist`. A test MUST NOT rely on
   execution order or state created by another test. Modules that mutate a
   shared filesystem path MUST use `pytest.mark.xdist_group("<name>")`.
+  Sockets, lock files, lease names and scratch paths come from `tmp_path` or
+  include the xdist worker id; never a fixed path under `/tmp`.
 - Tests slower than the ordinary suite use `@pytest.mark.slow`.
   Simulation-based coverage, bias, or parameter-recovery checks additionally
   use `@pytest.mark.parameter_recovery` and retain a small fast smoke case.

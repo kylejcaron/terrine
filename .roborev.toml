@@ -1,0 +1,16 @@
+review_guidelines = """
+Test tier placement.
+
+Report as Medium a test added or changed under tests/ that builds a Model,
+snapshots, stages, publishes and reads back, or starts processes, to check one
+narrow rule. The fix is to check the rule at the function that owns it with a
+few rows of input, or to keep one end-to-end check per workflow under
+integration/ or @pytest.mark.slow.
+
+Report as Medium a test that uses a fixed socket, lock file, lease name or
+scratch path shared across pytest-xdist workers instead of tmp_path or a
+worker-specific name.
+
+Report as Low a plan acceptance check that does not name the function owning
+the rule and its tier (unit, slow or integration).
+"""
