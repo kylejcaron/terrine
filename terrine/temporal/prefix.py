@@ -57,7 +57,7 @@ def exact_subtract(left, right):
 
 
 @ibis.udf.scalar.builtin(name="nextafter", signature=((dt.float64, dt.float64), dt.float64))
-def _nextafter(value, direction):
+def _nextafter(value, _direction):
     """Native adjacent binary64 value."""
 
 

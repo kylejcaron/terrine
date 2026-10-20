@@ -98,7 +98,7 @@ Temporian and Kaskada are the strongest overlooked technical analogues. Temporia
 
 All sources below are first-party docs, source repositories, or papers. Accessed for this research on 2026-10-18.
 
-- **[S1]** Terrine handoff: [docs/superpowers/specs/2026-10-16-terrine-handoff.md](../superpowers/specs/2026-10-16-terrine-handoff.md) (§§2–6).
+- **[S1]** Terrine handoff: `docs/superpowers/specs/2026-10-16-terrine-handoff.md` (§§2–6).
 - **[S2]** ATLAS source repository and README: https://github.com/OHDSI/Atlas
 - **[S3]** HADES source repository: https://github.com/OHDSI/Hades
 - **[S4]** Aetion Evidence Platform: https://aetion.com/technology/platform
