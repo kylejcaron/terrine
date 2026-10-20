@@ -1,6 +1,11 @@
 """Executed local capability evidence; no external warehouse connections."""
 
+import sys
+from _thread import LockType, RLock
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from decimal import Decimal
+from threading import Event
 
 import ibis
 import pyarrow as pa
@@ -10,7 +15,11 @@ import pytest
 from terrine.data import Budget, MaterializedFrame
 from terrine.errors import TerrineError, thaw
 from terrine.execution.backend import backend_capabilities
+from tests._timing import HANG_GUARD_SECONDS
+from tests.conftest import events_world as events_world
+from tests.conftest import native_inputs as native_inputs
 from tests.fixtures.interop import interop_frame
+from tests.test_frame_runtime import _design, _model
 
 
 def test_duckdb_typed_dataset_arrow_parquet_and_generation_parity(tmp_path):
@@ -100,3 +109,47 @@ def test_duckdb_typed_dataset_arrow_parquet_and_generation_parity(tmp_path):
         assert pinned.equals(streamed, check_metadata=True)
     finally:
         con.disconnect()
+
+
+def test_shared_model_concurrent_exports_keep_independent_results(native_inputs):
+    frame = _design().build(_model(native_inputs))
+    origin = native_inputs[1].con
+    execute, fetchall = origin.execute.__func__, origin.fetchall.__func__
+    executed, release, fetched = Event(), Event(), Event()
+
+    def export(first):
+        paused = False
+
+        def interleave(_frame, event, operation):
+            nonlocal paused
+            if first:
+                if event == "c_return" and operation is execute and not paused:
+                    paused = True
+                    executed.set()
+                    assert release.wait(timeout=HANG_GUARD_SECONDS)
+                elif event == "c_return" and operation is fetchall:
+                    fetched.set()
+            elif not release.is_set() and (
+                (event == "c_return" and operation is fetchall)
+                or (event == "return" and isinstance(operation, (LockType, RLock)))
+            ):
+                # Allow serialization, or force the competing result to be consumed
+                # before the first export fetches. No replacement database is used.
+                release.set()
+                assert fetched.wait(timeout=HANG_GUARD_SECONDS)
+
+        sys.setprofile(interleave)
+        try:
+            return frame.materialize().table.select(["unit", "t0"]).sort_by("unit")
+        finally:
+            sys.setprofile(None)
+            release.set()
+            fetched.set()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(export, True)
+        assert executed.wait(timeout=HANG_GUARD_SECONDS)
+        second = pool.submit(export, False)
+        results = [future.result(timeout=HANG_GUARD_SECONDS) for future in (first, second)]
+    expected = [{"unit": unit, "t0": datetime(2025, 1, 3, tzinfo=UTC)} for unit in ("a", "b")]
+    assert all(result.to_pylist() == expected for result in results)

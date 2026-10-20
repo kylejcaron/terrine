@@ -1,19 +1,10 @@
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
-from terrine.data import Coverage, UnitSource
+import pyarrow as pa
+
+from terrine.data import ExpressionTiming, SamplingMeta
 from terrine.export import ArrowSurrogate, to_surrogate_arrow
-from terrine.model import Model
-from terrine.spec import (
-    Design,
-    FixedDate,
-    Initiation,
-    MatchedT0Sample,
-    Schedule,
-    Sequential,
-    TrialWeight,
-    agg,
-    event_time,
-)
 
 
 def test_surrogate_arrow_round_trip_preserves_selected_columns_and_provenance(frame):
@@ -27,29 +18,34 @@ def test_surrogate_arrow_round_trip_preserves_selected_columns_and_provenance(fr
     assert restored.metadata["outcome_columns"] == ["y"]
 
 
-def test_surrogate_round_trip_retains_selected_event_relative_timing(native_inputs):
-    catalog, con = native_inputs
-    model = Model.from_catalog(
-        catalog,
-        con=con,
-        readiness={name: Coverage("2025-01-01", "2025-01-31") for name in ("events", "labels")},
-        units={"user": UnitSource("users", "user_id")},
+def test_surrogate_round_trip_retains_selected_event_relative_timing(frame):
+    origin = datetime(2025, 1, 1, tzinfo=UTC)
+    support = ("selected_at", "selected_start", "selected_end")
+    table = frame.table.append_column("selected", pa.array([1, 2]))
+    table = table.append_column("excluded", pa.array([origin, origin]))
+    for offset, name in enumerate(support):
+        table = table.append_column(name, pa.array([origin + timedelta(days=offset)] * 2))
+    timing = ExpressionTiming(
+        "event_time",
+        "session",
+        (0, 86400),
+        (-345600, -86400),
+        ("session",),
+        {"session": (-345600, -172800)},
+        *support,
     )
-    design = Design(
-        "user",
-        FixedDate("2025-01-06"),
-        features={
-            "selected": agg(
-                "sessions",
-                window=("0d", "1d"),
-                relative_to=event_time("session", window=("-4d", "-2d")),
-            ),
-            "excluded": event_time("churn", window=("-4d", "-2d")),
-        },
+    materialized = replace(
+        frame,
+        table=table,
+        roles=replace(frame.roles, features=("selected", "excluded"), outcomes=()),
+        provenance=replace(
+            frame.provenance,
+            expression_timings={
+                "selected": timing,
+                "excluded": replace(timing, point_time_column="excluded"),
+            },
+        ),
     )
-    materialized = design.build(model).materialize()
-    timing = materialized.provenance.expression_timings["selected"]
-    support = (timing.point_time_column, timing.start_bound_column, timing.end_bound_column)
     exported = to_surrogate_arrow(materialized, features=("selected",), outcomes=())
     restored = ArrowSurrogate.from_arrow(exported.to_arrow())
     support_columns = restored.metadata["support_columns"]
@@ -58,7 +54,6 @@ def test_surrogate_round_trip_retains_selected_event_relative_timing(native_inpu
     assert isinstance(provenance, dict)
 
     for name in support:
-        assert name is not None
         assert name in restored.data.column_names
         assert restored.data[name].equals(materialized.table[name])
         assert name in support_columns
@@ -69,35 +64,35 @@ def test_surrogate_round_trip_retains_selected_event_relative_timing(native_inpu
     assert restored.metadata == exported.metadata
 
 
-def test_surrogate_round_trip_retains_sampled_sequential_roles(native_inputs):
-    catalog, con = native_inputs
-    con.raw_sql("DELETE FROM events WHERE user_id = 'b'")
-    con.raw_sql("INSERT INTO users VALUES ('c', 'cc'), ('d', 'dd')")
-    model = Model.from_catalog(
-        catalog,
-        con=con,
-        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
-        units={"user": UnitSource("users", "user_id")},
-    )
-    design = Sequential(
-        Design(
-            "user",
-            Schedule("1d", "2025-01-03", "2025-01-04"),
-            features={"target_weight": agg("sessions", window=("-1d", "0d"))},
-            sample=MatchedT0Sample((), controls_per_treated=2, seed=27),
+def test_surrogate_round_trip_retains_sampled_sequential_roles(frame):
+    table = frame.table
+    role_columns = ("trial", "assignment_probability", "target_weight", "trial_weight")
+    for name, values in zip(
+        role_columns, ([0, 1], [1.0, 0.5], [1.0, 2.0], [0.5, 0.5]), strict=True
+    ):
+        table = table.append_column(name, pa.array(values))
+    materialized = replace(
+        frame,
+        table=table,
+        roles=replace(
+            frame.roles,
+            features=("target_weight",),
+            outcomes=("a",),
+            trial="trial",
+            assignment_probability="assignment_probability",
+            target_weight="target_weight",
+            trial_weight="trial_weight",
         ),
-        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
-        trial_weight=TrialWeight("equal_trial"),
+        provenance=replace(frame.provenance, shape="sequential", sampling=SamplingMeta((), 2, 27)),
     )
-    materialized = design.build(model).materialize()
-    exported = to_surrogate_arrow(materialized, features=(), outcomes=("treatment",))
+    exported = to_surrogate_arrow(materialized, features=(), outcomes=("a",))
     restored = ArrowSurrogate.from_arrow(exported.to_arrow())
     roles = restored.metadata["roles"]
     provenance = restored.metadata["provenance"]
     assert isinstance(roles, dict)
     assert isinstance(provenance, dict)
 
-    for role in ("trial", "assignment_probability", "target_weight", "trial_weight"):
+    for role in role_columns:
         name = getattr(materialized.roles, role)
         assert name is not None
         assert roles[role] == name

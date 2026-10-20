@@ -1,8 +1,5 @@
 import sys
-from _thread import LockType, RLock
-from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
-from threading import Event
 
 import duckdb
 import pyarrow as pa
@@ -13,9 +10,8 @@ from terrine.data import Budget, Coverage
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.models import Catalog
-from terrine.spec import Design, EventAnchor, EventSequence, agg, gt
+from terrine.spec import Design, EventAnchor, EventSequence, agg
 from terrine.windows import Window
-from tests._timing import HANG_GUARD_SECONDS
 
 
 def _design(**kwargs):
@@ -55,50 +51,6 @@ def test_non_utc_execution_preserves_instants_and_exports_utc_batches(native_inp
     assert result.table.schema.field("t0").type == pa.timestamp("us", tz="UTC")
     assert result.table.column("t0").to_pylist() == [datetime(2025, 1, 3, tzinfo=UTC)] * 2
     assert con.raw_sql("SELECT current_setting('TimeZone')").fetchall() == [("America/New_York",)]
-
-
-def test_shared_model_concurrent_exports_keep_independent_results(native_inputs):
-    frame = _design().build(_model(native_inputs))
-    origin = native_inputs[1].con
-    execute, fetchall = origin.execute.__func__, origin.fetchall.__func__
-    executed, release, fetched = Event(), Event(), Event()
-
-    def export(first):
-        paused = False
-
-        def interleave(_frame, event, operation):
-            nonlocal paused
-            if first:
-                if event == "c_return" and operation is execute and not paused:
-                    paused = True
-                    executed.set()
-                    assert release.wait(timeout=HANG_GUARD_SECONDS)
-                elif event == "c_return" and operation is fetchall:
-                    fetched.set()
-            elif not release.is_set() and (
-                (event == "c_return" and operation is fetchall)
-                or (event == "return" and isinstance(operation, (LockType, RLock)))
-            ):
-                # Allow serialization, or force the competing result to be consumed
-                # before the first export fetches. No replacement database is used.
-                release.set()
-                assert fetched.wait(timeout=HANG_GUARD_SECONDS)
-
-        sys.setprofile(interleave)
-        try:
-            return frame.materialize().table.select(["unit", "t0"]).sort_by("unit")
-        finally:
-            sys.setprofile(None)
-            release.set()
-            fetched.set()
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        first = pool.submit(export, True)
-        assert executed.wait(timeout=HANG_GUARD_SECONDS)
-        second = pool.submit(export, False)
-        results = [future.result(timeout=HANG_GUARD_SECONDS) for future in (first, second)]
-    expected = [{"unit": unit, "t0": datetime(2025, 1, 3, tzinfo=UTC)} for unit in ("a", "b")]
-    assert all(result.to_pylist() == expected for result in results)
 
 
 def test_default_preview_does_not_evaluate_invalid_source_rows(native_inputs):
@@ -166,12 +118,42 @@ def test_sequence_provenance_round_trips_on_bounded_materialization(native_input
     assert restored.provenance.sequence_meta == metadata
 
 
-def test_unresolved_eligibility_refuses_export_with_only_aggregate_counts(native_inputs):
-    frame = _design(eligibility={"history": gt(agg("sessions", window=("-7d", "0d")), 0)}).build(
-        _model(native_inputs)
-    )
-    with pytest.raises(TerrineError) as error:
-        frame.materialize()
+def test_unresolved_eligibility_refuses_export_with_only_aggregate_counts():
+    import ibis
+
+    from terrine.compile.anchors import AnchorTable
+    from terrine.compile.columns import CompiledStudy
+    from terrine.data import Roles
+    from terrine.execution.gates import validate_compiled_output
+
+    con = ibis.duckdb.connect()
+    try:
+        table = con.create_table(
+            "candidates",
+            pa.table(
+                {
+                    "unit": ["a", "b"],
+                    "anchor_id": [0, 1],
+                    "t0": [datetime(2025, 1, 3, tzinfo=UTC)] * 2,
+                    "__terrine_eligible": pa.array([None, None], type=pa.bool_()),
+                }
+            ),
+        )
+        compiled = CompiledStudy(
+            table,
+            table,
+            Roles("unit", "anchor_id", "t0", None, (), ()),
+            {},
+            {},
+            {},
+            {},
+            AnchorTable(table, ()),
+            (),
+        )
+        with pytest.raises(TerrineError) as error:
+            validate_compiled_output(compiled, con.to_pyarrow)
+    finally:
+        con.disconnect()
     assert error.value.code == "terrine.study.eligibility_unknown"
     assert dict(error.value.context) == {
         "candidate": 2,
