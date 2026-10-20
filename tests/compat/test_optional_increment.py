@@ -1,8 +1,6 @@
 import subprocess
 import sys
 
-import pytest
-
 _NATIVE_CATALOG = """schema_version: 1
 day_boundary: UTC
 dialect: duckdb
@@ -39,7 +37,6 @@ sys.meta_path.insert(0, BlockIncrement())
 """
 
 
-@pytest.mark.slow
 def test_native_binding_and_missing_extra_are_isolated_from_increment(tmp_path):
     catalog_path = tmp_path / "catalog.yaml"
     catalog_path.write_text(_NATIVE_CATALOG, encoding="utf-8")

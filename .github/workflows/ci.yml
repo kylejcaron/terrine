@@ -108,7 +108,7 @@ jobs:
           python-version: "3.13"
       - run: uv sync --locked --group dev --extra duckdb --extra increment
       - run: uv run pytest tests/compat tests/parity
-      - run: uv run pytest tests/compat tests/parity -m slow
+      - run: uv run pytest integration/parity
 
   library-handoffs:
     runs-on: ubuntu-latest
