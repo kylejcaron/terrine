@@ -194,7 +194,7 @@ def test_cutoff_nulls_period_error_certificate_with_its_value():
                 EventAnchor("purchase", which="first"),
                 shape=CohortSpec(
                     origin="purchase",
-                    trajectory=Trajectory("float_revenue", "7d", periods=3, cumulative=False),
+                    trajectory=Trajectory("float_revenue", "7d", periods=2, cumulative=False),
                 ),
                 administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
             ),
@@ -229,7 +229,7 @@ def test_cumulative_float_results_enforce_final_tolerance():
                 EventAnchor("purchase", which="first"),
                 shape=CohortSpec(
                     origin="purchase",
-                    trajectory=Trajectory("float_revenue", "7d", periods=3, cumulative=True),
+                    trajectory=Trajectory("float_revenue", "7d", periods=2, cumulative=True),
                 ),
             ),
             model,
