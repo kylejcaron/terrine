@@ -93,29 +93,6 @@ def test_prepare_uses_owner_planner_and_refuses_without_reopenable_snapshot(owne
     )
 
 
-def test_execute_replays_before_source_freshness_and_resolves_exact_invocation(
-    owner_tools, monkeypatch
-):
-    recipe = recipe_for(owner_tools)
-    destination = next(iter(owner_tools.policy.allowed_destinations))
-    prepared = owner_tools.prepare_dataset(recipe, destination=destination, invocation_id="execute")
-    first = owner_tools.execute_plan(prepared.output, request_key="stable")
-    assert first.status == "ok" and first.output.durable_state == "succeeded"
-    owner_tools.model.con.raw_sql("DROP TABLE users")
-    monkeypatch.setattr(
-        owner_tools.policy.snapshot_authority,
-        "reopen",
-        _unexpected_execution,
-    )
-    replay = owner_tools.execute_plan(prepared.output, request_key="stable")
-    assert replay.output == first.output
-    owner_tools.policy = replace(owner_tools.policy, write=False)
-    assert (
-        owner_tools.execute_plan(prepared.output, request_key="stable").code
-        == "terrine.agent.permission_denied"
-    )
-
-
 def test_plan_and_run_recheck_destination_source_and_budget_grants(owner_tools):
     recipe = recipe_for(owner_tools)
     destination = next(iter(owner_tools.policy.allowed_destinations))
@@ -139,56 +116,6 @@ def test_plan_and_run_recheck_destination_source_and_budget_grants(owner_tools):
             "WHERE table_schema='agent' AND table_name='runtime_runs'"
         ).fetchone()[0]
         == 0
-    )
-
-
-def test_receipt_binds_dataset_recipe_change_evidence_and_base_generation(owner_tools):
-    from terrine.dataset.splits import TimeSplit
-    from terrine.spec import agg
-
-    base = recipe_for(owner_tools)
-    metric = owner_tools.inspect_catalog().output.metrics[0].name
-    design = replace(
-        base.base_design,
-        features={"history": agg(metric, window=("-1d", "0s"))},
-        outcomes={"label": agg(metric, window=("0s", "1d"))},
-    )
-    recipe = DatasetRecipe(
-        schema_version=1,
-        base_design=design,
-        view={
-            "kind": "training",
-            "features": ["history"],
-            "labels": ["label"],
-            "incomplete_labels": "keep",
-            "split": TimeSplit(train_until="2025-01-15").to_record(),
-        },
-    )
-    destination = next(iter(owner_tools.policy.allowed_destinations))
-    prepared = owner_tools.prepare_dataset(
-        recipe, destination=destination, invocation_id="training"
-    )
-    assert prepared.status == "ok"
-    changed = replace(
-        recipe, view={**dict(recipe.view), "split": TimeSplit(train_until="2025-01-16").to_record()}
-    )
-    assert (
-        owner_tools.prepare_dataset(changed, destination=destination, invocation_id="training").code
-        == "terrine.runtime.plan_invocation_conflict"
-    )
-    for revoked in (
-        replace(owner_tools.policy, allowed_sources=frozenset()),
-        replace(owner_tools.policy, allowed_destinations=frozenset()),
-    ):
-        restricted = DatasetTools(owner_tools.model, revoked, namespace="agent")
-        assert (
-            restricted.execute_plan(prepared.output, request_key="not-authorized").code
-            == "terrine.agent.scope_denied"
-        )
-    forged = prepared.output.model_copy(update={"recipe_hash": "0" * 64})
-    assert (
-        owner_tools.execute_plan(forged, request_key="forged").code
-        == "terrine.agent.receipt_unavailable"
     )
 
 

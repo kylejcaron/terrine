@@ -65,14 +65,9 @@ def _root_spec(
     return roots
 
 
-def _root_sql(relation: Any, raw: Any, catalog: Catalog) -> str:
+def _root_sql(relation: Any, objects: tuple[_native.NativeObject, ...], catalog: Catalog) -> str:
     if isinstance(relation, TableRef):
-        obj = _native._match(
-            relation,
-            _native.native_objects(raw),
-            _native._current_namespace(raw),
-            allow_temporary=True,
-        )
+        obj = _native._match(relation, objects, allow_temporary=True)
         return "SELECT * FROM " + ".".join(
             _quote_ident(component) for component in (obj.catalog, obj.schema, obj.name)
         )
@@ -84,18 +79,13 @@ def _root_sql(relation: Any, raw: Any, catalog: Catalog) -> str:
     return source_sql
 
 
-def _identity(relation: Any, catalog: Catalog, raw: Any) -> PhysicalRelationId:
+def _identity(relation: Any, objects: tuple[_native.NativeObject, ...]) -> PhysicalRelationId:
     if isinstance(relation, SqlQuery):
         fingerprint = hashlib.sha256(relation.sql.encode()).hexdigest()
         return PhysicalRelationId(
             "sql_result", None, None, f"result_{fingerprint[:20]}", fingerprint
         )
-    obj = _native._match(
-        relation,
-        _native.native_objects(raw),
-        _native._current_namespace(raw),
-        allow_temporary=True,
-    )
+    obj = _native._match(relation, objects, allow_temporary=True)
     if obj.kind == "table":
         return PhysicalRelationId("table", obj.catalog, obj.schema, obj.name)
     fingerprint = hashlib.sha256((obj.definition or "").encode()).hexdigest()
@@ -203,6 +193,7 @@ def _publish_locked(
         writer = duckdb.connect(path)
         origin.execute("BEGIN TRANSACTION")
         _admit_roots(catalog, origin, units, roots)
+        objects = _native.native_objects(origin)
         handles: dict[PhysicalRelationId, RelationHandle] = {}
         issuer = _Issuer(None, None)
         from terrine.execution.inputs import _catalog_hash, _units_hash
@@ -215,12 +206,12 @@ def _publish_locked(
         root_identities: dict[tuple[str, str], PhysicalRelationId] = {}
         for _namespace, _name, relation in roots:
             key = (relation.kind, relation.name if isinstance(relation, TableRef) else relation.sql)
-            identity = _identity(relation, catalog, origin)
+            identity = _identity(relation, objects)
             root_identities[key] = identity
             if identity in staged_identities:
                 staged[key] = staged_identities[identity]
                 continue
-            sql = _root_sql(relation, origin, catalog)
+            sql = _root_sql(relation, objects, catalog)
             storage_name = f"input_{len(staged_identities)}"
             if retained_path is not None:
                 capture_dir = retained_path

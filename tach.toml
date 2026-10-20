@@ -60,7 +60,7 @@ depends_on = ["terrine.compile", "terrine.data", "terrine.errors", "terrine.mode
 
 [[modules]]
 path = "terrine.compile.dispatch"
-depends_on = ["terrine.compile", "terrine.compile.shapes", "terrine.spec"]
+depends_on = ["terrine.compile", "terrine.compile.shapes", "terrine.execution", "terrine.spec"]
 
 
 [[modules]]

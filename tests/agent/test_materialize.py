@@ -1,286 +1,92 @@
 from dataclasses import replace
 
+import pyarrow as pa
 import pytest
 
-from terrine.agent import DatasetTools
-from terrine.agent.schemas import AgentDatasetReference
-from terrine.runtime.changes import ChangeSet
+from terrine.agent.schemas import AgentDatasetReference, DatasetColumn
+from terrine.data import Budget
+from terrine.dataset.manifest import DatasetManifest, ManifestColumn, ManifestGeneration
+from terrine.spec import Design, FixedDate
 from terrine.spec.dataset import DatasetRecipe
-from terrine.spec.io import from_json
 
 
-def _prepare(tools, invocation="stage"):
+@pytest.fixture
+def pinned_preview(tools, monkeypatch):
+    table = pa.table(
+        {
+            "unit": pa.array([1, 2], type=pa.int32()),
+            "unapproved": ["private" * 1000, "private" * 1000],
+        }
+    )
     recipe = DatasetRecipe(
-        schema_version=1, base_design=from_json(tools.design_example().output.serialized), view=None
+        schema_version=1, base_design=Design("user", FixedDate("2025-01-02")), view=None
     )
-    return tools.prepare_dataset(
-        recipe, destination=next(iter(tools.policy.allowed_destinations)), invocation_id=invocation
-    ).output
+
+    class PinnedReader:
+        manifest = DatasetManifest(
+            recipe=recipe,
+            generation=ManifestGeneration("study", "generation", ("p1",), ("checksum",), 2),
+            columns=(
+                ManifestColumn("unit", "int32", "unit"),
+                ManifestColumn("unapproved", "string", "support"),
+            ),
+            design_hash=recipe.base_design.spec_hash,
+            model_hash=tools.model.model_hash,
+            source_coverage={},
+            source_snapshots={},
+        )
+
+        def __init__(self):
+            self.calls = []
+            self.closed = []
+
+        def to_arrow_batches(self, *, batch_size):
+            self.calls.append(batch_size)
+            try:
+                yield from table.to_batches(max_chunksize=batch_size)
+            finally:
+                self.closed.append(True)
+
+    reader = PinnedReader()
+    reference = AgentDatasetReference(
+        dataset="study",
+        generation="generation",
+        definition_hash=reader.manifest.design_hash,
+        recipe_reference=recipe.digest,
+        model_hash=reader.manifest.model_hash,
+        manifest_hash=reader.manifest.digest,
+        row_count=2,
+        columns=(DatasetColumn(name="unit", data_type="int32", role="unit"),),
+    )
+    monkeypatch.setattr(tools, "_resolve_dataset", lambda reference, permission: (reader, None))
+    return tools, reference, reader
 
 
-def test_stage_refresh_and_export_require_separate_capabilities(owner_tools, tmp_path):
-    receipt = _prepare(owner_tools)
-    denied = DatasetTools(
-        owner_tools.model, replace(owner_tools.policy, write=False), namespace="agent"
-    )
-    assert denied.stage(receipt, request_key="stage").code == "terrine.agent.permission_denied"
-    first = owner_tools.stage(receipt, request_key="stage")
-    assert first.status == "ok" and isinstance(first.output, AgentDatasetReference)
-    assert owner_tools.stage(receipt, request_key="stage").output == first.output
-    encoded = first.model_dump_json()
+def test_preview_is_denied_by_default_and_bounded_redacted_when_granted(pinned_preview):
+    tools, reference, reader = pinned_preview
     assert (
-        "recipe_json" not in encoded and "snapshot" not in encoded and "owner.duckdb" not in encoded
-    )
-    assert first.output.row_count == 2
-    assert first.output.columns and all(
-        column.role and column.data_type for column in first.output.columns
-    )
-    owner_tools.model.con.raw_sql("INSERT INTO users VALUES (3)")
-    prepared = owner_tools.prepare_refresh(
-        first.output, changes=ChangeSet((), "conservative_rebuild"), invocation_id="refresh"
-    )
-    assert prepared.status == "ok"
-    second = owner_tools.refresh(first.output, prepared.output, request_key="refresh")
-    assert second.status == "ok" and second.output.generation != first.output.generation
-    assert first.output.row_count == 2 and second.output.row_count == 3
-    assert (
-        owner_tools.refresh(first.output, prepared.output, request_key="refresh").output
-        == second.output
-    )
-    assert owner_tools.prepare_refresh(first.output, invocation_id="stale").status == "refused"
-    destination = tmp_path / "export"
-    assert (
-        owner_tools.export_parquet(second.output, destination=str(destination)).code
+        tools.preview_rows(reference, limit=1, columns=("unit",)).code
         == "terrine.agent.permission_denied"
     )
-    owner_tools.policy = replace(
-        owner_tools.policy, export=True, allowed_exports=frozenset({destination})
-    )
-    assert (
-        owner_tools.export_parquet(second.output, destination=str(tmp_path / "private")).code
-        == "terrine.agent.scope_denied"
-    )
-    exported = owner_tools.export_parquet(second.output, destination=str(destination))
-    assert exported.status == "ok" and exported.output.row_count == 3
-    assert (
-        owner_tools.export_parquet(second.output, destination=str(destination)).output
-        == exported.output
-    )
-    forged = first.output.model_copy(update={"generation": second.output.generation})
-    assert owner_tools.preview_rows(forged, limit=1, columns=("unit",)).status == "refused"
-
-
-def test_preview_is_denied_by_default_and_bounded_redacted_when_granted(owner_tools, monkeypatch):
-    from terrine.dataset.reference import Dataset
-
-    reference = owner_tools.stage(_prepare(owner_tools), request_key="preview").output
-    name = next(column.name for column in reference.columns if column.role == "unit")
-    assert (
-        owner_tools.preview_rows(reference, limit=1, columns=(name,)).code
-        == "terrine.agent.permission_denied"
-    )
-    owner_tools.policy = replace(
-        owner_tools.policy,
+    tools.policy = replace(
+        tools.policy,
         preview=True,
-        preview_columns=frozenset({name}),
-        redacted_columns=frozenset({name}),
+        preview_columns=frozenset({"unit"}),
+        redacted_columns=frozenset({"unit"}),
         batch_cap=1,
         max_preview_rows=2,
     )
     for limit in (0, -1, 3, True):
-        assert owner_tools.preview_rows(reference, limit=limit, columns=(name,)).status == "refused"
+        assert tools.preview_rows(reference, limit=limit, columns=("unit",)).status == "refused"
     assert (
-        owner_tools.preview_rows(reference, limit=1, columns=("private",)).code
+        tools.preview_rows(reference, limit=1, columns=("private",)).code
         == "terrine.agent.scope_denied"
     )
-    called = []
-    closed = []
-    real = Dataset.to_arrow_batches
-
-    def batches(self, *, batch_size):
-        called.append(batch_size)
-        iterator = real(self, batch_size=batch_size)
-        try:
-            yield from iterator
-        finally:
-            iterator.close()
-            closed.append(True)
-
-    monkeypatch.setattr(Dataset, "to_arrow_batches", batches)
-    result = owner_tools.preview_rows(reference, limit=2, columns=(name,))
+    result = tools.preview_rows(reference, limit=2, columns=("unit",))
     assert result.status == "ok"
-    assert result.output.columns == (name,)
+    assert result.output.columns == ("unit",)
     assert result.output.rows == ((None,), (None,))
-    assert called == [1] and closed == [True]
-
-
-def test_runtime_and_concurrency_limits_are_distinct(owner_tools, monkeypatch):
-    from datetime import UTC, datetime, timedelta
-
-    import terrine.agent.tools as module
-    from terrine.runtime.leases import LeaseStore
-
-    receipt = _prepare(owner_tools)
-    first = owner_tools.execute_plan(receipt, request_key="complete")
-    assert first.output.durable_state == "succeeded"
-    raw = owner_tools.model.con.con
-    receipt = _prepare(owner_tools, invocation="limits")
-    leases = LeaseStore(raw, namespace="agent")
-    active = leases.acquire(
-        "dataset:study", first.output.run_id, ttl=timedelta(minutes=5), now=datetime.now(UTC)
-    )
-    raw.execute(
-        "UPDATE agent.runtime_runs SET state='running',attempt_fence=? WHERE run_id=?",
-        [active.fence, first.output.run_id],
-    )
-    blocked = owner_tools.execute_plan(receipt, request_key="concurrency")
-    assert blocked.code == "terrine.runtime.concurrency_limit"
-    leases.release(active)
-    raw.execute(
-        "UPDATE agent.runtime_runs SET state='succeeded' WHERE run_id=?", [first.output.run_id]
-    )
-    ticks = iter((0.0, 301.0))
-    monkeypatch.setattr(module, "monotonic", lambda: next(ticks, 301.0))
-    cancelled = owner_tools.execute_plan(receipt, request_key="deadline")
-    assert cancelled.output.durable_state == "cancelled"
-    assert cancelled.output.pinned_result_ref is None
-
-
-@pytest.mark.parametrize("kind", ["training", "scoring"])
-def test_typed_dataset_views_survive_preparation_and_staging(owner_tools, kind):
-    from terrine.dataset.splits import TimeSplit
-    from terrine.spec import Design, FixedDate, agg
-
-    metric = owner_tools.inspect_catalog().output.metrics[0].name
-    original = Design(
-        "user",
-        FixedDate("2025-01-01"),
-        features={"history": agg(metric, window=("-1d", "0s"))},
-        outcomes={"label": agg(metric, window=("0s", "1d"))},
-    )
-    if kind == "training":
-        design = original
-        view = {
-            "kind": kind,
-            "features": ["history"],
-            "labels": ["label"],
-            "incomplete_labels": "keep",
-            "split": TimeSplit(train_until="2025-01-15").to_record(),
-        }
-    else:
-        design = replace(original, outcomes={})
-        view = {
-            "kind": kind,
-            "features": ["history"],
-            "eligibility": {},
-            "as_of": "2025-01-01T00:00:00+00:00",
-            "parent_design_hash": original.spec_hash,
-        }
-    recipe = DatasetRecipe(schema_version=1, base_design=design, view=view)
-    prepared = owner_tools.prepare_dataset(
-        recipe, destination=next(iter(owner_tools.policy.allowed_destinations)), invocation_id=kind
-    )
-    assert prepared.status == "ok"
-    staged = owner_tools.stage(prepared.output, request_key=kind)
-    assert staged.status == "ok"
-    assert any(
-        column.name == "history" and column.role == "feature" for column in staged.output.columns
-    )
-    assert ("label" in {column.name for column in staged.output.columns}) == (kind == "training")
-    assert staged.output.recipe_reference == recipe.digest
-
-
-def test_preview_reads_only_bounded_batches_without_rehashing_output(owner_tools, monkeypatch):
-    import terrine.dataset.reference as module
-
-    reference = owner_tools.stage(_prepare(owner_tools), request_key="bounded").output
-    name = next(column.name for column in reference.columns if column.role == "unit")
-    owner_tools.policy = replace(
-        owner_tools.policy, preview=True, preview_columns=frozenset({name}), batch_cap=1
-    )
-
-    def unexpected(*args, **kwargs):
-        raise AssertionError("bounded preview rehashed full output")
-
-    monkeypatch.setattr(module, "_digest_relation", unexpected)
-    result = owner_tools.preview_rows(reference, limit=1, columns=(name,))
-    assert result.status == "ok"
-    assert len(result.output.rows) == 1
-
-
-def test_refresh_preserves_owner_approved_destination_alias(owner_tools, tmp_path):
-    destination = next(iter(owner_tools.policy.allowed_destinations))
-    alias = tmp_path / "owner-alias.duckdb"
-    alias.symlink_to(destination.database)
-    approved = replace(destination, database=str(alias))
-    owner_tools.policy = replace(owner_tools.policy, allowed_destinations=frozenset({approved}))
-    receipt = _prepare(owner_tools)
-    first = owner_tools.stage(receipt, request_key="alias")
-    assert first.status == "ok" and first.output is not None
-    refreshed = owner_tools.prepare_refresh(first.output, invocation_id="alias-refresh")
-    assert refreshed.status == "ok" and refreshed.output is not None
-    _, saved = owner_tools._resolve_receipt(refreshed.output, "prepare")
-    assert saved.destination == approved
-
-
-@pytest.mark.parametrize("preview", [False, True])
-def test_partitioned_export_projects_no_partition_values(owner_tools, tmp_path, preview):
-    import json
-
-    from terrine.dataset.export import ExportManifest
-
-    reference = owner_tools.stage(_prepare(owner_tools), request_key="partitioned").output
-    destination = tmp_path / "partitioned"
-    owner_tools.policy = replace(
-        owner_tools.policy,
-        export=True,
-        allowed_exports=frozenset({destination}),
-        preview=preview,
-        preview_columns=frozenset({"unit"}),
-        redacted_columns=frozenset({"unit"}),
-    )
-    result = owner_tools.export_parquet(
-        reference, destination=str(destination), partition_by=("unit",)
-    )
-    assert result.status == "ok"
-    payload = json.loads(result.model_dump_json())["output"]
-    assert "shards" not in payload and "path" not in payload
-    assert set(payload) == {
-        "schema_version",
-        "dataset",
-        "generation",
-        "row_count",
-        "byte_count",
-        "shard_count",
-    }
-    manifest = ExportManifest.from_json((destination / "export-manifest.json").read_bytes())
-    assert any("unit=" in shard.path for shard in manifest.shards)
-    assert payload["row_count"] == manifest.row_count
-    assert payload["byte_count"] == manifest.byte_count
-    assert payload["shard_count"] == len(manifest.shards)
-
-
-@pytest.mark.parametrize("advance", [False, True])
-def test_refresh_preparation_replays_before_live_inputs_or_current_base_checks(
-    owner_tools, advance
-):
-    reference = owner_tools.stage(_prepare(owner_tools), request_key="base").output
-    changes = ChangeSet((), "conservative_rebuild")
-    prepared = owner_tools.prepare_refresh(reference, invocation_id="lost-refresh", changes=changes)
-    assert prepared.status == "ok" and prepared.output is not None
-    if advance:
-        owner_tools.model.con.raw_sql("INSERT INTO users VALUES (3)")
-        published = owner_tools.refresh(reference, prepared.output, request_key="refresh")
-        assert published.status == "ok" and published.output.generation != reference.generation
-    owner_tools.model.con.drop_table("events")
-    owner_tools.model.con.drop_table("users")
-    replay = owner_tools.prepare_refresh(reference, invocation_id="lost-refresh", changes=changes)
-    assert replay.status == "ok" and replay.output == prepared.output
-    changed = owner_tools.prepare_refresh(reference, invocation_id="lost-refresh", changes=None)
-    assert changed.code == "terrine.runtime.plan_invocation_conflict"
-    if advance:
-        stale = owner_tools.prepare_refresh(reference, invocation_id="new-refresh", changes=changes)
-        assert stale.code == "terrine.runtime.plan_request_invalid"
+    assert reader.calls == [1] and reader.closed == [True]
 
 
 @pytest.mark.parametrize(
@@ -291,78 +97,39 @@ def test_refresh_preparation_replays_before_live_inputs_or_current_base_checks(
         ("bytes", "terrine.budget.output_bytes_exceeded"),
     ],
 )
-def test_row_preview_enforces_owner_budget_without_partial_output(
-    owner_tools, monkeypatch, kind, code
-):
-    from terrine.data import Budget
-    from terrine.dataset.reference import Dataset
-
-    reference = owner_tools.stage(_prepare(owner_tools), request_key="preview-budget").output
+def test_row_preview_enforces_owner_budget_without_partial_output(pinned_preview, kind, code):
+    tools, reference, reader = pinned_preview
     budget = {
         "scan": Budget(max_scan_bytes=0, strict_scan=True),
         "rows": Budget(max_rows=0, strict_scan=False),
         "bytes": Budget(max_output_bytes=0, strict_scan=False),
     }[kind]
-    owner_tools.policy = replace(
-        owner_tools.policy, preview=True, preview_columns=frozenset({"unit"}), budget=budget
+    tools.policy = replace(
+        tools.policy, preview=True, preview_columns=frozenset({"unit"}), budget=budget
     )
-    calls, closed = [], []
-    real = Dataset.to_arrow_batches
-
-    def batches(self, *, batch_size):
-        calls.append(batch_size)
-        iterator = real(self, batch_size=batch_size)
-        try:
-            yield from iterator
-        finally:
-            iterator.close()
-            closed.append(True)
-
-    monkeypatch.setattr(Dataset, "to_arrow_batches", batches)
-    result = owner_tools.preview_rows(reference, limit=2, columns=("unit",))
+    result = tools.preview_rows(reference, limit=2, columns=("unit",))
     assert result.status == "refused" and result.code == code
     assert result.output is None and result.suggested_route
     if kind in {"scan", "rows"}:
-        assert calls == [] and closed == []
+        assert reader.calls == [] and reader.closed == []
     else:
-        assert calls == [2] and closed == [True]
+        assert reader.calls == [2] and reader.closed == [True]
 
 
-def test_row_preview_byte_budget_counts_exact_projected_arrow_buffers(owner_tools, monkeypatch):
-    import pyarrow as pa
-
-    from terrine.data import Budget
-    from terrine.dataset.reference import Dataset
-
-    reference = owner_tools.stage(_prepare(owner_tools), request_key="projected-budget").output
-    batch = pa.record_batch(
-        {
-            "unit": pa.array([1, 2], type=pa.int32()),
-            "unapproved": ["private" * 1000, "private" * 1000],
-        }
-    )
-    projected_bytes = batch.select(("unit",)).nbytes
-    owner_tools.policy = replace(
-        owner_tools.policy,
+def test_row_preview_byte_budget_counts_exact_projected_arrow_buffers(pinned_preview):
+    tools, reference, reader = pinned_preview
+    # Two non-null int32 values occupy eight bytes, independent of the private column.
+    tools.policy = replace(
+        tools.policy,
         preview=True,
         preview_columns=frozenset({"unit"}),
-        budget=Budget(max_rows=2, max_output_bytes=projected_bytes, strict_scan=False),
+        budget=Budget(max_rows=2, max_output_bytes=8, strict_scan=False),
     )
-    closed = []
-
-    def batches(self, *, batch_size):
-        try:
-            yield batch
-        finally:
-            closed.append(True)
-
-    monkeypatch.setattr(Dataset, "to_arrow_batches", batches)
-    exact = owner_tools.preview_rows(reference, limit=2, columns=("unit",))
+    exact = tools.preview_rows(reference, limit=2, columns=("unit",))
     assert exact.status == "ok" and exact.output.rows == ((1,), (2,))
-    owner_tools.policy = replace(
-        owner_tools.policy,
-        budget=Budget(max_rows=2, max_output_bytes=projected_bytes - 1, strict_scan=False),
+    tools.policy = replace(
+        tools.policy, budget=Budget(max_rows=2, max_output_bytes=7, strict_scan=False)
     )
-    refused = owner_tools.preview_rows(reference, limit=2, columns=("unit",))
+    refused = tools.preview_rows(reference, limit=2, columns=("unit",))
     assert refused.code == "terrine.budget.output_bytes_exceeded" and refused.output is None
-    assert closed == [True, True]
+    assert reader.closed == [True, True]

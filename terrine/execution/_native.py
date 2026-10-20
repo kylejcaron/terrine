@@ -6,12 +6,15 @@ import hashlib
 import json
 import threading
 import weakref
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 import ibis
 from sqlglot import exp
 
+from terrine.execution._metadata import invalidate_metadata, metadata_fact
 from terrine.semantic.models import Catalog, SqlQuery, TableRef
 from terrine.semantic.sql import (
     _CAPTURE_READERS,
@@ -97,6 +100,7 @@ def _ascii_key(value: str) -> str:
     )
 
 
+@metadata_fact
 def native_objects(raw: Any) -> tuple[NativeObject, ...]:
     """Read all native tables/views, including internal and temporary contenders."""
     table_sql = (
@@ -129,20 +133,28 @@ def native_objects(raw: Any) -> tuple[NativeObject, ...]:
     return tuple(objects)
 
 
+@metadata_fact
 def _current_namespace(raw: Any) -> tuple[str, str]:
     row = _rows(raw, "SELECT system.main.current_database(), system.main.current_schema()")[0]
     return str(row[0]), str(row[1])
 
 
-def function_fingerprint(raw: Any) -> str:
-    rows = _rows(
-        raw,
-        "SELECT function_name, internal, function_type, macro_definition "
-        "FROM system.main.duckdb_functions()",
+@metadata_fact
+def _function_rows(raw: Any) -> tuple[tuple[Any, ...], ...]:
+    return tuple(
+        _rows(
+            raw,
+            "SELECT function_name, internal, function_type, macro_definition "
+            "FROM system.main.duckdb_functions()",
+        )
     )
+
+
+@metadata_fact
+def function_fingerprint(raw: Any) -> str:
     payload = sorted(
         (str(name), bool(internal), str(kind), None if definition is None else str(definition))
-        for name, internal, kind, definition in rows
+        for name, internal, kind, definition in _function_rows(raw)
     )
     return hashlib.sha256(repr(payload).encode()).hexdigest()
 
@@ -150,7 +162,6 @@ def function_fingerprint(raw: Any) -> str:
 def _match(
     ref: TableRef,
     objects: tuple[NativeObject, ...],
-    namespace: tuple[str, str],
     *,
     allow_temporary: bool = False,
 ) -> NativeObject:
@@ -172,7 +183,6 @@ def _match_parts(
     schema: str | None,
     catalog: str | None,
     objects: tuple[NativeObject, ...],
-    namespace: tuple[str, str],
     *,
     allow_temporary: bool = False,
 ) -> NativeObject:
@@ -203,6 +213,7 @@ def _sql_tables(
     allow_temporary: bool = False,
     _crosscheck: bool = True,
     _capture: bool = False,
+    _objects: tuple[NativeObject, ...] | None = None,
 ) -> tuple[NativeObject, ...]:
     actual = str(getattr(ibis.duckdb, "name", "duckdb"))
     statement = (
@@ -216,8 +227,7 @@ def _sql_tables(
         __import__("sqlglot.optimizer.scope", fromlist=["traverse_scope"]).traverse_scope(statement)
     )
     physical: dict[tuple[str, str, str], NativeObject] = {}
-    objects = native_objects(raw)
-    namespace = _current_namespace(raw)
+    objects = native_objects(raw) if _objects is None else _objects
     for scope in scopes:
         for source_name, source in scope.sources.items():
             if source_name in scope.cte_sources or not hasattr(source, "this"):
@@ -235,12 +245,11 @@ def _sql_tables(
                     str(node.db) if node.db else None,
                     str(node.catalog) if node.catalog else None,
                     objects,
-                    namespace,
                     allow_temporary=allow_temporary,
                 )
             else:
                 obj = _match_parts(
-                    str(node.name), None, None, objects, namespace, allow_temporary=allow_temporary
+                    str(node.name), None, None, objects, allow_temporary=allow_temporary
                 )
             physical[obj.identity] = obj
     if not _crosscheck:
@@ -266,6 +275,7 @@ def _sql_tables(
             allow_temporary=allow_temporary,
             _crosscheck=False,
             _capture=_capture,
+            _objects=objects,
         )
         leaves: set[tuple[str, str, str]] = set()
         next_active = active | {obj.identity}
@@ -299,7 +309,6 @@ def _sql_tables(
             str(node.db) if node.db else None,
             str(node.catalog) if node.catalog else None,
             objects,
-            namespace,
             allow_temporary=allow_temporary,
         )
         native_physical.add(obj.identity)
@@ -318,18 +327,14 @@ def admit_capture_root(relation: Any, catalog: Catalog, raw: Any) -> None:
         return
     if not isinstance(relation, TableRef):
         raise _binding_error("unsupported opaque capture root")
-    obj = _match(
-        relation,
-        native_objects(raw),
-        _current_namespace(raw),
-        allow_temporary=True,
-    )
+    objects = native_objects(raw)
+    obj = _match(relation, objects, allow_temporary=True)
     if obj.kind != "view":
         raise _binding_error("only a view can be captured as an opaque named root")
     query = "SELECT * FROM " + ".".join(
         _quote_ident(value) for value in (obj.catalog, obj.schema, obj.name)
     )
-    _sql_tables(query, _dummy_catalog(), raw, allow_temporary=True, _capture=True)
+    _sql_tables(query, _dummy_catalog(), raw, allow_temporary=True, _capture=True, _objects=objects)
 
 
 def _closure(
@@ -353,7 +358,9 @@ def _closure(
     query = _admit_stored_view_query_ast(definition, "duckdb")
     query_sql = query.sql(dialect="duckdb")
     check_native_functions(raw, query_sql, "duckdb")
-    dependencies = _sql_tables(query_sql, _dummy_catalog(), raw, allow_temporary=allow_temporary)
+    dependencies = _sql_tables(
+        query_sql, _dummy_catalog(), raw, allow_temporary=allow_temporary, _objects=objects
+    )
     for dependency in dependencies:
         _closure(dependency, objects, raw, seen, active, allow_temporary=allow_temporary)
     active.remove(obj.identity)
@@ -391,16 +398,17 @@ def required_relations(
 ) -> tuple[Any, ...]:
     raw = raw_connection(con)
     objects = native_objects(raw)
-    namespace = _current_namespace(raw)
     seen: dict[tuple[str, str, str], NativeObject] = {}
     for relation in roots(catalog, units) if _roots is None else _roots:
         if isinstance(relation, TableRef):
-            root = _match(relation, objects, namespace, allow_temporary=_include_temporary)
+            root = _match(relation, objects, allow_temporary=_include_temporary)
             _closure(root, objects, raw, seen, set(), allow_temporary=_include_temporary)
         elif isinstance(relation, SqlQuery):
             _admit_read_query_ast(relation.sql, catalog.dialect, "duckdb")
             check_native_functions(raw, relation.sql, catalog.dialect)
-            for root in _sql_tables(relation.sql, catalog, raw, allow_temporary=_include_temporary):
+            for root in _sql_tables(
+                relation.sql, catalog, raw, allow_temporary=_include_temporary, _objects=objects
+            ):
                 _closure(root, objects, raw, seen, set(), allow_temporary=_include_temporary)
     active_catalogs = {
         _ascii_key(item.catalog)
@@ -428,14 +436,12 @@ def admission_fingerprint(catalog: Catalog, relation: Any, raw: Any) -> str:
     objects = native_objects(raw)
     seen: dict[tuple[str, str, str], NativeObject] = {}
     if isinstance(relation, TableRef):
-        root = _match(relation, objects, _current_namespace(raw))
+        root = _match(relation, objects)
         _closure(root, objects, raw, seen, set())
-        query = f'SELECT * FROM "{relation.name.replace(chr(34), chr(34) * 2)}"'
-        check_native_functions(raw, query, "duckdb")
     else:
         _admit_read_query_ast(relation.sql, catalog.dialect, "duckdb")
         check_native_functions(raw, relation.sql, catalog.dialect)
-        for root in _sql_tables(relation.sql, catalog, raw):
+        for root in _sql_tables(relation.sql, catalog, raw, _objects=objects):
             _closure(root, objects, raw, seen, set())
     payload = sorted(
         (obj.identity, obj.kind, obj.oid, obj.definition_hash) for obj in seen.values()
@@ -460,6 +466,8 @@ def begin_owned_transaction(raw: Any) -> None:
         raw.execute("BEGIN TRANSACTION")
     except Exception as exc:
         raise _snapshot_error("could not establish isolated execution transaction") from exc
+    finally:
+        invalidate_metadata()
 
 
 def _quote_ident(value: str) -> str:
@@ -490,19 +498,14 @@ def restore_semantic_settings(origin: Any, runtime: Any) -> None:
             raise ValueError("settings differ after restoration")
     except Exception as exc:
         raise _snapshot_error("semantic session settings could not be reproduced") from exc
+    finally:
+        invalidate_metadata()
 
 
-def check_native_functions(raw: Any, sql: str, dialect: str | None) -> None:
-    """Validate native function ownership, recursively including trusted macros."""
-    if dialect is not None:
-        _admit_read_query_ast(sql, dialect, "duckdb")
-    rows = _rows(
-        raw,
-        "SELECT function_name, internal, function_type, macro_definition "
-        "FROM system.main.duckdb_functions()",
-    )
+@metadata_fact
+def _function_catalog(raw: Any) -> Mapping[str, tuple[tuple[bool, str, str | None], ...]]:
     metadata: dict[str, list[tuple[bool, str, str | None]]] = {}
-    for name, internal, kind, definition in rows:
+    for name, internal, kind, definition in _function_rows(raw):
         metadata.setdefault(str(name).casefold(), []).append(
             (
                 bool(internal),
@@ -510,6 +513,15 @@ def check_native_functions(raw: Any, sql: str, dialect: str | None) -> None:
                 str(definition) if definition is not None else None,
             )
         )
+    return MappingProxyType({name: tuple(entries) for name, entries in metadata.items()})
+
+
+@metadata_fact
+def check_native_functions(raw: Any, sql: str, dialect: str | None) -> None:
+    """Validate native function ownership, recursively including trusted macros."""
+    if dialect is not None:
+        _admit_read_query_ast(sql, dialect, "duckdb")
+    metadata = _function_catalog(raw)
 
     def names_in(statement: str) -> set[str]:
         try:

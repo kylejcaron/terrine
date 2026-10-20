@@ -49,6 +49,15 @@
 - Execute in owned private transaction sessions or retained immutable inputs;
   keep caller connections open and preserve exact UTC output instants under
   non-UTC SQL sessions.
+- Reuse read-only input schemas within each execution and native relation
+  metadata within each admission/capture operation, while revalidating live
+  bindings before cached relations are returned.
+- Share namespace, relation and function metadata across nested read operations;
+  discard those facts after session changes and before a later operation.
+- Preserve live input-binding validation when retained snapshots reopen an
+  execution, including reads through already-resolved relations.
+- Execute admitted SQL directly for Arrow tables and streams rather than
+  compiling each expression again after validation.
 - Save destination-bound plans and track authoritative run status, bounded event
   pages, request-key replay, cancellation requests, renewable fences and atomic
   generation publication through Python, CLI and owner-local IPC.

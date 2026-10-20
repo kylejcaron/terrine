@@ -479,6 +479,8 @@ def test_observation_key_and_level_integrity_refuses(observed_model_factory, obs
 
 
 def test_binned_state_periods_ignore_covariate_gap(panel_model):
+    from terrine.compile.shapes.state_panel import compile_state_panel
+
     design = Design(
         "user",
         Schedule("1d", "2025-01-03", "2025-01-05"),
@@ -488,11 +490,9 @@ def test_binned_state_periods_ignore_covariate_gap(panel_model):
             max_periods=2,
         ),
     )
-    rows = (
-        design.build(panel_model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
-        .table.to_pylist()
-    )
+    compiled = compile_state_panel(design, panel_model)
+    compiled.validate(execute=panel_model.con.to_pyarrow)
+    rows = panel_model.con.to_pyarrow(compiled.table).to_pylist()
     assert rows
 
 

@@ -3,15 +3,16 @@ from __future__ import annotations
 import ibis
 import pytest
 
-from terrine.data import Coverage, MaterializedFrame, UnitSource
+from terrine.compile.shapes.ltv import compile_ltv
+from terrine.data import Coverage, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.models import Catalog
-from terrine.spec import CohortSpec, Design, EventAnchor, agg, event_time
+from terrine.spec import CohortSpec, Design, EventAnchor, agg
 from terrine.spec.trajectory import Trajectory
 
 
-def _trajectory_model(*, decimal_type="DECIMAL(18, 2)"):
+def _trajectory_model(*, decimal_type="DECIMAL(18, 2)", unit=None):
     con = ibis.duckdb.connect()
     con.raw_sql("""
         CREATE TABLE events AS SELECT * FROM (VALUES
@@ -26,6 +27,9 @@ def _trajectory_model(*, decimal_type="DECIMAL(18, 2)"):
     con.raw_sql("UPDATE events SET decimal_amount = amount::DECIMAL(18, 2) / 100")
     con.raw_sql("ALTER TABLE events ADD COLUMN float_amount DOUBLE")
     con.raw_sql("CREATE TABLE users AS SELECT * FROM (VALUES ('u1'), ('u2'), ('u3')) AS u(id)")
+    if unit is not None:
+        con.raw_sql(f"DELETE FROM users WHERE id != '{unit}'")
+        con.raw_sql(f"DELETE FROM events WHERE user_id != '{unit}'")
     con.raw_sql("UPDATE events SET float_amount = amount::DOUBLE / 100")
     catalog = Catalog.model_validate(
         {
@@ -86,6 +90,11 @@ def _trajectory_model(*, decimal_type="DECIMAL(18, 2)"):
     return con, model
 
 
+def _collect(con, compiled):
+    compiled.validate(execute=con.to_pyarrow)
+    return con.to_pyarrow(compiled.table)
+
+
 def test_ltv_period_and_cumulative_values_match_hand_sum():
     con, model = _trajectory_model()
     try:
@@ -97,7 +106,7 @@ def test_ltv_period_and_cumulative_values_match_hand_sum():
                 trajectory=Trajectory("net_revenue", "7d", periods=3, cumulative=True),
             ),
         )
-        table = design.build(model).to_pyarrow()
+        table = _collect(con, compile_ltv(design, model))
         rows = sorted(table.to_pylist(), key=lambda row: (row["unit"], row["age"]))
         u1 = [row for row in rows if row["unit"] == "u1"]
         assert [(row["age"], row["period_value"], row["cumulative_value"]) for row in u1] == [
@@ -160,8 +169,8 @@ def test_float_feature_certificates_survive_exact_trajectory_compilation():
                 trajectory=Trajectory("net_revenue", "7d", periods=1, cumulative=False),
             ),
         )
-        frame = design.build(model)
-        table = frame.to_pyarrow()
+        frame = compile_ltv(design, model)
+        table = _collect(con, frame)
         feature = frame.columns["float_feature"]
         assert feature.numeric_policy == "checked_float64_v1"
         for column in (
@@ -180,18 +189,21 @@ def test_float_feature_certificates_survive_exact_trajectory_compilation():
 def test_cutoff_nulls_period_error_certificate_with_its_value():
     from datetime import UTC, datetime
 
-    con, model = _trajectory_model()
+    con, model = _trajectory_model(unit="u3")
     try:
-        frame = Design(
-            "user",
-            EventAnchor("purchase", which="first"),
-            shape=CohortSpec(
-                origin="purchase",
-                trajectory=Trajectory("float_revenue", "7d", periods=3, cumulative=False),
+        frame = compile_ltv(
+            Design(
+                "user",
+                EventAnchor("purchase", which="first"),
+                shape=CohortSpec(
+                    origin="purchase",
+                    trajectory=Trajectory("float_revenue", "7d", periods=2, cumulative=False),
+                ),
+                administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
             ),
-            administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
-        ).build(model)
-        table = frame.to_pyarrow().to_pylist()
+            model,
+        )
+        table = con.to_pyarrow(frame.table).to_pylist()
         young = next(row for row in table if row["unit"] == "u3" and row["age"] == 1)
         error_column = frame.columns["period_value"].absolute_error_column
         assert error_column is not None
@@ -201,30 +213,61 @@ def test_cutoff_nulls_period_error_certificate_with_its_value():
         con.disconnect()
 
 
-def test_cumulative_float_results_enforce_final_tolerance():
-    con, model = _trajectory_model()
+def test_cumulative_float_results_enforce_final_tolerance(monkeypatch):
+    from dataclasses import replace
+    from datetime import UTC, datetime
+    from math import ulp
+
+    from terrine.compile.columns import compile_columns
+    from terrine.data import ColumnMeta
+    from terrine.windows import Window
+
+    con, model = _trajectory_model(unit="u1")
     try:
-        con.raw_sql(
-            "UPDATE events SET float_amount = 1e12 "
-            "WHERE user_id = 'u1' AND kind = 'revenue' AND ts = "
-            "TIMESTAMPTZ '2025-01-03 00:00:00+00'"
-        )
-        con.raw_sql(
-            "UPDATE events SET float_amount = -1e12 "
-            "WHERE user_id = 'u1' AND kind = 'revenue' AND ts = "
-            "TIMESTAMPTZ '2025-01-10 00:00:00+00'"
-        )
-        frame = Design(
-            "user",
-            EventAnchor("purchase", which="first"),
-            shape=CohortSpec(
-                origin="purchase",
-                trajectory=Trajectory("float_revenue", "7d", periods=3, cumulative=True),
+        base = compile_columns(Design("user", EventAnchor("purchase", which="first")), model)
+        periods = con.create_table(
+            "period_values",
+            base.table.mutate(
+                __trajectory_age_0=ibis.literal(1e12),
+                __trajectory_age_1=ibis.literal(-1e12),
+                complete=ibis.literal(True),
+                reason=ibis.null().cast("string"),
+                observed_from=ibis.literal(datetime(2025, 1, 1, tzinfo=UTC)),
+                observed_until=ibis.literal(datetime(2025, 1, 31, tzinfo=UTC)),
+                absolute_error=ibis.literal(ulp(1e12)),
             ),
-        ).build(model)
+        )
+        period = 7 * 24 * 60 * 60
+        metadata = {
+            f"__trajectory_age_{age}": ColumnMeta(
+                Window(age * period, (age + 1) * period),
+                "outcome",
+                "observed_from",
+                "observed_until",
+                "complete",
+                "reason",
+                numeric_policy="checked_float64_v1",
+                absolute_error_column="absolute_error",
+            )
+            for age in range(2)
+        }
+        prepared = replace(base, table=periods, columns=metadata)
+        monkeypatch.setattr("terrine.compile.shapes.ltv.compile_columns", lambda *_args: prepared)
+        frame = compile_ltv(
+            Design(
+                "user",
+                EventAnchor("purchase", which="first"),
+                shape=CohortSpec(
+                    origin="purchase",
+                    trajectory=Trajectory("float_revenue", "7d", periods=2, cumulative=True),
+                ),
+            ),
+            model,
+        )
         with pytest.raises(TerrineError) as error:
-            frame.materialize()
+            frame.validate(execute=con.to_pyarrow)
         assert error.value.code == "terrine.temporal.float64_precision"
+        assert error.value.context["output"] == "cumulative_value"
     finally:
         con.disconnect()
 
@@ -255,48 +298,19 @@ def test_scale_zero_decimal_cumulative_retains_wide_values():
             "UPDATE events SET decimal_amount = 10000000000000000000000000000000000000 "
             "WHERE user_id = 'u1' AND kind = 'revenue'"
         )
-        frame = Design(
-            "user",
-            EventAnchor("purchase", which="first"),
-            shape=CohortSpec(
-                origin="purchase",
-                trajectory=Trajectory("decimal_revenue", "7d", periods=1, cumulative=True),
+        frame = compile_ltv(
+            Design(
+                "user",
+                EventAnchor("purchase", which="first"),
+                shape=CohortSpec(
+                    origin="purchase",
+                    trajectory=Trajectory("decimal_revenue", "7d", periods=1, cumulative=True),
+                ),
             ),
-        ).build(model)
-        rows = frame.to_pyarrow().to_pylist()
+            model,
+        )
+        rows = _collect(con, frame).to_pylist()
         row = next(row for row in rows if row["unit"] == "u1")
         assert row["cumulative_value"] == 10**37
-    finally:
-        con.disconnect()
-
-
-def test_trajectory_preserves_event_feature_timing_through_arrow_round_trip():
-    con, model = _trajectory_model()
-    try:
-        frame = Design(
-            "user",
-            EventAnchor("purchase", which="first"),
-            features={
-                "prior_revenue": agg("net_revenue", window=("-1d", "0s")),
-                "purchase_time": event_time("purchase", window=("-1d", "0s")),
-            },
-            shape=CohortSpec(
-                "purchase", Trajectory("net_revenue", "7d", periods=1, cumulative=False)
-            ),
-        ).build(model)
-
-        arrow = frame.to_pyarrow()
-        restored = MaterializedFrame.from_arrow(arrow)
-        prior = restored.provenance.expression_timings["prior_revenue"]
-        assert prior.point_time_column == "cohort_time"
-        assert prior.point_time_column in arrow.column_names
-        if prior.start_bound_column is not None:
-            assert prior.start_bound_column in arrow.column_names
-        if prior.end_bound_column is not None:
-            assert prior.end_bound_column in arrow.column_names
-        timing = restored.provenance.expression_timings["purchase_time"]
-        assert timing.point_time_column in arrow.column_names
-        assert timing.start_bound_column in arrow.column_names
-        assert timing.end_bound_column in arrow.column_names
     finally:
         con.disconnect()

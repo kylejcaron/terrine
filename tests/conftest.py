@@ -1,62 +1,60 @@
+from functools import wraps
+
 import pytest
+
+from tests import _worlds
+
+
+@pytest.fixture(scope="session", autouse=True)
+def worker_duckdb_resources(request):
+    if not hasattr(request.config, "workerinput"):
+        yield
+        return
+
+    try:
+        import duckdb
+    except ModuleNotFoundError as error:
+        if error.name != "duckdb":
+            raise
+        yield
+        return
+
+    original = duckdb.connect
+
+    @wraps(original)
+    def connect(*args, **kwargs):
+        settings = dict(kwargs.pop("config", None) or {})
+        settings.setdefault("threads", 2)
+        return original(*args, config=settings, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(duckdb, "connect", connect)
+        yield
+
+
+@pytest.fixture(scope="session")
+def events_world():
+    return _worlds.events_world()
+
+
+@pytest.fixture(scope="session")
+def winsorization_world():
+    return _worlds.winsorization_world()
+
+
+@pytest.fixture(scope="session")
+def interop_world():
+    return _worlds.interop_world()
 
 
 @pytest.fixture
-def native_inputs():
-    from datetime import UTC, datetime
-
+def native_inputs(events_world):
     import ibis
-    import pyarrow as pa
-
-    from terrine.semantic.models import Catalog
 
     con = ibis.duckdb.connect()
-    con.create_table(
-        "events",
-        pa.table(
-            {
-                "user_id": ["a", "b"],
-                "ts": [datetime(2025, 1, 3, tzinfo=UTC)] * 2,
-                "event_id": ["a1", "b1"],
-                "alternate_event_id": ["a2", "b2"],
-            }
-        ),
-    )
-    con.create_table("labels", con.table("events"))
-    con.create_table("users", pa.table({"user_id": ["a", "b"], "alt_id": ["aa", "bb"]}))
-    catalog = Catalog.model_validate(
-        {
-            "schema_version": 1,
-            "day_boundary": "UTC",
-            "dialect": "duckdb",
-            "sources": {
-                name: {
-                    "relation": {"kind": "table", "name": name},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": [fact],
-                    "properties": [],
-                    "dimensions": [],
-                }
-                for name, fact in (("events", "session"), ("labels", "churn"))
-            },
-            "facts": {
-                "session": {"source": "events", "column": None},
-                "churn": {"source": "labels", "column": None},
-            },
-            "properties": {},
-            "dimensions": {},
-            "measures": {
-                "sessions_count": {"fact": "session", "aggregation": "count"},
-                "churn_count": {"fact": "churn", "aggregation": "count"},
-            },
-            "metrics": {
-                "sessions": {"kind": "mean", "entity": "user", "measure": "sessions_count"},
-                "churned": {"kind": "conversion", "entity": "user", "measure": "churn_count"},
-            },
-        }
-    )
     try:
-        yield catalog, con
+        for name, table in events_world.tables.items():
+            con.create_table(name, table)
+        yield events_world.catalog, con
     finally:
         con.disconnect()

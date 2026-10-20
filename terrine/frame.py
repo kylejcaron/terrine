@@ -659,8 +659,7 @@ class Frame:
                 chunk_size = min(chunk_size, limit)
             batches = []
             row_count = byte_count = 0
-            context._check_query(query)
-            reader = context.con.to_pyarrow_batches(query, chunk_size=chunk_size)
+            reader = context.to_arrow_batches(query, chunk_size=chunk_size)
             try:
                 schema = reader.schema
                 output_schema = self._winsorize_output(

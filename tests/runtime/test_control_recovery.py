@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
 
 import duckdb
@@ -35,9 +36,8 @@ def test_owner_start_reconciles_expired_runs_and_emits_lifecycle_events():
         f"CREATE TABLE {schema}.runtime_run_publications "
         "(run_id VARCHAR PRIMARY KEY,dataset VARCHAR,generation VARCHAR,version BIGINT)"
     )
-    server = ControlServer(
-        store, namespace="owner", endpoint=ControlEndpoint(Path("/tmp/terrine-recovery-test.sock"))
-    )
+    endpoint = ControlEndpoint(Path(f"/tmp/terrine-recovery-{os.getpid()}-{uuid.uuid4().hex}.sock"))
+    server = ControlServer(store, namespace="owner", endpoint=endpoint)
     server.start()
     try:
         row = con.execute(
@@ -48,9 +48,7 @@ def test_owner_start_reconciles_expired_runs_and_emits_lifecycle_events():
             f"UPDATE {schema}.runtime_leases SET expires_at=TIMESTAMP '2000-01-01' "
             "WHERE owner='interrupted'"
         )
-        status = ControlClient(
-            ControlEndpoint(Path("/tmp/terrine-recovery-test.sock")), namespace="owner"
-        ).get_run("interrupted")
+        status = ControlClient(endpoint, namespace="owner").get_run("interrupted")
         assert status.durable_state == "failed"
         events = read_run_events("interrupted", con=con, namespace="owner").events
         assert [event.payload["state"] for event in events] == ["failed"]
