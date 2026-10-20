@@ -49,6 +49,57 @@ class RunReceipt:
     published_generation: str | None
 
 
+def _ensure_run_tables(con: Any, schema: str) -> None:
+    """Create or upgrade the run, task and result tables.
+
+    The owner calls this before serving requests: concurrent requests that add
+    the same missing column conflict in DuckDB's catalog, while additions of
+    columns that already exist do not.
+
+    Args:
+        con: Connection holding the runtime store.
+        schema: Quoted runtime namespace schema.
+    """
+    con.execute(
+        f"CREATE TABLE IF NOT EXISTS {schema}.runtime_runs ("
+        "run_id VARCHAR PRIMARY KEY, dataset VARCHAR NOT NULL, fingerprint VARCHAR NOT NULL, "
+        "state VARCHAR NOT NULL, published_generation VARCHAR, attempt_fence BIGINT, "
+        "updated_at TIMESTAMP, heartbeat_at TIMESTAMP)"
+    )
+    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS attempt_fence BIGINT")
+    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP")
+    con.execute(
+        f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP"
+    )
+    for column in ("snapshot_id VARCHAR", "task_count BIGINT", "error_code VARCHAR"):
+        con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS {column}")
+    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS request_key VARCHAR")
+    con.execute(
+        f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS destination_json VARCHAR"
+    )
+    con.execute(
+        f"CREATE UNIQUE INDEX IF NOT EXISTS runtime_runs_request_destination "
+        f"ON {schema}.runtime_runs (request_key, destination_json)"
+    )
+    con.execute(
+        f"CREATE TABLE IF NOT EXISTS {schema}.runtime_tasks ("
+        "run_id VARCHAR NOT NULL, task_id VARCHAR NOT NULL, status VARCHAR NOT NULL, "
+        "output_blob BLOB, task_fence BIGINT, PRIMARY KEY(run_id, task_id))"
+    )
+    con.execute(f"ALTER TABLE {schema}.runtime_tasks ADD COLUMN IF NOT EXISTS task_fence BIGINT")
+    for column, dtype in (
+        ("attempts", "BIGINT DEFAULT 0"),
+        ("layer", "VARCHAR"),
+        ("output_rows", "BIGINT"),
+        ("output_bytes", "BIGINT"),
+    ):
+        con.execute(f"ALTER TABLE {schema}.runtime_tasks ADD COLUMN IF NOT EXISTS {column} {dtype}")
+    con.execute(
+        f"CREATE TABLE IF NOT EXISTS {schema}.runtime_run_results "
+        "(run_id VARCHAR NOT NULL, partition VARCHAR NOT NULL, PRIMARY KEY(run_id,partition))"
+    )
+
+
 def execute_plan(
     plan: RefreshPlan,
     *,
@@ -101,44 +152,7 @@ def execute_plan(
     runtime_store.initialize()
     leases = LeaseStore(con, namespace=namespace)
     schema = leases._schema
-    con.execute(
-        f"CREATE TABLE IF NOT EXISTS {schema}.runtime_runs ("
-        "run_id VARCHAR PRIMARY KEY, dataset VARCHAR NOT NULL, fingerprint VARCHAR NOT NULL, "
-        "state VARCHAR NOT NULL, published_generation VARCHAR, attempt_fence BIGINT, "
-        "updated_at TIMESTAMP, heartbeat_at TIMESTAMP)"
-    )
-    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS attempt_fence BIGINT")
-    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP")
-    con.execute(
-        f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP"
-    )
-    for column in ("snapshot_id VARCHAR", "task_count BIGINT", "error_code VARCHAR"):
-        con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS {column}")
-    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS request_key VARCHAR")
-    con.execute(
-        f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS destination_json VARCHAR"
-    )
-    con.execute(
-        f"CREATE UNIQUE INDEX IF NOT EXISTS runtime_runs_request_destination "
-        f"ON {schema}.runtime_runs (request_key, destination_json)"
-    )
-    con.execute(
-        f"CREATE TABLE IF NOT EXISTS {schema}.runtime_tasks ("
-        "run_id VARCHAR NOT NULL, task_id VARCHAR NOT NULL, status VARCHAR NOT NULL, "
-        "output_blob BLOB, task_fence BIGINT, PRIMARY KEY(run_id, task_id))"
-    )
-    con.execute(f"ALTER TABLE {schema}.runtime_tasks ADD COLUMN IF NOT EXISTS task_fence BIGINT")
-    for column, dtype in (
-        ("attempts", "BIGINT DEFAULT 0"),
-        ("layer", "VARCHAR"),
-        ("output_rows", "BIGINT"),
-        ("output_bytes", "BIGINT"),
-    ):
-        con.execute(f"ALTER TABLE {schema}.runtime_tasks ADD COLUMN IF NOT EXISTS {column} {dtype}")
-    con.execute(
-        f"CREATE TABLE IF NOT EXISTS {schema}.runtime_run_results "
-        "(run_id VARCHAR NOT NULL, partition VARCHAR NOT NULL, PRIMARY KEY(run_id,partition))"
-    )
+    _ensure_run_tables(con, schema)
     dependencies = {dependency for task in plan.tasks for dependency in task.dependencies}
     result_partitions = sorted(
         task.task_id for task in plan.tasks if task.task_id not in dependencies

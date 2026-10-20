@@ -86,6 +86,9 @@
   analysis unit has no separate roster.
 - Read retained run-event pages and their cursor-gap boundary from one consistent
   snapshot so concurrent retention cannot silently skip events.
+- Create the complete run-tracking schema when the runtime owner starts, so a
+  request-key lookup or status read that overlaps the namespace's first run is no
+  longer refused by a DuckDB catalog conflict.
 - Share export refusals for incomplete outcomes, unknown eligibility, missing
   repeated-unit clusters and grace-defined baseline treatment. DoWhy additionally
   refuses repeated units and declared weights rather than forwarding ignored

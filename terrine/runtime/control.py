@@ -21,7 +21,7 @@ from terrine.runtime.events import (
     RunEvent,
     read_run_events,
 )
-from terrine.runtime.execute import RunReceipt
+from terrine.runtime.execute import RunReceipt, _ensure_run_tables
 from terrine.runtime.state import RuntimeStore
 from terrine.runtime.status import (
     CancelReceipt,
@@ -82,6 +82,8 @@ class ControlServer:
         if self._server is not None:
             return
         self.endpoint.path.parent.mkdir(parents=True, exist_ok=True)
+        self.store.initialize()
+        _ensure_run_tables(self.store.con, self.store._schema)
         _recover_interrupted_runs(self.store.con, namespace=self.namespace)
         server = self
 
