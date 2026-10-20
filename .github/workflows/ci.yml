@@ -19,7 +19,7 @@ jobs:
       # Type checking and adapter tests need the optional integrations installed.
       - run: uv sync --locked --group dev --group docs --all-extras
       - run: make check TESTS="tests"
-      - run: uv run pytest tests/temporal/test_window_aggregates.py tests/compile/test_columns.py tests/compile/test_state_panel.py tests/spec/test_state_panel.py tests/test_frame_runtime.py -m slow
+      - run: uv run pytest -q -n 8 tests -m slow
       - run: uv run python -m tests.integration.study_api_smoke
       - run: uv run pytest -q -n 4 integration
       - run: |

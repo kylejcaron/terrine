@@ -555,3 +555,7 @@ evidence. No deletion or lower-boundary rewrite is claimed in these rows.
 | `tests/runtime/test_execute.py::test_lease_heartbeat_keeps_long_task_alive` | KEEP | `tests/runtime/test_execute.py::test_lease_heartbeat_keeps_long_task_alive` | Assertions unchanged; inventory proposes REWRITE. |
 | `tests/runtime/test_execute.py::test_cancellation_serializes_with_heartbeat_persistence` | KEEP | `tests/runtime/test_execute.py::test_cancellation_serializes_with_heartbeat_persistence` | Assertions unchanged; inventory proposes REWRITE. |
 | `tests/temporal/test_sketches.py::test_tdigest_partition_merge_is_canonical_and_fresh_process_reproducible` | KEEP | `tests/temporal/test_sketches.py::test_tdigest_partition_merge_is_canonical_and_fresh_process_reproducible` | Assertions unchanged; inventory proposes REWRITE. |
+
+## Area dispositions
+
+Per-area ledgers with carrier test ids and red-check evidence: [dataset](ledger-dataset.md), [compile](ledger-compile.md), [runtime/agent](ledger-runtime.md). Totals: dataset 56 rows (MOVE 50, REWRITE 5, KEEP 1); compile 111 (MOVE 20, REWRITE 55, SLIM 4, KEEP 32); runtime/execution/adapters/agent 63 (MOVE 42, REWRITE 8, KEEP 13). DELETE 0: every proposed duplicate turned out to assert something its integration twin does not.
