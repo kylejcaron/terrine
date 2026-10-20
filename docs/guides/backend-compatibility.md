@@ -75,8 +75,10 @@ the checkout, checks that optional distributions are absent, and imports every
 public facade with optional imports blocked. It then installs the DuckDB extra
 and executes the exact README tutorial, including retained staging and reopening.
 The installed package location is checked, so a source checkout cannot mask
-missing wheel files. The sdist retains guides, examples, typed package data and
-the direct-dependency notice inventory; wheels retain matching notices.
+missing wheel files. The sdist retains guides, examples, typed package data, the
+Apache-2.0 `LICENSE` and `NOTICE`, and the direct-dependency notice inventory;
+wheels retain the same license files and declare `License-Expression:
+Apache-2.0`.
 
 CI runs this command for both Python versions with highest and lowest direct
 dependency resolution. Lowest resolution uses `uv pip compile --resolution

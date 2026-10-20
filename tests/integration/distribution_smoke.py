@@ -41,6 +41,11 @@ def check_artifacts(wheel: Path, sdist: Path) -> None:
         wheel_names = set(archive.namelist())
         required = {"terrine/__init__.py", "terrine/py.typed", "terrine/simulate/baseline.yaml"}
         assert required <= wheel_names, f"Missing wheel files: {required - wheel_names}"
+        license_files = {
+            PurePosixPath(name).name for name in wheel_names if "/licenses/" in name
+        }
+        expected_licenses = {"LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.txt"}
+        assert expected_licenses <= license_files, "Wheel must retain license and notices"
         notices = [
             name for name in wheel_names if name.endswith("/licenses/THIRD_PARTY_NOTICES.txt")
         ]
@@ -61,6 +66,8 @@ def check_artifacts(wheel: Path, sdist: Path) -> None:
         required = {
             "README.md",
             "CHANGELOG.md",
+            "LICENSE",
+            "NOTICE",
             "THIRD_PARTY_NOTICES.txt",
             "pyproject.toml",
             "uv.lock",
@@ -89,6 +96,7 @@ def check_artifacts(wheel: Path, sdist: Path) -> None:
         assert wheel_notices == source_notices, "Wheel/sdist notices differ"
         assert metadata["Name"] == project["name"]
         assert metadata["Version"] == project["version"]
+        assert metadata["License-Expression"] == project["license"] == "Apache-2.0"
         assert {item.strip() for item in metadata["Requires-Python"].split(",")} == {
             item.strip() for item in project["requires-python"].split(",")
         }

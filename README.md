@@ -281,3 +281,9 @@ Window endpoints represent elapsed durations, not calendar dates.
 - [Cost and data residency](docs/guides/cost-and-residency.md)
 - [Inherent limits](docs/guides/limitations.md)
 - [Refusal-code reference](docs/reference/refusals.md)
+
+## License
+
+Terrine is licensed under the [Apache License 2.0](LICENSE); see also
+[NOTICE](NOTICE). Contributions require signing the Contributor License
+Agreement; `CONTRIBUTING.md` explains how.

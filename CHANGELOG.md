@@ -97,3 +97,9 @@
   bounded local scale measurements and an owner-gated live warehouse tier.
 - Terrine delivers datasets and descriptive summaries, not native effect
   estimators, inferential diagnostics, survival curves or causal guarantees.
+
+### License
+
+- Terrine is licensed under the Apache License 2.0 (`LICENSE`, `NOTICE`).
+  Contributions require signing the Contributor License Agreement
+  (`.github/CLA.md`); see `CONTRIBUTING.md`.
