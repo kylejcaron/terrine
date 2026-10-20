@@ -28,6 +28,7 @@ from terrine.model import Model
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog
+from terrine.spec.anchors import EventAnchor
 from terrine.spec.design import Design
 from terrine.spec.expressions import (
     ApproxMetricDistinct,
@@ -471,14 +472,15 @@ def _design_root_names(
     properties: set[str] = set()
 
     def visit(value: Any) -> None:
-        if isinstance(value, EventTime):
+        if isinstance(value, (EventAnchor, EventTime)):
             fact = model.catalog.facts.get(value.fact)
             if fact is not None:
                 sources.add(fact.source)
-            if value.label_property is not None:
-                properties.add(value.label_property)
-            if value.relative_to is not None:
-                visit(value.relative_to)
+            if isinstance(value, EventTime):
+                if value.label_property is not None:
+                    properties.add(value.label_property)
+                if value.relative_to is not None:
+                    visit(value.relative_to)
         elif isinstance(value, RetentionMetric):
             fact = model.catalog.facts.get(value.fact)
             if fact is not None:
@@ -499,6 +501,8 @@ def _design_root_names(
                         fact = model.catalog.facts.get(measure.fact)
                         if fact is not None:
                             sources.add(fact.source)
+            if isinstance(value, MetricAgg) and value.relative_to is not None:
+                visit(value.relative_to)
         elif isinstance(value, Mapping):
             for child in value.values():
                 visit(child)
