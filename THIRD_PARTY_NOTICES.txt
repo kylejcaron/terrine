@@ -8,7 +8,8 @@ Dependencies are installed as separate upstream distributions; Terrine does not
 vendor their source or binary wheels. Their full license, bundled-component and
 transitive dependency notices remain in those distributions and must be retained
 when redistributing them. Platform-specific binaries can carry additional terms.
-This file records third-party attribution only; it does not set Terrine's license.
+This file records third-party attribution only; Terrine's own license is in
+LICENSE and its attribution notice in NOTICE.
 
 Base dependencies
 -----------------

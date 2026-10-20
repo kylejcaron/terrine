@@ -204,7 +204,7 @@ def build_docs(root: Path) -> None:
                 source / name,
                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "superpowers"),
             )
-        for name in ("README.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.txt"):
+        for name in ("README.md", "CHANGELOG.md", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.txt"):
             shutil.copyfile(root / name, source / name)
         config = load_config(
             config_file=str(root / "mkdocs.yml"),
