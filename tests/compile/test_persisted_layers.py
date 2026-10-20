@@ -165,6 +165,8 @@ def test_layer_definition_identity_binds_catalog_and_design(column_model):
         column_model.con.to_pyarrow(actual.audit_table.order_by("unit"))
     )
 
+
+def test_runtime_layer_composition_matches_direct_state_audit(column_model):
     from terrine.compile.dispatch import compile_design
     from terrine.runtime.materialize import compose_runtime_frame
     from terrine.spec import BinnedMetricState, Schedule, StatePanel
@@ -174,12 +176,16 @@ def test_layer_definition_identity_binds_catalog_and_design(column_model):
         Schedule("1d", "2025-01-02", "2025-01-03"),
         shape=StatePanel(
             BinnedMetricState("total", cutpoints=(0,), levels=("none", "some")),
-            max_periods=2,
+            max_periods=1,
         ),
     )
     ordinary = compile_design(design, column_model)
     budget = Budget(max_rows=100, max_output_bytes=100_000)
-    materialized = compose_runtime_frame(design, column_model, persisted={}, budget=budget)
+    prefixes = {
+        key: column_model.con.create_table(f"audit_prefix_{index}", relation)
+        for index, (key, relation) in enumerate(_persisted_prefixes(design, column_model).items())
+    }
+    materialized = compose_runtime_frame(design, column_model, persisted=prefixes, budget=budget)
     assert column_model.con.to_pyarrow(ordinary.audit_table.order_by("unit")).equals(
         column_model.con.to_pyarrow(materialized.audit_table.order_by("unit"))
     )

@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 import ibis
 import pytest
 
-from terrine.data import Coverage, MaterializedFrame
+from terrine.data import Coverage, MaterializedFrame, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.models import Catalog
@@ -22,6 +22,7 @@ def _model(
     exit_start="2025-01-01",
     exit_end="2025-01-11",
     nanosecond_outcomes=False,
+    unit=None,
 ):
 
     con = ibis.duckdb.connect()
@@ -67,6 +68,9 @@ def _model(
         ) AS x(user_id, ts)
     """)
     con.raw_sql("CREATE TABLE exits AS SELECT * FROM entries")
+    if unit is not None:
+        anchors = con.table("anchors")
+        con.create_table("users", anchors.filter(anchors.user_id == unit).select(id="user_id"))
     catalog = Catalog.model_validate(
         {
             "schema_version": 1,
@@ -121,6 +125,7 @@ def _model(
     model = Model.from_catalog(
         catalog,
         con=con,
+        units={"user": UnitSource("users", "id")} if unit is not None else {},
         readiness={
             "anchors": Coverage("2025-01-01", anchor_end),
             "outcomes": Coverage(outcome_start, outcome_end),
@@ -131,11 +136,25 @@ def _model(
     return con, model
 
 
-def _collect(design, model):
+def _collect(design, model, *, columns=None, monkeypatch=None):
+    if monkeypatch is not None:
+        from dataclasses import replace
+
+        from terrine.compile.columns import compile_columns
+
+        base = compile_columns(Design(design.unit, design.anchor), model)
+        candidates = model.con.create_table(
+            "survival_candidates", base.table.select("unit", "anchor_id", "t0")
+        )
+        prepared = replace(base, table=candidates)
+        monkeypatch.setattr(
+            "terrine.compile.shapes.time_to_event.compile_columns", lambda *_args: prepared
+        )
     frame = design.build(model)
     compiled = frame._compiled
     compiled.validate(execute=model.con.to_pyarrow)
-    return frame._normalize_output(model.con.to_pyarrow(compiled.table))
+    output = compiled.table if columns is None else compiled.table.select(*columns)
+    return frame._normalize_output(model.con.to_pyarrow(output))
 
 
 def test_prevalent_events_are_excluded_and_cutoff_equality_is_censored():
@@ -298,20 +317,23 @@ def test_nanosecond_delayed_entry_keeps_entry_before_outcome_coverage():
         con.disconnect()
 
 
-def test_nanosecond_exit_before_outcome_coverage_is_not_ignored():
+def test_nanosecond_exit_before_outcome_coverage_is_not_ignored(monkeypatch):
     con, model = _model(
         outcome_start="2025-01-03",
         nanosecond_outcomes=True,
+        unit="u1",
     )
     try:
         con.raw_sql("DELETE FROM outcomes WHERE user_id = 'u1' AND ts < TIMESTAMP_NS '2025-01-02'")
         result = _collect(
             Design(
                 "user",
-                EventAnchor("signup", which="first"),
+                FixedDate("2025-01-01"),
                 shape=TimeToEvent("churn", exit="closed"),
             ),
             model,
+            columns=("unit", "complete", "event", "censor_time"),
+            monkeypatch=monkeypatch,
         )
         rows = {row["unit"]: row for row in result.to_pylist()}
         assert rows["u1"]["complete"] is False
@@ -321,20 +343,23 @@ def test_nanosecond_exit_before_outcome_coverage_is_not_ignored():
         con.disconnect()
 
 
-def test_nanosecond_wide_outcome_and_exit_coverages_do_not_narrow_out_of_range():
+def test_nanosecond_wide_outcome_and_exit_coverages_do_not_narrow_out_of_range(monkeypatch):
     con, model = _model(
         nanosecond_outcomes=True,
         outcome_end="2501-01-01",
         exit_end="2502-01-01",
+        unit="u1",
     )
     try:
         result = _collect(
             Design(
                 "user",
-                EventAnchor("signup", which="first"),
+                FixedDate("2025-01-01"),
                 shape=TimeToEvent("churn", exit="closed"),
             ),
             model,
+            columns=("unit", "censor_time"),
+            monkeypatch=monkeypatch,
         )
         assert result.num_rows > 0
     finally:
@@ -361,40 +386,46 @@ def test_wide_entry_coverage_start_is_intersected_before_narrowing():
         con.disconnect()
 
 
-def test_wide_exit_coverage_start_is_intersected_before_narrowing():
+def test_wide_exit_coverage_start_is_intersected_before_narrowing(monkeypatch):
     con, model = _model(
         nanosecond_outcomes=True,
         exit_start="2500-01-01",
         exit_end="2501-01-01",
+        unit="u1",
     )
     try:
         result = _collect(
             Design(
                 "user",
-                EventAnchor("signup", which="first"),
+                FixedDate("2025-01-01"),
                 shape=TimeToEvent("churn", exit="closed"),
             ),
             model,
+            columns=("unit", "censor_time"),
+            monkeypatch=monkeypatch,
         )
         assert result.num_rows > 0
     finally:
         con.disconnect()
 
 
-def test_wide_exit_source_timestamp_is_not_cast_to_nanoseconds():
+def test_wide_exit_source_timestamp_is_not_cast_to_nanoseconds(monkeypatch):
     con, model = _model(
         nanosecond_outcomes=True,
         exit_end="2501-01-01",
+        unit="u1",
     )
     try:
         con.raw_sql("UPDATE exits SET ts = TIMESTAMPTZ '2500-01-01 00:00:00+00'")
         result = _collect(
             Design(
                 "user",
-                EventAnchor("signup", which="first"),
+                FixedDate("2025-01-01"),
                 shape=TimeToEvent("churn", exit="closed"),
             ),
             model,
+            columns=("unit", "censor_time"),
+            monkeypatch=monkeypatch,
         )
         assert result.num_rows > 0
     finally:

@@ -12,7 +12,7 @@ from terrine.spec import CohortSpec, Design, EventAnchor, agg
 from terrine.spec.trajectory import Trajectory
 
 
-def _trajectory_model(*, decimal_type="DECIMAL(18, 2)"):
+def _trajectory_model(*, decimal_type="DECIMAL(18, 2)", unit=None):
     con = ibis.duckdb.connect()
     con.raw_sql("""
         CREATE TABLE events AS SELECT * FROM (VALUES
@@ -27,6 +27,9 @@ def _trajectory_model(*, decimal_type="DECIMAL(18, 2)"):
     con.raw_sql("UPDATE events SET decimal_amount = amount::DECIMAL(18, 2) / 100")
     con.raw_sql("ALTER TABLE events ADD COLUMN float_amount DOUBLE")
     con.raw_sql("CREATE TABLE users AS SELECT * FROM (VALUES ('u1'), ('u2'), ('u3')) AS u(id)")
+    if unit is not None:
+        con.raw_sql(f"DELETE FROM users WHERE id != '{unit}'")
+        con.raw_sql(f"DELETE FROM events WHERE user_id != '{unit}'")
     con.raw_sql("UPDATE events SET float_amount = amount::DOUBLE / 100")
     catalog = Catalog.model_validate(
         {
@@ -186,7 +189,7 @@ def test_float_feature_certificates_survive_exact_trajectory_compilation():
 def test_cutoff_nulls_period_error_certificate_with_its_value():
     from datetime import UTC, datetime
 
-    con, model = _trajectory_model()
+    con, model = _trajectory_model(unit="u3")
     try:
         frame = compile_ltv(
             Design(
@@ -200,7 +203,7 @@ def test_cutoff_nulls_period_error_certificate_with_its_value():
             ),
             model,
         )
-        table = _collect(con, frame).to_pylist()
+        table = con.to_pyarrow(frame.table).to_pylist()
         young = next(row for row in table if row["unit"] == "u3" and row["age"] == 1)
         error_column = frame.columns["period_value"].absolute_error_column
         assert error_column is not None
@@ -210,19 +213,46 @@ def test_cutoff_nulls_period_error_certificate_with_its_value():
         con.disconnect()
 
 
-def test_cumulative_float_results_enforce_final_tolerance():
-    con, model = _trajectory_model()
+def test_cumulative_float_results_enforce_final_tolerance(monkeypatch):
+    from dataclasses import replace
+    from datetime import UTC, datetime
+    from math import ulp
+
+    from terrine.compile.columns import compile_columns
+    from terrine.data import ColumnMeta
+    from terrine.windows import Window
+
+    con, model = _trajectory_model(unit="u1")
     try:
-        con.raw_sql(
-            "UPDATE events SET float_amount = 1e12 "
-            "WHERE user_id = 'u1' AND kind = 'revenue' AND ts = "
-            "TIMESTAMPTZ '2025-01-03 00:00:00+00'"
+        base = compile_columns(Design("user", EventAnchor("purchase", which="first")), model)
+        periods = con.create_table(
+            "period_values",
+            base.table.mutate(
+                __trajectory_age_0=ibis.literal(1e12),
+                __trajectory_age_1=ibis.literal(-1e12),
+                complete=ibis.literal(True),
+                reason=ibis.null().cast("string"),
+                observed_from=ibis.literal(datetime(2025, 1, 1, tzinfo=UTC)),
+                observed_until=ibis.literal(datetime(2025, 1, 31, tzinfo=UTC)),
+                absolute_error=ibis.literal(ulp(1e12)),
+            ),
         )
-        con.raw_sql(
-            "UPDATE events SET float_amount = -1e12 "
-            "WHERE user_id = 'u1' AND kind = 'revenue' AND ts = "
-            "TIMESTAMPTZ '2025-01-10 00:00:00+00'"
-        )
+        period = 7 * 24 * 60 * 60
+        metadata = {
+            f"__trajectory_age_{age}": ColumnMeta(
+                Window(age * period, (age + 1) * period),
+                "outcome",
+                "observed_from",
+                "observed_until",
+                "complete",
+                "reason",
+                numeric_policy="checked_float64_v1",
+                absolute_error_column="absolute_error",
+            )
+            for age in range(2)
+        }
+        prepared = replace(base, table=periods, columns=metadata)
+        monkeypatch.setattr("terrine.compile.shapes.ltv.compile_columns", lambda *_args: prepared)
         frame = compile_ltv(
             Design(
                 "user",
@@ -237,6 +267,7 @@ def test_cumulative_float_results_enforce_final_tolerance():
         with pytest.raises(TerrineError) as error:
             frame.validate(execute=con.to_pyarrow)
         assert error.value.code == "terrine.temporal.float64_precision"
+        assert error.value.context["output"] == "cumulative_value"
     finally:
         con.disconnect()
 

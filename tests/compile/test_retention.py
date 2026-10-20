@@ -208,8 +208,9 @@ def test_open_retention_sets_independent_treatment_followup_bound(retention_mode
 def test_calendar_open_retention_history_includes_anticipation(
     retention_model, observed_day, refused
 ):
-    from terrine.compile.dispatch import compile_design
+    from terrine.compile.shapes.calendar_comparison import _history_check
     from terrine.spec import CalendarComparisonSpec, Initiation
+    from terrine.spec.validate import _outcome_bounds
 
     original = retention_model
     original.con.create_table(
@@ -280,10 +281,27 @@ def test_calendar_open_retention_history_includes_anticipation(
             (-1,),
         ),
     )
-    compiled = compile_design(design, model)
+    users = model.con.table("calendar_users")
+    participants = users.select(
+        unit=users.id,
+        t0=ibis.literal(datetime(2025, 1, 3, tzinfo=UTC)),
+        cohort=ibis.literal(datetime(2025, 1, 3, tzinfo=UTC)),
+        treatment=users.id == "a",
+        control_eligible=ibis.literal(True),
+        _observed_from=users.observed_from,
+        _observed_until=users.observed_until,
+    )
+    offsets, cutoffs = _outcome_bounds(design, model)
+    check = _history_check(
+        design,
+        model,
+        participants,
+        max(offsets, default=0),
+        max(cutoffs) if cutoffs else None,
+    )
     if refused:
         with pytest.raises(TerrineError) as error:
-            compiled.validate(execute=model.con.to_pyarrow)
+            check.validate(execute=model.con.to_pyarrow)
         assert error.value.code == "terrine.design.incomplete_unit_treatment_history"
     else:
-        compiled.validate(execute=model.con.to_pyarrow)
+        check.validate(execute=model.con.to_pyarrow)

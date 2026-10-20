@@ -2,7 +2,7 @@
 
 ## Scope and measurement model
 
-Area: `tests/compile`, `tests/temporal`, `tests/simulate`, `tests/semantic`, `tests/compat`, `tests/parity`, `tests/reference`, and the in-tests `tests/integration` folder. There are 111 inventoried cases in this area. Dispositions: **0 DELETE, 20 MOVE, 55 REWRITE, 4 SLIM, 32 KEEP**. No library changes or shared ledger/fixture/CI changes are included.
+Area: `tests/compile`, `tests/temporal`, `tests/simulate`, `tests/semantic`, `tests/compat`, `tests/parity`, `tests/reference`, and the in-tests `tests/integration` folder. There are 111 inventoried cases in this area. Updated dispositions after the integrated duration pass: **0 DELETE, 20 MOVE, 58 REWRITE, 4 SLIM, 29 KEEP**. No library changes or shared ledger/fixture/CI changes are included in this area's commits.
 
 Ruling: inventory rows are proposals, not mandates. Retain tests already at their owning function on tiny inputs, and retain actual optional-dependency/process isolation and independent-path parity rather than replacing these with weaker helper assertions. The final uncontended duration gate belongs to the integrator.
 
@@ -84,14 +84,14 @@ Parsing the actual failed node IDs and comparing them with every REWRITE row ret
 | `tests/compile/test_retention.py::test_retention_composes_with_bounded_repeated_shapes[event_panel]` | REWRITE | `tests/compile/test_retention.py::test_retention_composes_with_bounded_repeated_shapes[event_panel]` | Same consumer-visible assertions at the owning compiler/reduction boundary; red: retention. |
 | `tests/compile/test_retention.py::test_named_retention_roundtrip_frame_matches_independent_occurrences[2d]` | MOVE | `integration/warehouse_execution/test_backend_capabilities.py::test_named_retention_roundtrip_frame_matches_independent_occurrences[2d]` | Original assertions at test_retention.py:109-147 retained, including serialization, independent oracle, exact reasons, and portable provenance. Collected in the 24-case focused integration selection. |
 | `tests/compile/test_retention.py::test_named_retention_roundtrip_frame_matches_independent_occurrences[open_ended]` | MOVE | `integration/warehouse_execution/test_backend_capabilities.py::test_named_retention_roundtrip_frame_matches_independent_occurrences[open_ended]` | Original assertions at test_retention.py:109-147 retained, including serialization, independent oracle, exact reasons, and portable provenance. Collected in the 24-case focused integration selection. |
-| `tests/compile/test_retention.py::test_calendar_open_retention_history_includes_anticipation[6-False]` | KEEP | `tests/compile/test_retention.py::test_calendar_open_retention_history_includes_anticipation[6-False]` | Retain direct design-admission and calendar-anticipation boundary assertions; no new lower-level surrogate. |
-| `tests/compile/test_retention.py::test_calendar_open_retention_history_includes_anticipation[5-True]` | KEEP | `tests/compile/test_retention.py::test_calendar_open_retention_history_includes_anticipation[5-True]` | Retain direct design-admission and calendar-anticipation boundary assertions; no new lower-level surrogate. |
+| `tests/compile/test_retention.py::test_calendar_open_retention_history_includes_anticipation[6-False]` | REWRITE | `tests/compile/test_retention.py::test_calendar_open_retention_history_includes_anticipation[6-False]` | Retain acceptance at the exact exclusive history bound using the owning history check, real roster rows, and the retention expression's actual outcome cutoff. Integrated follow-up below records the red check. |
+| `tests/compile/test_retention.py::test_calendar_open_retention_history_includes_anticipation[5-True]` | REWRITE | `tests/compile/test_retention.py::test_calendar_open_retention_history_includes_anticipation[5-True]` | Retain the incomplete-unit-treatment-history refusal and anticipation horizon using the owning history check on real roster rows. Integrated follow-up below records the red check. |
 | `tests/compile/test_persisted_layers.py::test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors[1d-totals0-fresh_totals0-observed]` | MOVE | `integration/warehouse_execution/test_saved_plan_restart.py::test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors[1d-totals0-fresh_totals0-observed]` | Original assertions at test_persisted_layers.py:580-607 retained, including mutation isolation, frozen values, fresh values, identities, and metadata. Collected in the 24-case focused integration selection. |
 | `tests/compile/test_persisted_layers.py::test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors[12h-totals1-fresh_totals1-observed]` | MOVE | `integration/warehouse_execution/test_saved_plan_restart.py::test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors[12h-totals1-fresh_totals1-observed]` | Original assertions at test_persisted_layers.py:580-607 retained, including mutation isolation, frozen values, fresh values, identities, and metadata. Collected in the 24-case focused integration selection. |
 | `tests/compile/test_persisted_layers.py::test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors[1d-totals0-fresh_totals0-binned]` | MOVE | `integration/warehouse_execution/test_saved_plan_restart.py::test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors[1d-totals0-fresh_totals0-binned]` | Original assertions at test_persisted_layers.py:580-607 retained, including mutation isolation, frozen values, fresh values, identities, and metadata. Collected in the 24-case focused integration selection. |
 | `tests/compile/test_persisted_layers.py::test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors[12h-totals1-fresh_totals1-binned]` | MOVE | `integration/warehouse_execution/test_saved_plan_restart.py::test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors[12h-totals1-fresh_totals1-binned]` | Original assertions at test_persisted_layers.py:580-607 retained, including mutation isolation, frozen values, fresh values, identities, and metadata. Collected in the 24-case focused integration selection. |
 | `tests/compile/test_persisted_layers.py::test_persisted_shape_matrix_preserves_panel_rows_and_metadata[sequential]` | MOVE | `integration/warehouse_execution/test_saved_plan_restart.py::test_persisted_shape_matrix_preserves_panel_rows_and_metadata[sequential]` | Original assertions at test_persisted_layers.py:461-468 retained; persisted and ordinary compiler paths keep all row/metadata comparisons. Collected in the 24-case focused integration selection. |
-| `tests/compile/test_persisted_layers.py::test_layer_definition_identity_binds_catalog_and_design` | KEEP | `tests/compile/test_persisted_layers.py::test_layer_definition_identity_binds_catalog_and_design` | Already direct layer planning/composition with the tiny column_model; retain definition, measure, and row-parity assertions. |
+| `tests/compile/test_persisted_layers.py::test_layer_definition_identity_binds_catalog_and_design` | REWRITE | `tests/compile/test_persisted_layers.py::test_layer_definition_identity_binds_catalog_and_design`; `tests/compile/test_persisted_layers.py::test_runtime_layer_composition_matches_direct_state_audit` | Preserve every original identity/refusal/parity assertion; separate catalog-identity behavior from runtime state-audit parity so each test has one owning contract. Integrated follow-up below records both red checks. |
 | `tests/compile/test_persisted_layers.py::test_runtime_and_frame_share_unknown_eligibility_refusal` | MOVE | `integration/warehouse_execution/test_saved_plan_restart.py::test_runtime_and_frame_share_unknown_eligibility_refusal` | Original assertions at test_persisted_layers.py:343-344 retained; runtime/public-frame code and context parity is composition. Collected in the 24-case focused integration selection. |
 | `tests/compile/test_persisted_layers.py::test_same_fact_measures_keep_filter_and_aggregation_identity` | KEEP | `tests/compile/test_persisted_layers.py::test_same_fact_measures_keep_filter_and_aggregation_identity` | Already direct layer planning/composition with the tiny column_model; retain definition, measure, and row-parity assertions. |
 | `tests/compile/test_persisted_layers.py::test_persisted_daily_prefix_anchor_reuse_matches_ordinary_frame_compiler` | MOVE | `integration/warehouse_execution/test_saved_plan_restart.py::test_persisted_daily_prefix_anchor_reuse_matches_ordinary_frame_compiler` | Original assertions at test_persisted_layers.py:68-74 retained, including anchor reuse, row equality, and metadata. Collected in the 24-case focused integration selection. |
@@ -168,7 +168,7 @@ Parsing the actual failed node IDs and comparing them with every REWRITE row ret
 
 ## CI selector changes
 
-- Add `tests/temporal/test_sparse_state.py` to the checks job's explicit `-m slow` selector. The four full original matrices live in `test_float_prefix_certificates_enclose_reordered_and_partitioned_leaves[values0..values3]`.
+- The original area handoff required adding `tests/temporal/test_sparse_state.py` to the checks job's explicit `-m slow` selector. Integration now runs `uv run pytest -q -n 8 tests -m slow`, which includes the file and its four full original matrices. No additional selector edit is needed for this follow-up.
 - Root `pytest -q -n 4 integration` already recursively discovers every move. The focused collection command below collected all 20 moved cases alongside four existing integration cases. All need only the DuckDB/Pandas dependencies already installed by the checks job; no new optional extra is introduced.
 - No active selector names either removed `tests/integration` file. Historical implementation plans and the shared ledger are intentionally unchanged; the parent integrates these coverage rows.
 
@@ -274,3 +274,72 @@ The final loaded ordinary run reported these calls above two seconds:
 | `test_time_to_event.py::test_wide_exit_source_timestamp_is_not_cast_to_nanoseconds` | 2.13 |
 
 All other reported ordinary durations were below two seconds in this loaded run. Main owns the explicitly deferred uncontended integrated-suite measurement and the required sparse-state CI selector.
+
+## Integrated uncontended follow-up
+
+Main's integrated single-process measurement reported eight remaining calls above two seconds after the area merges and library overhead change. Work continued in `/Users/kylejcaron/terrine/.worktrees/fast-tests` on `feat/fast-tests`, with exclusive edit ownership, after `uv sync --group dev --group docs --all-extras` (`Resolved 261 packages`; `Checked 259 packages`).
+
+Ruling: keep the actual compiler, assertions, and wide timestamp domains, but remove irrelevant event-anchor discovery from four survival exit cases. Their known anchor instant and one asserted unit suffice; event-anchor behavior remains covered by the other survival cases. The trajectory cases keep their required first-event anchors, use only the asserted unit, and the cutoff-projection test reads the output directly rather than repeating unrelated numeric checks. The cumulative precision case still runs deferred validation. Fixture defaults used by other unit/integration cases are unchanged.
+
+Ruling: calendar retention tests own the roster history boundary, not construction of an entire comparison stack. Evaluate the real history-check query on the same two roster units and actual retention cutoff, with the same refusal/no-refusal assertions. For a Jan 4 open-ended cutoff plus two anticipation days, an exclusive Jan 6 observation bound suffices and Jan 5 does not; both sides are checked by the mutations below.
+
+Ruling: the layer-identity test mixed catalog hash/refusal/parity and runtime state-audit parity. Separate those distinct contracts while preserving every assertion and real compiler/composer call; the runtime audit comparison uses one period instead of two. Do not split a single numerical behavior into fragments.
+
+Red checks used process-local replacements and restored every patched function in `finally`:
+
+```sh
+env PYTHONPATH=. uv run python /tmp/terrine_residual_rule_probe.py <mode>
+```
+
+| Mode | Broken production rule | Observed output |
+| --- | --- | --- |
+| `cutoff` | Remove the administrative-cutoff nulling of period values. | `1 failed` at the period-value null assertion. |
+| `precision` | Disable the final cumulative-tolerance failure predicate, retaining upstream checks. | `1 failed`: the expected `TerrineError` did not occur. |
+| `exit` | Ignore the actual exit time in the survival follow-up end. | `1 failed`: event was true instead of false. |
+| `bounds` | Directly cast wide bounds to nanoseconds rather than bounding them. | `2 failed`: DuckDB rejected timestamp-us to timestamp-ns conversion. |
+| `source` | Cast exit-source timestamps to the nanosecond outcome axis. | `1 failed`: DuckDB rejected timestamp-us to timestamp-ns conversion. |
+| `identity` | Omit the persisted definition-hash mismatch guard. | `1 failed`: expected identity `ValueError` did not occur. |
+| `audit` | Drop all runtime-composed audit rows. | `1 failed`: real audit-table equality assertion. |
+| `anticipation` | Omit anticipation from the history bound. | `1 failed`: expected incomplete-history refusal did not occur. |
+| `exclusive` | Reject an observation bound equal to an exclusive outcome cutoff. | `1 failed`: the valid bound raised incomplete-history refusal. |
+
+An initial fixed-date trajectory attempt was rejected by `CohortSpec` construction and is not red-check evidence; those probes were repeated after restoring its required first-event anchor. All ten changed/split cases then passed together (`10 passed, 64 warnings in 14.13s`); that measurement still showed four calls above two seconds, so it is not the final duration gate.
+
+Profiling the remaining cumulative-precision and wide-exit-source cases:
+
+```sh
+uv run python -m cProfile -o /tmp/terrine-residual.prof -m pytest -q -o "addopts=-ra --strict-markers -m 'not slow'" -p no:xdist tests/compile/test_ltv.py::test_cumulative_float_results_enforce_final_tolerance tests/compile/test_time_to_event.py::test_wide_exit_source_timestamp_is_not_cast_to_nanoseconds
+uv run python -c "import pstats; pstats.Stats('/tmp/terrine-residual.prof').strip_dirs().sort_stats('cumulative').print_stats(35)"
+```
+
+Output: `2 passed, 10 warnings in 11.09s` under profiling. The profile recorded 14 SQL compilation calls with 7.749 cumulative seconds and 3.397 cumulative seconds in select/select rewriting. Profiled times are diagnostic, not acceptance measurements.
+
+Ruling: query only the survival columns consumed by each assertion, retaining `censor_time` in every wide-exit projection so the problematic timestamp path is still executed. Keep every deferred validation and the existing output normalizer. This removes irrelevant output expressions, not the wide numerical domain.
+
+Ruling: the final cumulative certificate rule consumes certified period values. Supply one real, physically bound, two-period relation to that owner through its column-compiler dependency, with values `1e12` and `-1e12`, one-ULP input certificates, complete observation metadata, and real anchor validation. Execute the actual trajectory reduction and deferred check; also assert the public error context names `cumulative_value`. Only the upstream column builder is substituted, not numerical output or validation. The existing full-column trajectory and temporal-window tests retain upstream certificate coverage. Cost if wrong: missing an upstream-to-cumulative composition regression; the real compiler path remains covered by the other trajectory tests, while this case independently checks its final refusal.
+
+The narrowed projections still left a wide-exit call at `2.01s` in the ten-case focused run (`10 passed, 65 warnings in 11.96s`). Ruling: expression width alone does not remove the repeated anchor subquery embedded in each first-occurrence query. Materialize the real fixed-date candidate relation before handing it to the survival compiler, preserving its metadata and all deferred checks; the compiler still performs the real exit/event lookups and timestamp arithmetic. This is a physical input-boundary change, not a replacement result. For runtime audit parity, bind real physical prefix inputs through the existing persisted-layer API rather than reconstructing the same prefix inside each composed query.
+
+The first full integrated gate passed (`443 passed, 49 deselected, 1449 warnings in 88.94s`) but reported the wide-outcome/exit case at `2.02s`. Ruling: the fixed-date roster declares no observation-bound columns, so its minimal candidate input should contain only `unit`, `anchor_id`, and `t0`, not materialized nullable observation placeholders. This preserves the same unknown-observation domain while avoiding needless nanosecond bound expressions. The source-coverage and exit-time guards remain real and are red-checked again. The complete affected integration files passed (`28 passed, 321 warnings in 21.23s`).
+
+### Final integrated verification
+
+After the minimal candidate input change, repeated the `exit`, `bounds`, and `source` red probes: the same four survival cases failed on the intended wrong event flag or rejected out-of-range cast. Restored every production function before the green run.
+
+```sh
+uv run ruff format terrine tests examples integration
+uv run ruff check terrine tests examples integration
+uv run ty check terrine tests
+uv run tach check
+uv run pytest -q -o "addopts=-ra --strict-markers -m 'not slow'" -p no:xdist tests/compile tests/temporal --durations=0 --durations-min=2.0
+```
+
+Outputs: `317 files left unchanged`; Ruff and ty `All checks passed!`; Tach `All modules validated!`; pytest **`443 passed, 49 deselected, 1449 warnings in 87.06s`**, with **`(1329 durations < 2s hidden.)`** and no reported phase at the two-second threshold. This is the requested uncontended single-process compiler/temporal gate, not an extrapolation from parallel timings.
+
+Affected integration verification used:
+
+```sh
+uv run pytest -q -n 4 integration/warehouse_execution/test_backend_capabilities.py integration/warehouse_execution/test_saved_plan_restart.py integration/test_independence.py
+```
+
+Output: `28 passed, 321 warnings in 21.23s`. The extra cases relative to the original area run came from the integrated branch. No integration file, library file, shared fixture, or CI file is changed by this follow-up. The temporary red runner and profile are removed before handoff.
