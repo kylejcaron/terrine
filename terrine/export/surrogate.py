@@ -84,11 +84,32 @@ def to_surrogate_arrow(
             name for name in (data.roles.unit, data.roles.anchor, data.roles.t0) if name is not None
         )
     )
-    metadata_columns = tuple(
-        dict.fromkeys((*requested, *data.roles.outcomes, *structural, *identity))
+    role_support = tuple(
+        name
+        for name in (
+            data.roles.trial,
+            data.roles.assignment_probability,
+            data.roles.target_weight,
+            data.roles.trial_weight,
+        )
+        if name is not None
     )
-    support = []
+    metadata_columns = tuple(
+        dict.fromkeys((*requested, *data.roles.outcomes, *structural, *identity, *role_support))
+    )
+    support = list(role_support)
     for name in metadata_columns:
+        timing = data.provenance.expression_timings.get(name)
+        if timing is not None:
+            support.extend(
+                column
+                for column in (
+                    timing.point_time_column,
+                    timing.start_bound_column,
+                    timing.end_bound_column,
+                )
+                if column is not None
+            )
         meta = data.columns.get(name)
         if meta is not None:
             support.extend(
@@ -119,17 +140,22 @@ def to_surrogate_arrow(
     for role in ("unit", "anchor", "t0", "treatment", "weight", "cluster_unit", "prior_state"):
         if role in role_metadata and role_metadata[role] not in retained:
             role_metadata[role] = None
+    provenance = serialized["provenance"]
+    for field in ("expression_timings", "feature_cutoffs"):
+        provenance[field] = {
+            name: value for name, value in provenance[field].items() if name in retained
+        }
     metadata = {
         "schema_version": 1,
         "design_hash": data.provenance.design_hash,
         "model_hash": data.provenance.model_hash,
         "source_generations": dict(data.provenance.source_generations),
         "execution_snapshot": serialized["provenance"]["execution_snapshot"],
-        "provenance": serialized["provenance"],
+        "provenance": provenance,
         "roles": role_metadata,
         "feature_columns": list(features),
         "outcome_columns": list(dict.fromkeys(projected_outcomes)),
-        "support_columns": list(support),
+        "support_columns": list(dict.fromkeys(support)),
         "columns": {
             name: value for name, value in serialized["columns"].items() if name in retained
         },

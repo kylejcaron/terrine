@@ -41,6 +41,8 @@
   frozen limits and require matching feature/recipe/snapshot identities on reuse.
 - Export resumable checksum-verified local Parquet shards with semantic metadata,
   exact decimal/timestamp/null values and typed empty outputs.
+- Preserve selected event-relative timing bounds, trial identity and sampling
+  weights in surrogate Arrow projections and their portable metadata.
 
 ### Execution and integrations
 
