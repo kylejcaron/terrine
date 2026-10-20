@@ -57,8 +57,7 @@
 - Preserve live input-binding validation when retained snapshots reopen an
   execution, including reads through already-resolved relations.
 - Execute admitted SQL directly for Arrow tables and streams rather than
-  compiling each expression again after validation. Reuse the validated
-  eligibility summary through runtime staging.
+  compiling each expression again after validation.
 - Save destination-bound plans and track authoritative run status, bounded event
   pages, request-key replay, cancellation requests, renewable fences and atomic
   generation publication through Python, CLI and owner-local IPC.

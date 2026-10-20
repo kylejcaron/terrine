@@ -9,7 +9,7 @@ import ibis
 from terrine.compile.columns import CompiledStudy
 from terrine.compile.layers import LayerKey
 from terrine.compile.materialize import compose_materialized_frame
-from terrine.data import Budget, EligibilitySummary
+from terrine.data import Budget
 from terrine.errors import RefusalSpec
 from terrine.execution.gates import enforce_shape_budget, validate_compiled_output
 from terrine.model import Model
@@ -39,10 +39,10 @@ def compose_runtime_frame(
     *,
     persisted: Mapping[LayerKey, ibis.Table],
     budget: Budget | None = None,
-) -> tuple[CompiledStudy, EligibilitySummary]:
-    """Compose a validated runtime frame and its unchanged candidate audit."""
+) -> CompiledStudy:
+    """Compose and validate a runtime frame before it can enter publication staging."""
     enforce_shape_budget(design.shape, budget)
     ensure_runtime_expressions_supported(design)
     compiled = compose_materialized_frame(design, model, persisted=persisted, budget=budget)
-    summary = validate_compiled_output(compiled, model.con.to_pyarrow)
-    return compiled, summary
+    validate_compiled_output(compiled, model.con.to_pyarrow)
+    return compiled

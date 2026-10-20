@@ -31,12 +31,7 @@ def test_duckdb_runtime_reports_unknown_scan_and_observed_compiler_output(column
                 calls.append(task.task_id)
                 if task.layer != "frame":
                     return pa.table({"unit": pa.array([], type=pa.string())})
-                compiled, _summary = compose_runtime_frame(
-                    design,
-                    column_model,
-                    persisted={},
-                    budget=budget,
-                )
+                compiled = compose_runtime_frame(design, column_model, persisted={}, budget=budget)
                 return column_model.con.to_pyarrow(compiled.table)
 
             def publish(self, plan, outputs, lease, run_id):

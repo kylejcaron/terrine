@@ -549,14 +549,12 @@ class DesignExecutor:
             persisted[key] = relation
         spooled = None
         try:
-            compiled, summary = compose_runtime_frame(
-                self.design,
-                execution_model,
-                persisted=persisted,
-                budget=self._plan.budget,
+            compiled = compose_runtime_frame(
+                self.design, execution_model, persisted=persisted, budget=self._plan.budget
             )
             import terrine.compile.provenance as _provenance
             from terrine.data import SamplingMeta
+            from terrine.execution.gates import _eligibility_summary
             from terrine.spec.anchors import FixedDate
             from terrine.spec.sequence import EventSequence
             from terrine.spec.state_panel import StatePanel
@@ -571,6 +569,7 @@ class DesignExecutor:
                         compiled, self._frame._training_view, context.execute
                     )
             compiled = self._frame._active_compiled(compiled)
+            summary = _eligibility_summary(compiled.audit_table, context.execute)
             reader = context.to_arrow_batches(compiled.table, chunk_size=65_536)
             from terrine.runtime.arrow import ArrowOutput
 

@@ -205,13 +205,10 @@ def test_layer_definition_identity_binds_catalog_and_design(column_model):
     )
     ordinary = compile_design(design, column_model)
     budget = Budget(max_rows=100, max_output_bytes=100_000)
-    materialized, summary = compose_runtime_frame(design, column_model, persisted={}, budget=budget)
-    expected_audit = column_model.con.to_pyarrow(ordinary.audit_table.order_by("unit"))
-    assert expected_audit.equals(
+    materialized = compose_runtime_frame(design, column_model, persisted={}, budget=budget)
+    assert column_model.con.to_pyarrow(ordinary.audit_table.order_by("unit")).equals(
         column_model.con.to_pyarrow(materialized.audit_table.order_by("unit"))
     )
-    assert summary.candidate == summary.retained == expected_audit.num_rows
-    assert summary.excluded_false == summary.unknown == 0
 
 
 def test_runtime_composition_refuses_approximate_quantile_sidecar_before_source_work(
