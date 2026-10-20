@@ -65,59 +65,61 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
 
 - `uv sync --extra duckdb --extra pandas --extra polars` installs the local
   reference backend and dataframe extras with development dependencies.
-- `make check TESTS="<affected paths>"` runs static gates and focused tests.
-  `make fmt` formats source/tests; `uv build` builds local distributions.
-- `make test-slow TESTS=...` selects the expensive tier; `make complexity`
-  reports without gating.
-- Before a commit, run `make check TESTS="<affected paths>"`. The slow and
-  integration tiers, the smoke script and examples run in CI and before merges,
-  not after each fix.
-- The ordinary suite lists every test slower than 5 s; a healthy run lists
-  none, even on a busy machine. Treat any listed test as a regression to fix,
-  not as noise.
+- `make check TESTS="<affected paths>"` runs static gates and focused tests;
+  run it before each commit. `make fmt` formats source/tests; `uv build` builds
+  local distributions.
+- `make test-slow TESTS=...` selects the slow tier; `make complexity` reports
+  without gating. The slow and integration tiers, the smoke script and examples
+  run in CI and before merges.
+- The ordinary suite lists unit tests slower than 5 s (well above the 2 s
+  target, so contention does not trip it); a healthy run lists none. Fix any
+  listed test.
 
 ## Tests and validation
 
 - Keep the smallest permanent suite that protects meaningful consumer-visible
   behavior. Every added test must catch a plausible regression; extend or
   consolidate existing coverage before adding redundant tests. No test-count
-  or blanket coverage-percentage targets.
+  or blanket coverage-percentage targets. Delete a test as a duplicate only
+  when its twin asserts everything it does; otherwise move it.
 - Test each behavior at the lowest useful boundary; retain targeted cross-path
   and end-to-end checks where composition matters. Do not repeat every edge
   case at every layer. Prefer targeted parameterization over Cartesian matrices.
-- A unit test checks one rule through the function that owns it, with a few
-  rows of input. A test that builds a Model, snapshots, stages, publishes and
-  reads back, or starts processes, to check one narrow rule is an integration
-  test: rewrite it at the owning function, or keep it as one end-to-end check
-  per workflow under `integration/` or `@pytest.mark.slow`.
+- Put each test in the cheapest tier that can show its behavior:
+  - **Unit** (`tests/`, default): one rule at the function that owns it, a few
+    rows of input, in-process unless the rule is process isolation itself.
+    Unit tests MUST NOT use the network or a real warehouse. Typically
+    milliseconds; under about 2 s alone.
+  - **Slow** (`tests/`, `@pytest.mark.slow`): one component whose check is
+    inherently expensive, such as precision sweeps, large parameter sets or
+    simulation. Under about 15 s. Simulation-based coverage, bias or
+    parameter-recovery checks also use `@pytest.mark.parameter_recovery` and
+    keep a small fast smoke case in the unit tier.
+  - **Integration** (`integration/`): composition across subsystems, processes
+    or real libraries, such as Model→snapshot→stage→publish→read-back, crash
+    recovery, orchestrators and library hand-offs; live warehouses under
+    `integration/warehouse_execution/`. One end-to-end test per workflow,
+    typically under 20 s. Scale and resource-bound checks may take up to about
+    2 minutes; keep them few.
+  - A unit test that drives a full pipeline to check one narrow rule is
+    misplaced: rewrite it at the owning function.
 - Use tiny deterministic fixtures and bounded property-based cases. Avoid sleeps
   and dependence on the real clock; use controlled clocks or synchronization.
   Source-text assertions, forwarding-only checks and mock echoes are not useful
   regression tests. Use throwaway checks for one-off verification instead.
-- Unit tests must stay fast, under about 2 s each when run alone. A new or
-  changed test that the duration report lists is rewritten or re-tiered before
-  commit. Profile a slow test on tiny fixtures first: fixed per-run overhead in
-  terrine also costs users. Make tests do less before tuning worker counts or
-  threads. Do not use brittle wall-clock assertions as unit-test performance
-  gates.
-- Time tests only when no other test run shares the machine, and compare
-  in-suite times with standalone (`-n 0`) times before blaming contention.
+- When a test is slow on tiny inputs, profile it: fixed per-run overhead in
+  terrine costs users too. Cut test work before tuning workers or threads, and
+  compare in-suite with `-n 0` timings before blaming contention. Do not use
+  wall-clock assertions as performance gates.
 - Plan acceptance lists and suggested test names specify required behaviors,
-  not a quota of test functions. Each acceptance check names the function that
-  owns the rule and its tier (unit, slow or integration). Consolidate without
-  losing acceptance coverage, and update any affected command selectors. Delete
-  a test as a duplicate only after comparing its assertions with its twin's;
-  when they differ, move it instead.
-- Unit tests MUST NOT use the network or a real warehouse. Live warehouse
-  checks belong under `integration/warehouse_execution/`.
+  not a quota of test functions. Each acceptance check names the owning
+  function and tier. Consolidate without losing acceptance coverage, and update
+  any affected command selectors.
 - Tests MUST be independent under `pytest-xdist`. A test MUST NOT rely on
   execution order or state created by another test. Modules that mutate a
   shared filesystem path MUST use `pytest.mark.xdist_group("<name>")`.
   Sockets, lock files, lease names and scratch paths come from `tmp_path` or
   include the xdist worker id; never a fixed path under `/tmp`.
-- Tests slower than the ordinary suite use `@pytest.mark.slow`.
-  Simulation-based coverage, bias, or parameter-recovery checks additionally
-  use `@pytest.mark.parameter_recovery` and retain a small fast smoke case.
 - Tests assert consumer-visible behavior: stable codes, numerical contracts,
   tolerances, invariants, and cross-path parity. They MUST NOT pin permitted
   message wording, private structure, internal wiring, or exact bits where a
