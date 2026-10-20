@@ -67,18 +67,18 @@ def test_control_returns_full_bounded_event_page():
     con = duckdb.connect(":memory:")
     store = RuntimeStore(con, namespace="owner")
     store.initialize()
-    from datetime import UTC, datetime, timedelta
+    from datetime import UTC, datetime
 
     started = datetime(2026, 10, 18, tzinfo=UTC)
-    for sequence in range(1000):
-        record_run_event(
-            "r1",
-            "phase",
-            {"phase": f"{sequence:04d}-" + "x" * 100},
-            con=con,
-            namespace="owner",
-            at=started + timedelta(seconds=sequence),
-        )
+    record_run_event(
+        "r1", "phase", {"phase": "0000-" + "x" * 100}, con=con, namespace="owner", at=started
+    )
+    con.execute(
+        "INSERT INTO owner.runtime_run_events "
+        "SELECT 'r1', i+1, TIMESTAMP '2026-10-18' + i * INTERVAL '1 second', "
+        "'phase', json_object('phase', lpad(i::VARCHAR, 4, '0') || '-' || repeat('x', 100)) "
+        "FROM range(1, 1000) AS rows(i)"
+    )
     endpoint = ControlEndpoint(Path(f"/tmp/terrine-events-{os.getpid()}.sock"))
     server = ControlServer(store, namespace="owner", endpoint=endpoint)
     server.start()

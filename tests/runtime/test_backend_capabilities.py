@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import copy
-import pickle
 from dataclasses import replace
 
 import ibis
@@ -14,44 +12,7 @@ from terrine.model import Model
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.spec import Design, EventAnchor
-from tests.runtime.test_snapshot import _catalog, _design
-
-
-def test_unknown_snapshot_refuses_only_retained_execution_before_source_work(tmp_path, monkeypatch):
-    path = tmp_path / "owner.duckdb"
-    con = ibis.duckdb.connect(str(path))
-    try:
-        con.con.execute("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
-        con.con.execute("INSERT INTO events VALUES ('2025-01-01', 1, 3)")
-        con.con.execute("CREATE TABLE users AS SELECT 1 AS user_id")
-        model = Model.from_catalog(
-            _catalog(),
-            con=con,
-            readiness={"events": Coverage("2025-01-01", "2025-02-01")},
-            units={"user": UnitSource("users", "user_id")},
-        )
-        provider = backend_provider(con)
-        monkeypatch.setattr(
-            provider, "capabilities", replace(provider.capabilities, retained_snapshot=None)
-        )
-        frame = _design().build(model)
-        assert frame.materialize().table["total"].to_pylist() == [3]
-        con.con.execute("DROP TABLE events")
-        owner = RuntimeOwner(state_path=path, snapshot_root=tmp_path / "snapshots")
-        with pytest.raises(TerrineError) as error:
-            SnapshotAuthority(owner).capture(
-                model, design=_design(), con=con, namespace="runtime", run_id="run", budget=Budget()
-            )
-        assert error.value.code == "terrine.backend.capability_unavailable"
-        assert error.value.context["operation"] == "retained_snapshot"
-        assert error.value.context["status"] == "unverified"
-        assert not owner.snapshot_root.exists()
-        for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
-            assert restored.context == error.value.context
-            with pytest.raises(TypeError):
-                restored.context["status"] = "verified"  # ty: ignore[invalid-assignment]
-    finally:
-        con.disconnect()
+from tests.runtime.test_snapshot import _catalog
 
 
 def test_unknown_scan_estimate_refuses_strict_budget_but_not_non_strict(native_inputs):

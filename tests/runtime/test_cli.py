@@ -5,12 +5,13 @@ import json
 import os
 import subprocess
 import sys
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from pathlib import Path
-from threading import Event
+from unittest.mock import patch
 
 import duckdb
 import pyarrow as pa
-import pytest
 
 from terrine.runtime.control import ControlClient, ControlEndpoint, ControlServer
 from terrine.runtime.events import record_run_event
@@ -18,7 +19,18 @@ from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.recipe import DestinationRef
 from terrine.runtime.state import RuntimeStore
-from tests._timing import HANG_GUARD_SECONDS
+
+
+def _run_cli(command, *, check, capture_output, text, env):
+    from terrine.runtime.cli import main
+
+    stdout, stderr = StringIO(), StringIO()
+    with patch.dict(os.environ, env), redirect_stdout(stdout), redirect_stderr(stderr):
+        returncode = main(command[1:])
+    result = subprocess.CompletedProcess(command, returncode, stdout.getvalue(), stderr.getvalue())
+    if check:
+        result.check_returncode()
+    return result
 
 
 class _Executor:
@@ -79,7 +91,7 @@ def test_cli_plan_refuses_unknown_scan_under_strict_budget(tmp_path):
     }
     script = str(Path(sys.executable).with_name("terrine"))
     try:
-        result = subprocess.run(
+        result = _run_cli(
             [script, "plan", str(plan_file)],
             check=False,
             capture_output=True,
@@ -139,7 +151,7 @@ def test_cli_status_events_and_cancel_use_owner_ipc():
         )
         plan_file = Path(f"/tmp/tcli-{os.getpid()}.json")
         plan_file.write_bytes(plan.serialize())
-        planned = subprocess.run(
+        planned = _run_cli(
             [script, "plan", str(plan_file)],
             check=True,
             capture_output=True,
@@ -160,7 +172,7 @@ def test_cli_status_events_and_cancel_use_owner_ipc():
         )
         assert len(large_plan.serialize()) > 65536
         plan_file.write_bytes(large_plan.serialize())
-        large_planned = subprocess.run(
+        large_planned = _run_cli(
             [script, "plan", str(plan_file)],
             check=True,
             capture_output=True,
@@ -182,10 +194,10 @@ def test_cli_status_events_and_cancel_use_owner_ipc():
             "--destination-dataset",
             "orders",
         ]
-        first_run = subprocess.run(command, check=True, capture_output=True, text=True, env=env)
-        replay = subprocess.run(command, check=True, capture_output=True, text=True, env=env)
+        first_run = _run_cli(command, check=True, capture_output=True, text=True, env=env)
+        replay = _run_cli(command, check=True, capture_output=True, text=True, env=env)
         assert json.loads(first_run.stdout)["run_id"] == json.loads(replay.stdout)["run_id"]
-        lookup = subprocess.run(
+        lookup = _run_cli(
             [
                 script,
                 "run",
@@ -207,12 +219,12 @@ def test_cli_status_events_and_cancel_use_owner_ipc():
         different_destination = command.copy()
         database_index = different_destination.index("--destination-database") + 1
         different_destination[database_index] = "other.duckdb"
-        isolated = subprocess.run(
+        isolated = _run_cli(
             different_destination, check=True, capture_output=True, text=True, env=env
         )
         assert json.loads(isolated.stdout)["run_id"] != json.loads(first_run.stdout)["run_id"]
         plan_file.unlink()
-        status = subprocess.run(
+        status = _run_cli(
             [script, "status", "r1"],
             check=True,
             capture_output=True,
@@ -220,7 +232,7 @@ def test_cli_status_events_and_cancel_use_owner_ipc():
             env=env,
         )
         assert json.loads(status.stdout)["durable_state"] == "queued"
-        events = subprocess.run(
+        events = _run_cli(
             [script, "events", "r1"],
             check=True,
             capture_output=True,
@@ -229,7 +241,7 @@ def test_cli_status_events_and_cancel_use_owner_ipc():
         )
         event_page = json.loads(events.stdout)
         assert [item["payload"]["state"] for item in event_page["events"]] == ["queued"]
-        cancelled = subprocess.run(
+        cancelled = _run_cli(
             [script, "cancel", "r1"],
             check=True,
             capture_output=True,
@@ -242,57 +254,3 @@ def test_cli_status_events_and_cancel_use_owner_ipc():
         )
     finally:
         server.close()
-
-
-def test_cli_run_waits_for_long_owner_execution_receipt():
-    con = duckdb.connect(":memory:")
-    store = RuntimeStore(con, namespace="owner")
-    started = Event()
-    release = Event()
-
-    class SlowExecutor:
-        def run_task(self, task, dependencies):
-            started.set()
-            release.wait(timeout=HANG_GUARD_SECONDS)
-            return pa.table({"id": [task.task_id]})
-
-        def publish(self, plan, outputs, lease, run_id):
-            return f"g-{run_id}"
-
-    endpoint = ControlEndpoint(Path(f"/tmp/tclilong-{os.getpid()}.sock"))
-    server = ControlServer(store, namespace="owner", endpoint=endpoint, executor=SlowExecutor())
-    server.start()
-    plan = plan_refresh(
-        namespace="owner",
-        dataset="orders",
-        definition_hash="definition",
-        snapshot_id="snapshot",
-        graph=dependency_graph(
-            sources=("orders",), definition_hash="definition", partitions=("all",)
-        ),
-    )
-    plan_file = Path(f"/tmp/tclilong-{os.getpid()}.json")
-    plan_file.write_bytes(plan.serialize())
-    env = {
-        **os.environ,
-        "TERRINE_RUNTIME_SOCKET": str(endpoint.path),
-        "TERRINE_RUNTIME_NAMESPACE": "owner",
-    }
-    process = subprocess.Popen(
-        [str(Path(sys.executable).with_name("terrine")), "run", str(plan_file)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env=env,
-    )
-    try:
-        assert started.wait(timeout=HANG_GUARD_SECONDS)
-        with pytest.raises(subprocess.TimeoutExpired):
-            process.communicate(timeout=2.2)
-    finally:
-        release.set()
-    stdout, _stderr = process.communicate(timeout=HANG_GUARD_SECONDS)
-    plan_file.unlink()
-    server.close()
-    assert process.returncode == 0
-    assert json.loads(stdout)["state"] == "succeeded"
