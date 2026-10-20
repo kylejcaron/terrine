@@ -181,8 +181,8 @@ without increment; unsupported semantic mappings are listed separately in the
 [provider]: ../../tests/execution/test_backend_provider.py
 [acceptance]: ../../integration/warehouse_execution/test_backend_capabilities.py
 [publication]: ../../integration/warehouse_execution/test_duckdb_runtime_recovery.py
-[handoffs]: ../../tests/test_common_stack_interop.py
-[exports]: ../../tests/dataset/test_export.py
+[handoffs]: ../../integration/warehouse_execution/test_ml_staging_duckdb.py
+[exports]: ../../integration/warehouse_execution/test_ml_staging_duckdb.py
 [gates]: ../../tests/runtime/test_backend_capabilities.py
 [increment]: ../../tests/compat/test_increment_semantics.py
 
