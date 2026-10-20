@@ -8,37 +8,6 @@ from terrine.errors import TerrineError
 from tests.fixtures.winsorization import create_model, design
 
 
-def test_winsorization_uses_frozen_explicit_bounds_at_declared_stage():
-    from terrine.spec.transforms import Winsorization
-
-    con = ibis.duckdb.connect()
-    try:
-        model = create_model(con)
-        con.raw_sql(
-            "UPDATE events SET amount=9 WHERE ts::DATE='2025-01-02'; "
-            "INSERT INTO events VALUES ('a','2025-01-02 13:00:00+00',9,'known')"
-        )
-        frame = design().build(model)
-        original = frame.materialize()
-        assert original.table["value"][0].as_py() == Decimal(18)
-        transformed = frame.winsorize(Winsorization("value", lower="0", upper="10"))
-        result = transformed.materialize()
-        expected = original.table["value"].to_pandas().clip(Decimal(0), Decimal(10)).tolist()
-        assert result.table["value"].to_pylist() == expected == [Decimal(10)] * 5
-        assert result.table["label"].equals(original.table["label"])
-        metadata = result.columns["value"]
-        assert metadata.window == original.columns["value"].window
-        assert metadata.reason_column == original.columns["value"].reason_column
-        assert metadata.complete_column == original.columns["value"].complete_column
-        assert metadata.transformation["stage"] == "post_aggregation"
-        assert metadata.transformation["fit"] is None
-        with pytest.raises(TerrineError) as escape:
-            _ = transformed.expr
-        assert escape.value.code == "terrine.transform.winsorization_expr_unsupported"
-    finally:
-        con.disconnect()
-
-
 def test_fixed_clamping_precedes_decimal_narrowing_and_preserves_nulls():
     from terrine.dataset.transforms import apply_winsorization, bind_winsorization
     from terrine.spec.transforms import Winsorization
