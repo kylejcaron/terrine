@@ -12,7 +12,9 @@ test-slow:
 lint:
 	uv run ruff check terrine tests
 	uv run vulture terrine
-	uv run pydoclint terrine
+	# Isolated: pydoclint's docstring-parser-fork and dagster's docstring-parser
+	# install the same module and would overwrite each other.
+	uv run --isolated --no-project --with pydoclint==0.11.1 pydoclint terrine
 	uv run tach check
 
 typecheck:

@@ -454,7 +454,7 @@ class _SnapshotContext(ExecutionContext):
     def __enter__(self) -> _SnapshotContext:
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback) -> None:
+    def __exit__(self, *_: object) -> None:
         self.close()
 
     def close(self) -> None:
