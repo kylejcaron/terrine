@@ -54,6 +54,8 @@
   bindings before cached relations are returned.
 - Share namespace, relation and function metadata across nested read operations;
   discard those facts after session changes and before a later operation.
+- Preserve live input-binding validation when retained snapshots reopen an
+  execution, including reads through already-resolved relations.
 - Save destination-bound plans and track authoritative run status, bounded event
   pages, request-key replay, cancellation requests, renewable fences and atomic
   generation publication through Python, CLI and owner-local IPC.

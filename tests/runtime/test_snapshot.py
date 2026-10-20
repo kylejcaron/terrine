@@ -171,6 +171,12 @@ def test_snapshot_receipt_reopens_same_inputs_after_fresh_owner_connection(tmp_p
         execution = SnapshotAuthority(owner).reopen(restored, con=reopened_con, namespace="runtime")
         relation = execution.resolve(model.catalog.sources["events"].relation)
         assert execution.execute(relation).to_pylist()[0]["value"] == 3
+        published = execution._published
+        assert published is not None
+        published.con.raw_sql("CREATE TEMP MACRO sum(x) AS first(x)")
+        with pytest.raises(TerrineError) as error:
+            execution.execute(relation)
+        assert error.value.code == "terrine.execution.invalid_input_binding"
         source_generations = execution.snapshot.source_generations
         execution.close()
         reopened_again = SnapshotAuthority(owner).reopen(

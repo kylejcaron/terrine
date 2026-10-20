@@ -441,7 +441,12 @@ class _SnapshotContext(ExecutionContext):
 
     def __init__(self, context: ExecutionContext, manager: Any, published: PublishedInputs) -> None:
         super().__init__(
-            context.con, context.snapshot, context._resolver, context._raw, context._revalidate
+            con=context.con,
+            snapshot=context.snapshot,
+            _resolver=context._resolver,
+            _raw=context._raw,
+            owner_con=context.owner_con,
+            _revalidate=context._revalidate,
         )
         self._manager = manager
         self._published = published
