@@ -131,6 +131,13 @@ def _model(
     return con, model
 
 
+def _collect(design, model):
+    frame = design.build(model)
+    compiled = frame._compiled
+    compiled.validate(execute=model.con.to_pyarrow)
+    return frame._normalize_output(model.con.to_pyarrow(compiled.table))
+
+
 def test_prevalent_events_are_excluded_and_cutoff_equality_is_censored():
     con, model = _model()
     try:
@@ -140,7 +147,7 @@ def test_prevalent_events_are_excluded_and_cutoff_equality_is_censored():
             shape=TimeToEvent("churn"),
             administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
         )
-        rows = design.build(model).materialize().table.to_pylist()
+        rows = _collect(design, model).to_pylist()
         assert sorted((row["unit"], row["event_time"], row["event"]) for row in rows) == [
             ("u1", datetime(2025, 1, 1, tzinfo=UTC), True),
             ("u2", None, False),
@@ -154,8 +161,8 @@ def test_unobserved_initial_history_is_explained_and_excluded():
     con, model = _model(outcome_start="2025-01-02")
     try:
         design = Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
-        result = design.build(model).materialize()
-        rows = {row["unit"]: row for row in result.table.to_pylist()}
+        result = _collect(design, model)
+        rows = {row["unit"]: row for row in result.to_pylist()}
         assert rows["u1"]["complete"] is False
         assert rows["u1"]["reason"] == "incomplete_initial_history"
     finally:
@@ -175,7 +182,7 @@ def test_non_delayed_entry_advance_without_prior_event_is_incomplete():
             EventAnchor("signup", which="first"),
             shape=TimeToEvent("churn", entry="enrolled"),
         )
-        rows = {row["unit"]: row for row in design.build(model).materialize().table.to_pylist()}
+        rows = {row["unit"]: row for row in _collect(design, model).to_pylist()}
         assert rows["u1"]["complete"] is False
         assert rows["u1"]["reason"] == "incomplete_initial_history"
     finally:
@@ -190,7 +197,7 @@ def test_event_before_declared_delayed_entry_is_prevalent():
             EventAnchor("signup", which="first"),
             shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
         )
-        rows = {row["unit"]: row for row in design.build(model).materialize().table.to_pylist()}
+        rows = {row["unit"]: row for row in _collect(design, model).to_pylist()}
         assert "u1" not in rows
         assert rows["u2"]["entry_time"] == datetime(2025, 1, 2, tzinfo=UTC)
         assert rows["u2"]["event"] is True
@@ -215,8 +222,8 @@ def test_administrative_cutoff_changes_followup_without_changing_readiness():
             shape=base.shape,
             administrative_cutoff=datetime(2025, 1, 5, tzinfo=UTC),
         )
-        early_rows = {r["unit"]: r for r in early.build(model).materialize().table.to_pylist()}
-        late_rows = {r["unit"]: r for r in late.build(model).materialize().table.to_pylist()}
+        early_rows = {r["unit"]: r for r in _collect(early, model).to_pylist()}
+        late_rows = {r["unit"]: r for r in _collect(late, model).to_pylist()}
         assert early_rows["u2"]["event"] is False
         assert late_rows["u2"]["event"] is True
         assert early_rows["u2"]["duration"] == datetime(2025, 1, 4, tzinfo=UTC)
@@ -234,8 +241,8 @@ def test_cutoff_before_anchor_is_not_emitted_as_complete_followup():
             shape=TimeToEvent("churn"),
             administrative_cutoff=datetime(2024, 12, 31, tzinfo=UTC),
         )
-        result = design.build(model).materialize()
-        assert all(row["complete"] is False for row in result.table.to_pylist())
+        result = _collect(design, model)
+        assert all(row["complete"] is False for row in result.to_pylist())
     finally:
         con.disconnect()
 
@@ -243,12 +250,10 @@ def test_cutoff_before_anchor_is_not_emitted_as_complete_followup():
 def test_nanosecond_events_support_coverage_outside_nanosecond_range():
     con, model = _model(outcome_start="1600-01-01", nanosecond_outcomes=True)
     try:
-        result = (
-            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
-            .build(model)
-            .materialize()
+        result = _collect(
+            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn")), model
         )
-        assert result.table.num_rows > 0
+        assert result.num_rows > 0
     finally:
         con.disconnect()
 
@@ -263,12 +268,10 @@ def test_nanosecond_event_after_python_microsecond_clamp_is_retained():
         con.raw_sql(
             "INSERT INTO outcomes VALUES ('u1', TIMESTAMP_NS '2262-04-11 23:47:16.854775500')"
         )
-        result = (
-            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
-            .build(model)
-            .materialize()
+        result = _collect(
+            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn")), model
         )
-        rows = {row["unit"]: row for row in result.table.to_pylist()}
+        rows = {row["unit"]: row for row in result.to_pylist()}
         assert rows["u1"]["event"] is True
     finally:
         con.disconnect()
@@ -281,16 +284,15 @@ def test_nanosecond_delayed_entry_keeps_entry_before_outcome_coverage():
     )
     try:
         con.raw_sql("DELETE FROM outcomes WHERE user_id = 'u1' AND ts < TIMESTAMP_NS '2025-01-02'")
-        result = (
+        result = _collect(
             Design(
                 "user",
                 EventAnchor("signup", which="first"),
                 shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
-            )
-            .build(model)
-            .materialize()
+            ),
+            model,
         )
-        rows = {row["unit"]: row for row in result.table.to_pylist()}
+        rows = {row["unit"]: row for row in result.to_pylist()}
         assert rows["u1"]["complete"] is True
     finally:
         con.disconnect()
@@ -303,16 +305,15 @@ def test_nanosecond_exit_before_outcome_coverage_is_not_ignored():
     )
     try:
         con.raw_sql("DELETE FROM outcomes WHERE user_id = 'u1' AND ts < TIMESTAMP_NS '2025-01-02'")
-        result = (
+        result = _collect(
             Design(
                 "user",
                 EventAnchor("signup", which="first"),
                 shape=TimeToEvent("churn", exit="closed"),
-            )
-            .build(model)
-            .materialize()
+            ),
+            model,
         )
-        rows = {row["unit"]: row for row in result.table.to_pylist()}
+        rows = {row["unit"]: row for row in result.to_pylist()}
         assert rows["u1"]["complete"] is False
         assert rows["u1"]["event"] is False
         assert rows["u1"]["censor_time"] == datetime(2025, 1, 2, tzinfo=UTC)
@@ -327,16 +328,15 @@ def test_nanosecond_wide_outcome_and_exit_coverages_do_not_narrow_out_of_range()
         exit_end="2502-01-01",
     )
     try:
-        result = (
+        result = _collect(
             Design(
                 "user",
                 EventAnchor("signup", which="first"),
                 shape=TimeToEvent("churn", exit="closed"),
-            )
-            .build(model)
-            .materialize()
+            ),
+            model,
         )
-        assert result.table.num_rows > 0
+        assert result.num_rows > 0
     finally:
         con.disconnect()
 
@@ -348,16 +348,15 @@ def test_wide_entry_coverage_start_is_intersected_before_narrowing():
         entry_end="2501-01-01",
     )
     try:
-        result = (
+        result = _collect(
             Design(
                 "user",
                 EventAnchor("signup", which="first"),
                 shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
-            )
-            .build(model)
-            .materialize()
+            ),
+            model,
         )
-        assert result.table.num_rows > 0
+        assert result.num_rows > 0
     finally:
         con.disconnect()
 
@@ -369,16 +368,15 @@ def test_wide_exit_coverage_start_is_intersected_before_narrowing():
         exit_end="2501-01-01",
     )
     try:
-        result = (
+        result = _collect(
             Design(
                 "user",
                 EventAnchor("signup", which="first"),
                 shape=TimeToEvent("churn", exit="closed"),
-            )
-            .build(model)
-            .materialize()
+            ),
+            model,
         )
-        assert result.table.num_rows > 0
+        assert result.num_rows > 0
     finally:
         con.disconnect()
 
@@ -390,16 +388,15 @@ def test_wide_exit_source_timestamp_is_not_cast_to_nanoseconds():
     )
     try:
         con.raw_sql("UPDATE exits SET ts = TIMESTAMPTZ '2500-01-01 00:00:00+00'")
-        result = (
+        result = _collect(
             Design(
                 "user",
                 EventAnchor("signup", which="first"),
                 shape=TimeToEvent("churn", exit="closed"),
-            )
-            .build(model)
-            .materialize()
+            ),
+            model,
         )
-        assert result.table.num_rows > 0
+        assert result.num_rows > 0
     finally:
         con.disconnect()
 
@@ -411,16 +408,15 @@ def test_wide_entry_source_timestamp_is_not_cast_to_nanoseconds():
     )
     try:
         con.raw_sql("UPDATE entries SET ts = TIMESTAMPTZ '2500-01-01 00:00:00+00'")
-        result = (
+        result = _collect(
             Design(
                 "user",
                 EventAnchor("signup", which="first"),
                 shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
-            )
-            .build(model)
-            .materialize()
+            ),
+            model,
         )
-        assert result.table.num_rows > 0
+        assert result.num_rows > 0
     finally:
         con.disconnect()
 
@@ -473,12 +469,10 @@ def test_wide_roster_observation_end_is_intersected_before_narrowing():
             readiness=model.readiness.sources,
             units={"user": UnitSource("roster", "user_id", observed_until="observed_until")},
         )
-        result = (
-            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
-            .build(model)
-            .materialize()
+        result = _collect(
+            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn")), model
         )
-        rows = result.table.to_pylist()
+        rows = result.to_pylist()
         assert rows
         assert all(row["event"] is False for row in rows)
         assert all(row["censor_time"] == datetime(2025, 1, 12, tzinfo=UTC) for row in rows)
@@ -504,16 +498,15 @@ def test_nanosecond_source_refuses_administrative_cutoff_beyond_ns_range():
 def test_nanosecond_event_source_accepts_utc_timestamptz_entry_source():
     con, model = _model(nanosecond_outcomes=True)
     try:
-        result = (
+        result = _collect(
             Design(
                 "user",
                 EventAnchor("signup", which="first"),
                 shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
-            )
-            .build(model)
-            .materialize()
+            ),
+            model,
         )
-        assert result.table.num_rows > 0
+        assert result.num_rows > 0
     finally:
         con.disconnect()
 
@@ -537,22 +530,18 @@ def test_nanosecond_events_survive_time_to_event_compilation_in_any_session_time
     con, model = _model(nanosecond_outcomes=True)
     try:
         con.raw_sql("SET TimeZone='America/Los_Angeles'")
-        result = (
-            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
-            .build(model)
-            .materialize()
+        result = _collect(
+            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn")), model
         )
     finally:
         con.disconnect()
 
     con, model = _model(naive_outcomes=True)
     try:
-        result = (
-            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
-            .build(model)
-            .materialize()
+        result = _collect(
+            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn")), model
         )
-        assert result.table.schema.field("duration").type.tz == "UTC"
+        assert result.schema.field("duration").type.tz == "UTC"
     finally:
         con.disconnect()
 
@@ -573,7 +562,7 @@ def test_failure_before_non_delayed_entry_is_not_discarded():
             EventAnchor("signup", which="first"),
             shape=TimeToEvent("churn", entry="enrolled", delayed_entry=False),
         )
-        rows = {row["unit"]: row for row in design.build(model).materialize().table.to_pylist()}
+        rows = {row["unit"]: row for row in _collect(design, model).to_pylist()}
         assert "u2" not in rows
     finally:
         con.disconnect()
