@@ -9,6 +9,7 @@ import ibis
 import pyarrow as pa
 
 from terrine.compile.columns import CompiledStudy, compile_columns
+from terrine.execution._metadata import metadata_operation
 from terrine.spec.design import Design
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import StatePanel
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 __all__ = ["compile_design", "compile_cohort_summary", "aggregate_life_table"]
 
 
+@metadata_operation()
 def compile_design(
     design: Design,
     model: Model,

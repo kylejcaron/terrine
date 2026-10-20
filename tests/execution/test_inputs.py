@@ -64,7 +64,27 @@ def test_execution_observes_schema_changes_between_operations():
         con.disconnect()
 
 
+def test_restoring_session_settings_invalidates_namespace_metadata():
+    from terrine.execution import _native
+    from terrine.execution._metadata import metadata_operation
+
+    origin = duckdb.connect()
+    runtime = origin.cursor()
+    try:
+        origin.execute("CREATE SCHEMA selected")
+        origin.execute("USE memory.selected")
+        with metadata_operation():
+            assert _native._current_namespace(runtime)[1] == "main"
+            _native.restore_semantic_settings(origin, runtime)
+            assert _native._current_namespace(runtime)[1] == "selected"
+    finally:
+        runtime.close()
+        origin.close()
+
+
 def test_published_execution_revalidates_cached_relation_after_function_change():
+    from terrine.execution._metadata import metadata_operation
+
     con = duckdb.connect()
     try:
         con.execute("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
@@ -74,12 +94,16 @@ def test_published_execution_revalidates_cached_relation_after_function_change()
         with publish_native_inputs(catalog, con=con) as published:
             binding = verify_immutable_inputs(catalog, published.con, relations=published.relations)
             with open_execution(catalog, published.con, input_binding=binding) as execution:
-                assert execution.resolve(relation).columns == ("ts", "user_id", "value")
-                assert execution.execute(execution.resolve(relation)).to_pylist()[0]["value"] == 3
+                with metadata_operation():
+                    assert execution.resolve(relation).columns == ("ts", "user_id", "value")
+                    assert (
+                        execution.execute(execution.resolve(relation)).to_pylist()[0]["value"] == 3
+                    )
                 published.con.con.execute("CREATE TEMP MACRO sum(x) AS first(x)")
-                with pytest.raises(TerrineError) as error:
-                    execution.resolve(relation)
-                assert error.value.code == "terrine.execution.invalid_input_binding"
+                with metadata_operation():
+                    with pytest.raises(TerrineError) as error:
+                        execution.resolve(relation)
+                    assert error.value.code == "terrine.execution.invalid_input_binding"
     finally:
         con.close()
 
@@ -223,6 +247,8 @@ def test_required_relations_treats_a_quoted_dotted_name_as_one_identifier():
 
 
 def test_required_relations_includes_empty_physical_leaf_behind_nested_views():
+    from terrine.execution._metadata import metadata_operation
+
     con = duckdb.connect()
     try:
         con.execute("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
@@ -230,9 +256,16 @@ def test_required_relations_includes_empty_physical_leaf_behind_nested_views():
         con.execute("CREATE VIEW v2 AS WITH used AS (SELECT * FROM v1) SELECT * FROM used")
         catalog = _catalog(table="v2")
 
-        relations = required_relations(catalog, ibis.duckdb.from_connection(con))
+        backend = ibis.duckdb.from_connection(con)
+        with metadata_operation():
+            relations = required_relations(catalog, backend)
+            assert [(r.kind, r.name.casefold()) for r in relations] == [("table", "events")]
 
-        assert [(r.kind, r.name.casefold()) for r in relations] == [("table", "events")]
+        con.execute("CREATE TABLE revised (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        con.execute("CREATE OR REPLACE VIEW v1 AS SELECT * FROM revised WHERE false")
+        with metadata_operation():
+            relations = required_relations(catalog, backend)
+            assert [(r.kind, r.name.casefold()) for r in relations] == [("table", "revised")]
     finally:
         con.close()
 

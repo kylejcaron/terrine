@@ -12,6 +12,7 @@ from typing import Any
 import ibis
 from sqlglot import exp
 
+from terrine.execution._metadata import invalidate_metadata, metadata_fact
 from terrine.semantic.models import Catalog, SqlQuery, TableRef
 from terrine.semantic.sql import (
     _CAPTURE_READERS,
@@ -97,6 +98,7 @@ def _ascii_key(value: str) -> str:
     )
 
 
+@metadata_fact
 def native_objects(raw: Any) -> tuple[NativeObject, ...]:
     """Read all native tables/views, including internal and temporary contenders."""
     table_sql = (
@@ -129,20 +131,28 @@ def native_objects(raw: Any) -> tuple[NativeObject, ...]:
     return tuple(objects)
 
 
+@metadata_fact
 def _current_namespace(raw: Any) -> tuple[str, str]:
     row = _rows(raw, "SELECT system.main.current_database(), system.main.current_schema()")[0]
     return str(row[0]), str(row[1])
 
 
-def function_fingerprint(raw: Any) -> str:
-    rows = _rows(
-        raw,
-        "SELECT function_name, internal, function_type, macro_definition "
-        "FROM system.main.duckdb_functions()",
+@metadata_fact
+def _function_rows(raw: Any) -> tuple[tuple[Any, ...], ...]:
+    return tuple(
+        _rows(
+            raw,
+            "SELECT function_name, internal, function_type, macro_definition "
+            "FROM system.main.duckdb_functions()",
+        )
     )
+
+
+@metadata_fact
+def function_fingerprint(raw: Any) -> str:
     payload = sorted(
         (str(name), bool(internal), str(kind), None if definition is None else str(definition))
-        for name, internal, kind, definition in rows
+        for name, internal, kind, definition in _function_rows(raw)
     )
     return hashlib.sha256(repr(payload).encode()).hexdigest()
 
@@ -456,6 +466,8 @@ def begin_owned_transaction(raw: Any) -> None:
         raw.execute("BEGIN TRANSACTION")
     except Exception as exc:
         raise _snapshot_error("could not establish isolated execution transaction") from exc
+    finally:
+        invalidate_metadata()
 
 
 def _quote_ident(value: str) -> str:
@@ -486,19 +498,17 @@ def restore_semantic_settings(origin: Any, runtime: Any) -> None:
             raise ValueError("settings differ after restoration")
     except Exception as exc:
         raise _snapshot_error("semantic session settings could not be reproduced") from exc
+    finally:
+        invalidate_metadata()
 
 
+@metadata_fact
 def check_native_functions(raw: Any, sql: str, dialect: str | None) -> None:
     """Validate native function ownership, recursively including trusted macros."""
     if dialect is not None:
         _admit_read_query_ast(sql, dialect, "duckdb")
-    rows = _rows(
-        raw,
-        "SELECT function_name, internal, function_type, macro_definition "
-        "FROM system.main.duckdb_functions()",
-    )
     metadata: dict[str, list[tuple[bool, str, str | None]]] = {}
-    for name, internal, kind, definition in rows:
+    for name, internal, kind, definition in _function_rows(raw):
         metadata.setdefault(str(name).casefold(), []).append(
             (
                 bool(internal),

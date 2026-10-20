@@ -20,6 +20,7 @@ import pyarrow as pa
 from terrine.data import Budget, ExecutionSnapshot
 from terrine.errors import RefusalSpec
 from terrine.execution import _native
+from terrine.execution._metadata import metadata_fact, metadata_operation
 from terrine.semantic.models import Catalog, RelationSpec, TableRef
 from terrine.semantic.sql import admit_read_query
 
@@ -287,6 +288,7 @@ def _required_native_relations(
         return tuple(issuer.facts)
 
 
+@metadata_operation()
 def verify_immutable_inputs(
     catalog: Catalog,
     con: Any,
@@ -408,6 +410,7 @@ def _bind_native_resolver(
     return resolve
 
 
+@metadata_fact
 def _revalidate_backing(issuer: _Issuer, con: Any) -> None:
     _check_published_namespace(issuer)
     objects = _native.native_objects(issuer.raw)
@@ -504,6 +507,7 @@ class ExecutionContext:
     def resolve(self, relation: RelationSpec) -> Any:
         return self._resolver(relation)
 
+    @metadata_operation()
     def _check_query(self, query: Any) -> None:
         if self._revalidate is not None:
             self._revalidate()

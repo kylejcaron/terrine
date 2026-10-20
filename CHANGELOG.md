@@ -52,6 +52,8 @@
 - Reuse read-only input schemas within each execution and native relation
   metadata within each admission/capture operation, while revalidating live
   bindings before cached relations are returned.
+- Share namespace, relation and function metadata across nested read operations;
+  discard those facts after session changes and before a later operation.
 - Save destination-bound plans and track authoritative run status, bounded event
   pages, request-key replay, cancellation requests, renewable fences and atomic
   generation publication through Python, CLI and owner-local IPC.

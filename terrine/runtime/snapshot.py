@@ -14,6 +14,7 @@ from typing import Any
 
 from terrine.data import Budget, UnitSource
 from terrine.errors import RefusalSpec
+from terrine.execution._metadata import metadata_operation
 from terrine.execution.inputs import (
     ExecutionContext,
     PublishedInputs,
@@ -368,6 +369,7 @@ class SnapshotAuthority:
         finally:
             published.close()
 
+    @metadata_operation()
     def reopen(self, snapshot: ReopenableSnapshot, *, con: Any, namespace: str) -> _SnapshotContext:
         if not isinstance(snapshot, ReopenableSnapshot):
             raise TypeError("snapshot must be ReopenableSnapshot")
