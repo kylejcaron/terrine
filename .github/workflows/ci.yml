@@ -87,7 +87,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: uv sync --locked --group dev --extra duckdb --extra increment
-      - run: make check TESTS="tests/compat tests/parity"
+      - run: uv run pytest tests/compat tests/parity
       - run: uv run pytest tests/compat tests/parity -m slow
 
   library-handoffs:
