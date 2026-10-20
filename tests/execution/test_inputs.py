@@ -49,6 +49,41 @@ def test_published_execution_uses_private_session_and_sealed_root():
         con.close()
 
 
+def test_execution_observes_schema_changes_between_operations():
+    con = ibis.duckdb.connect()
+    try:
+        con.con.execute("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        catalog = _catalog()
+        relation = catalog.sources["events"].relation
+        with open_execution(catalog, con) as execution:
+            assert execution.resolve(relation).columns == ("ts", "user_id", "value")
+        con.con.execute("ALTER TABLE events ADD COLUMN revised BIGINT")
+        with open_execution(catalog, con) as execution:
+            assert execution.resolve(relation).columns == ("ts", "user_id", "value", "revised")
+    finally:
+        con.disconnect()
+
+
+def test_published_execution_revalidates_cached_relation_after_function_change():
+    con = duckdb.connect()
+    try:
+        con.execute("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        con.execute("INSERT INTO events VALUES ('2025-01-01', 1, 3)")
+        catalog = _catalog()
+        relation = catalog.sources["events"].relation
+        with publish_native_inputs(catalog, con=con) as published:
+            binding = verify_immutable_inputs(catalog, published.con, relations=published.relations)
+            with open_execution(catalog, published.con, input_binding=binding) as execution:
+                assert execution.resolve(relation).columns == ("ts", "user_id", "value")
+                assert execution.execute(execution.resolve(relation)).to_pylist()[0]["value"] == 3
+                published.con.con.execute("CREATE TEMP MACRO sum(x) AS first(x)")
+                with pytest.raises(TerrineError) as error:
+                    execution.resolve(relation)
+                assert error.value.code == "terrine.execution.invalid_input_binding"
+    finally:
+        con.close()
+
+
 def test_opaque_publication_refuses_side_effecting_functions_before_invocation():
     con = duckdb.connect()
     try:

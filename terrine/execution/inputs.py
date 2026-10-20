@@ -422,7 +422,8 @@ def _revalidate_backing(issuer: _Issuer, con: Any) -> None:
             raise _INVALID.error(reason="published backing identity or generation changed")
     runtime = _native.raw_connection(con)
     if (
-        issuer.namespace is not None
+        runtime is not issuer.raw
+        and issuer.namespace is not None
         and _native._current_namespace(runtime)[0] != issuer.namespace[0]
     ):
         raise _INVALID.error(reason="execution database differs from the issued backing")
@@ -501,8 +502,6 @@ class ExecutionContext:
     _revalidate: Callable[[], None] | None = None
 
     def resolve(self, relation: RelationSpec) -> Any:
-        if self._revalidate is not None:
-            self._revalidate()
         return self._resolver(relation)
 
     def _check_query(self, query: Any) -> None:
@@ -558,6 +557,8 @@ def _open_native_execution(
                 _native.restore_semantic_settings(issuer.raw, raw)
                 _native.begin_owned_transaction(raw)
 
+            admitted: dict[str, Any] = {}
+
             def validate() -> None:
                 _validate_leased_binding(input_binding, catalog, con, private, units)
 
@@ -570,10 +571,14 @@ def _open_native_execution(
                 storage_name = issuer.root_names.get(key)
                 if storage_name is None:
                     raise _INVALID.error(reason="root has no issued stored-result substitution")
-                return private.table(
-                    storage_name,
-                    database=issuer.namespace,
-                )
+                if storage_name not in admitted:
+                    # Fully qualified backing tables are read-only; keep schemas only
+                    # for this execution, after validating the live binding above.
+                    admitted[storage_name] = private.table(
+                        storage_name,
+                        database=issuer.namespace,
+                    )
+                return admitted[storage_name]
 
             resolver = resolve_published
             validate()

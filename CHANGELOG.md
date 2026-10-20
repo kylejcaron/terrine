@@ -49,6 +49,9 @@
 - Execute in owned private transaction sessions or retained immutable inputs;
   keep caller connections open and preserve exact UTC output instants under
   non-UTC SQL sessions.
+- Reuse read-only input schemas within each execution and native relation
+  metadata within each admission/capture operation, while revalidating live
+  bindings before cached relations are returned.
 - Save destination-bound plans and track authoritative run status, bounded event
   pages, request-key replay, cancellation requests, renewable fences and atomic
   generation publication through Python, CLI and owner-local IPC.
