@@ -88,7 +88,8 @@ def _state(
             events, measure, {"_timestamp": events._timestamp}, "user_id", source=source
         )
     )
-    return measure, sparse_prefix(grouped, measure, resolution=resolution)
+    prefix = sparse_prefix(grouped, measure, resolution=resolution)
+    return measure, con.create_table(f"{name}_prefix", prefix, overwrite=True)
 
 
 def _anchors(con, *, time="2025-01-02 00:00:00+00", units=("a",), extra=""):

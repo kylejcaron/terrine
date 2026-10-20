@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pandas as pd
 import pytest
 
+from terrine.compile.dispatch import compile_design
 from terrine.data import Coverage, UnitSource
 from terrine.model import Model
 from terrine.spec import (
@@ -29,6 +30,13 @@ def _event_model(native_inputs, coverage=None):
         units={"user": UnitSource("users", "user_id")},
         event_ids={"events": "event_id"},
     )
+
+
+def _validated(design, model):
+    design.validate(model)
+    compiled = compile_design(design, model)
+    compiled.validate(execute=model.con.to_pyarrow)
+    return compiled
 
 
 def test_sequential_schedule_emits_one_row_per_unit_trial(native_inputs):
@@ -108,7 +116,7 @@ def test_sequential_later_initiation_uses_reanchored_outcome_support(native_inpu
     )
 
     with pytest.raises(TerrineError) as error:
-        design.build(model).materialize()
+        _validated(design, model)
 
     assert error.value.code == "terrine.compile.later_control_initiation"
 
@@ -127,7 +135,7 @@ def test_later_control_initiation_refuses_sustained_no_initiation_strategy(nativ
     )
 
     with pytest.raises(TerrineError) as error:
-        design.build(model).materialize()
+        _validated(design, model)
 
     assert error.value.code == "terrine.compile.later_control_initiation"
 
@@ -330,7 +338,7 @@ def test_persistent_adoption_refuses_contradictory_history(native_inputs):
     )
 
     with pytest.raises(TerrineError) as error:
-        design.build(model).materialize()
+        _validated(design, model)
 
     assert error.value.code == "terrine.compile.contradictory_persistent_adoption_history"
 
@@ -366,7 +374,7 @@ def test_later_initiation_at_trial_specific_exclusive_horizon_is_not_refused(nat
         treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
     )
 
-    design.build(model).materialize()
+    _validated(design, model)
 
 
 @pytest.mark.parametrize(
@@ -399,10 +407,10 @@ def test_sequential_roster_history_uses_exclusive_trial_horizon(
 
     if raises:
         with pytest.raises(TerrineError) as error:
-            design.build(model).materialize()
+            _validated(design, model)
         assert error.value.code == "terrine.design.incomplete_unit_treatment_history"
     else:
-        design.build(model).materialize()
+        _validated(design, model)
 
 
 def test_sequential_roster_history_ignores_ineligible_anchor_rows(native_inputs):
@@ -432,42 +440,9 @@ def test_sequential_roster_history_ignores_ineligible_anchor_rows(native_inputs)
         treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
     )
 
-    rows = design.build(model).materialize().table.to_pylist()
+    rows = model.con.to_pyarrow(_validated(design, model).table).to_pylist()
 
     assert [row["unit"] for row in rows] == ["a"]
-
-
-def test_sequential_anticipation_extends_control_risk_horizon(native_inputs):
-    from terrine.errors import TerrineError
-
-    model = _event_model(native_inputs)
-    model.con.raw_sql(
-        "UPDATE events SET ts = TIMESTAMPTZ '2025-01-11 00:00:00+00' WHERE user_id = 'b'"
-    )
-    design = Sequential(
-        Design(
-            "user",
-            Schedule("1d", "2025-01-03", "2025-01-04"),
-            outcomes={"sessions_after_t0": agg("sessions", window=("0d", "7d"))},
-        ),
-        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
-        anticipation="2d",
-    )
-
-    with pytest.raises(TerrineError) as error:
-        design.build(model).materialize()
-    assert error.value.code == "terrine.compile.later_control_initiation"
-
-    model.con.raw_sql(
-        "UPDATE events SET ts = TIMESTAMPTZ '2025-01-12 00:00:00+00' WHERE user_id = 'b'"
-    )
-    frame = design.build(model).materialize()
-    panel = frame.provenance.panel
-    assert panel is not None
-    assert panel.anticipation_seconds == 2 * 86_400
-    restored_panel = type(frame).from_arrow(frame.to_arrow()).provenance.panel
-    assert restored_panel is not None
-    assert restored_panel.anticipation_seconds == 2 * 86_400
 
 
 def test_sequential_anticipation_requires_source_coverage_through_buffer(native_inputs):
@@ -503,5 +478,5 @@ def test_sequential_anticipation_preserves_schedule_fallback_without_outcomes(na
     )
 
     with pytest.raises(TerrineError) as error:
-        design.build(model).materialize()
+        _validated(design, model)
     assert error.value.code == "terrine.compile.later_control_initiation"

@@ -243,13 +243,32 @@ def test_event_grouping_uses_same_filters_and_exact_original_counts(connection):
     [
         [10.0, -3.0, 0.25, 0.125],
         [1e16, 1.0, -1e16],
-        [math.nextafter(1.0, 2.0), 1.0, -0.5],
         [math.ulp(0.0), math.ulp(0.0), -math.ulp(0.0)],
     ],
 )
 def test_float_prefix_certificates_enclose_exact_stored_leaves(connection, values):
+    _assert_float_prefix_certificates(connection, values, orders=[values])
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "values",
+    [
+        [10.0, -3.0, 0.25, 0.125],
+        [1e16, 1.0, -1e16],
+        [math.nextafter(1.0, 2.0), 1.0, -0.5],
+        [math.ulp(0.0), math.ulp(0.0), -math.ulp(0.0)],
+    ],
+)
+def test_float_prefix_certificates_enclose_reordered_and_partitioned_leaves(connection, values):
+    _assert_float_prefix_certificates(
+        connection, values, orders=list(dict.fromkeys(permutations(values)))[:3]
+    )
+
+
+def _assert_float_prefix_certificates(connection, values, *, orders):
     # Reordering and splitting groups must retain leaf counts and absolute leaves.
-    for order in list(dict.fromkeys(permutations(values)))[:3]:
+    for order in orders:
         for days in ([1] * len(order), list(range(1, len(order) + 1))):
             times = [datetime(2025, 3, day, tzinfo=UTC) for day in days]
             daily, measure = _daily(connection, list(order), times=times)

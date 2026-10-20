@@ -7,12 +7,17 @@ import subprocess
 import sys
 from dataclasses import replace
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import ibis
 import pytest
 
+from terrine.compile.anchors import compile_anchors
+from terrine.compile.columns import compile_columns
 from terrine.compile.layers import plan_layers
+from terrine.compile.materialize import compose_materialized_frame
 from terrine.data import Budget, Coverage
+from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
@@ -22,6 +27,8 @@ from terrine.semantic.models import Catalog
 from terrine.spec import Design, FixedDate, agg
 from tests._timing import HANG_GUARD_SECONDS
 from tests.compile.test_columns import column_model  # noqa: F401
+from tests.compile.test_columns import column_model as column_model
+from tests.compile.test_persisted_layers import _persisted_prefixes
 
 
 def _catalog() -> Catalog:
@@ -452,3 +459,206 @@ def test_saved_panel_publication_preserves_ordinary_provenance(column_model, tmp
         assert published.provenance.expression_timings == expected.provenance.expression_timings
     finally:
         con.disconnect()
+
+
+def test_persisted_daily_prefix_anchor_reuse_matches_ordinary_frame_compiler(column_model):
+    design = Design(
+        "user",
+        FixedDate("2025-01-03T00:00:00+00:00"),
+        features={"total": agg("total", window=("-1d", "0s"))},
+    )
+    ordinary = compile_columns(design, column_model)
+    persisted = _persisted_prefixes(design, column_model)
+    anchor_key = next(
+        key for key in plan_layers(design, column_model).keys if key.layer == "anchor"
+    )
+    anchor_table = compile_anchors(design, column_model).table
+    anchor_arrow = column_model.con.to_pyarrow(anchor_table)
+    persisted_anchor = ibis.memtable(anchor_arrow)
+    persisted[replace(anchor_key, snapshot_id="same-snapshot")] = persisted_anchor
+    reused = compose_materialized_frame(design, column_model, persisted=persisted)
+    assert reused._anchors.table is persisted_anchor
+    ordinary.validate(execute=column_model.con.to_pyarrow)
+    reused.validate(execute=column_model.con.to_pyarrow)
+    assert column_model.con.to_pyarrow(ordinary.audit_table.order_by("unit")).equals(
+        column_model.con.to_pyarrow(reused.audit_table.order_by("unit"))
+    )
+    assert ordinary.columns == reused.columns
+
+
+def test_runtime_and_frame_share_unknown_eligibility_refusal(column_model):
+    from terrine.runtime.materialize import compose_runtime_frame
+    from terrine.spec import all_of, asof, eq, gt
+
+    design = Design(
+        "user",
+        FixedDate("2025-01-03T00:00:00+00:00"),
+        eligibility={
+            "eligible": all_of(
+                eq(asof("tier", before="0s"), "not-present"),
+                gt(asof("tier", before="-2d"), "a"),
+            )
+        },
+    )
+    frame = design.build(column_model)
+    refusals = []
+    for operation in (
+        lambda: frame.materialize(),
+        lambda: compose_runtime_frame(design, column_model, persisted={}),
+    ):
+        with pytest.raises(TerrineError) as error:
+            operation()
+        refusals.append((error.value.code, error.value.context))
+    assert refusals[0] == refusals[1]
+    assert refusals[0][0] == "terrine.study.eligibility_unknown"
+
+
+@pytest.mark.parametrize("shape", ["sequential", "event_panel"])
+def test_persisted_shape_matrix_preserves_panel_rows_and_metadata(column_model, shape):
+    from datetime import UTC, datetime
+
+    from terrine.compile.dispatch import compile_design
+    from terrine.data import Coverage
+    from terrine.spec import EventAnchor, EventPanel, Initiation, Schedule, Sequential
+
+    column_model = Model.from_catalog(
+        column_model.catalog,
+        con=column_model.con,
+        units=column_model.units,
+        readiness={"events": Coverage("2025-01-01", "2025-01-05")},
+    )
+    if shape == "sequential":
+        design = Sequential(
+            Design(
+                "user",
+                Schedule("12h", "2025-01-03", "2025-01-05"),
+                features={"total": agg("total", window=("-1d", "0s"))},
+            ),
+            treatment=Initiation("events", "amount", datetime(2025, 1, 1, tzinfo=UTC)),
+        )
+    else:
+        design = EventPanel(
+            Design(
+                "user",
+                EventAnchor("amount", "first"),
+                features={"total": agg("total", window=("-1h", "0s"))},
+            ),
+            periods=(-1, 0, 1),
+            period_seconds=3600,
+        )
+    ordinary = compile_design(design, column_model)
+    persisted = _persisted_prefixes(design, column_model)
+    anchor_key = next(
+        key for key in plan_layers(design, column_model).keys if key.layer == "anchor"
+    )
+    parent = ibis.memtable(column_model.con.to_pyarrow(compile_anchors(design, column_model).table))
+    persisted[replace(anchor_key, snapshot_id="same-snapshot")] = parent
+    reused = compose_materialized_frame(design, column_model, persisted=persisted)
+    ordinary.validate(execute=column_model.con.to_pyarrow)
+    reused.validate(execute=column_model.con.to_pyarrow)
+    assert column_model.con.to_pyarrow(ordinary.audit_table.order_by("unit", "t0")).equals(
+        column_model.con.to_pyarrow(reused.audit_table.order_by("unit", "t0"))
+    )
+    assert reused.roles == ordinary.roles
+    assert reused.columns == ordinary.columns
+    assert reused.expression_timings == ordinary.expression_timings
+    assert reused.sequence_meta == ordinary.sequence_meta
+    assert reused.range_plans == ordinary.range_plans
+
+
+@pytest.mark.parametrize("state_kind", ["binned", "observed"])
+@pytest.mark.parametrize(
+    ("every", "totals", "fresh_totals"),
+    [
+        ("1d", [5, 10], [105, 210]),
+        ("12h", [5, 8, 10, 7], [105, 208, 210, 107]),
+    ],
+)
+def test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors(
+    column_model, state_kind, every, totals, fresh_totals
+):
+    from terrine.compile.dispatch import compile_design
+    from terrine.compile.layers import build_layer
+    from terrine.data import Coverage
+    from terrine.spec import BinnedMetricState, Schedule, StateObservations, StatePanel
+
+    con = column_model.con
+    con.raw_sql(
+        "INSERT INTO events VALUES "
+        "('a', '2025-01-01 12:00:00+00', 5, 'old'), "
+        "('a', '2025-01-03 12:00:00+00', 6, 'new')"
+    )
+    definition = column_model.catalog.model_dump(mode="python")
+    readiness = {"events": Coverage("2025-01-01", "2025-01-05")}
+    state: BinnedMetricState | StateObservations = BinnedMetricState(
+        "total", cutpoints=(20,), levels=("low", "high")
+    )
+    if state_kind == "observed":
+        con.raw_sql(
+            "CREATE TABLE statuses AS SELECT user_id, ts::TIMESTAMPTZ AS ts, state "
+            "FROM (VALUES "
+            "('a', '2025-01-02 00:00:00+00', 'active'), "
+            "('a', '2025-01-03 00:00:00+00', 'active'), "
+            "('a', '2025-01-04 00:00:00+00', 'closed')) AS points(user_id, ts, state)"
+        )
+        definition["sources"]["statuses"] = {
+            "relation": {"kind": "table", "name": "statuses"},
+            "timestamp": "ts",
+            "entities": {"user": "user_id"},
+            "facts": [],
+            "properties": ["state"],
+            "dimensions": [],
+        }
+        definition["properties"]["state"] = {
+            "source": "statuses",
+            "column": "state",
+            "dtype": "string",
+            "as_of": "event_time",
+        }
+        readiness["statuses"] = Coverage("2025-01-01", "2025-01-05")
+        state = StateObservations("state", ("active", "closed"), absorbing=("closed",))
+    model = Model.from_catalog(
+        Catalog.model_validate(definition),
+        con=con,
+        units=column_model.units,
+        readiness=readiness,
+    )
+    design = Design(
+        "user",
+        Schedule(every, "2025-01-02", "2025-01-04"),
+        features={"total": agg("total", window=("-1d", "0s"))},
+        shape=StatePanel(
+            state,
+            max_periods=len(totals),
+            baseline_features={"baseline_total": agg("total", window=("-1d", "0s"))},
+        ),
+    )
+    ordinary = compile_design(design, model)
+    expected = con.to_pyarrow(ordinary.table.filter(ordinary.table.unit == "a").order_by("t0"))
+    assert expected["total"].to_pylist() == [Decimal(value) for value in totals]
+    assert expected["baseline_total"].to_pylist() == [Decimal(5)] * len(totals)
+    persisted = {
+        replace(key, snapshot_id="frozen"): con.create_table(
+            f"frozen_state_layer_{index}", obj=build_layer(design, model, key)
+        )
+        for index, key in enumerate(plan_layers(design, model).keys)
+    }
+    anchor_key = next(key for key in persisted if key.layer == "anchor")
+    anchors = persisted[anchor_key]
+    persisted[anchor_key] = anchors.filter(anchors.unit == "a")
+    con.raw_sql("UPDATE events SET amount=amount+100")
+
+    cached = compose_materialized_frame(design, model, persisted=persisted)
+    actual = con.to_pyarrow(cached.table.order_by("t0"))
+    assert actual.equals(expected)
+    assert {key.resolution for key in persisted if key.layer == "prefix"} == (
+        {"day"} if every == "1d" else {"day", "event"}
+    )
+    assert cached._anchors.table is persisted[anchor_key]
+    assert cached.roles == ordinary.roles
+    assert cached.columns == ordinary.columns
+    assert cached.expression_timings == ordinary.expression_timings
+    fresh = compile_design(design, model)
+    assert con.to_pyarrow(fresh.table.filter(fresh.table.unit == "a").order_by("t0"))[
+        "total"
+    ].to_pylist() == [Decimal(value) for value in fresh_totals]
