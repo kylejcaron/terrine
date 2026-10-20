@@ -20,7 +20,7 @@ import pyarrow as pa
 from terrine.data import Budget, ExecutionSnapshot
 from terrine.errors import RefusalSpec
 from terrine.execution import _native
-from terrine.execution._metadata import metadata_fact, metadata_operation
+from terrine.execution._metadata import invalidate_metadata, metadata_fact, metadata_operation
 from terrine.semantic.models import Catalog, RelationSpec, TableRef
 from terrine.semantic.sql import admit_read_query
 
@@ -508,7 +508,7 @@ class ExecutionContext:
         return self._resolver(relation)
 
     @metadata_operation()
-    def _check_query(self, query: Any) -> None:
+    def _check_query(self, query: Any) -> str:
         if self._revalidate is not None:
             self._revalidate()
         if self._raw is None:
@@ -520,10 +520,36 @@ class ExecutionContext:
                 reason="compiled query could not be inspected"
             ) from exc
         _native.check_native_functions(self._raw, sql, None)
+        return sql
 
     def execute(self, query: Any) -> pa.Table:
-        self._check_query(query)
-        return self.con.to_pyarrow(query)
+        from ibis.backends.duckdb.converter import DuckDBPyArrowData
+
+        sql = self._check_query(query)
+        try:
+            self.con._run_pre_execute_hooks(query)
+            if query.as_table().schema().geospatial:
+                self.con._load_extensions(["spatial"])
+        finally:
+            invalidate_metadata()
+        table = self._raw.sql(sql).to_arrow_table()
+        return query.__pyarrow_result__(table, data_mapper=DuckDBPyArrowData)
+
+    def to_arrow_batches(self, query: Any, *, chunk_size: int = 65_536) -> pa.RecordBatchReader:
+        """Stream the same SQL whose native function ownership was admitted."""
+        import pyarrow_hotfix  # noqa: F401
+
+        sql = self._check_query(query)
+        try:
+            self.con._run_pre_execute_hooks(query)
+        finally:
+            invalidate_metadata()
+        result = self.con.raw_sql(sql)
+
+        def batches():
+            yield from result.fetch_record_batch(rows_per_batch=chunk_size)
+
+        return pa.RecordBatchReader.from_batches(query.as_table().schema().to_pyarrow(), batches())
 
     def close(self) -> None:
         if self._raw is None:

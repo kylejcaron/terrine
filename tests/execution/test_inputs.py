@@ -64,6 +64,36 @@ def test_execution_observes_schema_changes_between_operations():
         con.disconnect()
 
 
+def test_execution_and_batches_preserve_decimal_nanosecond_and_null_values():
+    from decimal import Decimal
+
+    import pyarrow as pa
+
+    con = ibis.duckdb.connect()
+    try:
+        con.raw_sql("CREATE TABLE events (ts TIMESTAMP_NS, user_id INTEGER, value DECIMAL(20,2))")
+        con.raw_sql(
+            "INSERT INTO events VALUES "
+            "('1970-01-01 00:00:00.000000001', 1, 123456789012345.67), "
+            "('1970-01-01 00:00:00.000000002', 2, NULL)"
+        )
+        catalog = _catalog()
+        expected = pa.table(
+            {
+                "ts": pa.array([1, 2], type=pa.timestamp("ns")),
+                "user_id": pa.array([1, 2], type=pa.int32()),
+                "value": pa.array([Decimal("123456789012345.67"), None], type=pa.decimal128(20, 2)),
+            }
+        )
+        with open_execution(catalog, con) as execution:
+            query = execution.resolve(catalog.sources["events"].relation).order_by("user_id")
+            assert execution.execute(query).equals(expected)
+            with execution.to_arrow_batches(query, chunk_size=1) as reader:
+                assert pa.Table.from_batches(reader).equals(expected)
+    finally:
+        con.disconnect()
+
+
 def test_restoring_session_settings_invalidates_namespace_metadata():
     from terrine.execution import _native
     from terrine.execution._metadata import metadata_operation
@@ -472,7 +502,8 @@ def test_open_execution_preserves_origin_timezone_after_ibis_wrap():
         con.disconnect()
 
 
-def test_execution_refuses_persistent_aggregate_macro_shadow_before_query():
+@pytest.mark.parametrize("stream", [False, True])
+def test_execution_refuses_persistent_aggregate_macro_shadow_before_query(stream):
     con = duckdb.connect()
     try:
         con.execute("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
@@ -481,7 +512,10 @@ def test_execution_refuses_persistent_aggregate_macro_shadow_before_query():
         with open_execution(_catalog(), ibis.duckdb.from_connection(con)) as execution:
             query = execution.con.sql("SELECT SUM(value) AS total FROM events")
             with pytest.raises(TerrineError) as error:
-                execution.execute(query)
+                if stream:
+                    execution.to_arrow_batches(query)
+                else:
+                    execution.execute(query)
             assert error.value.code == "terrine.execution.snapshot_unavailable"
     finally:
         con.close()

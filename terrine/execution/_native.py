@@ -6,7 +6,9 @@ import hashlib
 import json
 import threading
 import weakref
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 import ibis
@@ -436,8 +438,6 @@ def admission_fingerprint(catalog: Catalog, relation: Any, raw: Any) -> str:
     if isinstance(relation, TableRef):
         root = _match(relation, objects)
         _closure(root, objects, raw, seen, set())
-        query = f'SELECT * FROM "{relation.name.replace(chr(34), chr(34) * 2)}"'
-        check_native_functions(raw, query, "duckdb")
     else:
         _admit_read_query_ast(relation.sql, catalog.dialect, "duckdb")
         check_native_functions(raw, relation.sql, catalog.dialect)
@@ -503,10 +503,7 @@ def restore_semantic_settings(origin: Any, runtime: Any) -> None:
 
 
 @metadata_fact
-def check_native_functions(raw: Any, sql: str, dialect: str | None) -> None:
-    """Validate native function ownership, recursively including trusted macros."""
-    if dialect is not None:
-        _admit_read_query_ast(sql, dialect, "duckdb")
+def _function_catalog(raw: Any) -> Mapping[str, tuple[tuple[bool, str, str | None], ...]]:
     metadata: dict[str, list[tuple[bool, str, str | None]]] = {}
     for name, internal, kind, definition in _function_rows(raw):
         metadata.setdefault(str(name).casefold(), []).append(
@@ -516,6 +513,15 @@ def check_native_functions(raw: Any, sql: str, dialect: str | None) -> None:
                 str(definition) if definition is not None else None,
             )
         )
+    return MappingProxyType({name: tuple(entries) for name, entries in metadata.items()})
+
+
+@metadata_fact
+def check_native_functions(raw: Any, sql: str, dialect: str | None) -> None:
+    """Validate native function ownership, recursively including trusted macros."""
+    if dialect is not None:
+        _admit_read_query_ast(sql, dialect, "duckdb")
+    metadata = _function_catalog(raw)
 
     def names_in(statement: str) -> set[str]:
         try:
