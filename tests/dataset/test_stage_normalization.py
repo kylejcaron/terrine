@@ -7,8 +7,8 @@ from terrine.spec import BinnedMetricState, Design, Schedule, StatePanel, agg
 from tests.dataset.test_staging import _durable_frame
 
 
-def test_state_panel_stage_matches_ordinary_normalization_and_support(native_inputs, tmp_path):
-    base, con = _durable_frame(native_inputs, tmp_path)
+def test_state_panel_stage_matches_ordinary_normalization_and_support(events_world, tmp_path):
+    base, con = _durable_frame(events_world, tmp_path)
     frame = (
         Design(
             "user",
@@ -40,7 +40,7 @@ def test_state_panel_stage_matches_ordinary_normalization_and_support(native_inp
 
 
 def test_stage_never_collects_full_output_through_snapshot_execute(
-    native_inputs, tmp_path, monkeypatch
+    events_world, tmp_path, monkeypatch
 ):
     from terrine.execution.inputs import ExecutionContext
 
@@ -52,7 +52,7 @@ def test_stage_never_collects_full_output_through_snapshot_execute(
         return original(context, relation)
 
     monkeypatch.setattr(ExecutionContext, "execute", execute)
-    frame, con = _durable_frame(native_inputs, tmp_path)
+    frame, con = _durable_frame(events_world, tmp_path)
     staged = frame.stage("bounded", budget=Budget(strict_scan=False))
     iterator = staged.to_arrow_batches(batch_size=1)
     assert next(iterator).num_rows == 1

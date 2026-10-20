@@ -15,8 +15,8 @@ from tests._timing import HANG_GUARD_SECONDS
 from tests.dataset.test_staging import _durable_frame
 
 
-def test_saved_stage_replays_exact_generation_and_refuses_changed_view(native_inputs, tmp_path):
-    frame, con = _durable_frame(native_inputs, tmp_path)
+def test_saved_stage_replays_exact_generation_and_refuses_changed_view(events_world, tmp_path):
+    frame, con = _durable_frame(events_world, tmp_path)
     training = frame.training_set(label="churn", incomplete_labels="keep")
     dataset = training.stage("training", budget=Budget(strict_scan=False))
     saved, request_key = con.con.execute(
@@ -53,10 +53,8 @@ def test_saved_stage_replays_exact_generation_and_refuses_changed_view(native_in
     con.disconnect()
 
 
-def test_staged_batches_preserve_frame_metadata_and_verify_recipe_ownership(
-    native_inputs, tmp_path
-):
-    frame, con = _durable_frame(native_inputs, tmp_path)
+def test_staged_batches_preserve_frame_metadata_and_verify_recipe_ownership(events_world, tmp_path):
+    frame, con = _durable_frame(events_world, tmp_path)
     training = frame.training_set(label="churn", incomplete_labels="keep")
     expected = training.materialize(Budget(strict_scan=False))
     dataset = training.stage("training", budget=Budget(strict_scan=False))
@@ -79,7 +77,7 @@ def frame_recipe(frame):
     return DatasetRecipe(schema_version=1, base_design=frame._design)
 
 
-def test_stage_renews_lease_during_snapshot_tasks(native_inputs, tmp_path, monkeypatch):
+def test_stage_renews_lease_during_snapshot_tasks(events_world, tmp_path, monkeypatch):
     import threading
 
     from terrine.runtime.api import DesignExecutor
@@ -100,7 +98,7 @@ def test_stage_renews_lease_during_snapshot_tasks(native_inputs, tmp_path, monke
 
     monkeypatch.setattr(LeaseStore, "renew", renew)
     monkeypatch.setattr(DesignExecutor, "run_snapshot_task", run_task)
-    frame, con = _durable_frame(native_inputs, tmp_path)
+    frame, con = _durable_frame(events_world, tmp_path)
     dataset = frame.stage("long_stage", budget=Budget(strict_scan=False))
     assert renewed.is_set()
     assert dataset.manifest.generation.row_count > 0
@@ -111,7 +109,7 @@ def test_stage_renews_lease_during_snapshot_tasks(native_inputs, tmp_path, monke
     ("role", "window"), [("features", ("-1d", "0d")), ("outcomes", ("0d", "1d"))]
 )
 def test_approximate_quantile_stage_refuses_before_capture(
-    native_inputs, tmp_path, monkeypatch, role, window
+    events_world, tmp_path, monkeypatch, role, window
 ):
     from decimal import Decimal
     from importlib.metadata import version
@@ -123,7 +121,7 @@ def test_approximate_quantile_stage_refuses_before_capture(
     from terrine.spec import Design, FixedDate, SketchRequest, approx_quantile
 
     pytest.importorskip("datasketches")
-    frame, con = _durable_frame(native_inputs, tmp_path)
+    frame, con = _durable_frame(events_world, tmp_path)
     try:
         con.raw_sql("ALTER TABLE events ADD COLUMN value INTEGER DEFAULT 1")
         definition = frame._model.catalog.model_dump(mode="python")

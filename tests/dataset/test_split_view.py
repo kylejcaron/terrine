@@ -8,8 +8,8 @@ from terrine.spec import Design, EventAnchor, agg
 from tests.dataset.test_staging import _durable_frame
 
 
-def test_training_split_assigns_support_without_reassigning_overlap(native_inputs, tmp_path):
-    initial, con = _durable_frame(native_inputs, tmp_path)
+def test_training_split_assigns_support_without_reassigning_overlap(events_world, tmp_path):
+    initial, con = _durable_frame(events_world, tmp_path)
     base = Design(
         "user",
         EventAnchor("session"),
@@ -38,8 +38,8 @@ def test_training_split_assigns_support_without_reassigning_overlap(native_input
     con.disconnect()
 
 
-def test_group_split_view_matches_typed_reference_and_reconstruction(native_inputs, tmp_path):
-    initial, con = _durable_frame(native_inputs, tmp_path)
+def test_group_split_view_matches_typed_reference_and_reconstruction(events_world, tmp_path):
+    initial, con = _durable_frame(events_world, tmp_path)
     policy = GroupSplit(seed=17)
     training = initial.training_set(label="churn", incomplete_labels="keep", split=policy)
     result = training.materialize(Budget(strict_scan=False))

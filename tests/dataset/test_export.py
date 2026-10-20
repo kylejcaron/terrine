@@ -1,31 +1,29 @@
 from __future__ import annotations
 
-import ibis
+from dataclasses import replace
+
 import pyarrow.parquet as pq
 import pytest
 
-from terrine.data import Budget, Coverage, UnitSource
+from terrine.data import Budget, Coverage
 from terrine.errors import TerrineError
-from terrine.model import Model
 from terrine.spec import Design, FixedDate, agg
+from tests._worlds import bind_model
 
 
-def _staged_dataset(native_inputs, tmp_path, *, empty_training=False):
+def _staged_dataset(events_world, tmp_path, *, empty_training=False):
     from terrine.dataset.reference import stage_frame
 
-    catalog, source_con = native_inputs
-    con = ibis.duckdb.connect(str(tmp_path / "study.duckdb"))
-    for name in ("events", "labels", "users"):
-        con.create_table(name, source_con.table(name).execute())
-    model = Model.from_catalog(
-        catalog,
-        con=con,
-        units={"user": UnitSource("users", "user_id")},
-        readiness={
-            "events": Coverage("2025-01-01", "2025-01-31"),
-            "labels": Coverage("2025-01-01", "2025-01-01" if empty_training else "2025-01-31"),
-        },
-    )
+    if empty_training:
+        events_world = replace(
+            events_world,
+            readiness={
+                **events_world.readiness,
+                "labels": Coverage("2025-01-01", "2025-01-01"),
+            },
+        )
+    model = bind_model(events_world, tmp_path)
+    con = model.con
     frame = Design(
         "user",
         FixedDate("2025-01-05"),
@@ -37,10 +35,8 @@ def _staged_dataset(native_inputs, tmp_path, *, empty_training=False):
     return stage_frame(frame, "training", budget=Budget(strict_scan=False)), con
 
 
-def test_parquet_export_preserves_pinned_arrow_schema_and_refuses_overwrite(
-    native_inputs, tmp_path
-):
-    dataset, con = _staged_dataset(native_inputs, tmp_path)
+def test_parquet_export_preserves_pinned_arrow_schema_and_refuses_overwrite(events_world, tmp_path):
+    dataset, con = _staged_dataset(events_world, tmp_path)
     destination = tmp_path / "export"
     export = dataset.export_parquet(destination=str(destination), target_file_bytes=128)
 
@@ -74,9 +70,9 @@ def test_parquet_export_preserves_pinned_arrow_schema_and_refuses_overwrite(
 
 
 def test_export_discards_unfinished_shard_and_rewrites_on_retry(
-    native_inputs, tmp_path, monkeypatch
+    events_world, tmp_path, monkeypatch
 ):
-    dataset, con = _staged_dataset(native_inputs, tmp_path)
+    dataset, con = _staged_dataset(events_world, tmp_path)
     destination = tmp_path / "resumable"
     partial = tmp_path / ".resumable.partial"
     original = dataset.to_arrow_batches
@@ -127,13 +123,13 @@ def test_export_discards_unfinished_shard_and_rewrites_on_retry(
 
 
 def test_export_syncs_shards_and_directories_before_checkpoint_and_publication(
-    native_inputs, tmp_path, monkeypatch
+    events_world, tmp_path, monkeypatch
 ):
     import os
 
     from terrine.dataset import export as export_module
 
-    dataset, con = _staged_dataset(native_inputs, tmp_path)
+    dataset, con = _staged_dataset(events_world, tmp_path)
     destination = tmp_path / "durable"
     events = []
     synced = {}
@@ -179,12 +175,12 @@ def test_export_syncs_shards_and_directories_before_checkpoint_and_publication(
     con.disconnect()
 
 
-def test_export_does_not_checkpoint_a_shard_when_fsync_fails(native_inputs, tmp_path, monkeypatch):
+def test_export_does_not_checkpoint_a_shard_when_fsync_fails(events_world, tmp_path, monkeypatch):
     import os
 
     from terrine.dataset import export as export_module
 
-    dataset, con = _staged_dataset(native_inputs, tmp_path)
+    dataset, con = _staged_dataset(events_world, tmp_path)
     destination = tmp_path / "sync-retry"
     partial = tmp_path / ".sync-retry.partial"
     original_fsync = os.fsync
@@ -212,13 +208,13 @@ def test_export_does_not_checkpoint_a_shard_when_fsync_fails(native_inputs, tmp_
 
 
 def test_export_retry_resyncs_parent_after_interrupted_publication(
-    native_inputs, tmp_path, monkeypatch
+    events_world, tmp_path, monkeypatch
 ):
     import os
 
     from terrine.dataset import export as export_module
 
-    dataset, con = _staged_dataset(native_inputs, tmp_path)
+    dataset, con = _staged_dataset(events_world, tmp_path)
     destination = tmp_path / "rename-retry"
     original_fsync, original_rename = os.fsync, os.rename
     renamed = False
@@ -252,11 +248,11 @@ def test_export_retry_resyncs_parent_after_interrupted_publication(
 
 @pytest.mark.parametrize("partition_by", [(), ("sessions",)])
 def test_empty_training_export_preserves_complete_arrow_metadata(
-    native_inputs, tmp_path, partition_by
+    events_world, tmp_path, partition_by
 ):
     from terrine.data import MaterializedFrame
 
-    dataset, con = _staged_dataset(native_inputs, tmp_path, empty_training=True)
+    dataset, con = _staged_dataset(events_world, tmp_path, empty_training=True)
     assert dataset.manifest.generation.row_count == 0
     schema = dataset._arrow_schema()
     assert schema.metadata and b"terrine.materialized_frame.v1" in schema.metadata

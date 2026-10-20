@@ -4,23 +4,25 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
-import ibis
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
 from terrine.data import Budget, MaterializedFrame
 from terrine.errors import TerrineError, thaw
-from tests.fixtures.interop import interop_frame
+from tests._worlds import bind_model
+from tests.fixtures.interop import interop_design
 
 
 @pytest.fixture(params=[False, True], ids=["typed_rows", "empty"])
-def common_frame(request, tmp_path):
-    con = ibis.duckdb.connect(str(tmp_path / "dataset.duckdb"))
+def common_frame(request, tmp_path, interop_world):
+    model = bind_model(interop_world, tmp_path)
     try:
-        yield interop_frame(con, empty=request.param, full=False)
+        if request.param:
+            model.con.raw_sql("DELETE FROM users")
+        yield interop_design(full=False).build(model)
     finally:
-        con.disconnect()
+        model.con.disconnect()
 
 
 def test_local_arrow_preserves_exact_temporal_values_and_semantic_metadata(common_frame):

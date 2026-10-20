@@ -95,6 +95,10 @@ def interop_frame(con, *, empty=False, full=True):
         units={"user": UnitSource("users", "id")},
         readiness={"events": Coverage("2025-01-01", "2025-01-02")},
     )
+    return interop_design(full=full).build(model)
+
+
+def interop_design(*, full=True):
     features = (
         {
             "amount": agg("amount", window=("-1s", "0s")),
@@ -110,4 +114,4 @@ def interop_frame(con, *, empty=False, full=True):
         FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),
         features=features,
         outcomes={"future": agg("amount", window=("0s", "2d"))} if full else {},
-    ).build(model)
+    )

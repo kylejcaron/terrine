@@ -1,23 +1,23 @@
 from dataclasses import FrozenInstanceError
 from decimal import Decimal, localcontext
 
-import ibis
 import pytest
 
 from terrine.dataset.reference import _recipe_for
 from terrine.dataset.splits import TimeSplit
 from terrine.errors import TerrineError
 from terrine.spec.dataset import DatasetRecipe
-from tests.fixtures.winsorization import bind_model, create_model, design
+from tests import _worlds
+from tests.fixtures.winsorization import bind_model, design
 
 
 @pytest.fixture
-def model():
-    con = ibis.duckdb.connect()
+def model(winsorization_world, tmp_path):
+    model = _worlds.bind_model(winsorization_world, tmp_path)
     try:
-        yield create_model(con)
+        yield model
     finally:
-        con.disconnect()
+        model.con.disconnect()
 
 
 def training(model, *, split=True, keep=False):

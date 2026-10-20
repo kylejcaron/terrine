@@ -1,28 +1,16 @@
 from __future__ import annotations
 
-import ibis
 import pytest
 
-from terrine.data import Budget, Coverage, UnitSource
+from terrine.data import Budget
 from terrine.dataset.reference import Dataset
-from terrine.model import Model
 from terrine.spec import Design, FixedDate, agg
+from tests._worlds import bind_model
 
 
-def _durable_frame(native_inputs, tmp_path):
-    catalog, source_con = native_inputs
-    con = ibis.duckdb.connect(str(tmp_path / "study.duckdb"))
-    for name in ("events", "labels", "users"):
-        con.create_table(name, source_con.table(name).execute())
-    model = Model.from_catalog(
-        catalog,
-        con=con,
-        units={"user": UnitSource("users", "user_id")},
-        readiness={
-            "events": Coverage("2025-01-01", "2025-01-31"),
-            "labels": Coverage("2025-01-01", "2025-01-31"),
-        },
-    )
+def _durable_frame(events_world, tmp_path):
+    model = bind_model(events_world, tmp_path)
+    con = model.con
     frame = Design(
         "user",
         FixedDate("2025-01-05"),
@@ -32,10 +20,8 @@ def _durable_frame(native_inputs, tmp_path):
     return frame, con
 
 
-def test_frame_stage_publishes_and_reads_its_pinned_generation(
-    native_inputs, tmp_path, monkeypatch
-):
-    frame, con = _durable_frame(native_inputs, tmp_path)
+def test_frame_stage_publishes_and_reads_its_pinned_generation(events_world, tmp_path, monkeypatch):
+    frame, con = _durable_frame(events_world, tmp_path)
 
     def collect_forbidden(*args, **kwargs):
         raise AssertionError("staging must stream the compiled output")
@@ -59,12 +45,12 @@ def test_frame_stage_publishes_and_reads_its_pinned_generation(
     con.disconnect()
 
 
-def test_manifest_reopen_rejects_tampered_generation_row_count(native_inputs, tmp_path):
+def test_manifest_reopen_rejects_tampered_generation_row_count(events_world, tmp_path):
     from dataclasses import replace
 
     from terrine.errors import TerrineError
 
-    frame, con = _durable_frame(native_inputs, tmp_path)
+    frame, con = _durable_frame(events_world, tmp_path)
     dataset = frame.stage("training", budget=Budget(strict_scan=False))
     altered_generation = replace(
         dataset.manifest.generation,
@@ -77,10 +63,10 @@ def test_manifest_reopen_rejects_tampered_generation_row_count(native_inputs, tm
     con.disconnect()
 
 
-def test_invalid_arrow_batch_size_refuses_before_read(native_inputs, tmp_path):
+def test_invalid_arrow_batch_size_refuses_before_read(events_world, tmp_path):
     from terrine.errors import TerrineError
 
-    frame, con = _durable_frame(native_inputs, tmp_path)
+    frame, con = _durable_frame(events_world, tmp_path)
     dataset = frame.stage("training", budget=Budget(strict_scan=False))
     with pytest.raises(TerrineError) as error:
         dataset.to_arrow_batches(batch_size=0)
@@ -89,11 +75,11 @@ def test_invalid_arrow_batch_size_refuses_before_read(native_inputs, tmp_path):
 
 
 def test_roster_only_stage_uses_executor_default_durable_outputs(
-    native_inputs, tmp_path, monkeypatch
+    events_world, tmp_path, monkeypatch
 ):
     from terrine.runtime.api import DesignExecutor
 
-    frame, con = _durable_frame(native_inputs, tmp_path)
+    frame, con = _durable_frame(events_world, tmp_path)
     original = DesignExecutor.__init__
 
     def initialize(self, *args, **kwargs):
@@ -112,13 +98,13 @@ def test_roster_only_stage_uses_executor_default_durable_outputs(
     con.disconnect()
 
 
-def test_reopen_accepts_resolved_owner_scoped_recipe_reference(native_inputs, tmp_path):
+def test_reopen_accepts_resolved_owner_scoped_recipe_reference(events_world, tmp_path):
     from dataclasses import replace
 
     from terrine.dataset.manifest import DatasetManifest
     from terrine.spec.dataset import DatasetRecipeStore
 
-    frame, con = _durable_frame(native_inputs, tmp_path)
+    frame, con = _durable_frame(events_world, tmp_path)
     dataset = frame.stage("training", budget=Budget(strict_scan=False))
     recipes = DatasetRecipeStore(tmp_path / "recipes", owner="customer")
     reference = recipes.put(dataset.manifest.recipe)
@@ -131,14 +117,14 @@ def test_reopen_accepts_resolved_owner_scoped_recipe_reference(native_inputs, tm
     con.disconnect()
 
 
-def test_reopen_preserves_version_one_manifest_without_frame_metadata(native_inputs, tmp_path):
+def test_reopen_preserves_version_one_manifest_without_frame_metadata(events_world, tmp_path):
     import json
     from dataclasses import replace
 
     from terrine.dataset.manifest import DatasetManifest
     from terrine.runtime.backends.duckdb import _digest_relation
 
-    frame, con = _durable_frame(native_inputs, tmp_path)
+    frame, con = _durable_frame(events_world, tmp_path)
     dataset = frame.stage("training", budget=Budget(strict_scan=False))
     checksums = []
     for partition in dataset.manifest.generation.output_refs:

@@ -56,7 +56,7 @@ full-suite wall time. Record the observed ratio without gating on it. Task 7's
 - Create: `docs/superpowers/plans/2026-10-19-terrine-fast-tests-ledger.md` (findings section)
 
 - [ ] **Step 1: Measure the worker-count curve.** Run `uv run pytest -q -p no:warnings tests/dataset tests/test_common_stack_interop.py -n {1,4,8,12}` under `/usr/bin/time -p`. Record wall, user and sys for each. If user+sys stays flat while wall grows, the tests are waiting (locks or I/O). If user+sys grows with workers, they are competing for CPU.
-- [ ] **Step 2: Profile one top test under load.** Run the full `-n 8` suite. In parallel, profile `test_parquet_export_preserves_pinned_arrow_schema_and_refuses_overwrite` with `uv run python -m cProfile -o /tmp/loaded.prof -m pytest -p no:xdist <test>`, then compare the top `tottime` entries with the standalone profile. Name the dominant extra cost with file:line: a lock wait, a shared path, DuckDB checkpointing, or the Ibis compile.
+- [ ] **Step 2: Profile one top test under load.** Run the full `-n 8` suite. In parallel, profile `test_parquet_export_preserves_pinned_arrow_schema_and_refuses_overwrite` with `uv run python -m cProfile -o /tmp/loaded.prof -m pytest -n 0 <test>`, then compare the top `tottime` entries with the standalone profile. Name the dominant extra cost with file:line: a lock wait, a shared path, DuckDB checkpointing, or the Ibis compile.
 - [ ] **Step 3: Fix the cause.** Give each worker its own resources (paths, sockets, lease names, DuckDB temp directories via `tmp_path`/`worker_id`). If the cause is CPU oversubscription, set the default worker count in `pyproject.toml` `addopts` to the measured best (`-n auto` or a fixed number). Fix the fixed socket path.
 - [ ] **Step 4: Verify.** Record the cause, resource isolation, selected worker/thread counts, full-suite wall before and after, and the observed loaded/standalone test-time ratio in the ledger. Acceptance is the execution ruling above, not a per-test timing ratio.
 - [ ] **Step 5: Commit** `test: isolate per-worker test resources`.
@@ -133,7 +133,7 @@ These are the `SLIM` rows (`tests/runtime/test_incremental_equivalence.py` `defi
 - Modify: the ledger (final timings)
 
 - [ ] **Step 1:** Run `uv run pytest -q -n 8 tests` three times. The median wall time must be at most 90 s.
-- [ ] **Step 2:** Run uncontended `uv run pytest -q -p no:xdist tests --durations=0 --durations-min=2.0`. No entries.
+- [ ] **Step 2:** Run uncontended `uv run pytest -q -n 0 tests --durations=0 --durations-min=2.0`. No entries.
 - [ ] **Step 3:** Run `uv run pytest -q -n 4 integration` (at most 4 min), `uv run pytest -q tests -m slow`, and the optional-extra CI selectors. All pass.
 - [ ] **Step 4:** The ledger has a disposition and carrier for all 230 inventoried tests, with no empty carrier except for verified deletes that cite their twin.
 - [ ] **Step 5:** Commit `ci: report test durations and keep the fast tier fast`.

@@ -9,8 +9,8 @@ from terrine.spec import Design, FixedDate, agg, gt
 from tests.dataset.test_staging import _durable_frame
 
 
-def test_refresh_reconstructs_recipe_without_mutating_pinned_reader(native_inputs, tmp_path):
-    initial, con = _durable_frame(native_inputs, tmp_path)
+def test_refresh_reconstructs_recipe_without_mutating_pinned_reader(events_world, tmp_path):
+    initial, con = _durable_frame(events_world, tmp_path)
     model = initial._model
     frame = (
         Design(
@@ -53,8 +53,8 @@ def test_refresh_reconstructs_recipe_without_mutating_pinned_reader(native_input
     con.disconnect()
 
 
-def test_scoring_refresh_preserves_as_of_and_never_reads_unused_labels(native_inputs, tmp_path):
-    initial, con = _durable_frame(native_inputs, tmp_path)
+def test_scoring_refresh_preserves_as_of_and_never_reads_unused_labels(events_world, tmp_path):
+    initial, con = _durable_frame(events_world, tmp_path)
     model = initial._model
     design = Design(
         "user",
@@ -77,13 +77,13 @@ def test_scoring_refresh_preserves_as_of_and_never_reads_unused_labels(native_in
 
 
 def test_refresh_nochange_reuses_only_same_definition_and_rejects_stale_base(
-    native_inputs, tmp_path
+    events_world, tmp_path
 ):
     import pytest
 
     from terrine.errors import TerrineError
 
-    frame, con = _durable_frame(native_inputs, tmp_path)
+    frame, con = _durable_frame(events_world, tmp_path)
     budget = Budget(strict_scan=False)
     dataset = frame.stage("training", budget=budget)
     empty = ChangeSet((), "operator")
