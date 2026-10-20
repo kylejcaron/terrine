@@ -41,6 +41,15 @@ A coverage ledger maps every removed or moved test to the test that now carries 
 
 The top tests run about 6.7x slower inside the `-n 8` suite than alone. For example, `tests/dataset/test_export.py::test_parquet_export_preserves_pinned_arrow_schema_and_refuses_overwrite` takes 12.6 s alone and 84 s in the suite. Limiting DuckDB to `threads=1` made it worse (dataset directory 111 s vs 86 s). Bare DuckDB, fsync and test collection are not the cause.
 
+Execution ruling (2026-10-19): the 84 s outlier came from concurrent background
+runs, not the suite alone. The diagnosis found CPU contention rather than a
+shared wait. Task 1 acceptance is therefore: cause identified and recorded;
+per-worker resource isolation done; default worker count and DuckDB thread
+setting chosen from the measured curve by best total wall time, not a per-test
+ratio. Apply a test-only resource setting only when it measurably improves
+full-suite wall time. Record the observed ratio without gating on it. Task 7's
+90 s full-suite gate is unchanged.
+
 **Files:**
 - Modify: `tests/runtime/test_control_recovery.py:39,52` (fixed `/tmp/terrine-recovery-test.sock` → `tmp_path`-scoped or pid+uuid path)
 - Modify: other offenders found in Step 2
@@ -49,7 +58,7 @@ The top tests run about 6.7x slower inside the `-n 8` suite than alone. For exam
 - [ ] **Step 1: Measure the worker-count curve.** Run `uv run pytest -q -p no:warnings tests/dataset tests/test_common_stack_interop.py -n {1,4,8,12}` under `/usr/bin/time -p`. Record wall, user and sys for each. If user+sys stays flat while wall grows, the tests are waiting (locks or I/O). If user+sys grows with workers, they are competing for CPU.
 - [ ] **Step 2: Profile one top test under load.** Run the full `-n 8` suite. In parallel, profile `test_parquet_export_preserves_pinned_arrow_schema_and_refuses_overwrite` with `uv run python -m cProfile -o /tmp/loaded.prof -m pytest -p no:xdist <test>`, then compare the top `tottime` entries with the standalone profile. Name the dominant extra cost with file:line: a lock wait, a shared path, DuckDB checkpointing, or the Ibis compile.
 - [ ] **Step 3: Fix the cause.** Give each worker its own resources (paths, sockets, lease names, DuckDB temp directories via `tmp_path`/`worker_id`). If the cause is CPU oversubscription, set the default worker count in `pyproject.toml` `addopts` to the measured best (`-n auto` or a fixed number). Fix the fixed socket path.
-- [ ] **Step 4: Verify.** The same test run inside the `-n 8` suite takes at most 2x its standalone time. Record before and after in the ledger.
+- [ ] **Step 4: Verify.** Record the cause, resource isolation, selected worker/thread counts, full-suite wall before and after, and the observed loaded/standalone test-time ratio in the ledger. Acceptance is the execution ruling above, not a per-test timing ratio.
 - [ ] **Step 5: Commit** `test: isolate per-worker test resources`.
 
 ### Task 2: Shared immutable fixtures and the ledger format

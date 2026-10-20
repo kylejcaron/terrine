@@ -1,4 +1,27 @@
+from functools import wraps
+
 import pytest
+
+
+@pytest.fixture(scope="session", autouse=True)
+def worker_duckdb_resources(request):
+    if not hasattr(request.config, "workerinput"):
+        yield
+        return
+
+    import duckdb
+
+    original = duckdb.connect
+
+    @wraps(original)
+    def connect(*args, **kwargs):
+        settings = dict(kwargs.pop("config", None) or {})
+        settings.setdefault("threads", 2)
+        return original(*args, config=settings, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(duckdb, "connect", connect)
+        yield
 
 
 @pytest.fixture
