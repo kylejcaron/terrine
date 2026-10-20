@@ -75,6 +75,8 @@
   history checks across ordinary, retained and downstream export paths.
 - Capture event-anchor and recursive event-selector sources even when the
   analysis unit has no separate roster.
+- Read retained run-event pages and their cursor-gap boundary from one consistent
+  snapshot so concurrent retention cannot silently skip events.
 - Share export refusals for incomplete outcomes, unknown eligibility, missing
   repeated-unit clusters and grace-defined baseline treatment. DoWhy additionally
   refuses repeated units and declared weights rather than forwarding ignored

@@ -102,6 +102,67 @@ def test_event_retention_reports_cursor_gap(monkeypatch):
     assert [event.sequence for event in page.events] == [3, 4, 5]
 
 
+def test_event_page_keeps_retention_boundary_and_rows_in_one_snapshot(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    import terrine.runtime.events as events_module
+
+    monkeypatch.setattr(events_module, "_RETENTION", 2)
+    con = duckdb.connect(":memory:")
+    record_run_event("r1", "lifecycle", {"state": "queued"}, con=con, namespace="owner")
+    cursor = read_run_events("r1", con=con, namespace="owner").next_cursor
+    for state in ("running", "cancel_requested"):
+        record_run_event("r1", "lifecycle", {"state": state}, con=con, namespace="owner")
+    boundary_read = Event()
+    appended = Event()
+
+    class PausedPageConnection:
+        def execute(self, query, parameters=None):
+            if query.startswith("SELECT sequence, event_at, kind, payload"):
+                boundary_read.set()
+                assert appended.wait(timeout=HANG_GUARD_SECONDS)
+            return con.execute(query, parameters)
+
+    def append_and_trim():
+        writer = con.cursor()
+        try:
+            assert boundary_read.wait(timeout=HANG_GUARD_SECONDS)
+            writer.execute("BEGIN TRANSACTION")
+            try:
+                record_run_event(
+                    "r1",
+                    "lifecycle",
+                    {"state": "cancelled"},
+                    con=writer,
+                    namespace="owner",
+                    _in_transaction=True,
+                )
+            except BaseException:
+                writer.execute("ROLLBACK")
+                raise
+            else:
+                writer.execute("COMMIT")
+        finally:
+            writer.close()
+            appended.set()
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            writer = executor.submit(append_and_trim)
+            page = read_run_events(
+                "r1", con=PausedPageConnection(), namespace="owner", after=cursor
+            )
+            writer.result(timeout=HANG_GUARD_SECONDS)
+        assert not page.cursor_gap
+        assert [event.sequence for event in page.events] == [2, 3]
+        resumed = read_run_events("r1", con=con, namespace="owner", after=page.next_cursor)
+        assert not resumed.cursor_gap
+        assert [event.sequence for event in resumed.events] == [4]
+    finally:
+        con.close()
+
+
 def test_concurrent_lifecycle_emission_allocates_unique_sequences():
     from concurrent.futures import ThreadPoolExecutor
     from datetime import UTC, datetime, timedelta

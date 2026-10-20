@@ -143,11 +143,7 @@ def read_run_events(
 ) -> EventPage:
     if not run_id or isinstance(limit, bool) or limit < 1:
         raise ValueError("run_id and positive event limit are required")
-    store = RuntimeStore(con, namespace=namespace)
-    with _EVENT_WRITE_LOCK:
-        store.initialize()
-        schema = store._schema
-        _ensure_events(con, schema)
+    schema = RuntimeStore(con, namespace=namespace)._schema
 
     after_sequence = 0
     cursor_gap = False
@@ -160,17 +156,18 @@ def read_run_events(
             after_sequence = int(raw_sequence)
         except (ValueError, TypeError, json.JSONDecodeError):
             cursor_gap = True
-    oldest = con.execute(
-        f"SELECT min(sequence) FROM {schema}.runtime_run_events WHERE run_id=?", [run_id]
-    ).fetchone()[0]
-    if after is not None and oldest is not None and after_sequence < oldest - 1:
-        cursor_gap = True
     cap = min(limit, _MAX_LIMIT)
-    rows = con.execute(
-        f"SELECT sequence, event_at, kind, payload FROM {schema}.runtime_run_events "
-        "WHERE run_id=? AND sequence>? ORDER BY sequence LIMIT ?",
-        [run_id, after_sequence, cap + 1],
-    ).fetchall()
+    with event_read_transaction(con, namespace=namespace):
+        oldest = con.execute(
+            f"SELECT min(sequence) FROM {schema}.runtime_run_events WHERE run_id=?", [run_id]
+        ).fetchone()[0]
+        if after is not None and oldest is not None and after_sequence < oldest - 1:
+            cursor_gap = True
+        rows = con.execute(
+            f"SELECT sequence, event_at, kind, payload FROM {schema}.runtime_run_events "
+            "WHERE run_id=? AND sequence>? ORDER BY sequence LIMIT ?",
+            [run_id, after_sequence, cap + 1],
+        ).fetchall()
     selected = rows[:cap]
     events = tuple(
         RunEvent(run_id, sequence, at.replace(tzinfo=UTC), kind, json.loads(payload))
