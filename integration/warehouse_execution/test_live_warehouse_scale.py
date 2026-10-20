@@ -9,13 +9,14 @@ import pytest
 from benchmarks.run_live import failure_report, run_approved
 from terrine.errors import TerrineError
 
-pytestmark = pytest.mark.slow
+pytestmark = pytest.mark.scale
 
 
 def test_owner_approved_live_compiler_workload():
     reference = os.environ.get("TERRINE_LIVE_APPROVAL")
     if reference is None:
-        pytest.skip("UNVERIFIED: no owner-approved backend/account/workload/spend configuration")
+        reason = "UNVERIFIED: no owner-approved backend/account/workload/spend configuration"
+        pytest.skip(reason)  # ty: ignore[too-many-positional-arguments]
     approval = json.loads(Path(reference).read_text(encoding="utf-8"))
     try:
         record = run_approved(approval)

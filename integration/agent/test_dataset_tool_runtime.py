@@ -50,9 +50,11 @@ def owner_tools(tmp_path):
     owner = RuntimeOwner.from_connection(con)
     reference = ModelReference.from_model(model, owner_key=owner.reference)
 
+    expected_reference = reference
+
     class Resolver:
-        def resolve(self, requested):
-            assert requested == reference
+        def resolve(self, reference):
+            assert reference == expected_reference
             return model
 
     policy = AgentPolicy(
@@ -216,11 +218,11 @@ def test_response_loss_recovers_manifest_without_reopening_sources(owner_tools, 
     with pytest.raises(RuntimeError, match="response lost"):
         tools.stage(receipt, request_key="lost")
     monkeypatch.setattr(module, "dataset_from_run", finish)
-    monkeypatch.setattr(
-        tools.policy.snapshot_authority,
-        "reopen",
-        lambda *args, **kwargs: pytest.fail("terminal replay reopened source inputs"),
-    )
+
+    def reopen_forbidden(*args, **kwargs):
+        raise AssertionError("terminal replay reopened source inputs")
+
+    monkeypatch.setattr(tools.policy.snapshot_authority, "reopen", reopen_forbidden)
     tools.model.con.raw_sql("DROP TABLE events")
     recovered = tools.stage(receipt, request_key="lost")
     assert recovered.status == "ok" and recovered.output is not None
@@ -303,7 +305,7 @@ def test_cancellation_during_task_prevents_publication_and_stays_terminal(owner_
             return output
 
         def publish(self, plan, outputs, lease, run_id):
-            pytest.fail("cancelled execution must not publish")
+            raise AssertionError("cancelled execution must not publish")
 
     tools.policy = replace(tools.policy, executor=Cancelling())
     cancelled = tools.execute_plan(receipt, request_key="cancelled")

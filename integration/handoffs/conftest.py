@@ -12,7 +12,7 @@ from terrine.data import ColumnMeta, ExecutionSnapshot, MaterializedFrame, Prove
 def library():
     def load(name):
         if find_spec(name) is None:
-            pytest.skip(f"optional {name} extra is absent")
+            pytest.skip(f"optional {name} extra is absent")  # ty: ignore[too-many-positional-arguments]
         return import_module(name)
 
     return load

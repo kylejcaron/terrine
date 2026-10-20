@@ -332,6 +332,7 @@ def _measure_bounded_workflow(root: Path, rows: int) -> dict[str, int]:
         pa.set_memory_pool(base_pool)
 
 
+@pytest.mark.scale
 def test_growing_dataset_bounds_client_batches_and_arrow_buffers(tmp_path):
     measurements = []
     for rows in (65_537, 327_681):

@@ -1,16 +1,18 @@
-.PHONY: test test-slow lint typecheck fmt check complexity
+.PHONY: test test-scale lint typecheck fmt check complexity
 
 TESTS ?= tests
+SCALE_TESTS ?= integration
 
-# Ordinary suite excludes explicitly marked slow tests.
+# Ordinary suite; scale checks are deselected by default.
 test:
 	uv run pytest $(TESTS)
 
-test-slow:
-	uv run pytest $(TESTS) -m slow
+# Scheduled scale tier: resource-bound scale, oracle and live-warehouse checks.
+test-scale:
+	uv run pytest $(SCALE_TESTS) -m scale
 
 lint:
-	uv run ruff check terrine tests
+	uv run ruff check terrine tests integration
 	uv run vulture terrine
 	# Isolated: pydoclint's docstring-parser-fork and dagster's docstring-parser
 	# install the same module and would overwrite each other.
@@ -18,11 +20,11 @@ lint:
 	uv run tach check
 
 typecheck:
-	uv run ty check terrine tests
+	uv run ty check terrine tests integration
 
 fmt:
-	uv run ruff format terrine tests
-	uv run ruff check --fix terrine tests
+	uv run ruff format terrine tests integration
+	uv run ruff check --fix terrine tests integration
 
 check: lint typecheck test
 

@@ -1,11 +1,11 @@
-"""Explicit local compiler scale tier, excluded from ordinary pytest collection."""
+"""Local compiler scale checks; run with the scheduled scale tier."""
 
 import pytest
 
 from benchmarks.run_duckdb import run
 from terrine.simulate.scale import ScaleConfig
 
-pytestmark = pytest.mark.slow
+pytestmark = pytest.mark.scale
 
 
 @pytest.mark.parametrize(("units", "events", "anchors", "batch"), [(2, 17, 4, 3), (3, 29, 5, 7)])

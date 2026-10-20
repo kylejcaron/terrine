@@ -1,7 +1,11 @@
-"""Explicit local DuckDB evidence, not a live-warehouse result."""
+"""Explicit local DuckDB evidence, not a live-warehouse result; scheduled scale tier."""
+
+import pytest
 
 from benchmarks.run_duckdb import run
 from terrine.simulate.scale import ScaleConfig
+
+pytestmark = pytest.mark.scale
 
 
 def test_retained_compiler_generations_and_bounded_ranges_match_independent_oracles():
