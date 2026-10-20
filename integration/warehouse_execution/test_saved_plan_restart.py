@@ -1,21 +1,27 @@
+# ruff: noqa: F811
 from __future__ import annotations
 
 import json
 import os
 import subprocess
 import sys
+from dataclasses import replace
+from datetime import UTC, datetime
 
 import ibis
 import pytest
 
+from terrine.compile.layers import plan_layers
 from terrine.data import Budget, Coverage
 from terrine.model import Model
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
+from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog
 from terrine.spec import Design, FixedDate, agg
 from tests._timing import HANG_GUARD_SECONDS
+from tests.compile.test_columns import column_model  # noqa: F401
 
 
 def _catalog() -> Catalog:
@@ -322,3 +328,127 @@ connection.disconnect()
         text=True,
         env=os.environ.copy(),
     )
+
+
+def test_state_panel_composition_matches_full_rebuild(column_model):
+    from terrine.compile.dispatch import compile_design
+    from terrine.compile.layers import build_layer
+    from terrine.compile.materialize import compose_materialized_frame
+    from terrine.spec import BinnedMetricState, Schedule, StatePanel
+
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-02", "2025-01-03"),
+        shape=StatePanel(
+            BinnedMetricState("total", cutpoints=(0,), levels=("none", "some")), max_periods=2
+        ),
+    )
+    persisted = {
+        replace(key, snapshot_id="snapshot"): build_layer(design, column_model, key)
+        for key in plan_layers(design, column_model).keys
+    }
+    actual = compose_materialized_frame(design, column_model, persisted=persisted)
+    expected = compile_design(design, column_model)
+    assert column_model.con.to_pyarrow(actual.table.order_by("unit")).equals(
+        column_model.con.to_pyarrow(expected.table.order_by("unit"))
+    )
+    assert actual.roles == expected.roles
+    assert actual.columns == expected.columns
+    assert actual.expression_timings == expected.expression_timings
+
+
+@pytest.mark.parametrize("shape", ["sequential", "event_panel"])
+def test_saved_panel_publication_preserves_ordinary_provenance(column_model, tmp_path, shape):
+    import ibis
+
+    from terrine.data import Budget, Coverage
+    from terrine.model import Model
+    from terrine.runtime import open_published_frame, run_serialized_plan
+    from terrine.runtime.graph import dependency_graph
+    from terrine.runtime.owner import RuntimeOwner
+    from terrine.runtime.planner import plan_refresh
+    from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
+    from terrine.runtime.snapshot import SnapshotAuthority
+    from terrine.spec import EventAnchor, EventPanel, Initiation, Schedule, Sequential
+
+    owner = RuntimeOwner(
+        state_path=tmp_path / "panel_state.duckdb", snapshot_root=tmp_path / "snapshots"
+    )
+    con = ibis.duckdb.connect(str(owner.state_path))
+    try:
+        for table in ("events", "users"):
+            con.create_table(table, column_model.con.to_pyarrow(column_model.con.table(table)))
+        con.raw_sql("INSERT INTO users VALUES ('c')")
+        model = Model.from_catalog(
+            column_model.catalog,
+            con=con,
+            units=column_model.units,
+            readiness={"events": Coverage("2025-01-01", "2025-01-05")},
+        )
+        if shape == "sequential":
+            design = Sequential(
+                Design(
+                    "user",
+                    Schedule("1d", "2025-01-03", "2025-01-05"),
+                    features={"total": agg("total", window=("-1d", "0s"))},
+                ),
+                treatment=Initiation("events", "amount", datetime(2025, 1, 1, tzinfo=UTC)),
+            )
+        else:
+            design = EventPanel(
+                Design(
+                    "user",
+                    EventAnchor("amount", "first"),
+                    features={"total": agg("total", window=("-1h", "0s"))},
+                ),
+                periods=(-1, 0, 1),
+                period_seconds=3600,
+            )
+        budget = Budget(max_rows=100, max_output_bytes=1_000_000)
+        expected = design.build(model).materialize(budget)
+        assert expected.table.num_rows > 0
+        authority = SnapshotAuthority(owner)
+        snapshot = authority.capture(
+            model, design=design, con=con, namespace="owner", run_id=shape, budget=budget
+        )
+        plan = plan_refresh(
+            namespace="owner",
+            dataset="panels",
+            definition_hash=design.spec_hash,
+            snapshot_id=snapshot.snapshot_id,
+            graph=dependency_graph(model, design, sources=("events",)),
+            budget=budget,
+        )
+        recipe = SavedPlanRecipe.create(
+            plan_json=plan.serialize(),
+            design=design,
+            model=ModelReference.from_model(model, owner_key="panel-model"),
+            destination=DestinationRef(str(owner.state_path), "published", "panels"),
+            namespace="owner",
+            expected_base_manifest=None,
+        )
+        store = RuntimeStore(con.con, namespace="owner")
+        store.initialize()
+        recipe.pin_snapshot(store)
+
+        class Resolver:
+            def resolve(self, reference):
+                return model
+
+        receipt = run_serialized_plan(
+            recipe.to_json(),
+            con=con.con,
+            namespace="owner",
+            request_key=shape,
+            resolver=Resolver(),
+            snapshot_authority=authority,
+        )
+        published = open_published_frame(receipt, con=con.con, namespace="owner")
+        order = [("unit", "ascending"), ("t0", "ascending")]
+        assert published.table.sort_by(order).equals(expected.table.sort_by(order))
+        assert published.columns == expected.columns
+        assert published.provenance.shape == expected.provenance.shape == shape
+        assert published.provenance.panel == expected.provenance.panel
+        assert published.provenance.expression_timings == expected.provenance.expression_timings
+    finally:
+        con.disconnect()
