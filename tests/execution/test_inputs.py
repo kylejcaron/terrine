@@ -49,6 +49,95 @@ def test_published_execution_uses_private_session_and_sealed_root():
         con.close()
 
 
+def test_execution_observes_schema_changes_between_operations():
+    con = ibis.duckdb.connect()
+    try:
+        con.con.execute("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        catalog = _catalog()
+        relation = catalog.sources["events"].relation
+        with open_execution(catalog, con) as execution:
+            assert execution.resolve(relation).columns == ("ts", "user_id", "value")
+        con.con.execute("ALTER TABLE events ADD COLUMN revised BIGINT")
+        with open_execution(catalog, con) as execution:
+            assert execution.resolve(relation).columns == ("ts", "user_id", "value", "revised")
+    finally:
+        con.disconnect()
+
+
+def test_execution_and_batches_preserve_decimal_nanosecond_and_null_values():
+    from decimal import Decimal
+
+    import pyarrow as pa
+
+    con = ibis.duckdb.connect()
+    try:
+        con.raw_sql("CREATE TABLE events (ts TIMESTAMP_NS, user_id INTEGER, value DECIMAL(20,2))")
+        con.raw_sql(
+            "INSERT INTO events VALUES "
+            "('1970-01-01 00:00:00.000000001', 1, 123456789012345.67), "
+            "('1970-01-01 00:00:00.000000002', 2, NULL)"
+        )
+        catalog = _catalog()
+        expected = pa.table(
+            {
+                "ts": pa.array([1, 2], type=pa.timestamp("ns")),
+                "user_id": pa.array([1, 2], type=pa.int32()),
+                "value": pa.array([Decimal("123456789012345.67"), None], type=pa.decimal128(20, 2)),
+            }
+        )
+        with open_execution(catalog, con) as execution:
+            query = execution.resolve(catalog.sources["events"].relation).order_by("user_id")
+            assert execution.execute(query).equals(expected)
+            with execution.to_arrow_batches(query, chunk_size=1) as reader:
+                assert pa.Table.from_batches(reader).equals(expected)
+    finally:
+        con.disconnect()
+
+
+def test_restoring_session_settings_invalidates_namespace_metadata():
+    from terrine.execution import _native
+    from terrine.execution._metadata import metadata_operation
+
+    origin = duckdb.connect()
+    runtime = origin.cursor()
+    try:
+        origin.execute("CREATE SCHEMA selected")
+        origin.execute("USE memory.selected")
+        with metadata_operation():
+            assert _native._current_namespace(runtime)[1] == "main"
+            _native.restore_semantic_settings(origin, runtime)
+            assert _native._current_namespace(runtime)[1] == "selected"
+    finally:
+        runtime.close()
+        origin.close()
+
+
+def test_published_execution_revalidates_cached_relation_after_function_change():
+    from terrine.execution._metadata import metadata_operation
+
+    con = duckdb.connect()
+    try:
+        con.execute("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        con.execute("INSERT INTO events VALUES ('2025-01-01', 1, 3)")
+        catalog = _catalog()
+        relation = catalog.sources["events"].relation
+        with publish_native_inputs(catalog, con=con) as published:
+            binding = verify_immutable_inputs(catalog, published.con, relations=published.relations)
+            with open_execution(catalog, published.con, input_binding=binding) as execution:
+                with metadata_operation():
+                    assert execution.resolve(relation).columns == ("ts", "user_id", "value")
+                    assert (
+                        execution.execute(execution.resolve(relation)).to_pylist()[0]["value"] == 3
+                    )
+                published.con.con.execute("CREATE TEMP MACRO sum(x) AS first(x)")
+                with metadata_operation():
+                    with pytest.raises(TerrineError) as error:
+                        execution.resolve(relation)
+                    assert error.value.code == "terrine.execution.invalid_input_binding"
+    finally:
+        con.close()
+
+
 def test_opaque_publication_refuses_side_effecting_functions_before_invocation():
     con = duckdb.connect()
     try:
@@ -188,6 +277,8 @@ def test_required_relations_treats_a_quoted_dotted_name_as_one_identifier():
 
 
 def test_required_relations_includes_empty_physical_leaf_behind_nested_views():
+    from terrine.execution._metadata import metadata_operation
+
     con = duckdb.connect()
     try:
         con.execute("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
@@ -195,9 +286,16 @@ def test_required_relations_includes_empty_physical_leaf_behind_nested_views():
         con.execute("CREATE VIEW v2 AS WITH used AS (SELECT * FROM v1) SELECT * FROM used")
         catalog = _catalog(table="v2")
 
-        relations = required_relations(catalog, ibis.duckdb.from_connection(con))
+        backend = ibis.duckdb.from_connection(con)
+        with metadata_operation():
+            relations = required_relations(catalog, backend)
+            assert [(r.kind, r.name.casefold()) for r in relations] == [("table", "events")]
 
-        assert [(r.kind, r.name.casefold()) for r in relations] == [("table", "events")]
+        con.execute("CREATE TABLE revised (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        con.execute("CREATE OR REPLACE VIEW v1 AS SELECT * FROM revised WHERE false")
+        with metadata_operation():
+            relations = required_relations(catalog, backend)
+            assert [(r.kind, r.name.casefold()) for r in relations] == [("table", "revised")]
     finally:
         con.close()
 
@@ -404,7 +502,8 @@ def test_open_execution_preserves_origin_timezone_after_ibis_wrap():
         con.disconnect()
 
 
-def test_execution_refuses_persistent_aggregate_macro_shadow_before_query():
+@pytest.mark.parametrize("stream", [False, True])
+def test_execution_refuses_persistent_aggregate_macro_shadow_before_query(stream):
     con = duckdb.connect()
     try:
         con.execute("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
@@ -413,7 +512,10 @@ def test_execution_refuses_persistent_aggregate_macro_shadow_before_query():
         with open_execution(_catalog(), ibis.duckdb.from_connection(con)) as execution:
             query = execution.con.sql("SELECT SUM(value) AS total FROM events")
             with pytest.raises(TerrineError) as error:
-                execution.execute(query)
+                if stream:
+                    execution.to_arrow_batches(query)
+                else:
+                    execution.execute(query)
             assert error.value.code == "terrine.execution.snapshot_unavailable"
     finally:
         con.close()

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from terrine.data import BoundCoverage, Coverage, UnitSource
 from terrine.errors import RefusalSpec
+from terrine.execution._metadata import metadata_operation
 from terrine.semantic.bind import _SCHEMA, bind_metric, normalize_source
 from terrine.semantic.io import load_catalog
 from terrine.semantic.models import BoundMetric, BoundSource, Catalog, RelationSpec, TableRef
@@ -89,6 +90,7 @@ class Model:
         object.__setattr__(self, "day_boundary", _boundary_function(catalog.day_boundary))
 
     @classmethod
+    @metadata_operation()
     def from_catalog(
         cls,
         path_or_catalog: str | Path | Catalog,
@@ -217,6 +219,7 @@ class Model:
 
         return backend_provider(self.con).sql(self.con, sql)
 
+    @metadata_operation()
     def _for_execution(
         self,
         context: ExecutionContext,

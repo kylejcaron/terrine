@@ -7,6 +7,7 @@ from typing import Literal
 
 import ibis
 
+from terrine.execution._metadata import metadata_operation
 from terrine.spec.design import Design
 
 LayerResolution = Literal["day", "event", "point", "period"]
@@ -75,6 +76,7 @@ def build_measure_layer(
     return sparse_prefix(grouped, measure, resolution=resolution)
 
 
+@metadata_operation()
 def build_layer(design: Design, model, key: LayerKey, *, relation_resolver=None) -> ibis.Table:
     """Build one compiler-planned anchor or measure-prefix relation."""
     from dataclasses import replace
@@ -134,6 +136,7 @@ def build_layer(design: Design, model, key: LayerKey, *, relation_resolver=None)
     )
 
 
+@metadata_operation()
 def plan_layers(design: Design, model) -> LayerPlan:
     """Describe compiler input layers for a design, without consulting runtime state."""
     from terrine.semantic.rules import calendar_average_alignment

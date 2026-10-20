@@ -20,6 +20,7 @@ import pyarrow as pa
 from terrine.data import Budget, ExecutionSnapshot
 from terrine.errors import RefusalSpec
 from terrine.execution import _native
+from terrine.execution._metadata import invalidate_metadata, metadata_fact, metadata_operation
 from terrine.semantic.models import Catalog, RelationSpec, TableRef
 from terrine.semantic.sql import admit_read_query
 
@@ -287,6 +288,7 @@ def _required_native_relations(
         return tuple(issuer.facts)
 
 
+@metadata_operation()
 def verify_immutable_inputs(
     catalog: Catalog,
     con: Any,
@@ -408,6 +410,7 @@ def _bind_native_resolver(
     return resolve
 
 
+@metadata_fact
 def _revalidate_backing(issuer: _Issuer, con: Any) -> None:
     _check_published_namespace(issuer)
     objects = _native.native_objects(issuer.raw)
@@ -422,7 +425,8 @@ def _revalidate_backing(issuer: _Issuer, con: Any) -> None:
             raise _INVALID.error(reason="published backing identity or generation changed")
     runtime = _native.raw_connection(con)
     if (
-        issuer.namespace is not None
+        runtime is not issuer.raw
+        and issuer.namespace is not None
         and _native._current_namespace(runtime)[0] != issuer.namespace[0]
     ):
         raise _INVALID.error(reason="execution database differs from the issued backing")
@@ -501,11 +505,10 @@ class ExecutionContext:
     _revalidate: Callable[[], None] | None = None
 
     def resolve(self, relation: RelationSpec) -> Any:
-        if self._revalidate is not None:
-            self._revalidate()
         return self._resolver(relation)
 
-    def _check_query(self, query: Any) -> None:
+    @metadata_operation()
+    def _check_query(self, query: Any) -> str:
         if self._revalidate is not None:
             self._revalidate()
         if self._raw is None:
@@ -517,10 +520,36 @@ class ExecutionContext:
                 reason="compiled query could not be inspected"
             ) from exc
         _native.check_native_functions(self._raw, sql, None)
+        return sql
 
     def execute(self, query: Any) -> pa.Table:
-        self._check_query(query)
-        return self.con.to_pyarrow(query)
+        from ibis.backends.duckdb.converter import DuckDBPyArrowData
+
+        sql = self._check_query(query)
+        try:
+            self.con._run_pre_execute_hooks(query)
+            if query.as_table().schema().geospatial:
+                self.con._load_extensions(["spatial"])
+        finally:
+            invalidate_metadata()
+        table = self._raw.sql(sql).to_arrow_table()
+        return query.__pyarrow_result__(table, data_mapper=DuckDBPyArrowData)
+
+    def to_arrow_batches(self, query: Any, *, chunk_size: int = 65_536) -> pa.RecordBatchReader:
+        """Stream the same SQL whose native function ownership was admitted."""
+        import pyarrow_hotfix  # noqa: F401
+
+        sql = self._check_query(query)
+        try:
+            self.con._run_pre_execute_hooks(query)
+        finally:
+            invalidate_metadata()
+        result = self.con.raw_sql(sql)
+
+        def batches():
+            yield from result.fetch_record_batch(rows_per_batch=chunk_size)
+
+        return pa.RecordBatchReader.from_batches(query.as_table().schema().to_pyarrow(), batches())
 
     def close(self) -> None:
         if self._raw is None:
@@ -558,6 +587,8 @@ def _open_native_execution(
                 _native.restore_semantic_settings(issuer.raw, raw)
                 _native.begin_owned_transaction(raw)
 
+            admitted: dict[str, Any] = {}
+
             def validate() -> None:
                 _validate_leased_binding(input_binding, catalog, con, private, units)
 
@@ -570,10 +601,14 @@ def _open_native_execution(
                 storage_name = issuer.root_names.get(key)
                 if storage_name is None:
                     raise _INVALID.error(reason="root has no issued stored-result substitution")
-                return private.table(
-                    storage_name,
-                    database=issuer.namespace,
-                )
+                if storage_name not in admitted:
+                    # Fully qualified backing tables are read-only; keep schemas only
+                    # for this execution, after validating the live binding above.
+                    admitted[storage_name] = private.table(
+                        storage_name,
+                        database=issuer.namespace,
+                    )
+                return admitted[storage_name]
 
             resolver = resolve_published
             validate()

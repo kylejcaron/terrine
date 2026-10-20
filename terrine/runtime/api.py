@@ -8,6 +8,7 @@ from typing import Any, Protocol
 import ibis
 
 from terrine.errors import RefusalSpec
+from terrine.execution._metadata import metadata_operation
 from terrine.runtime.backends.base import CostProvider, PublicationReceipt
 from terrine.runtime.cost import _AUTHORITY, ScanAuthorization, ScanEvidence, ScanPhase
 from terrine.runtime.events import read_run_events
@@ -569,8 +570,7 @@ class DesignExecutor:
                     )
             compiled = self._frame._active_compiled(compiled)
             summary = _eligibility_summary(compiled.audit_table, context.execute)
-            context._check_query(compiled.table)
-            reader = context.con.to_pyarrow_batches(compiled.table, chunk_size=65_536)
+            reader = context.to_arrow_batches(compiled.table, chunk_size=65_536)
             from terrine.runtime.arrow import ArrowOutput
 
             table = self._frame._normalize_output(pa.Table.from_batches([], schema=reader.schema))
@@ -698,12 +698,12 @@ class DesignExecutor:
         from terrine.runtime.arrow import ArrowOutput
 
         def read_layer(table):
-            context._check_query(table)
-            return context.con.to_pyarrow_batches(table, chunk_size=65_536)
+            return context.to_arrow_batches(table, chunk_size=65_536)
 
         reader = _persistable_layer(relation, read_layer)
         return ArrowOutput.write(reader, root=self._output_root)
 
+    @metadata_operation()
     def _execution_model(self, context: Any):
         from terrine.spec.validate import validate_design
 
