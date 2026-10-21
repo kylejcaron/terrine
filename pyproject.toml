@@ -20,6 +20,8 @@ terrine = "terrine.runtime.cli:main"
 
 [project.optional-dependencies]
 duckdb = ["ibis-framework[duckdb]>=11,<13", "duckdb==1.5.6"]
+# Ibis 11 PostgreSQL as-of lowering filters units after choosing the nearest row.
+postgres = ["ibis-framework[postgres]>=12,<13"]
 pandas = ["pandas>=2.2,<4"]
 polars = ["polars>=1.21,<2"]
 airflow = ["apache-airflow==3.3.2", "apache-airflow-providers-standard==1.20.1"]
@@ -58,9 +60,10 @@ packages = ["terrine"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --durations=0 --durations-min=5.0 -n 8 -m 'not scale'"
+addopts = "-ra --strict-markers --durations=0 --durations-min=5.0 -n 8 -m 'not scale and not postgres'"
 markers = [
     "scale: resource-bound scale, oracle and live-warehouse checks; scheduled tier only",
+    "postgres: live PostgreSQL probes; need TERRINE_TEST_POSTGRES_* settings",
     "handoffs: optional downstream library integration examples",
 ]
 

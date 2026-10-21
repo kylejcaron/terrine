@@ -1,4 +1,4 @@
-.PHONY: test test-scale lint typecheck fmt check complexity
+.PHONY: test test-scale test-postgres lint typecheck fmt check complexity
 
 TESTS ?= tests
 SCALE_TESTS ?= integration
@@ -10,6 +10,12 @@ test:
 # Scheduled scale tier: resource-bound scale, oracle and live-warehouse checks.
 test-scale:
 	uv run pytest $(SCALE_TESTS) -m scale
+
+# Live PostgreSQL probes; requires TERRINE_TEST_POSTGRES_* settings and fails
+# without them. `uv run python -m tests.integration.postgres_scratch` starts a
+# throwaway local server and prints the settings.
+test-postgres:
+	uv run pytest integration -m postgres
 
 lint:
 	uv run ruff check terrine tests integration
