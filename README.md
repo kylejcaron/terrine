@@ -271,6 +271,18 @@ except TerrineError as error:
 
 Window endpoints represent elapsed durations, not calendar dates.
 
+## Build directly from PostgreSQL
+
+With `terrine[postgres]`, a Model can bind an Ibis PostgreSQL connection and
+`Frame.materialize()` reads the source tables in one consistent read-only
+snapshot, without copying them out first. Counts, exact integer/decimal sums,
+as-of attributes and the panel and time-to-event shapes produce the same rows as
+DuckDB; averages, ratios and float windows refuse with a route. Staging and
+publishing Dataset generations stay on DuckDB.
+[`examples/postgres/dataset.py`](examples/postgres/dataset.py) is a complete
+example, and [backend compatibility](docs/guides/backend-compatibility.md#postgresql)
+lists exactly what is supported.
+
 ## Guides
 
 - [All guides and references](docs/guides/index.md)

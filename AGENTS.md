@@ -76,6 +76,13 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   `integration/.test_durations`. Tests without a stored time still run (they
   are assigned the average); after large changes refresh it with
   `uv run pytest integration --store-durations --durations-path integration/.test_durations`.
+- `make test-postgres` runs the live PostgreSQL probes (`@pytest.mark.postgres`,
+  deselected by default); they fail, never skip, without
+  `TERRINE_TEST_POSTGRES_*` settings. Start a throwaway local server with
+  `eval "$(uv run python -m tests.integration.postgres_scratch start)"` and stop it
+  with `uv run python -m tests.integration.postgres_scratch stop`. CI runs them
+  on every push against a PostgreSQL 16 service container. Each probe owns a
+  uniquely named schema; never share a warehouse namespace between tests.
 - The ordinary suite lists unit tests slower than 5 s (well above the 2 s
   target, so contention does not trip it); a healthy run lists none. Fix any
   listed test.

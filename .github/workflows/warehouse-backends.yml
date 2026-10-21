@@ -61,3 +61,6 @@ jobs:
           python-version: "3.13"
       - run: uv sync --locked --group dev --extra duckdb --extra postgres
       - run: make test-postgres
+      - run: uv run python examples/postgres/dataset.py
+        env:
+          TERRINE_POSTGRES_URL: postgres://postgres:terrine@localhost:5432/terrine_test

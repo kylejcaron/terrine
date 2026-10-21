@@ -1,11 +1,12 @@
 # Backend compatibility
 
 Terrine distinguishes verified execution from SQL compilation. Native local Ibis
-DuckDB is the execution provider. An unrecognized connection—including a raw
-driver connection or one that only declares `name = "duckdb"`—refuses before
-source schema access with `terrine.backend.capability_unavailable`; use a local
-Ibis DuckDB backend. Raw DuckDB connections remain valid for native runtime
-protocols; they are not Ibis relation/execution providers.
+DuckDB is the reference execution provider, and an Ibis PostgreSQL backend
+(`terrine[postgres]`, Ibis 12 or newer) materializes Frames directly from
+PostgreSQL tables. An unrecognized connection—including a raw driver connection
+or one that only declares `name = "duckdb"`—refuses before source schema access
+with `terrine.backend.capability_unavailable`. Raw DuckDB connections remain
+valid for native runtime protocols; they are not Ibis relation/execution providers.
 
 Execution and publication share an immutable capability record without making
 Model or the compiler depend on runtime. The provider preserves the caller-owned
@@ -17,10 +18,37 @@ connection remains open. A transaction view is **not** a durable replay snapshot
 Runtime DuckDB publication retains its fenced, transactional manifest switch;
 Ibis SQL compilation or DDL support alone does not establish publication safety.
 
-PostgreSQL, Snowflake and BigQuery execution are unverified. No paid warehouse,
-credentials or remote resources are accessed by the local workflow. Named dbt
-relation binding is owner-gated; an existing dbt recipe is not evidence of a
-reviewed relation-to-Catalog bridge.
+Snowflake and BigQuery execution are unverified. No paid warehouse, credentials or
+remote resources are accessed by the local workflow. Named dbt relation binding is
+owner-gated; an existing dbt recipe is not evidence of a reviewed relation-to-Catalog
+bridge.
+
+## PostgreSQL
+
+Each materialization opens a private connection with the caller's connection
+parameters and search path, sets `TimeZone` to UTC and reads in one
+`REPEATABLE READ READ ONLY` transaction, so every query sees one consistent
+snapshot. The caller's connection, and any transaction open on it, is never used
+or changed. Schemas of SQL relations are read without creating database objects.
+A query that calls a name also defined as a user function outside the system
+catalogs refuses.
+
+Supported: counts and exact integer/decimal sums over windows, as-of attributes,
+fixed, scheduled and event anchors, time-to-event shapes and observed state
+panels, with rows identical to the DuckDB reference
+([differential probes][postgres]). Timestamps are exact at PostgreSQL's native
+microsecond precision. Decimal columns need a declared `numeric(p, s)` with
+`p <= 38`; unconstrained `numeric` refuses with
+`terrine.semantic.decimal_scale_required` and NaN/infinite values with
+`terrine.backend.nonfinite_decimal`. Sums that do not fit the output type refuse
+with `terrine.temporal.exact_overflow`.
+
+Refused on PostgreSQL, with a route: averages, ratios and float-valued windows
+(`terrine.temporal.float64_unsupported`; PostgreSQL has no `nextafter` and its
+float-to-numeric conversion is not exact, so request a sum and a count and divide
+downstream, or use DuckDB); retained input capture, Dataset staging, publication
+and reopening (`terrine.backend.capability_unavailable`; these live in the DuckDB
+runtime).
 
 ## Operation evidence
 
@@ -54,11 +82,9 @@ Capabilities distinguish verified (`True`), unsupported (`False`), and unverifie
   cancellation support.
 
 `terrine.execution.backend.backend_capabilities(con)` inspects evidence without
-admitting the connection or reading source schema. PostgreSQL, Snowflake,
-BigQuery and unregistered backend connections return unverified operation values;
-attempting execution still refuses. No optional driver extra or runtime backend
-class is supplied without a real execution slice. Local PostgreSQL was not
-available (`pg_isready`: no response); no service was launched.
+admitting the connection or reading source schema. Snowflake, BigQuery and
+unregistered backend connections return unverified operation values; attempting
+execution still refuses.
 
 ## Python and dependency support
 
@@ -146,12 +172,12 @@ Python 3.14 distribution/tutorial checks above do not replace these operation te
 
 | Operation | Local DuckDB versions above | PostgreSQL | Snowflake | BigQuery | Route or limitation |
 | --- | --- | --- | --- | --- | --- |
-| Read-only dialect admission, relation identity | [Verified][provider] | Unverified | Unverified | Unverified | Use native local DuckDB; an Ibis dialect/name is not execution evidence |
-| Accepted UTC timestamps, exact decimals, strict t0 and SCD2 boundaries | [Verified][acceptance] | Unverified | Unverified | Unverified | Existing timestamp precision/domain and decimal overflow refusals remain active |
-| Private transaction view and owned-session cleanup | [Verified][provider] | Unverified | Unverified | Unverified | Does not promise a durable source snapshot or native query cancellation |
+| Read-only dialect admission, relation identity | [Verified][provider] | [Verified][postgres] | Unverified | Unverified | Use native local DuckDB or PostgreSQL; an Ibis dialect/name is not execution evidence |
+| Accepted UTC timestamps, exact decimals, strict t0 and SCD2 boundaries | [Verified][acceptance] | [Verified][postgres]; microsecond timestamps, declared `numeric(p, s)` | Unverified | Unverified | Existing timestamp precision/domain and decimal overflow refusals remain active |
+| Private transaction view and owned-session cleanup | [Verified][provider] | [Verified][postgres]; consistent `REPEATABLE READ` snapshot | Unverified | Unverified | Does not promise a durable source snapshot or native query cancellation |
 | Retained immutable inputs and pinned generation reads | [Verified][acceptance] | Unverified | Unverified | Unverified | Use the owner-retained snapshot receipt; native source revisions remain unknown |
 | Table publication and atomic fenced manifest switch | [Verified][publication] | Unverified | Unverified | Unverified | Materialize a bounded Frame if publication is unavailable |
-| Bounded Arrow batch reads | [Verified][acceptance] | Unverified | Unverified | Unverified | Requires independent Arrow-batch evidence |
+| Bounded Arrow batch reads | [Verified][acceptance] | [Verified][postgres] | Unverified | Unverified | Requires independent Arrow-batch evidence |
 | Local Parquet streaming and metadata readback | [Verified][handoffs] | Unverified | Unverified | Unverified | Bounded Arrow/PyArrow path; caller-owned local destination only |
 | Output row/byte limits | [Verified][exports] | Unverified | Unverified | Unverified | Do not certify source scan work or peak query memory |
 | Native durable/replay snapshot | Unsupported | Unverified | Unverified | Unverified | Use retained immutable capture, not a transaction-view claim |
@@ -160,11 +186,12 @@ Python 3.14 distribution/tutorial checks above do not replace these operation te
 | Native query cancellation | Unverified | Unverified | Unverified | Unverified | Cooperative runtime cancellation remains distinct |
 | Native Parquet unload | Unverified | Unverified | Unverified | Unverified | Use verified local Arrow streaming instead |
 
-No PostgreSQL server/driver execution was exercised. Snowflake/BigQuery remain
-owner-gated; no warehouse versions, auth integrations or paid-resource support are
-claimed. Unknown backends refuse with an actionable local route before schema or
-source access. The [operation-gate tests][gates] separately prove that missing
-publication, retained capture or Arrow evidence does not disable unrelated work.
+Snowflake/BigQuery remain owner-gated; no warehouse versions, auth integrations or
+paid-resource support are claimed. PostgreSQL evidence was measured on
+PostgreSQL 16. Unknown backends refuse with an actionable local route before
+schema or source access. The [operation-gate tests][gates] separately prove that
+missing publication, retained capture or Arrow evidence does not disable unrelated
+work.
 
 | Common-stack component | Measured version | Exercised contract |
 | --- | --- | --- |
@@ -191,3 +218,4 @@ without increment; unsupported semantic mappings are listed separately in the
 [distribution]: ../../tests/integration/distribution_smoke.py
 [sketches]: ../../tests/temporal/test_sketches.py
 [libraries]: library-handoffs.md
+[postgres]: ../../integration/warehouse_execution/test_postgres_windows.py
