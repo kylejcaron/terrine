@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from importlib.metadata import version
 from typing import Any, Literal, cast
 
@@ -42,18 +44,64 @@ type Float64Failure = Literal[
     "tolerance",
 ]
 
-# These are native builtin bindings, not Python row functions. BIGNUM remains internal.
+# These are native builtin bindings, not Python row functions. The exact type stays
+# internal: DuckDB BIGNUM, or PostgreSQL's arbitrary-precision NUMERIC.
 _EXACT = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
+_PG_EXACT = dt.Unknown(raw_type=sge.DataType.build("NUMERIC", dialect="postgres"))
+_EXACT_DIALECT: ContextVar[str] = ContextVar("terrine_exact_dialect", default="duckdb")
+
+
+@contextmanager
+def exact_dialect(dialect: str) -> Generator[None]:
+    """Build exact state for ``dialect`` while compiling one Design."""
+    token = _EXACT_DIALECT.set(dialect.casefold())
+    try:
+        yield
+    finally:
+        _EXACT_DIALECT.reset(token)
+
+
+def _postgres() -> bool:
+    return _EXACT_DIALECT.get() == "postgres"
+
+
+def exact_type() -> dt.DataType:
+    return _PG_EXACT if _postgres() else _EXACT
+
+
+def is_exact_type(dtype: dt.DataType) -> bool:
+    """Whether ``dtype`` is an internal exact-state type on any backend."""
+    return dtype in (_EXACT, _PG_EXACT)
 
 
 @ibis.udf.agg.builtin(name="sum", signature=((_EXACT,), _EXACT))
-def exact_sum(value):
+def _duckdb_exact_sum(value):
     """Native exact coefficient/count sum."""
 
 
 @ibis.udf.scalar.builtin(name="subtract", signature=((_EXACT, _EXACT), _EXACT))
-def exact_subtract(left, right):
+def _duckdb_exact_subtract(left, right):
     """Native exact coefficient/count subtraction."""
+
+
+@ibis.udf.agg.builtin(name="sum", signature=((_PG_EXACT,), _PG_EXACT))
+def _pg_exact_sum(value):
+    """PostgreSQL exact NUMERIC sum."""
+
+
+@ibis.udf.scalar.builtin(
+    name="numeric_sub", database="pg_catalog", signature=((_PG_EXACT, _PG_EXACT), _PG_EXACT)
+)
+def _pg_exact_subtract(left, right):
+    """PostgreSQL exact NUMERIC subtraction."""
+
+
+def exact_sum(value):
+    return _pg_exact_sum(value) if _postgres() else _duckdb_exact_sum(value)
+
+
+def exact_subtract(left, right):
+    return _pg_exact_subtract(left, right) if _postgres() else _duckdb_exact_subtract(left, right)
 
 
 @ibis.udf.scalar.builtin(name="nextafter", signature=((dt.float64, dt.float64), dt.float64))
@@ -92,16 +140,22 @@ def _divide(left, right):
 
 def exact_literal(value: int):
     """Construct an exact native integer without an inferred fixed-width literal."""
-    return ibis.literal(str(value)).cast(_EXACT)
+    return ibis.literal(str(value)).cast(exact_type())
 
 
 def _require_backend(table: ibis.Table, *, floating: bool = False) -> None:
-    """Check static backend/build metadata; never run a capability query here."""
+    """Check static backend/build metadata; never run a capability query here.
+
+    PostgreSQL supports exact integer/decimal state; its float certificates are
+    unverified (no ``nextafter``; float8 to NUMERIC is not an exact conversion).
+    """
     try:
         backend = table._find_backend(use_default=False).name
     except IbisError:
         backend = "unbound"
-    supported = backend == "duckdb" and version("duckdb") == "1.5.6"
+    supported = (backend == "duckdb" and version("duckdb") == "1.5.6") or (
+        backend == "postgres" and not floating and _postgres()
+    )
     if not supported:
         if floating:
             raise FLOAT64_UNSUPPORTED.error(

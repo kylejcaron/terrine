@@ -36,11 +36,9 @@ def _allocate(used: set[str], stem: str) -> str:
 
 
 def _numeric(dtype: dt.DataType) -> bool:
-    return dtype.is_numeric() or (
-        isinstance(dtype, dt.Unknown)
-        and dtype.raw_type is not None
-        and str(dtype.raw_type).upper() == "BIGNUM"
-    )
+    from terrine.temporal.prefix import is_exact_type
+
+    return dtype.is_numeric() or is_exact_type(dtype)
 
 
 def lookup_prefix(

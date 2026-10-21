@@ -31,6 +31,25 @@ def compile_design(
     persisted_anchors: ibis.Table | None = None,
 ) -> CompiledStudy:
     """Compile a shape, propagating supported verified logical substitutions."""
+    from terrine.temporal.prefix import exact_dialect
+
+    # The Catalog dialect was matched to the execution backend when the Model was bound.
+    with exact_dialect(model.catalog.dialect):
+        return _compile_design(
+            design,
+            model,
+            persisted_prefixes=persisted_prefixes,
+            persisted_anchors=persisted_anchors,
+        )
+
+
+def _compile_design(
+    design: Design,
+    model: Model,
+    *,
+    persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None = None,
+    persisted_anchors: ibis.Table | None = None,
+) -> CompiledStudy:
     if persisted_prefixes is not None or persisted_anchors is not None:
         ensure_runtime_shape_supported(design.shape)
     if isinstance(design.shape, EventSequence):

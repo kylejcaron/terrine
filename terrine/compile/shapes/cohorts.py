@@ -12,7 +12,13 @@ from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
 from terrine.spec.trajectory import CohortGrouping
 from terrine.temporal._timestamps import _backend, timestamp_parts
-from terrine.temporal.aggregate import _EXACT_OVERFLOW, _Check, _Failure, _scaled_text
+from terrine.temporal.aggregate import (
+    _EXACT_OVERFLOW,
+    _Check,
+    _Failure,
+    _scaled_text,
+    narrow_exact,
+)
 from terrine.temporal.prefix import (
     FLOAT64_PRECISION,
     _isfinite,
@@ -102,7 +108,7 @@ def compile_cohorts(
             _total=exact_sum(exact_coefficient),
             _total_count=total_inputs._value.notnull().cast("int64").sum(),
         )
-        decimal_total = _scaled_text(total_state._total, scale).try_cast(numeric_type)
+        decimal_total = narrow_exact(total_state._total, scale, numeric_type)
         total_state = total_state.mutate(
             _total_value=decimal_total,
             _total_unrepresentable=(total_state._total_count > 0) & decimal_total.isnull(),

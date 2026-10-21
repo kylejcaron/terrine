@@ -35,6 +35,7 @@ from terrine.temporal.prefix import (
     _divide,
     _isfinite,
     _outward,
+    _postgres,
     _require_backend,
     _subtract,
     exact_literal,
@@ -188,6 +189,28 @@ def _scaled_text(coefficient, scale: int):
         + "."
         + digits.substr(digits.length() - scale)
     )
+
+
+def narrow_exact(coefficient, scale: int, target: str | dt.DataType):
+    """Convert an exact coefficient to ``target``; NULL when it does not fit.
+
+    PostgreSQL lowers TRY_CAST to an ordinary CAST that aborts the transaction on
+    overflow, so the range is checked on the exact coefficient before casting.
+    """
+    text = _scaled_text(coefficient, scale)
+    if not _postgres():
+        return text.try_cast(target)
+    target_type = dt.dtype(target)
+    if isinstance(target_type, dt.SignedInteger):
+        bits = target_type.nbytes * 8
+        low, high = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
+    elif isinstance(target_type, dt.Decimal) and target_type.precision is not None:
+        low, high = -(10**target_type.precision) + 1, 10**target_type.precision - 1
+    else:
+        # An unbounded NUMERIC target cannot overflow.
+        return text.cast(target_type)
+    fits = (coefficient >= exact_literal(low)) & (coefficient <= exact_literal(high))
+    return fits.ifelse(text.cast(target_type), ibis.null().cast(target_type))
 
 
 def _aligned(timestamp, minutes: int):
@@ -654,7 +677,7 @@ def aggregate_window(
         target = "int64" if quantity.count else dt.Decimal(38, quantity.scale)
         value = builder.put(
             "exact_output",
-            _scaled_text(builder.col(quantity.value), quantity.scale).try_cast(target),
+            narrow_exact(builder.col(quantity.value), quantity.scale, target),
         )
         overflow = builder.put(
             "exact_overflow",
