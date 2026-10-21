@@ -33,6 +33,12 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Groups are balanced from integration/.test_durations; tests without a
+        # stored duration get the average and are still assigned to a group.
+        group: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -42,8 +48,13 @@ jobs:
         with:
           python-version: "3.13"
       - run: uv sync --locked --group dev --all-extras
-      - run: uv run python -m tests.integration.study_api_smoke
-      - run: uv run pytest -q integration
+      - if: matrix.group == 1
+        run: uv run python -m tests.integration.study_api_smoke
+      - run: >-
+          uv run pytest -q integration
+          --splits 4 --group ${{ matrix.group }}
+          --splitting-algorithm least_duration
+          --durations-path integration/.test_durations
   docs-and-examples:
     runs-on: ubuntu-latest
     timeout-minutes: 30

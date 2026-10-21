@@ -72,6 +72,10 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   `integration/` default); `make complexity` reports without gating. The
   integration tier, the smoke script and examples run in CI on every push and
   before merges; the scale tier runs nightly and on demand.
+- CI splits the integration tier into balanced groups from
+  `integration/.test_durations`. Tests without a stored time still run (they
+  are assigned the average); after large changes refresh it with
+  `uv run pytest integration --store-durations --durations-path integration/.test_durations`.
 - The ordinary suite lists unit tests slower than 5 s (well above the 2 s
   target, so contention does not trip it); a healthy run lists none. Fix any
   listed test.
