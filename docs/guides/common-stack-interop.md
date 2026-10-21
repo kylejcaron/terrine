@@ -82,8 +82,10 @@ pinned Dataset; an earlier reference remains attached to its earlier generation.
 
 Consumers that strip Arrow metadata must keep the manifests separately. Loading
 Parquet into a consumer dataframe does not recreate Terrine semantics by column
-name. External object stores and authentication integrations are owner-gated;
-this workflow writes only caller-owned local files.
+name. Terrine writes only caller-owned local files and does not write to cloud
+object stores. To use the output from S3, GCS or Azure, copy the Parquet shards
+together with both manifests to the bucket; the copy carries no atomic
+publication guarantee of its own.
 
 ## Semantic inputs
 
