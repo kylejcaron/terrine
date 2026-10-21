@@ -31,10 +31,9 @@ def compile_design(
     persisted_anchors: ibis.Table | None = None,
 ) -> CompiledStudy:
     """Compile a shape, propagating supported verified logical substitutions."""
-    from terrine.temporal.prefix import exact_dialect
+    from terrine.compile.columns import exact_scope
 
-    # The Catalog dialect was matched to the execution backend when the Model was bound.
-    with exact_dialect(model.catalog.dialect):
+    with exact_scope(model):
         return _compile_design(
             design,
             model,

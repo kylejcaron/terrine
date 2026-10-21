@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unicodedata
 from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from importlib.metadata import version as package_version
@@ -68,6 +69,7 @@ from terrine.temporal.nonadditive import (
     aggregate_nonadditive_window,
     approximate_quantile_window_values,
 )
+from terrine.temporal.prefix import exact_dialect
 from terrine.temporal.ranges import RangePlan
 
 if TYPE_CHECKING:
@@ -238,6 +240,14 @@ def resolve_sketch_sidecars(table: pa.Table, compiled: CompiledStudy, con) -> pa
             index = table.schema.get_field_index(output)
             table = table.set_column(index, output, pa.array(values, type=pa.float64()))
     return table
+
+
+def exact_scope(model: Model) -> AbstractContextManager[None]:
+    """Build exact window state for the Model's backend while compiling.
+
+    The Catalog dialect was matched to the execution backend when the Model was bound.
+    """
+    return exact_dialect(model.catalog.dialect)
 
 
 def compile_columns(
