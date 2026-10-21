@@ -107,6 +107,11 @@ jobs:
       - run: uv sync --group dev --extra duckdb --extra pandas --extra sketches
       - run: uv run pytest tests/temporal/test_sketches.py tests/spec/test_sketch_refusal.py tests/compile/test_nonadditive.py -q
 
+  postgres:
+    uses: ./.github/workflows/warehouse-backends.yml
+    with:
+      backend_mode: postgres
+
   increment-compatibility:
     runs-on: ubuntu-latest
     steps:
