@@ -268,216 +268,6 @@ def test_panel_baseline_and_per_origin_feature_cutoffs_are_distinct(panel_model)
     assert compiled.expression_timings["baseline"].point_time_column == "__terrine_panel_start"
 
 
-@pytest.mark.slow
-def test_baseline_is_computed_for_delayed_entry_at_panel_start(native_inputs):
-    import pyarrow as pa
-
-    catalog, con = native_inputs
-    con.create_table(
-        "events",
-        pa.table(
-            {
-                "user_id": ["a", "b"],
-                "ts": [
-                    datetime(2025, 1, 2, tzinfo=UTC),
-                    datetime(2025, 1, 2, tzinfo=UTC),
-                ],
-                "event_id": ["a0", "b1"],
-                "alternate_event_id": ["a0", "b1"],
-            }
-        ),
-        overwrite=True,
-    )
-    con.create_table(
-        "users",
-        pa.table(
-            {
-                "user_id": ["a", "b"],
-                "entered_at": [
-                    datetime(2025, 1, 1, tzinfo=UTC),
-                    datetime(2025, 1, 4, tzinfo=UTC),
-                ],
-            }
-        ),
-        overwrite=True,
-    )
-    model = Model.from_catalog(
-        catalog,
-        con=con,
-        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
-        units={"user": UnitSource("users", "user_id", entered_at="entered_at")},
-    )
-    design = Design(
-        "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
-        features={"origin": agg("sessions", window=("-1d", "0d"))},
-        shape=StatePanel(
-            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            baseline_features={"baseline": agg("sessions", window=("-1d", "0d"))},
-            max_periods=2,
-        ),
-    )
-    materialized = design.build(model).materialize(Budget(max_rows=10, max_output_bytes=100_000))
-    restored = type(materialized).from_arrow(materialized.to_arrow())
-    rows = materialized.table.to_pylist()
-    entrant = next(row for row in rows if row["unit"] == "b" and row["period_index"] == 1)
-    assert entrant["baseline"] == 1
-    assert entrant["origin"] == 0
-    assert restored.provenance.feature_cutoffs["baseline"].reference == "panel_start"
-    assert restored.provenance.feature_cutoffs["origin"].reference == "row_t0"
-    assert entrant[materialized.columns["baseline"].complete_column] is True
-
-
-@pytest.mark.slow
-def test_binned_response_remains_complete_at_membership_exit(native_inputs):
-    import pyarrow as pa
-
-    catalog, con = native_inputs
-    con.create_table(
-        "users",
-        pa.table(
-            {
-                "user_id": ["a", "b"],
-                "exited_at": [
-                    datetime(2025, 1, 4, tzinfo=UTC),
-                    datetime(2025, 1, 10, tzinfo=UTC),
-                ],
-            }
-        ),
-        overwrite=True,
-    )
-    model = Model.from_catalog(
-        catalog,
-        con=con,
-        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
-        units={"user": UnitSource("users", "user_id", exited_at="exited_at")},
-    )
-    design = Design(
-        "user",
-        Schedule("1d", "2025-01-03", "2025-01-04"),
-        shape=StatePanel(
-            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=1,
-        ),
-    )
-    rows = (
-        design.build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
-        .table.to_pylist()
-    )
-    row = next(row for row in rows if row["unit"] == "a")
-    assert row["to_state"] == "some"
-    assert row["to_state_complete"] is True
-
-
-@pytest.mark.slow
-def test_binned_missing_period_sides_and_unit_end_exclusivity(native_inputs):
-    import pyarrow as pa
-
-    catalog, con = native_inputs
-    con.create_table(
-        "users",
-        pa.table(
-            {
-                "user_id": ["a", "b"],
-                "observed_from": [
-                    datetime(2025, 1, 3, tzinfo=UTC),
-                    datetime(2025, 1, 1, tzinfo=UTC),
-                ],
-                "observed_until": [
-                    datetime(2025, 1, 10, tzinfo=UTC),
-                    datetime(2025, 1, 3, tzinfo=UTC),
-                ],
-            }
-        ),
-        overwrite=True,
-    )
-    model = Model.from_catalog(
-        catalog,
-        con=con,
-        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
-        units={
-            "user": UnitSource(
-                "users", "user_id", observed_from="observed_from", observed_until="observed_until"
-            )
-        },
-    )
-    design = Design(
-        "user",
-        Schedule("1d", "2025-01-03", "2025-01-04"),
-        shape=StatePanel(
-            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=1,
-        ),
-    )
-    rows = (
-        design.build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
-        .table.to_pylist()
-    )
-    by_unit = {row["unit"]: row for row in rows}
-    assert by_unit["a"]["from_state_complete"] is False
-    assert by_unit["a"]["to_state_complete"] is True
-    assert by_unit["b"]["from_state_complete"] is True
-    assert by_unit["b"]["to_state_complete"] is False
-
-
-@pytest.mark.slow
-@pytest.mark.parametrize(
-    ("terminal_time", "range_start"),
-    [
-        (datetime(2025, 1, 2, tzinfo=UTC), None),
-        (datetime(2025, 1, 4, tzinfo=UTC), "2025-01-04"),
-    ],
-)
-def test_terminal_is_found_before_panel_or_anchor_range_filter(
-    observed_model_factory, terminal_time, range_start
-):
-    from terrine.spec import AnchorRange
-
-    model = observed_model_factory([("a", terminal_time, "closed")])
-    design = _observed_design()
-    if range_start is not None:
-        design = Design(
-            design.unit,
-            design.anchor,
-            shape=design.shape,
-            anchor_range=AnchorRange(start=range_start),
-        )
-    rows = (
-        design.build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
-        .table.to_pylist()
-    )
-    assert not [row for row in rows if row["unit"] == "a"]
-
-
-@pytest.mark.slow
-@pytest.mark.parametrize(
-    "observations",
-    [
-        [
-            ("a", datetime(2025, 1, 3, tzinfo=UTC), "active"),
-            ("a", datetime(2025, 1, 3, tzinfo=UTC), "active"),
-        ],
-        [
-            (None, datetime(2025, 1, 3, tzinfo=UTC), "active"),
-            ("b", datetime(2025, 1, 4, tzinfo=UTC), "active"),
-        ],
-        [
-            ("a", None, "active"),
-            ("b", datetime(2025, 1, 4, tzinfo=UTC), "active"),
-        ],
-        [("a", datetime(2025, 1, 3, tzinfo=UTC), "unknown")],
-    ],
-)
-def test_observation_key_and_level_integrity_refuses(observed_model_factory, observations):
-    model = observed_model_factory(observations)
-    with pytest.raises(TerrineError) as error:
-        _observed_design().build(model).materialize(Budget(max_rows=10, max_output_bytes=100_000))
-    assert error.value.code == "terrine.state_panel.invalid_observations"
-
-
 def test_binned_state_periods_ignore_covariate_gap(panel_model):
     from terrine.compile.shapes.state_panel import compile_state_panel
 
@@ -522,24 +312,6 @@ def test_state_panel_rejects_generated_status_name_collisions(panel_model, name)
     with pytest.raises(TerrineError) as error:
         design.build(panel_model)
     assert error.value.code == "terrine.spec.reserved_output_name"
-
-
-@pytest.mark.slow
-def test_known_null_after_absorption_does_not_count_as_recovery(observed_model_factory):
-    model = observed_model_factory(
-        [
-            ("a", datetime(2025, 1, 3, tzinfo=UTC), "active"),
-            ("a", datetime(2025, 1, 4, tzinfo=UTC), "closed"),
-            ("a", datetime(2025, 1, 5, tzinfo=UTC), None),
-        ]
-    )
-    rows = (
-        _observed_design()
-        .build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
-        .table.to_pylist()
-    )
-    assert len([row for row in rows if row["unit"] == "a"]) == 1
 
 
 def test_float_bin_certificate_rounds_upper_endpoint_outward():
@@ -609,14 +381,308 @@ def test_state_panel_refuses_partial_schedule_and_unsupported_designs(panel_mode
     assert error.value.code == expected
 
 
-@pytest.mark.slow
+def test_float_metric_rejects_integer_cutpoint_outside_float64_range():
+    import ibis.expr.datatypes as dt
+
+    from terrine.compile.shapes.state_panel import _cut_literal
+
+    with pytest.raises(TerrineError) as error:
+        _cut_literal(10**400, dt.float64)
+    assert error.value.code == "terrine.state_panel.unsupported_combination"
+
+
+def test_observed_state_property_must_be_source_owned(panel_model):
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-03", "2025-01-05"),
+        shape=StatePanel(
+            StateObservations("not_a_property", ("active", "closed")),
+            max_periods=2,
+        ),
+    )
+    with pytest.raises(TerrineError) as error:
+        design.validate(panel_model)
+    assert error.value.code == "terrine.state_panel.invalid_state_source"
+
+
+def test_state_panel_rejects_schedule_over_cap_with_owned_refusal(panel_model):
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-03", "2025-01-06"),
+        shape=StatePanel(
+            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
+            max_periods=2,
+        ),
+    )
+    with pytest.raises(TerrineError) as error:
+        design.validate(panel_model)
+    assert error.value.code == "terrine.state_panel.invalid_schedule"
+
+
 @pytest.mark.parametrize(
-    ("cut", "ambiguous"),
+    "budget",
     [
-        (float.fromhex("0x1.0000000000001p+0"), True),
-        (Decimal("0.1"), False),
+        Budget(max_rows=10),
+        Budget(max_rows=0, max_output_bytes=100_000),
+        Budget(max_rows=10, max_output_bytes=0),
+        Budget(max_output_bytes=100_000),
     ],
 )
+def test_state_panel_materialization_requires_positive_row_and_byte_budgets(panel_model, budget):
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-03", "2025-01-05"),
+        shape=StatePanel(
+            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
+            max_periods=2,
+        ),
+    )
+    with pytest.raises(TerrineError) as error:
+        design.build(panel_model).materialize(budget)
+    assert error.value.code == "terrine.state_panel.budget_required"
+
+
+def _observed_design(*, absorbing=("closed",)):
+    from terrine.spec import StateObservations
+
+    return Design(
+        "user",
+        Schedule("1d", "2025-01-03", "2025-01-05"),
+        shape=StatePanel(
+            StateObservations("state", ("active", "closed"), absorbing=absorbing),
+            max_periods=2,
+        ),
+    )
+
+
+def test_binned_classifier_preserves_huge_decimal_cuts_and_lower_equality():
+    from decimal import Decimal
+
+    import ibis
+    import pyarrow as pa
+
+    from terrine.compile.shapes.state_panel import _label
+    from terrine.data import ColumnMeta
+
+    lower = Decimal(2**80)
+    upper = lower + Decimal(1)
+    state = BinnedMetricState("sessions", (lower, upper), ("low", "mid", "high"))
+    meta = ColumnMeta(None, "state", None, None, None, None, numeric_policy="exact")
+    values = pa.array([lower, upper, upper + 1], type=pa.decimal128(30, 0))
+    relation = ibis.memtable(pa.table({"_state_period": values}))
+    labels = relation.select(label=_label(relation, state, meta))
+    con = ibis.duckdb.connect()
+    try:
+        assert con.execute(labels)["label"].tolist() == ["low", "mid", "high"]
+    finally:
+        con.disconnect()
+
+
+def test_binned_classifier_refuses_a_float_certificate_spanning_a_cut():
+    import ibis
+    import pandas as pd
+    import pyarrow as pa
+
+    from terrine.compile.shapes.state_panel import _state_value
+    from terrine.data import ColumnMeta
+
+    state = BinnedMetricState("sessions", (0.0,), ("low", "high"))
+    meta = ColumnMeta(
+        None,
+        "state",
+        None,
+        None,
+        "__terrine_state_complete",
+        "__terrine_state_reason",
+        numeric_policy="checked_float64_v1",
+        absolute_error_column="error",
+    )
+    relation = ibis.memtable(
+        pa.table(
+            {
+                "_state_period": pa.array([0.0]),
+                "error": pa.array([0.01]),
+                "__terrine_state_complete": pa.array([True]),
+                "__terrine_state_reason": pa.array([None], type=pa.string()),
+            }
+        )
+    )
+    value, complete, reason = _state_value(relation, state, meta)
+    classified = relation.select(value=value, complete=complete, reason=reason)
+    con = ibis.duckdb.connect()
+    try:
+        result = con.execute(classified).iloc[0]
+        assert pd.isna(result["value"])
+        assert not result["complete"]
+        assert result["reason"] == "ambiguous_state_bin"
+    finally:
+        con.disconnect()
+
+
+def test_binned_response_remains_complete_at_membership_exit(native_inputs):
+    import pyarrow as pa
+
+    catalog, con = native_inputs
+    con.create_table(
+        "users",
+        pa.table(
+            {
+                "user_id": ["a", "b"],
+                "exited_at": [
+                    datetime(2025, 1, 4, tzinfo=UTC),
+                    datetime(2025, 1, 10, tzinfo=UTC),
+                ],
+            }
+        ),
+        overwrite=True,
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
+        units={"user": UnitSource("users", "user_id", exited_at="exited_at")},
+    )
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-03", "2025-01-04"),
+        shape=StatePanel(
+            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
+            max_periods=1,
+        ),
+    )
+    rows = (
+        design.build(model)
+        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .table.to_pylist()
+    )
+    row = next(row for row in rows if row["unit"] == "a")
+    assert row["to_state"] == "some"
+    assert row["to_state_complete"] is True
+
+
+def test_binned_missing_period_sides_and_unit_end_exclusivity(native_inputs):
+    import pyarrow as pa
+
+    catalog, con = native_inputs
+    con.create_table(
+        "users",
+        pa.table(
+            {
+                "user_id": ["a", "b"],
+                "observed_from": [
+                    datetime(2025, 1, 3, tzinfo=UTC),
+                    datetime(2025, 1, 1, tzinfo=UTC),
+                ],
+                "observed_until": [
+                    datetime(2025, 1, 10, tzinfo=UTC),
+                    datetime(2025, 1, 3, tzinfo=UTC),
+                ],
+            }
+        ),
+        overwrite=True,
+    )
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
+        units={
+            "user": UnitSource(
+                "users", "user_id", observed_from="observed_from", observed_until="observed_until"
+            )
+        },
+    )
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-03", "2025-01-04"),
+        shape=StatePanel(
+            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
+            max_periods=1,
+        ),
+    )
+    rows = (
+        design.build(model)
+        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .table.to_pylist()
+    )
+    by_unit = {row["unit"]: row for row in rows}
+    assert by_unit["a"]["from_state_complete"] is False
+    assert by_unit["a"]["to_state_complete"] is True
+    assert by_unit["b"]["from_state_complete"] is True
+    assert by_unit["b"]["to_state_complete"] is False
+
+
+@pytest.mark.parametrize(
+    ("terminal_time", "range_start"),
+    [
+        (datetime(2025, 1, 2, tzinfo=UTC), None),
+        (datetime(2025, 1, 4, tzinfo=UTC), "2025-01-04"),
+    ],
+)
+def test_terminal_is_found_before_panel_or_anchor_range_filter(
+    observed_model_factory, terminal_time, range_start
+):
+    from terrine.spec import AnchorRange
+
+    model = observed_model_factory([("a", terminal_time, "closed")])
+    design = _observed_design()
+    if range_start is not None:
+        design = Design(
+            design.unit,
+            design.anchor,
+            shape=design.shape,
+            anchor_range=AnchorRange(start=range_start),
+        )
+    rows = (
+        design.build(model)
+        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .table.to_pylist()
+    )
+    assert not [row for row in rows if row["unit"] == "a"]
+
+
+@pytest.mark.parametrize(
+    "observations",
+    [
+        [
+            ("a", datetime(2025, 1, 3, tzinfo=UTC), "active"),
+            ("a", datetime(2025, 1, 3, tzinfo=UTC), "active"),
+        ],
+        [
+            (None, datetime(2025, 1, 3, tzinfo=UTC), "active"),
+            ("b", datetime(2025, 1, 4, tzinfo=UTC), "active"),
+        ],
+        [
+            ("a", None, "active"),
+            ("b", datetime(2025, 1, 4, tzinfo=UTC), "active"),
+        ],
+        [("a", datetime(2025, 1, 3, tzinfo=UTC), "unknown")],
+    ],
+)
+def test_observation_key_and_level_integrity_refuses(observed_model_factory, observations):
+    model = observed_model_factory(observations)
+    with pytest.raises(TerrineError) as error:
+        _observed_design().build(model).materialize(Budget(max_rows=10, max_output_bytes=100_000))
+    assert error.value.code == "terrine.state_panel.invalid_observations"
+
+
+def test_known_null_after_absorption_does_not_count_as_recovery(observed_model_factory):
+    model = observed_model_factory(
+        [
+            ("a", datetime(2025, 1, 3, tzinfo=UTC), "active"),
+            ("a", datetime(2025, 1, 4, tzinfo=UTC), "closed"),
+            ("a", datetime(2025, 1, 5, tzinfo=UTC), None),
+        ]
+    )
+    rows = (
+        _observed_design()
+        .build(model)
+        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
+        .table.to_pylist()
+    )
+    assert len([row for row in rows if row["unit"] == "a"]) == 1
+
+
+@pytest.mark.parametrize(("cut", "ambiguous"), [(Decimal("0.1"), False)])
 def test_float_metric_cut_precision_and_near_boundary(native_inputs, cut, ambiguous):
     import pyarrow as pa
 
@@ -685,7 +751,6 @@ def test_float_metric_cut_precision_and_near_boundary(native_inputs, cut, ambigu
     assert row["to_state_reason"] == "ambiguous_state_bin"
 
 
-@pytest.mark.slow
 def test_binned_state_preserves_metric_null_reasons():
     import ibis
     import pyarrow as pa
@@ -723,122 +788,9 @@ def test_binned_state_preserves_metric_null_reasons():
     ]
 
 
-@pytest.mark.slow
-def test_binned_panel_retains_named_eligibility_column(panel_model):
-    from terrine.compile.dispatch import compile_design
-    from terrine.spec import gt
-
-    design = Design(
-        "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
-        eligibility={"has_history": gt(agg("sessions", window=("-1d", "0d")), 0)},
-        shape=StatePanel(
-            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=2,
-        ),
-    )
-    compiled = compile_design(design, panel_model)
-    assert "has_history" in compiled.audit_table.columns
-    materialized = design.build(panel_model).materialize(
-        Budget(max_rows=10, max_output_bytes=100_000)
-    )
-    assert materialized.table["has_history"].to_pylist() == [True, True]
-
-
-@pytest.mark.slow
-def test_observed_panel_retains_named_eligibility_column(observed_model_factory):
-    from terrine.compile.dispatch import compile_design
-    from terrine.spec import StateObservations, gt
-
-    model = observed_model_factory(
-        [
-            ("a", datetime(2025, 1, 3, tzinfo=UTC), "active"),
-            ("a", datetime(2025, 1, 4, tzinfo=UTC), "active"),
-        ]
-    )
-    design = Design(
-        "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
-        eligibility={"has_history": gt(agg("sessions", window=("-1d", "0d")), 0)},
-        shape=StatePanel(
-            StateObservations("state", ("active", "closed")),
-            max_periods=2,
-        ),
-    )
-    compiled = compile_design(design, model)
-    assert "has_history" in compiled.audit_table.columns
-    materialized = design.build(model).materialize(Budget(max_rows=10, max_output_bytes=100_000))
-    assert materialized.table["has_history"].to_pylist() == [True, True]
-
-
-def test_float_metric_rejects_integer_cutpoint_outside_float64_range():
-    import ibis.expr.datatypes as dt
-
-    from terrine.compile.shapes.state_panel import _cut_literal
-
-    with pytest.raises(TerrineError) as error:
-        _cut_literal(10**400, dt.float64)
-    assert error.value.code == "terrine.state_panel.unsupported_combination"
-
-
-def test_observed_state_property_must_be_source_owned(panel_model):
-    design = Design(
-        "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
-        shape=StatePanel(
-            StateObservations("not_a_property", ("active", "closed")),
-            max_periods=2,
-        ),
-    )
-    with pytest.raises(TerrineError) as error:
-        design.validate(panel_model)
-    assert error.value.code == "terrine.state_panel.invalid_state_source"
-
-
-def test_state_panel_rejects_schedule_over_cap_with_owned_refusal(panel_model):
-    design = Design(
-        "user",
-        Schedule("1d", "2025-01-03", "2025-01-06"),
-        shape=StatePanel(
-            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=2,
-        ),
-    )
-    with pytest.raises(TerrineError) as error:
-        design.validate(panel_model)
-    assert error.value.code == "terrine.state_panel.invalid_schedule"
-
-
-@pytest.mark.parametrize(
-    "budget",
-    [
-        Budget(max_rows=10),
-        Budget(max_rows=0, max_output_bytes=100_000),
-        Budget(max_rows=10, max_output_bytes=0),
-        Budget(max_output_bytes=100_000),
-    ],
-)
-def test_state_panel_materialization_requires_positive_row_and_byte_budgets(panel_model, budget):
-    design = Design(
-        "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
-        shape=StatePanel(
-            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=2,
-        ),
-    )
-    with pytest.raises(TerrineError) as error:
-        design.build(panel_model).materialize(budget)
-    assert error.value.code == "terrine.state_panel.budget_required"
-
-
-@pytest.mark.slow
 @pytest.mark.parametrize(
     ("budget", "code"),
-    [
-        (Budget(max_rows=1, max_output_bytes=100_000), "terrine.budget.rows_exceeded"),
-        (Budget(max_rows=10, max_output_bytes=1), "terrine.budget.output_bytes_exceeded"),
-    ],
+    [(Budget(max_rows=10, max_output_bytes=1), "terrine.budget.output_bytes_exceeded")],
 )
 def test_state_panel_enforces_output_row_and_byte_budgets(panel_model, budget, code):
     design = Design(
@@ -854,7 +806,6 @@ def test_state_panel_enforces_output_row_and_byte_budgets(panel_model, budget, c
     assert error.value.code == code
 
 
-@pytest.mark.slow
 def test_observed_state_panel_is_invariant_to_source_row_order(observed_model_factory):
     observations = [
         ("a", datetime(2025, 1, 3, tzinfo=UTC), "active"),
@@ -885,48 +836,6 @@ def test_observed_state_panel_is_invariant_to_source_row_order(observed_model_fa
     assert results[0] == results[1]
 
 
-@pytest.mark.slow
-def test_adjacent_binned_state_relation_pairs_response_with_successor_prior(panel_model):
-    design = Design(
-        "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
-        features={"past_sessions": agg("sessions", window=("-1d", "0d"))},
-        shape=StatePanel(
-            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=2,
-        ),
-    )
-    rows = (
-        design.build(panel_model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
-        .table.to_pylist()
-    )
-    a_rows = sorted(
-        (row for row in rows if row["unit"] == "a"), key=lambda row: row["period_index"]
-    )
-    assert len(a_rows) == 2
-    assert a_rows[0]["period_index"] == 0
-    assert a_rows[1]["period_index"] == 1
-    assert a_rows[0]["to_state"] == "some"
-    assert a_rows[0]["to_state"] == a_rows[1]["from_state"]
-    assert a_rows[0]["to_time"] == datetime(2025, 1, 4, tzinfo=UTC)
-    assert a_rows[0]["scheduled_to"] == a_rows[0]["to_time"]
-
-
-def _observed_design(*, absorbing=("closed",)):
-    from terrine.spec import StateObservations
-
-    return Design(
-        "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
-        shape=StatePanel(
-            StateObservations("state", ("active", "closed"), absorbing=absorbing),
-            max_periods=2,
-        ),
-    )
-
-
-@pytest.mark.slow
 def test_terminal_detection_precedes_output_eligibility_filter(observed_model_factory):
     from terrine.spec import StateObservations, gt
 
@@ -953,7 +862,6 @@ def test_terminal_detection_precedes_output_eligibility_filter(observed_model_fa
     assert not [row for row in rows if row["unit"] == "a"]
 
 
-@pytest.mark.slow
 def test_missing_observations_are_not_bridged_across_adjacent_rows(observed_model_factory):
     model = observed_model_factory(
         [
@@ -981,7 +889,6 @@ def test_missing_observations_are_not_bridged_across_adjacent_rows(observed_mode
     assert a_rows[1]["to_state"] == "active"
 
 
-@pytest.mark.slow
 def test_known_null_observation_is_complete_but_not_a_state_label(observed_model_factory):
     model = observed_model_factory(
         [
@@ -1006,7 +913,6 @@ def test_known_null_observation_is_complete_but_not_a_state_label(observed_model
     assert second["from_state_reason"] == "state_value_null"
 
 
-@pytest.mark.slow
 def test_terminal_boundary_emits_incoming_transition_and_suppresses_suffix(observed_model_factory):
     model = observed_model_factory(
         [
@@ -1027,7 +933,6 @@ def test_terminal_boundary_emits_incoming_transition_and_suppresses_suffix(obser
     assert terminal_row["to_time"] == datetime(2025, 1, 5, tzinfo=UTC)
 
 
-@pytest.mark.slow
 def test_usable_state_recovery_after_absorption_refuses(observed_model_factory):
     model = observed_model_factory(
         [
@@ -1040,7 +945,6 @@ def test_usable_state_recovery_after_absorption_refuses(observed_model_factory):
     assert error.value.code == "terrine.state_panel.invalid_observations"
 
 
-@pytest.mark.slow
 def test_off_grid_terminal_is_allowed_but_nonterminal_refuses(observed_model_factory):
     from datetime import timedelta
 
@@ -1068,7 +972,6 @@ def test_off_grid_terminal_is_allowed_but_nonterminal_refuses(observed_model_fac
     assert error.value.code == "terrine.state_panel.invalid_observations"
 
 
-@pytest.mark.slow
 def test_delayed_entry_and_observation_bounds_do_not_shift_or_override_history(
     observed_model_factory,
 ):
@@ -1115,7 +1018,6 @@ def test_delayed_entry_and_observation_bounds_do_not_shift_or_override_history(
     assert a_rows[0]["to_state_reason"] == "incomplete_observation"
 
 
-@pytest.mark.slow
 def test_unit_observed_until_is_exclusive_for_point_states(observed_model_factory):
     model = observed_model_factory(
         [
@@ -1139,7 +1041,6 @@ def test_unit_observed_until_is_exclusive_for_point_states(observed_model_factor
     assert first["to_state_reason"] == "incomplete_observation"
 
 
-@pytest.mark.slow
 def test_terminal_at_origin_suppresses_and_source_correction_rebuilds_suffix(
     observed_model_factory,
 ):
@@ -1181,7 +1082,6 @@ def test_terminal_at_origin_suppresses_and_source_correction_rebuilds_suffix(
     assert len([row for row in corrected_rows if row["unit"] == "a"]) == 2
 
 
-@pytest.mark.slow
 def test_exclusive_source_coverage_end_is_unavailable_not_absorbing(observed_model_factory):
     model = observed_model_factory(
         [
@@ -1205,67 +1105,3 @@ def test_exclusive_source_coverage_end_is_unavailable_not_absorbing(observed_mod
         "from_state": "from_time",
         "to_state": "to_time",
     }
-
-
-def test_binned_classifier_preserves_huge_decimal_cuts_and_lower_equality():
-    from decimal import Decimal
-
-    import ibis
-    import pyarrow as pa
-
-    from terrine.compile.shapes.state_panel import _label
-    from terrine.data import ColumnMeta
-
-    lower = Decimal(2**80)
-    upper = lower + Decimal(1)
-    state = BinnedMetricState("sessions", (lower, upper), ("low", "mid", "high"))
-    meta = ColumnMeta(None, "state", None, None, None, None, numeric_policy="exact")
-    values = pa.array([lower, upper, upper + 1], type=pa.decimal128(30, 0))
-    relation = ibis.memtable(pa.table({"_state_period": values}))
-    labels = relation.select(label=_label(relation, state, meta))
-    con = ibis.duckdb.connect()
-    try:
-        assert con.execute(labels)["label"].tolist() == ["low", "mid", "high"]
-    finally:
-        con.disconnect()
-
-
-def test_binned_classifier_refuses_a_float_certificate_spanning_a_cut():
-    import ibis
-    import pandas as pd
-    import pyarrow as pa
-
-    from terrine.compile.shapes.state_panel import _state_value
-    from terrine.data import ColumnMeta
-
-    state = BinnedMetricState("sessions", (0.0,), ("low", "high"))
-    meta = ColumnMeta(
-        None,
-        "state",
-        None,
-        None,
-        "__terrine_state_complete",
-        "__terrine_state_reason",
-        numeric_policy="checked_float64_v1",
-        absolute_error_column="error",
-    )
-    relation = ibis.memtable(
-        pa.table(
-            {
-                "_state_period": pa.array([0.0]),
-                "error": pa.array([0.01]),
-                "__terrine_state_complete": pa.array([True]),
-                "__terrine_state_reason": pa.array([None], type=pa.string()),
-            }
-        )
-    )
-    value, complete, reason = _state_value(relation, state, meta)
-    classified = relation.select(value=value, complete=complete, reason=reason)
-    con = ibis.duckdb.connect()
-    try:
-        result = con.execute(classified).iloc[0]
-        assert pd.isna(result["value"])
-        assert not result["complete"]
-        assert result["reason"] == "ambiguous_state_bin"
-    finally:
-        con.disconnect()
