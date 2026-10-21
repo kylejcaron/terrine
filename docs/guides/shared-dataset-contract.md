@@ -13,7 +13,7 @@ DuckDB example is `examples/increment_parity.py`. Run:
 
 ```sh
 uv sync --extra increment --extra duckdb
-uv run pytest tests/parity/test_increment_frames.py -q -m ""
+uv run pytest tests/parity/test_increment_frames.py integration/parity -q
 uv run python examples/increment_parity.py
 ```
 

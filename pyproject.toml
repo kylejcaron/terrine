@@ -39,6 +39,7 @@ dev = [
     "jsonschema>=4,<5",
     "hypothesis>=6,<7",
     "pytest-xdist>=3,<4",
+    "pytest-split>=0.11,<1",
     "ruff>=0.11,<1",
     "ty>=0.0.1a0",
     "tach>=0.20,<1",
@@ -57,9 +58,9 @@ packages = ["terrine"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --durations=0 --durations-min=5.0 -n 8 -m 'not slow'"
+addopts = "-ra --strict-markers --durations=0 --durations-min=5.0 -n 8 -m 'not scale'"
 markers = [
-    "slow: tests excluded from the ordinary suite",
+    "scale: resource-bound scale, oracle and live-warehouse checks; scheduled tier only",
     "handoffs: optional downstream library integration examples",
 ]
 

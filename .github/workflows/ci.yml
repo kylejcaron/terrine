@@ -30,22 +30,15 @@ jobs:
       # Type checking and adapter tests need the optional integrations installed.
       - run: uv sync --locked --group dev --group docs --all-extras
       - run: make check TESTS="tests"
-  slow:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - run: uv sync --locked --group dev --all-extras
-      - run: uv run pytest -q tests -m slow
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Groups are balanced from integration/.test_durations; tests without a
+        # stored duration get the average and are still assigned to a group.
+        group: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -55,8 +48,13 @@ jobs:
         with:
           python-version: "3.13"
       - run: uv sync --locked --group dev --all-extras
-      - run: uv run python -m tests.integration.study_api_smoke
-      - run: uv run pytest -q integration
+      - if: matrix.group == 1
+        run: uv run python -m tests.integration.study_api_smoke
+      - run: >-
+          uv run pytest -q integration
+          --splits 4 --group ${{ matrix.group }}
+          --splitting-algorithm least_duration
+          --durations-path integration/.test_durations
   docs-and-examples:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -109,20 +107,6 @@ jobs:
       - run: uv sync --group dev --extra duckdb --extra pandas --extra sketches
       - run: uv run pytest tests/temporal/test_sketches.py tests/spec/test_sketch_refusal.py tests/compile/test_nonadditive.py -q
 
-  warehouse-runtime:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - run: uv sync --group dev --extra duckdb --extra pandas
-      - run: uv run pytest integration/warehouse_execution -q
-
   increment-compatibility:
     runs-on: ubuntu-latest
     steps:
@@ -135,7 +119,7 @@ jobs:
           python-version: "3.13"
       - run: uv sync --locked --group dev --extra duckdb --extra increment
       - run: uv run pytest tests/compat tests/parity
-      - run: uv run pytest tests/compat tests/parity -m slow
+      - run: uv run pytest integration/parity
 
   library-handoffs:
     runs-on: ubuntu-latest

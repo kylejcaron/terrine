@@ -44,7 +44,9 @@ jobs:
           # AI coding agents add Co-authored-by trailers; they are counted as
           # committers but cannot comment to sign, so they must be allowlisted
           # or every agent-assisted PR blocks permanently.
-          allowlist: kylejcaron,bot*,dependabot[bot],renovate[bot],copilot,Copilot,Codex,Cursor,noreply@anthropic.com,cursoragent@cursor.com,codex@openai.com
+          # Name automated accounts explicitly; a wildcard such as bot* would also
+          # exempt human accounts whose names start with "bot".
+          allowlist: kylejcaron,dependabot[bot],renovate[bot],github-actions[bot],copilot,Copilot,Codex,Cursor,noreply@anthropic.com,cursoragent@cursor.com,codex@openai.com
           # Fail the check when the PR opener authored none of the commits.
           require-opener-as-author: true
           lock-pullrequest-aftermerge: false

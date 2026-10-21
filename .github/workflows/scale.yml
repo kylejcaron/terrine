@@ -1,0 +1,31 @@
+name: scale
+
+# Resource-bound scale, oracle and live-warehouse checks. Too slow for every
+# push; run nightly and on demand.
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: scale
+  cancel-in-progress: false
+
+env:
+  # Size pytest-xdist to the runner (2 CPUs on private-repo runners).
+  PYTEST_ADDOPTS: -n auto
+
+jobs:
+  scale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: uv sync --locked --group dev --all-extras
+      - run: make test-scale

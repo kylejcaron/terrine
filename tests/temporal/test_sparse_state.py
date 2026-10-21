@@ -250,7 +250,6 @@ def test_float_prefix_certificates_enclose_exact_stored_leaves(connection, value
     _assert_float_prefix_certificates(connection, values, orders=[values])
 
 
-@pytest.mark.slow
 @pytest.mark.parametrize(
     "values",
     [

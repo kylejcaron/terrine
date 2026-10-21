@@ -71,10 +71,9 @@ There is no billion-event or universal scale claim from local calibration.
 ```sh
 # Fast deterministic generator/reference and no-connection owner-gate checks.
 uv run pytest -q tests/simulate/test_scale_generator.py tests/integration/test_live_scale_gate.py tests/integration/test_benchmark_failure_reporting.py
-# Instrumented compiler benchmarks are excluded from ordinary pytest by slow.
-uv run pytest -q -m slow tests/integration/test_duckdb_scale.py
-# Local DuckDB integration lies outside ordinary testpaths; this is NOT live.
-uv run pytest -q integration/warehouse_execution/test_duckdb_scale.py
+# Instrumented compiler benchmarks and the retained DuckDB oracle check run in
+# the scheduled scale tier; this is NOT live.
+make test-scale SCALE_TESTS="integration/warehouse_execution/test_duckdb_compiler_scale.py integration/warehouse_execution/test_duckdb_scale.py"
 ```
 
 ## Live warehouse: owner approval required
@@ -111,7 +110,7 @@ Only after that gate is satisfied, the owner may run:
 ```sh
 uv run python -m benchmarks.run_live --approval /owner/approval.json --output /owner/new-live-report.json
 TERRINE_LIVE_APPROVAL=/owner/approval.json TERRINE_LIVE_REPORT=/owner/new-live-report.json \
-  uv run pytest -q -m slow integration/warehouse_execution/test_live_warehouse_scale.py
+  make test-scale SCALE_TESTS=integration/warehouse_execution/test_live_warehouse_scale.py
 ```
 
 Reports contain aggregates/digests, not customer rows, credentials, raw SQL or

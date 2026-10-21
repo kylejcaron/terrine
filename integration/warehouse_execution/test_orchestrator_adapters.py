@@ -280,6 +280,7 @@ def test_airflow_and_dagster_share_owner_state_and_failed_run_fence(tmp_path):
     import ibis
     import pyarrow as pa
     from airflow import DAG
+    from airflow.sdk import BaseOperator
     from dagster import DagsterInstance, materialize
 
     from terrine.data import Coverage, UnitSource
@@ -366,14 +367,15 @@ def test_airflow_and_dagster_share_owner_state_and_failed_run_fence(tmp_path):
             namespace="owner",
             pool="terrine-owner",
         )
-    task = next(iter(group.children.values()))
+    task = cast(BaseOperator, next(iter(group.children.values())))
     xcom_payloads = []
     task_instance = type(
         "TaskInstance",
         (),
         {"xcom_push": lambda self, **kwargs: xcom_payloads.append(kwargs)},
     )()
-    context = {"ti": task_instance}
+    context = cast(Any, {"ti": task_instance})
+    operator = cast(Any, task)
     asset = build_materialization_asset(
         plan_request_provider=lambda values: PlanRequest(
             "provider-request",
@@ -395,7 +397,7 @@ def test_airflow_and_dagster_share_owner_state_and_failed_run_fence(tmp_path):
     try:
         with pytest.raises(TerrineError):
             task.execute(context)
-        failed_invocation = task._invocation
+        failed_invocation = operator._invocation
         assert failed_invocation is not None
         failed = ControlClient(endpoint, namespace="owner").find_run_by_request_key(
             failed_invocation.request_key,

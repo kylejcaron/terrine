@@ -68,9 +68,14 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
 - `make check TESTS="<affected paths>"` runs static gates and focused tests;
   run it before each commit. `make fmt` formats source/tests; `uv build` builds
   local distributions.
-- `make test-slow TESTS=...` selects the slow tier; `make complexity` reports
-  without gating. The slow and integration tiers, the smoke script and examples
-  run in CI and before merges.
+- `make test-scale` runs the scheduled scale tier (`SCALE_TESTS` overrides the
+  `integration/` default); `make complexity` reports without gating. The
+  integration tier, the smoke script and examples run in CI on every push and
+  before merges; the scale tier runs nightly and on demand.
+- CI splits the integration tier into balanced groups from
+  `integration/.test_durations`. Tests without a stored time still run (they
+  are assigned the average); after large changes refresh it with
+  `uv run pytest integration --store-durations --durations-path integration/.test_durations`.
 - The ordinary suite lists unit tests slower than 5 s (well above the 2 s
   target, so contention does not trip it); a healthy run lists none. Fix any
   listed test.
@@ -85,22 +90,21 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
 - Test each behavior at the lowest useful boundary; retain targeted cross-path
   and end-to-end checks where composition matters. Do not repeat every edge
   case at every layer. Prefer targeted parameterization over Cartesian matrices.
-- Put each test in the cheapest tier that can show its behavior:
+- Put each test in the cheapest tier that can show its behavior. Tiers are
+  defined by when they run:
   - **Unit** (`tests/`, default): one rule at the function that owns it, a few
     rows of input, in-process unless the rule is process isolation itself.
     Unit tests MUST NOT use the network or a real warehouse. Typically
-    milliseconds; under about 2 s alone.
-  - **Slow** (`tests/`, `@pytest.mark.slow`): one component whose check is
-    inherently expensive, such as precision sweeps, large parameter sets or
-    simulation. Under about 15 s. Simulation-based coverage, bias or
-    parameter-recovery checks also use `@pytest.mark.parameter_recovery` and
-    keep a small fast smoke case in the unit tier.
+    milliseconds; under about 2 s alone. Runs on every local check and push.
   - **Integration** (`integration/`): composition across subsystems, processes
     or real libraries, such as Model→snapshot→stage→publish→read-back, crash
-    recovery, orchestrators and library hand-offs; live warehouses under
-    `integration/warehouse_execution/`. One end-to-end test per workflow,
-    typically under 20 s. Scale and resource-bound checks may take up to about
-    2 minutes; keep them few.
+    recovery, orchestrators and library hand-offs. One end-to-end test per
+    workflow, typically under 30 s on the 2-CPU CI runner. A unit-boundary test
+    that cannot meet the unit budget (for example fixed compile overhead) also
+    moves here. Runs on every push.
+  - **Scale** (`@pytest.mark.scale`, under `integration/`): resource-bound
+    scale, independent-oracle and owner-approved live-warehouse checks.
+    Deselected by default; runs nightly and on demand. Keep them few.
   - A unit test that drives a full pipeline to check one narrow rule is
     misplaced: rewrite it at the owning function.
 - Use tiny deterministic fixtures and bounded property-based cases. Avoid sleeps
