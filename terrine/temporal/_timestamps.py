@@ -70,6 +70,13 @@ def _backend(*values: ir.Value) -> str:
     return "duckdb"
 
 
+def epoch_us_sql(dialect: str, column_sql: str) -> str:
+    """Native SQL for a timestamp's exact signed microseconds since the Unix epoch."""
+    if dialect.casefold() == "postgres":
+        return f"CAST(pg_catalog.extract('epoch', {column_sql}) * 1000000 AS BIGINT)"
+    return f"epoch_us({column_sql})"
+
+
 def integer_quotient(
     value: ir.IntegerValue, divisor: int | ir.IntegerValue, *, like: ir.Value
 ) -> ir.IntegerValue:

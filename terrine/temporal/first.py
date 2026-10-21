@@ -10,7 +10,7 @@ import ibis.expr.types as ir
 
 from terrine.data import ColumnMeta
 from terrine.errors import RefusalSpec
-from terrine.temporal._timestamps import _struct_key, timestamp_order_key
+from terrine.temporal._timestamps import _backend, _struct_key, timestamp_order_key, timestamp_parts
 from terrine.temporal.aggregate import TemporalResult, _Check, _Failure
 
 __all__ = ["first_occurrence", "last_event_value"]
@@ -21,8 +21,9 @@ _DUPLICATE_EVENT_ID = RefusalSpec(
 )
 _UNSUPPORTED_BACKEND = RefusalSpec(
     "terrine.temporal.first_occurrence_unsupported_backend",
-    "First-occurrence point lookup requires the DuckDB backend; got {backend!r}.",
+    "First-occurrence point lookup requires the DuckDB or PostgreSQL backend; got {backend!r}.",
 )
+_SUPPORTED_BACKENDS = frozenset({"duckdb", "postgres"})
 _INVALID = RefusalSpec(
     "terrine.temporal.first_occurrence_invalid_relation",
     "First-occurrence input relation is invalid ({reason}).",
@@ -40,7 +41,20 @@ def _validate_timestamp(table: ibis.Table, column: str, name: str) -> dt.Timesta
     return dtype
 
 
-def _reverse_time_key(value: ir.TimestampValue) -> ir.StructValue:
+def _reverse_time_key(value: ir.TimestampValue) -> ir.Value:
+    """A key whose ascending order is the instants' descending order."""
+    if _backend(value) == "postgres":
+        # One exact scalar: PostgreSQL's microsecond range stays below 10**19.
+        rank, seconds, nanos = timestamp_parts(value, backend="postgres")
+        wide = dt.Decimal(38, 0)
+        million = cast(ir.DecimalValue, ibis.literal(10**6, type=wide))
+        rank_weight = cast(ir.DecimalValue, ibis.literal(10**20, type=wide))
+        micros = cast(ir.DecimalValue, seconds.cast(wide)) * million + cast(
+            ir.DecimalValue, (nanos // 1000).cast(wide)
+        )
+        return cast(ir.DecimalValue, ibis.literal(0, type=wide)) - (
+            cast(ir.DecimalValue, rank.cast(wide)) * rank_weight + micros
+        )
     key = _struct_key(value)
     return ibis.struct(
         {
@@ -92,7 +106,7 @@ def first_occurrence(
         backend_name = backend.name
     except Exception as exc:
         raise _UNSUPPORTED_BACKEND.error(backend="unbound") from exc
-    if backend_name != "duckdb" or candidate_backend is not backend:
+    if backend_name not in _SUPPORTED_BACKENDS or candidate_backend is not backend:
         raise _UNSUPPORTED_BACKEND.error(backend=backend_name)
 
     used = {name.casefold() for name in candidates.columns}
@@ -227,7 +241,7 @@ def last_event_value(
         backend_name = backend.name
     except Exception as exc:
         raise _UNSUPPORTED_BACKEND.error(backend="unbound") from exc
-    if backend_name != "duckdb" or candidate_backend is not backend:
+    if backend_name not in _SUPPORTED_BACKENDS or candidate_backend is not backend:
         raise _UNSUPPORTED_BACKEND.error(backend=backend_name)
 
     candidate_names = {name.casefold() for name in candidates.columns}
