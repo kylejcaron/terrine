@@ -377,7 +377,7 @@ def test_exact_quantile_refuses_unverified_backend_before_query():
             "user",
             FixedDate(date(2025, 1, 1)),
             features={"p50": quantile("sessions", "0.5", window=("-7d", "0d"))},
-        ).validate(model(dialect="postgres"))
+        ).validate(model(dialect="snowflake"))
     assert error.value.code == "terrine.metric.exact_quantile_backend_unsupported"
 
 
@@ -696,13 +696,13 @@ def test_static_dimension_and_static_inline_properties_do_not_need_event_resolut
         "workspace",
         date_anchor,
         features={"region": asof("region", before="-1d")},
-    ).validate(model(dimensions=[static_dimension], dialect="postgres"))
+    ).validate(model(dimensions=[static_dimension], dialect="snowflake"))
     inline_static = SimpleNamespace(dimension_name=None, as_of="static")
     Design(
         "user",
         date_anchor,
         features={"enabled": asof("enabled", before="-1d")},
-    ).validate(model(properties={"enabled": inline_static}, dialect="postgres"))
+    ).validate(model(properties={"enabled": inline_static}, dialect="snowflake"))
 
 
 @pytest.mark.parametrize("as_of", ("event_time", "static"))
@@ -718,13 +718,13 @@ def test_versioned_cutoff_capability_uses_exact_anchor_clock_not_offset_sign(as_
         "workspace",
         FixedDate(date(2025, 3, 1)),
         features={"region": asof("region", before="-1d")},
-    ).validate(model(dimensions=[dimension], dialect="postgres", boundary="UTC-05:00"))
+    ).validate(model(dimensions=[dimension], dialect="snowflake", boundary="UTC-05:00"))
     with pytest.raises(TerrineError) as error:
         Design(
             "workspace",
             FixedDate(datetime(2025, 3, 1, 12, tzinfo=UTC)),
             features={"region": asof("region", before="0d")},
-        ).validate(model(dimensions=[dimension], dialect="postgres"))
+        ).validate(model(dimensions=[dimension], dialect="snowflake"))
     assert error.value.code == "terrine.temporal.unsupported_event_resolution"
 
 
@@ -741,7 +741,7 @@ def test_extreme_asof_clock_classification_avoids_datetime_endpoint_arithmetic()
             "workspace",
             FixedDate(datetime.min.replace(tzinfo=UTC)),
             features={"region": asof("region", before="0d")},
-        ).validate(model(dimensions=[dimension], dialect="postgres", boundary="UTC-05:00"))
+        ).validate(model(dimensions=[dimension], dialect="snowflake", boundary="UTC-05:00"))
     assert error.value.code == "terrine.temporal.unsupported_event_resolution"
 
 
@@ -751,13 +751,13 @@ def test_inline_event_time_cutoff_requires_capability_only_when_unaligned():
         "user",
         FixedDate(date(2025, 3, 1)),
         features={"status": asof("status", before="-1d")},
-    ).validate(model(properties={"status": prop}, dialect="postgres"))
+    ).validate(model(properties={"status": prop}, dialect="snowflake"))
     with pytest.raises(TerrineError) as error:
         Design(
             "user",
             FixedDate(datetime(2025, 3, 1, 12, tzinfo=UTC)),
             features={"status": asof("status", before="0d")},
-        ).validate(model(properties={"status": prop}, dialect="postgres"))
+        ).validate(model(properties={"status": prop}, dialect="snowflake"))
     assert error.value.code == "terrine.temporal.unsupported_event_resolution"
 
 

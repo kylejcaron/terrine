@@ -11,7 +11,7 @@ from terrine.compile.columns import CompiledStudy
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
 from terrine.spec.trajectory import CohortGrouping
-from terrine.temporal._timestamps import timestamp_order_key
+from terrine.temporal._timestamps import _backend, timestamp_parts
 from terrine.temporal.aggregate import _EXACT_OVERFLOW, _Check, _Failure, _scaled_text
 from terrine.temporal.prefix import (
     FLOAT64_PRECISION,
@@ -44,15 +44,12 @@ def compile_cohorts(
     if complete_column not in study.table.columns:
         raise _INVALID.error(reason="missing_value_completeness")
     table = study.table
-    time_key = timestamp_order_key(table.cohort_time)
+    _rank, time_seconds, time_nanos = timestamp_parts(table.cohort_time)
     origin = cast(ir.TimestampValue, ibis.literal(grouping.bucket_origin))
-    origin_key = timestamp_order_key(origin)
-    elapsed_seconds = cast(ir.IntegerValue, time_key["seconds"]) - cast(
-        ir.IntegerValue, origin_key["seconds"]
-    )
-    elapsed_nanos = cast(ir.IntegerValue, time_key["nanos"]) - cast(
-        ir.IntegerValue, origin_key["nanos"]
-    )
+    backend = _backend(table.cohort_time)
+    _origin_rank, origin_seconds, origin_nanos = timestamp_parts(origin, backend=backend)
+    elapsed_seconds = time_seconds - origin_seconds
+    elapsed_nanos = time_nanos - origin_nanos
     carry = elapsed_nanos // 1_000_000_000
     quotient = (elapsed_seconds + carry) // grouping.bucket
     table = table.mutate(bucket_index=quotient.cast("int64"))

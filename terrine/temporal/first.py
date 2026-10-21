@@ -10,7 +10,7 @@ import ibis.expr.types as ir
 
 from terrine.data import ColumnMeta
 from terrine.errors import RefusalSpec
-from terrine.temporal._timestamps import timestamp_order_key
+from terrine.temporal._timestamps import _struct_key, timestamp_order_key
 from terrine.temporal.aggregate import TemporalResult, _Check, _Failure
 
 __all__ = ["first_occurrence", "last_event_value"]
@@ -41,7 +41,7 @@ def _validate_timestamp(table: ibis.Table, column: str, name: str) -> dt.Timesta
 
 
 def _reverse_time_key(value: ir.TimestampValue) -> ir.StructValue:
-    key = timestamp_order_key(value)
+    key = _struct_key(value)
     return ibis.struct(
         {
             "rank": -cast(ir.IntegerValue, key["rank"]),
