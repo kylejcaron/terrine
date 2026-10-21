@@ -47,43 +47,68 @@ in CI, with the same workflow shape increment uses for warehouse validation.
    microsecond precision; sub-µs requests refuse), `arrow_batches`.
    Publication/retained-snapshot operations stay unverified, so runtime staging
    refuses with a route to DuckDB.
-2. **DDL-free schema discovery.** Ibis 12's PostgreSQL `con.sql` discovers a query
+   **Runtime boundary:** Dataset construction and `open_generation()` add an
+   explicit DuckDB runtime-reader admission before any database access, separate
+   from publication write capabilities, so a PostgreSQL connection refuses there
+   with a route instead of reaching DuckDB-only runtime code.
+2. **Backend-neutral execution context.** `ExecutionContext` and snapshot
+   provenance currently call DuckDB APIs directly. Task 2 cuts them over to a
+   provider-owned interface: query inspection, Arrow execution and batching,
+   snapshot provenance, cleanup. Frame materialization and preview use only that
+   interface. PostgreSQL lifecycle: psycopg cursors share their connection's
+   transaction, so each materialization opens a **fresh terrine-owned
+   connection** from the caller's connection parameters (`conn.info`, password
+   included), copies `search_path` and sets `TimeZone=UTC`, runs one
+   `REPEATABLE READ READ ONLY` transaction, and closes it on success or failure.
+   The caller's connection and any open transaction on it are never touched. If
+   the parameters cannot reopen a connection, materialization refuses with a
+   route (pass a connectable Ibis PostgreSQL backend). Acceptance: snapshot
+   consistency under a concurrent writer, caller transaction preserved, cleanup
+   after an injected failure.
+3. **DDL-free schema discovery.** Ibis 12's PostgreSQL `con.sql` discovers a query
    schema by creating a temporary view, which a read-only transaction forbids.
    Compiler-produced queries pass their known Ibis schema to `con.sql(..., schema=)`;
    SQL-backed source relations get their schema from a `LIMIT 0` cursor
-   description (no DDL). Acceptance runs SQL-backed sources and Schedule
-   materialization inside the actual read-only transaction.
-3. **Exact state: sums and counts only.** Represent the exact window state as
+   description (no DDL). Task 2 acceptance runs an SQL-backed source inside the
+   read-only transaction.
+4. **Decimal domain.** Supported exact inputs: `smallint/integer/bigint` and
+   `numeric(p, s)` with declared precision and scale, `p <= 38`. Unconstrained
+   `numeric` (no fixed scale) and `NaN`/`±Infinity` values refuse with a stable
+   code and route "cast to numeric(p, s) in the relation SQL". Internal
+   accumulation is unbounded `NUMERIC`, kept separate from the declared output
+   type. Acceptance covers a fractional unconstrained column and SQL expression.
+5. **Exact state: sums and counts only.** Represent the exact window state as
    PostgreSQL `NUMERIC` through a per-backend primitive table in `prefix.py`
    instead of DuckDB `BIGNUM` builtins. Supported: counts and integer/decimal
    sums (additive windows, as-of attributes). Averages and ratios need the binary64
    quotient certification (`checked_float64_v1` metadata, outward rounding,
    certified predicates), so they **refuse** on PostgreSQL in this slice with route
    "use DuckDB, or request sum and count and divide downstream".
-4. **Overflow refusal without try_cast.** Ibis 12 lowers `TryCast` to a plain
+6. **Overflow refusal without try_cast.** Ibis 12 lowers `TryCast` to a plain
    `CAST` on PostgreSQL, which would abort the transaction with a driver error.
    Narrowing to the output type is guarded in NUMERIC (`CASE WHEN value BETWEEN
    min AND max THEN CAST(...) END`) so `terrine.temporal.exact_overflow` is still
    raised. Acceptance: an overflowing decimal sum refuses with that code; a value
    at the representable boundary succeeds.
-5. **Float windows refuse** (`FLOAT64_UNSUPPORTED`) with route "cast to DECIMAL or
+7. **Float windows refuse** (`FLOAT64_UNSUPPORTED`) with route "cast to DECIMAL or
    use DuckDB": PostgreSQL has no `nextafter`, and float8→NUMERIC is not exact
    (verified above).
-6. **Timestamps and event admission.** Port the shared timestamp lowering in
+8. **Timestamps and event admission.** Port the shared timestamp lowering in
    `terrine/temporal/_timestamps.py` (`timestamp_order_key`, `compare_timestamps`,
    currently DuckDB `epoch_us`/`divide`) to per-backend lowering with shared
    consumers (prefix lookups, timestamp comparisons, SCD2 checks), and extend
-   `semantic.rules.supports_event_resolution` to PostgreSQL. Acceptance: strict
-   half-open boundaries, pre-epoch fractional instants, nulls, EventAnchor designs.
-7. **Dependency floor.** Ibis 11's PostgreSQL as-of lowering applies unit
+   `semantic.rules.supports_event_resolution` to PostgreSQL. Primitive acceptance
+   (Task 3): strict half-open boundaries, pre-epoch fractional instants, nulls.
+   EventAnchor designs are accepted in Task 5.
+9. **Dependency floor.** Ibis 11's PostgreSQL as-of lowering applies unit
    predicates after choosing the nearest row (wrong results with interleaved
    units). The `postgres` extra requires `ibis-framework[postgres]>=12,<13`, and
    admission refuses a PostgreSQL connection on Ibis < 12 with a route. Acceptance
    includes an interleaved-unit as-of case.
-8. **Metadata/identity.** Relation identity and function ownership via
+10. **Metadata/identity.** Relation identity and function ownership via
    `pg_catalog` (relation oid, `pg_proc` for user functions); read-only SQL
    admitted with the `postgres` sqlglot dialect.
-9. **Unported operations refuse per operation** with routes (sketches, quotients,
+11. **Unported operations refuse per operation** with routes (sketches, quotients,
    floats, publication). The plan ports Schedule expansion (`generate_series`)
    and first-occurrence lookup because common designs need them.
 
@@ -108,26 +133,35 @@ in CI, with the same workflow shape increment uses for warehouse validation.
    Add the `postgres` optional extra (`ibis-framework[postgres]>=12,<13`) and
    notices. Acceptance: selected-without-settings fails; with settings, a trivial
    probe passes.
-2. **Provider, admission, metadata, schema discovery.** Decisions 1, 2, 7, 8.
-   Unit tests for refusal routing (no server); integration probes for identity,
-   admission, SQL-backed sources inside the read-only transaction, and Arrow
-   results with exact NUMERIC→decimal and timestamptz→UTC µs.
-3. **Shared timestamp lowering and event admission.** Decision 6, before windows.
-4. **Exact sums/counts on NUMERIC.** Decisions 3, 4, 5. Differential tests vs the
-   DuckDB oracle, overflow refusal and boundary cases, quotient/float refusals.
-5. **Shapes.** Remove hardcoded `dialect="duckdb"` in `anchors.py` and
-   `_observations.py`; Schedule expansion via `generate_series`; first-occurrence
-   lookup; as-of attributes with interleaved units. Differential tests per shape
-   (cross-section, scheduled panel, event anchors).
+2. **Execution context, provider, admission, metadata.** Decisions 1–4, 9, 10.
+   Primitive acceptance only: identity,
+   admission, an SQL-backed source read inside the read-only transaction,
+   concurrent-writer snapshot, caller-transaction preservation, failure cleanup,
+   Arrow results with exact numeric(p, s)→decimal and timestamptz→UTC µs, decimal
+   domain refusals, Dataset/open_generation refusal on PostgreSQL.
+3. **Shared timestamp lowering and event admission.** Timestamp-lowering
+   decision. Primitive acceptance: ordering keys and comparisons on strict
+   boundaries, pre-epoch fractions and nulls, executed directly on PostgreSQL.
+4. **Exact sums/counts on NUMERIC.** Exact-state, overflow and float decisions.
+   Differential tests vs the DuckDB oracle on cross-section windows, overflow
+   refusal and boundary cases, quotient/float refusals.
+5. **Shapes (complete-design acceptance).** Remove hardcoded `dialect="duckdb"`
+   in `anchors.py` and `_observations.py`; Schedule expansion via
+   `generate_series` (run inside the read-only transaction); first-occurrence
+   lookup; as-of attributes with interleaved units. Differential tests per shape:
+   cross-section, scheduled panel, EventAnchor designs.
 6. **CI workflow.** `.github/workflows/warehouse-backends.yml` mirroring increment
    (`backend_mode` input; postgres job with `postgres:16` service; required
-   settings fail), and a `postgres` job in `ci.yml` on every push once green.
-7. **Docs + example + finish.** Runnable `examples/postgres_dataset.py` (install
+   settings fail), and a `postgres` job in `ci.yml` on every push once green. That
+   job also runs the PostgreSQL example.
+7. **Docs + example + finish.** Runnable `examples/postgres/dataset.py` (install
    the extra, connect, PostgreSQL Catalog, Model → Design → `Frame.materialize()`,
-   inspect rows) linked from the README with the DuckDB-only publication boundary
-   explained; `backend-compatibility.md` PostgreSQL column (verified/refused
-   operations and routes); AGENTS test commands; CHANGELOG; full local
-   verification and green CI.
+   inspect rows). It lives in a subdirectory so the service-free
+   `docs-and-examples` job (`examples/*.py`, non-recursive) does not run it; the
+   PostgreSQL CI job does. Linked from the README with the DuckDB-only publication
+   boundary explained; `backend-compatibility.md` PostgreSQL column
+   (verified/refused operations and routes); AGENTS test commands; CHANGELOG; full
+   local verification and green CI.
 
 ## Out of scope / follow-ups
 
