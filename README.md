@@ -13,18 +13,15 @@ uv sync --group dev --extra duckdb --extra pandas
 make check
 ```
 
-The ordinary suite excludes tests marked `slow`. Run a
-focused selection with `make test TESTS="tests/test_windows.py"`. The `lint`,
-`typecheck`, and `fmt` targets run Ruff/Vulture/pydoclint/Tach, ty, and Ruff
-formatting respectively. `make complexity` reports complexity and is
-informational, not part of the gate. `make check` runs static checks and the
-ordinary test suite.
-
-The explicit expensive tier uses `make test-slow TESTS=...`. Keep the
-ordinary feedback loop under 10 seconds on a warm local environment as an
-initial development budget, not a per-test assertion. The foundation selection
-measured 0.94 seconds (21 cases) on Python 3.13/macOS; investigate sustained
-regressions and revisit the budget from measurements as capabilities grow.
+Tests run in three tiers. The ordinary suite (`tests/`) is the fast unit tier
+that `make check` runs; run a focused selection with
+`make test TESTS="tests/test_windows.py"`. `uv run pytest -q integration` runs
+the integration tier, and `make test-scale` runs the scheduled scale tier,
+which ordinary runs deselect. The `lint`, `typecheck`, and `fmt` targets run
+Ruff/Vulture/pydoclint/Tach, ty, and Ruff formatting respectively, over the
+package, `tests/` and `integration/`. `make complexity` reports complexity and
+is informational, not part of the gate. `make check` runs static checks and the
+unit tier.
 
 ## Build a study dataset
 

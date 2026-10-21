@@ -57,9 +57,8 @@ packages = ["terrine"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --durations=0 --durations-min=5.0 -n 8 -m 'not slow and not scale'"
+addopts = "-ra --strict-markers --durations=0 --durations-min=5.0 -n 8 -m 'not scale'"
 markers = [
-    "slow: tests excluded from the ordinary suite",
     "scale: resource-bound scale, oracle and live-warehouse checks; scheduled tier only",
     "handoffs: optional downstream library integration examples",
 ]

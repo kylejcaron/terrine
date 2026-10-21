@@ -492,8 +492,9 @@ required measurement history to evade a refusal.
 
 Run the focused fast boundary/certificate checks with
 `uv run pytest tests/temporal/test_prefix_lookup.py tests/temporal/test_window_aggregates.py`.
-The explicit native quotient/calendar integration tier runs with
-`uv run pytest tests/temporal/test_window_aggregates.py -m slow`.
+Native quotient/calendar certificate checks whose compilation cost exceeds the
+unit budget run in the integration tier with `uv run pytest integration/temporal`.
+
 ## Bounded event sequences and event-time origins
 
 `EventSequence` returns one header for each candidate anchor. The default
