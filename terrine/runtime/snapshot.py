@@ -444,7 +444,7 @@ class _SnapshotContext(ExecutionContext):
             con=context.con,
             snapshot=context.snapshot,
             _resolver=context._resolver,
-            _raw=context._raw,
+            _session=context._session,
             owner_con=context.owner_con,
             _revalidate=context._revalidate,
         )

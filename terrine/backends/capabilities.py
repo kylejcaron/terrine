@@ -6,7 +6,12 @@ from dataclasses import dataclass
 
 from terrine.errors import RefusalSpec
 
-__all__ = ["BackendCapabilities", "DUCKDB_CAPABILITIES", "UNVERIFIED_CAPABILITIES"]
+__all__ = [
+    "BackendCapabilities",
+    "DUCKDB_CAPABILITIES",
+    "POSTGRES_CAPABILITIES",
+    "UNVERIFIED_CAPABILITIES",
+]
 
 _CAPABILITY_UNAVAILABLE = RefusalSpec(
     "terrine.backend.capability_unavailable",
@@ -32,6 +37,8 @@ class BackendCapabilities:
     arrow_batches: bool | None = None
     native_parquet_unload: bool | None = None
     scan_limit: bool | None = None
+    # Reading owner-published generations and manifests (Dataset, open_generation).
+    runtime_reader: bool | None = None
 
     def require(self, operation: str, *, backend: str, route: str) -> None:
         """Refuse only the requested operation when its evidence is absent."""
@@ -57,6 +64,21 @@ DUCKDB_CAPABILITIES = BackendCapabilities(
     transaction_view=True,
     retained_snapshot=True,
     table_publication=True,
+    arrow_batches=True,
+    runtime_reader=True,
+)
+# Materialization reads one REPEATABLE READ READ ONLY transaction on a private
+# connection. Timestamps are exact at microseconds; runtime staging, retained
+# snapshots and publication stay on DuckDB.
+POSTGRES_CAPABILITIES = BackendCapabilities(
+    snapshot=False,
+    change_evidence=frozenset(),
+    scan_estimate=None,
+    cancellation=None,
+    dialect_admission=True,
+    exact_timestamps=True,
+    exact_decimals=True,
+    transaction_view=True,
     arrow_batches=True,
 )
 UNVERIFIED_CAPABILITIES = BackendCapabilities()

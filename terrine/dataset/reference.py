@@ -111,6 +111,17 @@ class _ModelResolver:
         return self.model
 
 
+def _require_runtime_reader(con: Any) -> None:
+    """Refuse before database access when published generations cannot be read."""
+    provider = backend_provider(con)
+    provider.capabilities.require(
+        "runtime_reader",
+        backend=provider.dialect(con),
+        route="Published datasets live in the DuckDB runtime; reopen them with a DuckDB "
+        "connection, or materialize this backend's Frame directly.",
+    )
+
+
 class Dataset:
     """An immutable reference to one committed output generation."""
 
@@ -119,7 +130,7 @@ class Dataset:
     def __init__(self, manifest: DatasetManifest, *, con: Any, namespace: str) -> None:
         if not isinstance(manifest, DatasetManifest):
             raise TypeError("manifest must be a DatasetManifest")
-        backend_provider(con)
+        _require_runtime_reader(con)
         self._con, self._raw = con, con.con
         self._namespace, self._manifest = namespace, manifest
         self._verify_publication()
@@ -140,7 +151,7 @@ class Dataset:
         """Open an owner-persisted publication without rescanning its output."""
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", namespace):
             raise _GENERATION_INVALID.error()
-        backend_provider(con)
+        _require_runtime_reader(con)
         record = con.con.execute(
             f'SELECT manifest_json FROM "{namespace}".runtime_dataset_recipes '
             "WHERE dataset=? AND generation=?",

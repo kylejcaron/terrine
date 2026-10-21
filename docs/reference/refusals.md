@@ -47,6 +47,7 @@ Use verified local DuckDB operation capabilities.
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
 | `terrine.backend.capability_unavailable` | <code>Backend {backend!r} cannot provide {operation!r}: {status}. {route}</code> | `backend`, `operation`, `route`, `status` | [terrine/backends/capabilities.py](../../terrine/backends/capabilities.py) |
+| `terrine.backend.nonfinite_decimal` | <code>Exact decimal column {column!r} contains {value}, which has no exact decimal value. Filter or replace non-finite numeric values in the relation SQL.</code> | `column`, `value` | [terrine/execution/_postgres.py](../../terrine/execution/_postgres.py) |
 
 ## budget
 
@@ -336,6 +337,7 @@ Correct native semantics or use an admitted staged table.
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
 | `terrine.semantic.ambiguous_column` | <code>Normalized event aliases conflict with declared physical column {column!r}.</code> | `column` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
+| `terrine.semantic.decimal_scale_required` | <code>Decimal column {column!r} has no fixed precision and scale up to 38 digits (declared {declared}). Cast it to an explicit numeric(p, s) with p &lt;= 38 in the relation SQL.</code> | `column`, `declared` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
 | `terrine.semantic.dialect_mismatch` | <code>Catalog dialect {declared!r} does not match connection dialect {execution!r}.</code> | `declared`, `execution` | [terrine/semantic/sql.py](../../terrine/semantic/sql.py) |
 | `terrine.semantic.missing_reference` | <code>Catalog reference {reference!r} is not declared.</code> | `reference` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
 | `terrine.semantic.schema_mismatch` | <code>Declared {field} column {column!r} is absent or has an incompatible type.</code> | `column`, `field` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |

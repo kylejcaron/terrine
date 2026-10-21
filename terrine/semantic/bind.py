@@ -35,6 +35,12 @@ _AMBIGUOUS = RefusalSpec(
     "terrine.semantic.ambiguous_column",
     "Normalized event aliases conflict with declared physical column {column!r}.",
 )
+_DECIMAL_SCALE = RefusalSpec(
+    "terrine.semantic.decimal_scale_required",
+    "Decimal column {column!r} has no fixed precision and scale up to 38 digits "
+    "(declared {declared}). Cast it to an explicit numeric(p, s) with p <= 38 in the "
+    "relation SQL.",
+)
 
 
 def _reference(registry: Mapping[str, Any], name: str, label: str):
@@ -67,7 +73,7 @@ def _dtype_ok(dtype: Any, expected: str) -> bool:
     return False
 
 
-def _require_exact_type(provider: Any, dialect: str, dtype: Any) -> None:
+def _require_exact_type(provider: Any, dialect: str, dtype: Any, column: str) -> None:
     operation = (
         "exact_timestamps"
         if dtype.is_timestamp()
@@ -81,6 +87,10 @@ def _require_exact_type(provider: Any, dialect: str, dtype: Any) -> None:
             backend=dialect,
             route="Use a backend with verified exact source types, or normalize the source type.",
         )
+    if dtype.is_decimal() and (
+        dtype.precision is None or dtype.scale is None or dtype.precision > 38
+    ):
+        raise _DECIMAL_SCALE.error(column=column, declared=str(dtype))
 
 
 def normalize_source(
@@ -108,7 +118,7 @@ def normalize_source(
     columns = dict(schema.items())
     if source.timestamp not in columns or not columns[source.timestamp].is_timestamp():
         raise _SCHEMA.error(field="timestamp", column=source.timestamp)
-    _require_exact_type(provider, execution_dialect, columns[source.timestamp])
+    _require_exact_type(provider, execution_dialect, columns[source.timestamp], source.timestamp)
     for name, column in source.entities.items():
         if column not in columns:
             raise _SCHEMA.error(field=f"entity {name}", column=column)
@@ -121,7 +131,7 @@ def normalize_source(
         if fact.column is not None and fact.column not in columns:
             raise _SCHEMA.error(field=f"fact {name}", column=fact.column)
         if fact.column is not None:
-            _require_exact_type(provider, execution_dialect, columns[fact.column])
+            _require_exact_type(provider, execution_dialect, columns[fact.column], fact.column)
     properties = {}
     for name in source.properties:
         prop = _reference(catalog.properties, name, "property")
@@ -130,7 +140,7 @@ def normalize_source(
         if prop.dimension is None:
             if prop.column not in columns or not _dtype_ok(columns.get(prop.column), prop.dtype):
                 raise _SCHEMA.error(field=f"property {name}", column=prop.column)
-            _require_exact_type(provider, execution_dialect, columns[prop.column])
+            _require_exact_type(provider, execution_dialect, columns[prop.column], prop.column)
         elif (
             prop.dimension not in source.dimensions
             or name not in _reference(catalog.dimensions, prop.dimension, "dimension").properties
@@ -163,7 +173,7 @@ def normalize_source(
                 ):
                     raise _SCHEMA.error(field=f"dimension {name} validity", column=col)
                 if col is not None:
-                    _require_exact_type(provider, execution_dialect, dimension_columns[col])
+                    _require_exact_type(provider, execution_dialect, dimension_columns[col], col)
         dimension_properties = {}
         for property_name in dim.properties:
             prop = _reference(catalog.properties, property_name, "property")
@@ -173,7 +183,9 @@ def normalize_source(
                 dimension_columns.get(prop.column), prop.dtype
             ):
                 raise _SCHEMA.error(field=f"dimension property {property_name}", column=prop.column)
-            _require_exact_type(provider, execution_dialect, dimension_columns[prop.column])
+            _require_exact_type(
+                provider, execution_dialect, dimension_columns[prop.column], prop.column
+            )
             dimension_properties[property_name] = PropertyBinding(
                 property_name, prop.column, prop.dtype, prop.as_of, name
             )

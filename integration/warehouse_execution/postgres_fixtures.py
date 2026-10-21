@@ -33,7 +33,7 @@ def postgres_settings() -> dict[str, str]:
         message = (
             "PostgreSQL probes were selected but settings are missing: "
             f"{', '.join(missing)}. Start a local server with "
-            "`eval \"$(uv run python -m tests.integration.postgres_scratch start)\"`."
+            '`eval "$(uv run python -m tests.integration.postgres_scratch start)"`.'
         )
         pytest.fail(message)  # ty: ignore[invalid-argument-type]
     return {name: os.environ[name] for name in _SETTINGS}
