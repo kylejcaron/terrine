@@ -6,8 +6,7 @@ from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.spec import Treatment, agg, all_of, asof, eq, gt
 from tests.compile.test_columns import _compile
-
-pytest_plugins = ("tests.compile.test_columns",)
+from tests.compile.test_columns import column_model as column_model  # noqa: F401
 
 
 @pytest.fixture

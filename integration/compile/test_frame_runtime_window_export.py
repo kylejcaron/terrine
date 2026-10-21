@@ -3,8 +3,8 @@ import pytest
 from terrine.data import Coverage
 from terrine.model import Model
 from terrine.spec import Design, EventAnchor, agg
-
-pytest_plugins = ("tests.conftest",)
+from tests.conftest import events_world as events_world  # noqa: F401
+from tests.conftest import native_inputs as native_inputs  # noqa: F401
 
 
 @pytest.fixture
