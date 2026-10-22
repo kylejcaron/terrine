@@ -166,9 +166,10 @@ def test_user_function_shadowing_a_called_name_is_refused(postgres_scratch, sign
     [
         "SELECT user_id FROM events /* lower( */",
         "SELECT 'lower(' || user_id AS u FROM events",
+        'WITH "lower"(u) AS (SELECT user_id FROM events) SELECT u FROM "lower"',
     ],
 )
-def test_comments_and_literals_do_not_name_a_call(postgres_scratch, sql):  # noqa: F811
+def test_comments_literals_and_aliases_do_not_name_a_call(postgres_scratch, sql):  # noqa: F811
     con = postgres_scratch.con
     _events(con)
     con.raw_sql(

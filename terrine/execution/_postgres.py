@@ -223,28 +223,41 @@ def _called_names(sql: str) -> set[str]:
     Calls are read from the tokens of both the source and its rendered parse: the
     source keeps aliases the parser canonicalizes (``DATE_PART`` parses as
     ``EXTRACT``), and the rendering is what executes. Tokens exclude comments and
-    string literals, so neither can name a call.
+    string literals; CTE and table-alias declarations with column lists are
+    excluded by source position.
     """
     from sqlglot import exp
-    from sqlglot.dialects.dialect import Dialect
 
     statement = _parse_read_query_ast(sql, DIALECT)
-    dialect = Dialect.get_or_raise(DIALECT)
-    names: set[str] = set()
-    for text in (sql, statement.sql(dialect=DIALECT, comments=False)):
-        tokens = dialect.tokenize(text)
-        names.update(
-            token.text.casefold()
-            for token, following in pairwise(tokens)
-            if following.token_type.name == "L_PAREN"
-            and token.token_type.name not in _NON_NAME_TOKENS
-        )
+    rendered = statement.sql(dialect=DIALECT, comments=False)
+    names = _token_calls(sql, statement) | _token_calls(
+        rendered, _parse_read_query_ast(rendered, DIALECT)
+    )
     for node in statement.walk():
         if isinstance(node, exp.Anonymous):
             names.add(node.name.casefold())
         elif isinstance(node, exp.Func):
             names.add(node.sql_name().casefold())
     return names
+
+
+def _token_calls(text: str, statement: Any) -> set[str]:
+    from sqlglot import exp
+    from sqlglot.dialects.dialect import Dialect
+
+    declared = {
+        (alias.this.meta.get("start"), alias.this.meta.get("end"))
+        for alias in statement.find_all(exp.TableAlias)
+        if isinstance(alias.this, exp.Identifier)
+    }
+    tokens = Dialect.get_or_raise(DIALECT).tokenize(text)
+    return {
+        token.text.casefold()
+        for token, following in pairwise(tokens)
+        if following.token_type.name == "L_PAREN"
+        and token.token_type.name not in _NON_NAME_TOKENS
+        and (token.start, token.end) not in declared
+    }
 
 
 _NON_NAME_TOKENS = frozenset(
