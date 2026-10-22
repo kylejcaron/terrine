@@ -23,6 +23,7 @@ from terrine.semantic.models import TableRef
 from terrine.spec.anchors import FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.state_panel import _INVALID_OBSERVATIONS, StateObservations, StatePanel
+from terrine.temporal._timestamps import epoch_us_sql
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -133,17 +134,18 @@ def _points(design: Design, model: Model, state: StateObservations):
             "observation contains an undeclared state level",
         ),
     )
-    # DuckDB epoch_us keeps schedule-grid validation exact at microsecond precision.
+    # Exact signed microseconds keep schedule-grid validation exact.
     panel_points = all_points.filter(
         (all_points.point_time >= ibis.literal(start))
         & (all_points.point_time <= ibis.literal(end))
     )
-    sql = ibis.to_sql(panel_points, dialect="duckdb")
+    dialect = model.catalog.dialect
+    sql = ibis.to_sql(panel_points, dialect=dialect.casefold())
     start_us = _epoch_microseconds(start)
     period_us = schedule.every * 1_000_000
     with_grid = model._sql(
-        f"SELECT state_points.*, ((epoch_us(point_time) - {start_us}) % {period_us} = 0) "
-        f"AS __on_grid FROM ({sql}) AS state_points"
+        f"SELECT state_points.*, (({epoch_us_sql(dialect, 'point_time')} - {start_us}) "
+        f"% {period_us} = 0) AS __on_grid FROM ({sql}) AS state_points"
     )
     return coverage, bounded, with_grid, precision, raw_checks
 
@@ -338,11 +340,11 @@ def compile_observed_state_panel(
             to_state_reason=to_reason,
         )
         relation = joined.select(**projection)
-        query = ibis.to_sql(relation, dialect="duckdb")
-        return model._sql(
-            f"SELECT state_rows.*, epoch_us(to_time) - epoch_us(from_time) AS gap "
-            f"FROM ({query}) AS state_rows"
-        )
+        dialect = model.catalog.dialect
+        query = ibis.to_sql(relation, dialect=dialect.casefold())
+        later, earlier = epoch_us_sql(dialect, "to_time"), epoch_us_sql(dialect, "from_time")
+        gap = f"CAST({later} - {earlier} AS BIGINT)"
+        return model._sql(f"SELECT state_rows.*, {gap} AS gap FROM ({query}) AS state_rows")
 
     retained = attach(compiled.table)
     audit = attach(compiled.audit_table)

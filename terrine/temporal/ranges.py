@@ -11,10 +11,10 @@ import ibis.expr.types as ir
 
 from terrine.errors import RefusalSpec
 from terrine.temporal._timestamps import (
-    _quotient,
     _remainder,
     compare_timestamps,
-    timestamp_order_key,
+    integer_quotient,
+    timestamp_parts,
 )
 from terrine.windows import Window
 
@@ -56,12 +56,12 @@ class RangeJoin:
 def _bucket(
     timestamp: ir.TimestampValue, width: int, *, offset_seconds: int = 0
 ) -> ir.NumericValue:
-    key = timestamp_order_key(timestamp)
+    _rank, key_seconds, key_nanos = timestamp_parts(timestamp)
     zero = ibis.literal(0)
-    seconds = cast(ir.IntegerValue, key["seconds"]) - cast(
-        ir.IntegerValue, (cast(ir.IntegerValue, key["nanos"]) < zero).cast(dt.int64)
+    seconds = cast(
+        ir.IntegerValue, key_seconds - cast(ir.IntegerValue, (key_nanos < zero).cast(dt.int64))
     )
-    quotient = cast(ir.IntegerValue, _quotient(seconds, width))
+    quotient = integer_quotient(seconds, width, like=timestamp)
     remainder = cast(ir.IntegerValue, _remainder(seconds, width))
     negative = cast(ir.IntegerValue, (remainder < zero).cast(dt.int64))
     wide = dt.Decimal(38, 0)

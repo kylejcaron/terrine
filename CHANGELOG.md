@@ -46,6 +46,15 @@
 
 ### Execution and integrations
 
+- Materialize Frames directly from PostgreSQL (`terrine[postgres]`, Ibis 12+):
+  each run reads one consistent `REPEATABLE READ READ ONLY` snapshot on a private
+  connection. Counts, exact integer/decimal sums, as-of attributes and fixed,
+  scheduled, event-anchored, time-to-event, cohort-trajectory and state-panel
+  designs match DuckDB.
+  Averages, ratios, float windows and Dataset staging refuse with a route.
+- Refuse decimal sources without a declared precision and scale
+  (`terrine.semantic.decimal_scale_required`) and non-finite PostgreSQL numerics
+  (`terrine.backend.nonfinite_decimal`).
 - Execute in owned private transaction sessions or retained immutable inputs;
   keep caller connections open and preserve exact UTC output instants under
   non-UTC SQL sessions.

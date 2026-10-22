@@ -47,6 +47,7 @@ Use verified local DuckDB operation capabilities.
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
 | `terrine.backend.capability_unavailable` | <code>Backend {backend!r} cannot provide {operation!r}: {status}. {route}</code> | `backend`, `operation`, `route`, `status` | [terrine/backends/capabilities.py](../../terrine/backends/capabilities.py) |
+| `terrine.backend.nonfinite_decimal` | <code>Exact decimal column {column!r} contains {value}, which has no exact decimal value. Filter or replace non-finite numeric values in the relation SQL.</code> | `column`, `value` | [terrine/execution/_postgres.py](../../terrine/execution/_postgres.py) |
 
 ## budget
 
@@ -336,6 +337,7 @@ Correct native semantics or use an admitted staged table.
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
 | `terrine.semantic.ambiguous_column` | <code>Normalized event aliases conflict with declared physical column {column!r}.</code> | `column` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
+| `terrine.semantic.decimal_scale_required` | <code>Decimal column {column!r} has no fixed precision and scale up to 38 digits (declared {declared}). Cast it to an explicit numeric(p, s) with p &lt;= 38 in the relation SQL.</code> | `column`, `declared` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
 | `terrine.semantic.dialect_mismatch` | <code>Catalog dialect {declared!r} does not match connection dialect {execution!r}.</code> | `declared`, `execution` | [terrine/semantic/sql.py](../../terrine/semantic/sql.py) |
 | `terrine.semantic.missing_reference` | <code>Catalog reference {reference!r} is not declared.</code> | `reference` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
 | `terrine.semantic.schema_mismatch` | <code>Declared {field} column {column!r} is absent or has an incompatible type.</code> | `column`, `field` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
@@ -436,7 +438,7 @@ Check exact endpoints, coverage and arithmetic validity.
 | `terrine.temporal.exact_overflow` | <code>The requested exact result cannot be represented by the native output type. Use a supported exact representation or a semantically sufficient window.</code> | None | [terrine/temporal/aggregate.py](../../terrine/temporal/aggregate.py) |
 | `terrine.temporal.exact_unsupported` | <code>Backend {backend!r} lacks exact sparse BIGNUM state. Use the supported DuckDB backend.</code> | `backend` | [terrine/temporal/prefix.py](../../terrine/temporal/prefix.py) |
 | `terrine.temporal.first_occurrence_invalid_relation` | <code>First-occurrence input relation is invalid ({reason}).</code> | `reason` | [terrine/temporal/first.py](../../terrine/temporal/first.py) |
-| `terrine.temporal.first_occurrence_unsupported_backend` | <code>First-occurrence point lookup requires the DuckDB backend; got {backend!r}.</code> | `backend` | [terrine/temporal/first.py](../../terrine/temporal/first.py) |
+| `terrine.temporal.first_occurrence_unsupported_backend` | <code>First-occurrence point lookup requires the DuckDB or PostgreSQL backend; got {backend!r}.</code> | `backend` | [terrine/temporal/first.py](../../terrine/temporal/first.py) |
 | `terrine.temporal.float64_precision` | <code>Float64 certification failed ({failure}). Use correctly declared exact facts or a smaller semantically sufficient history with explicit completeness.</code> | `failure` | [terrine/temporal/prefix.py](../../terrine/temporal/prefix.py) |
 | `terrine.temporal.float64_unsupported` | <code>Backend {backend!r} lacks {capability}. Use a supported checked backend or correctly declared integer/decimal facts.</code> | `backend`, `capability` | [terrine/temporal/prefix.py](../../terrine/temporal/prefix.py) |
 | `terrine.temporal.malformed_history` | <code>Dimension history contains null keys, null starts, or malformed validity intervals.</code> | None | [terrine/temporal/attributes.py](../../terrine/temporal/attributes.py) |

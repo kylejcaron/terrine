@@ -120,6 +120,20 @@ def _quote(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
 
 
+def _dialect(model: Model) -> str:
+    return model.catalog.dialect.casefold()
+
+
+def _utc_sql(model: Model, column_sql: str) -> str:
+    """Native SQL converting a timestamp to UTC: naive input denotes UTC wall time."""
+    dialect = _dialect(model)
+    if dialect == "duckdb":
+        return f"timezone('UTC', {column_sql})"
+    if dialect == "postgres":
+        return f"({column_sql} AT TIME ZONE 'UTC')"
+    raise _UTC_CONVERSION_UNSUPPORTED.error(backend=model.catalog.dialect)
+
+
 def _precision_check(
     model: Model, table: ibis.Table, column: str, *, source_column: str | None = None
 ) -> _AnchorCheck | None:
@@ -144,10 +158,8 @@ def _utc_column(model: Model, table: Any, column: str, output: str) -> Any:
     dtype = table.schema()[column]
     if dtype.timezone is not None:
         return table.mutate(**{output: table[column].cast("timestamp('UTC')")})
-    if model.catalog.dialect.casefold() != "duckdb":
-        raise _UTC_CONVERSION_UNSUPPORTED.error(backend=model.catalog.dialect)
-    relation_sql = ibis.to_sql(table, dialect="duckdb")
-    expression = f"timezone('UTC', source.{_quote(column)})"
+    relation_sql = ibis.to_sql(table, dialect=_dialect(model))
+    expression = _utc_sql(model, f"source.{_quote(column)}")
     return model._sql(
         f"SELECT source.*, {expression} AS {_quote(output)} FROM ({relation_sql}) AS source"
     )
@@ -160,7 +172,7 @@ def _range_filter_raw(
         return table
     dtype = table.schema()[column]
     naive = dtype.timezone is None
-    if naive and model.catalog.dialect.casefold() != "duckdb":
+    if naive and _dialect(model) not in {"duckdb", "postgres"}:
         raise _UTC_CONVERSION_UNSUPPORTED.error(backend=model.catalog.dialect)
     start, end = _bound(model, anchor_range.start), _bound(model, anchor_range.end)
     for bound, lower in ((start, True), (end, False)):
@@ -301,11 +313,18 @@ def _roster_anchors(
         if elapsed_seconds <= 0:
             raise _INVALID.error(reason="schedule interval has no elapsed time")
         stop = (elapsed_seconds + schedule.every - 1) // schedule.every
-        if model.catalog.dialect.casefold() != "duckdb":
-            raise _INVALID.error(
-                reason="lazy Schedule expansion currently requires DuckDB range support"
+        dialect = _dialect(model)
+        if dialect == "duckdb":
+            sequence = model._sql(f"SELECT unnest(range(0, {stop})) AS ordinal")
+        elif dialect == "postgres":
+            sequence = model._sql(
+                f"SELECT CAST(ordinal AS BIGINT) AS ordinal FROM generate_series(0, {stop - 1}) "
+                "AS ordinal"
             )
-        sequence = model._sql(f"SELECT unnest(range(0, {stop})) AS ordinal")
+        else:
+            raise _INVALID.error(
+                reason="lazy Schedule expansion requires DuckDB or PostgreSQL series support"
+            )
         ordinal = sequence.ordinal
         t0 = ibis.literal(start) + ibis.interval(seconds=schedule.every) * ordinal
         base = sequence.select(
@@ -347,16 +366,15 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
     identity_dtype = events.schema()[identity_column]
     identity_text = None
     if identity_dtype.is_timestamp() and identity_dtype.timezone is not None:
-        if model.catalog.dialect.casefold() != "duckdb":
-            raise _UTC_CONVERSION_UNSUPPORTED.error(backend=model.catalog.dialect)
         alias = "_anchor_identity_text"
         names = {name.casefold() for name in events.columns}
         while alias.casefold() in names:
             alias = f"_{alias}"
-        relation_sql = ibis.to_sql(events, dialect="duckdb")
+        relation_sql = ibis.to_sql(events, dialect=_dialect(model))
+        utc = _utc_sql(model, f"source.{_quote(identity_column)}")
         events = model._sql(
-            f"SELECT source.*, CAST(timezone('UTC', source.{_quote(identity_column)}) "
-            f"AS VARCHAR) AS {_quote(alias)} FROM ({relation_sql}) AS source"
+            f"SELECT source.*, CAST({utc} AS VARCHAR) AS {_quote(alias)} "
+            f"FROM ({relation_sql}) AS source"
         )
         identity_text = events[alias]
     raw_timestamp = events[source.timestamp_column]

@@ -12,7 +12,7 @@ from collections.abc import Callable, Generator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 import ibis
 import pyarrow as pa
@@ -455,6 +455,8 @@ def _execution_snapshot(
     catalog: Catalog,
     units: Mapping[str, Any] | None = None,
     binding: VerifiedInputBinding | None = None,
+    *,
+    backend: str = "duckdb",
 ) -> ExecutionSnapshot:
     generations = {
         json.dumps([kind, name], ensure_ascii=False, separators=(",", ":")): None
@@ -470,7 +472,7 @@ def _execution_snapshot(
             generations[key] = binding._issuer.token
     return ExecutionSnapshot(
         snapshot_id=None,
-        backend="duckdb",
+        backend=backend,
         source_generations=generations,
         input_binding_id=binding._issuer.token if binding is not None else None,
         replay_equivalence="unverified",
@@ -495,56 +497,50 @@ def _validate_leased_binding(
         _revalidate_backing(issuer, runtime_con)
 
 
-@dataclass(slots=True)
-class ExecutionContext:
-    con: Any
-    snapshot: ExecutionSnapshot
-    _resolver: Callable[[RelationSpec], Any]
-    _raw: Any = None
-    owner_con: Any = None
-    _revalidate: Callable[[], None] | None = None
+class ExecutionSession(Protocol):
+    """Backend-owned query admission, execution and transaction lifetime."""
 
-    def resolve(self, relation: RelationSpec) -> Any:
-        return self._resolver(relation)
+    backend: str
 
-    @metadata_operation()
-    def _check_query(self, query: Any) -> str:
-        if self._revalidate is not None:
-            self._revalidate()
-        if self._raw is None:
-            raise _SNAPSHOT_UNAVAILABLE.error(reason="execution context is closed")
-        try:
-            sql = self.con.compile(query)
-        except Exception as exc:
-            raise _SNAPSHOT_UNAVAILABLE.error(
-                reason="compiled query could not be inspected"
-            ) from exc
-        _native.check_native_functions(self._raw, sql, None)
-        return sql
+    def check_query(self, sql: str) -> None: ...
+    def execute(self, con: Any, query: Any, sql: str) -> pa.Table: ...
+    def batches(
+        self, con: Any, query: Any, sql: str, *, chunk_size: int
+    ) -> pa.RecordBatchReader: ...
+    def close(self) -> None: ...
 
-    def execute(self, query: Any) -> pa.Table:
+
+class _DuckDBSession:
+    """A private DuckDB cursor holding one owned transaction."""
+
+    backend = "duckdb"
+
+    def __init__(self, raw: Any) -> None:
+        self.raw = raw
+
+    def check_query(self, sql: str) -> None:
+        _native.check_native_functions(self.raw, sql, None)
+
+    def execute(self, con: Any, query: Any, sql: str) -> pa.Table:
         from ibis.backends.duckdb.converter import DuckDBPyArrowData
 
-        sql = self._check_query(query)
         try:
-            self.con._run_pre_execute_hooks(query)
+            con._run_pre_execute_hooks(query)
             if query.as_table().schema().geospatial:
-                self.con._load_extensions(["spatial"])
+                con._load_extensions(["spatial"])
         finally:
             invalidate_metadata()
-        table = self._raw.sql(sql).to_arrow_table()
+        table = self.raw.sql(sql).to_arrow_table()
         return query.__pyarrow_result__(table, data_mapper=DuckDBPyArrowData)
 
-    def to_arrow_batches(self, query: Any, *, chunk_size: int = 65_536) -> pa.RecordBatchReader:
-        """Stream the same SQL whose native function ownership was admitted."""
+    def batches(self, con: Any, query: Any, sql: str, *, chunk_size: int) -> pa.RecordBatchReader:
         import pyarrow_hotfix  # noqa: F401
 
-        sql = self._check_query(query)
         try:
-            self.con._run_pre_execute_hooks(query)
+            con._run_pre_execute_hooks(query)
         finally:
             invalidate_metadata()
-        result = self.con.raw_sql(sql)
+        result = con.raw_sql(sql)
 
         def batches():
             yield from result.fetch_record_batch(rows_per_batch=chunk_size)
@@ -552,18 +548,58 @@ class ExecutionContext:
         return pa.RecordBatchReader.from_batches(query.as_table().schema().to_pyarrow(), batches())
 
     def close(self) -> None:
-        if self._raw is None:
-            return
-        raw, self._raw = self._raw, None
         try:
-            raw.execute("COMMIT")
+            self.raw.execute("COMMIT")
         except Exception:
             try:
-                raw.execute("ROLLBACK")
+                self.raw.execute("ROLLBACK")
             except Exception:
                 pass
         finally:
-            raw.close()
+            self.raw.close()
+
+
+@dataclass(slots=True)
+class ExecutionContext:
+    con: Any
+    snapshot: ExecutionSnapshot
+    _resolver: Callable[[RelationSpec], Any]
+    _session: ExecutionSession | None = None
+    owner_con: Any = None
+    _revalidate: Callable[[], None] | None = None
+
+    def resolve(self, relation: RelationSpec) -> Any:
+        return self._resolver(relation)
+
+    @metadata_operation()
+    def _check_query(self, query: Any) -> tuple[ExecutionSession, str]:
+        if self._revalidate is not None:
+            self._revalidate()
+        session = self._session
+        if session is None:
+            raise _SNAPSHOT_UNAVAILABLE.error(reason="execution context is closed")
+        try:
+            sql = self.con.compile(query)
+        except Exception as exc:
+            raise _SNAPSHOT_UNAVAILABLE.error(
+                reason="compiled query could not be inspected"
+            ) from exc
+        session.check_query(sql)
+        return session, sql
+
+    def execute(self, query: Any) -> pa.Table:
+        session, sql = self._check_query(query)
+        return session.execute(self.con, query, sql)
+
+    def to_arrow_batches(self, query: Any, *, chunk_size: int = 65_536) -> pa.RecordBatchReader:
+        """Stream the same SQL whose native function ownership was admitted."""
+        session, sql = self._check_query(query)
+        return session.batches(self.con, query, sql, chunk_size=chunk_size)
+
+    def close(self) -> None:
+        session, self._session = self._session, None
+        if session is not None:
+            session.close()
 
 
 @contextlib.contextmanager
@@ -616,7 +652,7 @@ def _open_native_execution(
                 private,
                 _execution_snapshot(catalog, units, binding=input_binding),
                 resolver,
-                _raw=raw,
+                _session=_DuckDBSession(raw),
                 _revalidate=validate,
                 owner_con=con,
             )
@@ -643,7 +679,7 @@ def _open_native_execution(
             private,
             _execution_snapshot(catalog, units),
             resolver,
-            _raw=raw,
+            _session=_DuckDBSession(raw),
             owner_con=con,
         )
         yield context
@@ -652,6 +688,41 @@ def _open_native_execution(
             context.close()
         elif raw is not None:
             raw.close()
+
+
+@contextlib.contextmanager
+def _open_postgres_execution(
+    provider: Any,
+    catalog: Catalog,
+    con: Any,
+    *,
+    units: Mapping[str, Any] | None = None,
+    input_binding: VerifiedInputBinding | None = None,
+) -> Generator[ExecutionContext]:
+    """Read through a private connection so the caller's transaction is never touched."""
+    from terrine.execution import _postgres
+
+    owned = _postgres.owned_connection(con)
+    session = _postgres.PostgresSession(owned)
+    context = None
+    try:
+        private = ibis.postgres.from_connection(owned)
+        resolver = provider.bind_resolver(
+            catalog, private, units=units, input_binding=input_binding
+        )
+        context = ExecutionContext(
+            private,
+            _execution_snapshot(catalog, units, backend="postgres"),
+            resolver,
+            _session=session,
+            owner_con=con,
+        )
+        yield context
+    finally:
+        if context is not None:
+            context.close()
+        else:
+            session.close()
 
 
 def required_relations(

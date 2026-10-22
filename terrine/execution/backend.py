@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from terrine.backends.capabilities import (
     _CAPABILITY_UNAVAILABLE,
     DUCKDB_CAPABILITIES,
+    POSTGRES_CAPABILITIES,
     UNVERIFIED_CAPABILITIES,
     BackendCapabilities,
 )
@@ -117,11 +118,83 @@ class _DuckDBProvider:
 _DUCKDB_PROVIDER = _DuckDBProvider()
 
 
+class _PostgresProvider:
+    capabilities = POSTGRES_CAPABILITIES
+
+    def matches(self, con: Any) -> bool:
+        return type(con).__module__ == "ibis.backends.postgres"
+
+    def dialect(self, con: Any) -> str:
+        return "postgres"
+
+    def resolve_relation(self, con: Any, relation: RelationSpec) -> ibis.Table:
+        from terrine.execution import _postgres
+
+        return _postgres.resolve(con, relation)
+
+    def required_relations(self, catalog, con, *, units=None):
+        from terrine.execution import _postgres
+
+        return _postgres.required_relations(catalog, con, units=units)
+
+    def bind_resolver(self, catalog, con, **kwargs):
+        from terrine.execution import _postgres
+        from terrine.execution.inputs import _INVALID
+
+        units = kwargs.get("units")
+        if kwargs.get("input_binding") is not None:
+            raise _CAPABILITY_UNAVAILABLE.error(
+                backend="postgres",
+                operation="retained_snapshot",
+                status="unverified",
+                route="Retained input bindings are DuckDB-only; materialize directly.",
+            )
+        raw = _postgres.raw_connection(con)
+        _postgres.required_relations(catalog, con, units=units)
+        admitted: dict[tuple[str, str], Any] = {}
+        fingerprints: dict[tuple[str, str], str] = {}
+
+        def resolve(relation: RelationSpec) -> Any:
+            key = (relation.kind, relation.name if isinstance(relation, TableRef) else relation.sql)
+            fingerprint = _postgres.admission_fingerprint(relation, raw)
+            if key in admitted:
+                if fingerprints[key] != fingerprint:
+                    raise _INVALID.error(
+                        reason="relation definition or identity changed after Model binding"
+                    )
+                return admitted[key]
+            admitted[key] = _postgres.resolve(con, relation, catalog.dialect)
+            fingerprints[key] = fingerprint
+            return admitted[key]
+
+        return resolve
+
+    def sql(self, con: Any, sql: str) -> ibis.Table:
+        from terrine.execution import _postgres
+
+        raw = _postgres.raw_connection(con)
+        _parse_read_query_ast(sql, "postgres")
+        _postgres.check_functions(raw, sql)
+        return con.sql(sql, schema=_postgres.query_schema(raw, sql, con.compiler.type_mapper))
+
+    def open_execution(self, catalog, con, *, units=None, input_binding=None):
+        from terrine.execution.inputs import _open_postgres_execution
+
+        return _open_postgres_execution(
+            self, catalog, con, units=units, input_binding=input_binding
+        )
+
+
+_POSTGRES_PROVIDER = _PostgresProvider()
+_PROVIDERS: tuple[BackendProvider, ...] = (_DUCKDB_PROVIDER, _POSTGRES_PROVIDER)
+
+
 def backend_capabilities(con: Any) -> BackendCapabilities:
     """Inspect evidence without admitting a connection or reading source metadata."""
-    return (
-        _DUCKDB_PROVIDER.capabilities if _DUCKDB_PROVIDER.matches(con) else UNVERIFIED_CAPABILITIES
-    )
+    for provider in _PROVIDERS:
+        if provider.matches(con):
+            return provider.capabilities
+    return UNVERIFIED_CAPABILITIES
 
 
 def backend_provider(con: Any) -> BackendProvider:
@@ -133,9 +206,20 @@ def backend_provider(con: Any) -> BackendProvider:
             route="Use a native backend with verified read-only dialect admission.",
         )
         return _DUCKDB_PROVIDER
+    if _POSTGRES_PROVIDER.matches(con):
+        from terrine.execution._postgres import ibis_supported
+
+        if not ibis_supported():
+            raise _CAPABILITY_UNAVAILABLE.error(
+                backend="postgres",
+                operation="dialect_admission",
+                status="unsupported",
+                route="Install terrine[postgres], which requires ibis-framework 12 or newer.",
+            )
+        return _POSTGRES_PROVIDER
     raise _CAPABILITY_UNAVAILABLE.error(
         backend=str(getattr(con, "name", type(con).__name__)).casefold(),
         operation="query",
         status="unverified",
-        route="Bind a local Ibis DuckDB backend; other execution providers are unverified.",
+        route="Bind a local Ibis DuckDB or PostgreSQL backend; other providers are unverified.",
     )

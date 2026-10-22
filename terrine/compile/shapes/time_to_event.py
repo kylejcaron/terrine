@@ -17,7 +17,7 @@ from terrine.spec.anchors import FixedDate
 from terrine.spec.design import Design
 from terrine.spec.trajectory import TimeToEvent
 from terrine.temporal._timestamps import _UNSUPPORTED as _TIMESTAMP_ORDER_UNSUPPORTED
-from terrine.temporal._timestamps import compare_timestamps, timestamp_order_key
+from terrine.temporal._timestamps import _struct_key, compare_timestamps
 from terrine.temporal.first import first_occurrence
 
 if TYPE_CHECKING:
@@ -92,7 +92,7 @@ def _narrow_bound(value, lower, upper, time_type) -> ir.TimestampValue:
         ibis.ifelse(above_upper, upper_timestamp, normalized.try_cast(time_type)),
     )
     if time_type.scale == 9:
-        key = timestamp_order_key(normalized)
+        key = _struct_key(normalized)
         seconds = cast(ir.IntegerValue, key["seconds"])
         nanos = cast(ir.IntegerValue, key["nanos"])
         min_seconds = ibis.literal(-9_223_372_036).cast("int64")

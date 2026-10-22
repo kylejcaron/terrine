@@ -24,13 +24,13 @@ from terrine.semantic.rules import (
 from terrine.semantic.time import boundary_timezone
 from terrine.temporal.attributes import _enriched_property_columns
 from terrine.temporal.prefix import (
-    _EXACT,
     _float64_conforms,
     _isfinite,
     _require_backend,
     exact_literal,
     exact_subtract,
     exact_sum,
+    exact_type,
 )
 
 __all__ = ["sparse_daily"]
@@ -225,7 +225,7 @@ def _numeric_threshold(item, scale, bounds, name):
 def _exact_comparison(value, coefficient, scale, bounds, item, op, name):
     """Lower an exact coefficient/rational comparison without native division."""
     if item is None:
-        threshold = ibis.null().cast(_EXACT)
+        threshold = ibis.null().cast(exact_type())
     else:
         floor, ceil, integral = _numeric_threshold(item, scale, bounds, name)
         if op in {"equals", "not_equals"} and not integral:
@@ -280,7 +280,7 @@ def _filter_comparison(value, filt):
         else:
             bounds = dtype.bounds
         text = value.cast("string")
-        coefficient = (text.replace(".", "") if scale else text).cast(_EXACT)
+        coefficient = (text.replace(".", "") if scale else text).cast(exact_type())
     elif dtype.is_floating():
         value = value.cast("float64")
         value = _isfinite(value).ifelse(value, ibis.null().cast("float64"))
@@ -397,7 +397,9 @@ def _sparse_group(
         text = leaf.__terrine_value.cast("string")
         if dtype.is_decimal():
             text = text.replace(".", "")
-        coefficient = leaf.__terrine_selected.ifelse(text.cast(_EXACT), ibis.null().cast(_EXACT))
+        coefficient = leaf.__terrine_selected.ifelse(
+            text.cast(exact_type()), ibis.null().cast(exact_type())
+        )
         aggregates["sum_value"] = exact_sum(coefficient)
     grouped = leaf.group_by("_unit", *keys).aggregate(**aggregates)
     constants = {

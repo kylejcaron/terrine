@@ -13,7 +13,7 @@ from terrine.errors import RefusalSpec
 from terrine.spec.design import Design
 from terrine.spec.expressions import MetricAgg
 from terrine.spec.trajectory import CohortSpec
-from terrine.temporal.aggregate import _Check, _Failure, _scaled_text
+from terrine.temporal.aggregate import _Check, _Failure, narrow_exact
 from terrine.temporal.prefix import (
     FLOAT64_PRECISION,
     exact_literal,
@@ -211,10 +211,11 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
                 coefficient_text.length() + scale - fractional_digits, "0"
             ).cast(exact_literal(0).type())
             exact_total = exact_sum(coefficient).over(frame)
-            total = _scaled_text(exact_total, scale).try_cast(numeric_type)
+            total = narrow_exact(exact_total, scale, numeric_type)
         else:
             total = table.period_value.sum().over(frame)
-        missing = table.period_value.isnull().cast("int64").sum().over(frame) > 0
+        # Through INT: PostgreSQL cannot cast boolean to BIGINT.
+        missing = table.period_value.isnull().cast("int32").sum().over(frame) > 0
         cumulative = missing.ifelse(ibis.null().cast(total.type()), total)
         table = table.mutate(cumulative_value=cumulative)
         table = table.mutate(

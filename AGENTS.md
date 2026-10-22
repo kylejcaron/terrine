@@ -76,6 +76,13 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   `integration/.test_durations`. Tests without a stored time still run (they
   are assigned the average); after large changes refresh it with
   `uv run pytest integration --store-durations --durations-path integration/.test_durations`.
+- `make test-postgres` runs the live PostgreSQL probes (`@pytest.mark.postgres`,
+  deselected by default); they fail, never skip, without
+  `TERRINE_TEST_POSTGRES_*` settings. Start a throwaway local server with
+  `eval "$(uv run python -m tests.integration.postgres_scratch start)"` and stop it
+  with `uv run python -m tests.integration.postgres_scratch stop`. CI runs them
+  on every push against a PostgreSQL 16 service container. Each probe owns a
+  uniquely named schema; never share a warehouse namespace between tests.
 - The ordinary suite lists unit tests slower than 5 s (well above the 2 s
   target, so contention does not trip it); a healthy run lists none. Fix any
   listed test.
@@ -181,6 +188,22 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   behavior, duplicate handling, and treatment of runtime-only values.
 - Read-only SQL is parsed using the dialect that will execute it and is
   rejected when read-only safety cannot be established.
+
+## Backend portability
+
+- Study queries (`terrine/compile/`, `terrine/temporal/`) are built from Ibis
+  expressions so every backend gets them through Ibis's translation. Do not add
+  raw SQL strings or `@ibis.udf.*.builtin` bindings to native functions there.
+- When Ibis lacks or mistranslates an operation on a supported backend, put
+  the workaround in one backend-dispatched helper with a live parity test,
+  not at each call site.
+- Raw SQL is acceptable only for: terrine's own DuckDB runtime state tables
+  (`terrine/runtime/`), backend-provider catalog introspection and transaction
+  control (`terrine/execution/`), and admitted user SQL relations.
+- Warehouse results match the DuckDB reference within a stated tolerance
+  (tight relative tolerance for floats; exact for counts and decimal sums).
+  Do not port DuckDB-specific exactness machinery, such as certified float
+  error bounds, to a warehouse to reach bit-for-bit parity.
 
 ## Complete changes
 

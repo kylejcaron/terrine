@@ -60,8 +60,11 @@ UNSUPPORTED_EVENT_RESOLUTION = RefusalSpec(
 
 
 def supports_event_resolution(dialect: str) -> bool:
-    """Whether a bound backend profile supports exact event-time resolution."""
-    return dialect.casefold() == "duckdb"
+    """Whether a bound backend profile supports exact event-time resolution.
+
+    PostgreSQL resolves exactly at its native microsecond precision.
+    """
+    return dialect.casefold() in {"duckdb", "postgres"}
 
 
 def _wall_clock_aligned(anchor: datetime, offset_seconds: int, day_boundary: str) -> bool:
