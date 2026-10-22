@@ -10,7 +10,7 @@ import pytest
 from integration.warehouse_execution.postgres_fixtures import (
     postgres_scratch as postgres_scratch,  # noqa: F401
 )
-from terrine.temporal._timestamps import compare_timestamps, timestamp_parts
+from terrine.backends.timestamps import compare_timestamps, timestamp_parts
 
 pytestmark = pytest.mark.postgres
 

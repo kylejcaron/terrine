@@ -10,10 +10,10 @@ import ibis
 import ibis.expr.types as ir
 import pyarrow as pa
 
+from terrine.backends.timestamps import compare_timestamps, timestamp_order_key
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _MISSING, _SCHEMA
 from terrine.semantic.models import BoundDimension
-from terrine.temporal._timestamps import compare_timestamps, timestamp_order_key
 
 __all__ = ["attribute_asof", "enrich_events", "validate_history"]
 

@@ -11,11 +11,11 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+from terrine.backends.timestamps import compare_timestamps
 from terrine.data import ColumnMeta
 from terrine.errors import RefusalSpec
 from terrine.semantic.models import BoundMeasure, BoundSource
 from terrine.semantic.rules import UNKNOWN_FILTER
-from terrine.temporal._timestamps import compare_timestamps
 from terrine.temporal.aggregate import TemporalResult, _Check, _Failure
 from terrine.temporal.daily import _predicate
 from terrine.temporal.ranges import RangePlan, blocked_range_join

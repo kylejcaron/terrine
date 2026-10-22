@@ -13,6 +13,16 @@ import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 import pyarrow as pa
 
+from terrine.backends.dialect import dialect_of
+from terrine.backends.numeric import (
+    exact_literal,
+    exact_subtract,
+    exact_sum,
+    float_is_finite,
+    ieee_divide,
+    ieee_subtract,
+)
+from terrine.backends.timestamps import utc_instant, utc_wall_clock
 from terrine.data import ColumnMeta
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _SCHEMA
@@ -27,20 +37,13 @@ from terrine.semantic.rules import (
     supports_temporal_aggregation,
 )
 from terrine.semantic.time import boundary_timezone
-from terrine.temporal.daily import _UNKNOWN_FIELDS, _utc_aware, _utc_naive
+from terrine.temporal.daily import _UNKNOWN_FIELDS
 from terrine.temporal.lookup import lookup_prefix
 from terrine.temporal.prefix import (
     FLOAT64_PRECISION,
     FLOAT64_UNSUPPORTED,
-    _divide,
-    _isfinite,
     _outward,
-    _postgres,
     _require_backend,
-    _subtract,
-    exact_literal,
-    exact_subtract,
-    exact_sum,
     float64_rounding_radius,
     float64_tolerance,
     outward_add,
@@ -198,7 +201,7 @@ def narrow_exact(coefficient, scale: int, target: str | dt.DataType):
     overflow, so the range is checked on the exact coefficient before casting.
     """
     text = _scaled_text(coefficient, scale)
-    if not _postgres():
+    if not dialect_of() == "postgres":
         return text.try_cast(target)
     target_type = dt.dtype(target)
     if isinstance(target_type, dt.SignedInteger):
@@ -214,12 +217,12 @@ def narrow_exact(coefficient, scale: int, target: str | dt.DataType):
 
 
 def _aligned(timestamp, minutes: int):
-    utc = cast(ir.TimestampValue, _utc_naive("UTC", timestamp))
+    utc = utc_wall_clock(timestamp)
     local = utc + ibis.interval(minutes=minutes)
     midnight = cast(ir.TimestampValue, local.date().cast("timestamp")) - ibis.interval(
         minutes=minutes
     )
-    return timestamp == _utc_aware("UTC", midnight)
+    return timestamp == utc_instant(midnight)
 
 
 def _float_quantity(builder: _Builder, quantity: _Quantity, context) -> _Quantity:
@@ -230,7 +233,9 @@ def _float_quantity(builder: _Builder, quantity: _Quantity, context) -> _Quantit
         "parsed", _scaled_text(builder.col(quantity.value), quantity.scale).try_cast("float64")
     )
     builder.flag(
-        builder.col(value).isnull() | ~_isfinite(builder.col(value)), "uncertifiable_cast", context
+        builder.col(value).isnull() | ~float_is_finite(builder.col(value)),
+        "uncertifiable_cast",
+        context,
     )
     lossless = builder.col(quantity.known_zero)
     if quantity.scale == 0:
@@ -246,8 +251,8 @@ def _check_quantity(builder: _Builder, quantity: _Quantity, context) -> None:
     assert quantity.error is not None
     value, error = builder.col(quantity.value), builder.col(quantity.error)
     failures = (
-        ("nonfinite_state", ~_isfinite(value) | value.isnull()),
-        ("bound_overflow", ~_isfinite(error) | error.isnull() | (error < 0.0)),
+        ("nonfinite_state", ~float_is_finite(value) | value.isnull()),
+        ("bound_overflow", ~float_is_finite(error) | error.isnull() | (error < 0.0)),
     )
     columns = builder.put_many(*failures)
     for column, (failure, _) in zip(columns, failures, strict=True):
@@ -277,9 +282,9 @@ def _quotient(
         ),
         ("upper", outward_add(builder.col(denominator.value), builder.col(denominator.error))),
     )
-    invalid_endpoint = ~_isfinite(builder.col(ln))
+    invalid_endpoint = ~float_is_finite(builder.col(ln))
     for endpoint in (un, ld, ud):
-        invalid_endpoint = invalid_endpoint | ~_isfinite(builder.col(endpoint))
+        invalid_endpoint = invalid_endpoint | ~float_is_finite(builder.col(endpoint))
     builder.flag(invalid_endpoint, "bound_overflow", context)
     excludes_zero = builder.put("excludes_zero", (builder.col(ld) > 0.0) | (builder.col(ud) < 0.0))
     builder.flag(~builder.col(excludes_zero), "denominator_interval_zero", context)
@@ -294,7 +299,7 @@ def _quotient(
     lower, upper, value = builder.put_many(
         ("quotient_min", ibis.least(*(builder.col(n) for n in endpoints[::2]))),
         ("quotient_max", ibis.greatest(*(builder.col(n) for n in endpoints[1::2]))),
-        ("quotient", _divide(builder.col(numerator.value), builder.col(denominator.value))),
+        ("quotient", ieee_divide(builder.col(numerator.value), builder.col(denominator.value))),
     )
     left_error, right_error = builder.put_many(
         ("left_error", outward_subtract(builder.col(value), builder.col(lower))),
@@ -312,7 +317,9 @@ def _quotient(
     # Zero divided by a finite nonzero value is exact; no arithmetic interval is needed.
     error = builder.put("quotient_error", builder.col(known_zero).ifelse(0.0, builder.col(error)))
     builder.flag(
-        ~_isfinite(builder.col(lower)) | ~_isfinite(builder.col(upper)), "bound_overflow", context
+        ~float_is_finite(builder.col(lower)) | ~float_is_finite(builder.col(upper)),
+        "bound_overflow",
+        context,
     )
     result = _Quantity(value, reason, known_zero, error)
     _check_quantity(builder, result, context)
@@ -407,7 +414,9 @@ def _component(
                 builder.numeric.append((flag, FLOAT64_PRECISION, {"failure": failure, **context}))
         value = builder.put(
             "sum",
-            builder.col(empty).ifelse(0.0, _subtract(builder.col(sums[1]), builder.col(sums[0]))),
+            builder.col(empty).ifelse(
+                0.0, ieee_subtract(builder.col(sums[1]), builder.col(sums[0]))
+            ),
         )
         errors = []
         for endpoint in (start, end):
@@ -427,8 +436,8 @@ def _component(
             builder.col(empty)
             | (
                 (builder.col(sums[0]) == builder.col(sums[1]))
-                & _isfinite(builder.col(sums[0]))
-                & _isfinite(builder.col(sums[1]))
+                & float_is_finite(builder.col(sums[0]))
+                & float_is_finite(builder.col(sums[1]))
                 & (builder.col(errors[0]) == 0.0)
                 & (builder.col(errors[1]) == 0.0)
                 & valid_history

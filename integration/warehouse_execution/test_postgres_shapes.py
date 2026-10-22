@@ -159,19 +159,32 @@ def _rows(model, design):
     return sorted(table.select(kept).to_pylist(), key=lambda row: (row["unit"], row["t0"]))
 
 
-def _both(postgres_scratch, tmp_path, **model_options):
+def _both(postgres_scratch, tmp_path, *, naive=False, **model_options):
     duckdb = ibis.duckdb.connect()
-    _load(duckdb, timestamp_type="TIMESTAMPTZ", amount_type="DECIMAL(10, 2)")
-    _load(postgres_scratch.con, timestamp_type="timestamptz", amount_type="numeric(10, 2)")
+    _load(
+        duckdb, timestamp_type="TIMESTAMP" if naive else "TIMESTAMPTZ", amount_type="DECIMAL(10, 2)"
+    )
+    _load(
+        postgres_scratch.con,
+        timestamp_type="timestamp" if naive else "timestamptz",
+        amount_type="numeric(10, 2)",
+    )
     return (
         _model(duckdb, tmp_path, "duckdb", **model_options),
         _model(postgres_scratch.con, tmp_path, "postgres", **model_options),
     )
 
 
-@pytest.mark.parametrize("name", sorted(_DESIGNS))
-def test_design_matches_duckdb(postgres_scratch, tmp_path, name):  # noqa: F811
-    duckdb, postgres = _both(postgres_scratch, tmp_path)
+# Naive source timestamps denote UTC and take each backend's UTC conversion path.
+_NAIVE_DESIGNS = ("first_event_anchor", "observed_state_panel", "schedule")
+
+
+@pytest.mark.parametrize(
+    ("name", "naive"),
+    [(name, False) for name in sorted(_DESIGNS)] + [(name, True) for name in _NAIVE_DESIGNS],
+)
+def test_design_matches_duckdb(postgres_scratch, tmp_path, name, naive):  # noqa: F811
+    duckdb, postgres = _both(postgres_scratch, tmp_path, naive=naive)
     design = _DESIGNS[name]
     expected = _rows(duckdb, design)
     actual = _rows(postgres, design)

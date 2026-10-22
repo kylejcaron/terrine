@@ -55,6 +55,10 @@
 - Refuse decimal sources without a declared precision and scale
   (`terrine.semantic.decimal_scale_required`) and non-finite PostgreSQL numerics
   (`terrine.backend.nonfinite_decimal`).
+- Compile Designs entirely from Ibis expressions: building a Frame sends no SQL,
+  and a shadowed native function in a compiled query refuses
+  (`terrine.execution.snapshot_unavailable`) when the Frame runs, before any
+  user function executes.
 - Execute in owned private transaction sessions or retained immutable inputs;
   keep caller connections open and preserve exact UTC output instants under
   non-UTC SQL sessions.

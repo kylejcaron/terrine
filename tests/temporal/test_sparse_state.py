@@ -9,6 +9,7 @@ import ibis
 import pyarrow as pa
 import pytest
 
+from terrine.backends.numeric import exact_literal, exact_subtract
 from terrine.errors import TerrineError
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import (
@@ -23,8 +24,6 @@ from terrine.semantic.models import (
 from terrine.temporal.attributes import enrich_events
 from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
 from terrine.temporal.prefix import (
-    exact_literal,
-    exact_subtract,
     float64_certificate,
     float64_rounding_radius,
     outward_add,

@@ -10,7 +10,7 @@ from integration.warehouse_execution.postgres_fixtures import (
     postgres_scratch as postgres_scratch,  # noqa: F401
 )
 from terrine.errors import TerrineError
-from terrine.execution._postgres import PostgresSession
+from terrine.execution._postgres import PostgresSession, check_functions, raw_connection
 from terrine.execution.backend import backend_provider
 from terrine.execution.inputs import open_execution
 from terrine.semantic.models import SqlQuery, TableRef
@@ -157,7 +157,7 @@ def test_user_function_shadowing_a_called_name_is_refused(postgres_scratch, sign
         f"CREATE FUNCTION \"{postgres_scratch.schema}\".{signature} LANGUAGE sql AS 'SELECT $1'"
     ).close()
     with pytest.raises(TerrineError) as error:
-        backend_provider(con).sql(con, f"SELECT {call} AS u FROM events")
+        check_functions(raw_connection(con), f"SELECT {call} AS u FROM events")
     assert error.value.code == "terrine.execution.snapshot_unavailable"
 
 
@@ -176,7 +176,7 @@ def test_comments_literals_and_aliases_do_not_name_a_call(postgres_scratch, sql)
         f'CREATE FUNCTION "{postgres_scratch.schema}".lower(text) RETURNS text '
         "LANGUAGE sql AS 'SELECT $1'"
     ).close()
-    assert backend_provider(con).sql(con, sql).count().execute() == 1
+    check_functions(raw_connection(con), sql)
 
 
 def test_view_calling_a_user_function_is_refused(postgres_scratch, tmp_path):  # noqa: F811

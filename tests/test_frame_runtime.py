@@ -204,7 +204,9 @@ def test_empty_cohort_has_zero_eligibility_totals(native_inputs):
     assert result.table.schema.equals(frame.expr.schema().to_pyarrow())
 
 
-def test_compiler_sql_refuses_shadowed_functions_before_schema_binding(native_inputs, tmp_path):
+def test_shadowed_native_function_in_compiled_query_is_refused_before_it_runs(
+    native_inputs, tmp_path
+):
     catalog, con = native_inputs
     model = Model.from_catalog(
         catalog,
@@ -223,8 +225,8 @@ def test_compiler_sql_refuses_shadowed_functions_before_schema_binding(native_in
     con.raw_sql("CREATE MACRO range(lo, hi) AS (SELECT list(ordinal) FROM read_csv(probe_path()))")
     calls.clear()
     design = Design("user", tr.Schedule("1d", "2025-01-03", "2025-01-05"))
-    for operation in (lambda: design.build(model), lambda: tr.preview(design, model)):
-        with pytest.raises(TerrineError) as error:
-            operation()
-        assert error.value.code == "terrine.execution.snapshot_unavailable"
-        assert calls == []
+    frame = design.build(model)  # compiling sends no SQL
+    with pytest.raises(TerrineError) as error:
+        frame.materialize()
+    assert error.value.code == "terrine.execution.snapshot_unavailable"
+    assert calls == []

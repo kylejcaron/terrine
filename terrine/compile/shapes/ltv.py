@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import ibis
 
+from terrine.backends.numeric import exact_literal, exact_sum
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
@@ -16,8 +17,6 @@ from terrine.spec.trajectory import CohortSpec
 from terrine.temporal.aggregate import _Check, _Failure, narrow_exact
 from terrine.temporal.prefix import (
     FLOAT64_PRECISION,
-    exact_literal,
-    exact_sum,
     float64_rounding_radius,
     float64_tolerance,
     outward_add,

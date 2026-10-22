@@ -8,9 +8,10 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+from terrine.backends.dialect import dialect_of
+from terrine.backends.timestamps import _struct_key, timestamp_order_key, timestamp_parts
 from terrine.data import ColumnMeta
 from terrine.errors import RefusalSpec
-from terrine.temporal._timestamps import _backend, _struct_key, timestamp_order_key, timestamp_parts
 from terrine.temporal.aggregate import TemporalResult, _Check, _Failure
 
 __all__ = ["first_occurrence", "last_event_value"]
@@ -43,7 +44,7 @@ def _validate_timestamp(table: ibis.Table, column: str, name: str) -> dt.Timesta
 
 def _reverse_time_key(value: ir.TimestampValue) -> ir.Value:
     """A key whose ascending order is the instants' descending order."""
-    if _backend(value) == "postgres":
+    if dialect_of(value) == "postgres":
         # One exact scalar: PostgreSQL's microsecond range stays below 10**19.
         rank, seconds, nanos = timestamp_parts(value, backend="postgres")
         wide = dt.Decimal(38, 0)

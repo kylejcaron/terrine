@@ -11,7 +11,8 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
-from terrine.temporal._timestamps import timestamp_order_key
+from terrine.backends.numeric import is_exact_type
+from terrine.backends.timestamps import timestamp_order_key
 
 __all__ = ["PrefixLookup", "lookup_prefix"]
 
@@ -36,8 +37,6 @@ def _allocate(used: set[str], stem: str) -> str:
 
 
 def _numeric(dtype: dt.DataType) -> bool:
-    from terrine.temporal.prefix import is_exact_type
-
     return dtype.is_numeric() or is_exact_type(dtype)
 
 
