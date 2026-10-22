@@ -10,6 +10,7 @@ from typing import cast
 import ibis
 from ibis.expr import types as ir
 
+from terrine.backends.timestamps import compare_timestamps
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.compile.shapes.matched_t0 import sample_risk_sets
 from terrine.data import ColumnMeta, Roles
@@ -19,7 +20,6 @@ from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
 from terrine.spec.panels import Initiation, PersistentAdoption, SequentialSpec
 from terrine.spec.validate import _outcome_bounds
-from terrine.temporal._timestamps import compare_timestamps
 from terrine.temporal.aggregate import _Check, _Failure
 
 _INVALID_TRIAL_WEIGHT = RefusalSpec(

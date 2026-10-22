@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
-import math
-from collections.abc import Callable, Generator
-from contextlib import contextmanager
-from contextvars import ContextVar
+from collections.abc import Callable
 from importlib.metadata import version
 from typing import Any, Literal, cast
 
 import ibis
-import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
-import sqlglot.expressions as sge
 from ibis.common.exceptions import IbisError
 
+from terrine.backends.dialect import dialect_of
+from terrine.backends.numeric import (
+    exact_literal,
+    exact_subtract,
+    exact_sum,
+    float_is_finite,
+    ieee_add,
+    ieee_divide,
+    ieee_multiply,
+    ieee_subtract,
+    next_toward,
+)
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _SCHEMA
 from terrine.semantic.models import BoundMeasure
@@ -45,110 +52,6 @@ type Float64Failure = Literal[
     "tolerance",
 ]
 
-# These are native builtin bindings, not Python row functions. The exact type stays
-# internal: DuckDB BIGNUM, or PostgreSQL's arbitrary-precision NUMERIC.
-_EXACT = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
-_PG_EXACT = dt.Unknown(raw_type=sge.DataType.build("NUMERIC", dialect="postgres"))
-_EXACT_DIALECT: ContextVar[str] = ContextVar("terrine_exact_dialect", default="duckdb")
-
-
-@contextmanager
-def exact_dialect(dialect: str) -> Generator[None]:
-    """Build exact state for ``dialect`` while compiling one Design."""
-    token = _EXACT_DIALECT.set(dialect.casefold())
-    try:
-        yield
-    finally:
-        _EXACT_DIALECT.reset(token)
-
-
-def _postgres() -> bool:
-    return _EXACT_DIALECT.get() == "postgres"
-
-
-def exact_type() -> dt.DataType:
-    return _PG_EXACT if _postgres() else _EXACT
-
-
-def is_exact_type(dtype: dt.DataType) -> bool:
-    """Whether ``dtype`` is an internal exact-state type on any backend."""
-    return dtype in (_EXACT, _PG_EXACT)
-
-
-@ibis.udf.agg.builtin(name="sum", signature=((_EXACT,), _EXACT))
-def _duckdb_exact_sum(value):
-    """Native exact coefficient/count sum."""
-
-
-@ibis.udf.scalar.builtin(name="subtract", signature=((_EXACT, _EXACT), _EXACT))
-def _duckdb_exact_subtract(left, right):
-    """Native exact coefficient/count subtraction."""
-
-
-@ibis.udf.agg.builtin(name="sum", signature=((_PG_EXACT,), _PG_EXACT))
-def _pg_exact_sum(value):
-    """PostgreSQL exact NUMERIC sum."""
-
-
-@ibis.udf.scalar.builtin(
-    name="numeric_sub", database="pg_catalog", signature=((_PG_EXACT, _PG_EXACT), _PG_EXACT)
-)
-def _pg_exact_subtract(left, right):
-    """PostgreSQL exact NUMERIC subtraction."""
-
-
-def exact_sum(value):
-    return _pg_exact_sum(value) if _postgres() else _duckdb_exact_sum(value)
-
-
-def exact_subtract(left, right):
-    return _pg_exact_subtract(left, right) if _postgres() else _duckdb_exact_subtract(left, right)
-
-
-@ibis.udf.scalar.builtin(name="nextafter", signature=((dt.float64, dt.float64), dt.float64))
-def _nextafter(value, _direction):
-    """Native adjacent binary64 value."""
-
-
-@ibis.udf.scalar.builtin(name="isfinite", signature=((dt.float64,), dt.boolean))
-def _native_isfinite(value):
-    """Native finite-state predicate."""
-
-
-def _isfinite(value) -> ir.BooleanValue:
-    if _postgres():
-        # PostgreSQL has no isfinite(double precision), and NaN equals NaN there.
-        nonfinite = [
-            ibis.literal(item, type=dt.float64) for item in (math.inf, -math.inf, math.nan)
-        ]
-        return cast(ir.FloatingValue, value.cast(dt.float64)).notin(nonfinite)
-    return cast(ir.BooleanValue, _native_isfinite(value))
-
-
-@ibis.udf.scalar.builtin(name="add", signature=((dt.float64, dt.float64), dt.float64))
-def _add(left, right):
-    """Native binary64 addition."""
-
-
-@ibis.udf.scalar.builtin(name="subtract", signature=((dt.float64, dt.float64), dt.float64))
-def _subtract(left, right):
-    """Native binary64 subtraction."""
-
-
-@ibis.udf.scalar.builtin(name="multiply", signature=((dt.float64, dt.float64), dt.float64))
-def _multiply(left, right):
-    """Native binary64 multiplication."""
-
-
-@ibis.udf.scalar.builtin(name="divide", signature=((dt.float64, dt.float64), dt.float64))
-def _divide(left, right):
-    """Native binary64 division."""
-
-
-def exact_literal(value: int):
-    """Construct an exact native integer without an inferred fixed-width literal."""
-    return ibis.literal(str(value)).cast(exact_type())
-
 
 def _require_backend(table: ibis.Table, *, floating: bool = False) -> None:
     """Check static backend/build metadata; never run a capability query here.
@@ -161,7 +64,7 @@ def _require_backend(table: ibis.Table, *, floating: bool = False) -> None:
     except IbisError:
         backend = "unbound"
     supported = (backend == "duckdb" and version("duckdb") == "1.5.6") or (
-        backend == "postgres" and not floating and _postgres()
+        backend == "postgres" and not floating and dialect_of() == "postgres"
     )
     if not supported:
         if floating:
@@ -173,29 +76,29 @@ def _require_backend(table: ibis.Table, *, floating: bool = False) -> None:
 
 
 def _outward(value, upper: bool):
-    return _isfinite(value).ifelse(
-        _nextafter(value, float("inf") if upper else -float("inf")), value
+    return float_is_finite(value).ifelse(
+        next_toward(value, float("inf") if upper else -float("inf")), value
     )
 
 
 def outward_add(left, right, *, upper: bool = True):
     """One addition rounded outward; inputs are binary64 endpoints."""
-    return _outward(_add(left, right), upper)
+    return _outward(ieee_add(left, right), upper)
 
 
 def outward_subtract(left, right, *, upper: bool = True):
     """One subtraction rounded outward; inputs are binary64 endpoints."""
-    return _outward(_subtract(left, right), upper)
+    return _outward(ieee_subtract(left, right), upper)
 
 
 def outward_multiply(left, right, *, upper: bool = True):
     """One endpoint product rounded outward (caller chooses signs/endpoints)."""
-    return _outward(_multiply(left, right), upper)
+    return _outward(ieee_multiply(left, right), upper)
 
 
 def outward_divide(left, right, *, upper: bool = True):
     """One endpoint quotient rounded outward; caller proves denominator excludes zero."""
-    return _outward(_divide(left, right), upper)
+    return _outward(ieee_divide(left, right), upper)
 
 
 def float64_rounding_radius(value):
@@ -219,14 +122,14 @@ def _float64_conforms(value):
     proof against a changing floating-point environment.
     """
     one = (value.fill_null(0.0) >= 0.0).ifelse(1.0, -1.0)
-    half_ulp = _multiply(one, 2**-53)
-    neighbor = _nextafter(one, _multiply(one, 2.0))
-    tiny = _nextafter(_multiply(one, 0.0), one)
+    half_ulp = ieee_multiply(one, 2**-53)
+    neighbor = next_toward(one, ieee_multiply(one, 2.0))
+    tiny = next_toward(ieee_multiply(one, 0.0), one)
     return (
-        (_add(one, half_ulp) == one)
-        & (_add(neighbor, half_ulp) == _nextafter(neighbor, _multiply(one, 2.0)))
-        & (_add(tiny, tiny) == _multiply(one, 2**-1073))
-        & (_divide(tiny, 2.0) == 0.0)
+        (ieee_add(one, half_ulp) == one)
+        & (ieee_add(neighbor, half_ulp) == next_toward(neighbor, ieee_multiply(one, 2.0)))
+        & (ieee_add(tiny, tiny) == ieee_multiply(one, 2**-1073))
+        & (ieee_divide(tiny, 2.0) == 0.0)
         & (tiny != 0.0)
     )
 
@@ -255,8 +158,8 @@ def float64_certificate(state: ibis.Table) -> ibis.Table:
         _cert_empty=count == zero,
         float64_nonfinite_state=prior_bad
         | (
-            ~_isfinite(state.sum_value)
-            | ~_isfinite(state.sum_abs_value)
+            ~float_is_finite(state.sum_value)
+            | ~float_is_finite(state.sum_abs_value)
             | state.sum_value.isnull()
             | state.sum_abs_value.isnull()
         ).fill_null(True),
@@ -301,10 +204,10 @@ def float64_certificate(state: ibis.Table) -> ibis.Table:
     )
     stage = stage.mutate(
         float64_bound_overflow=(
-            ~_isfinite(stage._cert_g)
-            | ~_isfinite(stage._cert_b)
-            | ~_isfinite(stage.sum_abs_upper)
-            | ~_isfinite(stage.prefix_error)
+            ~float_is_finite(stage._cert_g)
+            | ~float_is_finite(stage._cert_b)
+            | ~float_is_finite(stage.sum_abs_upper)
+            | ~float_is_finite(stage.prefix_error)
             | (stage._cert_denominator <= 0.0)
             | (stage._cert_absolute_denominator <= 0.0)
             | (stage.sum_abs_value < 0.0)

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import ibis
 import pyarrow as pa
 
+from terrine.backends.timestamps import epoch_us_sql
 from terrine.compile.anchors import (
     AnchorTable,
     _precision_check,
@@ -23,7 +24,6 @@ from terrine.semantic.models import TableRef
 from terrine.spec.anchors import FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.state_panel import _INVALID_OBSERVATIONS, StateObservations, StatePanel
-from terrine.temporal._timestamps import epoch_us_sql
 
 if TYPE_CHECKING:
     from terrine.model import Model

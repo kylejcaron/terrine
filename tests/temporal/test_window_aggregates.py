@@ -9,6 +9,7 @@ import ibis
 import pyarrow as pa
 import pytest
 
+from terrine.backends.numeric import exact_literal
 from terrine.data import BoundCoverage
 from terrine.errors import TerrineError
 from terrine.semantic.bind import normalize_events
@@ -21,7 +22,7 @@ from terrine.semantic.models import (
     TableRef,
 )
 from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
-from terrine.temporal.prefix import exact_literal, sparse_prefix
+from terrine.temporal.prefix import sparse_prefix
 from terrine.temporal.readiness import Readiness
 from terrine.windows import Window
 

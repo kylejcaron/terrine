@@ -15,6 +15,7 @@ import ibis
 import ibis.expr.types as ir
 import pyarrow as pa
 
+from terrine.backends.dialect import dialect_scope
 from terrine.compile._asof import compile_asof
 from terrine.compile._predicates import CompiledValue, compile_predicate
 from terrine.compile.anchors import (
@@ -69,7 +70,6 @@ from terrine.temporal.nonadditive import (
     aggregate_nonadditive_window,
     approximate_quantile_window_values,
 )
-from terrine.temporal.prefix import exact_dialect
 from terrine.temporal.ranges import RangePlan
 
 if TYPE_CHECKING:
@@ -247,7 +247,7 @@ def exact_scope(model: Model) -> AbstractContextManager[None]:
 
     The Catalog dialect was matched to the execution backend when the Model was bound.
     """
-    return exact_dialect(model.catalog.dialect)
+    return dialect_scope(model.catalog.dialect)
 
 
 def compile_columns(

@@ -214,7 +214,7 @@ def test_bucket_join_virtual_endpoints_do_not_overflow_native_timestamp_domain(
 
 
 def test_shifted_timestamp_comparisons_preserve_null_predicates():
-    from terrine.temporal._timestamps import compare_timestamps
+    from terrine.backends.timestamps import compare_timestamps
 
     con = ibis.duckdb.connect()
     try:

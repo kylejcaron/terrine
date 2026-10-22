@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING, cast
 import ibis
 import ibis.expr.types as ir
 
+from terrine.backends.timestamps import compare_timestamps
 from terrine.data import ColumnMeta
 from terrine.semantic.models import BoundSource
 from terrine.spec.expressions import RetentionMetric
 from terrine.spec.validate import _retention_window
-from terrine.temporal._timestamps import compare_timestamps
 from terrine.temporal.aggregate import TemporalResult
 from terrine.temporal.ranges import RangePlan
 from terrine.temporal.retention import retention_threshold_bands

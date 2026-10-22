@@ -7,9 +7,9 @@ from fractions import Fraction
 import ibis
 import pytest
 
+from terrine.backends.numeric import exact_literal
 from terrine.data import BoundCoverage
 from terrine.errors import TerrineError
-from terrine.temporal.prefix import exact_literal
 from terrine.temporal.readiness import Readiness
 from tests.temporal.test_window_aggregates import (
     _anchors,

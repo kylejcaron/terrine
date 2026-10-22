@@ -9,13 +9,9 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+from terrine.backends.numeric import truncating_quotient
+from terrine.backends.timestamps import compare_timestamps, timestamp_parts
 from terrine.errors import RefusalSpec
-from terrine.temporal._timestamps import (
-    _remainder,
-    compare_timestamps,
-    integer_quotient,
-    timestamp_parts,
-)
 from terrine.windows import Window
 
 _RANGE_BOUND = RefusalSpec(
@@ -61,8 +57,8 @@ def _bucket(
     seconds = cast(
         ir.IntegerValue, key_seconds - cast(ir.IntegerValue, (key_nanos < zero).cast(dt.int64))
     )
-    quotient = integer_quotient(seconds, width, like=timestamp)
-    remainder = cast(ir.IntegerValue, _remainder(seconds, width))
+    quotient = truncating_quotient(seconds, width, like=timestamp)
+    remainder = seconds % width
     negative = cast(ir.IntegerValue, (remainder < zero).cast(dt.int64))
     wide = dt.Decimal(38, 0)
     base = cast(ir.DecimalValue, (quotient - negative).cast(wide))

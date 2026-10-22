@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 import ibis
 from ibis.expr import types as ir
 
+from terrine.backends.timestamps import compare_timestamps
 from terrine.compile.anchors import AnchorTable, _precision_check, _utc_column
 from terrine.compile.columns import CompiledStudy, _validate_names, compile_columns
 from terrine.data import ColumnMeta, Roles
@@ -18,7 +19,6 @@ from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
 from terrine.spec.panels import CalendarComparisonSpec
 from terrine.spec.validate import _outcome_bounds
-from terrine.temporal._timestamps import compare_timestamps
 from terrine.temporal.aggregate import _Check, _Failure
 
 if TYPE_CHECKING:

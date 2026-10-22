@@ -10,14 +10,14 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+from terrine.backends.timestamps import _UNSUPPORTED as _TIMESTAMP_ORDER_UNSUPPORTED
+from terrine.backends.timestamps import _struct_key, compare_timestamps, utc_wall_clock
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
 from terrine.spec.anchors import FixedDate
 from terrine.spec.design import Design
 from terrine.spec.trajectory import TimeToEvent
-from terrine.temporal._timestamps import _UNSUPPORTED as _TIMESTAMP_ORDER_UNSUPPORTED
-from terrine.temporal._timestamps import _struct_key, compare_timestamps
 from terrine.temporal.first import first_occurrence
 
 if TYPE_CHECKING:
@@ -55,13 +55,6 @@ def _validate_nanosecond_axis(design: Design, timestamp_types) -> None:
             )
 
 
-@ibis.udf.scalar.builtin(
-    name="timezone", signature=((dt.string, dt.Timestamp(timezone="UTC")), dt.timestamp)
-)
-def _utc_naive(zone, timestamp):
-    """Normalize an aware UTC instant to a timezone-independent wall timestamp."""
-
-
 def _source(model: Model, unit: str, fact_name: str):
     fact = model.catalog.facts[fact_name]
     source = model.sources[fact.source]
@@ -81,7 +74,7 @@ def _events(model: Model, source, unit_column: str):
 
 
 def _narrow_bound(value, lower, upper, time_type) -> ir.TimestampValue:
-    normalized = cast(ir.TimestampValue, _utc_naive("UTC", value))
+    normalized = utc_wall_clock(value)
     lower_timestamp = cast(ir.TimestampValue, lower)
     upper_timestamp = cast(ir.TimestampValue, upper)
     below_lower = compare_timestamps(normalized, lower_timestamp, "le")
@@ -189,7 +182,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
     time_type = dt.Timestamp(scale=max(dtype.scale or 6 for dtype in timestamp_types))
     event_timestamp = event_relation._timestamp
     if event_relation.schema()["_timestamp"].timezone is not None:
-        event_timestamp = _utc_naive("UTC", event_timestamp)
+        event_timestamp = utc_wall_clock(event_timestamp)
     event_relation = event_relation.mutate(_timestamp=event_timestamp.cast(time_type))
     coverage = model.readiness.sources.get(event_source.name)
     if coverage is None:
@@ -202,23 +195,23 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
             if coverage.start < ns_min
             else ibis.literal("infinity").cast(time_type)
             if coverage.start > ns_max
-            else _utc_naive("UTC", ibis.literal(coverage.start)).cast(time_type)
+            else utc_wall_clock(ibis.literal(coverage.start)).cast(time_type)
         )
         end = (
             ibis.literal("-infinity").cast(time_type)
             if coverage.end_exclusive < ns_min
             else ibis.literal("infinity").cast(time_type)
             if coverage.end_exclusive > ns_max
-            else _utc_naive("UTC", ibis.literal(coverage.end_exclusive)).cast(time_type)
+            else utc_wall_clock(ibis.literal(coverage.end_exclusive)).cast(time_type)
         )
     else:
-        start = _utc_naive("UTC", ibis.literal(coverage.start)).cast(time_type)
-        end = _utc_naive("UTC", ibis.literal(coverage.end_exclusive)).cast(time_type)
+        start = utc_wall_clock(ibis.literal(coverage.start)).cast(time_type)
+        end = utc_wall_clock(ibis.literal(coverage.end_exclusive)).cast(time_type)
     candidates = base.table.select(
         **{name: base.table[name] for name in base.table.columns if name != "__terrine_eligible"}
     )
     candidates = candidates.mutate(
-        _t0_naive=_utc_naive("UTC", candidates.t0).cast(time_type),
+        _t0_naive=utc_wall_clock(candidates.t0).cast(time_type),
         _observed_from_naive=_narrow_bound(candidates._observed_from, start, end, time_type)
         if "_observed_from" in candidates.columns
         else ibis.null().cast(time_type),
@@ -237,7 +230,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
             if time_type.scale == 9 and cutoff_value < ns_min
             else ibis.literal("infinity").cast(time_type)
             if time_type.scale == 9 and cutoff_value > ns_max
-            else _utc_naive("UTC", ibis.literal(cutoff_value)).cast(time_type)
+            else utc_wall_clock(ibis.literal(cutoff_value)).cast(time_type)
         )
         supported_end = ibis.least(supported_end, cutoff)
     history_start = start
@@ -249,7 +242,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         entry_events, entry_event_id = _events(model, entry_source, entry_unit)
         entry_timestamp = entry_events._timestamp
         if entry_events.schema()["_timestamp"].timezone is not None:
-            entry_timestamp = _utc_naive("UTC", entry_timestamp)
+            entry_timestamp = utc_wall_clock(entry_timestamp)
         entry_events = entry_events.mutate(_timestamp=entry_timestamp)
         entry_coverage = model.readiness.sources[entry_source.name]
         entry_start = _narrow_bound(
@@ -318,7 +311,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         exit_events, exit_event_id = _events(model, exit_source, exit_unit)
         exit_timestamp = exit_events._timestamp
         if exit_events.schema()["_timestamp"].timezone is not None:
-            exit_timestamp = _utc_naive("UTC", exit_timestamp)
+            exit_timestamp = utc_wall_clock(exit_timestamp)
         exit_events = exit_events.mutate(_timestamp=exit_timestamp)
         exit_candidates = candidates.select(
             unit=candidates.unit,
@@ -461,7 +454,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
             censor_reason,
         )
     if design.administrative_cutoff is not None:
-        cutoff = _utc_naive("UTC", ibis.literal(design.administrative_cutoff)).cast(
+        cutoff = utc_wall_clock(ibis.literal(design.administrative_cutoff)).cast(
             retained._followup_end.type()
         )
         censor_reason = ibis.ifelse(

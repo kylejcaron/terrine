@@ -11,10 +11,10 @@ import ibis
 import ibis.expr.types as ir
 import pyarrow as pa
 
+from terrine.backends.timestamps import compare_timestamps
 from terrine.data import ColumnMeta
 from terrine.semantic.models import BoundDimension, BoundValidity
 from terrine.spec.validate import _MISSING
-from terrine.temporal._timestamps import compare_timestamps
 from terrine.temporal.attributes import attribute_asof, validate_history
 
 if TYPE_CHECKING:

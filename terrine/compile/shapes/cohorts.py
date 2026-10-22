@@ -7,11 +7,13 @@ from typing import cast
 import ibis
 import ibis.expr.types as ir
 
+from terrine.backends.dialect import dialect_of, dialect_scope
+from terrine.backends.numeric import exact_literal, exact_sum, float_is_finite
+from terrine.backends.timestamps import timestamp_parts
 from terrine.compile.columns import CompiledStudy
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
 from terrine.spec.trajectory import CohortGrouping
-from terrine.temporal._timestamps import _backend, timestamp_parts
 from terrine.temporal.aggregate import (
     _EXACT_OVERFLOW,
     _Check,
@@ -21,10 +23,6 @@ from terrine.temporal.aggregate import (
 )
 from terrine.temporal.prefix import (
     FLOAT64_PRECISION,
-    _isfinite,
-    exact_dialect,
-    exact_literal,
-    exact_sum,
     float64_rounding_radius,
     float64_tolerance,
     outward_add,
@@ -44,7 +42,7 @@ def compile_cohorts(
 ) -> CompiledStudy:
     """Group an already compiled LTV relation; this function never recompiles a Frame."""
     # Summaries compile after the Design's compile scope ends; use the table's backend.
-    with exact_dialect(_backend(*(study.table[name] for name in study.table.columns[:1]))):
+    with dialect_scope(dialect_of(*(study.table[name] for name in study.table.columns[:1]))):
         return _compile_cohorts(study, grouping=grouping, value_column=value_column)
 
 
@@ -61,7 +59,7 @@ def _compile_cohorts(
     table = study.table
     _rank, time_seconds, time_nanos = timestamp_parts(table.cohort_time)
     origin = cast(ir.TimestampValue, ibis.literal(grouping.bucket_origin))
-    backend = _backend(table.cohort_time)
+    backend = dialect_of(table.cohort_time)
     _origin_rank, origin_seconds, origin_nanos = timestamp_parts(origin, backend=backend)
     elapsed_seconds = time_seconds - origin_seconds
     elapsed_nanos = time_nanos - origin_nanos
@@ -163,7 +161,7 @@ def _compile_cohorts(
                 decimal_value,
             ),
             _mean_unrepresentable=(mean_state._mean_count > 0)
-            & (decimal_value.isnull() | ~_isfinite(decimal_value)),
+            & (decimal_value.isnull() | ~float_is_finite(decimal_value)),
         )
         reduction_table = per_unit.left_join(mean_state, keys)
         observed_value = reduction_table._mean_value.min()
@@ -300,8 +298,8 @@ def _compile_cohorts(
         failed = result.value.notnull() & (
             result.value_absolute_error.isnull()
             | (result.value_absolute_error < 0.0)
-            | ~_isfinite(result.value)
-            | ~_isfinite(result.value_absolute_error)
+            | ~float_is_finite(result.value)
+            | ~float_is_finite(result.value_absolute_error)
             | (result.value_absolute_error > float64_tolerance(result.value))
         )
         failure_column = "failed_cohort_tolerance"

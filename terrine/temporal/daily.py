@@ -15,6 +15,14 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+from terrine.backends.numeric import (
+    exact_literal,
+    exact_subtract,
+    exact_sum,
+    exact_type,
+    float_is_finite,
+)
+from terrine.backends.timestamps import utc_instant, utc_wall_clock
 from terrine.semantic.bind import _MISSING, _SCHEMA
 from terrine.semantic.models import BoundMeasure, BoundSource
 from terrine.semantic.rules import (
@@ -23,15 +31,7 @@ from terrine.semantic.rules import (
 )
 from terrine.semantic.time import boundary_timezone
 from terrine.temporal.attributes import _enriched_property_columns
-from terrine.temporal.prefix import (
-    _float64_conforms,
-    _isfinite,
-    _require_backend,
-    exact_literal,
-    exact_subtract,
-    exact_sum,
-    exact_type,
-)
+from terrine.temporal.prefix import _float64_conforms, _require_backend
 
 __all__ = ["sparse_daily"]
 
@@ -42,20 +42,6 @@ _UNKNOWN_FIELDS = (
     "unknown_filter_literal_count",
     "unknown_filter_nonfinite_count",
 )
-
-
-@ibis.udf.scalar.builtin(
-    name="timezone", signature=((dt.string, dt.Timestamp(timezone="UTC")), dt.timestamp)
-)
-def _utc_naive(zone, timestamp):
-    """Remove a timestamp's zone explicitly in UTC, independent of session timezone."""
-
-
-@ibis.udf.scalar.builtin(
-    name="timezone", signature=((dt.string, dt.timestamp), dt.Timestamp(timezone="UTC"))
-)
-def _utc_aware(zone, timestamp):
-    """Attach UTC explicitly to a naive UTC bucket boundary."""
 
 
 def resolve_measure(
@@ -283,7 +269,7 @@ def _filter_comparison(value, filt):
         coefficient = (text.replace(".", "") if scale else text).cast(exact_type())
     elif dtype.is_floating():
         value = value.cast("float64")
-        value = _isfinite(value).ifelse(value, ibis.null().cast("float64"))
+        value = float_is_finite(value).ifelse(value, ibis.null().cast("float64"))
 
     def compare(item, op):
         if exact:
@@ -317,7 +303,7 @@ def _predicate(events: ibis.Table, measure: BoundMeasure, source: BoundSource):
         observed_null |= found & value.isnull()
         missing |= ~found
         if value.type().is_floating():
-            nonfinite |= found & value.notnull() & ~_isfinite(value.cast("float64"))
+            nonfinite |= found & value.notnull() & ~float_is_finite(value.cast("float64"))
         if any(item is None for item in filt.values):
             literal_null |= comparison.isnull()
     return predicate, observed_null, missing, literal_null, nonfinite
@@ -388,7 +374,9 @@ def _sparse_group(
         aggregates.update(
             sum_value=selected_value.sum(),
             sum_abs_value=selected_value.abs().sum(),
-            float64_nonfinite_input=(selected_value.notnull() & ~_isfinite(selected_value)).any(),
+            float64_nonfinite_input=(
+                selected_value.notnull() & ~float_is_finite(selected_value)
+            ).any(),
             float64_conformance_failure=(
                 leaf.__terrine_selected & ~_float64_conforms(selected_value)
             ).any(),
@@ -415,7 +403,7 @@ def _sparse_group(
     if floating:
         constants["float64_nonfinite_state"] = (
             (grouped.nonnull_count > exact_literal(0))
-            & (~_isfinite(grouped.sum_value) | ~_isfinite(grouped.sum_abs_value))
+            & (~float_is_finite(grouped.sum_value) | ~float_is_finite(grouped.sum_abs_value))
         ).fill_null(False)
     return grouped.mutate(**constants)
 
@@ -443,7 +431,7 @@ def sparse_daily(
         raise _SCHEMA.error(field="normalized event", column="_timestamp")
     utc = cast(
         ir.TimestampValue,
-        _utc_naive("UTC", timestamp) if timestamp.type().timezone else timestamp,
+        utc_wall_clock(timestamp) if timestamp.type().timezone else timestamp,
     )
     dtype = utc.type()
     if isinstance(dtype, dt.Timestamp) and dtype.scale is not None and dtype.scale > 6:
@@ -465,8 +453,8 @@ def sparse_daily(
             day + ibis.interval(days=1), day
         )
     day = day.cast("date")
-    bucket = _utc_aware(
-        "UTC", cast(ir.TimestampValue, day.cast("timestamp")) - ibis.interval(minutes=minutes)
+    bucket = utc_instant(
+        cast(ir.TimestampValue, day.cast("timestamp")) - ibis.interval(minutes=minutes)
     )
     return _sparse_group(
         events, measure, {"local_day": day, "_timestamp": bucket}, unit_column, source=source

@@ -1,15 +1,31 @@
-"""Lossless native timestamp ordering and exact elapsed-offset comparisons."""
+"""Lossless timestamp ordering, exact elapsed-offset comparisons and UTC conversion.
+
+DuckDB keys finite instants by truncated seconds and a signed remainder taken from
+Ibis's exact microsecond/nanosecond ``delta``; PostgreSQL timestamps are exact at
+microseconds and are their own key.
+"""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Literal, cast
 
 import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
-from ibis.common.exceptions import IbisError
 
+from terrine.backends.dialect import dialect_of, unavailable
+from terrine.backends.numeric import truncating_quotient
 from terrine.errors import RefusalSpec
+
+__all__ = [
+    "compare_timestamps",
+    "timestamp_is_finite",
+    "timestamp_order_key",
+    "timestamp_parts",
+    "utc_instant",
+    "utc_wall_clock",
+]
 
 _UNSUPPORTED = RefusalSpec(
     "terrine.temporal.timestamp_order_unsupported",
@@ -17,34 +33,50 @@ _UNSUPPORTED = RefusalSpec(
     "native microsecond or nanosecond timestamp before binding.",
 )
 _KEY = dt.Struct.from_tuples((("rank", dt.int8), ("seconds", dt.int64), ("nanos", dt.int64)))
-
-
-@ibis.udf.scalar.builtin(name="epoch_ns")
-def _epoch_ns(value) -> int:
-    """Native signed nanosecond coefficient; argument precision is unchanged."""
-    raise NotImplementedError
-
-
-@ibis.udf.scalar.builtin(name="epoch_us")
-def _epoch_us(value) -> int:
-    """Native signed microsecond coefficient; argument precision is unchanged."""
-    raise NotImplementedError
+_NATIVE = frozenset({"duckdb", "postgres"})
 
 
 @ibis.udf.scalar.builtin(name="isfinite")
-def _finite(value) -> bool:
-    """Native timestamp finiteness predicate."""
+def _isfinite(value) -> bool:
+    """Native timestamp finiteness predicate (DuckDB and PostgreSQL)."""
     raise NotImplementedError
 
 
-@ibis.udf.scalar.builtin(name="divide", signature=((dt.int64, dt.int64), dt.int64))
-def _quotient(value, divisor):
-    """Native integer division truncating toward zero."""
+def timestamp_is_finite(value: ir.TimestampValue) -> ir.BooleanValue:
+    dialect = dialect_of(value)
+    if dialect not in _NATIVE:
+        raise unavailable("timestamp_is_finite", dialect)
+    return cast(ir.BooleanValue, _isfinite(value))
 
 
-@ibis.udf.scalar.builtin(name="mod", signature=((dt.int64, dt.int64), dt.int64))
-def _remainder(value, divisor):
-    """Native signed remainder, paired with truncating division."""
+@ibis.udf.scalar.builtin(
+    name="timezone", signature=((dt.string, dt.Timestamp(timezone="UTC")), dt.timestamp)
+)
+def _utc_naive(zone, timestamp):
+    """Remove a timestamp's zone explicitly in UTC, independent of session timezone."""
+
+
+@ibis.udf.scalar.builtin(
+    name="timezone", signature=((dt.string, dt.timestamp), dt.Timestamp(timezone="UTC"))
+)
+def _utc_aware(zone, timestamp):
+    """Attach UTC explicitly to a naive UTC wall-clock value."""
+
+
+def utc_wall_clock(value: ir.Value) -> ir.TimestampValue:
+    """An instant's naive UTC wall clock, independent of the session time zone."""
+    dialect = dialect_of(value)
+    if dialect not in _NATIVE:
+        raise unavailable("utc_wall_clock", dialect)
+    return cast(ir.TimestampValue, _utc_naive("UTC", value))
+
+
+def utc_instant(value: ir.Value) -> ir.TimestampValue:
+    """The UTC instant a naive UTC wall-clock value denotes."""
+    dialect = dialect_of(value)
+    if dialect not in _NATIVE:
+        raise unavailable("utc_instant", dialect)
+    return cast(ir.TimestampValue, _utc_aware("UTC", value))
 
 
 @ibis.udf.scalar.builtin(
@@ -78,23 +110,16 @@ def _pg_epoch_seconds(value: ir.TimestampValue) -> ir.DecimalValue:
     )
 
 
-@ibis.udf.scalar.builtin(name="div", signature=((dt.int64, dt.int64), dt.int64))
-def _pg_quotient(value, divisor):
-    """PostgreSQL integer division truncating toward zero."""
-
-
 @ibis.udf.scalar.builtin(name="trunc", signature=((dt.Decimal(38, 6),), dt.Decimal(38, 0)))
 def _pg_trunc(value):
     """PostgreSQL NUMERIC truncation toward zero."""
 
 
-def _backend(*values: ir.Value) -> str:
-    for value in values:
-        try:
-            return value._find_backend(use_default=False).name
-        except IbisError:
-            continue
-    return "duckdb"
+def _epoch(dtype: dt.Timestamp) -> ir.TimestampScalar:
+    """The Unix epoch typed like ``dtype``; an aware literal carries its UTC offset
+    so its meaning does not depend on the session time zone."""
+    instant = datetime(1970, 1, 1, tzinfo=UTC) if dtype.timezone else datetime(1970, 1, 1)
+    return cast(ir.TimestampScalar, ibis.literal(instant, type=dtype))
 
 
 def epoch_us_sql(dialect: str, column_sql: str) -> str:
@@ -114,17 +139,6 @@ def epoch_us_sql(dialect: str, column_sql: str) -> str:
     return f"epoch_us({column_sql})"
 
 
-def integer_quotient(
-    value: ir.IntegerValue, divisor: int | ir.IntegerValue, *, like: ir.Value
-) -> ir.IntegerValue:
-    """Integer division truncating toward zero on ``like``'s backend."""
-    if _backend(like) == "postgres":
-        quotient = cast(ir.IntegerValue, _pg_quotient(value, divisor))
-    else:
-        quotient = cast(ir.IntegerValue, _quotient(value, divisor))
-    return cast(ir.IntegerValue, quotient.cast(dt.int64))
-
-
 def timestamp_parts(
     value: ir.TimestampValue, *, backend: str | None = None
 ) -> tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue]:
@@ -133,7 +147,7 @@ def timestamp_parts(
     Every part is NULL when the value is NULL. Naive timestamps denote UTC. Pass
     ``backend`` when ``value`` may be an unbound literal compared with a bound column.
     """
-    if (backend or _backend(value)) != "postgres":
+    if (backend or dialect_of(value)) != "postgres":
         key = _struct_key(value)
         return (
             cast(ir.IntegerValue, key["rank"]),
@@ -143,8 +157,8 @@ def timestamp_parts(
     dtype = value.type()
     if not isinstance(dtype, dt.Timestamp) or dtype.scale not in (None, 6):
         raise _UNSUPPORTED.error(dtype=str(dtype))
-    finite = cast(ir.BooleanValue, _finite(value))
-    epoch = cast(ir.TimestampScalar, ibis.literal("1970-01-01 00:00:00").cast(dtype))
+    finite = timestamp_is_finite(value)
+    epoch = _epoch(dtype)
     epoch_seconds = _pg_epoch_seconds(cast(ir.TimestampValue, finite.ifelse(value, epoch)))
     # Split before narrowing: whole seconds fit BIGINT for every PostgreSQL
     # timestamp, while the full microsecond coefficient does not.
@@ -175,7 +189,7 @@ def timestamp_order_key(value: ir.TimestampValue) -> ir.Value:
     dtype = value.type()
     if not isinstance(dtype, dt.Timestamp):
         raise _UNSUPPORTED.error(dtype=str(dtype))
-    if _backend(value) == "postgres":
+    if dialect_of(value) == "postgres":
         if dtype.scale not in (None, 6):
             raise _UNSUPPORTED.error(dtype=str(dtype))
         return value
@@ -194,16 +208,19 @@ def _struct_key(value: ir.TimestampValue) -> ir.StructValue:
         raise _UNSUPPORTED.error(dtype=str(dtype))
     scale = dtype.scale if dtype.scale is not None else 6
     if scale == 9:
-        extractor, divisor, multiplier = _epoch_ns, 10**9, 1
+        unit, divisor, multiplier = "nanosecond", 10**9, 1
     elif scale == 6:
-        extractor, divisor, multiplier = _epoch_us, 10**6, 1000
+        unit, divisor, multiplier = "microsecond", 10**6, 1000
     else:
         raise _UNSUPPORTED.error(dtype=str(dtype))
-    finite = cast(ir.BooleanValue, _finite(value))
-    epoch = cast(ir.TimestampScalar, ibis.literal("1970-01-01 00:00:00").cast(dtype))
-    coefficient = cast(ir.IntegerValue, extractor(finite.ifelse(value, epoch)))
-    seconds = cast(ir.IntegerValue, _quotient(coefficient, divisor))
-    nanos = cast(ir.IntegerValue, _remainder(coefficient, divisor)) * multiplier
+    finite = timestamp_is_finite(value)
+    epoch = _epoch(dtype)
+    instant = cast(ir.TimestampValue, finite.ifelse(value, epoch))
+    coefficient = instant.delta(epoch, unit=unit)
+    seconds = truncating_quotient(coefficient, divisor, like=value)
+    # Ibis renders a nanosecond delta as a bare subtraction, so `delta % n` would
+    # bind as `a - (b % n)`; the remainder is taken by subtraction instead.
+    nanos = (coefficient - seconds * divisor) * multiplier
     zero = ibis.literal(0)
     key = ibis.struct(
         {
@@ -225,7 +242,7 @@ def compare_timestamps(
     right_offset_seconds: int = 0,
 ) -> ir.BooleanValue:
     """Compare instants with an optional exact whole-second shift of the right operand."""
-    backend = _backend(left, right)
+    backend = dialect_of(left, right)
     left_rank, left_seconds, left_nanos = timestamp_parts(left, backend=backend)
     right_rank, right_seconds, right_nanos = timestamp_parts(right, backend=backend)
     if right_offset_seconds:

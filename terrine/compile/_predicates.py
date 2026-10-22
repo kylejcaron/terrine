@@ -7,12 +7,13 @@ from dataclasses import dataclass
 
 import ibis
 
+from terrine.backends.numeric import float_is_finite
 from terrine.data import ColumnMeta, FeatureCutoff
 from terrine.semantic.models import BoundFilter
 from terrine.spec.expressions import And, Eq, Expr, Gt, IsNull, Predicate
 from terrine.temporal.aggregate import _Builder, _Check
 from terrine.temporal.daily import _filter_comparison, _filter_literal
-from terrine.temporal.prefix import FLOAT64_PRECISION, _isfinite, outward_add, outward_subtract
+from terrine.temporal.prefix import FLOAT64_PRECISION, outward_add, outward_subtract
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +110,7 @@ def compile_predicate(
                     lo, hi = builder.col(low_name), builder.col(high_name)
                     threshold = _filter_literal(value, node.value, compiled.name)
                     invalid = builder.put(
-                        "invalid_comparison_bound", ~_isfinite(lo) | ~_isfinite(hi)
+                        "invalid_comparison_bound", ~float_is_finite(lo) | ~float_is_finite(hi)
                     )
                     checks.append(
                         builder.check(

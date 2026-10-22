@@ -9,8 +9,8 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+from terrine.backends.timestamps import compare_timestamps
 from terrine.errors import RefusalSpec
-from terrine.temporal._timestamps import compare_timestamps
 from terrine.temporal.ranges import (
     _MAX_CANDIDATES,
     _RANGE_BOUND,
