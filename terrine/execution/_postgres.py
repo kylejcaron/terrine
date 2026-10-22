@@ -122,10 +122,38 @@ def _closure(raw: Any, oid: int, seen: dict[int, _Relation], path: frozenset[int
     relation = _relation(raw, oid)
     seen[oid] = relation
     if relation.kind == "view":
-        definition = _rows(raw, "SELECT pg_catalog.pg_get_viewdef(%s, true)", (oid,))[0][0]
-        check_functions(raw, definition)
+        _check_view_functions(raw, oid)
         for (dependency,) in _rows(raw, _VIEW_DEPENDENCIES_SQL, (oid, oid)):
             _closure(raw, int(dependency), seen, path | {oid})
+
+
+_VIEW_FUNCTIONS_SQL = """
+SELECT DISTINCT p.proname
+FROM pg_catalog.pg_rewrite r
+JOIN pg_catalog.pg_depend d
+  ON d.objid = r.oid
+ AND d.classid = 'pg_catalog.pg_rewrite'::regclass
+ AND d.refclassid = 'pg_catalog.pg_proc'::regclass
+JOIN pg_catalog.pg_proc p ON p.oid = d.refobjid
+JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+WHERE r.ev_class = %s AND n.nspname <> ALL(%s)
+"""
+
+
+def _check_view_functions(raw: Any, oid: int) -> None:
+    """Refuse a view whose stored rules call any function outside the system catalogs."""
+    user_functions = _rows(raw, _VIEW_FUNCTIONS_SQL, (oid, list(_SYSTEM_SCHEMAS)))
+    if user_functions:
+        raise _snapshot_error(
+            "view calls a user-defined function: "
+            + ", ".join(sorted(row[0] for row in user_functions))
+        )
+
+
+def _table_name(source: Any) -> str:
+    """Render a parsed table reference with PostgreSQL identifier rules."""
+    parts = (source.args.get("catalog"), source.args.get("db"), source.this)
+    return ".".join(part.sql(dialect=DIALECT) for part in parts if part is not None)
 
 
 def _sql_roots(sql: str, raw: Any) -> list[int]:
@@ -137,8 +165,7 @@ def _sql_roots(sql: str, raw: Any) -> list[int]:
     for scope in traverse_scope(statement):
         for source in scope.sources.values():
             if isinstance(source, exp.Table):
-                parts = [part for part in (source.catalog, source.db, source.name) if part]
-                oids.append(_lookup(raw, ".".join(f'"{part}"' for part in parts)))
+                oids.append(_lookup(raw, _table_name(source)))
     return oids
 
 
@@ -190,13 +217,29 @@ def admission_fingerprint(relation: RelationSpec, raw: Any) -> str:
     return hashlib.sha256(json.dumps(payload, separators=(",", ":")).encode()).hexdigest()
 
 
+def _called_names(sql: str) -> set[str]:
+    """Function names a parsed query may call, case-folded; comments and quoting removed."""
+    from sqlglot import exp
+
+    statement = _parse_read_query_ast(sql, DIALECT)
+    names: set[str] = set()
+    for node in statement.walk():
+        if isinstance(node, exp.Anonymous):
+            names.add(node.name.casefold())
+        elif isinstance(node, exp.Func):
+            names.add(node.sql_name().casefold())
+            names.update(name.casefold() for name in _CALL.findall(node.sql(dialect=DIALECT)))
+    return names
+
+
 def check_functions(raw: Any, sql: str) -> None:
     """Refuse queries that could call a function defined outside the system catalogs.
 
-    Every identifier followed by ``(`` is a candidate call; a user-defined function
-    with that name in any schema could shadow or replace the built-in meaning.
+    Names come from the parsed query, so quoting and comments cannot hide a call; a
+    user-defined function with a matching name in any schema could shadow or replace
+    the built-in meaning. Matching is case-insensitive, which only widens refusal.
     """
-    names = sorted({match.lower() for match in _CALL.findall(sql)})
+    names = sorted(_called_names(sql))
     if not names:
         return
     shadowing = _rows(
@@ -213,11 +256,16 @@ def check_functions(raw: Any, sql: str) -> None:
         )
 
 
+def _normalized(sql: str) -> str:
+    """One statement rendered from its parse, without terminators or comments."""
+    return _parse_read_query_ast(sql, DIALECT).sql(dialect=DIALECT, comments=False)
+
+
 def query_schema(raw: Any, sql: str, type_mapper: Any) -> Any:
     """Describe a read query's columns without creating any database object."""
     import ibis
 
-    _parse_read_query_ast(sql, DIALECT)
+    sql = _normalized(sql)
     with raw.cursor() as cursor:
         cursor.execute(f"SELECT * FROM ({sql}) AS terrine_probe LIMIT 0")
         result = cursor.pgresult
@@ -236,7 +284,7 @@ def resolve(con: Any, relation: RelationSpec, catalog_dialect: str = DIALECT) ->
     if isinstance(relation, TableRef):
         item = _relation(raw, _lookup(raw, relation.name))
         return con.table(item.name, database=item.schema)
-    sql = admit_read_query(relation.sql, catalog_dialect, DIALECT)
+    sql = _normalized(admit_read_query(relation.sql, catalog_dialect, DIALECT))
     return con.sql(sql, schema=query_schema(raw, sql, con.compiler.type_mapper))
 
 
@@ -290,7 +338,8 @@ class PostgresSession:
                     array = pa.array(batch, type=struct)
                 except (pa.ArrowInvalid, pa.ArrowTypeError):
                     _raise_nonfinite(batch, schema)
-                    raise
+                    # psycopg returns uuid.UUID where Ibis expects Arrow strings.
+                    array = pa.array(_uuids_as_text(batch), type=struct)
                 yield pa.RecordBatch.from_struct_array(array)
 
     def execute(self, con: Any, query: Any, sql: str) -> pa.Table:
@@ -324,3 +373,11 @@ def _raise_nonfinite(rows: list[tuple[Any, ...]], schema: pa.Schema) -> None:
         for field, value in zip(schema, row, strict=True):
             if isinstance(value, Decimal) and not value.is_finite():
                 raise _NONFINITE.error(column=field.name, value=str(value))
+
+
+def _uuids_as_text(rows: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+    from uuid import UUID
+
+    return [
+        tuple(str(value) if isinstance(value, UUID) else value for value in row) for row in rows
+    ]
