@@ -24,6 +24,16 @@ _VALUES = {
     "positive_infinity": "infinity",
     "negative_infinity": "-infinity",
     "missing": None,
+    # Beyond Python's datetime and PostgreSQL's BIGINT Unix-microsecond range;
+    # distinct by one microsecond, so rounding would merge them.
+    "latest": "294276-12-31 23:59:58.250001+00",
+    "near_latest": "294276-12-31 23:59:58.25+00",
+    "earliest": "4714-11-24 00:00:00.000001+00 BC",
+}
+_OUT_OF_DATETIME_RANGE = {
+    "294276-12-31 23:59:58.250001+00": (0, 9_224_318_015_998, 250_001_000),
+    "294276-12-31 23:59:58.25+00": (0, 9_224_318_015_998, 250_000_000),
+    "4714-11-24 00:00:00.000001+00 BC": (0, -210_866_803_199, -999_999_000),
 }
 
 
@@ -34,6 +44,8 @@ def _reference(text: str | None) -> tuple[int, int, int] | None:
         return (1, 0, 0)
     if text == "-infinity":
         return (-1, 0, 0)
+    if text in _OUT_OF_DATETIME_RANGE:
+        return _OUT_OF_DATETIME_RANGE[text]
     instant = datetime.fromisoformat(text.replace("+00", "+00:00"))
     micros = (instant - _EPOCH) // timedelta(microseconds=1)
     seconds = int(micros / 10**6)  # truncate toward zero, like the SQL

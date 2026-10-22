@@ -74,14 +74,15 @@ def _load(con, *, timestamp_type: str, amount_type: str) -> None:
     con.raw_sql("CREATE TABLE users(user_id VARCHAR)")
     con.raw_sql(
         f"CREATE TABLE events(user_id VARCHAR, occurred_at {timestamp_type}, "
-        f"amount {amount_type}, tier VARCHAR)"
+        f"amount {amount_type}, tier VARCHAR, event_id UUID)"
     )
     con.raw_sql("INSERT INTO users VALUES " + ", ".join(f"('{user}')" for user in _USERS))
     con.raw_sql(
         "INSERT INTO events VALUES "
         + ", ".join(
-            f"('{user}', '{at}+00', {amount}, {'NULL' if tier is None else repr(tier)})"
-            for user, at, amount, tier in _EVENTS
+            f"('{user}', '{at}+00', {amount}, {'NULL' if tier is None else repr(tier)}, "
+            f"'00000000-0000-0000-0000-{index:012d}')"
+            for index, (user, at, amount, tier) in enumerate(_EVENTS)
         )
     )
     con.raw_sql(
@@ -93,7 +94,7 @@ def _load(con, *, timestamp_type: str, amount_type: str) -> None:
     )
 
 
-def _model(con, tmp_path, dialect: str):
+def _model(con, tmp_path, dialect: str, event_ids=None):
     path = tmp_path / f"{dialect}.yaml"
     path.write_text(_CATALOG.format(dialect=dialect), encoding="utf-8")
     return tr.Model.from_catalog(
@@ -104,6 +105,7 @@ def _model(con, tmp_path, dialect: str):
             "orders": tr.Coverage("2024-12-01", "2025-02-01"),
             "states": tr.Coverage("2024-12-01", "2025-02-01"),
         },
+        event_ids=event_ids,
     )
 
 
@@ -157,13 +159,62 @@ def _rows(model, design):
     return sorted(table.select(kept).to_pylist(), key=lambda row: (row["unit"], row["t0"]))
 
 
-@pytest.mark.parametrize("name", sorted(_DESIGNS))
-def test_design_matches_duckdb(postgres_scratch, tmp_path, name):  # noqa: F811
+def _both(postgres_scratch, tmp_path, **model_options):
     duckdb = ibis.duckdb.connect()
     _load(duckdb, timestamp_type="TIMESTAMPTZ", amount_type="DECIMAL(10, 2)")
     _load(postgres_scratch.con, timestamp_type="timestamptz", amount_type="numeric(10, 2)")
+    return (
+        _model(duckdb, tmp_path, "duckdb", **model_options),
+        _model(postgres_scratch.con, tmp_path, "postgres", **model_options),
+    )
+
+
+@pytest.mark.parametrize("name", sorted(_DESIGNS))
+def test_design_matches_duckdb(postgres_scratch, tmp_path, name):  # noqa: F811
+    duckdb, postgres = _both(postgres_scratch, tmp_path)
     design = _DESIGNS[name]
-    expected = _rows(_model(duckdb, tmp_path, "duckdb"), design)
-    actual = _rows(_model(postgres_scratch.con, tmp_path, "postgres"), design)
+    expected = _rows(duckdb, design)
+    actual = _rows(postgres, design)
     assert expected, "the DuckDB reference produced no rows"
     assert actual == expected
+
+
+def test_uuid_event_ids_break_first_event_ties(postgres_scratch, tmp_path):  # noqa: F811
+    duckdb, postgres = _both(postgres_scratch, tmp_path, event_ids={"orders": "event_id"})
+    design = _DESIGNS["time_to_first_order"]
+    assert _rows(postgres, design) == _rows(duckdb, design)
+
+
+@pytest.mark.parametrize("statistic", ["total", "mean"])
+def test_cohort_summaries_match_duckdb(postgres_scratch, tmp_path, statistic):  # noqa: F811
+    duckdb, postgres = _both(postgres_scratch, tmp_path)
+    design = tr.Design(
+        "user",
+        tr.EventAnchor("order", which="first"),
+        shape=tr.CohortSpec("order", tr.Trajectory("spend", "1d", periods=2, cumulative=True)),
+        administrative_cutoff=datetime(2025, 1, 6, tzinfo=UTC),
+    )
+    grouping = tr.CohortGrouping("1d", datetime(2025, 1, 1, tzinfo=UTC), statistic=statistic)
+
+    def summary(model):
+        cohorts = design.build(model).cohorts(grouping=grouping, value_column="cumulative_value")
+        rows = cohorts.to_pyarrow(budget=_BUDGET).to_pylist()
+        return sorted(rows, key=lambda row: tuple(str(value) for value in row.values()))
+
+    expected = summary(duckdb)
+    assert expected, "the DuckDB reference produced no rows"
+    assert summary(postgres) == expected
+
+
+def test_late_timestamp_outside_the_window_leaves_results_unchanged(postgres_scratch, tmp_path):  # noqa: F811
+    con = postgres_scratch.con
+    _load(con, timestamp_type="timestamptz", amount_type="numeric(10, 2)")
+    model = _model(con, tmp_path, "postgres")
+    design = _DESIGNS["as_of_interleaved_units"]
+    before = _rows(model, design)
+    # Valid in PostgreSQL, but past the BIGINT Unix-microsecond range.
+    con.raw_sql(
+        "INSERT INTO events VALUES ('a', '294250-01-01 00:00:00+00', 1.00, 'platinum', "
+        "'00000000-0000-0000-0000-999999999999')"
+    ).close()
+    assert _rows(model, design) == before

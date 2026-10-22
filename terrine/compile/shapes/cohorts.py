@@ -22,6 +22,7 @@ from terrine.temporal.aggregate import (
 from terrine.temporal.prefix import (
     FLOAT64_PRECISION,
     _isfinite,
+    exact_dialect,
     exact_literal,
     exact_sum,
     float64_rounding_radius,
@@ -42,6 +43,14 @@ def compile_cohorts(
     study: CompiledStudy, *, grouping: CohortGrouping, value_column: str
 ) -> CompiledStudy:
     """Group an already compiled LTV relation; this function never recompiles a Frame."""
+    # Summaries compile after the Design's compile scope ends; use the table's backend.
+    with exact_dialect(_backend(*(study.table[name] for name in study.table.columns[:1]))):
+        return _compile_cohorts(study, grouping=grouping, value_column=value_column)
+
+
+def _compile_cohorts(
+    study: CompiledStudy, *, grouping: CohortGrouping, value_column: str
+) -> CompiledStudy:
     if not isinstance(grouping, CohortGrouping):
         raise TypeError("grouping must be CohortGrouping")
     if value_column not in study.table.columns:
@@ -76,14 +85,15 @@ def compile_cohorts(
         and error_column is not None
         and error_column in table.columns
     )
+    # One first-event anchor per unit makes each (bucket, age, unit) a single row,
+    # and later joined state is constant per group, so min() selects that value;
+    # unlike FIRST it exists on every backend. Reasons choose deterministically.
     per_unit = table.group_by("bucket_index", "age", "unit").aggregate(
-        _value=table[value_column].first(),
-        _absolute_error=table[error_column].first()
-        if checked_float
-        else ibis.null().cast("float64"),
-        _complete=table[complete_column].first().fill_null(ibis.literal(False)),
-        _mature=table.period_value_mature.first(),
-        _reason=table[f"{value_column}_reason"].first()
+        _value=table[value_column].min(),
+        _absolute_error=table[error_column].min() if checked_float else ibis.null().cast("float64"),
+        _complete=table[complete_column].min().fill_null(ibis.literal(False)),
+        _mature=table.period_value_mature.min(),
+        _reason=table[f"{value_column}_reason"].min()
         if f"{value_column}_reason" in table.columns
         else ibis.null().cast("string"),
     )
@@ -104,9 +114,11 @@ def compile_cohorts(
         exact_coefficient = coefficient_text.rpad(
             coefficient_text.length() + scale - fractional_digits, "0"
         ).cast(exact_type)
+        # Booleans count through INT: PostgreSQL cannot cast boolean to BIGINT, and
+        # its SUM(integer) is BIGINT where SUM(bigint) would be NUMERIC.
         total_state = total_inputs.group_by(*keys).aggregate(
             _total=exact_sum(exact_coefficient),
-            _total_count=total_inputs._value.notnull().cast("int64").sum(),
+            _total_count=total_inputs._value.notnull().cast("int32").sum(),
         )
         decimal_total = narrow_exact(total_state._total, scale, numeric_type)
         total_state = total_state.mutate(
@@ -114,21 +126,21 @@ def compile_cohorts(
             _total_unrepresentable=(total_state._total_count > 0) & decimal_total.isnull(),
         )
         reduction_table = per_unit.left_join(total_state, keys)
-        observed_value = reduction_table._total_value.first()
-        decimal_total_failure = reduction_table._total_unrepresentable.first()
+        observed_value = reduction_table._total_value.min()
+        decimal_total_failure = reduction_table._total_unrepresentable.min()
     elif grouping.statistic == "total":
         observed_value = per_unit._value.sum()
     elif numeric_type.is_integer():
         observed_value = (
             per_unit._value.cast("decimal(38, 0)").sum()
-            / per_unit._value.notnull().cast("int64").sum()
+            / per_unit._value.notnull().cast("int32").sum()
         )
     elif numeric_type.is_decimal():
         scale = numeric_type.scale
         assert scale is not None
         keys = ["bucket_index", "age"]
         exact_type = exact_literal(0).type()
-        exact_count = per_unit._value.notnull().cast("int64").sum()
+        exact_count = per_unit._value.notnull().cast("int32").sum()
         counts = per_unit.group_by(*keys).aggregate(_mean_count=exact_count)
         mean_inputs = per_unit.left_join(counts, keys)
         decimal_text = mean_inputs._value.cast("string")
@@ -140,7 +152,7 @@ def compile_cohorts(
         ).cast(exact_type)
         mean_state = mean_inputs.group_by(*keys).aggregate(
             _mean_total=exact_sum(exact_coefficient),
-            _mean_count=mean_inputs._mean_count.first(),
+            _mean_count=mean_inputs._mean_count.min(),
         )
         exact_total = _scaled_text(mean_state._mean_total, scale).try_cast("float64")
         decimal_value = exact_total / mean_state._mean_count.cast("float64")
@@ -154,8 +166,8 @@ def compile_cohorts(
             & (decimal_value.isnull() | ~_isfinite(decimal_value)),
         )
         reduction_table = per_unit.left_join(mean_state, keys)
-        observed_value = reduction_table._mean_value.first()
-        decimal_mean_failure = reduction_table._mean_unrepresentable.first()
+        observed_value = reduction_table._mean_value.min()
+        decimal_mean_failure = reduction_table._mean_unrepresentable.min()
     else:
         scales = per_unit.group_by("bucket_index", "age").aggregate(
             _scale=per_unit._value.abs().max()
@@ -166,7 +178,7 @@ def compile_cohorts(
             _scale=ibis.ifelse(scaled._scale == 0.0, 1.0, scaled._scale),
         )
         normalized = reduction_table._value / reduction_table._scale
-        observed_value = normalized.mean() * reduction_table._scale.first()
+        observed_value = normalized.mean() * reduction_table._scale.min()
     if decimal_mean_failure is None:
         decimal_mean_failure = ibis.literal(False)
     if decimal_total_failure is None:
@@ -189,19 +201,19 @@ def compile_cohorts(
         input_error = per_unit._absolute_error.max()
         error_count = per_unit._value.notnull().cast("float64").sum()
         reduction_error = outward_multiply(
-            float64_rounding_radius(reduction_table._magnitude.first()),
+            float64_rounding_radius(reduction_table._magnitude.min()),
             outward_multiply(error_count, 4.0),
         )
         absolute_error = outward_add(input_error, reduction_error)
     else:
         absolute_error = ibis.null().cast("float64")
     groups = reduction_table.group_by("bucket_index", "age").aggregate(
-        observable=reduction_table._complete.cast("int64").sum(),
-        _value_count=reduction_table._value.notnull().cast("int64").sum(),
+        observable=reduction_table._complete.cast("int32").sum(),
+        _value_count=reduction_table._value.notnull().cast("int32").sum(),
         _observed_value=observed_value,
         _absolute_error=absolute_error,
         _mature=reduction_table._mature.max(),
-        _reason=reduction_table._reason.first(),
+        _reason=reduction_table._reason.min(),
         _mean_unrepresentable=decimal_mean_failure,
         _total_unrepresentable=decimal_total_failure,
     )

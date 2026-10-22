@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -115,6 +116,12 @@ def _native_isfinite(value):
 
 
 def _isfinite(value) -> ir.BooleanValue:
+    if _postgres():
+        # PostgreSQL has no isfinite(double precision), and NaN equals NaN there.
+        nonfinite = [
+            ibis.literal(item, type=dt.float64) for item in (math.inf, -math.inf, math.nan)
+        ]
+        return cast(ir.FloatingValue, value.cast(dt.float64)).notin(nonfinite)
     return cast(ir.BooleanValue, _native_isfinite(value))
 
 

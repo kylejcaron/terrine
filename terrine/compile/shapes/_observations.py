@@ -342,7 +342,8 @@ def compile_observed_state_panel(
         relation = joined.select(**projection)
         dialect = model.catalog.dialect
         query = ibis.to_sql(relation, dialect=dialect.casefold())
-        gap = f"{epoch_us_sql(dialect, 'to_time')} - {epoch_us_sql(dialect, 'from_time')}"
+        later, earlier = epoch_us_sql(dialect, "to_time"), epoch_us_sql(dialect, "from_time")
+        gap = f"CAST({later} - {earlier} AS BIGINT)"
         return model._sql(f"SELECT state_rows.*, {gap} AS gap FROM ({query}) AS state_rows")
 
     retained = attach(compiled.table)

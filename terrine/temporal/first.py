@@ -150,11 +150,25 @@ def first_occurrence(
         event_relation = event_relation.mutate(**{event_identifier: ibis.null().cast("string")})
     else:
         event_columns[event_value_id] = events_view[event_id]
-        event_relation = events_view.filter(events_view[timestamp].notnull()).select(
-            **event_columns
+        tie_rank = fresh_name("__terrine_event_tie_rank")
+        ranked = events_view.filter(events_view[timestamp].notnull()).select(**event_columns)
+        # Ordered numbering, not MIN: PostgreSQL orders UUIDs but has no min(uuid).
+        ranked = ranked.mutate(
+            **{
+                tie_rank: ibis.row_number().over(
+                    ibis.window(
+                        group_by=[ranked[event_unit], ranked[event_time]],
+                        order_by=[ranked[event_value_id]],
+                    )
+                )
+            }
         )
-        event_relation = event_relation.group_by(event_unit, event_time).aggregate(
-            **{event_identifier: event_relation[event_value_id].min()}
+        event_relation = ranked.filter(ranked[tie_rank] == 0).select(
+            **{
+                event_unit: ranked[event_unit],
+                event_time: ranked[event_time],
+                event_identifier: ranked[event_value_id],
+            }
         )
 
     candidates_view = candidates.view()

@@ -214,7 +214,8 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
             total = narrow_exact(exact_total, scale, numeric_type)
         else:
             total = table.period_value.sum().over(frame)
-        missing = table.period_value.isnull().cast("int64").sum().over(frame) > 0
+        # Through INT: PostgreSQL cannot cast boolean to BIGINT.
+        missing = table.period_value.isnull().cast("int32").sum().over(frame) > 0
         cumulative = missing.ifelse(ibis.null().cast(total.type()), total)
         table = table.mutate(cumulative_value=cumulative)
         table = table.mutate(

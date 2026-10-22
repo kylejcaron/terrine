@@ -24,23 +24,29 @@ sources:
     timestamp: occurred_at
     entities: {{user: user_id}}
     facts: [order, quantity, amount, weight]
-    properties: []
+    properties: [heaviness]
     dimensions: []
 facts:
   order: {{source: orders, column: null}}
   quantity: {{source: orders, column: qty}}
   amount: {{source: orders, column: amount}}
   weight: {{source: orders, column: weight}}
-properties: {{}}
+properties:
+  heaviness: {{source: orders, column: weight, dtype: float, as_of: event_time}}
 dimensions: {{}}
 measures:
   order_count: {{fact: order, aggregation: count}}
+  heavy_order_count:
+    fact: order
+    aggregation: count
+    filters: [{{property: heaviness, op: gte, values: [1.0]}}]
   quantity_total: {{fact: quantity, aggregation: sum}}
   amount_total: {{fact: amount, aggregation: sum}}
   amount_average: {{fact: amount, aggregation: avg_event}}
   weight_total: {{fact: weight, aggregation: sum}}
 metrics:
   orders: {{kind: mean, entity: user, measure: order_count}}
+  heavy_orders: {{kind: mean, entity: user, measure: heavy_order_count}}
   quantity: {{kind: mean, entity: user, measure: quantity_total}}
   spend: {{kind: mean, entity: user, measure: amount_total}}
   average_spend: {{kind: mean, entity: user, measure: amount_average}}
@@ -102,6 +108,8 @@ _DESIGN = _design(
     orders_before=tr.agg("orders", window=("-1d", "0s")),
     quantity_before=tr.agg("quantity", window=("-1d", "0s")),
     quantity_week=tr.agg("quantity", window=("-7d", "0s")),
+    # An exact count filtered on a floating property.
+    heavy_orders_week=tr.agg("heavy_orders", window=("-7d", "0s")),
     spend_before=tr.agg("spend", window=("-1d", "0s")),
     spend_three_days=tr.agg("spend", window=("-3d", "0s")),
 )
@@ -127,6 +135,7 @@ def test_counts_and_sums_match_duckdb(postgres_scratch, tmp_path):  # noqa: F811
     assert by_unit["a"]["quantity_before"] == 9_000_000_000_001
     assert by_unit["a"]["spend_before"] == Decimal("7.15")
     assert by_unit["d"]["spend_before"] == Decimal("0.00")
+    assert [by_unit[unit]["heavy_orders_week"] for unit in "abcd"] == [0, 1, 1, 0]
 
 
 def test_exact_overflow_is_a_coded_refusal_and_the_boundary_succeeds(postgres_scratch, tmp_path):  # noqa: F811

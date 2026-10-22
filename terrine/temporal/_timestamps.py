@@ -53,12 +53,39 @@ def _remainder(value, divisor):
     signature=((dt.string, dt.Timestamp(timezone="UTC")), dt.Decimal(38, 6)),
 )
 def _pg_extract(field, value):
-    """PostgreSQL's exact numeric field extraction; epoch is exact at microseconds."""
+    """PostgreSQL's numeric field extraction; see ``_pg_epoch_seconds`` for epoch."""
+
+
+# PostgreSQL's epoch extraction is exact only while the instant's Unix microseconds
+# fit BIGINT (until about year 294247); later timestamps, valid through 294276,
+# round. Those are shifted back by a whole number of hours, which needs no time
+# zone, extracted exactly, and shifted forward again in NUMERIC.
+_PG_LATE_YEAR = 290_000
+_PG_SHIFT_HOURS = 100_000_000
+
+
+def _pg_epoch_seconds(value: ir.TimestampValue) -> ir.DecimalValue:
+    """Exact NUMERIC seconds since the Unix epoch for a finite PostgreSQL timestamp."""
+    year = cast(ir.NumericColumn, _pg_extract("year", value))
+    late = cast(ir.BooleanValue, year >= _PG_LATE_YEAR)
+    shifted = cast(ir.TimestampValue, value - ibis.interval(hours=_PG_SHIFT_HOURS))
+    return cast(
+        ir.DecimalValue,
+        late.ifelse(
+            cast(ir.DecimalValue, _pg_extract("epoch", shifted)) + _PG_SHIFT_HOURS * 3600,
+            _pg_extract("epoch", value),
+        ),
+    )
 
 
 @ibis.udf.scalar.builtin(name="div", signature=((dt.int64, dt.int64), dt.int64))
 def _pg_quotient(value, divisor):
     """PostgreSQL integer division truncating toward zero."""
+
+
+@ibis.udf.scalar.builtin(name="trunc", signature=((dt.Decimal(38, 6),), dt.Decimal(38, 0)))
+def _pg_trunc(value):
+    """PostgreSQL NUMERIC truncation toward zero."""
 
 
 def _backend(*values: ir.Value) -> str:
@@ -71,9 +98,19 @@ def _backend(*values: ir.Value) -> str:
 
 
 def epoch_us_sql(dialect: str, column_sql: str) -> str:
-    """Native SQL for a timestamp's exact signed microseconds since the Unix epoch."""
+    """Native SQL for a timestamp's exact signed microseconds since the Unix epoch.
+
+    PostgreSQL returns exact NUMERIC: its late timestamps exceed the BIGINT
+    microsecond range, so cast only a bounded result such as a difference.
+    """
     if dialect.casefold() == "postgres":
-        return f"CAST(pg_catalog.extract('epoch', {column_sql}) * 1000000 AS BIGINT)"
+        late = f"pg_catalog.extract('year', {column_sql}) >= {_PG_LATE_YEAR}"
+        shifted = f"{column_sql} - INTERVAL '{_PG_SHIFT_HOURS} hours'"
+        return (
+            f"(CASE WHEN {late} THEN pg_catalog.extract('epoch', {shifted}) + "
+            f"{_PG_SHIFT_HOURS * 3600} ELSE pg_catalog.extract('epoch', {column_sql}) END "
+            "* 1000000)"
+        )
     return f"epoch_us({column_sql})"
 
 
@@ -108,10 +145,12 @@ def timestamp_parts(
         raise _UNSUPPORTED.error(dtype=str(dtype))
     finite = cast(ir.BooleanValue, _finite(value))
     epoch = cast(ir.TimestampScalar, ibis.literal("1970-01-01 00:00:00").cast(dtype))
-    epoch_seconds = cast(ir.DecimalValue, _pg_extract("epoch", finite.ifelse(value, epoch)))
-    micros = cast(ir.IntegerValue, (epoch_seconds * 10**6).cast(dt.int64))
-    seconds = cast(ir.IntegerValue, _pg_quotient(micros, 10**6))
-    nanos = cast(ir.IntegerValue, _remainder(micros, 10**6)) * 1000
+    epoch_seconds = _pg_epoch_seconds(cast(ir.TimestampValue, finite.ifelse(value, epoch)))
+    # Split before narrowing: whole seconds fit BIGINT for every PostgreSQL
+    # timestamp, while the full microsecond coefficient does not.
+    whole = cast(ir.DecimalValue, _pg_trunc(epoch_seconds))
+    seconds = cast(ir.IntegerValue, whole.cast(dt.int64))
+    nanos = cast(ir.IntegerValue, ((epoch_seconds - whole) * 10**6).cast(dt.int64)) * 1000
     zero = ibis.literal(0, type=dt.int64)
     rank = finite.ifelse(zero, (value < epoch).ifelse(ibis.literal(-1), ibis.literal(1)))
     missing = value.isnull()
