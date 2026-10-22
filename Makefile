@@ -12,10 +12,11 @@ test-scale:
 	uv run pytest $(SCALE_TESTS) -m scale
 
 # Live PostgreSQL probes; requires TERRINE_TEST_POSTGRES_* settings and fails
-# without them. `uv run python -m tests.integration.postgres_scratch` starts a
-# throwaway local server and prints the settings.
+# without them. `uv run python -m tests.integration.postgres_scratch start` starts
+# a throwaway local server and prints the settings. The extras provide the driver
+# and the DuckDB reference backend.
 test-postgres:
-	uv run pytest integration -m postgres
+	uv run --extra duckdb --extra postgres pytest integration -m postgres
 
 lint:
 	uv run ruff check terrine tests integration

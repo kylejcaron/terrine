@@ -54,12 +54,22 @@ def _exports(port: int) -> str:
     return "\n".join(f"export {key}={value!r}" for key, value in settings.items())
 
 
+def _running(data: Path) -> bool:
+    status = subprocess.run(
+        [_binary("pg_ctl"), "-D", str(data), "status"], check=False, capture_output=True
+    )
+    return status.returncode == 0
+
+
 def start() -> None:
     data = _STATE / "data"
     port_file = _STATE / "port"
-    if data.exists():
+    # Reuse only a completely started server; a stopped or half-initialized
+    # directory (interrupted start) is discarded and rebuilt.
+    if port_file.exists() and data.exists() and _running(data):
         print(_exports(int(port_file.read_text())))
         return
+    stop()
     _STATE.mkdir(parents=True, exist_ok=True)
     port = _free_port()
     subprocess.run(
