@@ -6,9 +6,9 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
-from itertools import pairwise
 from dataclasses import dataclass
 from importlib.metadata import version
+from itertools import pairwise
 from typing import Any
 
 import pyarrow as pa
