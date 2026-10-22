@@ -1,7 +1,8 @@
-"""PostgreSQL exact window counts and sums against the DuckDB reference backend."""
+"""PostgreSQL window metrics against the DuckDB reference backend."""
 
 from __future__ import annotations
 
+import math
 from decimal import Decimal
 
 import ibis
@@ -155,11 +156,35 @@ def test_exact_overflow_is_a_coded_refusal_and_the_boundary_succeeds(postgres_sc
     assert error.value.code == "terrine.temporal.exact_overflow"
 
 
-@pytest.mark.parametrize("metric", ["average_spend", "spend_per_order", "weight"])
-def test_quotients_and_floats_refuse_on_postgres(postgres_scratch, tmp_path, metric):  # noqa: F811
-    con = postgres_scratch.con
-    _load(con, timestamp_type="timestamptz", amount_type="numeric(12, 2)")
-    model = _model(con, tmp_path, "postgres")
-    with pytest.raises(TerrineError) as error:
-        _design(value=tr.agg(metric, window=("-1d", "0s"))).build(model)
-    assert error.value.code == "terrine.temporal.float64_unsupported"
+def _assert_close(actual, expected):
+    """Equal rows, except floats within a tight relative tolerance; PostgreSQL omits
+    DuckDB's certified absolute-error columns."""
+    assert len(actual) == len(expected)
+    for got, want in zip(actual, expected, strict=True):
+        extra = set(want) - set(got)
+        assert all(name.endswith("_absolute_error") for name in extra), extra
+        for name, value in got.items():
+            if isinstance(value, float) and want[name] is not None:
+                assert math.isclose(value, want[name], rel_tol=1e-12, abs_tol=1e-300), name
+            else:
+                assert value == want[name], name
+
+
+def test_averages_and_ratios_match_duckdb_within_tolerance(postgres_scratch, tmp_path):  # noqa: F811
+    duckdb = ibis.duckdb.connect()
+    _load(duckdb, timestamp_type="TIMESTAMPTZ", amount_type="DECIMAL(12, 2)")
+    _load(postgres_scratch.con, timestamp_type="timestamptz", amount_type="numeric(12, 2)")
+    # Unit d has no orders: an empty average and a zero ratio denominator.
+    design = _design(
+        outcomes={"average_after": tr.agg("average_spend", window=("0s", "1d"))},
+        average_before=tr.agg("average_spend", window=("-1d", "0s")),
+        average_week=tr.agg("average_spend", window=("-7d", "0s")),
+        per_order_before=tr.agg("spend_per_order", window=("-3d", "0s")),
+    )
+    expected = _rows(_model(duckdb, tmp_path, "duckdb"), design)
+    actual = _rows(_model(postgres_scratch.con, tmp_path, "postgres"), design)
+    _assert_close(actual, expected)
+    by_unit = {row["unit"]: row for row in actual}
+    assert by_unit["a"]["average_before"] == pytest.approx(7.15 / 2, rel=1e-15)
+    assert by_unit["d"]["average_before"] is None
+    assert by_unit["d"]["per_order_before"] is None
