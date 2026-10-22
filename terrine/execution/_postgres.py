@@ -153,7 +153,7 @@ def _check_view_functions(raw: Any, oid: int) -> None:
 def _table_name(source: Any) -> str:
     """Render a parsed table reference with PostgreSQL identifier rules."""
     parts = (source.args.get("catalog"), source.args.get("db"), source.this)
-    return ".".join(part.sql(dialect=DIALECT) for part in parts if part is not None)
+    return ".".join(part.sql(dialect=DIALECT, comments=False) for part in parts if part is not None)
 
 
 def _sql_roots(sql: str, raw: Any) -> list[int]:
@@ -218,11 +218,15 @@ def admission_fingerprint(relation: RelationSpec, raw: Any) -> str:
 
 
 def _called_names(sql: str) -> set[str]:
-    """Function names a parsed query may call, case-folded; comments and quoting removed."""
+    """Function names a query may call, case-folded.
+
+    The parse catches quoted and comment-separated calls; the source text keeps
+    aliases the parser canonicalizes (``DATE_PART`` parses as ``EXTRACT``).
+    """
     from sqlglot import exp
 
     statement = _parse_read_query_ast(sql, DIALECT)
-    names: set[str] = set()
+    names = {name.casefold() for name in _CALL.findall(sql)}
     for node in statement.walk():
         if isinstance(node, exp.Anonymous):
             names.add(node.name.casefold())
@@ -235,9 +239,9 @@ def _called_names(sql: str) -> set[str]:
 def check_functions(raw: Any, sql: str) -> None:
     """Refuse queries that could call a function defined outside the system catalogs.
 
-    Names come from the parsed query, so quoting and comments cannot hide a call; a
-    user-defined function with a matching name in any schema could shadow or replace
-    the built-in meaning. Matching is case-insensitive, which only widens refusal.
+    A user-defined function with a matching name in any schema could shadow or
+    replace the built-in meaning. Matching is case-insensitive and unions parsed
+    and textual names, which only widens refusal.
     """
     names = sorted(_called_names(sql))
     if not names:

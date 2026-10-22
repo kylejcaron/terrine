@@ -94,6 +94,8 @@ def test_private_read_holds_one_snapshot_and_never_touches_the_callers_transacti
         # Unquoted names fold to lower case; a trailing line comment must not
         # swallow the probe's closing parenthesis.
         "SELECT user_id, occurred_at, amount FROM EVENTS -- trailing note",
+        # A comment inside a qualified name is not part of the identifier.
+        "SELECT user_id, occurred_at, amount FROM {schema} /* note */ .events",
     ],
 )
 def test_sql_relation_resolves_inside_the_read_only_transaction(
@@ -103,6 +105,7 @@ def test_sql_relation_resolves_inside_the_read_only_transaction(
 ):
     con = postgres_scratch.con
     _events(con)
+    sql = sql.format(schema=postgres_scratch.schema)
     model = _model(con, tmp_path, relation="{kind: sql, sql: " + repr(sql) + "}")
     with open_execution(model.catalog, con) as context:
         assert _count(context, SqlQuery(kind="sql", sql=sql)) == 1
@@ -135,19 +138,23 @@ def test_private_connection_closes_when_execution_fails(postgres_scratch, tmp_pa
 
 
 @pytest.mark.parametrize(
-    ("name", "call"),
+    ("signature", "call"),
     [
-        ("lower", "lower(user_id)"),
-        ("lower", "lower/**/(user_id)"),
-        ('"CustomFn"', '"CustomFn"(user_id)'),
+        ("lower(text) RETURNS text", "lower(user_id)"),
+        ("lower(text) RETURNS text", "lower/**/(user_id)"),
+        ('"CustomFn"(text) RETURNS text', '"CustomFn"(user_id)'),
+        # The parser canonicalizes date_part to EXTRACT; the call still resolves by name.
+        (
+            "date_part(text, timestamptz) RETURNS text",
+            "date_part('year', occurred_at)",
+        ),
     ],
 )
-def test_user_function_shadowing_a_called_name_is_refused(postgres_scratch, name, call):  # noqa: F811
+def test_user_function_shadowing_a_called_name_is_refused(postgres_scratch, signature, call):  # noqa: F811
     con = postgres_scratch.con
     _events(con)
     con.raw_sql(
-        f'CREATE FUNCTION "{postgres_scratch.schema}".{name}(text) RETURNS text '
-        "LANGUAGE sql AS 'SELECT $1'"
+        f"CREATE FUNCTION \"{postgres_scratch.schema}\".{signature} LANGUAGE sql AS 'SELECT $1'"
     ).close()
     with pytest.raises(TerrineError) as error:
         backend_provider(con).sql(con, f"SELECT {call} AS u FROM events")

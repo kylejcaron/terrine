@@ -30,8 +30,9 @@ parameters and search path, sets `TimeZone` to UTC and reads in one
 `REPEATABLE READ READ ONLY` transaction, so every query sees one consistent
 snapshot. The caller's connection, and any transaction open on it, is never used
 or changed. Schemas of SQL relations are read without creating database objects.
-A query, or a view it reads, that calls a name also defined as a user function
-outside the system catalogs refuses.
+A query that calls a name also defined as a user function outside the system
+catalogs refuses, as does a view whose stored definition depends on such a
+function.
 
 Supported: counts and exact integer/decimal sums over windows, as-of attributes,
 fixed, scheduled and event anchors, time-to-event shapes, cohort trajectories
