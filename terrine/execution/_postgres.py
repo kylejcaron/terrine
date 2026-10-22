@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
+from itertools import pairwise
 from dataclasses import dataclass
 from importlib.metadata import version
 from typing import Any
@@ -28,7 +29,6 @@ _MIN_IBIS = (12, 0)
 # Relation kinds that are physical row sources or views over them.
 _TABLE_KINDS = {"r": "table", "p": "table", "m": "table"}
 _SYSTEM_SCHEMAS = ("pg_catalog", "information_schema")
-_CALL = re.compile(r"\b([A-Za-z_][A-Za-z0-9_$]*)\s*\(")
 
 
 def _snapshot_error(reason: str):
@@ -220,20 +220,37 @@ def admission_fingerprint(relation: RelationSpec, raw: Any) -> str:
 def _called_names(sql: str) -> set[str]:
     """Function names a query may call, case-folded.
 
-    The parse catches quoted and comment-separated calls; the source text keeps
-    aliases the parser canonicalizes (``DATE_PART`` parses as ``EXTRACT``).
+    Calls are read from the tokens of both the source and its rendered parse: the
+    source keeps aliases the parser canonicalizes (``DATE_PART`` parses as
+    ``EXTRACT``), and the rendering is what executes. Tokens exclude comments and
+    string literals, so neither can name a call.
     """
     from sqlglot import exp
+    from sqlglot.dialects.dialect import Dialect
 
     statement = _parse_read_query_ast(sql, DIALECT)
-    names = {name.casefold() for name in _CALL.findall(sql)}
+    dialect = Dialect.get_or_raise(DIALECT)
+    names: set[str] = set()
+    for text in (sql, statement.sql(dialect=DIALECT, comments=False)):
+        tokens = dialect.tokenize(text)
+        names.update(
+            token.text.casefold()
+            for token, following in pairwise(tokens)
+            if following.token_type.name == "L_PAREN"
+            and token.token_type.name not in _NON_NAME_TOKENS
+        )
     for node in statement.walk():
         if isinstance(node, exp.Anonymous):
             names.add(node.name.casefold())
         elif isinstance(node, exp.Func):
             names.add(node.sql_name().casefold())
-            names.update(name.casefold() for name in _CALL.findall(node.sql(dialect=DIALECT)))
     return names
+
+
+_NON_NAME_TOKENS = frozenset(
+    {"STRING", "NATIONAL_STRING", "RAW_STRING", "HEREDOC_STRING", "BIT_STRING", "HEX_STRING"}
+    | {"BYTE_STRING", "UNICODE_STRING", "NUMBER", "L_PAREN", "R_PAREN", "COMMA", "STAR"}
+)
 
 
 def check_functions(raw: Any, sql: str) -> None:

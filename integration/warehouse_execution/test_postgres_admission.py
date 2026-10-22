@@ -161,6 +161,23 @@ def test_user_function_shadowing_a_called_name_is_refused(postgres_scratch, sign
     assert error.value.code == "terrine.execution.snapshot_unavailable"
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT user_id FROM events /* lower( */",
+        "SELECT 'lower(' || user_id AS u FROM events",
+    ],
+)
+def test_comments_and_literals_do_not_name_a_call(postgres_scratch, sql):  # noqa: F811
+    con = postgres_scratch.con
+    _events(con)
+    con.raw_sql(
+        f'CREATE FUNCTION "{postgres_scratch.schema}".lower(text) RETURNS text '
+        "LANGUAGE sql AS 'SELECT $1'"
+    ).close()
+    assert backend_provider(con).sql(con, sql).count().execute() == 1
+
+
 def test_view_calling_a_user_function_is_refused(postgres_scratch, tmp_path):  # noqa: F811
     con = postgres_scratch.con
     _events(con)
