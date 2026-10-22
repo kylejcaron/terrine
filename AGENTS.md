@@ -83,6 +83,13 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   with `uv run python -m tests.integration.postgres_scratch stop`. CI runs them
   on every push against a PostgreSQL 16 service container. Each probe owns a
   uniquely named schema; never share a warehouse namespace between tests.
+- `make test-bigquery` runs the live BigQuery probes (`@pytest.mark.bigquery`,
+  deselected by default); they fail, never skip, without
+  `TERRINE_TEST_BIGQUERY_PROJECT`, `TERRINE_TEST_BIGQUERY_DATASET` and
+  credentials. Locally,
+  `TERRINE_TEST_BIGQUERY_ACCESS_TOKEN="$(gcloud auth print-access-token)"` is
+  enough. Each probe creates and drops its own dataset; queries are billed, so
+  keep fixtures tiny. CI runs them weekly and on dispatch, serialized.
 - The ordinary suite lists unit tests slower than 5 s (well above the 2 s
   target, so contention does not trip it); a healthy run lists none. Fix any
   listed test.
