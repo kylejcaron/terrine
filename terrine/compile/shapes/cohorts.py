@@ -8,14 +8,18 @@ import ibis
 import ibis.expr.types as ir
 
 from terrine.backends.dialect import dialect_of, dialect_scope
-from terrine.backends.numeric import exact_literal, exact_sum, float_is_finite
+from terrine.backends.numeric import (
+    EXACT_OVERFLOW,
+    exact_literal,
+    exact_sum,
+    float_is_finite,
+)
 from terrine.backends.timestamps import timestamp_parts
 from terrine.compile.columns import CompiledStudy
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
 from terrine.spec.trajectory import CohortGrouping
 from terrine.temporal.aggregate import (
-    _EXACT_OVERFLOW,
     _Check,
     _Failure,
     _scaled_text,
@@ -273,7 +277,7 @@ def _compile_cohorts(
                 (
                     _Failure(
                         failure_column,
-                        _EXACT_OVERFLOW,
+                        EXACT_OVERFLOW,
                         {"source": "cohort", "measure": value_column, "output": "value"},
                     ),
                 ),
@@ -288,7 +292,7 @@ def _compile_cohorts(
                 (
                     _Failure(
                         failure_column,
-                        _EXACT_OVERFLOW,
+                        EXACT_OVERFLOW,
                         {"source": "cohort", "measure": value_column, "output": "value"},
                     ),
                 ),

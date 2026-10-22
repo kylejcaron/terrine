@@ -16,9 +16,7 @@ pytestmark = pytest.mark.bigquery
 
 def test_scratch_dataset_is_isolated_and_round_trips_exact_values(bigquery_scratch):  # noqa: F811
     scratch = bigquery_scratch
-    scratch.sql(
-        "CREATE TABLE events(user_id STRING, occurred_at TIMESTAMP, amount NUMERIC(12, 2))"
-    )
+    scratch.sql("CREATE TABLE events(user_id STRING, occurred_at TIMESTAMP, amount NUMERIC(12, 2))")
     scratch.sql("INSERT events VALUES ('a', TIMESTAMP '2025-01-01 12:00:00.000001+00', 1.5)")
     table = scratch.con.table("events", database=scratch.dataset)
     row = scratch.con.to_pyarrow(table).to_pylist()[0]

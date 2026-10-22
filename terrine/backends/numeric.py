@@ -18,8 +18,10 @@ import ibis.expr.types as ir
 import sqlglot.expressions as sge
 
 from terrine.backends.dialect import dialect_of, unavailable
+from terrine.errors import RefusalSpec
 
 __all__ = [
+    "EXACT_OVERFLOW",
     "exact_is_nonfinite",
     "exact_literal",
     "exact_ratio",
@@ -37,6 +39,12 @@ __all__ = [
     "truncating_quotient",
 ]
 
+
+EXACT_OVERFLOW = RefusalSpec(
+    "terrine.temporal.exact_overflow",
+    "The requested exact result cannot be represented by the native output type. "
+    "Use a supported exact representation or a semantically sufficient window.",
+)
 _DUCKDB_EXACT = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
 _PG_EXACT = dt.Unknown(raw_type=sge.DataType.build("NUMERIC", dialect="postgres"))
 

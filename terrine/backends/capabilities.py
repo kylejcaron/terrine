@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from terrine.errors import RefusalSpec
 
 __all__ = [
+    "BIGQUERY_CAPABILITIES",
     "BackendCapabilities",
     "DUCKDB_CAPABILITIES",
     "POSTGRES_CAPABILITIES",
@@ -71,6 +72,20 @@ DUCKDB_CAPABILITIES = BackendCapabilities(
 # connection. Timestamps are exact at microseconds; runtime staging, retained
 # snapshots and publication stay on DuckDB.
 POSTGRES_CAPABILITIES = BackendCapabilities(
+    snapshot=False,
+    change_evidence=frozenset(),
+    scan_estimate=None,
+    cancellation=None,
+    dialect_admission=True,
+    exact_timestamps=True,
+    exact_decimals=True,
+    transaction_view=True,
+    arrow_batches=True,
+)
+# Materialization reads one snapshot transaction in a private session on a new
+# client. Timestamps are exact at microseconds; staging, retained snapshots and
+# publication stay on DuckDB.
+BIGQUERY_CAPABILITIES = BackendCapabilities(
     snapshot=False,
     change_evidence=frozenset(),
     scan_estimate=None,

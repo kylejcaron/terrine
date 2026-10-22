@@ -15,6 +15,9 @@ import pyarrow as pa
 
 from terrine.backends.dialect import dialect_of
 from terrine.backends.numeric import (
+    EXACT_OVERFLOW as _EXACT_OVERFLOW,
+)
+from terrine.backends.numeric import (
     exact_is_nonfinite,
     exact_literal,
     exact_ratio,
@@ -59,11 +62,6 @@ from terrine.windows import Window
 
 __all__ = ["TemporalResult", "aggregate_window"]
 
-_EXACT_OVERFLOW = RefusalSpec(
-    "terrine.temporal.exact_overflow",
-    "The requested exact result cannot be represented by the native output type. "
-    "Use a supported exact representation or a semantically sufficient window.",
-)
 _DAY_ALIGNMENT = RefusalSpec(
     "terrine.temporal.unaligned_day_resolution",
     "Day prefixes require both endpoints at local midnight; use event prefixes "

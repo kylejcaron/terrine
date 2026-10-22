@@ -725,6 +725,41 @@ def _open_postgres_execution(
             session.close()
 
 
+@contextlib.contextmanager
+def _open_bigquery_execution(
+    provider: Any,
+    catalog: Catalog,
+    con: Any,
+    *,
+    units: Mapping[str, Any] | None = None,
+    input_binding: VerifiedInputBinding | None = None,
+) -> Generator[ExecutionContext]:
+    """Read in a private session transaction so the caller's client is never touched."""
+    from terrine.execution import _bigquery
+
+    client, session_id = _bigquery.owned_session(con)
+    session = _bigquery.BigQuerySession(client, session_id)
+    context = None
+    try:
+        private = ibis.bigquery.from_connection(client, dataset_id=con.current_database)
+        resolver = provider.bind_resolver(
+            catalog, private, units=units, input_binding=input_binding
+        )
+        context = ExecutionContext(
+            private,
+            _execution_snapshot(catalog, units, backend="bigquery"),
+            resolver,
+            _session=session,
+            owner_con=con,
+        )
+        yield context
+    finally:
+        if context is not None:
+            context.close()
+        else:
+            session.close()
+
+
 def required_relations(
     catalog: Catalog, con: Any, *, units: Mapping[str, Any] | None = None
 ) -> tuple[PhysicalRelationId, ...]:
