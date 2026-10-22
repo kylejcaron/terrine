@@ -57,6 +57,8 @@ metrics:
   weight: {{kind: mean, entity: user, measure: weight_total}}
   light: {{kind: mean, entity: user, measure: light_total}}
   spend_per_order: {{kind: ratio, entity: user, numerator: amount_total, denominator: order_count}}
+  spend_per_weight:
+    {{kind: ratio, entity: user, numerator: amount_total, denominator: weight_total}}
 """
 
 # Boundary rows: exactly t0 - 1d (inside [-1d, 0)), exactly t0 (outcome, not
@@ -212,10 +214,12 @@ def test_float_windows_match_duckdb_within_tolerance(postgres_scratch, tmp_path)
 
 
 def _float_rows(con, rows: list[tuple[str, str]]) -> None:
-    con.raw_sql(
+    cursor = con.raw_sql(
         "INSERT INTO events VALUES "
         + ", ".join(f"('d', '{at}+00', 0, 0, {weight}, 0)" for at, weight in rows)
-    ).close()
+    )
+    if con.name == "postgres":  # DuckDB returns its connection, not a cursor
+        cursor.close()
 
 
 def test_large_float_history_cancels_exactly_outside_the_window(postgres_scratch, tmp_path):  # noqa: F811
@@ -236,22 +240,53 @@ def test_large_float_history_cancels_exactly_outside_the_window(postgres_scratch
 
 
 @pytest.mark.parametrize(
-    ("rows", "failure"),
+    ("rows", "metric", "failure"),
     [
         # A non-finite value before the window still poisons it, as on DuckDB.
-        ([("2024-12-20 00:00:00", "'NaN'"), ("2025-01-01 12:00:00", "1.0")], "nonfinite_input"),
-        ([("2025-01-01 12:00:00", "1e308"), ("2025-01-01 13:00:00", "1e308")], "bound_overflow"),
+        (
+            [("2024-12-20 00:00:00", "'NaN'"), ("2025-01-01 12:00:00", "1.0")],
+            "weight",
+            "nonfinite_input",
+        ),
+        # Division must not erase it: 0 / Infinity would otherwise be 0.
+        ([("2025-01-01 12:00:00", "'Infinity'")], "spend_per_weight", "nonfinite_input"),
+        (
+            [("2025-01-01 12:00:00", "1e308"), ("2025-01-01 13:00:00", "1e308")],
+            "weight",
+            "bound_overflow",
+        ),
     ],
 )
-def test_float_window_failures_are_coded_refusals(postgres_scratch, tmp_path, rows, failure):  # noqa: F811
+def test_float_window_failures_are_coded_refusals(
+    postgres_scratch, tmp_path, rows, metric, failure
+):  # noqa: F811
     con = postgres_scratch.con
     _load(con, timestamp_type="timestamptz", amount_type="numeric(12, 2)")
     _float_rows(con, rows)
-    design = _design(weight_before=tr.agg("weight", window=("-1d", "0s")))
+    design = _design(value=tr.agg(metric, window=("-1d", "0s")))
     with pytest.raises(TerrineError) as error:
         _rows(_model(con, tmp_path, "postgres"), design)
     assert error.value.code == "terrine.temporal.float64_precision"
     assert error.value.context["failure"] == failure
+
+
+def test_cancelling_float_window_stays_within_the_absolute_sum_bound(postgres_scratch, tmp_path):  # noqa: F811
+    """Each float enters as its shortest decimal, within half an ulp, so under
+    cancellation the agreement with DuckDB is relative to the window's absolute sum."""
+    duckdb = ibis.duckdb.connect()
+    _load(duckdb, timestamp_type="TIMESTAMPTZ", amount_type="DECIMAL(12, 2)")
+    _load(postgres_scratch.con, timestamp_type="timestamptz", amount_type="numeric(12, 2)")
+    rows = [("2025-01-01 12:00:00", "1.000001"), ("2025-01-01 13:00:00", "-1.0")]
+    for con in (duckdb, postgres_scratch.con):
+        _float_rows(con, rows)
+    design = _design(weight_before=tr.agg("weight", window=("-1d", "0s")))
+
+    def value(model):
+        return {row["unit"]: row["weight_before"] for row in _rows(model, design)}["d"]
+
+    expected = value(_model(duckdb, tmp_path, "duckdb"))
+    actual = value(_model(postgres_scratch.con, tmp_path, "postgres"))
+    assert abs(actual - expected) <= 2**-52 * (1.000001 + 1.0)
 
 
 def test_float_state_ignores_the_callers_float_text_precision(postgres_scratch, tmp_path):  # noqa: F811

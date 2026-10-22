@@ -20,6 +20,7 @@ import sqlglot.expressions as sge
 from terrine.backends.dialect import dialect_of, unavailable
 
 __all__ = [
+    "exact_is_nonfinite",
     "exact_literal",
     "exact_ratio",
     "exact_subtract",
@@ -90,6 +91,14 @@ _FLOAT64_ROUNDS_TO_ZERO = "0." + str(5**1075).rjust(1075, "0")
 _NONFINITE = ("NaN", "Infinity", "-Infinity")
 
 
+def exact_is_nonfinite(value: ir.Value) -> ir.BooleanValue:
+    """Whether an exact NUMERIC value is NaN or infinite (PostgreSQL); NULL stays NULL."""
+    dialect = dialect_of(value)
+    if dialect != "postgres":
+        raise unavailable("exact_is_nonfinite", dialect)
+    return value.isin([_exact_text(text, value) for text in _NONFINITE])
+
+
 def exact_to_float(
     value: ir.Value,
 ) -> tuple[ir.FloatingValue, ir.BooleanValue, ir.BooleanValue]:
@@ -98,11 +107,8 @@ def exact_to_float(
     Returns (float, nonfinite, out_of_range); the float is NULL for either flag.
     Magnitudes at or below 2**-1075 become 0.0, as round-to-nearest would give.
     """
-    dialect = dialect_of(value)
-    if dialect != "postgres":
-        raise unavailable("exact_to_float", dialect)
     # NUMERIC NaN equals itself and sorts above every number, so test it first.
-    nonfinite = value.isin([_exact_text(text, value) for text in _NONFINITE])
+    nonfinite = exact_is_nonfinite(value)
     limit, tiny = _exact_text(_FLOAT64_MAX, value), _exact_text(_FLOAT64_ROUNDS_TO_ZERO, value)
     negative_limit = _exact_text("-" + _FLOAT64_MAX, value)
     negative_tiny = _exact_text("-" + _FLOAT64_ROUNDS_TO_ZERO, value)

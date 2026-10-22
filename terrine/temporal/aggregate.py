@@ -15,6 +15,7 @@ import pyarrow as pa
 
 from terrine.backends.dialect import dialect_of
 from terrine.backends.numeric import (
+    exact_is_nonfinite,
     exact_literal,
     exact_ratio,
     exact_subtract,
@@ -278,9 +279,18 @@ def _exact_decimal(builder: _Builder, quantity: _Quantity) -> ir.Value:
 
 
 def _rounded_quotient(
-    builder: _Builder, numerator: _Quantity, denominator: _Quantity, reason: str
+    builder: _Builder, numerator: _Quantity, denominator: _Quantity, reason: str, context
 ) -> _Quantity:
-    """Divide exactly in NUMERIC; ``aggregate_window`` rounds the result once."""
+    """Divide exactly in NUMERIC; ``aggregate_window`` rounds the result once.
+
+    A non-finite component refuses here: division could erase it (1/Infinity = 0).
+    """
+    for component in (numerator, denominator):
+        if component.rounded:
+            nonfinite = exact_is_nonfinite(builder.col(component.value)).fill_null(
+                ibis.literal(False)
+            )
+            builder.flag(nonfinite, "nonfinite_input", context)
     value = builder.put(
         "quotient",
         exact_ratio(_exact_decimal(builder, numerator), _exact_decimal(builder, denominator)),
@@ -297,7 +307,7 @@ def _quotient(
 ) -> _Quantity:
     """Enclose all four endpoint quotients, then measure error from the returned RN value."""
     if not _certifying(builder):
-        return _rounded_quotient(builder, numerator, denominator, reason)
+        return _rounded_quotient(builder, numerator, denominator, reason, context)
     numerator = _float_quantity(builder, numerator, context)
     denominator = _float_quantity(builder, denominator, context)
     assert numerator.error is not None and denominator.error is not None
