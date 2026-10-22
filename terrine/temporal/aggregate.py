@@ -491,15 +491,23 @@ def _component(
         quantity = _Quantity(value, reason, known_zero, error)
         _check_quantity(builder, quantity, context)
     else:
-        value = builder.put("sum", exact_subtract(builder.col(sums[1]), builder.col(sums[0])))
-        known_zero = builder.put("sum_zero", builder.col(value) == zero)
         assert measure.value_type is not None  # callers pass resolved measures
         dtype = dt.dtype(measure.value_type)
-        scale = 0
-        if isinstance(dtype, dt.Decimal):
-            assert dtype.scale is not None
-            scale = dtype.scale
-        quantity = _Quantity(value, reason, known_zero, scale=scale)
+        difference = exact_subtract(builder.col(sums[1]), builder.col(sums[0]))
+        if dtype.is_floating():
+            # Exact float state (non-certifying backends): an empty window is zero
+            # even when non-finite history makes the prefix difference NaN.
+            value = builder.put("sum", builder.col(empty).ifelse(zero, difference))
+            known_zero = builder.put("sum_zero", builder.col(value) == zero)
+            quantity = _Quantity(value, reason, known_zero, rounded=True)
+        else:
+            value = builder.put("sum", difference)
+            known_zero = builder.put("sum_zero", builder.col(value) == zero)
+            scale = 0
+            if isinstance(dtype, dt.Decimal):
+                assert dtype.scale is not None
+                scale = dtype.scale
+            quantity = _Quantity(value, reason, known_zero, scale=scale)
     if measure.aggregation in {"avg_event", "avg_calendar_day"}:
         divisor = (
             nonnull_count

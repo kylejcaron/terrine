@@ -9,6 +9,7 @@ import ibis
 import pytest
 
 import terrine as tr
+from integration.warehouse_execution.postgres_fixtures import connect_postgres
 from integration.warehouse_execution.postgres_fixtures import (
     postgres_scratch as postgres_scratch,  # noqa: F401
 )
@@ -24,7 +25,7 @@ sources:
     relation: {{kind: table, name: events}}
     timestamp: occurred_at
     entities: {{user: user_id}}
-    facts: [order, quantity, amount, weight]
+    facts: [order, quantity, amount, weight, light]
     properties: [heaviness]
     dimensions: []
 facts:
@@ -32,6 +33,7 @@ facts:
   quantity: {{source: orders, column: qty}}
   amount: {{source: orders, column: amount}}
   weight: {{source: orders, column: weight}}
+  light: {{source: orders, column: light}}
 properties:
   heaviness: {{source: orders, column: weight, dtype: float, as_of: event_time}}
 dimensions: {{}}
@@ -45,6 +47,7 @@ measures:
   amount_total: {{fact: amount, aggregation: sum}}
   amount_average: {{fact: amount, aggregation: avg_event}}
   weight_total: {{fact: weight, aggregation: sum}}
+  light_total: {{fact: light, aggregation: sum}}
 metrics:
   orders: {{kind: mean, entity: user, measure: order_count}}
   heavy_orders: {{kind: mean, entity: user, measure: heavy_order_count}}
@@ -52,6 +55,7 @@ metrics:
   spend: {{kind: mean, entity: user, measure: amount_total}}
   average_spend: {{kind: mean, entity: user, measure: amount_average}}
   weight: {{kind: mean, entity: user, measure: weight_total}}
+  light: {{kind: mean, entity: user, measure: light_total}}
   spend_per_order: {{kind: ratio, entity: user, numerator: amount_total, denominator: order_count}}
 """
 
@@ -74,13 +78,14 @@ def _load(con, *, timestamp_type: str, amount_type: str) -> None:
     con.raw_sql("CREATE TABLE users(user_id VARCHAR)")
     con.raw_sql(
         f"CREATE TABLE events(user_id VARCHAR, occurred_at {timestamp_type}, "
-        f"qty BIGINT, amount {amount_type}, weight DOUBLE PRECISION)"
+        f"qty BIGINT, amount {amount_type}, weight DOUBLE PRECISION, light REAL)"
     )
     con.raw_sql("INSERT INTO users VALUES " + ", ".join(f"('{user}')" for user in _USERS))
+    # REAL values such as 0.1 widen to binary64 (0.10000000149011612) on both backends.
     con.raw_sql(
         "INSERT INTO events VALUES "
         + ", ".join(
-            f"('{user}', '{at}+00', {qty}, {amount}, {weight})"
+            f"('{user}', '{at}+00', {qty}, {amount}, {weight}, {weight / 10})"
             for user, at, qty, amount, weight in _EVENTS
         )
     )
@@ -188,3 +193,83 @@ def test_averages_and_ratios_match_duckdb_within_tolerance(postgres_scratch, tmp
     assert by_unit["a"]["average_before"] == pytest.approx(7.15 / 2, rel=1e-15)
     assert by_unit["d"]["average_before"] is None
     assert by_unit["d"]["per_order_before"] is None
+
+
+def test_float_windows_match_duckdb_within_tolerance(postgres_scratch, tmp_path):  # noqa: F811
+    duckdb = ibis.duckdb.connect()
+    _load(duckdb, timestamp_type="TIMESTAMPTZ", amount_type="DECIMAL(12, 2)")
+    _load(postgres_scratch.con, timestamp_type="timestamptz", amount_type="numeric(12, 2)")
+    design = _design(
+        outcomes={"weight_after": tr.agg("weight", window=("0s", "1d"))},
+        weight_before=tr.agg("weight", window=("-1d", "0s")),
+        weight_week=tr.agg("weight", window=("-7d", "0s")),
+        light_week=tr.agg("light", window=("-7d", "0s")),
+    )
+    expected = _rows(_model(duckdb, tmp_path, "duckdb"), design)
+    actual = _rows(_model(postgres_scratch.con, tmp_path, "postgres"), design)
+    _assert_close(actual, expected)
+    assert {row["unit"]: row["weight_before"] for row in actual}["a"] == 0.75
+
+
+def _float_rows(con, rows: list[tuple[str, str]]) -> None:
+    con.raw_sql(
+        "INSERT INTO events VALUES "
+        + ", ".join(f"('d', '{at}+00', 0, 0, {weight}, 0)" for at, weight in rows)
+    ).close()
+
+
+def test_large_float_history_cancels_exactly_outside_the_window(postgres_scratch, tmp_path):  # noqa: F811
+    con = postgres_scratch.con
+    _load(con, timestamp_type="timestamptz", amount_type="numeric(12, 2)")
+    # Float prefix sums would lose the small window entirely beneath this history.
+    _float_rows(
+        con,
+        [("2024-12-20 00:00:00", "1e17"), ("2024-12-21 00:00:00", "-3e16")]
+        + [("2025-01-01 12:00:00", "0.1"), ("2025-01-01 13:00:00", "0.2")],
+    )
+    design = _design(weight_before=tr.agg("weight", window=("-1d", "0s")))
+    value = {
+        row["unit"]: row["weight_before"]
+        for row in _rows(_model(con, tmp_path, "postgres"), design)
+    }
+    assert math.isclose(value["d"], 0.3, rel_tol=1e-15)
+
+
+@pytest.mark.parametrize(
+    ("rows", "failure"),
+    [
+        # A non-finite value before the window still poisons it, as on DuckDB.
+        ([("2024-12-20 00:00:00", "'NaN'"), ("2025-01-01 12:00:00", "1.0")], "nonfinite_input"),
+        ([("2025-01-01 12:00:00", "1e308"), ("2025-01-01 13:00:00", "1e308")], "bound_overflow"),
+    ],
+)
+def test_float_window_failures_are_coded_refusals(postgres_scratch, tmp_path, rows, failure):  # noqa: F811
+    con = postgres_scratch.con
+    _load(con, timestamp_type="timestamptz", amount_type="numeric(12, 2)")
+    _float_rows(con, rows)
+    design = _design(weight_before=tr.agg("weight", window=("-1d", "0s")))
+    with pytest.raises(TerrineError) as error:
+        _rows(_model(con, tmp_path, "postgres"), design)
+    assert error.value.code == "terrine.temporal.float64_precision"
+    assert error.value.context["failure"] == failure
+
+
+def test_float_state_ignores_the_callers_float_text_precision(postgres_scratch, tmp_path):  # noqa: F811
+    _load(postgres_scratch.con, timestamp_type="timestamptz", amount_type="numeric(12, 2)")
+    _float_rows(postgres_scratch.con, [("2025-01-01 12:00:00", str(1 / 3))])
+    con = connect_postgres(schema=postgres_scratch.schema, options="-c extra_float_digits=0")
+    try:
+        design = _design(weight_before=tr.agg("weight", window=("-1d", "0s")))
+        rows = _rows(_model(con, tmp_path, "postgres"), design)
+    finally:
+        con.disconnect()
+    assert {row["unit"]: row["weight_before"] for row in rows}["d"] == 1 / 3
+
+
+def test_empty_window_after_nonfinite_history_is_zero(postgres_scratch, tmp_path):  # noqa: F811
+    con = postgres_scratch.con
+    _load(con, timestamp_type="timestamptz", amount_type="numeric(12, 2)")
+    _float_rows(con, [("2024-12-20 00:00:00", "'Infinity'")])
+    design = _design(weight_before=tr.agg("weight", window=("-1d", "0s")))
+    rows = _rows(_model(con, tmp_path, "postgres"), design)
+    assert {row["unit"]: row["weight_before"] for row in rows}["d"] == 0.0
