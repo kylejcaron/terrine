@@ -189,6 +189,22 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
 - Read-only SQL is parsed using the dialect that will execute it and is
   rejected when read-only safety cannot be established.
 
+## Backend portability
+
+- Study queries (`terrine/compile/`, `terrine/temporal/`) are built from Ibis
+  expressions so every backend gets them through Ibis's translation. Do not add
+  raw SQL strings or `@ibis.udf.*.builtin` bindings to native functions there.
+- When Ibis lacks or mistranslates an operation on a supported backend, put
+  the workaround in one backend-dispatched helper with a live parity test,
+  not at each call site.
+- Raw SQL is acceptable only for: terrine's own DuckDB runtime state tables
+  (`terrine/runtime/`), backend-provider catalog introspection and transaction
+  control (`terrine/execution/`), and admitted user SQL relations.
+- Warehouse results match the DuckDB reference within a stated tolerance
+  (tight relative tolerance for floats; exact for counts and decimal sums).
+  Do not port DuckDB-specific exactness machinery, such as certified float
+  error bounds, to a warehouse to reach bit-for-bit parity.
+
 ## Complete changes
 
 - Public API changes update production callers, exports and registries,
