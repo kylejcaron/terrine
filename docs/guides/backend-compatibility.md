@@ -45,12 +45,21 @@ microsecond precision. Decimal columns need a declared `numeric(p, s)` with
 `terrine.backend.nonfinite_decimal`. Sums that do not fit the output type refuse
 with `terrine.temporal.exact_overflow`.
 
-Refused on PostgreSQL, with a route: averages, ratios and float-valued windows
-(`terrine.temporal.float64_unsupported`; PostgreSQL has no `nextafter` and its
-float-to-numeric conversion is not exact, so request a sum and a count and divide
-downstream, or use DuckDB); retained input capture, Dataset staging, publication
-and reopening (`terrine.backend.capability_unavailable`; these live in the DuckDB
-runtime).
+Averages, ratios and float-valued windows match DuckDB within a tight relative
+tolerance rather than bit for bit. PostgreSQL keeps each window quantity exact in
+`NUMERIC` and rounds to binary64 once: a float fact enters as the decimal value
+of its shortest round-trip text (`REAL` is widened first), so history outside the
+window cancels exactly and a window sum's error is at most 2^-53 times the sum of
+its absolute values, plus the final rounding; a quotient is divided to at least
+16 significant digits before rounding (relative error below 1e-15). These columns
+carry `numeric_policy=None` and no absolute-error column; DuckDB's certified
+`checked_float64_v1` results are unchanged. A non-finite value at or before the
+window end, or a result beyond binary64 range, refuses with
+`terrine.temporal.float64_precision` (`nonfinite_input` / `bound_overflow`).
+
+Refused on PostgreSQL, with a route: retained input capture, Dataset staging,
+publication and reopening (`terrine.backend.capability_unavailable`; these live
+in the DuckDB runtime).
 
 ## Operation evidence
 

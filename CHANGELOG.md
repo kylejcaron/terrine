@@ -50,8 +50,9 @@
   each run reads one consistent `REPEATABLE READ READ ONLY` snapshot on a private
   connection. Counts, exact integer/decimal sums, as-of attributes and fixed,
   scheduled, event-anchored, time-to-event, cohort-trajectory and state-panel
-  designs match DuckDB.
-  Averages, ratios, float windows and Dataset staging refuse with a route.
+  designs match DuckDB. Averages, ratios and float windows are computed exactly
+  in `NUMERIC` and rounded once, matching DuckDB within a tight relative
+  tolerance (`numeric_policy=None`). Dataset staging refuses with a route.
 - Refuse decimal sources without a declared precision and scale
   (`terrine.semantic.decimal_scale_required`) and non-finite PostgreSQL numerics
   (`terrine.backend.nonfinite_decimal`).
