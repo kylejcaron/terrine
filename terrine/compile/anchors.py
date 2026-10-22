@@ -12,6 +12,7 @@ import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 import pyarrow as pa
 
+from terrine.backends.timestamps import has_submicrosecond, utc_instant, utc_wall_clock
 from terrine.errors import RefusalSpec
 from terrine.model import Model
 from terrine.semantic.models import TableRef
@@ -116,24 +117,6 @@ def _bound(model: Model, value: date | datetime | None) -> datetime | None:
     return model.day_boundary(value).astimezone(UTC)
 
 
-def _quote(identifier: str) -> str:
-    return '"' + identifier.replace('"', '""') + '"'
-
-
-def _dialect(model: Model) -> str:
-    return model.catalog.dialect.casefold()
-
-
-def _utc_sql(model: Model, column_sql: str) -> str:
-    """Native SQL converting a timestamp to UTC: naive input denotes UTC wall time."""
-    dialect = _dialect(model)
-    if dialect == "duckdb":
-        return f"timezone('UTC', {column_sql})"
-    if dialect == "postgres":
-        return f"({column_sql} AT TIME ZONE 'UTC')"
-    raise _UTC_CONVERSION_UNSUPPORTED.error(backend=model.catalog.dialect)
-
-
 def _precision_check(
     model: Model, table: ibis.Table, column: str, *, source_column: str | None = None
 ) -> _AnchorCheck | None:
@@ -141,14 +124,7 @@ def _precision_check(
     assert isinstance(dtype, dt.Timestamp)
     if dtype.scale is None or dtype.scale <= 6:
         return None
-    if model.catalog.dialect.casefold() != "duckdb":
-        raise _UTC_CONVERSION_UNSUPPORTED.error(backend=model.catalog.dialect)
-    relation_sql = ibis.to_sql(table, dialect="duckdb")
-    col = f"source.{_quote(column)}"
-    query = model._sql(
-        f"SELECT count(*) AS invalid_count FROM ({relation_sql}) AS source "
-        f"WHERE {col} IS NOT NULL AND epoch_ns({col}) % 1000 <> 0"
-    )
+    query = table.filter(has_submicrosecond(table[column])).aggregate(invalid_count=ibis._.count())
     reported_column = source_column if source_column is not None else column
     return _AnchorCheck(query, _TIMESTAMP_PRECISION, (("column", reported_column),))
 
@@ -158,11 +134,7 @@ def _utc_column(model: Model, table: Any, column: str, output: str) -> Any:
     dtype = table.schema()[column]
     if dtype.timezone is not None:
         return table.mutate(**{output: table[column].cast("timestamp('UTC')")})
-    relation_sql = ibis.to_sql(table, dialect=_dialect(model))
-    expression = _utc_sql(model, f"source.{_quote(column)}")
-    return model._sql(
-        f"SELECT source.*, {expression} AS {_quote(output)} FROM ({relation_sql}) AS source"
-    )
+    return table.mutate(**{output: utc_instant(table[column])})
 
 
 def _range_filter_raw(
@@ -172,7 +144,7 @@ def _range_filter_raw(
         return table
     dtype = table.schema()[column]
     naive = dtype.timezone is None
-    if naive and _dialect(model) not in {"duckdb", "postgres"}:
+    if naive and model.catalog.dialect.casefold() not in {"duckdb", "postgres"}:
         raise _UTC_CONVERSION_UNSUPPORTED.error(backend=model.catalog.dialect)
     start, end = _bound(model, anchor_range.start), _bound(model, anchor_range.end)
     for bound, lower in ((start, True), (end, False)):
@@ -313,18 +285,7 @@ def _roster_anchors(
         if elapsed_seconds <= 0:
             raise _INVALID.error(reason="schedule interval has no elapsed time")
         stop = (elapsed_seconds + schedule.every - 1) // schedule.every
-        dialect = _dialect(model)
-        if dialect == "duckdb":
-            sequence = model._sql(f"SELECT unnest(range(0, {stop})) AS ordinal")
-        elif dialect == "postgres":
-            sequence = model._sql(
-                f"SELECT CAST(ordinal AS BIGINT) AS ordinal FROM generate_series(0, {stop - 1}) "
-                "AS ordinal"
-            )
-        else:
-            raise _INVALID.error(
-                reason="lazy Schedule expansion requires DuckDB or PostgreSQL series support"
-            )
+        sequence = ibis.range(0, stop).unnest().cast("int64").name("ordinal").as_table()
         ordinal = sequence.ordinal
         t0 = ibis.literal(start) + ibis.interval(seconds=schedule.every) * ordinal
         base = sequence.select(
@@ -370,12 +331,8 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
         names = {name.casefold() for name in events.columns}
         while alias.casefold() in names:
             alias = f"_{alias}"
-        relation_sql = ibis.to_sql(events, dialect=_dialect(model))
-        utc = _utc_sql(model, f"source.{_quote(identity_column)}")
-        events = model._sql(
-            f"SELECT source.*, CAST({utc} AS VARCHAR) AS {_quote(alias)} "
-            f"FROM ({relation_sql}) AS source"
-        )
+        utc_text = utc_wall_clock(events[identity_column]).cast("string")
+        events = events.mutate(**{alias: utc_text})
         identity_text = events[alias]
     raw_timestamp = events[source.timestamp_column]
     checks: list[_AnchorCheck] = [

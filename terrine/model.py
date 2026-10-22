@@ -213,12 +213,6 @@ class Model:
     def _relation(self, relation: RelationSpec) -> Any:
         return self._resolver(relation)
 
-    def _sql(self, sql: str) -> Any:
-        """Admit compiler functions before schema inference can invoke callbacks."""
-        from terrine.execution.backend import backend_provider
-
-        return backend_provider(self.con).sql(self.con, sql)
-
     @metadata_operation()
     def _for_execution(
         self,

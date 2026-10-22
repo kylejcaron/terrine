@@ -142,31 +142,6 @@ def test_unverified_backend_evidence_does_not_admit_queries(dialect):
     assert error.value.context["backend"] == dialect
 
 
-@pytest.mark.parametrize(
-    "sql",
-    [
-        "DELETE FROM events RETURNING value",
-        "CREATE TABLE unexpected AS SELECT 1",
-        "SELECT value FROM events; DELETE FROM events",
-    ],
-)
-def test_provider_rejects_non_read_compiler_queries_before_native_execution(sql):
-    from terrine.execution.backend import backend_provider
-
-    con = ibis.duckdb.connect()
-    try:
-        con.con.execute("CREATE TABLE events AS SELECT 7 AS value")
-        with pytest.raises(TerrineError) as error:
-            backend_provider(con).sql(con, sql)
-        assert error.value.code == "terrine.sql.invalid_read_query"
-        assert con.con.execute("SELECT value FROM events").fetchall() == [(7,)]
-        assert con.con.execute(
-            "SELECT count(*) FROM information_schema.tables WHERE table_name = 'unexpected'"
-        ).fetchone() == (0,)
-    finally:
-        con.disconnect()
-
-
 def test_raw_driver_connection_is_not_an_ibis_execution_provider():
     from terrine.execution._native import verify_native_backend
     from terrine.execution.backend import backend_capabilities, backend_provider

@@ -20,6 +20,7 @@ from terrine.errors import RefusalSpec
 
 __all__ = [
     "compare_timestamps",
+    "has_submicrosecond",
     "timestamp_is_finite",
     "timestamp_order_key",
     "timestamp_parts",
@@ -47,6 +48,18 @@ def timestamp_is_finite(value: ir.TimestampValue) -> ir.BooleanValue:
     if dialect not in _NATIVE:
         raise unavailable("timestamp_is_finite", dialect)
     return cast(ir.BooleanValue, _isfinite(value))
+
+
+def has_submicrosecond(value: ir.TimestampValue) -> ir.BooleanValue:
+    """Whether a finite instant has nonzero nanoseconds below its microsecond."""
+    dtype = cast(dt.Timestamp, value.type())
+    finite = timestamp_is_finite(value)
+    epoch = _epoch(dtype)
+    instant = cast(ir.TimestampValue, finite.ifelse(value, epoch))
+    coefficient = instant.delta(epoch, unit="nanosecond")
+    # Subtraction, not `%`: Ibis renders this delta as a bare `a - b`.
+    below = coefficient - truncating_quotient(coefficient, 1000, like=value) * 1000
+    return value.notnull() & finite & (below != 0)
 
 
 @ibis.udf.scalar.builtin(
@@ -120,23 +133,6 @@ def _epoch(dtype: dt.Timestamp) -> ir.TimestampScalar:
     so its meaning does not depend on the session time zone."""
     instant = datetime(1970, 1, 1, tzinfo=UTC) if dtype.timezone else datetime(1970, 1, 1)
     return cast(ir.TimestampScalar, ibis.literal(instant, type=dtype))
-
-
-def epoch_us_sql(dialect: str, column_sql: str) -> str:
-    """Native SQL for a timestamp's exact signed microseconds since the Unix epoch.
-
-    PostgreSQL returns exact NUMERIC: its late timestamps exceed the BIGINT
-    microsecond range, so cast only a bounded result such as a difference.
-    """
-    if dialect.casefold() == "postgres":
-        late = f"pg_catalog.extract('year', {column_sql}) >= {_PG_LATE_YEAR}"
-        shifted = f"{column_sql} - INTERVAL '{_PG_SHIFT_HOURS} hours'"
-        return (
-            f"(CASE WHEN {late} THEN pg_catalog.extract('epoch', {shifted}) + "
-            f"{_PG_SHIFT_HOURS * 3600} ELSE pg_catalog.extract('epoch', {column_sql}) END "
-            "* 1000000)"
-        )
-    return f"epoch_us({column_sql})"
 
 
 def timestamp_parts(

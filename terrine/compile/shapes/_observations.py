@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC
 from typing import TYPE_CHECKING
 
 import ibis
 import pyarrow as pa
 
-from terrine.backends.timestamps import epoch_us_sql
 from terrine.compile.anchors import (
     AnchorTable,
     _precision_check,
@@ -72,12 +71,6 @@ def _period_design(
     )
 
 
-def _epoch_microseconds(value: datetime) -> int:
-    epoch = datetime(1970, 1, 1, tzinfo=UTC)
-    delta = value.astimezone(UTC) - epoch
-    return ((delta.days * 86_400 + delta.seconds) * 1_000_000) + delta.microseconds
-
-
 def _points(design: Design, model: Model, state: StateObservations):
     schedule = design.anchor
     assert isinstance(schedule, Schedule)
@@ -134,19 +127,13 @@ def _points(design: Design, model: Model, state: StateObservations):
             "observation contains an undeclared state level",
         ),
     )
-    # Exact signed microseconds keep schedule-grid validation exact.
+    # Exact microsecond offsets from the grid start keep schedule-grid validation exact.
     panel_points = all_points.filter(
         (all_points.point_time >= ibis.literal(start))
         & (all_points.point_time <= ibis.literal(end))
     )
-    dialect = model.catalog.dialect
-    sql = ibis.to_sql(panel_points, dialect=dialect.casefold())
-    start_us = _epoch_microseconds(start)
-    period_us = schedule.every * 1_000_000
-    with_grid = model._sql(
-        f"SELECT state_points.*, (({epoch_us_sql(dialect, 'point_time')} - {start_us}) "
-        f"% {period_us} = 0) AS __on_grid FROM ({sql}) AS state_points"
-    )
+    offset = panel_points.point_time.delta(ibis.literal(start), unit="microsecond")
+    with_grid = panel_points.mutate(__on_grid=offset % (schedule.every * 1_000_000) == 0)
     return coverage, bounded, with_grid, precision, raw_checks
 
 
@@ -340,11 +327,7 @@ def compile_observed_state_panel(
             to_state_reason=to_reason,
         )
         relation = joined.select(**projection)
-        dialect = model.catalog.dialect
-        query = ibis.to_sql(relation, dialect=dialect.casefold())
-        later, earlier = epoch_us_sql(dialect, "to_time"), epoch_us_sql(dialect, "from_time")
-        gap = f"CAST({later} - {earlier} AS BIGINT)"
-        return model._sql(f"SELECT state_rows.*, {gap} AS gap FROM ({query}) AS state_rows")
+        return relation.mutate(gap=relation.to_time.delta(relation.from_time, unit="microsecond"))
 
     retained = attach(compiled.table)
     audit = attach(compiled.audit_table)
