@@ -193,10 +193,13 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
 
 - Study queries (`terrine/compile/`, `terrine/temporal/`) are built from Ibis
   expressions so every backend gets them through Ibis's translation. Do not add
-  raw SQL strings or `@ibis.udf.*.builtin` bindings to native functions there.
-- When Ibis lacks or mistranslates an operation on a supported backend, put
-  the workaround in one backend-dispatched helper with a live parity test,
-  not at each call site.
+  raw SQL strings or `@ibis.udf.*.builtin` bindings to native functions there;
+  ruff (`TID251`) rejects `ibis.udf` and `ibis.to_sql` outside the allowed
+  packages.
+- When Ibis lacks or mistranslates an operation on a supported backend, add a
+  dispatched helper in `terrine/backends/` (`dialect`, `numeric`, `timestamps`)
+  with a live parity test, not a workaround at each call site. Supporting a new
+  warehouse means implementing those helpers for it.
 - Raw SQL is acceptable only for: terrine's own DuckDB runtime state tables
   (`terrine/runtime/`), backend-provider catalog introspection and transaction
   control (`terrine/execution/`), and admitted user SQL relations.
