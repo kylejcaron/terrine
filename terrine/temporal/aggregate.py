@@ -15,9 +15,13 @@ import pyarrow as pa
 
 from terrine.backends.dialect import dialect_of
 from terrine.backends.numeric import (
+    exact_is_nonfinite,
     exact_literal,
+    exact_ratio,
     exact_subtract,
     exact_sum,
+    exact_to_float,
+    exact_type,
     float_is_finite,
     ieee_divide,
     ieee_subtract,
@@ -177,6 +181,9 @@ class _Quantity:
     error: str | None = None
     scale: int = 0
     count: bool = False
+    # An exact NUMERIC decimal rounded once to binary64 at output (non-certifying
+    # backends); ``scale`` is then 0 because the value is not a coefficient.
+    rounded: bool = False
 
 
 def _scaled_text(coefficient, scale: int):
@@ -259,10 +266,48 @@ def _check_quantity(builder: _Builder, quantity: _Quantity, context) -> None:
         builder.numeric.append((column, FLOAT64_PRECISION, {**context, "failure": failure}))
 
 
+def _certifying(builder: _Builder) -> bool:
+    """DuckDB certifies float results; other backends round exact NUMERIC once."""
+    return dialect_of(builder.table.t0) == "duckdb"
+
+
+def _exact_decimal(builder: _Builder, quantity: _Quantity) -> ir.Value:
+    value = builder.col(quantity.value)
+    if quantity.rounded or quantity.scale == 0:
+        return value
+    return _scaled_text(value, quantity.scale).cast(exact_type(value))
+
+
+def _rounded_quotient(
+    builder: _Builder, numerator: _Quantity, denominator: _Quantity, reason: str, context
+) -> _Quantity:
+    """Divide exactly in NUMERIC; ``aggregate_window`` rounds the result once.
+
+    A non-finite component refuses here: division could erase it (1/Infinity = 0).
+    """
+    for component in (numerator, denominator):
+        if component.rounded:
+            nonfinite = exact_is_nonfinite(builder.col(component.value)).fill_null(
+                ibis.literal(False)
+            )
+            builder.flag(nonfinite, "nonfinite_input", context)
+    value = builder.put(
+        "quotient",
+        exact_ratio(_exact_decimal(builder, numerator), _exact_decimal(builder, denominator)),
+    )
+    known_zero = builder.put(
+        "quotient_zero",
+        builder.col(numerator.known_zero) & ~builder.col(denominator.known_zero),
+    )
+    return _Quantity(value, reason, known_zero, rounded=True)
+
+
 def _quotient(
     builder: _Builder, numerator: _Quantity, denominator: _Quantity, reason: str, context
 ) -> _Quantity:
     """Enclose all four endpoint quotients, then measure error from the returned RN value."""
+    if not _certifying(builder):
+        return _rounded_quotient(builder, numerator, denominator, reason, context)
     numerator = _float_quantity(builder, numerator, context)
     denominator = _float_quantity(builder, denominator, context)
     assert numerator.error is not None and denominator.error is not None
@@ -456,15 +501,23 @@ def _component(
         quantity = _Quantity(value, reason, known_zero, error)
         _check_quantity(builder, quantity, context)
     else:
-        value = builder.put("sum", exact_subtract(builder.col(sums[1]), builder.col(sums[0])))
-        known_zero = builder.put("sum_zero", builder.col(value) == zero)
         assert measure.value_type is not None  # callers pass resolved measures
         dtype = dt.dtype(measure.value_type)
-        scale = 0
-        if isinstance(dtype, dt.Decimal):
-            assert dtype.scale is not None
-            scale = dtype.scale
-        quantity = _Quantity(value, reason, known_zero, scale=scale)
+        difference = exact_subtract(builder.col(sums[1]), builder.col(sums[0]))
+        if dtype.is_floating():
+            # Exact float state (non-certifying backends): an empty window is zero
+            # even when non-finite history makes the prefix difference NaN.
+            value = builder.put("sum", builder.col(empty).ifelse(zero, difference))
+            known_zero = builder.put("sum_zero", builder.col(value) == zero)
+            quantity = _Quantity(value, reason, known_zero, rounded=True)
+        else:
+            value = builder.put("sum", difference)
+            known_zero = builder.put("sum_zero", builder.col(value) == zero)
+            scale = 0
+            if isinstance(dtype, dt.Decimal):
+                assert dtype.scale is not None
+                scale = dtype.scale
+            quantity = _Quantity(value, reason, known_zero, scale=scale)
     if measure.aggregation in {"avg_event", "avg_calendar_day"}:
         divisor = (
             nonnull_count
@@ -671,17 +724,18 @@ def aggregate_window(
     evaluated = builder.put("evaluated", builder.col(final_reason).isnull())
     if unknown_flags:
         checks.append(builder.check(unknown_flags, active=builder.col(available)))
+    numeric_context = {
+        "source": ",".join(m.source_name for m in metric.measures),
+        "measure": ",".join(m.fact for m in metric.measures),
+        "output": output,
+    }
     if quantity.error is not None:
         builder.flag(
             builder.col(quantity.error) > float64_tolerance(builder.col(quantity.value)),
             "tolerance",
-            {
-                "source": ",".join(m.source_name for m in metric.measures),
-                "measure": ",".join(m.fact for m in metric.measures),
-                "output": output,
-            },
+            numeric_context,
         )
-    exact_output = metric.kind != "conversion" and quantity.error is None
+    exact_output = metric.kind != "conversion" and quantity.error is None and not quantity.rounded
     if exact_output:
         target = "int64" if quantity.count else dt.Decimal(38, quantity.scale)
         value = builder.put(
@@ -713,6 +767,11 @@ def aggregate_window(
                 active=builder.col(evaluated),
             )
         )
+    elif quantity.rounded:
+        rounded, nonfinite, out_of_range = exact_to_float(builder.col(quantity.value))
+        value = builder.put("rounded", rounded)
+        builder.flag(nonfinite, "nonfinite_input", numeric_context)
+        builder.flag(out_of_range, "bound_overflow", numeric_context)
     else:
         value = quantity.value
     if builder.numeric:
@@ -744,7 +803,7 @@ def aggregate_window(
         reason_column=final_reason,
         numeric_policy=(
             None
-            if metric.kind == "conversion"
+            if metric.kind == "conversion" or quantity.rounded
             else "checked_float64_v1"
             if quantity.error is not None
             else "exact"

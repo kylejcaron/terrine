@@ -45,12 +45,26 @@ microsecond precision. Decimal columns need a declared `numeric(p, s)` with
 `terrine.backend.nonfinite_decimal`. Sums that do not fit the output type refuse
 with `terrine.temporal.exact_overflow`.
 
-Refused on PostgreSQL, with a route: averages, ratios and float-valued windows
-(`terrine.temporal.float64_unsupported`; PostgreSQL has no `nextafter` and its
-float-to-numeric conversion is not exact, so request a sum and a count and divide
-downstream, or use DuckDB); retained input capture, Dataset staging, publication
-and reopening (`terrine.backend.capability_unavailable`; these live in the DuckDB
-runtime).
+Averages, ratios and float-valued windows match DuckDB within a tight tolerance
+rather than bit for bit. PostgreSQL keeps each window quantity exact in `NUMERIC`
+and rounds to binary64 once. A float fact enters as the decimal value of its
+shortest round-trip text (`REAL` is widened first), which lies within half an ulp
+of the stored float, so history outside the window cancels exactly. A window
+sum's error is therefore at most the sum of its values' half-ulps (at most
+2^-53·Σ|xᵢ|, plus 2^-1075 per subnormal value) and one final rounding. The bound
+is relative to the window's absolute sum, not to the result: under cancellation,
+such as 1.000001 + (-1.0), the relative difference from DuckDB can reach about
+1e-10. A quotient is divided to at least 16 significant digits before rounding
+(relative error below 1e-15 of its exact inputs). These columns carry
+`numeric_policy=None` and no absolute-error column; DuckDB's certified
+`checked_float64_v1` results are unchanged. A non-finite value at or before the
+end of a non-empty window, or a result beyond binary64 range, refuses with
+`terrine.temporal.float64_precision` (`nonfinite_input` / `bound_overflow`); an
+empty window is zero, as on DuckDB.
+
+Refused on PostgreSQL, with a route: retained input capture, Dataset staging,
+publication and reopening (`terrine.backend.capability_unavailable`; these live
+in the DuckDB runtime).
 
 ## Operation evidence
 

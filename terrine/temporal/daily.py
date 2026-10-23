@@ -15,6 +15,7 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+from terrine.backends.dialect import dialect_of
 from terrine.backends.numeric import (
     exact_literal,
     exact_subtract,
@@ -331,6 +332,13 @@ def _sparse_group(
     assert measure.value_type is not None  # resolve_measure always binds it
     dtype = dt.dtype(measure.value_type)
     floating = dtype.is_floating() and measure.aggregation != "count"
+    if floating and dialect_of(events[events.columns[0]]) != "duckdb":
+        # Without DuckDB's certified float reductions, float facts accumulate
+        # exactly from each value's shortest round-trip decimal; window sums then
+        # cancel history exactly and round once at output.
+        floating, exact_floats = False, True
+    else:
+        exact_floats = False
     _require_backend(events, floating=floating)
     predicate, observed_null, missing, literal_null, nonfinite = _predicate(events, measure, source)
     selected = predicate.fill_null(False)
@@ -382,7 +390,8 @@ def _sparse_group(
             ).any(),
         )
     else:
-        text = leaf.__terrine_value.cast("string")
+        source_value = leaf.__terrine_value
+        text = (source_value.cast("float64") if exact_floats else source_value).cast("string")
         if dtype.is_decimal():
             text = text.replace(".", "")
         coefficient = leaf.__terrine_selected.ifelse(

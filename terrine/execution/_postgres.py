@@ -342,6 +342,8 @@ def owned_connection(con: Any) -> Any:
     try:
         with owned.cursor() as cursor:
             cursor.execute("SET TIME ZONE 'UTC'")
+            # Shortest round-trip float text: exact float state is built from it.
+            cursor.execute("SET extra_float_digits = 1")
             cursor.execute("SELECT pg_catalog.set_config('search_path', %s, false)", (search_path,))
         owned.commit()
         owned.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")

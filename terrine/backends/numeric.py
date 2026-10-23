@@ -9,6 +9,7 @@ tolerance instead.
 from __future__ import annotations
 
 import math
+import sys
 from typing import cast
 
 import ibis
@@ -19,9 +20,12 @@ import sqlglot.expressions as sge
 from terrine.backends.dialect import dialect_of, unavailable
 
 __all__ = [
+    "exact_is_nonfinite",
     "exact_literal",
+    "exact_ratio",
     "exact_subtract",
     "exact_sum",
+    "exact_to_float",
     "exact_type",
     "float_is_finite",
     "ieee_add",
@@ -54,6 +58,74 @@ def is_exact_type(dtype: dt.DataType) -> bool:
 def exact_literal(value: int, *like: ir.Value) -> ir.Value:
     """An exact native integer, without an inferred fixed-width literal type."""
     return ibis.literal(str(value)).cast(exact_type(*like))
+
+
+def _exact_text(text: str, *like: ir.Value) -> ir.Value:
+    return ibis.literal(text).cast(exact_type(*like))
+
+
+@ibis.udf.scalar.builtin(
+    name="numeric_div", database="pg_catalog", signature=((_PG_EXACT, _PG_EXACT), _PG_EXACT)
+)
+def _pg_exact_divide(numerator, denominator):
+    """PostgreSQL NUMERIC division to at least 16 significant digits."""
+
+
+def exact_ratio(numerator: ir.Value, denominator: ir.Value) -> ir.Value:
+    """NUMERIC ``numerator / denominator``; NULL for a zero denominator.
+
+    PostgreSQL only: DuckDB's certified path encloses quotients in float intervals.
+    """
+    dialect = dialect_of(numerator, denominator)
+    if dialect != "postgres":
+        raise unavailable("exact_ratio", dialect)
+    zero = exact_literal(0, numerator, denominator)
+    divisor = (denominator == zero).ifelse(ibis.null().cast(_PG_EXACT), denominator)
+    return _pg_exact_divide(numerator, divisor)
+
+
+# Binary64's largest finite value, and 2**-1075: magnitudes at or below it round
+# to zero, which PostgreSQL's float8 input rejects instead of returning.
+_FLOAT64_MAX = str(int(sys.float_info.max))
+_FLOAT64_ROUNDS_TO_ZERO = "0." + str(5**1075).rjust(1075, "0")
+_NONFINITE = ("NaN", "Infinity", "-Infinity")
+
+
+def exact_is_nonfinite(value: ir.Value) -> ir.BooleanValue:
+    """Whether an exact NUMERIC value is NaN or infinite (PostgreSQL); NULL stays NULL."""
+    dialect = dialect_of(value)
+    if dialect != "postgres":
+        raise unavailable("exact_is_nonfinite", dialect)
+    return value.isin([_exact_text(text, value) for text in _NONFINITE])
+
+
+def exact_to_float(
+    value: ir.Value,
+) -> tuple[ir.FloatingValue, ir.BooleanValue, ir.BooleanValue]:
+    """Round a NUMERIC value once to binary64.
+
+    Returns (float, nonfinite, out_of_range); the float is NULL for either flag.
+    Magnitudes at or below 2**-1075 become 0.0, as round-to-nearest would give.
+    """
+    # NUMERIC NaN equals itself and sorts above every number, so test it first.
+    nonfinite = exact_is_nonfinite(value)
+    limit, tiny = _exact_text(_FLOAT64_MAX, value), _exact_text(_FLOAT64_ROUNDS_TO_ZERO, value)
+    negative_limit = _exact_text("-" + _FLOAT64_MAX, value)
+    negative_tiny = _exact_text("-" + _FLOAT64_ROUNDS_TO_ZERO, value)
+    out_of_range = ~nonfinite & ((value > limit) | (value < negative_limit))
+    rounds_to_zero = (value <= tiny) & (value >= negative_tiny)
+    missing = ibis.null().cast(dt.float64)
+    result = ibis.cases(
+        (nonfinite | out_of_range, missing),
+        (rounds_to_zero, ibis.literal(0.0)),
+        else_=value.cast(dt.float64),
+    )
+    false = ibis.literal(False)
+    return (
+        cast(ir.FloatingValue, result),
+        nonfinite.fill_null(false),
+        out_of_range.fill_null(false),
+    )
 
 
 @ibis.udf.agg.builtin(name="sum", signature=((_DUCKDB_EXACT,), _DUCKDB_EXACT))

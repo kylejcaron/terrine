@@ -204,7 +204,8 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   (`terrine/runtime/`), backend-provider catalog introspection and transaction
   control (`terrine/execution/`), and admitted user SQL relations.
 - Warehouse results match the DuckDB reference within a stated tolerance
-  (tight relative tolerance for floats; exact for counts and decimal sums).
+  (floats: tight, relative to the window's absolute sum, since cancellation
+  defeats a purely relative bound; exact for counts and decimal sums).
   Do not port DuckDB-specific exactness machinery, such as certified float
   error bounds, to a warehouse to reach bit-for-bit parity.
 
