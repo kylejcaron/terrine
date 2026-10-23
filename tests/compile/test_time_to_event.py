@@ -225,6 +225,25 @@ def test_event_before_declared_delayed_entry_is_prevalent():
         con.disconnect()
 
 
+def test_entry_and_exit_together_bound_followup_on_both_sides():
+    con, model = _model(unit="u2")
+    try:
+        con.raw_sql(
+            "UPDATE exits SET ts = TIMESTAMPTZ '2025-01-03 00:00:00+00' WHERE user_id = 'u2'"
+        )
+        design = Design(
+            "user",
+            FixedDate("2025-01-01"),
+            shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True, exit="closed"),
+        )
+        rows = {row["unit"]: row for row in _collect(design, model).to_pylist()}
+        assert rows["u2"]["entry_time"] == datetime(2025, 1, 2, tzinfo=UTC)
+        assert rows["u2"]["censor_time"] == datetime(2025, 1, 3, tzinfo=UTC)
+        assert rows["u2"]["event"] is False
+    finally:
+        con.disconnect()
+
+
 def test_administrative_cutoff_changes_followup_without_changing_readiness():
     con, model = _model()
     try:

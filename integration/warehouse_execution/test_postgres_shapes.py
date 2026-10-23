@@ -142,6 +142,13 @@ _DESIGNS = {
         shape=tr.TimeToEvent("order"),
         administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
     ),
+    # Entry and exit coverages are narrowed against the backend's timestamp range.
+    "time_to_order_with_entry_and_exit": tr.Design(
+        "user",
+        tr.FixedDate("2025-01-01T12:00:00+00:00"),
+        shape=tr.TimeToEvent("order", entry="amount", delayed_entry=True, exit="amount"),
+        administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
+    ),
     "observed_state_panel": tr.Design(
         "user",
         tr.Schedule("1d", "2025-01-02", "2025-01-05"),

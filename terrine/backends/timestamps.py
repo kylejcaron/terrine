@@ -21,6 +21,7 @@ from terrine.errors import RefusalSpec
 __all__ = [
     "compare_timestamps",
     "has_submicrosecond",
+    "timestamp_extremes",
     "timestamp_is_finite",
     "timestamp_order_key",
     "timestamp_parts",
@@ -51,6 +52,19 @@ def timestamp_is_finite(value: ir.TimestampValue) -> ir.BooleanValue:
     if dialect not in _NATIVE:
         raise unavailable("timestamp_is_finite", dialect)
     return cast(ir.BooleanValue, _isfinite(value))
+
+
+def timestamp_extremes(dtype: dt.Timestamp) -> tuple[ir.TimestampScalar, ir.TimestampScalar]:
+    """The lowest and highest values of ``dtype``: infinities where the backend has
+    them (DuckDB, PostgreSQL), else BigQuery's year 1 and year 9999 limits."""
+    if dialect_of() == "bigquery":
+        low, high = "0001-01-01 00:00:00", "9999-12-31 23:59:59.999999"
+    else:
+        low, high = "-infinity", "infinity"
+    return (
+        cast(ir.TimestampScalar, ibis.literal(low).cast(dtype)),
+        cast(ir.TimestampScalar, ibis.literal(high).cast(dtype)),
+    )
 
 
 def has_submicrosecond(value: ir.TimestampValue) -> ir.BooleanValue:

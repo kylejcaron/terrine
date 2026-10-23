@@ -105,6 +105,8 @@
   history checks across ordinary, retained and downstream export paths.
 - Capture event-anchor and recursive event-selector sources even when the
   analysis unit has no separate roster.
+- Build time-to-event designs that declare both an entry and an exit fact;
+  they previously failed with a column name collision.
 - Read retained run-event pages and their cursor-gap boundary from one consistent
   snapshot so concurrent retention cannot silently skip events.
 - Create the complete run-tracking schema when the runtime owner starts, so a

@@ -11,7 +11,7 @@ from integration.warehouse_execution.bigquery_fixtures import (
 from terrine.errors import TerrineError
 from terrine.execution.backend import backend_provider
 from terrine.execution.inputs import open_execution
-from terrine.semantic.models import TableRef
+from terrine.semantic.models import SqlQuery, TableRef
 
 pytestmark = pytest.mark.bigquery
 
@@ -96,17 +96,34 @@ def test_replaced_table_and_changed_view_refuse_after_binding(bigquery_scratch, 
         assert error.value.code == "terrine.execution.invalid_input_binding"
 
 
-def test_view_calling_a_user_routine_is_refused(bigquery_scratch, tmp_path):  # noqa: F811
+@pytest.mark.parametrize(
+    "call",
+    [
+        "`{dataset}`.same(user_id)",
+        # A fully backticked path parses as one identifier, not a qualified call.
+        "`{project}.{dataset}.same`(user_id)",
+    ],
+)
+def test_view_calling_a_user_routine_is_refused(bigquery_scratch, tmp_path, call):  # noqa: F811
     scratch = bigquery_scratch
     _events(scratch)
     scratch.sql("CREATE FUNCTION same(x STRING) AS (x)")
+    routine = call.format(project=scratch.project, dataset=scratch.dataset)
     scratch.sql(
-        f"CREATE VIEW shaped AS SELECT `{scratch.dataset}`.same(user_id) AS user_id, "
-        "occurred_at, amount FROM events"
+        f"CREATE VIEW shaped AS SELECT {routine} AS user_id, occurred_at, amount FROM events"
     )
     with pytest.raises(TerrineError) as error:
         _model(scratch, tmp_path, relation="{kind: table, name: shaped}")
     assert error.value.code == "terrine.execution.snapshot_unavailable"
+
+
+def test_unqualified_sql_relation_resolves_in_the_default_dataset(bigquery_scratch, tmp_path):  # noqa: F811
+    scratch = bigquery_scratch
+    _events(scratch)
+    sql = "SELECT user_id, occurred_at, amount FROM events WHERE user_id <> 'z'"
+    model = _model(scratch, tmp_path, relation='{kind: sql, sql: "' + sql + '"}')
+    with open_execution(model.catalog, scratch.con) as context:
+        assert _count(context, SqlQuery(kind="sql", sql=sql)) == 1
 
 
 def test_unbounded_decimal_column_is_refused_at_binding(bigquery_scratch, tmp_path):  # noqa: F811

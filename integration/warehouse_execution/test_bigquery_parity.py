@@ -211,26 +211,33 @@ def test_float_windows_match_duckdb_within_tolerance(bigquery_scratch, tmp_path)
 
 
 @pytest.mark.parametrize(
-    ("rows", "failure"),
+    ("rows", "metric", "failure"),
     [
         # Non-finite history before a non-empty window refuses, as on DuckDB.
         (
             (("2024-12-20 00:00:00", "CAST('nan' AS FLOAT64)"), ("2025-01-01 12:00:00", "1.0")),
+            "weight",
             "nonfinite_input",
         ),
         # Beyond BIGNUMERIC's exact range.
-        ((("2025-01-01 12:00:00", "1e39"),), "bound_overflow"),
+        ((("2025-01-01 12:00:00", "1e39"),), "weight", "bound_overflow"),
+        # A dropped denominator must not read as a zero denominator.
+        ((("2025-01-01 12:00:00", "1e39"),), "spend_per_weight", "bound_overflow"),
+        # SAFE_DIVIDE returns NULL when the quotient leaves BIGNUMERIC's range.
+        ((("2025-01-01 12:00:00", "1e-38"),), "spend_per_weight", "bound_overflow"),
     ],
 )
-def test_float_window_failures_are_coded_refusals(bigquery_scratch, tmp_path, rows, failure):  # noqa: F811
+def test_float_window_failures_are_coded_refusals(
+    bigquery_scratch, tmp_path, rows, metric, failure
+):  # noqa: F811
     from terrine.errors import TerrineError
 
     _load_windows(bigquery_scratch)
     bigquery_scratch.sql(
         "INSERT events VALUES "
-        + ", ".join(f"('d', TIMESTAMP '{at}+00', 0, 0, {weight}, NULL)" for at, weight in rows)
+        + ", ".join(f"('d', TIMESTAMP '{at}+00', 1, 10, {weight}, NULL)" for at, weight in rows)
     )
-    design = windows._design(weight_before=tr.agg("weight", window=("-1d", "0s")))
+    design = windows._design(value=tr.agg(metric, window=("-1d", "0s")))
     with pytest.raises(TerrineError) as error:
         windows._rows(windows._model(bigquery_scratch.con, tmp_path, "bigquery"), design)
     assert error.value.code == "terrine.temporal.float64_precision"

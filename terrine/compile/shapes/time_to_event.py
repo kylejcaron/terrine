@@ -12,7 +12,12 @@ import ibis.expr.types as ir
 
 from terrine.backends.extrema import greatest, least
 from terrine.backends.timestamps import _UNSUPPORTED as _TIMESTAMP_ORDER_UNSUPPORTED
-from terrine.backends.timestamps import _struct_key, compare_timestamps, utc_wall_clock
+from terrine.backends.timestamps import (
+    _struct_key,
+    compare_timestamps,
+    timestamp_extremes,
+    utc_wall_clock,
+)
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
@@ -246,17 +251,10 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
             entry_timestamp = utc_wall_clock(entry_timestamp)
         entry_events = entry_events.mutate(_timestamp=entry_timestamp)
         entry_coverage = model.readiness.sources[entry_source.name]
-        entry_start = _narrow_bound(
-            ibis.literal(entry_coverage.start),
-            ibis.literal("-infinity").cast(time_type),
-            ibis.literal("infinity").cast(time_type),
-            time_type,
-        )
+        lowest, highest = timestamp_extremes(time_type)
+        entry_start = _narrow_bound(ibis.literal(entry_coverage.start), lowest, highest, time_type)
         entry_end = _narrow_bound(
-            ibis.literal(entry_coverage.end_exclusive),
-            ibis.literal("-infinity").cast(time_type),
-            ibis.literal("infinity").cast(time_type),
-            time_type,
+            ibis.literal(entry_coverage.end_exclusive), lowest, highest, time_type
         )
         entry_candidates = candidates.select(
             unit=candidates.unit,
@@ -283,7 +281,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
                 candidates.unit == entered.table.unit,
                 candidates.anchor_id == entered.table.anchor_id,
             ],
-        )
+        ).drop("unit_right", "anchor_id_right")
         checks.append(entered)
         supported_start = greatest(supported_start, candidates._entry_time)
 
@@ -294,19 +292,12 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         exit_coverage = model.readiness.sources.get(exit_source.name)
         if exit_coverage is None:
             raise _INVALID.error(reason="exit_source_coverage_required")
-        exit_start = _narrow_bound(
-            ibis.literal(exit_coverage.start),
-            ibis.literal("-infinity").cast(time_type),
-            ibis.literal("infinity").cast(time_type),
-            time_type,
-        )
+        lowest, highest = timestamp_extremes(time_type)
+        exit_start = _narrow_bound(ibis.literal(exit_coverage.start), lowest, highest, time_type)
         history_start = greatest(history_start, exit_start)
         supported_start = greatest(supported_start, exit_start)
         exit_end = _narrow_bound(
-            ibis.literal(exit_coverage.end_exclusive),
-            ibis.literal("-infinity").cast(time_type),
-            ibis.literal("infinity").cast(time_type),
-            time_type,
+            ibis.literal(exit_coverage.end_exclusive), lowest, highest, time_type
         )
         supported_end = least(supported_end, exit_end)
         exit_events, exit_event_id = _events(model, exit_source, exit_unit)
@@ -336,7 +327,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
                 _exit_time=exited.table.first_timestamp,
             ),
             [candidates.unit == exited.table.unit, candidates.anchor_id == exited.table.anchor_id],
-        )
+        ).drop("unit_right", "anchor_id_right")
         checks.append(exited)
         supported_end = least(supported_end, candidates._exit_time)
     candidates = candidates.mutate(

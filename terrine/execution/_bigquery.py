@@ -48,9 +48,8 @@ class _Relation:
 
 
 def _defaults(con: Any) -> tuple[str, str]:
-    project = con.project_id
-    dataset = con.current_database
-    return project, dataset
+    """The connection's data project and default dataset (not its billing project)."""
+    return con.data_project, con.dataset
 
 
 def _reference(con: Any, name: str) -> tuple[str, str, str]:
@@ -103,7 +102,10 @@ def check_routines(sql: str) -> None:
     except Exception as exc:
         raise _snapshot_error("view definition could not be parsed") from exc
     for node in statement.walk():
-        if isinstance(node, exp.Dot) and isinstance(node.expression, exp.Func):
+        qualified_call = isinstance(node, exp.Dot) and isinstance(node.expression, exp.Func)
+        # A fully backticked name such as `project.dataset.fn` parses as one identifier.
+        quoted_path = isinstance(node, exp.Anonymous) and "." in node.name
+        if qualified_call or quoted_path:
             raise _snapshot_error("query calls a user-defined routine")
 
 
@@ -204,24 +206,48 @@ def resolve(con: Any, relation: RelationSpec, catalog_dialect: str = DIALECT) ->
         project, dataset, name = _reference(con, relation.name)
         item = _relation(con, project, dataset, name)
         return con.table(item.name, database=(item.project, item.dataset))
-    return con.sql(admit_read_query(relation.sql, catalog_dialect, DIALECT))
+    sql = admit_read_query(relation.sql, catalog_dialect, DIALECT)
+    return con.sql(sql, schema=_query_schema(con, sql))
 
 
-def owned_session(con: Any) -> tuple[Any, str]:
-    """Open a private client and session holding one snapshot transaction.
+def _query_schema(con: Any, sql: str) -> Any:
+    """Describe an admitted query by dry run, resolving unqualified tables in the
+    connection's default dataset (Ibis's own dry run omits it)."""
+    from google.cloud import bigquery
+    from ibis.backends.bigquery.datatypes import BigQuerySchema
+
+    project, dataset = _defaults(con)
+    config = bigquery.QueryJobConfig(
+        dry_run=True,
+        use_query_cache=False,
+        default_dataset=f"{project}.{dataset}" if dataset else None,
+    )
+    try:
+        job = client_of(con).query(sql, job_config=config)
+    except Exception as exc:
+        raise _snapshot_error("query schema could not be determined") from exc
+    return BigQuerySchema.to_ibis(job.schema)
+
+
+def owned_session(con: Any) -> tuple[Any, Any, str]:
+    """Open a private client, storage reader and session holding one snapshot.
 
     The caller's client, and any session or job configuration it holds, is never
-    used for terrine's reads.
+    used for terrine's reads. Both owned clients use the caller's credentials, and
+    queries default to the caller's data project and dataset.
     """
     from google.cloud import bigquery
+    from google.cloud.bigquery_storage_v1 import BigQueryReadClient
 
     caller = client_of(con)
+    project, dataset = _defaults(con)
     try:
         client = bigquery.Client(
             project=caller.project,
             credentials=caller._credentials,
             location=caller.location,
         )
+        storage = BigQueryReadClient(credentials=caller._credentials)
         job = client.query(
             "BEGIN TRANSACTION", job_config=bigquery.QueryJobConfig(create_session=True)
         )
@@ -233,9 +259,10 @@ def owned_session(con: Any) -> tuple[Any, str]:
         client.close()
         raise _snapshot_error("BigQuery did not open a session for the snapshot transaction")
     client.default_query_job_config = bigquery.QueryJobConfig(
-        connection_properties=[bigquery.ConnectionProperty("session_id", session_id)]
+        default_dataset=f"{project}.{dataset}" if dataset else None,
+        connection_properties=[bigquery.ConnectionProperty("session_id", session_id)],
     )
-    return client, session_id
+    return client, storage, session_id
 
 
 class BigQuerySession:
@@ -243,8 +270,9 @@ class BigQuerySession:
 
     backend = DIALECT
 
-    def __init__(self, client: Any, session_id: str) -> None:
+    def __init__(self, client: Any, storage: Any, session_id: str) -> None:
         self.client = client
+        self.storage = storage
         self.session_id = session_id
 
     def check_query(self, sql: str) -> None:
@@ -267,11 +295,14 @@ class BigQuerySession:
         return pa.RecordBatchReader.from_batches(reader.schema, batches())
 
     def close(self) -> None:
-        try:
-            self.client.query("ROLLBACK TRANSACTION").result()
-            self.client.query("CALL BQ.ABORT_SESSION()").result()
-        finally:
-            self.client.close()
+        """Roll back and end the session; cleanup failures never mask a result."""
+        for statement in ("ROLLBACK TRANSACTION", "CALL BQ.ABORT_SESSION()"):
+            try:
+                self.client.query(statement).result()
+            except Exception:  # the session also expires server-side
+                continue
+        self.client.close()
+        self.storage.transport.close()
 
 
 @contextmanager

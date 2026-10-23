@@ -290,9 +290,17 @@ def _rounded_quotient(
                 ibis.literal(False)
             )
             builder.flag(nonfinite, "nonfinite_input", context)
-    value = builder.put(
-        "quotient",
-        exact_ratio(_exact_decimal(builder, numerator), _exact_decimal(builder, denominator)),
+    exact_numerator = _exact_decimal(builder, numerator)
+    exact_denominator = _exact_decimal(builder, denominator)
+    value = builder.put("quotient", exact_ratio(exact_numerator, exact_denominator))
+    # BigQuery's SAFE_DIVIDE returns NULL on overflow; only a zero denominator may.
+    builder.flag(
+        builder.col(value).isnull()
+        & exact_numerator.notnull()
+        & exact_denominator.notnull()
+        & ~builder.col(denominator.known_zero),
+        "bound_overflow",
+        context,
     )
     known_zero = builder.put(
         "quotient_zero",
@@ -505,8 +513,7 @@ def _component(
             # Exact float state (non-certifying backends): an empty window is zero
             # even when non-finite history makes the prefix difference NaN.
             value = builder.put("sum", builder.col(empty).ifelse(zero, difference))
-            known_zero = builder.put("sum_zero", builder.col(value) == zero)
-            quantity = _Quantity(value, reason, known_zero, rounded=True)
+            invalid = cast(ir.BooleanValue, ibis.literal(False))
             # Inputs the exact state could not hold, at or before the window end,
             # refuse a non-empty window, as non-finite history does on DuckDB.
             for name, failure in (
@@ -514,11 +521,21 @@ def _component(
                 ("float64_unrepresentable_count", "bound_overflow"),
             ):
                 if name in end:
-                    builder.flag(
-                        ~builder.col(empty) & (builder.col(end[name]).fill_null(zero) > zero),
-                        failure,
-                        context,
-                    )
+                    flag = ~builder.col(empty) & (builder.col(end[name]).fill_null(zero) > zero)
+                    builder.flag(flag, failure, context)
+                    invalid = invalid | flag
+            # BigQuery's SAFE_SUBTRACT returns NULL on overflow.
+            builder.flag(
+                builder.col(value).isnull()
+                & builder.col(sums[0]).notnull()
+                & builder.col(sums[1]).notnull(),
+                "bound_overflow",
+                context,
+            )
+            # A sum that only looks zero because inputs were dropped is not a zero
+            # denominator: its refusal must not be masked by a zero_denominator reason.
+            known_zero = builder.put("sum_zero", (builder.col(value) == zero) & ~invalid)
+            quantity = _Quantity(value, reason, known_zero, rounded=True)
         else:
             value = builder.put("sum", difference)
             known_zero = builder.put("sum_zero", builder.col(value) == zero)
