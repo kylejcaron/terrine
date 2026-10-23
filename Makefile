@@ -18,6 +18,13 @@ test-scale:
 test-postgres:
 	uv run --extra duckdb --extra postgres pytest integration -m postgres
 
+# Live BigQuery probes; requires TERRINE_TEST_BIGQUERY_PROJECT/_DATASET and
+# credentials (GOOGLE_APPLICATION_CREDENTIALS, application-default, or
+# TERRINE_TEST_BIGQUERY_ACCESS_TOKEN="$(gcloud auth print-access-token)"), and
+# fails without them. Each probe creates and drops its own dataset.
+test-bigquery:
+	uv run --extra duckdb --extra bigquery pytest integration -m bigquery
+
 lint:
 	uv run ruff check terrine tests integration
 	uv run vulture terrine

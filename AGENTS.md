@@ -83,6 +83,13 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   with `uv run python -m tests.integration.postgres_scratch stop`. CI runs them
   on every push against a PostgreSQL 16 service container. Each probe owns a
   uniquely named schema; never share a warehouse namespace between tests.
+- `make test-bigquery` runs the live BigQuery probes (`@pytest.mark.bigquery`,
+  deselected by default); they fail, never skip, without
+  `TERRINE_TEST_BIGQUERY_PROJECT`, `TERRINE_TEST_BIGQUERY_DATASET` and
+  credentials. Locally,
+  `TERRINE_TEST_BIGQUERY_ACCESS_TOKEN="$(gcloud auth print-access-token)"` is
+  enough. Each probe creates and drops its own dataset; queries are billed, so
+  keep fixtures tiny. CI runs them weekly and on dispatch, serialized.
 - The ordinary suite lists unit tests slower than 5 s (well above the 2 s
   target, so contention does not trip it); a healthy run lists none. Fix any
   listed test.
@@ -197,9 +204,12 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   ruff (`TID251`) rejects `ibis.udf` and `ibis.to_sql` outside the allowed
   packages.
 - When Ibis lacks or mistranslates an operation on a supported backend, add a
-  dispatched helper in `terrine/backends/` (`dialect`, `numeric`, `timestamps`)
-  with a live parity test, not a workaround at each call site. Supporting a new
-  warehouse means implementing those helpers for it.
+  dispatched helper in `terrine/backends/` (`dialect`, `numeric`, `timestamps`,
+  `joins`, `extrema`) with a live parity test, not a workaround at each call
+  site. Supporting a new warehouse means implementing those helpers for it.
+  Known Ibis gaps: no ASOF JOIN on BigQuery, NULL-propagating LEAST/GREATEST
+  there, and `interval * column` lowered through `EXTRACT(SECOND ...)` (multiply
+  integer seconds, then `.as_interval("s")`).
 - Raw SQL is acceptable only for: terrine's own DuckDB runtime state tables
   (`terrine/runtime/`), backend-provider catalog introspection and transaction
   control (`terrine/execution/`), and admitted user SQL relations.

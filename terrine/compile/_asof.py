@@ -11,6 +11,7 @@ import ibis
 import ibis.expr.types as ir
 import pyarrow as pa
 
+from terrine.backends.extrema import greatest, least
 from terrine.backends.timestamps import compare_timestamps
 from terrine.data import ColumnMeta
 from terrine.semantic.models import BoundDimension, BoundValidity
@@ -119,7 +120,7 @@ def compile_asof(
     observed_until: ir.Value = upper
     if "_observed_from" in table.columns:
         bound = table._observed_from
-        observed_from = ibis.greatest(lower, bound.fill_null(lower))
+        observed_from = greatest(lower, bound.fill_null(lower))
         unit_ready &= bound.isnull() | compare_timestamps(
             bound, table[cutoff], "lt" if strict else "le"
         )
@@ -127,7 +128,7 @@ def compile_asof(
             unit_ready &= bound.isnull() | compare_timestamps(bound, table[matched_at], "le")
     if "_observed_until" in table.columns:
         bound = table._observed_until
-        observed_until = ibis.least(upper, bound.fill_null(upper))
+        observed_until = least(upper, bound.fill_null(upper))
         unit_ready &= bound.isnull() | compare_timestamps(
             table[cutoff], bound, "le" if strict else "lt"
         )

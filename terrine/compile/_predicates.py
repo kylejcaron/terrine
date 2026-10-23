@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import ibis
 
+from terrine.backends.extrema import greatest, least
 from terrine.backends.numeric import float_is_finite
 from terrine.data import ColumnMeta, FeatureCutoff
 from terrine.semantic.models import BoundFilter
@@ -65,8 +66,8 @@ def compile_predicate(
             for value, cause, _, _, _ in reversed(terms):
                 reason = builder.col(value).isnull().ifelse(builder.col(cause), reason)
             reason = status.isnull().ifelse(reason, ibis.null().cast("string"))
-            lower = ibis.greatest(*(builder.col(item[2]) for item in terms))
-            upper = ibis.least(*(builder.col(item[3]) for item in terms))
+            lower = greatest(*(builder.col(item[2]) for item in terms))
+            upper = least(*(builder.col(item[3]) for item in terms))
             cutoff = conjunction_cutoff(tuple(item[4] for item in terms))
         else:
             expression = node.left if isinstance(node, Eq) else node.expr

@@ -10,6 +10,7 @@ from typing import cast
 import ibis
 from ibis.expr import types as ir
 
+from terrine.backends.extrema import greatest
 from terrine.backends.timestamps import compare_timestamps
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.compile.shapes.matched_t0 import sample_risk_sets
@@ -40,9 +41,7 @@ def _followup_at(design: Design, model, timestamp):
     if cutoffs:
         ends.append(ibis.literal(max(cutoffs)))
     end = (
-        ibis.greatest(timestamp, *ends)
-        if ends
-        else ibis.literal(model.day_boundary(design.anchor.end))
+        greatest(timestamp, *ends) if ends else ibis.literal(model.day_boundary(design.anchor.end))
     )
     return cast(ir.TimestampValue, end) + ibis.interval(seconds=design.shape.anticipation_seconds)
 

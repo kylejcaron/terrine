@@ -1,19 +1,22 @@
 name: warehouse-backends
 
 # Live warehouse probes. PostgreSQL runs against a service container and needs
-# no credentials; selected probes fail, never skip, when settings are missing.
+# no credentials. Cloud warehouses run weekly and on dispatch, one run at a time
+# per warehouse; selected probes fail, never skip, when settings are missing.
 on:
+  schedule:
+    - cron: "0 6 * * 1"
   workflow_dispatch:
     inputs:
       backend_mode:
         description: Backend probes to run
         type: choice
-        options: [all, postgres]
+        options: [all, postgres, cloud]
         default: all
   workflow_call:
     inputs:
       backend_mode:
-        description: "Backend probes to run: all or postgres."
+        description: "Backend probes to run: all, postgres or cloud."
         required: false
         type: string
         default: all
@@ -24,17 +27,17 @@ permissions:
 jobs:
   # Invalid reusable-workflow inputs must fail, not skip every backend.
   reject-unknown-backend-mode:
-    if: ${{ inputs.backend_mode != 'all' && inputs.backend_mode != 'postgres' }}
+    if: ${{ inputs.backend_mode && inputs.backend_mode != 'all' && inputs.backend_mode != 'postgres' && inputs.backend_mode != 'cloud' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - run: |
-          echo "::error::backend_mode must be all or postgres; got '$MODE'"
+          echo "::error::backend_mode must be all, postgres or cloud; got '$MODE'"
           exit 1
         env: {MODE: "${{ inputs.backend_mode }}"}
 
   postgres:
-    if: ${{ inputs.backend_mode == 'all' || inputs.backend_mode == 'postgres' }}
+    if: ${{ !inputs.backend_mode || inputs.backend_mode == 'all' || inputs.backend_mode == 'postgres' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -64,3 +67,32 @@ jobs:
       - run: uv run python examples/postgres/dataset.py
         env:
           TERRINE_POSTGRES_URL: postgres://postgres:terrine@localhost:5432/terrine_test
+
+  # Each probe owns a scratch dataset, but queries are billed: serialize runs.
+  bigquery:
+    if: ${{ !inputs.backend_mode || inputs.backend_mode == 'all' || inputs.backend_mode == 'cloud' }}
+    concurrency:
+      group: live-bigquery-backend
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TERRINE_TEST_BIGQUERY_PROJECT: ${{ secrets.TERRINE_TEST_BIGQUERY_PROJECT }}
+      TERRINE_TEST_BIGQUERY_DATASET: ${{ secrets.TERRINE_TEST_BIGQUERY_DATASET }}
+      PYTEST_ADDOPTS: -n 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Write service-account key
+        run: |
+          printf '%s' "$SA_KEY" > "$RUNNER_TEMP/gcp-sa.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/gcp-sa.json" >> "$GITHUB_ENV"
+        env: {SA_KEY: "${{ secrets.TERRINE_TEST_BIGQUERY_SA_KEY }}"}
+      - run: uv sync --locked --group dev --extra duckdb --extra bigquery
+      - run: make test-bigquery
+      - run: uv run python examples/bigquery/dataset.py

@@ -54,6 +54,12 @@
   in `NUMERIC` and rounded once, matching DuckDB within a tight tolerance
   relative to each window's absolute sum (`numeric_policy=None`). Dataset staging
   refuses with a route.
+- Materialize Frames directly from BigQuery (`terrine[bigquery]`): each run reads
+  one snapshot transaction in a private session on a new client, never the
+  caller's. The PostgreSQL coverage and tolerance contract carry over, with exact
+  state in `BIGNUMERIC` (sums and float facts beyond its range refuse with a
+  code). Views calling dataset-qualified routines refuse. Live BigQuery probes run
+  weekly and on dispatch (`make test-bigquery`).
 - Refuse decimal sources without a declared precision and scale
   (`terrine.semantic.decimal_scale_required`) and non-finite PostgreSQL numerics
   (`terrine.backend.nonfinite_decimal`).
@@ -99,6 +105,8 @@
   history checks across ordinary, retained and downstream export paths.
 - Capture event-anchor and recursive event-selector sources even when the
   analysis unit has no separate roster.
+- Build time-to-event designs that declare both an entry and an exit fact;
+  they previously failed with a column name collision.
 - Read retained run-event pages and their cursor-gap boundary from one consistent
   snapshot so concurrent retention cannot silently skip events.
 - Create the complete run-tracking schema when the runtime owner starts, so a

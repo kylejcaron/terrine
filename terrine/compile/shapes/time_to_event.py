@@ -10,8 +10,14 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+from terrine.backends.extrema import greatest, least
 from terrine.backends.timestamps import _UNSUPPORTED as _TIMESTAMP_ORDER_UNSUPPORTED
-from terrine.backends.timestamps import _struct_key, compare_timestamps, utc_wall_clock
+from terrine.backends.timestamps import (
+    _struct_key,
+    compare_timestamps,
+    timestamp_extremes,
+    utc_wall_clock,
+)
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
@@ -219,10 +225,10 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         if "_observed_until" in candidates.columns
         else ibis.null().cast(time_type),
     )
-    supported_start = ibis.greatest(start, candidates._t0_naive)
+    supported_start = greatest(start, candidates._t0_naive)
     if "_observed_from" in candidates.columns:
-        supported_start = ibis.greatest(supported_start, candidates._observed_from_naive)
-    supported_end = ibis.least(end, candidates._observed_until_naive)
+        supported_start = greatest(supported_start, candidates._observed_from_naive)
+    supported_end = least(end, candidates._observed_until_naive)
     if design.administrative_cutoff is not None:
         cutoff_value = design.administrative_cutoff
         cutoff = (
@@ -232,7 +238,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
             if time_type.scale == 9 and cutoff_value > ns_max
             else utc_wall_clock(ibis.literal(cutoff_value)).cast(time_type)
         )
-        supported_end = ibis.least(supported_end, cutoff)
+        supported_end = least(supported_end, cutoff)
     history_start = start
     checks = list(base._checks)
     if shape.entry is not None:
@@ -245,23 +251,16 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
             entry_timestamp = utc_wall_clock(entry_timestamp)
         entry_events = entry_events.mutate(_timestamp=entry_timestamp)
         entry_coverage = model.readiness.sources[entry_source.name]
-        entry_start = _narrow_bound(
-            ibis.literal(entry_coverage.start),
-            ibis.literal("-infinity").cast(time_type),
-            ibis.literal("infinity").cast(time_type),
-            time_type,
-        )
+        lowest, highest = timestamp_extremes(time_type)
+        entry_start = _narrow_bound(ibis.literal(entry_coverage.start), lowest, highest, time_type)
         entry_end = _narrow_bound(
-            ibis.literal(entry_coverage.end_exclusive),
-            ibis.literal("-infinity").cast(time_type),
-            ibis.literal("infinity").cast(time_type),
-            time_type,
+            ibis.literal(entry_coverage.end_exclusive), lowest, highest, time_type
         )
         entry_candidates = candidates.select(
             unit=candidates.unit,
             anchor_id=candidates.anchor_id,
             lower=entry_start,
-            upper=ibis.least(supported_end, entry_end).cast(time_type),
+            upper=least(supported_end, entry_end).cast(time_type),
         )
         entered = first_occurrence(
             entry_events,
@@ -282,9 +281,9 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
                 candidates.unit == entered.table.unit,
                 candidates.anchor_id == entered.table.anchor_id,
             ],
-        )
+        ).drop("unit_right", "anchor_id_right")
         checks.append(entered)
-        supported_start = ibis.greatest(supported_start, candidates._entry_time)
+        supported_start = greatest(supported_start, candidates._entry_time)
 
     if shape.exit is not None:
         _, exit_source, exit_unit = _source(model, design.unit, shape.exit)
@@ -293,21 +292,14 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         exit_coverage = model.readiness.sources.get(exit_source.name)
         if exit_coverage is None:
             raise _INVALID.error(reason="exit_source_coverage_required")
-        exit_start = _narrow_bound(
-            ibis.literal(exit_coverage.start),
-            ibis.literal("-infinity").cast(time_type),
-            ibis.literal("infinity").cast(time_type),
-            time_type,
-        )
-        history_start = ibis.greatest(history_start, exit_start)
-        supported_start = ibis.greatest(supported_start, exit_start)
+        lowest, highest = timestamp_extremes(time_type)
+        exit_start = _narrow_bound(ibis.literal(exit_coverage.start), lowest, highest, time_type)
+        history_start = greatest(history_start, exit_start)
+        supported_start = greatest(supported_start, exit_start)
         exit_end = _narrow_bound(
-            ibis.literal(exit_coverage.end_exclusive),
-            ibis.literal("-infinity").cast(time_type),
-            ibis.literal("infinity").cast(time_type),
-            time_type,
+            ibis.literal(exit_coverage.end_exclusive), lowest, highest, time_type
         )
-        supported_end = ibis.least(supported_end, exit_end)
+        supported_end = least(supported_end, exit_end)
         exit_events, exit_event_id = _events(model, exit_source, exit_unit)
         exit_timestamp = exit_events._timestamp
         if exit_events.schema()["_timestamp"].timezone is not None:
@@ -335,9 +327,9 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
                 _exit_time=exited.table.first_timestamp,
             ),
             [candidates.unit == exited.table.unit, candidates.anchor_id == exited.table.anchor_id],
-        )
+        ).drop("unit_right", "anchor_id_right")
         checks.append(exited)
-        supported_end = ibis.least(supported_end, candidates._exit_time)
+        supported_end = least(supported_end, candidates._exit_time)
     candidates = candidates.mutate(
         _followup_start=supported_start.cast(time_type),
         _followup_end=supported_end.cast(time_type),

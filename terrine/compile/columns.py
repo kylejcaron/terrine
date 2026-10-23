@@ -16,6 +16,7 @@ import ibis.expr.types as ir
 import pyarrow as pa
 
 from terrine.backends.dialect import dialect_scope
+from terrine.backends.extrema import greatest, least
 from terrine.compile._asof import compile_asof
 from terrine.compile._predicates import CompiledValue, compile_predicate
 from terrine.compile.anchors import (
@@ -452,11 +453,9 @@ def compile_columns(
         observed_from = ibis.literal(coverage.start)
         observed_until = ibis.literal(coverage.end_exclusive)
         if "_observed_from" in origin.columns:
-            observed_from = ibis.greatest(
-                observed_from, origin._observed_from.fill_null(coverage.start)
-            )
+            observed_from = greatest(observed_from, origin._observed_from.fill_null(coverage.start))
         if "_observed_until" in origin.columns:
-            observed_until = ibis.least(
+            observed_until = least(
                 observed_until, origin._observed_until.fill_null(coverage.end_exclusive)
             )
         candidates = origin.mutate(

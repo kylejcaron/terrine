@@ -11,6 +11,7 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+from terrine.backends.extrema import greatest, least
 from terrine.backends.timestamps import compare_timestamps
 from terrine.data import ColumnMeta
 from terrine.errors import RefusalSpec
@@ -283,11 +284,11 @@ def aggregate_nonadditive_window(
     observation_complete = ibis.literal(True)
     if "_observed_from" in anchors.columns:
         bound = anchors._observed_from
-        observed_from = ibis.greatest(observed_from, bound.fill_null(observed_from))
+        observed_from = greatest(observed_from, bound.fill_null(observed_from))
         observation_complete = observation_complete & (bound.isnull() | (start >= bound))
     if "_observed_until" in anchors.columns:
         bound = anchors._observed_until
-        observed_until = ibis.least(observed_until, bound.fill_null(observed_until))
+        observed_until = least(observed_until, bound.fill_null(observed_until))
         observation_complete = observation_complete & (bound.isnull() | (end <= bound))
     complete = (source_complete & observation_complete).fill_null(False)
     names = {

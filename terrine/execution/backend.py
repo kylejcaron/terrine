@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from terrine.backends.capabilities import (
     _CAPABILITY_UNAVAILABLE,
+    BIGQUERY_CAPABILITIES,
     DUCKDB_CAPABILITIES,
     POSTGRES_CAPABILITIES,
     UNVERIFIED_CAPABILITIES,
@@ -166,7 +167,71 @@ class _PostgresProvider:
 
 
 _POSTGRES_PROVIDER = _PostgresProvider()
-_PROVIDERS: tuple[BackendProvider, ...] = (_DUCKDB_PROVIDER, _POSTGRES_PROVIDER)
+
+
+class _BigQueryProvider:
+    capabilities = BIGQUERY_CAPABILITIES
+
+    def matches(self, con: Any) -> bool:
+        return type(con).__module__ == "ibis.backends.bigquery"
+
+    def dialect(self, con: Any) -> str:
+        return "bigquery"
+
+    def resolve_relation(self, con: Any, relation: RelationSpec) -> ibis.Table:
+        from terrine.execution import _bigquery
+
+        return _bigquery.resolve(con, relation)
+
+    def required_relations(self, catalog, con, *, units=None):
+        from terrine.execution import _bigquery
+
+        return _bigquery.required_relations(catalog, con, units=units)
+
+    def bind_resolver(self, catalog, con, **kwargs):
+        from terrine.execution import _bigquery
+        from terrine.execution.inputs import _INVALID
+
+        if kwargs.get("input_binding") is not None:
+            raise _CAPABILITY_UNAVAILABLE.error(
+                backend="bigquery",
+                operation="retained_snapshot",
+                status="unverified",
+                route="Retained input bindings are DuckDB-only; materialize directly.",
+            )
+        _bigquery.required_relations(catalog, con, units=kwargs.get("units"))
+        admitted: dict[tuple[str, str], Any] = {}
+        fingerprints: dict[tuple[str, str], str] = {}
+
+        def resolve(relation: RelationSpec) -> Any:
+            key = (relation.kind, relation.name if isinstance(relation, TableRef) else relation.sql)
+            fingerprint = _bigquery.admission_fingerprint(relation, con)
+            if key in admitted:
+                if fingerprints[key] != fingerprint:
+                    raise _INVALID.error(
+                        reason="relation definition or identity changed after Model binding"
+                    )
+                return admitted[key]
+            admitted[key] = _bigquery.resolve(con, relation, catalog.dialect)
+            fingerprints[key] = fingerprint
+            return admitted[key]
+
+        return resolve
+
+    def open_execution(self, catalog, con, *, units=None, input_binding=None):
+        from terrine.execution.inputs import _open_bigquery_execution
+
+        return _open_bigquery_execution(
+            self, catalog, con, units=units, input_binding=input_binding
+        )
+
+
+_BIGQUERY_PROVIDER = _BigQueryProvider()
+_PROVIDERS: tuple[BackendProvider, ...] = (
+    _DUCKDB_PROVIDER,
+    _POSTGRES_PROVIDER,
+    _BIGQUERY_PROVIDER,
+)
 
 
 def backend_capabilities(con: Any) -> BackendCapabilities:
@@ -197,9 +262,14 @@ def backend_provider(con: Any) -> BackendProvider:
                 route="Install terrine[postgres], which requires ibis-framework 12 or newer.",
             )
         return _POSTGRES_PROVIDER
+    if _BIGQUERY_PROVIDER.matches(con):
+        return _BIGQUERY_PROVIDER
     raise _CAPABILITY_UNAVAILABLE.error(
         backend=str(getattr(con, "name", type(con).__name__)).casefold(),
         operation="query",
         status="unverified",
-        route="Bind a local Ibis DuckDB or PostgreSQL backend; other providers are unverified.",
+        route=(
+            "Bind a local Ibis DuckDB, PostgreSQL or BigQuery backend; other providers "
+            "are unverified."
+        ),
     )

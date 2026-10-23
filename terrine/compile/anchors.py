@@ -144,7 +144,7 @@ def _range_filter_raw(
         return table
     dtype = table.schema()[column]
     naive = dtype.timezone is None
-    if naive and model.catalog.dialect.casefold() not in {"duckdb", "postgres"}:
+    if naive and model.catalog.dialect.casefold() not in {"duckdb", "postgres", "bigquery"}:
         raise _UTC_CONVERSION_UNSUPPORTED.error(backend=model.catalog.dialect)
     start, end = _bound(model, anchor_range.start), _bound(model, anchor_range.end)
     for bound, lower in ((start, True), (end, False)):
@@ -287,7 +287,9 @@ def _roster_anchors(
         stop = (elapsed_seconds + schedule.every - 1) // schedule.every
         sequence = ibis.range(0, stop).unnest().cast("int64").name("ordinal").as_table()
         ordinal = sequence.ordinal
-        t0 = ibis.literal(start) + ibis.interval(seconds=schedule.every) * ordinal
+        # An integer-seconds interval: Ibis lowers `interval * column` on BigQuery
+        # through EXTRACT(SECOND ...), which normalizes 86400 s to zero.
+        t0 = ibis.literal(start) + (ordinal * schedule.every).as_interval("s")
         base = sequence.select(
             unit=ibis.literal(None, type="string"),
             anchor_id=cast(ir.StringValue, ibis.literal("schedule:")).concat(

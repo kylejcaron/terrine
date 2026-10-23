@@ -14,6 +14,10 @@ import ibis.expr.types as ir
 import pyarrow as pa
 
 from terrine.backends.dialect import dialect_of
+from terrine.backends.extrema import greatest, least
+from terrine.backends.numeric import (
+    EXACT_OVERFLOW as _EXACT_OVERFLOW,
+)
 from terrine.backends.numeric import (
     exact_is_nonfinite,
     exact_literal,
@@ -59,11 +63,6 @@ from terrine.windows import Window
 
 __all__ = ["TemporalResult", "aggregate_window"]
 
-_EXACT_OVERFLOW = RefusalSpec(
-    "terrine.temporal.exact_overflow",
-    "The requested exact result cannot be represented by the native output type. "
-    "Use a supported exact representation or a semantically sufficient window.",
-)
 _DAY_ALIGNMENT = RefusalSpec(
     "terrine.temporal.unaligned_day_resolution",
     "Day prefixes require both endpoints at local midnight; use event prefixes "
@@ -192,7 +191,7 @@ def _scaled_text(coefficient, scale: int):
         return text
     sign = text.startswith("-").ifelse("-", "")
     digits = text.replace("-", "")
-    digits = digits.lpad(ibis.greatest(digits.length(), scale + 1), "0")
+    digits = digits.lpad(greatest(digits.length(), scale + 1), "0")
     return (
         sign
         + digits.substr(0, digits.length() - scale)
@@ -291,9 +290,17 @@ def _rounded_quotient(
                 ibis.literal(False)
             )
             builder.flag(nonfinite, "nonfinite_input", context)
-    value = builder.put(
-        "quotient",
-        exact_ratio(_exact_decimal(builder, numerator), _exact_decimal(builder, denominator)),
+    exact_numerator = _exact_decimal(builder, numerator)
+    exact_denominator = _exact_decimal(builder, denominator)
+    value = builder.put("quotient", exact_ratio(exact_numerator, exact_denominator))
+    # BigQuery's SAFE_DIVIDE returns NULL on overflow; only a zero denominator may.
+    builder.flag(
+        builder.col(value).isnull()
+        & exact_numerator.notnull()
+        & exact_denominator.notnull()
+        & ~builder.col(denominator.known_zero),
+        "bound_overflow",
+        context,
     )
     known_zero = builder.put(
         "quotient_zero",
@@ -342,8 +349,8 @@ def _quotient(
         )
     )
     lower, upper, value = builder.put_many(
-        ("quotient_min", ibis.least(*(builder.col(n) for n in endpoints[::2]))),
-        ("quotient_max", ibis.greatest(*(builder.col(n) for n in endpoints[1::2]))),
+        ("quotient_min", least(*(builder.col(n) for n in endpoints[::2]))),
+        ("quotient_max", greatest(*(builder.col(n) for n in endpoints[1::2]))),
         ("quotient", ieee_divide(builder.col(numerator.value), builder.col(denominator.value))),
     )
     left_error, right_error = builder.put_many(
@@ -353,9 +360,7 @@ def _quotient(
     error, known_zero = builder.put_many(
         (
             "quotient_error",
-            _outward(
-                ibis.greatest(builder.col(left_error).abs(), builder.col(right_error).abs()), True
-            ),
+            _outward(greatest(builder.col(left_error).abs(), builder.col(right_error).abs()), True),
         ),
         ("quotient_zero", builder.col(numerator.known_zero) & builder.col(excludes_zero)),
     )
@@ -508,7 +513,28 @@ def _component(
             # Exact float state (non-certifying backends): an empty window is zero
             # even when non-finite history makes the prefix difference NaN.
             value = builder.put("sum", builder.col(empty).ifelse(zero, difference))
-            known_zero = builder.put("sum_zero", builder.col(value) == zero)
+            invalid = cast(ir.BooleanValue, ibis.literal(False))
+            # Inputs the exact state could not hold, at or before the window end,
+            # refuse a non-empty window, as non-finite history does on DuckDB.
+            for name, failure in (
+                ("float64_nonfinite_count", "nonfinite_input"),
+                ("float64_unrepresentable_count", "bound_overflow"),
+            ):
+                if name in end:
+                    flag = ~builder.col(empty) & (builder.col(end[name]).fill_null(zero) > zero)
+                    builder.flag(flag, failure, context)
+                    invalid = invalid | flag
+            # BigQuery's SAFE_SUBTRACT returns NULL on overflow.
+            builder.flag(
+                builder.col(value).isnull()
+                & builder.col(sums[0]).notnull()
+                & builder.col(sums[1]).notnull(),
+                "bound_overflow",
+                context,
+            )
+            # A sum that only looks zero because inputs were dropped is not a zero
+            # denominator: its refusal must not be masked by a zero_denominator reason.
+            known_zero = builder.put("sum_zero", (builder.col(value) == zero) & ~invalid)
             quantity = _Quantity(value, reason, known_zero, rounded=True)
         else:
             value = builder.put("sum", difference)
@@ -625,13 +651,13 @@ def aggregate_window(
     observation_complete = cast(ir.BooleanValue, ibis.literal(True))
     if "_observed_from" in anchors.columns:
         bound = builder.table._observed_from
-        observed_from = ibis.greatest(observed_from, bound.fill_null(observed_from))
+        observed_from = greatest(observed_from, bound.fill_null(observed_from))
         observation_complete = observation_complete & (
             bound.isnull() | (builder.col(start) >= bound)
         )
     if "_observed_until" in anchors.columns:
         bound = builder.table._observed_until
-        observed_until = ibis.least(observed_until, bound.fill_null(observed_until))
+        observed_until = least(observed_until, bound.fill_null(observed_until))
         observation_complete = observation_complete & (bound.isnull() | (builder.col(end) <= bound))
     observed_from = builder.put("observed_from", observed_from)
     observed_until = builder.put("observed_until", observed_until)

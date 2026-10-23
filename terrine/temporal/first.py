@@ -9,6 +9,7 @@ import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
 from terrine.backends.dialect import dialect_of
+from terrine.backends.joins import asof_join
 from terrine.backends.timestamps import _struct_key, timestamp_order_key, timestamp_parts
 from terrine.data import ColumnMeta
 from terrine.errors import RefusalSpec
@@ -22,9 +23,10 @@ _DUPLICATE_EVENT_ID = RefusalSpec(
 )
 _UNSUPPORTED_BACKEND = RefusalSpec(
     "terrine.temporal.first_occurrence_unsupported_backend",
-    "First-occurrence point lookup requires the DuckDB or PostgreSQL backend; got {backend!r}.",
+    "First-occurrence point lookup requires the DuckDB, PostgreSQL or BigQuery "
+    "backend; got {backend!r}.",
 )
-_SUPPORTED_BACKENDS = frozenset({"duckdb", "postgres"})
+_SUPPORTED_BACKENDS = frozenset({"duckdb", "postgres", "bigquery"})
 _INVALID = RefusalSpec(
     "terrine.temporal.first_occurrence_invalid_relation",
     "First-occurrence input relation is invalid ({reason}).",
@@ -44,9 +46,10 @@ def _validate_timestamp(table: ibis.Table, column: str, name: str) -> dt.Timesta
 
 def _reverse_time_key(value: ir.TimestampValue) -> ir.Value:
     """A key whose ascending order is the instants' descending order."""
-    if dialect_of(value) == "postgres":
-        # One exact scalar: PostgreSQL's microsecond range stays below 10**19.
-        rank, seconds, nanos = timestamp_parts(value, backend="postgres")
+    dialect = dialect_of(value)
+    if dialect in {"postgres", "bigquery"}:
+        # One exact scalar: their microsecond ranges stay below 10**19.
+        rank, seconds, nanos = timestamp_parts(value, backend=dialect)
         wide = dt.Decimal(38, 0)
         million = cast(ir.DecimalValue, ibis.literal(10**6, type=wide))
         rank_weight = cast(ir.DecimalValue, ibis.literal(10**20, type=wide))
@@ -186,10 +189,14 @@ def first_occurrence(
             event_identifier: events_view[event_identifier],
         }
     )
-    joined = left.asof_join(
+    joined = asof_join(
+        left,
         right,
-        on=left[first_lower_key] >= right[event_key],
-        predicates=[left[unit] == right[event_unit]],
+        left_unit=unit,
+        left_key=first_lower_key,
+        right_unit=event_unit,
+        right_key=event_key,
+        inclusive=True,
     )
     upper_value = joined[upper]
     eligible = (
@@ -325,10 +332,14 @@ def last_event_value(
             event_identifier: chosen_view[event_identifier],
         }
     )
-    joined = left.asof_join(
+    joined = asof_join(
+        left,
         right,
-        on=left[upper_key] > right[event_key],
-        predicates=[left[unit] == right[event_unit]],
+        left_unit=unit,
+        left_key=upper_key,
+        right_unit=event_unit,
+        right_key=event_key,
+        inclusive=False,
     )
     eligible = (
         joined[event_time].notnull()

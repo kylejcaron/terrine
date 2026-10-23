@@ -8,14 +8,18 @@ import ibis
 import ibis.expr.types as ir
 
 from terrine.backends.dialect import dialect_of, dialect_scope
-from terrine.backends.numeric import exact_literal, exact_sum, float_is_finite
+from terrine.backends.numeric import (
+    EXACT_OVERFLOW,
+    exact_literal,
+    exact_sum,
+    float_is_finite,
+)
 from terrine.backends.timestamps import timestamp_parts
 from terrine.compile.columns import CompiledStudy
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
 from terrine.spec.trajectory import CohortGrouping
 from terrine.temporal.aggregate import (
-    _EXACT_OVERFLOW,
     _Check,
     _Failure,
     _scaled_text,
@@ -221,7 +225,8 @@ def _compile_cohorts(
         mature & (joined.observable == joined.at_risk) & (joined._value_count == joined.at_risk)
     )
     bucket_origin = cast(ir.TimestampValue, ibis.literal(grouping.bucket_origin))
-    bucket_start = bucket_origin + joined.bucket_index * ibis.interval(seconds=grouping.bucket)
+    # Integer-seconds interval; see compile/anchors.py for the BigQuery lowering.
+    bucket_start = bucket_origin + (joined.bucket_index * grouping.bucket).as_interval("s")
     result = joined.select(
         bucket_start=bucket_start,
         bucket_index=joined.bucket_index,
@@ -273,7 +278,7 @@ def _compile_cohorts(
                 (
                     _Failure(
                         failure_column,
-                        _EXACT_OVERFLOW,
+                        EXACT_OVERFLOW,
                         {"source": "cohort", "measure": value_column, "output": "value"},
                     ),
                 ),
@@ -288,7 +293,7 @@ def _compile_cohorts(
                 (
                     _Failure(
                         failure_column,
-                        _EXACT_OVERFLOW,
+                        EXACT_OVERFLOW,
                         {"source": "cohort", "measure": value_column, "output": "value"},
                     ),
                 ),
