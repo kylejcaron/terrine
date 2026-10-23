@@ -346,6 +346,26 @@ def normalized(
     return mantissa, cast(ir.IntegerValue, zero.ifelse(ibis.literal(0), decimal_exponent))
 
 
+_DUCKDB_HUGE = dt.Unknown(raw_type=sge.DataType.build("HUGEINT", dialect="duckdb"))
+# A mantissa in [1, 10) printed with 18 fractional digits has this many digits.
+_MANTISSA_DIGITS = 19
+# The 19 significant digits of MAX · (1 + 3.5 · 2**-53) at decimal exponent 308:
+# a quotient whose pre-rounding value is at most this returns ±MAX within the bound.
+_QUOTIENT_CLAMP = "1797693134862316406"
+_FLOAT64_MAX_EXPONENT = 308
+
+
+@ibis.udf.scalar.builtin(name="divide", signature=((_DUCKDB_HUGE, _DUCKDB_HUGE), _DUCKDB_HUGE))
+def _duckdb_huge_quotient(value, divisor):
+    """DuckDB 128-bit integer division truncating toward zero."""
+
+
+def _mantissa_digits(mantissa: ir.FloatingValue) -> ir.Value:
+    """``|mantissa| · 10**18`` rounded to an integer: 19 digits as HUGEINT."""
+    text = cast(ir.StringValue, _duckdb_printf("%.18f", mantissa.abs()))
+    return text.replace(".", "").cast(_DUCKDB_HUGE)
+
+
 def rounded_quotient(
     n_mantissa: ir.FloatingValue,
     n_exponent: ir.IntegerValue,
@@ -354,34 +374,63 @@ def rounded_quotient(
 ) -> tuple[ir.FloatingValue, ir.BooleanValue]:
     """Binary64 quotient of two ``normalized`` operands on DuckDB.
 
-    Returns (float, overflow). The mantissas divide in binary64; the exponent
-    difference is applied by rounding the text ``printf('%.17e', q)`` with its
-    exponent adjusted, so operands beyond binary64's range and subnormal
-    results are handled alike. A zero denominator or a NULL operand gives NULL
-    without ``overflow``; a result beyond binary64's range gives NULL with it.
+    Returns (float, overflow). Each mantissa's 19 significant digits divide
+    exactly as 128-bit integers, shifted so the quotient has 19 digits, and
+    the exponent difference is applied by rounding that digit text once, so
+    operands beyond binary64's range and subnormal results are handled alike.
+    A zero denominator or a NULL operand gives NULL without ``overflow``. A
+    pre-rounding value that rounds to infinity but is within 3.5u of the
+    largest finite binary64 returns ±MAX; beyond that gives NULL with
+    ``overflow``.
 
     Error model for exact operands ``p = M_n · 10**e_n`` and ``q = M_d · 10**e_d``
     with ``u = 2**-53``: each mantissa ``m = M(1 + ε)`` with ``|ε| ≤ u``
-    (``normalized``); the binary64 quotient ``m_n / m_d`` lies in (0.1, 10), a
-    normal range, so it is ``(M_n / M_d)(1 + ε_n)(1 + ε_q) / (1 + ε_d)`` with
-    ``|ε_q| ≤ u``; ``%.17e`` keeps 18 significant digits, a relative change
-    below ``5 · 10**-18 < u / 16``; and the final text-to-binary64 cast is
-    correctly rounded, within ``u`` relative for a normal result and within
-    ``2**-1075`` absolute for a subnormal one. The relative factors multiply
-    to below ``1 + 5.07u``, so ``|r − p / q| ≤ 6u · |p / q| + 2**-1075`` for
-    every finite result.
+    (``normalized``); its 19-digit text and the integer quotient's truncation
+    each perturb by less than ``10**-18`` relative, so the pre-rounding value
+    is ``t = (p / q)(1 + δ)`` with ``|δ| ≤ 2.03u``. A finite text-to-binary64
+    cast is correctly rounded, within ``u`` relative for a normal result and
+    within ``2**-1075`` absolute for a subnormal one, so
+    ``|r − p / q| ≤ 3.03u · |p / q| + 2**-1075``. When ``|t|`` rounds to
+    infinity but ``|t| ≤ MAX(1 + 3.5u)``, ``|p / q|`` lies in
+    ``[MAX(1 − 1.53u), MAX(1 + 5.53u)]``, so ``±MAX`` is within ``6u · |p / q|``;
+    a representable ``p / q`` gives ``|t| ≤ MAX(1 + 2.03u)`` and is never
+    flagged. Hence ``|r − p / q| ≤ 6u · |p / q| + 2**-1075`` for every finite
+    result.
     """
-    divides = d_mantissa != ibis.literal(0.0)
-    quotient = cast(
-        ir.FloatingValue, divides.ifelse(n_mantissa / d_mantissa, ibis.null(dt.float64))
+    zero = ibis.literal(0.0)
+    divides = d_mantissa != zero
+    numerator = _mantissa_digits(n_mantissa)
+    denominator = divides.ifelse(_mantissa_digits(d_mantissa), ibis.null().cast(_DUCKDB_HUGE))
+    # |n / d| lies in (0.1, 10): shift so the integer quotient has 19 digits.
+    shift = cast(
+        ir.IntegerValue,
+        (numerator >= denominator).ifelse(
+            ibis.literal(_MANTISSA_DIGITS - 1), ibis.literal(_MANTISSA_DIGITS)
+        ),
     )
-    text = cast(ir.StringValue, _duckdb_printf("%.17e", quotient))
-    marker = text.find("e")
-    shift = cast(ir.IntegerValue, text.substr(cast(ir.IntegerValue, marker + 1)).cast(dt.int64))
-    exponent = shift + n_exponent - d_exponent
-    result = (text.substr(0, marker) + "e" + exponent.cast("string")).cast(dt.float64)
-    overflow = (quotient.notnull() & ~float_is_finite(result)).fill_null(ibis.literal(False))
-    rounded = overflow.ifelse(ibis.null().cast(dt.float64), result)
+    zeros = cast(ir.StringValue, ibis.literal("0")).repeat(shift)
+    digits = _duckdb_huge_quotient(
+        (numerator.cast("string") + zeros).cast(_DUCKDB_HUGE), denominator
+    )
+    # t = digits · 10**(exponent − 18) with 10**exponent ≤ |t| < 10**(exponent + 1).
+    exponent = cast(ir.IntegerValue, n_exponent - d_exponent + (_MANTISSA_DIGITS - 1) - shift)
+    negative = (n_mantissa < zero) != (d_mantissa < zero)
+    sign = cast(ir.StringValue, negative.ifelse(ibis.literal("-"), ibis.literal("")))
+    magnitude = digits.cast("string") + "e" + (exponent - (_MANTISSA_DIGITS - 1)).cast("string")
+    result = cast(ir.FloatingValue, (sign + magnitude).cast(dt.float64))
+    clamp = ibis.literal(_QUOTIENT_CLAMP).cast(_DUCKDB_HUGE)
+    largest_exponent = ibis.literal(_FLOAT64_MAX_EXPONENT)
+    within_clamp = (exponent < largest_exponent) | (
+        (exponent == largest_exponent) & (digits <= clamp)
+    )
+    beyond = (digits.notnull() & ~float_is_finite(result)).fill_null(ibis.literal(False))
+    overflow = beyond & ~within_clamp
+    largest = negative.ifelse(ibis.literal(-sys.float_info.max), ibis.literal(sys.float_info.max))
+    rounded = ibis.cases(
+        (overflow, ibis.null().cast(dt.float64)),
+        (beyond, largest),
+        else_=result,
+    )
     return cast(ir.FloatingValue, rounded), overflow
 
 

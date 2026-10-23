@@ -149,6 +149,9 @@ _QUOTIENTS = [
     ("7.5", "-2.5"),
     ("-1e-320", "3.0"),
     ("3.5953862697246314e308", "2"),
+    # Quotients at or just past the largest finite double stay finite.
+    ("5.93238734504564181e308", "3.3"),
+    ("-1.7976931348623158e308", "1"),
 ]
 
 
