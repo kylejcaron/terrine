@@ -74,12 +74,12 @@ def test_baseline_is_computed_for_delayed_entry_at_panel_start(native_inputs):
     assert entrant[materialized.columns["baseline"].complete_column] is True
 
 
-@pytest.mark.parametrize(("cut", "ambiguous"), [(float.fromhex("0x1.0000000000001p+0"), True)])
-def test_float_metric_cut_precision_and_near_boundary(native_inputs, cut, ambiguous):
+def test_float_metric_bin_compares_the_rounded_value_at_a_near_boundary_cut(native_inputs):
     import pyarrow as pa
 
     from terrine.semantic.models import Catalog
 
+    cut = float.fromhex("0x1.0000000000001p+0")
     catalog, con = native_inputs
     con.create_table(
         "events",
@@ -112,19 +112,6 @@ def test_float_metric_cut_precision_and_near_boundary(native_inputs, cut, ambigu
         readiness={"events": Coverage("2025-01-01", "2025-01-31")},
         units={"user": UnitSource("users", "user_id")},
     )
-    if not ambiguous:
-        design = Design(
-            "user",
-            Schedule("1d", "2025-01-03", "2025-01-04"),
-            shape=StatePanel(
-                BinnedMetricState("score_avg", cutpoints=(cut,), levels=("low", "high")),
-                max_periods=1,
-            ),
-        )
-        with pytest.raises(TerrineError) as error:
-            design.build(model)
-        assert error.value.code == "terrine.state_panel.unsupported_combination"
-        return
     design = Design(
         "user",
         Schedule("1d", "2025-01-03", "2025-01-04"),
@@ -139,8 +126,8 @@ def test_float_metric_cut_precision_and_near_boundary(native_inputs, cut, ambigu
         .table.to_pylist()
     )
     row = next(row for row in rows if row["unit"] == "a")
-    assert row["to_state"] is None
-    assert row["to_state_reason"] == "ambiguous_state_bin"
+    assert row["to_state"] == "low"
+    assert row["to_state_reason"] is None
 
 
 def test_binned_panel_retains_named_eligibility_column(panel_model):

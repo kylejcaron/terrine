@@ -1,6 +1,5 @@
 from datetime import UTC, datetime
 from decimal import Decimal
-from math import ulp
 
 import ibis
 import pyarrow as pa
@@ -36,7 +35,6 @@ def _cohorts(
     times=None,
     complete=None,
     mature=None,
-    checked=False,
     bucket="7d",
     origin=datetime(2025, 1, 1, tzinfo=UTC),
 ):
@@ -55,9 +53,6 @@ def _cohorts(
                     [None if value is not None else "incomplete_observation" for value in values],
                     type=pa.string(),
                 ),
-                "period_value_absolute_error": [
-                    ulp(value) if checked and value is not None else 0.0 for value in values
-                ],
             }
         ),
         overwrite=True,
@@ -74,8 +69,6 @@ def _cohorts(
                 None,
                 "period_value_complete",
                 "period_value_reason",
-                numeric_policy="checked_float64_v1" if checked else None,
-                absolute_error_column="period_value_absolute_error" if checked else None,
             )
         },
         feature_cutoffs={},
@@ -164,7 +157,7 @@ def test_exact_integer_values_are_summed_before_cohort_mean_conversion(con):
 def test_cohort_mean_preserves_fractional_decimal_and_float_values(con):
     for dtype in (pa.decimal128(18, 2), pa.float64()):
         values = [Decimal("0.25")] * 2 if pa.types.is_decimal(dtype) else [0.25] * 2
-        _, rows = _cohorts(con, values, dtype=dtype, checked=pa.types.is_floating(dtype))
+        _, rows = _cohorts(con, values, dtype=dtype)
         assert rows[0]["value"] == 0.25
 
 
@@ -194,39 +187,22 @@ def test_high_scale_decimal_cohort_total_refuses_unrepresentable_result(con):
     assert error.value.code == "terrine.temporal.exact_overflow"
 
 
-def test_cohort_float_total_enforces_final_tolerance(con):
-    with pytest.raises(TerrineError) as error:
-        _cohorts(con, [1e12, -1e12], dtype=pa.float64(), statistic="total", checked=True)
-    assert error.value.code == "terrine.temporal.float64_precision"
-
-
-def test_float_cohort_mean_avoids_overflow_and_retains_certificate(con):
-    result, rows = _cohorts(con, [1e308, 1e308], dtype=pa.float64(), checked=True)
+def test_float_cohort_mean_of_huge_values_avoids_overflow(con):
+    result, rows = _cohorts(con, [1e308, 1e308], dtype=pa.float64())
     assert rows[0]["value"] == 1e308
     meta = result.columns["value"]
-    assert meta.numeric_policy == "checked_float64_v1"
-    assert meta.absolute_error_column is not None
-    assert rows[0][meta.absolute_error_column] > 0
-
-
-def test_float_mean_certificate_covers_many_member_rounding(con):
-    count = 256
-    result, rows = _cohorts(con, [1.0, 0.0] + [2**-54] * count, dtype=pa.float64(), checked=True)
-    expected = (Decimal(1) + count * Decimal.from_float(2**-54)) / Decimal(count + 2)
-    error_column = result.columns["value"].absolute_error_column
-    assert error_column is not None
-    assert abs(Decimal.from_float(rows[0]["value"]) - expected) <= Decimal.from_float(
-        rows[0][error_column]
-    )
+    assert meta.numeric_policy is None
+    assert meta.absolute_error_column is None
 
 
 def test_large_zero_float_cohort_mean_remains_available(con):
-    _, rows = _cohorts(con, [0.0] * 2050, dtype=pa.float64(), checked=True)
+    _, rows = _cohorts(con, [0.0] * 2050, dtype=pa.float64())
     assert rows[0]["value"] == 0.0
     assert rows[0]["complete"] is True
 
 
-def test_float_cohort_total_refuses_nonfinite_sum_and_certificate(con):
+def test_float_cohort_total_overflow_refuses(con):
     with pytest.raises(TerrineError) as error:
-        _cohorts(con, [1e308, 1e308], dtype=pa.float64(), statistic="total", checked=True)
+        _cohorts(con, [1e308, 1e308], dtype=pa.float64(), statistic="total")
     assert error.value.code == "terrine.temporal.float64_precision"
+    assert error.value.context["failure"] == "bound_overflow"

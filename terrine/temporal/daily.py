@@ -15,7 +15,6 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
-from terrine.backends.dialect import dialect_of
 from terrine.backends.numeric import (
     decimal_coefficient,
     exact_float,
@@ -24,6 +23,7 @@ from terrine.backends.numeric import (
     exact_sum,
     exact_type,
     float_is_finite,
+    float_scale,
 )
 from terrine.backends.timestamps import utc_instant, utc_wall_clock
 from terrine.semantic.bind import _MISSING, _SCHEMA
@@ -34,7 +34,7 @@ from terrine.semantic.rules import (
 )
 from terrine.semantic.time import boundary_timezone
 from terrine.temporal.attributes import _enriched_property_columns
-from terrine.temporal.prefix import _float64_conforms, _require_backend
+from terrine.temporal.prefix import _require_backend
 
 __all__ = ["sparse_daily"]
 
@@ -332,15 +332,12 @@ def _sparse_group(
         raise _SCHEMA.error(field="selected unit", column=unit_column)
     assert measure.value_type is not None  # resolve_measure always binds it
     dtype = dt.dtype(measure.value_type)
-    floating = dtype.is_floating() and measure.aggregation != "count"
-    if floating and dialect_of(events[events.columns[0]]) != "duckdb":
-        # Without DuckDB's certified float reductions, float facts accumulate
-        # exactly from each value's shortest round-trip decimal; window sums then
-        # cancel history exactly and round once at output.
-        floating, exact_floats = False, True
-    else:
-        exact_floats = False
-    _require_backend(events, floating=floating)
+    # A float fact accumulates exactly from each value's shortest round-trip
+    # decimal at its unit's scale: window sums cancel history exactly and round
+    # once at output. DuckDB derives the scale from the unit's values; the exact
+    # types of PostgreSQL and BigQuery hold the text unscaled.
+    exact_floats = dtype.is_floating() and measure.aggregation != "count"
+    _require_backend(events)
     predicate, observed_null, missing, literal_null, nonfinite = _predicate(events, measure, source)
     selected = predicate.fill_null(False)
     unknown = predicate.isnull()
@@ -365,9 +362,16 @@ def _sparse_group(
                 strict=True,
             )
         )
+    unit_scale = {}
+    if exact_floats:
+        # The scale spans the unit's whole selected history, so every group of
+        # the unit holds coefficients that its prefix can add exactly.
+        unit_scale["__terrine_scale"] = float_scale(
+            selected.ifelse(value, ibis.null().cast(value.type())), [events[unit_column]]
+        )
     # A single projection shares predicates and original leaves across all reductions.
     leaf = events.select(
-        **{"_unit": events[unit_column], **keys, **fields},
+        **{"_unit": events[unit_column], **keys, **fields, **unit_scale},
         __terrine_selected=selected,
         __terrine_possible=predicate.fill_null(True),
         __terrine_value=value,
@@ -376,26 +380,15 @@ def _sparse_group(
     aggregates = {name: exact_sum(leaf[name]) for name in fields}
     if measure.aggregation == "count":
         aggregates["sum_value"] = exact_sum(leaf.event_count)
-    elif floating:
-        selected_value = leaf.__terrine_selected.ifelse(
-            leaf.__terrine_value.cast("float64"), ibis.null().cast("float64")
-        )
-        aggregates.update(
-            sum_value=selected_value.sum(),
-            sum_abs_value=selected_value.abs().sum(),
-            float64_nonfinite_input=(
-                selected_value.notnull() & ~float_is_finite(selected_value)
-            ).any(),
-            float64_conformance_failure=(
-                leaf.__terrine_selected & ~_float64_conforms(selected_value)
-            ).any(),
-        )
     else:
         source_value = leaf.__terrine_value
         if exact_floats:
-            exact, nonfinite_value, unrepresentable = exact_float(source_value)
+            exact, nonfinite_value, unrepresentable = exact_float(
+                source_value, leaf.__terrine_scale
+            )
             selected_value = leaf.__terrine_selected & source_value.notnull()
             aggregates.update(
+                exact_scale=leaf.__terrine_scale.max(),
                 float64_nonfinite_count=exact_sum(
                     (selected_value & nonfinite_value).ifelse(exact_literal(1), exact_literal(0))
                 ),
@@ -414,16 +407,11 @@ def _sparse_group(
         "value_scale": ibis.literal(
             dtype.scale if isinstance(dtype, dt.Decimal) and measure.aggregation != "count" else 0
         ),
-        "numeric_policy": ibis.literal("checked_float64_v1" if floating else "exact"),
+        "numeric_policy": ibis.literal("exact"),
         "observed_null_count": exact_subtract(grouped.event_count, grouped.nonnull_count),
     }
     if not measure.filters:
         constants.update({name: exact_literal(0) for name in _UNKNOWN_FIELDS})
-    if floating:
-        constants["float64_nonfinite_state"] = (
-            (grouped.nonnull_count > exact_literal(0))
-            & (~float_is_finite(grouped.sum_value) | ~float_is_finite(grouped.sum_abs_value))
-        ).fill_null(False)
     return grouped.mutate(**constants)
 
 

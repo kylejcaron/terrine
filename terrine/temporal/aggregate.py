@@ -27,8 +27,9 @@ from terrine.backends.numeric import (
     exact_to_float,
     exact_type,
     float_is_finite,
-    ieee_divide,
     ieee_subtract,
+    normalized,
+    rounded_quotient,
 )
 from terrine.backends.timestamps import utc_instant, utc_wall_clock
 from terrine.data import ColumnMeta
@@ -50,13 +51,9 @@ from terrine.temporal.lookup import lookup_prefix
 from terrine.temporal.prefix import (
     FLOAT64_PRECISION,
     FLOAT64_UNSUPPORTED,
-    _outward,
-    _require_backend,
     float64_rounding_radius,
     float64_tolerance,
     outward_add,
-    outward_divide,
-    outward_subtract,
 )
 from terrine.temporal.readiness import Readiness
 from terrine.windows import Window
@@ -199,10 +196,13 @@ class _Quantity:
     reason: str
     known_zero: str
     error: str | None = None
-    scale: int = 0
+    # A decimal's literal scale, or the state column holding a float fact's
+    # per-unit scale on DuckDB.
+    scale: int | str = 0
     count: bool = False
-    # An exact NUMERIC decimal rounded once to binary64 at output (non-certifying
-    # backends); ``scale`` is then 0 because the value is not a coefficient.
+    # Published as binary64: an exact coefficient at ``scale`` rounds once at
+    # output, unless ``rounded`` marks a value that is already a binary64 quotient.
+    binary64: bool = False
     rounded: bool = False
 
 
@@ -252,28 +252,6 @@ def _aligned(timestamp, minutes: int):
     return timestamp == utc_instant(midnight)
 
 
-def _float_quantity(builder: _Builder, quantity: _Quantity, context) -> _Quantity:
-    if quantity.error is not None:
-        return quantity
-    _require_backend(builder.table, floating=True)
-    value = builder.put(
-        "parsed", _scaled_text(builder.col(quantity.value), quantity.scale).try_cast("float64")
-    )
-    builder.flag(
-        builder.col(value).isnull() | ~float_is_finite(builder.col(value)),
-        "uncertifiable_cast",
-        context,
-    )
-    lossless = builder.col(quantity.known_zero)
-    if quantity.scale == 0:
-        coefficient = builder.col(quantity.value)
-        lossless = (coefficient >= exact_literal(-(2**53))) & (coefficient <= exact_literal(2**53))
-    error = builder.put(
-        "cast_error", lossless.ifelse(0.0, float64_rounding_radius(builder.col(value)))
-    )
-    return _Quantity(value, quantity.reason, quantity.known_zero, error)
-
-
 def _check_quantity(builder: _Builder, quantity: _Quantity, context) -> None:
     assert quantity.error is not None
     value, error = builder.col(quantity.value), builder.col(quantity.error)
@@ -286,27 +264,54 @@ def _check_quantity(builder: _Builder, quantity: _Quantity, context) -> None:
         builder.numeric.append((column, FLOAT64_PRECISION, {**context, "failure": failure}))
 
 
-def _certifying(builder: _Builder) -> bool:
-    """DuckDB certifies float results; other backends round exact NUMERIC once."""
-    return dialect_of(builder.table.t0) == "duckdb"
-
-
 def _exact_decimal(builder: _Builder, quantity: _Quantity) -> ir.Value:
+    """An exact-state operand on PostgreSQL or BigQuery, whose float state is unscaled."""
     value = builder.col(quantity.value)
-    if quantity.rounded or quantity.scale == 0:
+    assert isinstance(quantity.scale, int)
+    if quantity.scale == 0:
         return value
     return _scaled_text(value, quantity.scale).cast(exact_type(value))
 
 
-def _rounded_quotient(
+def _normalized(builder: _Builder, quantity: _Quantity) -> tuple[ir.FloatingValue, ir.IntegerValue]:
+    """A DuckDB operand's ``(mantissa, exponent)``: exact at its scale, or already binary64."""
+    value = builder.col(quantity.value)
+    if quantity.rounded:
+        return normalized(value)
+    scale = builder.col(quantity.scale) if isinstance(quantity.scale, str) else quantity.scale
+    return normalized(value, scale)
+
+
+def _quotient(
     builder: _Builder, numerator: _Quantity, denominator: _Quantity, reason: str, context
 ) -> _Quantity:
-    """Divide exactly in NUMERIC; ``aggregate_window`` rounds the result once.
+    """Divide once into a binary64 within the documented quotient bound.
 
-    A non-finite component refuses here: division could erase it (1/Infinity = 0).
+    DuckDB normalizes each operand, exact or already rounded, to a mantissa and
+    decimal exponent and divides those; PostgreSQL and BigQuery divide exactly
+    in NUMERIC and ``aggregate_window`` rounds the result once. A non-finite
+    exact component refuses here: division could erase it (1/Infinity = 0).
     """
+    known_zero = builder.put(
+        "quotient_zero",
+        builder.col(numerator.known_zero) & ~builder.col(denominator.known_zero),
+    )
+    if dialect_of(builder.table.t0) == "duckdb":
+        operands = builder.put_many(
+            *(
+                (label, part)
+                for component in (numerator, denominator)
+                for label, part in zip(
+                    ("mantissa", "exponent"), _normalized(builder, component), strict=True
+                )
+            )
+        )
+        quotient, overflow = rounded_quotient(*(builder.col(name) for name in operands))
+        value = builder.put("quotient", quotient)
+        builder.flag(overflow, "bound_overflow", context)
+        return _Quantity(value, reason, known_zero, binary64=True, rounded=True)
     for component in (numerator, denominator):
-        if component.rounded:
+        if component.binary64:
             nonfinite = exact_is_nonfinite(builder.col(component.value)).fill_null(
                 ibis.literal(False)
             )
@@ -323,78 +328,7 @@ def _rounded_quotient(
         "bound_overflow",
         context,
     )
-    known_zero = builder.put(
-        "quotient_zero",
-        builder.col(numerator.known_zero) & ~builder.col(denominator.known_zero),
-    )
-    return _Quantity(value, reason, known_zero, rounded=True)
-
-
-def _quotient(
-    builder: _Builder, numerator: _Quantity, denominator: _Quantity, reason: str, context
-) -> _Quantity:
-    """Enclose all four endpoint quotients, then measure error from the returned RN value."""
-    if not _certifying(builder):
-        return _rounded_quotient(builder, numerator, denominator, reason, context)
-    numerator = _float_quantity(builder, numerator, context)
-    denominator = _float_quantity(builder, denominator, context)
-    assert numerator.error is not None and denominator.error is not None
-    ln, un, ld, ud = builder.put_many(
-        (
-            "lower",
-            outward_subtract(
-                builder.col(numerator.value), builder.col(numerator.error), upper=False
-            ),
-        ),
-        ("upper", outward_add(builder.col(numerator.value), builder.col(numerator.error))),
-        (
-            "lower",
-            outward_subtract(
-                builder.col(denominator.value), builder.col(denominator.error), upper=False
-            ),
-        ),
-        ("upper", outward_add(builder.col(denominator.value), builder.col(denominator.error))),
-    )
-    invalid_endpoint = ~float_is_finite(builder.col(ln))
-    for endpoint in (un, ld, ud):
-        invalid_endpoint = invalid_endpoint | ~float_is_finite(builder.col(endpoint))
-    builder.flag(invalid_endpoint, "bound_overflow", context)
-    excludes_zero = builder.put("excludes_zero", (builder.col(ld) > 0.0) | (builder.col(ud) < 0.0))
-    builder.flag(~builder.col(excludes_zero), "denominator_interval_zero", context)
-    endpoints = builder.put_many(
-        *(
-            (label, outward_divide(builder.col(n), builder.col(d), upper=upper))
-            for n in (ln, un)
-            for d in (ld, ud)
-            for label, upper in (("quotient_lower", False), ("quotient_upper", True))
-        )
-    )
-    lower, upper, value = builder.put_many(
-        ("quotient_min", least(*(builder.col(n) for n in endpoints[::2]))),
-        ("quotient_max", greatest(*(builder.col(n) for n in endpoints[1::2]))),
-        ("quotient", ieee_divide(builder.col(numerator.value), builder.col(denominator.value))),
-    )
-    left_error, right_error = builder.put_many(
-        ("left_error", outward_subtract(builder.col(value), builder.col(lower))),
-        ("right_error", outward_subtract(builder.col(upper), builder.col(value))),
-    )
-    error, known_zero = builder.put_many(
-        (
-            "quotient_error",
-            _outward(greatest(builder.col(left_error).abs(), builder.col(right_error).abs()), True),
-        ),
-        ("quotient_zero", builder.col(numerator.known_zero) & builder.col(excludes_zero)),
-    )
-    # Zero divided by a finite nonzero value is exact; no arithmetic interval is needed.
-    error = builder.put("quotient_error", builder.col(known_zero).ifelse(0.0, builder.col(error)))
-    builder.flag(
-        ~float_is_finite(builder.col(lower)) | ~float_is_finite(builder.col(upper)),
-        "bound_overflow",
-        context,
-    )
-    result = _Quantity(value, reason, known_zero, error)
-    _check_quantity(builder, result, context)
-    return result
+    return _Quantity(value, reason, known_zero, binary64=True)
 
 
 def _component(
@@ -531,20 +465,19 @@ def _component(
         dtype = dt.dtype(measure.value_type)
         difference = exact_subtract(builder.col(sums[1]), builder.col(sums[0]))
         if dtype.is_floating():
-            # Exact float state (non-certifying backends): an empty window is zero
-            # even when non-finite history makes the prefix difference NaN.
+            # Exact float state: an empty window is zero even when non-finite
+            # history makes the prefix difference NaN.
             value = builder.put("sum", builder.col(empty).ifelse(zero, difference))
             invalid = cast(ir.BooleanValue, ibis.literal(False))
             # Inputs the exact state could not hold, at or before the window end,
-            # refuse a non-empty window, as non-finite history does on DuckDB.
+            # refuse a non-empty window.
             for name, failure in (
                 ("float64_nonfinite_count", "nonfinite_input"),
                 ("float64_unrepresentable_count", "bound_overflow"),
             ):
-                if name in end:
-                    flag = ~builder.col(empty) & (builder.col(end[name]).fill_null(zero) > zero)
-                    builder.flag(flag, failure, context)
-                    invalid = invalid | flag
+                flag = ~builder.col(empty) & (builder.col(end[name]).fill_null(zero) > zero)
+                builder.flag(flag, failure, context)
+                invalid = invalid | flag
             # BigQuery's SAFE_SUBTRACT returns NULL on overflow.
             builder.flag(
                 builder.col(value).isnull()
@@ -556,7 +489,10 @@ def _component(
             # A sum that only looks zero because inputs were dropped is not a zero
             # denominator: its refusal must not be masked by a zero_denominator reason.
             known_zero = builder.put("sum_zero", (builder.col(value) == zero) & ~invalid)
-            quantity = _Quantity(value, reason, known_zero, rounded=True)
+            # DuckDB holds the unit's coefficients at the state's scale; the exact
+            # types of PostgreSQL and BigQuery hold the shortest text unscaled.
+            scale = end["exact_scale"] if dialect_of(builder.table.t0) == "duckdb" else 0
+            quantity = _Quantity(value, reason, known_zero, scale=scale, binary64=True)
         else:
             value = builder.put("sum", difference)
             known_zero = builder.put("sum_zero", builder.col(value) == zero)
@@ -593,10 +529,10 @@ def aggregate_window(
 ) -> TemporalResult:
     """Build exact endpoint differences and defer every data-dependent refusal.
 
-    At s=t0+start and e=t0+end, P(e)-P(s) measures exactly [s,e).
-    Float sums use E=RU(E_s+E_e+R(fl(S_e-S_s))). Fractional results
-    enclose both inputs and all four endpoint quotients before reapplying the
-    fixed final-result tolerance. Exact coefficients never multiply or divide.
+    At s=t0+start and e=t0+end, P(e)-P(s) measures exactly [s,e). Float facts
+    difference their exact shortest-decimal state and round once at output;
+    averages and ratios divide once within the quotient bound. Exact
+    coefficients never multiply or divide.
     """
     if not isinstance(window, Window):
         raise TypeError("window must be a Window")
@@ -782,8 +718,9 @@ def aggregate_window(
             "tolerance",
             numeric_context,
         )
-    exact_output = metric.kind != "conversion" and quantity.error is None and not quantity.rounded
+    exact_output = metric.kind != "conversion" and quantity.error is None and not quantity.binary64
     if exact_output:
+        assert isinstance(quantity.scale, int)
         target = "int64" if quantity.count else dt.Decimal(38, quantity.scale)
         value = builder.put(
             "exact_output",
@@ -815,7 +752,10 @@ def aggregate_window(
             )
         )
     elif quantity.rounded:
-        rounded, nonfinite, out_of_range = exact_to_float(builder.col(quantity.value))
+        value = quantity.value
+    elif quantity.binary64:
+        scale = builder.col(quantity.scale) if isinstance(quantity.scale, str) else quantity.scale
+        rounded, nonfinite, out_of_range = exact_to_float(builder.col(quantity.value), scale)
         value = builder.put("rounded", rounded)
         builder.flag(nonfinite, "nonfinite_input", numeric_context)
         builder.flag(out_of_range, "bound_overflow", numeric_context)
@@ -850,7 +790,7 @@ def aggregate_window(
         reason_column=final_reason,
         numeric_policy=(
             None
-            if metric.kind == "conversion" or quantity.rounded
+            if metric.kind == "conversion" or quantity.binary64
             else "checked_float64_v1"
             if quantity.error is not None
             else "exact"

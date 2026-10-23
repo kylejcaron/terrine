@@ -299,6 +299,28 @@ def _compile_cohorts(
                 ),
             )
         )
+    if numeric_type.is_floating():
+        # Native binary64 reductions: a total or mean that leaves the finite range
+        # refuses instead of publishing an infinity or NaN.
+        failure_column = "failed_cohort_nonfinite"
+        failed = result.value.notnull() & ~float_is_finite(result.value)
+        checks.append(
+            _Check(
+                result.filter(failed).aggregate(ibis._.count().cast("string").name(failure_column)),
+                (
+                    _Failure(
+                        failure_column,
+                        FLOAT64_PRECISION,
+                        {
+                            "failure": "bound_overflow",
+                            "source": "cohort",
+                            "measure": value_column,
+                            "output": "value",
+                        },
+                    ),
+                ),
+            )
+        )
     if checked_float:
         failed = result.value.notnull() & (
             result.value_absolute_error.isnull()

@@ -7,6 +7,7 @@ from importlib.metadata import version
 from typing import Any, Literal, cast
 
 import ibis
+import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 from ibis.common.exceptions import IbisError
 
@@ -259,10 +260,20 @@ def sparse_prefix(
     required = ("_unit", "_timestamp", *_COUNT_FIELDS, "sum_value")
     if resolution == "day":
         required += ("local_day",)
+    floating = state.sum_value.type().is_floating()
+    # A float fact's exact state carries its unit's scale and the counts of
+    # inputs it could not hold.
+    exact_floats = (
+        not floating
+        and measure.value_type is not None
+        and dt.dtype(measure.value_type).is_floating()
+        and measure.aggregation != "count"
+    )
+    if exact_floats:
+        required += ("exact_scale", *_EXACT_FLOAT_COUNTS)
     for column in required:
         if column not in state.columns:
             raise _SCHEMA.error(field="sufficient state", column=column)
-    floating = state.sum_value.type().is_floating()
     _require_backend(state, floating=floating)
     window = ibis.window(group_by=state._unit, order_by=state._timestamp, rows=(None, 0))
     fields = {
@@ -273,9 +284,8 @@ def sparse_prefix(
     }
     if not floating:
         fields["sum_value"] = exact_sum(state.sum_value).over(window).fill_null(exact_literal(0))
-        # Exact float state (non-certifying backends) counts inputs it cannot hold.
-        for name in _EXACT_FLOAT_COUNTS:
-            if name in state.columns:
+        if exact_floats:
+            for name in _EXACT_FLOAT_COUNTS:
                 fields[name] = exact_sum(state[name]).over(window).fill_null(exact_literal(0))
         cumulative = state.mutate(**fields)
         return cumulative.mutate(

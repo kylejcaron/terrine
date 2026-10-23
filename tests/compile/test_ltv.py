@@ -159,7 +159,7 @@ def test_cumulative_partitions_repeated_anchors_and_propagates_missing_period():
         con.disconnect()
 
 
-def test_float_feature_certificates_survive_exact_trajectory_compilation():
+def test_float_feature_metadata_survives_exact_trajectory_compilation():
     con, model = _trajectory_model()
     try:
         design = Design(
@@ -174,13 +174,13 @@ def test_float_feature_certificates_survive_exact_trajectory_compilation():
         frame = compile_ltv(design, model)
         table = _collect(con, frame)
         feature = frame.columns["float_feature"]
-        assert feature.numeric_policy == "checked_float64_v1"
+        assert feature.numeric_policy is None
+        assert feature.absolute_error_column is None
         for column in (
             feature.observed_from_column,
             feature.observed_until_column,
             feature.complete_column,
             feature.reason_column,
-            feature.absolute_error_column,
         ):
             assert column is not None and column in table.column_names
         assert frame.columns["period_value"].numeric_policy in (None, "exact")
@@ -188,7 +188,7 @@ def test_float_feature_certificates_survive_exact_trajectory_compilation():
         con.disconnect()
 
 
-def test_cutoff_nulls_period_error_certificate_with_its_value():
+def test_cutoff_nulls_immature_float_period_value():
     from datetime import UTC, datetime
 
     con, model = _trajectory_model(unit="u3")
@@ -207,18 +207,17 @@ def test_cutoff_nulls_period_error_certificate_with_its_value():
         )
         table = con.to_pyarrow(frame.table).to_pylist()
         young = next(row for row in table if row["unit"] == "u3" and row["age"] == 1)
-        error_column = frame.columns["period_value"].absolute_error_column
-        assert error_column is not None
+        meta = frame.columns["period_value"]
+        assert meta.numeric_policy is None and meta.absolute_error_column is None
         assert young["period_value"] is None
-        assert young[error_column] is None
+        assert young[meta.reason_column] == "administrative_cutoff"
     finally:
         con.disconnect()
 
 
-def test_cumulative_float_results_enforce_final_tolerance(monkeypatch):
+def test_cumulative_float_overflow_refuses(monkeypatch):
     from dataclasses import replace
     from datetime import UTC, datetime
-    from math import ulp
 
     from terrine.compile.columns import compile_columns
     from terrine.data import ColumnMeta
@@ -230,13 +229,12 @@ def test_cumulative_float_results_enforce_final_tolerance(monkeypatch):
         periods = con.create_table(
             "period_values",
             base.table.mutate(
-                __trajectory_age_0=ibis.literal(1e12),
-                __trajectory_age_1=ibis.literal(-1e12),
+                __trajectory_age_0=ibis.literal(1e308),
+                __trajectory_age_1=ibis.literal(1e308),
                 complete=ibis.literal(True),
                 reason=ibis.null().cast("string"),
                 observed_from=ibis.literal(datetime(2025, 1, 1, tzinfo=UTC)),
                 observed_until=ibis.literal(datetime(2025, 1, 31, tzinfo=UTC)),
-                absolute_error=ibis.literal(ulp(1e12)),
             ),
         )
         period = 7 * 24 * 60 * 60
@@ -248,8 +246,6 @@ def test_cumulative_float_results_enforce_final_tolerance(monkeypatch):
                 "observed_until",
                 "complete",
                 "reason",
-                numeric_policy="checked_float64_v1",
-                absolute_error_column="absolute_error",
             )
             for age in range(2)
         }
@@ -269,6 +265,7 @@ def test_cumulative_float_results_enforce_final_tolerance(monkeypatch):
         with pytest.raises(TerrineError) as error:
             frame.validate(execute=con.to_pyarrow)
         assert error.value.code == "terrine.temporal.float64_precision"
+        assert error.value.context["failure"] == "bound_overflow"
         assert error.value.context["output"] == "cumulative_value"
     finally:
         con.disconnect()
@@ -329,8 +326,7 @@ def test_scale_zero_decimal_cumulative_overflow_refuses(value):
     con, model = _trajectory_model(decimal_type="DECIMAL(38, 0)")
     try:
         con.raw_sql(
-            f"UPDATE events SET decimal_amount = {value} "
-            "WHERE user_id = 'u1' AND kind = 'revenue'"
+            f"UPDATE events SET decimal_amount = {value} WHERE user_id = 'u1' AND kind = 'revenue'"
         )
         frame = compile_ltv(
             Design(
@@ -360,8 +356,7 @@ def test_missing_decimal_period_preserves_cumulative_reason_when_known_subtotal_
             "AND ts = TIMESTAMPTZ '2025-01-03 00:00:00+00'"
         )
         con.raw_sql(
-            "UPDATE events SET decimal_amount = NULL "
-            "WHERE user_id = 'u1' AND kind = 'purchase'"
+            "UPDATE events SET decimal_amount = NULL WHERE user_id = 'u1' AND kind = 'purchase'"
         )
         con.raw_sql(
             "UPDATE events SET decimal_amount = 60000000000000000000000000000000000000 "

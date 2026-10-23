@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import ibis
 
-from terrine.backends.numeric import EXACT_OVERFLOW, exact_literal, exact_sum
+from terrine.backends.numeric import EXACT_OVERFLOW, exact_literal, exact_sum, float_is_finite
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
@@ -236,6 +236,25 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
             )
         cumulative = missing.ifelse(ibis.null().cast(total.type()), total)
         table = table.mutate(cumulative_value=cumulative)
+        if table.cumulative_value.type().is_floating():
+            # A native binary64 running total that leaves the finite range
+            # refuses instead of publishing an infinity or NaN.
+            failure_column = "failed_cumulative_nonfinite"
+            check_table = table.filter(
+                table.cumulative_value.notnull() & ~float_is_finite(table.cumulative_value)
+            ).aggregate(ibis._.count().cast("string").name(failure_column))
+            checks.append(
+                _Check(
+                    check_table,
+                    (
+                        _Failure(
+                            failure_column,
+                            FLOAT64_PRECISION,
+                            {"failure": "bound_overflow", "output": "cumulative_value"},
+                        ),
+                    ),
+                )
+            )
         table = table.mutate(
             cumulative_value_complete=~missing & table.period_value_complete.fill_null(False)
         )
