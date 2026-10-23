@@ -19,6 +19,8 @@
 - Build sequential/calendar/event panels, bounded state pairs, LTV trajectories,
   cohort summaries, per-unit time-to-event records and risk-set counts/plain
   rates. Retain row identity, temporal support and typed shape provenance.
+- Refuse exact cumulative LTV totals that exceed the declared decimal output
+  type; preserve unavailable cumulative values and their reasons.
 - Build deterministic bounded event sequences, sessions, funnels, transitions
   and event-relative selectors with explicit tie, missing-predecessor and
   temporal-leakage rules.
