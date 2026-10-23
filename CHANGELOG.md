@@ -113,8 +113,26 @@
 
 ### Correctness and support
 
-- Preserve integer/decimal scale and checked Float64 arithmetic; reject
-  unrepresentable temporal/numeric results instead of narrowing or overflowing.
+- **Breaking:** compute DuckDB float windows from exact state. Each input now
+  enters as its shortest decimal (at most half an ulp from its binary value) at
+  a scale derived per unit from the data, the window's exact difference is
+  rounded to binary64 once, and averages and ratios divide before that
+  rounding, so a published quotient `r` of exact `p/q` satisfies
+  `|r − p/q| ≤ 6·2⁻⁵³·|p/q| + 2⁻¹⁰⁷⁵`; PostgreSQL and BigQuery keep their
+  exact division and single rounding. Results no longer carry
+  earlier floating-point accumulation error, so they can differ from earlier
+  DuckDB results (`0.1 + 0.2 − 0.3` is `0.0`), and long histories no longer
+  refuse. The certified-interval machinery is removed: `absolute_error_column`
+  and the `checked_float64_v1` numeric policy leave `ColumnMeta` and saved
+  frame metadata (float outputs carry `numeric_policy=None`; metadata saved
+  with the removed fields does not decode), `terrine.temporal.float64_unsupported`
+  and the `float64_precision` failure kinds other than `nonfinite_input` and
+  `bound_overflow` are gone, the state-panel reason `ambiguous_state_bin` and
+  the eligibility reason `uncertain_comparison` no longer occur because bins
+  and predicates compare the rounded value, and runtime plans no longer carry
+  a prefix-certificate layer (`benchmarks/README.md` records the cost).
+- Preserve integer/decimal scale; reject unrepresentable temporal/numeric
+  results instead of narrowing or overflowing.
 - Report native Catalog schema errors as `terrine.catalog.invalid_definition`
   with immutable, field-located validation categories and recovery hints.
 - Retain snapshot-scoped integrity, exact boundary, source-identity and treatment
