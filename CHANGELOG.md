@@ -109,6 +109,8 @@
 
 - Preserve integer/decimal scale and checked Float64 arithmetic; reject
   unrepresentable temporal/numeric results instead of narrowing or overflowing.
+- Report native Catalog schema errors as `terrine.catalog.invalid_definition`
+  with immutable, field-located validation categories and recovery hints.
 - Retain snapshot-scoped integrity, exact boundary, source-identity and treatment
   history checks across ordinary, retained and downstream export paths.
 - Capture event-anchor and recursive event-selector sources even when the
