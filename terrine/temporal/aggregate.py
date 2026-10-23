@@ -14,6 +14,7 @@ import ibis.expr.types as ir
 import pyarrow as pa
 
 from terrine.backends.dialect import dialect_of
+from terrine.backends.extrema import greatest, least
 from terrine.backends.numeric import (
     EXACT_OVERFLOW as _EXACT_OVERFLOW,
 )
@@ -190,7 +191,7 @@ def _scaled_text(coefficient, scale: int):
         return text
     sign = text.startswith("-").ifelse("-", "")
     digits = text.replace("-", "")
-    digits = digits.lpad(ibis.greatest(digits.length(), scale + 1), "0")
+    digits = digits.lpad(greatest(digits.length(), scale + 1), "0")
     return (
         sign
         + digits.substr(0, digits.length() - scale)
@@ -340,8 +341,8 @@ def _quotient(
         )
     )
     lower, upper, value = builder.put_many(
-        ("quotient_min", ibis.least(*(builder.col(n) for n in endpoints[::2]))),
-        ("quotient_max", ibis.greatest(*(builder.col(n) for n in endpoints[1::2]))),
+        ("quotient_min", least(*(builder.col(n) for n in endpoints[::2]))),
+        ("quotient_max", greatest(*(builder.col(n) for n in endpoints[1::2]))),
         ("quotient", ieee_divide(builder.col(numerator.value), builder.col(denominator.value))),
     )
     left_error, right_error = builder.put_many(
@@ -351,9 +352,7 @@ def _quotient(
     error, known_zero = builder.put_many(
         (
             "quotient_error",
-            _outward(
-                ibis.greatest(builder.col(left_error).abs(), builder.col(right_error).abs()), True
-            ),
+            _outward(greatest(builder.col(left_error).abs(), builder.col(right_error).abs()), True),
         ),
         ("quotient_zero", builder.col(numerator.known_zero) & builder.col(excludes_zero)),
     )
@@ -623,13 +622,13 @@ def aggregate_window(
     observation_complete = cast(ir.BooleanValue, ibis.literal(True))
     if "_observed_from" in anchors.columns:
         bound = builder.table._observed_from
-        observed_from = ibis.greatest(observed_from, bound.fill_null(observed_from))
+        observed_from = greatest(observed_from, bound.fill_null(observed_from))
         observation_complete = observation_complete & (
             bound.isnull() | (builder.col(start) >= bound)
         )
     if "_observed_until" in anchors.columns:
         bound = builder.table._observed_until
-        observed_until = ibis.least(observed_until, bound.fill_null(observed_until))
+        observed_until = least(observed_until, bound.fill_null(observed_until))
         observation_complete = observation_complete & (bound.isnull() | (builder.col(end) <= bound))
     observed_from = builder.put("observed_from", observed_from)
     observed_until = builder.put("observed_until", observed_until)

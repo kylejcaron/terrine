@@ -11,6 +11,7 @@ import ibis.expr.types as ir
 from ibis.common.exceptions import IbisError
 
 from terrine.backends.dialect import dialect_of
+from terrine.backends.extrema import greatest
 from terrine.backends.numeric import (
     exact_literal,
     exact_subtract,
@@ -64,7 +65,7 @@ def _require_backend(table: ibis.Table, *, floating: bool = False) -> None:
     except IbisError:
         backend = "unbound"
     supported = (backend == "duckdb" and version("duckdb") == "1.5.6") or (
-        backend == "postgres" and not floating and dialect_of() == "postgres"
+        backend in {"postgres", "bigquery"} and not floating and dialect_of() == backend
     )
     if not supported:
         if floating:
@@ -110,8 +111,8 @@ def float64_rounding_radius(value):
 
 def float64_tolerance(value):
     """Downward threshold for the fixed checked_float64_v1 final-result policy."""
-    relative = ibis.greatest(outward_multiply(2**-30, value.abs(), upper=False), 0.0)
-    return ibis.greatest(outward_add(2**-40, relative, upper=False), 0.0)
+    relative = greatest(outward_multiply(2**-30, value.abs(), upper=False), 0.0)
+    return greatest(outward_add(2**-40, relative, upper=False), 0.0)
 
 
 def _float64_conforms(value):

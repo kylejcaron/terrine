@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -237,10 +238,6 @@ def owned_session(con: Any) -> tuple[Any, str]:
     return client, session_id
 
 
-def _overflow(exc: Exception) -> bool:
-    return "overflow" in str(exc).casefold()
-
-
 class BigQuerySession:
     """One snapshot transaction in a terrine-owned BigQuery session."""
 
@@ -254,19 +251,20 @@ class BigQuerySession:
         check_routines(sql)
 
     def execute(self, con: Any, query: Any, sql: str) -> pa.Table:
-        from terrine.backends.numeric import EXACT_OVERFLOW
-
         invalidate_metadata()
-        try:
+        with _overflow_refusal():
             return con.to_pyarrow(query)
-        except Exception as exc:
-            if _overflow(exc):
-                raise EXACT_OVERFLOW.error() from exc
-            raise
 
     def batches(self, con: Any, query: Any, sql: str, *, chunk_size: int) -> pa.RecordBatchReader:
         invalidate_metadata()
-        return con.to_pyarrow_batches(query, chunk_size=chunk_size)
+        with _overflow_refusal():
+            reader = con.to_pyarrow_batches(query, chunk_size=chunk_size)
+
+        def batches():
+            with _overflow_refusal():
+                yield from reader
+
+        return pa.RecordBatchReader.from_batches(reader.schema, batches())
 
     def close(self) -> None:
         try:
@@ -274,3 +272,16 @@ class BigQuerySession:
             self.client.query("CALL BQ.ABORT_SESSION()").result()
         finally:
             self.client.close()
+
+
+@contextmanager
+def _overflow_refusal() -> Generator[None]:
+    """BigQuery reports BIGNUMERIC overflow as a query error; refuse with the code."""
+    from terrine.backends.numeric import EXACT_OVERFLOW
+
+    try:
+        yield
+    except Exception as exc:
+        if "overflow" in str(exc).casefold():
+            raise EXACT_OVERFLOW.error() from exc
+        raise

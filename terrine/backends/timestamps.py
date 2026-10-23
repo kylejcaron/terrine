@@ -45,6 +45,9 @@ def _isfinite(value) -> bool:
 
 def timestamp_is_finite(value: ir.TimestampValue) -> ir.BooleanValue:
     dialect = dialect_of(value)
+    if dialect == "bigquery":
+        # BigQuery timestamps have no infinities.
+        return cast(ir.BooleanValue, ibis.literal(True))
     if dialect not in _NATIVE:
         raise unavailable("timestamp_is_finite", dialect)
     return cast(ir.BooleanValue, _isfinite(value))
@@ -79,6 +82,9 @@ def _utc_aware(zone, timestamp):
 def utc_wall_clock(value: ir.Value) -> ir.TimestampValue:
     """An instant's naive UTC wall clock, independent of the session time zone."""
     dialect = dialect_of(value)
+    if dialect == "bigquery":
+        # TIMESTAMP -> DATETIME converts in UTC; terrine's session sets no time zone.
+        return cast(ir.TimestampValue, value.cast(dt.Timestamp()))
     if dialect not in _NATIVE:
         raise unavailable("utc_wall_clock", dialect)
     return cast(ir.TimestampValue, _utc_naive("UTC", value))
@@ -87,6 +93,8 @@ def utc_wall_clock(value: ir.Value) -> ir.TimestampValue:
 def utc_instant(value: ir.Value) -> ir.TimestampValue:
     """The UTC instant a naive UTC wall-clock value denotes."""
     dialect = dialect_of(value)
+    if dialect == "bigquery":
+        return cast(ir.TimestampValue, value.cast(dt.Timestamp(timezone="UTC")))
     if dialect not in _NATIVE:
         raise unavailable("utc_instant", dialect)
     return cast(ir.TimestampValue, _utc_aware("UTC", value))
@@ -143,7 +151,10 @@ def timestamp_parts(
     Every part is NULL when the value is NULL. Naive timestamps denote UTC. Pass
     ``backend`` when ``value`` may be an unbound literal compared with a bound column.
     """
-    if (backend or dialect_of(value)) != "postgres":
+    dialect = backend or dialect_of(value)
+    if dialect == "bigquery":
+        return _bigquery_parts(value)
+    if dialect != "postgres":
         key = _struct_key(value)
         return (
             cast(ir.IntegerValue, key["rank"]),
@@ -175,6 +186,21 @@ def timestamp_parts(
     )
 
 
+def _bigquery_parts(
+    value: ir.TimestampValue,
+) -> tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue]:
+    """BigQuery instants are finite, microsecond-exact and within year 1-9999,
+    so their Unix microseconds fit BIGINT."""
+    dtype = value.type()
+    if not isinstance(dtype, dt.Timestamp) or dtype.scale not in (None, 6):
+        raise _UNSUPPORTED.error(dtype=str(dtype))
+    micros = value.delta(_epoch(dtype), unit="microsecond")
+    seconds = truncating_quotient(micros, 10**6, like=value)
+    nanos = cast(ir.IntegerValue, (micros - seconds * 10**6) * 1000)
+    rank = value.isnull().ifelse(ibis.null(dt.int64), ibis.literal(0, type=dt.int64))
+    return cast(ir.IntegerValue, rank), seconds, nanos
+
+
 def timestamp_order_key(value: ir.TimestampValue) -> ir.Value:
     """Return a value whose ordering and equality are exactly the instants'.
 
@@ -185,7 +211,7 @@ def timestamp_order_key(value: ir.TimestampValue) -> ir.Value:
     dtype = value.type()
     if not isinstance(dtype, dt.Timestamp):
         raise _UNSUPPORTED.error(dtype=str(dtype))
-    if dialect_of(value) == "postgres":
+    if dialect_of(value) in {"postgres", "bigquery"}:
         if dtype.scale not in (None, 6):
             raise _UNSUPPORTED.error(dtype=str(dtype))
         return value

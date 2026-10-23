@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, cast
 import ibis
 import ibis.expr.types as ir
 
+from terrine.backends.extrema import greatest, least
 from terrine.backends.timestamps import compare_timestamps
 from terrine.data import ColumnMeta
 from terrine.semantic.models import BoundSource
@@ -95,10 +96,10 @@ def compile_retention(
         else_=joined.reason,
     )
     complete = reason.isnull()
-    observed_from = ibis.greatest(
+    observed_from = greatest(
         ibis.literal(coverage.start), anchors._observed_from.fill_null(coverage.start)
     )
-    observed_until = ibis.least(
+    observed_until = least(
         ibis.literal(coverage.end_exclusive),
         anchors._observed_until.fill_null(coverage.end_exclusive),
     )

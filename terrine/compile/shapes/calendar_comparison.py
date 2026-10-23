@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 import ibis
 from ibis.expr import types as ir
 
+from terrine.backends.extrema import greatest
 from terrine.backends.timestamps import compare_timestamps
 from terrine.compile.anchors import AnchorTable, _precision_check, _utc_column
 from terrine.compile.columns import CompiledStudy, _validate_names, compile_columns
@@ -59,11 +60,11 @@ def _followup_bound(
     outcome_cutoff: datetime | None,
     anticipation_seconds: int,
 ) -> tuple[ir.TimestampValue, bool]:
-    end = cast(ir.TimestampValue, ibis.greatest(t0, reference_t0))
+    end = cast(ir.TimestampValue, greatest(t0, reference_t0))
     if outcome_window_end:
         end += ibis.interval(seconds=outcome_window_end)
     if outcome_cutoff is not None:
-        end = cast(ir.TimestampValue, ibis.greatest(end, ibis.literal(outcome_cutoff)))
+        end = cast(ir.TimestampValue, greatest(end, ibis.literal(outcome_cutoff)))
     if anticipation_seconds:
         end += ibis.interval(seconds=anticipation_seconds)
     return end, outcome_window_end > 0 or outcome_cutoff is not None

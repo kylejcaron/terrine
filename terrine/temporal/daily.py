@@ -17,6 +17,7 @@ import ibis.expr.types as ir
 
 from terrine.backends.dialect import dialect_of
 from terrine.backends.numeric import (
+    decimal_coefficient,
     exact_literal,
     exact_subtract,
     exact_sum,
@@ -266,8 +267,7 @@ def _filter_comparison(value, filt):
             bounds = (-maximum, maximum)
         else:
             bounds = dtype.bounds
-        text = value.cast("string")
-        coefficient = (text.replace(".", "") if scale else text).cast(exact_type())
+        coefficient = decimal_coefficient(value, scale)
     elif dtype.is_floating():
         value = value.cast("float64")
         value = float_is_finite(value).ifelse(value, ibis.null().cast("float64"))
@@ -391,12 +391,12 @@ def _sparse_group(
         )
     else:
         source_value = leaf.__terrine_value
-        text = (source_value.cast("float64") if exact_floats else source_value).cast("string")
-        if dtype.is_decimal():
-            text = text.replace(".", "")
-        coefficient = leaf.__terrine_selected.ifelse(
-            text.cast(exact_type()), ibis.null().cast(exact_type())
-        )
+        if exact_floats:
+            exact = source_value.cast("float64").cast("string").cast(exact_type())
+        else:
+            scale = dtype.scale if isinstance(dtype, dt.Decimal) else 0
+            exact = decimal_coefficient(source_value, scale or 0)
+        coefficient = leaf.__terrine_selected.ifelse(exact, ibis.null().cast(exact_type()))
         aggregates["sum_value"] = exact_sum(coefficient)
     grouped = leaf.group_by("_unit", *keys).aggregate(**aggregates)
     constants = {

@@ -47,6 +47,10 @@ EXACT_OVERFLOW = RefusalSpec(
 )
 _DUCKDB_EXACT = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
 _PG_EXACT = dt.Unknown(raw_type=sge.DataType.build("NUMERIC", dialect="postgres"))
+# BigQuery has no arbitrary precision: BIGNUMERIC holds integers to about 5.7e38
+# and 38 fractional digits. Overflow is an error (sums) or NULL (SAFE_ arithmetic),
+# both of which surface as terrine.temporal.exact_overflow.
+_BQ_EXACT = dt.Unknown(raw_type=sge.DataType.build("BIGNUMERIC", dialect="bigquery"))
 
 
 def exact_type(*like: ir.Value) -> dt.DataType:
@@ -55,12 +59,14 @@ def exact_type(*like: ir.Value) -> dt.DataType:
         return _PG_EXACT
     if dialect == "duckdb":
         return _DUCKDB_EXACT
+    if dialect == "bigquery":
+        return _BQ_EXACT
     raise unavailable("exact_state", dialect)
 
 
 def is_exact_type(dtype: dt.DataType) -> bool:
     """Whether ``dtype`` is an internal exact-state type on any backend."""
-    return dtype in (_DUCKDB_EXACT, _PG_EXACT)
+    return dtype in (_DUCKDB_EXACT, _PG_EXACT, _BQ_EXACT)
 
 
 def exact_literal(value: int, *like: ir.Value) -> ir.Value:
@@ -79,12 +85,41 @@ def _pg_exact_divide(numerator, denominator):
     """PostgreSQL NUMERIC division to at least 16 significant digits."""
 
 
-def exact_ratio(numerator: ir.Value, denominator: ir.Value) -> ir.Value:
-    """NUMERIC ``numerator / denominator``; NULL for a zero denominator.
+@ibis.udf.scalar.builtin(name="safe_divide", signature=((_BQ_EXACT, _BQ_EXACT), _BQ_EXACT))
+def _bq_exact_divide(numerator, denominator):
+    """BigQuery BIGNUMERIC division to 38 fractional digits; NULL for zero."""
 
-    PostgreSQL only: DuckDB's certified path encloses quotients in float intervals.
+
+@ibis.udf.scalar.builtin(name="safe_multiply", signature=((_BQ_EXACT, _BQ_EXACT), _BQ_EXACT))
+def _bq_exact_multiply(left, right):
+    """BigQuery exact BIGNUMERIC product; NULL on overflow."""
+
+
+def decimal_coefficient(value: ir.Value, scale: int) -> ir.Value:
+    """The exact integer ``value * 10**scale`` of an integer or fixed-scale decimal.
+
+    DuckDB and PostgreSQL print every fractional digit of a fixed-scale decimal,
+    so its text without the point is the coefficient; BigQuery prints NUMERIC
+    1.50 as ``1.5``, so it multiplies instead.
+    """
+    dialect = dialect_of(value)
+    if dialect == "bigquery":
+        exact = value.cast(_BQ_EXACT)
+        return _bq_exact_multiply(exact, exact_literal(10**scale, value)) if scale else exact
+    text = value.cast("string")
+    return (text.replace(".", "") if scale else text).cast(exact_type(value))
+
+
+def exact_ratio(numerator: ir.Value, denominator: ir.Value) -> ir.Value:
+    """Exact-state ``numerator / denominator``; NULL for a zero denominator.
+
+    Not for DuckDB, whose certified path encloses quotients in float intervals.
+    PostgreSQL divides to at least 16 significant digits; BigQuery to 38
+    fractional digits.
     """
     dialect = dialect_of(numerator, denominator)
+    if dialect == "bigquery":
+        return _bq_exact_divide(numerator, denominator)
     if dialect != "postgres":
         raise unavailable("exact_ratio", dialect)
     zero = exact_literal(0, numerator, denominator)
@@ -100,8 +135,15 @@ _NONFINITE = ("NaN", "Infinity", "-Infinity")
 
 
 def exact_is_nonfinite(value: ir.Value) -> ir.BooleanValue:
-    """Whether an exact NUMERIC value is NaN or infinite (PostgreSQL); NULL stays NULL."""
+    """Whether an exact value is NaN or infinite; NULL stays NULL.
+
+    Only PostgreSQL NUMERIC has non-finite values; BIGNUMERIC has none.
+    """
     dialect = dialect_of(value)
+    if dialect == "bigquery":
+        return cast(
+            ir.BooleanValue, value.isnull().ifelse(ibis.null(dt.boolean), ibis.literal(False))
+        )
     if dialect != "postgres":
         raise unavailable("exact_is_nonfinite", dialect)
     return value.isin([_exact_text(text, value) for text in _NONFINITE])
@@ -110,11 +152,16 @@ def exact_is_nonfinite(value: ir.Value) -> ir.BooleanValue:
 def exact_to_float(
     value: ir.Value,
 ) -> tuple[ir.FloatingValue, ir.BooleanValue, ir.BooleanValue]:
-    """Round a NUMERIC value once to binary64.
+    """Round an exact value once to binary64.
 
     Returns (float, nonfinite, out_of_range); the float is NULL for either flag.
     Magnitudes at or below 2**-1075 become 0.0, as round-to-nearest would give.
     """
+    false = ibis.literal(False)
+    if dialect_of(value) == "bigquery":
+        # BIGNUMERIC is finite and far inside binary64's range.
+        never = cast(ir.BooleanValue, false)
+        return cast(ir.FloatingValue, value.cast(dt.float64)), never, never
     # NUMERIC NaN equals itself and sorts above every number, so test it first.
     nonfinite = exact_is_nonfinite(value)
     limit, tiny = _exact_text(_FLOAT64_MAX, value), _exact_text(_FLOAT64_ROUNDS_TO_ZERO, value)
@@ -128,7 +175,6 @@ def exact_to_float(
         (rounds_to_zero, ibis.literal(0.0)),
         else_=value.cast(dt.float64),
     )
-    false = ibis.literal(False)
     return (
         cast(ir.FloatingValue, result),
         nonfinite.fill_null(false),
@@ -158,12 +204,24 @@ def _pg_exact_subtract(left, right):
     """PostgreSQL exact NUMERIC subtraction."""
 
 
+@ibis.udf.agg.builtin(name="sum", signature=((_BQ_EXACT,), _BQ_EXACT))
+def _bq_exact_sum(value):
+    """BigQuery BIGNUMERIC sum; overflow is a query error."""
+
+
+@ibis.udf.scalar.builtin(name="safe_subtract", signature=((_BQ_EXACT, _BQ_EXACT), _BQ_EXACT))
+def _bq_exact_subtract(left, right):
+    """BigQuery BIGNUMERIC subtraction; NULL on overflow."""
+
+
 def exact_sum(value):
     dialect = dialect_of(value)
     if dialect == "postgres":
         return _pg_exact_sum(value)
     if dialect == "duckdb":
         return _duckdb_exact_sum(value)
+    if dialect == "bigquery":
+        return _bq_exact_sum(value)
     raise unavailable("exact_state", dialect)
 
 
@@ -173,6 +231,8 @@ def exact_subtract(left, right):
         return _pg_exact_subtract(left, right)
     if dialect == "duckdb":
         return _duckdb_exact_subtract(left, right)
+    if dialect == "bigquery":
+        return _bq_exact_subtract(left, right)
     raise unavailable("exact_state", dialect)
 
 
@@ -182,8 +242,8 @@ def _duckdb_quotient(value, divisor):
 
 
 @ibis.udf.scalar.builtin(name="div", signature=((dt.int64, dt.int64), dt.int64))
-def _pg_quotient(value, divisor):
-    """PostgreSQL integer division truncating toward zero."""
+def _div(value, divisor):
+    """PostgreSQL and BigQuery integer division truncating toward zero."""
 
 
 def truncating_quotient(
@@ -191,8 +251,8 @@ def truncating_quotient(
 ) -> ir.IntegerValue:
     """Integer division truncating toward zero; Ibis ``//`` floors through doubles."""
     dialect = dialect_of(like, value)
-    if dialect == "postgres":
-        quotient = _pg_quotient(value, divisor)
+    if dialect in {"postgres", "bigquery"}:
+        quotient = _div(value, divisor)
     elif dialect == "duckdb":
         quotient = _duckdb_quotient(value, divisor)
     else:

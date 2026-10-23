@@ -48,7 +48,8 @@ def _reference(text: str | None) -> tuple[int, int, int] | None:
         return _OUT_OF_DATETIME_RANGE[text]
     instant = datetime.fromisoformat(text.replace("+00", "+00:00"))
     micros = (instant - _EPOCH) // timedelta(microseconds=1)
-    seconds = int(micros / 10**6)  # truncate toward zero, like the SQL
+    # Truncate toward zero, like the SQL, in exact integers (late instants exceed 2**53).
+    seconds = abs(micros) // 10**6 * (1 if micros >= 0 else -1)
     return (0, seconds, (micros - seconds * 10**6) * 1000)
 
 

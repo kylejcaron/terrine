@@ -11,6 +11,7 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+from terrine.backends.joins import has_native_asof
 from terrine.backends.numeric import is_exact_type
 from terrine.backends.timestamps import timestamp_order_key
 
@@ -55,6 +56,8 @@ def lookup_prefix(
     """
     if strategy not in {"native", "union_window"}:
         raise ValueError("strategy must be 'native' or 'union_window'")
+    if strategy == "native" and not has_native_asof(points[timestamp_column]):
+        strategy = "union_window"
     for column in (unit_column, timestamp_column):
         if column not in points.columns:
             raise ValueError(f"point column {column!r} is missing")
