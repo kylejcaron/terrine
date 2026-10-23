@@ -11,6 +11,10 @@ rows: Terrine does not fit a curve or infer a survival probability. Use the
 records with a downstream package such as lifelines when a model or curve is
 required.
 
+When a design declares a treatment, each retained survival row includes the
+`treatment` value and its support metadata. The `treatment` role refers to that
+output column; event and censoring rules are unchanged.
+
 The `LifeTable` design shape bins those records into a descriptive risk-set
 summary. Each group/time bin reports number at risk, events, delayed entries,
 and censor counts by reason, along with plain rates. It does not multiply
