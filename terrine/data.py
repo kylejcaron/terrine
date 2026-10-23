@@ -253,8 +253,7 @@ class ColumnMeta:
     observed_until_column: str | None
     complete_column: str | None
     reason_column: str | None
-    numeric_policy: Literal["exact", "checked_float64_v1"] | None = None
-    absolute_error_column: str | None = None
+    numeric_policy: Literal["exact"] | None = None
     approximation: ApproximationMeta | None = None
     transformation: Mapping[str, Any] | None = None
 
@@ -267,17 +266,12 @@ class ColumnMeta:
             "observed_until_column",
             "complete_column",
             "reason_column",
-            "absolute_error_column",
         ):
             value = getattr(self, name)
             if value is not None:
                 _nonempty(value, name)
-        if self.numeric_policy not in (None, "exact", "checked_float64_v1"):
+        if self.numeric_policy not in (None, "exact"):
             raise ValueError("unsupported numeric policy")
-        if (self.numeric_policy == "checked_float64_v1") != (
-            self.absolute_error_column is not None
-        ):
-            raise ValueError("checked float64 metadata requires exactly one error-bound column")
         if self.transformation is not None:
             object.__setattr__(
                 self, "transformation", _mapping(self.transformation, "transformation")

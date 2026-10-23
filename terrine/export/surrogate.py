@@ -119,7 +119,6 @@ def to_surrogate_arrow(
                     meta.observed_until_column,
                     meta.complete_column,
                     meta.reason_column,
-                    meta.absolute_error_column,
                 )
                 if column is not None
             )

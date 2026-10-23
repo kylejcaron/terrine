@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -159,24 +160,140 @@ def _rows(con, result):
         con.raw_sql("ROLLBACK")
 
 
-def _certificate(result, row, exact):
-    meta = result.columns["requested"]
-    error = Fraction.from_float(row[meta.absolute_error_column])
-    returned = Fraction.from_float(row["requested"])
-    assert abs(returned - exact) <= error
-    assert 0 <= error <= Fraction(1, 2**40) + abs(returned) / 2**30
+def _shortest(values):
+    """The exact sum of the values: a float counts as its shortest round-trip decimal."""
+    return sum(
+        (Fraction(repr(x)) if isinstance(x, float) else Fraction(x) for x in values),
+        Fraction(),
+    )
 
 
-def test_float_window_certifies_ordinary_history_but_refuses_cancellation(con):
-    ordinary = _state(con, [0.1, -0.2, 0.4], name="ordinary")
-    accepted = _result(_anchors(con), [ordinary])
-    _certificate(accepted, _rows(con, accepted)[0], sum(map(Fraction.from_float, [0.1, -0.2, 0.4])))
-    pair = _state(con, [1e16, 1.0], times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (1, 2)])
+def _assert_quotient(returned, numerator: Fraction, denominator: Fraction):
+    """``|r − p/q| ≤ 6·2⁻⁵³·|p/q| + 2⁻¹⁰⁷⁵`` with the sign of ``p/q``."""
+    exact = numerator / denominator
+    error = abs(Fraction(returned) - exact)
+    assert error <= 6 * Fraction(1, 2**53) * abs(exact) + Fraction(1, 2**1075)
+    assert (returned < 0) == (exact < 0)
+
+
+def test_long_history_small_window_is_exact(con):
+    generator = random.Random(2026)
+    history = [generator.uniform(0, 10000) for _ in range(1000)]
+    window = [1.25, 2.5, 3.16]
+    first = datetime(2025, 1, 1, tzinfo=UTC)
+    pair = _state(
+        con,
+        history + window,
+        times=[first + timedelta(seconds=index) for index in range(len(history))]
+        + [datetime(2025, 1, 2, 12, tzinfo=UTC)] * len(window),
+    )
     result = _result(_anchors(con), [pair])
+    row = _rows(con, result)[0]
+    assert row["requested"] == float(_shortest(window)) == 6.91
+    meta = result.columns["requested"]
+    assert meta.numeric_policy is None
+
+
+def test_float_window_cancels_history_beyond_binary64_precision(con):
+    pair = _state(con, [1e16, 1.0], times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (1, 2)])
+    assert _rows(con, _result(_anchors(con), [pair]))[0]["requested"] == 1.0
+
+
+def test_tiny_value_does_not_change_other_units(con):
+    pair = _state(
+        con,
+        [1.0, 5e-324, -1.0, 0.1, 0.2],
+        units=["tiny", "tiny", "tiny", "other", "other"],
+    )
+    result = _result(_anchors(con, units=("tiny", "other")), [pair])
+    rows = sorted(_rows(con, result), key=lambda row: row["unit"])
+    assert [row["requested"] for row in rows] == [0.3, 5e-324]
+
+
+def test_nonfinite_history_refuses(con):
+    pair = _state(
+        con,
+        [float("nan"), 2.0],
+        times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (1, 2)],
+    )
     with pytest.raises(TerrineError) as error:
-        _rows(con, result)
+        _rows(con, _result(_anchors(con), [pair]))
     assert error.value.code == "terrine.temporal.float64_precision"
-    assert error.value.context["failure"] == "tolerance"
+    assert error.value.context["failure"] == "nonfinite_input"
+    assert set(error.value.context) == {"failure", "failed_count", "source", "measure", "output"}
+
+
+@pytest.mark.parametrize(
+    "numerator,denominator",
+    [
+        ([1.25, -3.5, 0.75], None),
+        ([1.0, -1.0] * 100, None),
+        ([1.25, -3.5], [3]),
+        ([1.25, -3.5], [3e-7, 2.5]),
+        ([-1.25, -3.5], [-0.7]),
+        ([1.0], [float.fromhex("0x1.fffffffffffffp+1023")]),
+        ([Decimal("0.10"), Decimal("0.20")], None),
+        ([Decimal("0.10"), Decimal("0.20")], [7]),
+    ],
+)
+def test_mixed_scale_ratio_and_average_meet_bound(con, numerator, denominator):
+    dtype = "decimal(38,2)" if isinstance(numerator[0], Decimal) else "float64"
+    if denominator is None:
+        pair = _state(con, numerator, aggregation="avg_event", dtype=dtype, name="numerator")
+        result = _result(_anchors(con), [pair])
+        p, q = _shortest(numerator), Fraction(len(numerator))
+    else:
+        pairs = [
+            _state(con, numerator, dtype=dtype, name="numerator"),
+            _state(
+                con,
+                denominator,
+                dtype="int64" if isinstance(denominator[0], int) else "float64",
+                name="denominator",
+            ),
+        ]
+        result = _result(_anchors(con), pairs, kind="ratio")
+        p, q = _shortest(numerator), _shortest(denominator)
+    row = _rows(con, result)[0]
+    _assert_quotient(row["requested"], p, q)
+    meta = result.columns["requested"]
+    assert meta.numeric_policy is None
+
+
+def test_ratio_of_averages_divides_the_exact_averages(con):
+    first, second = [0.1, 0.2, -0.05], [3.0, 4.0, 0.3]
+    pairs = [
+        _state(con, first, aggregation="avg_event", name="first"),
+        _state(con, second, aggregation="avg_event", name="second"),
+    ]
+    ratio = _rows(con, _result(_anchors(con), pairs, kind="ratio"))[0]["requested"]
+    _assert_quotient(ratio, _shortest(first) / 3, _shortest(second) / 3)
+
+
+def test_ratio_composes_an_average_before_it_is_rounded(con):
+    # 5e-324 / 3 rounds to 0.0 on its own; a ratio must divide the unrounded average.
+    tiny = Fraction(repr(5e-324))
+    average = _state(con, [5e-324, 0.0, 0.0], aggregation="avg_event", name="average")
+    total = _state(con, [5e-324], name="total")
+    assert _rows(con, _result(_anchors(con), [average]))[0]["requested"] == 0.0
+    forward = _rows(con, _result(_anchors(con), [average, total], kind="ratio"))[0]
+    _assert_quotient(forward["requested"], tiny / 3, tiny)
+    reverse = _rows(con, _result(_anchors(con), [total, average], kind="ratio"))[0]
+    _assert_quotient(reverse["requested"], tiny, tiny / 3)
+    cancelled = _state(con, [1.0, -1.0], aggregation="avg_event", name="cancelled")
+    result = _result(_anchors(con), [total, cancelled], kind="ratio")
+    row = _rows(con, result)[0]
+    assert row["requested"] is None
+    assert row[result.columns["requested"].reason_column] == "zero_denominator"
+
+
+def test_quotient_overflow_refuses(con):
+    numerator = _state(con, [1e308], name="numerator")
+    denominator = _state(con, [1e-10], name="denominator")
+    with pytest.raises(TerrineError) as error:
+        _rows(con, _result(_anchors(con), [numerator, denominator], kind="ratio"))
+    assert error.value.code == "terrine.temporal.float64_precision"
+    assert error.value.context["failure"] == "bound_overflow"
 
 
 @pytest.mark.parametrize("strategy", ["native", "union_window"])
@@ -221,8 +338,6 @@ def test_complete_empty_and_all_null_remain_distinct(con, aggregation, kind, exp
     meta = result.columns["requested"]
     assert [r["requested"] for r in rows] == expected
     assert [r[meta.reason_column] for r in rows] == reasons
-    if meta.absolute_error_column:
-        assert rows[1][meta.absolute_error_column] is None
 
 
 def test_unit_observation_end_preserves_value_or_exact_unavailable_reason(con):
@@ -319,12 +434,11 @@ def test_unknown_filter_history_cancels_and_unavailable_suppresses_refusal(con):
     )
 
 
-def test_count_and_conversion_ignore_unused_float_certificates(con):
+def test_count_and_conversion_ignore_nonfinite_float_inputs(con):
     pair = _state(con, [float("inf")])
     conversion = _result(_anchors(con), [pair], kind="conversion")
     assert _rows(con, conversion)[0]["requested"] is True
     assert conversion.columns["requested"].numeric_policy is None
-    assert conversion.columns["requested"].absolute_error_column is None
     measure, state = pair
     count = replace(measure, aggregation="count")
     state = state.mutate(event_count=exact_literal(2**63))
@@ -374,7 +488,6 @@ def test_all_null_ratio_numerator_is_not_a_zero_denominator(con):
     row = _rows(con, result)[0]
     assert row["requested"] is None
     assert row[result.columns["requested"].reason_column] == "all_values_null"
-    assert row[result.columns["requested"].absolute_error_column] is None
 
 
 def test_day_prefixes_cannot_answer_an_intraday_request(con):
@@ -383,32 +496,6 @@ def test_day_prefixes_cannot_answer_an_intraday_request(con):
     with pytest.raises(TerrineError) as error:
         _rows(con, result)
     assert error.value.code == "terrine.temporal.unaligned_day_resolution"
-
-
-@pytest.mark.parametrize("kind", ["average"])
-def test_fractional_outputs_apply_tolerance_in_final_result_units(con, kind):
-    numerator = _state(
-        con,
-        [1.0, -1.0] * 100,
-        aggregation="avg_event" if kind == "average" else "sum",
-        name="numerator",
-    )
-    pairs = [numerator]
-    if kind == "ratio":
-        pairs.append(_state(con, [200], dtype="int64", name="denominator"))
-    result = _result(_anchors(con), pairs, kind="ratio" if kind == "ratio" else "mean")
-    _certificate(result, _rows(con, result)[0], Fraction(0))
-
-
-@pytest.mark.parametrize("sign", [1, -1])
-def test_quotient_refuses_overflowing_input_interval_even_when_output_is_finite(con, sign):
-    numerator = _state(con, [1.0], name="numerator")
-    denominator = _state(con, [sign * float.fromhex("0x1.fffffffffffffp+1023")], name="denominator")
-    result = _result(_anchors(con), [numerator, denominator], kind="ratio")
-    with pytest.raises(TerrineError) as error:
-        _rows(con, result)
-    assert error.value.code == "terrine.temporal.float64_precision"
-    assert error.value.context["failure"] == "bound_overflow"
 
 
 @pytest.mark.parametrize("strategy", ["native", "union_window"])
@@ -450,19 +537,3 @@ def test_public_window_preserves_ns_events_around_utc_microsecond_anchor(con, st
     )
     assert _rows(con, before)[0]["requested"] == 1
     assert _rows(con, after)[0]["requested"] == 6
-
-
-def test_historical_invalid_float_state_is_not_erased_by_a_later_group(con):
-    measure, state = _state(
-        con,
-        [1.0, 2.0],
-        times=[
-            datetime(2025, 1, 1, 12, tzinfo=UTC),
-            datetime(2025, 1, 2, 12, tzinfo=UTC),
-        ],
-    )
-    state = state.mutate(float64_nonfinite_state=ibis.literal(True))
-    result = _result(_anchors(con), [(measure, state)])
-    with pytest.raises(TerrineError) as error:
-        _rows(con, result)
-    assert error.value.context["failure"] == "nonfinite_state"

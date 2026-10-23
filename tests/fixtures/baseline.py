@@ -26,7 +26,7 @@ from tests.reference.baseline import reference_rows
 def materialized_baseline(world: World, *, weighted: bool = False) -> MaterializedFrame:
     """Materialize raw reference rows with explicit baseline-only causal metadata.
 
-    These are original binary64 measurements, not certified compiler aggregates.
+    These are original binary64 measurements, not compiler aggregates.
     No warehouse execution snapshot or replay equivalence is claimed.
     """
     table = reference_rows(world)

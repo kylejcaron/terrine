@@ -57,8 +57,8 @@ imply physical Arrow schema identity. Neither dataframe carries a promise to
 round-trip Terrine schema metadata.
 
 `MaterializedFrame.to_arrow()` stores roles, design/model identities, temporal
-cutoffs, completeness/null-reason references and numeric policy/error-bound
-references under the reserved `terrine.materialized_frame.v1` schema key.
+cutoffs, completeness/null-reason references and numeric policy references
+under the reserved `terrine.materialized_frame.v1` schema key.
 `MaterializedFrame.from_arrow()` restores typed metadata. Unrelated schema
 metadata is retained; stale content at the reserved key is replaced by current
 Terrine metadata. Do not zero-fill unavailable values or discard their reason

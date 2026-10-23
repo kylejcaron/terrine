@@ -60,7 +60,7 @@ def test_execution_persists_lifecycle_events_for_terminal_replay():
     ]
 
 
-def test_prefix_runner_receives_daily_output_for_certificate_plan():
+def test_prefix_runner_receives_daily_output_for_design_plan():
     from types import SimpleNamespace
 
     con = duckdb.connect(":memory:")

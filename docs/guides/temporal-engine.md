@@ -374,7 +374,7 @@ filters remain typed.
 For DuckDB's signed `HUGEINT`, threshold clipping covers its full signed
 128-bit range even when Ibis reports the column as `Decimal(38, 0)`.
 
-### Exact and checked numeric state
+### Exact numeric state
 
 On the supported native DuckDB 1.5.6 route, integer and decimal sums and counts
 use internal `BIGNUM` coefficients. For decimal scale `s`, the coefficient is
@@ -392,58 +392,28 @@ and refuse a nonrepresentable required result before export. Checked-cast
 nulls cannot masquerade as missing data. Native decimal precision above 38 is
 not available on this route.
 
-Float32 widens to Float64. Float64 uses ordinary native `SUM(x)` and
-`SUM(abs(original x))`, retaining original nonnull leaf counts across disjoint
-group and prefix reductions. Constant-vector blocks may use `RN(m*x)`:
-accepted multiplicities are exact, and each block consumes at most its
-original `m-1` rounding-operation budget. It is never labeled exact. The backend
-contract assumes stock DuckDB 1.5.6 native aggregates, round-to-nearest
-binary64 arithmetic, and gradual underflow; other builds/backends must
-establish the same capabilities rather than silently changing algorithms.
-Per-leaf native conformance expressions check rounding-sensitive operations
-and subnormal arithmetic in the execution thread. Finite conformance probes
-do not prove arbitrary hidden changes to the floating-point environment.
+Float32 widens to Float64. A Float64 fact enters the same exact state: each
+finite value stands for its shortest round-trip decimal text, the text DuckDB
+prints for it and reads back as the same binary64, held as the `BIGNUM`
+coefficient of that decimal at its unit's scale. The scale is derived from the
+data in the same query, per unit, as the largest number of fractional digits
+any of the unit's selected values needs, so one tiny value such as `5e-324`
+widens only its own unit's coefficients. Every finite binary64 is held
+exactly; no input is rounded on entry, and a long or large history is never a
+reason to refuse. The float state carries `exact_scale` alongside the exact
+counts, plus `float64_nonfinite_count` and `float64_unrepresentable_count` for
+inputs the exact state cannot hold: NaN and infinities, and on BigQuery values
+beyond `BIGNUMERIC`'s range. PostgreSQL and BigQuery hold the same shortest
+text unscaled in `NUMERIC`/`BIGNUMERIC`; PostgreSQL's `NUMERIC` admits NaN and
+infinities, which the output rounding refuses instead.
 
-For `k=max(n-1,0)`, `u=2**-53`, `eta=2**-1074`, the certificate constructs
-outward upper bounds `g >= k*u/(1-k*u)` and `b >= k*eta/(1-k*u)`, then
-`sum_abs_upper = RU((sum_abs_value+b)/(1-g))` and
-`prefix_error = RU(g*sum_abs_upper+b)`. Each elementary operation is followed
-by native `nextafter` when finite, with downward-rounded positive denominators.
-An elementary overflow stays nonfinite; inward rounding cannot hide it.
-Empty prefixes are the exact zero identity. `k*u >= 1/4`, nonfinite inputs or
-states, and invalid/nonfinite bounds are failures. Both grouped and past
-prefix failures remain flagged, even if a later tree could mask them.
-
-Certificate construction projects intermediate bounds once in the lazy
-relation, rather than recursively duplicating scalar expressions. This adds
-no row callbacks, extra source queries, or dense calendar.
-
-The internal Float64 fields are `sum_abs_value`, `sum_abs_upper`,
-`prefix_error`, `float64_nonfinite_input`, `float64_nonfinite_state`,
-`float64_count_limit`, `float64_bound_overflow`, and
-`float64_conformance_failure`, alongside the exact counts.
-`numeric_policy="checked_float64_v1"` describes these sufficient states, not
-a completed final-window precision claim.
-
-A prefix consumer can validate selected states with
-`validate_float64(..., execute=pinned_executor, source=..., measure=...,
-output=...)`. Window aggregation exposes its endpoint and final-result checks
-through `TemporalResult.validate(pinned_executor)`. Checks and export must use
-the **same snapshot**. Neither builder opens a transaction nor executes a hidden probe.
-Refusals contain aggregate failed counts and identifiers only, never customer
-rows, keys, or values. `terrine.temporal.float64_unsupported` identifies a
-missing capability; `terrine.temporal.float64_precision` identifies one of
-`nonfinite_input`, `nonfinite_state`, `count_limit`, `bound_overflow`,
-`uncertifiable_cast`, `denominator_interval_zero`, or `tolerance`.
-
-Window subtraction, casts and division need their own outward certificates.
-Shared scalar primitives include the rounding radius
-`RU((u*abs(value)+eta)/(1-u))` and a downward-rounded fixed final tolerance
-`2**-40 + 2**-30 * abs(value)`. A final checked `ColumnMeta` must name a
-finite, nonnegative absolute-error column using
-`numeric_policy="checked_float64_v1"` and `absolute_error_column`; an exact
-output has policy `exact` and no error column. These final-result obligations
-are not replaced by accepting a prefix certificate.
+Window aggregation exposes its data-dependent checks through
+`TemporalResult.validate(pinned_executor)`. Checks and export must use the
+**same snapshot**. Neither builder opens a transaction nor executes a hidden
+probe. Refusals contain aggregate failed counts and identifiers only, never
+customer rows, keys, or values. `terrine.temporal.float64_precision`
+identifies `nonfinite_input` (a non-finite value at or before the end of a
+non-empty window) or `bound_overflow` (a result beyond binary64's range).
 
 ## Exact timestamp windows
 
@@ -474,7 +444,7 @@ right endpoint is excluded.
 Readiness intersects every metric source and the unit's optional observation
 interval. Incomplete coverage takes precedence over incomplete observation,
 then cell-level empty/all-null/zero-denominator meanings. Unavailable cells
-retain numeric NULL and their exact reason; checked errors are NULL too.
+retain numeric NULL and their exact reason.
 Complete empty sums/counts are zero and conversion is false. Nonempty all-null
 facts still count as events and conversion is true, but sums/averages are NULL.
 Unknown required filters in an available window refuse before output.
@@ -483,27 +453,30 @@ Exact sums export as lossless decimal values with precision up to 38 and the
 original scale; counts use a checked exact integer representation.
 `terrine.temporal.exact_overflow` refuses a required unrepresentable result,
 not a wide internal prefix whose later window fits. Conversion booleans have
-no numeric precision policy or error column.
+no numeric precision policy.
 
-Float window subtraction retains both endpoint errors and adds its own outward
-rounding radius. Averages and ratios enclose inputs and all four endpoint
-quotients, then certify the returned quotient against the same fixed final
-tolerance. Intermediate certificates must remain finite and conservative;
-the output tolerance applies in the final result's units, not to unpublished
-sums. Every required outward input or quotient endpoint must remain finite.
-Exact fractional inputs use the pinned backend's correctly rounded canonical
-decimal-text parser, not an uncertified direct numeric cast.
-A known exact zero denominator is NULL with `zero_denominator`; an uncertain
-interval spanning zero raises `terrine.temporal.float64_precision`. A large
-old sum followed by a tiny window may refuse conservatively. Use genuinely
-exact integer/decimal facts, a supported checked backend, or a smaller
-semantically sufficient history; do not redefine first-event anchors or omit
-required measurement history to evade a refusal.
+A float window differences the exact prefix state, so history before the
+window cancels exactly, and rounds the result to binary64 once through the
+backend's correctly rounded decimal-text parser: a window sum is
+`RN(Σ shortest decimal of each value)`, one rounding, so `0.1 + 0.2 − 0.3` is
+`0.0`. An average or ratio of exact quantities `p / q` divides before that
+rounding. DuckDB normalizes each operand to a signed 19-digit significand with
+a decimal exponent, divides those as 128-bit integers (each truncation below
+`10**-18` relative) and rounds the quotient once, so the published value `r`
+satisfies `|r − p/q| ≤ 6·2⁻⁵³·|p/q| + 2⁻¹⁰⁷⁵` for normal and subnormal results
+alike, for operands beyond binary64's range, and for a ratio of averages,
+which divides the unrounded averages. PostgreSQL and BigQuery divide in
+`NUMERIC`/`BIGNUMERIC` and round once. Float outputs carry
+`numeric_policy=None` and no error column on every backend; eligibility
+predicates and state-panel bins compare the rounded value. A known exact zero
+denominator is NULL with `zero_denominator`. Cohort totals and means and
+cumulative lifetime value reduce published binary64 values natively and refuse
+`bound_overflow` when the result is not finite.
 
-Run the focused fast boundary/certificate checks with
+Run the focused fast boundary and window checks with
 `uv run pytest tests/temporal/test_prefix_lookup.py tests/temporal/test_window_aggregates.py`.
-Native quotient/calendar certificate checks whose compilation cost exceeds the
-unit budget run in the integration tier with `uv run pytest integration/temporal`.
+Native quotient/calendar checks whose compilation cost exceeds the unit budget
+run in the integration tier with `uv run pytest integration/temporal`.
 
 ## Bounded event sequences and event-time origins
 
