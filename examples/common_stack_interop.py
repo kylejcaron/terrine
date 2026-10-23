@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+import json
 from importlib.util import find_spec
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -14,6 +16,19 @@ from terrine import Budget, Coverage, Design, FixedDate, Model, UnitSource, agg
 from terrine.data import MaterializedFrame
 from terrine.execution.backend import backend_capabilities
 from terrine.semantic.models import Catalog
+
+
+def _assert_batches_match(batches, expected: pa.Table) -> None:
+    rows_seen = 0
+    for batch in batches:
+        assert batch.schema.names == expected.schema.names
+        for row in batch.to_pylist():
+            assert rows_seen < expected.num_rows
+            assert row == {
+                name: expected[name][rows_seen].as_py() for name in expected.column_names
+            }
+            rows_seen += 1
+    assert rows_seen == expected.num_rows
 
 
 def main() -> None:
@@ -72,19 +87,30 @@ def main() -> None:
                     assert len(converted) == arrow.num_rows
                     print(f"Bounded {extra} conversion: verified")
             dataset = frame.stage("common_stack", budget=budget)
-            batches = list(dataset.to_arrow_batches(batch_size=1))
-            streamed = pa.Table.from_batches(batches)
-            assert streamed.select(arrow.column_names).equals(arrow)
+            assert arrow["amount"][0].as_py() == Decimal("9007199254740993.01")
+            _assert_batches_match(
+                dataset.to_arrow_batches(batch_size=1),
+                arrow,
+            )
+            frame_metadata = json.loads(dataset.manifest.to_json())["frame_metadata"]
+            assert frame_metadata["roles"] == metadata.to_metadata()["roles"]
             destination = root / "parquet"
             manifest = dataset.export_parquet(destination=str(destination), budget=budget)
-            readback = pa.concat_tables(
-                [pq.ParquetFile(destination / shard.path).read() for shard in manifest.shards]
-            )
-            restored = MaterializedFrame.from_arrow(readback)
-            assert restored.roles == metadata.roles
-            assert readback.select(arrow.column_names).equals(arrow)
+
+            def parquet_batches():
+                for shard in manifest.shards:
+                    parquet = pq.ParquetFile(destination / shard.path)
+                    schema = parquet.schema_arrow
+                    assert b"terrine.materialized_frame.v1" in schema.metadata
+                    restored = MaterializedFrame.from_arrow(
+                        pa.Table.from_batches([], schema=schema)
+                    )
+                    assert restored.roles == metadata.roles
+                    yield from parquet.iter_batches(batch_size=1)
+
+            _assert_batches_match(parquet_batches(), arrow)
             assert backend_capabilities(con).native_parquet_unload is None
-            print("Local Arrow stream and Parquet hand-off: verified")
+            print("Incremental Arrow stream and Parquet hand-off: verified")
             print("Provenance: retained in Arrow schema and pinned Dataset manifest")
         finally:
             con.disconnect()

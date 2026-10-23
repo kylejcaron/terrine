@@ -4,15 +4,27 @@ Terrine builds typed analytical datasets from semantic definitions, with
 point-in-time features, post-anchor outcomes and explicit observation coverage.
 It includes independent synthetic worlds whose oracle describes expected dataset rows.
 
-## Install and develop
+## Install for use
 
-Requires Python 3.13 or 3.14 and [uv](https://docs.astral.sh/uv/).
+Requires CPython 3.13 or 3.14. For a released distribution, install the local
+DuckDB backend; add only the dataframe integrations you use:
 
 ```sh
-uv sync --group dev --extra duckdb --extra pandas
+uv pip install 'terrine[duckdb]'
+uv pip install 'terrine[duckdb,pandas]'
+uv pip install 'terrine[duckdb,polars]'
+```
+
+## Contribute from a checkout
+
+Install [uv](https://docs.astral.sh/uv/) and sync the development environment:
+
+```sh
+uv sync --group dev --group docs --all-extras
 make check
 ```
 
+These `uv sync` commands install the current checkout, not a released package.
 Tests run in three tiers. The ordinary suite (`tests/`) is the fast unit tier
 that `make check` runs; run a focused selection with
 `make test TESTS="tests/test_windows.py"`. `uv run pytest -q integration` runs
@@ -25,10 +37,9 @@ unit tier.
 
 ## Build a study dataset
 
-Install the local execution extra with `uv pip install 'terrine[duckdb]'`
-(or `uv sync --extra duckdb` in this checkout). This complete example creates
-two users, including one with no events, and follows **Model → Design → Frame →
-Dataset**. It uses a temporary, file-backed DuckDB database; nothing is uploaded.
+This complete example creates two users, including one with no events, and
+follows **Model → Design → Frame → Dataset**. It uses a temporary, file-backed
+DuckDB database; nothing is uploaded.
 
 <!-- --8<-- [start:first-dataset] -->
 ```python
@@ -88,8 +99,16 @@ metrics:
             outcomes={"sessions_after": tr.agg("sessions", window=("0s", "1d"))},
         )
         frame = design.build(model)  # Compile; do not read source rows.
+        try:
+            frame.materialize(tr.Budget(max_rows=1, strict_scan=False))
+        except tr.TerrineError as error:
+            assert error.code == "terrine.budget.rows_exceeded"
+            print(f"Safe refusal: {error.code}; raise the explicit row limit to continue")
+        else:
+            raise AssertionError("the one-row output cap should refuse two rows")
         budget = tr.Budget(max_rows=10, max_output_bytes=1_000_000, strict_scan=False)
         result = frame.materialize(budget)
+        # Optional durable lifecycle: publish and reopen the same bounded result.
         dataset = frame.stage("first_dataset", budget=budget)
         reopened = tr.Dataset.from_manifest(dataset.manifest, con=con)
         columns = ["unit", "sessions_before", "sessions_after"]
@@ -115,12 +134,12 @@ metrics:
 <!-- --8<-- [end:first-dataset] -->
 
 The event at exactly midnight belongs to the outcome, not the feature.
-`materialize` collects this tiny Frame with typed metadata; `stage` publishes a
-pinned generation and `Dataset.from_manifest` reopens that same generation.
-Keep the database and retained snapshots for a persistent dataset instead of
-using a temporary directory. See the [first-dataset guide](docs/guides/first-dataset.md)
-for the next steps and the [catalog guide](docs/guides/temporal-engine.md) for
-source/SCD2 setup.
+`materialize` collects this tiny Frame with typed metadata. Staging is a separate,
+optional durable lifecycle: `stage` publishes a pinned generation and
+`Dataset.from_manifest` reopens it. Keep the database and retained snapshots for
+a persistent dataset instead of using a temporary directory. See the
+[first-dataset guide](docs/guides/first-dataset.md) for the next steps and the
+[catalog guide](docs/guides/temporal-engine.md) for source/SCD2 setup.
 
 `Coverage` asserts source completeness; it is not inferred from the latest event.
 Windows are half-open. An unavailable feature/outcome retains a numeric null and
@@ -139,12 +158,16 @@ DoubleML, DoWhy and same-connection duckreg recipes, plus lifelines and diff-dif
 dataset conversions. Downstream libraries are optional; Terrine makes no causal
 estimates or identification claims.
 
-Output row/byte limits abort instead of returning truncated success. They do
-**not** bound source scans, query work or peak memory. Native scan costs are
-unknown; a strict `max_scan_bytes` therefore refuses before integrity reads.
-`tr.preview(design, model, bounded_count=1_000)` reads capped candidate diagnostics,
-not example rows; capped results do not claim complete cohort totals. Its
-integrity checks can still scan upstream data.
+## Handling a real output refusal
+
+The first-dataset example deliberately tries a one-row output limit against two
+roster users, catches `terrine.budget.rows_exceeded`, then recovers with an
+explicit larger row and byte budget. Limits abort rather than return truncated
+success. They do **not** bound source scans, query work, backend memory or
+retained inputs. Native scan costs are unknown; strict `max_scan_bytes` therefore
+refuses before integrity reads. `tr.preview(design, model, bounded_count=1_000)`
+reads capped candidate diagnostics, not example rows; capped results do not claim
+complete cohort totals. Its integrity checks can still scan upstream data.
 
 ## Restricted dataset tools
 
@@ -253,21 +276,7 @@ These are local execution identities, not portable snapshot/replay certificates.
 Ordinary source generations and snapshot IDs remain unknown; managed copies have
 issued generations, while replay equivalence is still `unverified`.
 
-## Current pure contracts
-
-```python
-from terrine import TerrineError, Window
-
-window = Window("-7d", "0s")  # normalized elapsed seconds, half-open bounds
-try:
-    raise TerrineError(
-        "Unsupported operation",
-        code="terrine.unsupported",
-        context={},
-    )
-except TerrineError as error:
-    print(error.code)
-```
+## Window contract
 
 Window endpoints represent elapsed durations, not calendar dates.
 
