@@ -185,11 +185,15 @@ def _design(workload: Workload) -> Design:
 
 
 def check(result: MaterializedFrame, expected: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
-    """Compare exact outputs for equality and checked floats for certificate enclosure."""
+    """Require the expected roster once each, then compare exact values and certificates."""
     rows = result.table.to_pylist()
+    returned = sorted(row["unit"] for row in rows)
+    roster_match = returned == sorted(expected)
     mismatches = 0
     for row in rows:
-        want = expected[row["unit"]]
+        want = expected.get(row["unit"])
+        if want is None:
+            continue
         for name in result.roles.features:
             meta = result.columns[name]
             value = row[name]
@@ -214,7 +218,8 @@ def check(result: MaterializedFrame, expected: Mapping[str, Mapping[str, Any]]) 
                     or abs(Fraction.from_float(value) - target) > Fraction.from_float(error)
                 )
     return {
-        "oracle_match": len(rows) == len(expected) and mismatches == 0,
+        "oracle_match": roster_match and mismatches == 0,
+        "roster_match": roster_match,
         "rows_compared": len(rows),
         "mismatches": mismatches,
     }
@@ -318,13 +323,17 @@ def run_case(workload: Workload, con: Any, *, repeats: int) -> dict[str, Any]:
     design = _design(workload)
     budget = Budget(max_rows=workload.units)
     setup_seconds = time.perf_counter() - setup_start
+    expected = reference(events, workload.units)
     first, result = _sample(design, model, budget)
+    verifications = [check(result, expected)]
     with compilations() as records:
         _, diagnosed = _sample(design, model, budget)
-    warm = [_sample(design, model, budget)[0] for _ in range(repeats)]
-    expected = reference(events, workload.units)
-    oracle = check(result, expected)
-    oracle["diagnostic_run_match"] = check(diagnosed, expected)["oracle_match"]
+    verifications.append(check(diagnosed, expected))
+    warm = []
+    for _ in range(repeats):
+        timing, repeated = _sample(design, model, budget)
+        warm.append(timing)
+        verifications.append(check(repeated, expected))
     return {
         "case": workload.name,
         "workload": {
@@ -340,7 +349,9 @@ def run_case(workload: Workload, con: Any, *, repeats: int) -> dict[str, Any]:
         "samples": {"first": first, "warm": warm},
         "warm_summary": _summary(warm),
         "diagnostics": _diagnostics(records),
-        **oracle,
+        # Every run (first, instrumented, each warm) is verified after its timed interval.
+        "oracle_match": all(item["oracle_match"] for item in verifications),
+        "verifications": verifications,
     }
 
 

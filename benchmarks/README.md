@@ -74,8 +74,10 @@ exact decimal sum, certified float average and ratio over one row, a few rows,
 and 10,000/100,000 events, requesting one or four columns. Materialization
 includes declared snapshot validation and the output stream. Expected values
 are computed independently with integer, `Decimal` and `Fraction` arithmetic
-over the generated events; `oracle_match` reports equality for exact outputs
-and certificate enclosure for checked floats.
+over the generated events. Every run, including each timed sample, is verified
+after its timed interval: `oracle_match` requires exactly the expected unit
+roster once each, equality for exact outputs and certificate enclosure for
+checked floats, and a failed case exits unsuccessfully.
 
 ```sh
 uv run python -m benchmarks.run_overhead --repeats 5 --output /tmp/terrine-overhead.json
