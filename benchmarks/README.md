@@ -66,6 +66,34 @@ are observed empirical errors with their algorithm/version/error metadata;
 HLL/t-digest are not advertised as exact or given an invented hard tolerance.
 There is no billion-event or universal scale claim from local calibration.
 
+## Fixed compiler overhead
+
+`benchmarks/run_overhead.py` times the ordinary public path, `Design.build`
+followed by `Frame.materialize`, on tiny deterministic DuckDB workloads: count,
+exact decimal sum, certified float average and ratio over one row, a few rows,
+and 10,000/100,000 events, requesting one or four columns. Materialization
+includes declared snapshot validation and the output stream. Expected values
+are computed independently with integer, `Decimal` and `Fraction` arithmetic
+over the generated events; `oracle_match` reports equality for exact outputs
+and certificate enclosure for checked floats.
+
+```sh
+uv run python -m benchmarks.run_overhead --repeats 5 --output /tmp/terrine-overhead.json
+# Optional separate profiled pass; it is never a timing sample.
+uv run python -m benchmarks.run_overhead --repeats 5 --profile /tmp/terrine-overhead.pstats
+# Select cases by name and label the record for before/after comparison.
+uv run python -m benchmarks.run_overhead --case one_row_float_average --label before
+```
+
+Each case records the environment (one DuckDB thread by default), workload,
+setup time, the first sample, every warm sample, warm medians and spread for
+the build and materialization phases, emitted rows, output Arrow bytes and
+diagnostics from one separate instrumented run: the number of SQL
+compilations, repeated identical expressions, and time per validation,
+eligibility and output query. Import time is measured in a fresh interpreter.
+Raw SQL is not stored and source scan bytes are not measured. Timings are local
+observations for comparing two commits on one machine, not CI thresholds.
+
 ## Explicit test tiers
 
 ```sh
