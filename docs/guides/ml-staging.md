@@ -27,6 +27,13 @@ Relative labels also retain the selector origin as point support and the compile
 
 The result is a pinned reference. It does not collect the full Frame into a client-side table. Export shards are checksummed and recorded in a manifest; a retry to the same destination resumes only verified shards for the same dataset generation and export layout. Existing destinations with a different generation, layout, or configuration are refused without overwriting them.
 
+`Budget.max_output_bytes` limits the cumulative Arrow bytes read for export,
+before each batch is partitioned or written; it does not limit the smaller
+compressed Parquet files. The manifest's physical `byte_count` remains storage
+metadata, not budget accounting. Replaying a completed export with this byte cap
+re-reads its pinned Arrow stream to enforce the limit; uncapped replay remains
+metadata-only apart from verifying the existing files.
+
 ## Scoring snapshots
 
 `Design.snapshot` re-anchors a cross-sectional Design to an explicit scoring instant and requires explicit eligibility. It drops outcomes and treatment, uses the configured unit roster rather than a historical event cohort, and validates only the selected feature and eligibility dependencies. Date values resolve at the Model's Catalog-local day boundary; aware timestamps are normalized to UTC. The literal `"today"` is resolved once per call and stored as an absolute instant.
