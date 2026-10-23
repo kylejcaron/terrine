@@ -1,15 +1,19 @@
 """Numeric expressions Ibis lacks or translates inexactly, per backend.
 
-Exact state uses an arbitrary-precision native type: DuckDB ``BIGNUM`` or
-PostgreSQL ``NUMERIC``. The IEEE binary64 primitives back DuckDB's certified
-float reductions only; other backends validate floats against DuckDB within a
-tolerance instead.
+Exact state uses an arbitrary-precision native type: DuckDB ``BIGNUM``,
+PostgreSQL ``NUMERIC`` or BigQuery ``BIGNUMERIC``. On DuckDB a float enters
+exact state as an integer coefficient at a data-derived decimal scale, built
+from its shortest round-trip text, and leaves it through text, which DuckDB
+rounds to binary64 correctly. The IEEE binary64 primitives back DuckDB's
+certified float reductions only; other backends validate floats against DuckDB
+within a tolerance instead.
 """
 
 from __future__ import annotations
 
 import math
 import sys
+from collections.abc import Sequence
 from typing import cast
 
 import ibis
@@ -32,12 +36,15 @@ __all__ = [
     "exact_to_float",
     "exact_type",
     "float_is_finite",
+    "float_scale",
     "ieee_add",
     "ieee_divide",
     "ieee_multiply",
     "ieee_subtract",
     "is_exact_type",
     "next_toward",
+    "normalized",
+    "rounded_quotient",
     "truncating_quotient",
 ]
 
@@ -112,14 +119,88 @@ def decimal_coefficient(value: ir.Value, scale: int) -> ir.Value:
     return (text.replace(".", "") if scale else text).cast(exact_type(value))
 
 
-def exact_float(value: ir.Value) -> tuple[ir.Value, ir.BooleanValue, ir.BooleanValue]:
-    """Exact state for a float from its round-trip text, within half an ulp of it.
+@ibis.udf.scalar.builtin(name="ltrim", signature=((dt.string, dt.string), dt.string))
+def _duckdb_ltrim(value, _characters):
+    """DuckDB ``ltrim`` removing the given characters."""
 
-    Returns (exact, nonfinite, unrepresentable). PostgreSQL NUMERIC keeps NaN and
-    infinities, which poison later arithmetic, so both flags are false there.
-    BigQuery BIGNUMERIC has neither and holds magnitudes below about 5.7e38 to 38
-    fractional digits; non-finite and out-of-range values become NULL and are
-    flagged so the caller can refuse them.
+
+@ibis.udf.scalar.builtin(name="printf", signature=((dt.string, dt.float64), dt.string))
+def _duckdb_printf(_template, value):
+    """DuckDB ``printf`` of one binary64 value."""
+
+
+def _decimal_parts(
+    text: ir.StringValue,
+) -> tuple[ir.StringValue, ir.StringValue, ir.IntegerValue, ir.IntegerValue]:
+    """``(sign, digits, fraction_digits, exponent)`` of ``[-]D[.F][e±E]`` text.
+
+    ``digits`` is ``D || F`` without sign or point, so the text's value is
+    ``sign · digits · 10**(exponent − fraction_digits)``. DuckDB prints a
+    binary64 as its shortest round-trip text in this form, and an exact
+    coefficient as plain signed digits.
+    """
+    zero = ibis.literal(0)
+    marker = text.find("e")
+    has_exponent = marker >= zero
+    after_marker = cast(ir.IntegerValue, marker + 1)
+    mantissa = cast(ir.StringValue, has_exponent.ifelse(text.substr(0, marker), text))
+    exponent = has_exponent.ifelse(text.substr(after_marker).cast(dt.int64), zero)
+    point = mantissa.find(".")
+    fraction_digits = (point >= zero).ifelse(mantissa.length() - point - 1, zero)
+    sign = text.startswith("-").ifelse(ibis.literal("-"), ibis.literal(""))
+    digits = mantissa.replace("-", "").replace(".", "")
+    return (
+        cast(ir.StringValue, sign),
+        digits,
+        cast(ir.IntegerValue, fraction_digits),
+        cast(ir.IntegerValue, exponent),
+    )
+
+
+def _finite_text(value: ir.Value) -> tuple[ir.FloatingValue, ir.StringValue]:
+    """A float widened to binary64 and its shortest text, NULL unless finite."""
+    widened = cast(ir.FloatingValue, value.cast(dt.float64))
+    text = float_is_finite(widened).ifelse(widened.cast("string"), ibis.null(dt.string))
+    return widened, cast(ir.StringValue, text)
+
+
+def _scale_text(scale: int | ir.IntegerValue) -> ir.StringValue:
+    if isinstance(scale, int):
+        return cast(ir.StringValue, ibis.literal(str(scale)))
+    return scale.cast("string")
+
+
+def float_scale(value: ir.Column, by: Sequence[ir.Column]) -> ir.IntegerValue:
+    """The decimal scale at which every float in each ``by`` partition is an integer.
+
+    DuckDB: the largest ``fraction_digits − exponent`` over the partition's
+    non-null finite values' shortest round-trip text, floored at 0, so one tiny
+    value widens only its own partition's coefficients. PostgreSQL and BigQuery
+    hold float text as unscaled exact state, so their scale is 0.
+    """
+    if dialect_of(value) != "duckdb":
+        return cast(ir.IntegerValue, ibis.literal(0, type=dt.int64))
+    _, text = _finite_text(value)
+    _, _, fraction_digits, exponent = _decimal_parts(text)
+    need = cast(ir.IntegerColumn, fraction_digits - exponent)
+    largest = need.max().over(ibis.window(group_by=list(by)))
+    return cast(ir.IntegerValue, ibis.greatest(largest.fill_null(ibis.literal(0)), 0))
+
+
+def exact_float(
+    value: ir.Value, scale: int | ir.IntegerValue | None = None
+) -> tuple[ir.Value, ir.BooleanValue, ir.BooleanValue]:
+    """Exact state for a float from its shortest round-trip text.
+
+    Returns (exact, nonfinite, unrepresentable). DuckDB holds every finite
+    binary64 exactly as the BIGNUM coefficient ``value · 10**scale``: the text's
+    digits padded with zeros. It needs ``scale`` from ``float_scale`` over the
+    same partition; a value needing more fractional digits than ``scale`` is
+    NULL and ``unrepresentable``, which that scale never produces. PostgreSQL
+    NUMERIC keeps NaN and infinities, which poison later arithmetic, so both
+    flags are false there. BigQuery BIGNUMERIC has neither and holds magnitudes
+    below about 5.7e38 to 38 fractional digits; non-finite and out-of-range
+    values become NULL and are flagged so the caller can refuse them.
     """
     widened = value.cast(dt.float64)
     text = widened.cast("string")
@@ -127,9 +208,22 @@ def exact_float(value: ir.Value) -> tuple[ir.Value, ir.BooleanValue, ir.BooleanV
     dialect = dialect_of(value)
     if dialect == "postgres":
         return text.cast(_PG_EXACT), never, never
+    floating = cast(ir.FloatingValue, widened)
+    if dialect == "duckdb":
+        if scale is None:
+            raise ValueError("DuckDB exact float state needs the partition's scale")
+        finite = float_is_finite(floating)
+        sign, digits, fraction_digits, exponent = _decimal_parts(_finite_text(value)[1])
+        padding = cast(ir.IntegerValue, scale - (fraction_digits - exponent))
+        representable = finite & (padding >= ibis.literal(0))
+        zeros = cast(ir.StringValue, ibis.literal("0")).repeat(padding)
+        coefficient = (sign + digits + zeros).cast(_DUCKDB_EXACT)
+        exact = representable.ifelse(coefficient, ibis.null().cast(_DUCKDB_EXACT))
+        nonfinite = (~finite).fill_null(ibis.literal(False))
+        unrepresentable = (finite & (padding < ibis.literal(0))).fill_null(ibis.literal(False))
+        return exact, nonfinite, unrepresentable
     if dialect != "bigquery":
         raise unavailable("exact_float", dialect)
-    floating = cast(ir.FloatingValue, widened)
     nonfinite = (floating.isnan() | floating.isinf()).fill_null(ibis.literal(False))
     exact = nonfinite.ifelse(ibis.null().cast(_BQ_EXACT), text.try_cast(_BQ_EXACT))
     unrepresentable = ~nonfinite & widened.notnull() & exact.isnull()
@@ -176,17 +270,30 @@ def exact_is_nonfinite(value: ir.Value) -> ir.BooleanValue:
 
 
 def exact_to_float(
-    value: ir.Value,
+    value: ir.Value, scale: int | ir.IntegerValue = 0
 ) -> tuple[ir.FloatingValue, ir.BooleanValue, ir.BooleanValue]:
-    """Round an exact value once to binary64.
+    """Round the exact value ``value · 10**-scale`` once to binary64.
 
     Returns (float, nonfinite, out_of_range); the float is NULL for either flag.
-    Magnitudes at or below 2**-1075 become 0.0, as round-to-nearest would give.
+    DuckDB parses ``coefficient || 'e-' || scale`` text, which its
+    string-to-double conversion rounds correctly (ties to even), and flags a
+    magnitude beyond binary64's range. PostgreSQL and BigQuery hold unscaled
+    exact state, so ``scale`` is 0 there. Magnitudes at or below 2**-1075 become
+    0.0, as round-to-nearest gives.
     """
     false = ibis.literal(False)
-    if dialect_of(value) == "bigquery":
+    never = cast(ir.BooleanValue, false)
+    dialect = dialect_of(value)
+    if dialect == "duckdb":
+        text = value.cast("string") + "e-" + _scale_text(scale)
+        result = cast(ir.FloatingValue, text.cast(dt.float64))
+        out_of_range = (value.notnull() & ~float_is_finite(result)).fill_null(false)
+        rounded = out_of_range.ifelse(ibis.null().cast(dt.float64), result)
+        return cast(ir.FloatingValue, rounded), never, out_of_range
+    if not isinstance(scale, int) or scale:
+        raise ValueError(f"{dialect} exact state is unscaled; scale must be 0")
+    if dialect == "bigquery":
         # BIGNUMERIC is finite and far inside binary64's range.
-        never = cast(ir.BooleanValue, false)
         return cast(ir.FloatingValue, value.cast(dt.float64)), never, never
     # NUMERIC NaN equals itself and sorts above every number, so test it first.
     nonfinite = exact_is_nonfinite(value)
@@ -206,6 +313,76 @@ def exact_to_float(
         nonfinite.fill_null(false),
         out_of_range.fill_null(false),
     )
+
+
+def normalized(
+    value: ir.Value, scale: int | ir.IntegerValue = 0
+) -> tuple[ir.FloatingValue, ir.IntegerValue]:
+    """``(mantissa, exponent)`` with ``value · 10**-scale = mantissa · 10**exponent``.
+
+    DuckDB only. The mantissa is a binary64 with ``1 ≤ |mantissa| < 10`` (0 for
+    zero), keeping the sign; the exponent is an integer. An exact coefficient
+    normalizes from its integer text; an already rounded binary64 operand from
+    its shortest round-trip text, so it stands for that decimal rather than its
+    binary expansion. The mantissa is the significant digits rounded once, so
+    it is within 2**-53 relative of the exact mantissa; digits that round up to
+    10 carry into the exponent as 1 · 10**(exponent + 1), still within 2**-53.
+    A NULL or non-finite float gives NULL.
+    """
+    dialect = dialect_of(value)
+    if dialect != "duckdb":
+        raise unavailable("normalized", dialect)
+    text = _finite_text(value)[1] if value.type().is_floating() else value.cast("string")
+    sign, digits, fraction_digits, exponent = _decimal_parts(text)
+    significant = cast(ir.StringValue, _duckdb_ltrim(digits, "0"))
+    count = significant.length()
+    zero = count == ibis.literal(0)
+    leading = cast(ir.StringValue, zero.ifelse(ibis.literal("0"), sign + significant))
+    mantissa = cast(ir.FloatingValue, (leading + "e" + (1 - count).cast("string")).cast(dt.float64))
+    carries = mantissa.abs() == ibis.literal(10.0)
+    mantissa = cast(ir.FloatingValue, carries.ifelse(mantissa / 10.0, mantissa))
+    carry = cast(ir.IntegerValue, carries.cast(dt.int64))
+    decimal_exponent = exponent - fraction_digits + count - 1 + carry - scale
+    return mantissa, cast(ir.IntegerValue, zero.ifelse(ibis.literal(0), decimal_exponent))
+
+
+def rounded_quotient(
+    n_mantissa: ir.FloatingValue,
+    n_exponent: ir.IntegerValue,
+    d_mantissa: ir.FloatingValue,
+    d_exponent: ir.IntegerValue,
+) -> tuple[ir.FloatingValue, ir.BooleanValue]:
+    """Binary64 quotient of two ``normalized`` operands on DuckDB.
+
+    Returns (float, overflow). The mantissas divide in binary64; the exponent
+    difference is applied by rounding the text ``printf('%.17e', q)`` with its
+    exponent adjusted, so operands beyond binary64's range and subnormal
+    results are handled alike. A zero denominator or a NULL operand gives NULL
+    without ``overflow``; a result beyond binary64's range gives NULL with it.
+
+    Error model for exact operands ``p = M_n · 10**e_n`` and ``q = M_d · 10**e_d``
+    with ``u = 2**-53``: each mantissa ``m = M(1 + ε)`` with ``|ε| ≤ u``
+    (``normalized``); the binary64 quotient ``m_n / m_d`` lies in (0.1, 10), a
+    normal range, so it is ``(M_n / M_d)(1 + ε_n)(1 + ε_q) / (1 + ε_d)`` with
+    ``|ε_q| ≤ u``; ``%.17e`` keeps 18 significant digits, a relative change
+    below ``5 · 10**-18 < u / 16``; and the final text-to-binary64 cast is
+    correctly rounded, within ``u`` relative for a normal result and within
+    ``2**-1075`` absolute for a subnormal one. The relative factors multiply
+    to below ``1 + 5.07u``, so ``|r − p / q| ≤ 6u · |p / q| + 2**-1075`` for
+    every finite result.
+    """
+    divides = d_mantissa != ibis.literal(0.0)
+    quotient = cast(
+        ir.FloatingValue, divides.ifelse(n_mantissa / d_mantissa, ibis.null(dt.float64))
+    )
+    text = cast(ir.StringValue, _duckdb_printf("%.17e", quotient))
+    marker = text.find("e")
+    shift = cast(ir.IntegerValue, text.substr(cast(ir.IntegerValue, marker + 1)).cast(dt.int64))
+    exponent = shift + n_exponent - d_exponent
+    result = (text.substr(0, marker) + "e" + exponent.cast("string")).cast(dt.float64)
+    overflow = (quotient.notnull() & ~float_is_finite(result)).fill_null(ibis.literal(False))
+    rounded = overflow.ifelse(ibis.null().cast(dt.float64), result)
+    return cast(ir.FloatingValue, rounded), overflow
 
 
 @ibis.udf.agg.builtin(name="sum", signature=((_DUCKDB_EXACT,), _DUCKDB_EXACT))
