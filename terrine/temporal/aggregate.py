@@ -126,13 +126,34 @@ class TemporalResult:
 
 
 class _Builder:
-    """Project shared arithmetic intermediates before reusing them."""
+    """Project shared arithmetic intermediates before reusing them.
+
+    Intermediates are staged in one pending projection and projected only when a
+    later expression reads one of them, so independent intermediates share a
+    layer instead of each nesting another projection. Fewer nested projections
+    keep SQL compilation time from growing superlinearly with intermediate count.
+    """
 
     def __init__(self, table: ibis.Table, output: str) -> None:
-        self.table = table
+        self._table = table
+        self._staged: dict[str, ir.Value] = {}
         self.used = {name.casefold() for name in (*table.columns, output)}
         self.counter = 0
         self.numeric: list[tuple[str, RefusalSpec, Mapping[str, Any]]] = []
+
+    @property
+    def table(self) -> ibis.Table:
+        """The relation holding every intermediate, projecting staged ones first."""
+        if self._staged:
+            self._table = self._table.mutate(**self._staged)
+            self._staged = {}
+        return self._table
+
+    @table.setter
+    def table(self, table: ibis.Table) -> None:
+        if self._staged:
+            raise ValueError("staged intermediates must be projected before replacing the table")
+        self._table = table
 
     def name(self, label: str) -> str:
         while True:
@@ -144,16 +165,16 @@ class _Builder:
 
     def put(self, label: str, expression) -> str:
         name = self.name(label)
-        self.table = self.table.mutate(**{name: expression})
+        self._staged[name] = expression
         return name
 
     def put_many(self, *expressions: tuple[str, ir.Value]) -> tuple[str, ...]:
         columns = {self.name(label): expression for label, expression in expressions}
-        self.table = self.table.mutate(**columns)
+        self._staged.update(columns)
         return tuple(columns)
 
     def col(self, name: str):
-        return self.table[name]
+        return (self.table if name in self._staged else self._table)[name]
 
     def flag(self, expression, failure: str, context: Mapping[str, Any]) -> None:
         name = self.put(failure, expression)
