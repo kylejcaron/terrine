@@ -272,29 +272,51 @@ def test_static_inline_conflicts_refuse_instead_of_choosing_one_value(column_mod
 
 
 def test_event_time_selector_and_relative_metric_execute(column_model):
+    column_model.con.raw_sql("""
+        INSERT INTO events VALUES
+            ('a', TIMESTAMPTZ '2025-01-02 12:00:01+00', NULL, NULL)
+    """)
     selector = event_time("amount", window=("0s", "1s"))
+    ordinary = agg("total", window=("1s", "2s"))
+    relative = agg("total", window=("1s", "2s"), relative_to=selector)
     compiled = _compile(
         column_model,
         outcomes={
             "selected_at": selector,
-            "selected_amount": agg("total", window=("0s", "1s"), relative_to=selector),
+            "ordinary_amount": ordinary,
+            "selected_amount": relative,
         },
     )
     rows = column_model.con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
     assert rows[0]["selected_at"] == datetime(2025, 1, 2, 12, tzinfo=UTC)
-    assert rows[0]["selected_amount"] == Decimal(7)
+    assert rows[0]["ordinary_amount"] is None
+    assert rows[0]["selected_amount"] is None
+    amount_meta = compiled.columns["ordinary_amount"]
+    relative_meta = compiled.columns["selected_amount"]
+    ordinary_state = (
+        rows[0]["ordinary_amount"],
+        rows[0][amount_meta.complete_column],
+        rows[0][amount_meta.reason_column],
+    )
+    relative_state = (
+        rows[0]["selected_amount"],
+        rows[0][relative_meta.complete_column],
+        rows[0][relative_meta.reason_column],
+    )
+    assert ordinary_state == relative_state
+    assert ordinary_state == (None, True, "all_values_null")
     timing = compiled.expression_timings["selected_amount"]
     assert timing.kind == "event_time"
     assert timing.selector_ref is not None
-    assert timing.relative_offsets == (0, 1)
-    assert timing.support_seconds == (0, 2)
+    assert timing.relative_offsets == (1, 2)
+    assert timing.support_seconds == (1, 3)
     assert timing.selector_support_seconds[timing.selector_ref] == (0, 1)
     assert timing.point_time_column in rows[0]
     assert timing.start_bound_column in rows[0]
     assert timing.end_bound_column in rows[0]
     assert rows[0][timing.point_time_column] == datetime(2025, 1, 2, 12, tzinfo=UTC)
-    assert rows[0][timing.start_bound_column] == datetime(2025, 1, 2, 12, tzinfo=UTC)
-    assert rows[0][timing.end_bound_column] == datetime(2025, 1, 2, 12, 0, 1, tzinfo=UTC)
+    assert rows[0][timing.start_bound_column] == datetime(2025, 1, 2, 12, 0, 1, tzinfo=UTC)
+    assert rows[0][timing.end_bound_column] == datetime(2025, 1, 2, 12, 0, 2, tzinfo=UTC)
     assert compiled.feature_cutoffs == {}
 
 
@@ -336,13 +358,34 @@ def test_reused_event_time_chain_allocates_unique_support_columns(column_model):
 
 
 def test_relative_attribute_asof_uses_selected_event_time(column_model):
+    column_model.con.raw_sql("""
+        INSERT INTO events VALUES
+            ('b', TIMESTAMPTZ '2025-01-02 12:00:00+00', 1, NULL)
+    """)
     selector = event_time("amount", window=("0s", "1s"))
     compiled = _compile(
         column_model,
-        outcomes={"tier_before_selected": asof("tier", before="0s", relative_to=selector)},
+        outcomes={
+            "tier_at_anchor": asof("tier", before="0s"),
+            "tier_before_selected": asof("tier", before="0s", relative_to=selector),
+        },
     )
     rows = column_model.con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
     assert rows[0]["tier_before_selected"] == "old"
+    ordinary_meta = compiled.columns["tier_at_anchor"]
+    relative_meta = compiled.columns["tier_before_selected"]
+    ordinary_state = (
+        rows[1]["tier_at_anchor"],
+        rows[1][ordinary_meta.complete_column],
+        rows[1][ordinary_meta.reason_column],
+    )
+    relative_state = (
+        rows[1]["tier_before_selected"],
+        rows[1][relative_meta.complete_column],
+        rows[1][relative_meta.reason_column],
+    )
+    assert ordinary_state == relative_state
+    assert ordinary_state == (None, True, "all_values_null")
     timing = compiled.expression_timings["tier_before_selected"]
     assert timing.kind == "event_time"
     assert timing.relative_offsets == (0, 0)
