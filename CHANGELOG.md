@@ -6,6 +6,8 @@
 
 - Build typed, point-in-time analytical and ML datasets with a standalone native
   Model → Design → Frame → Dataset workflow and a complete executable tutorial.
+- Lead onboarding with consumer installation, bounded collection and a real
+  output-refusal recovery; stream common-stack batches incrementally.
 - Describe sources, entities, dimensions, facts and metrics in a strict native
   Catalog; bind existing tables or admitted read-only SQL without requiring a
   semantic adapter or sibling checkout.
@@ -16,9 +18,14 @@
   three-valued eligibility and descriptive treatment/cluster/weight roles.
 - Preserve source-specific completeness, numeric nulls and exact unavailable
   reasons; distinguish fully observed zero activity from missing follow-up.
+- Preserve evaluated null reasons on event-relative results after a selector
+  resolves, independently of completeness.
 - Build sequential/calendar/event panels, bounded state pairs, LTV trajectories,
   cohort summaries, per-unit time-to-event records and risk-set counts/plain
   rates. Retain row identity, temporal support and typed shape provenance.
+- Refuse exact cumulative LTV totals that exceed the declared decimal output
+  type; preserve unavailable cumulative values and their reasons.
+- Retain declared treatment values and support metadata in time-to-event output.
 - Build deterministic bounded event sequences, sessions, funnels, transitions
   and event-relative selectors with explicit tie, missing-predecessor and
   temporal-leakage rules.
@@ -41,6 +48,9 @@
   frozen limits and require matching feature/recipe/snapshot identities on reuse.
 - Export resumable checksum-verified local Parquet shards with semantic metadata,
   exact decimal/timestamp/null values and typed empty outputs.
+- Enforce output-byte budgets against cumulative Arrow batches before Parquet
+  writes; capped export replays re-read the pinned stream while manifests retain
+  physical Parquet byte counts.
 - Preserve selected event-relative timing bounds, trial identity and sampling
   weights in surrogate Arrow projections and their portable metadata.
 
@@ -79,6 +89,10 @@
   execution, including reads through already-resolved relations.
 - Execute admitted SQL directly for Arrow tables and streams rather than
   compiling each expression again after validation.
+- Stage window-arithmetic intermediates in shared projections and resolve the
+  compile dialect from the Design's scope, so one-row float averages, ratios and
+  multi-column Frames materialize in roughly half the time with identical
+  values, metadata and refusals (`benchmarks/run_overhead.py`).
 - Save destination-bound plans and track authoritative run status, bounded event
   pages, request-key replay, cancellation requests, renewable fences and atomic
   generation publication through Python, CLI and owner-local IPC.
@@ -101,6 +115,8 @@
 
 - Preserve integer/decimal scale and checked Float64 arithmetic; reject
   unrepresentable temporal/numeric results instead of narrowing or overflowing.
+- Report native Catalog schema errors as `terrine.catalog.invalid_definition`
+  with immutable, field-located validation categories and recovery hints.
 - Retain snapshot-scoped integrity, exact boundary, source-identity and treatment
   history checks across ordinary, retained and downstream export paths.
 - Capture event-anchor and recursive event-selector sources even when the

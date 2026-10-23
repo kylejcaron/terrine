@@ -8,6 +8,7 @@ from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.models import Catalog
 from terrine.spec import Design, EventAnchor, FixedDate, agg, event_time
+from terrine.spec.design import Treatment
 from terrine.spec.trajectory import TimeToEvent
 
 
@@ -28,10 +29,10 @@ def _model(
     con = ibis.duckdb.connect()
     con.raw_sql("""
         CREATE TABLE anchors AS SELECT * FROM (VALUES
-          ('u1', TIMESTAMPTZ '2025-01-01 00:00:00+00'),
-          ('u2', TIMESTAMPTZ '2025-01-02 00:00:00+00'),
-          ('u3', TIMESTAMPTZ '2025-01-03 00:00:00+00')
-        ) AS a(user_id, ts)
+          ('u1', TIMESTAMPTZ '2025-01-01 00:00:00+00', TRUE),
+          ('u2', TIMESTAMPTZ '2025-01-02 00:00:00+00', FALSE),
+          ('u3', TIMESTAMPTZ '2025-01-03 00:00:00+00', FALSE)
+        ) AS a(user_id, ts, treated)
     """)
     if nanosecond_outcomes:
         con.raw_sql("""
@@ -82,7 +83,7 @@ def _model(
                     "timestamp": "ts",
                     "entities": {"user": "user_id"},
                     "facts": ["signup"],
-                    "properties": [],
+                    "properties": ["treated"],
                     "dimensions": [],
                 },
                 "outcomes": {
@@ -116,7 +117,14 @@ def _model(
                 "enrolled": {"source": "entries", "column": None},
                 "closed": {"source": "exits", "column": None},
             },
-            "properties": {},
+            "properties": {
+                "treated": {
+                    "source": "anchors",
+                    "column": "treated",
+                    "dtype": "bool",
+                    "as_of": "event_time",
+                }
+            },
             "dimensions": {},
             "measures": {},
             "metrics": {},
@@ -163,15 +171,33 @@ def test_prevalent_events_are_excluded_and_cutoff_equality_is_censored():
         design = Design(
             "user",
             EventAnchor("signup", which="first"),
+            treatment=Treatment("treated", known_at_t0=True),
             shape=TimeToEvent("churn"),
             administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
         )
-        rows = _collect(design, model).to_pylist()
-        assert sorted((row["unit"], row["event_time"], row["event"]) for row in rows) == [
-            ("u1", datetime(2025, 1, 1, tzinfo=UTC), True),
-            ("u2", None, False),
+        frame = design.build(model).materialize()
+        restored = MaterializedFrame.from_arrow(frame.to_arrow())
+        rows = restored.table.to_pylist()
+        assert sorted(
+            (row["unit"], row["event_time"], row["event"], row["treatment"]) for row in rows
+        ) == [
+            ("u1", datetime(2025, 1, 1, tzinfo=UTC), True, True),
+            ("u2", None, False, False),
         ]
         assert all(row["duration"] is not None for row in rows)
+        assert restored.roles.treatment == "treatment"
+        assert "treatment" in restored.columns
+        treatment_meta = restored.columns["treatment"]
+        assert all(
+            column is None or column in restored.table.column_names
+            for column in (
+                treatment_meta.observed_from_column,
+                treatment_meta.observed_until_column,
+                treatment_meta.complete_column,
+                treatment_meta.reason_column,
+                treatment_meta.absolute_error_column,
+            )
+        )
     finally:
         con.disconnect()
 

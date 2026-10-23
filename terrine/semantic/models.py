@@ -16,8 +16,10 @@ from pydantic import (
     StrictInt,
     StrictStr,
     field_serializer,
+    field_validator,
     model_validator,
 )
+from pydantic_core import PydanticCustomError
 
 if TYPE_CHECKING:
     from terrine.data import UnitSource
@@ -140,7 +142,9 @@ class Validity(_Record):
         if (self.valid_from is None) == (self.changed_at is None) or (
             self.changed_at is not None and self.valid_to is not None
         ):
-            raise ValueError("validity requires a range start or a change point, not both")
+            raise PydanticCustomError(
+                "invalid_validity_axis", "validity declaration uses an unsupported time axis"
+            )
         return self
 
 
@@ -169,13 +173,21 @@ class Filter(_Record):
     @model_validator(mode="after")
     def validate_arity(self):
         if self.op in {"equals", "not_equals", "gt", "gte", "lt", "lte"} and len(self.values) != 1:
-            raise ValueError("comparison filter requires one value")
+            raise PydanticCustomError(
+                "invalid_filter_arity", "filter operation has an unsupported number of values"
+            )
         if self.op in {"in", "not_in"} and not self.values:
-            raise ValueError("membership filter requires values")
+            raise PydanticCustomError(
+                "invalid_filter_arity", "filter operation has an unsupported number of values"
+            )
         if self.op == "between" and len(self.values) != 2:
-            raise ValueError("between filter requires two values")
+            raise PydanticCustomError(
+                "invalid_filter_arity", "filter operation has an unsupported number of values"
+            )
         if any(not _json_value(v) or isinstance(v, (list, tuple, Mapping)) for v in self.values):
-            raise ValueError("filter values must be JSON scalars")
+            raise PydanticCustomError(
+                "invalid_filter_values", "filter values are not supported JSON scalars"
+            )
         return self
 
 
@@ -200,15 +212,19 @@ class Metric(_Record):
     def validate_measure_shape(self):
         if self.kind == "ratio":
             if self.measure is not None or self.numerator is None or self.denominator is None:
-                raise ValueError("ratio requires numerator and denominator")
+                raise PydanticCustomError(
+                    "invalid_metric_shape", "metric fields do not match the declared kind"
+                )
         elif self.measure is None or self.numerator is not None or self.denominator is not None:
-            raise ValueError("non-ratio metric requires measure")
+            raise PydanticCustomError(
+                "invalid_metric_shape", "metric fields do not match the declared kind"
+            )
         return self
 
     @model_validator(mode="after")
     def validate_transform(self):
         if self.winsorization is not None and not _json_value(self.winsorization):
-            raise ValueError("winsorization must be safe JSON data")
+            raise PydanticCustomError("unsafe_transform", "winsorization is not safe JSON data")
         return self
 
 
@@ -223,12 +239,18 @@ class Catalog(_Record):
     measures: Mapping[StrictStr, Measure]
     metrics: Mapping[StrictStr, Metric]
 
-    @model_validator(mode="after")
-    def validate_boundary(self):
+    @field_validator("day_boundary")
+    @classmethod
+    def validate_boundary(cls, value: str) -> str:
         from terrine.semantic.time import boundary_timezone
 
-        boundary_timezone(self.day_boundary)
-        return self
+        try:
+            boundary_timezone(value)
+        except ValueError as exc:
+            raise PydanticCustomError(
+                "invalid_day_boundary", "day_boundary is not a supported fixed UTC offset"
+            ) from exc
+        return value
 
     def required_relations(
         self, con: Any, *, units: Mapping[str, UnitSource] | None = None

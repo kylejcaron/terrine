@@ -2,7 +2,7 @@
 
 Install the extras and point the example at a database you can create a schema in:
 
-    uv pip install 'terrine[postgres,duckdb]'
+    uv pip install 'terrine[postgres]'
     TERRINE_POSTGRES_URL=postgres://user:password@localhost:5432/analytics \
         python examples/postgres/dataset.py
 

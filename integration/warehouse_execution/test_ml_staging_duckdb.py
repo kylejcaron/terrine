@@ -221,7 +221,17 @@ def test_export_recovers_durable_shard_and_discards_interrupted_shard(tmp_path, 
     model.con.disconnect()
 
 
-def test_export_budget_cancellation_closes_pinned_batch_reader(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("budget", "code"),
+    [
+        (Budget(max_rows=0, strict_scan=False), "terrine.budget.rows_exceeded"),
+        (
+            Budget(max_output_bytes=0, strict_scan=False),
+            "terrine.budget.output_bytes_exceeded",
+        ),
+    ],
+)
+def test_export_budget_cancellation_closes_pinned_batch_reader(tmp_path, monkeypatch, budget, code):
     model = create_model(tmp_path / "owner.duckdb")
     dataset = _training(model).stage("training", budget=Budget(strict_scan=False))
     original = Dataset.to_arrow_batches
@@ -244,16 +254,63 @@ def test_export_budget_cancellation_closes_pinned_batch_reader(tmp_path, monkeyp
     monkeypatch.setattr(Dataset, "to_arrow_batches", tracked)
     try:
         with pytest.raises(TerrineError) as error:
-            dataset.export_parquet(
-                destination=str(tmp_path / "cancelled"), budget=Budget(max_rows=0)
-            )
-        assert error.value.code == "terrine.budget.rows_exceeded"
+            dataset.export_parquet(destination=str(tmp_path / "cancelled"), budget=budget)
+        assert error.value.code == code
         assert closed == [True]
         assert not (tmp_path / "cancelled").exists()
         assert sum(batch.num_rows for batch in original(dataset, batch_size=1)) == 2
     finally:
         for stream in streams:
             stream.close()
+        model.con.disconnect()
+
+
+def _compressible_dataset(tmp_path):
+    model = create_model(tmp_path / "owner.duckdb")
+    model.con.raw_sql("UPDATE events SET segment=repeat('x', 100000)")
+    dataset = (
+        training_design()
+        .build(model)
+        .training_set(label="following_amount", incomplete_labels="keep")
+        .stage("training", budget=Budget(strict_scan=False))
+    )
+    return dataset, model
+
+
+def test_parquet_export_budget_counts_arrow_bytes_before_publication(tmp_path):
+    dataset, model = _compressible_dataset(tmp_path)
+    destination = tmp_path / "bounded"
+    try:
+        with pytest.raises(TerrineError) as error:
+            dataset.export_parquet(
+                destination=str(destination),
+                budget=Budget(max_output_bytes=50_000, strict_scan=False),
+            )
+        assert error.value.code == "terrine.budget.output_bytes_exceeded"
+        assert list((tmp_path / ".bounded.partial").glob("**/*.parquet")) == []
+        assert not destination.exists()
+    finally:
+        model.con.disconnect()
+
+
+def test_completed_export_replay_enforces_arrow_byte_budget(tmp_path):
+    dataset, model = _compressible_dataset(tmp_path)
+    destination = tmp_path / "replay"
+    try:
+        exported = dataset.export_parquet(
+            destination=str(destination),
+            budget=Budget(max_output_bytes=1_000_000, strict_scan=False),
+        )
+        manifest_bytes = (destination / "export-manifest.json").read_bytes()
+        with pytest.raises(TerrineError) as error:
+            dataset.export_parquet(
+                destination=str(destination),
+                budget=Budget(max_output_bytes=50_000, strict_scan=False),
+            )
+        assert error.value.code == "terrine.budget.output_bytes_exceeded"
+        assert (destination / "export-manifest.json").read_bytes() == manifest_bytes
+        assert dataset.export_parquet(destination=str(destination)) == exported
+    finally:
         model.con.disconnect()
 
 
@@ -449,6 +506,15 @@ def test_export_discards_unfinished_shard_and_rewrites_on_retry(
     monkeypatch.setattr(
         type(dataset), "to_arrow_batches", lambda self, **kwargs: original(**kwargs)
     )
+    with pytest.raises(TerrineError) as error:
+        dataset.export_parquet(
+            destination=str(destination),
+            target_file_bytes=1,
+            budget=Budget(max_output_bytes=1, strict_scan=False),
+        )
+    assert error.value.code == "terrine.budget.output_bytes_exceeded"
+    assert len(list(partial.glob("**/*.parquet"))) == 1
+
 
     writers = 0
     original_writer = export_module.pq.ParquetWriter
@@ -459,7 +525,11 @@ def test_export_discards_unfinished_shard_and_rewrites_on_retry(
         return original_writer(*args, **kwargs)
 
     monkeypatch.setattr(export_module.pq, "ParquetWriter", count_writers)
-    export = dataset.export_parquet(destination=str(destination), target_file_bytes=1)
+    export = dataset.export_parquet(
+        destination=str(destination),
+        target_file_bytes=1,
+        budget=Budget(max_output_bytes=1_000_000, strict_scan=False),
+    )
     assert writers > 0
     assert export.row_count == dataset.manifest.generation.row_count
     assert sum(shard.row_count for shard in export.shards) == export.row_count
@@ -605,7 +675,7 @@ def test_empty_training_export_preserves_complete_arrow_metadata(
     export = dataset.export_parquet(
         destination=str(destination),
         partition_by=partition_by,
-        budget=Budget(max_rows=0, strict_scan=False),
+        budget=Budget(max_rows=0, max_output_bytes=0, strict_scan=False),
     )
     assert export.row_count == 0
     assert len(export.shards) == 1
@@ -622,7 +692,7 @@ def test_empty_training_export_preserves_complete_arrow_metadata(
         dataset.export_parquet(
             destination=str(destination),
             partition_by=partition_by,
-            budget=Budget(max_rows=0, strict_scan=False),
+            budget=Budget(max_rows=0, max_output_bytes=0, strict_scan=False),
         )
         == export
     )

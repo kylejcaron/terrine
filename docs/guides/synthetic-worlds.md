@@ -1,22 +1,23 @@
 # Independent baseline dataset worlds
 
 `terrine.simulate` creates deterministic raw-source worlds for exercising dataset
-construction. The packaged `baseline.yaml` catalog and independent reference
-builder are part of the fixture contract; the simulator does not ship fitted
-estimators or treatment-effect truth.
+construction. The packaged `baseline.yaml` catalog and `World.oracle` expected
+rows support public examples; the simulator does not ship fitted estimators or
+treatment-effect truth.
 
 ```python
 from terrine.simulate import WorldConfig, simulate
-from tests.reference.baseline import reference_rows
 
 world = simulate(WorldConfig(n_units=64), seed=17)
-expected_rows = reference_rows(world)
+expected_rows = world.oracle
 ```
 
-The oracle represents expected dataset rows and values. It is not a paired
-potential-outcome table, ATE, or other causal target. Dataset checks should
-compare anchors, window values, completeness, null reasons, and censoring to the
-independent reference implementation.
+The oracle provides expected dataset rows and values. It is not a paired
+potential-outcome table, ATE, or other causal target. For repository-only
+independent verification, `tests.reference.baseline.reference_rows(world)`
+recomputes expected rows from raw sources; it is not an installed Terrine API.
+Dataset checks compare anchors, window values, completeness, null reasons, and
+censoring against the relevant expected rows.
 
 ## Arrow sources and native Catalog
 
@@ -29,7 +30,7 @@ independent reference implementation.
   recorded baseline attribute.
 - `analysis_table`: point-in-time source values with observation bounds,
   completeness flags, and exact null reasons.
-- `oracle`: expected dataset rows used only by independent fixture checks.
+- `oracle`: expected dataset rows available to public simulator consumers.
 
 `world.semantic_yaml` comes from the installed
 `terrine.simulate/baseline.yaml` package resource. It is a version-1 native

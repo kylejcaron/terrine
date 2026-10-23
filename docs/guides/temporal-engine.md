@@ -7,6 +7,16 @@ Python mapping with `Catalog.model_validate(...)` or loaded from safe YAML with
 unknown fields, duplicate YAML keys, unsafe YAML tags, and unsupported schema
 versions are rejected.
 
+Schema failures from `load_catalog` raise `TerrineError` with code
+`terrine.catalog.invalid_definition`. Inspect its immutable `context["issues"]`
+for ordered locations, stable validation categories, and package-owned recovery
+hints; the same actionable locations and corrections appear in the displayed
+error. For example, `day_boundary: UTC+14:01` points to `day_boundary`: use
+`UTC`, a signed `HH:MM` offset, or a `UTC`-prefixed fixed offset within ±14:00
+(the endpoints are limited to exactly `14:00`). Correct the YAML and load it
+again. Direct `Catalog.model_validate(...)` construction continues to use
+Pydantic's `ValidationError`.
+
 ```yaml
 schema_version: 1
 day_boundary: UTC
@@ -521,11 +531,15 @@ one-based occurrence. Its optional paired `label_property` and `equals`
 arguments refine selection. An expression can use that timestamp as its origin:
 `agg("metric", window=("0s", "1h"), relative_to=selector)` or
 `asof("property", before="0s", relative_to=selector)`. Runtime time bounds are
-retained separately from the measured window. Static validation propagates
-every selector's possible support and refuses feature or eligibility chains
-that may cross the configured gap, without executing source queries or clipping
-the window. Baseline estimators refuse outcomes with event-time origins until
-they support that timing model.
+retained separately from the measured window. After the selector resolves to a
+present origin, the relative result preserves the underlying value,
+completeness, and null reason independently; a complete result can still carry a
+reason such as `all_values_null`. An incomplete selector or missing origin
+retains precedence over the result's reason. Static validation propagates every
+selector's possible support and refuses feature or eligibility chains that may
+cross the configured gap, without executing source queries or clipping the
+window. Baseline estimators refuse outcomes with event-time origins until they
+support that timing model.
 
 Materialized provenance records the sequence schema and each expression's
 selector references, conservative support intervals, and resolved time-column

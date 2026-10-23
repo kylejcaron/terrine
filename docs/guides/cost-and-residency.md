@@ -31,10 +31,15 @@ arbitrary backend exceptions or Dataset rows.
 
 | Control | Bounds | Does not certify |
 | --- | --- | --- |
-| `Budget.max_rows` | Successful output rows | Source scans, join work, backend memory |
-| `Budget.max_output_bytes` | Output Arrow bytes at the enforced boundary | Compressed Parquet size or peak query memory |
+| `Budget.max_output_bytes` | Cumulative Arrow bytes emitted by the selected output, checked before writing each export batch | Compressed Parquet size or peak query memory |
 | `Budget.max_scan_bytes` with strict policy | Independently verified scan bounds/enforceable caps for every read phase | A guessed estimate derived from output size |
 | Bounded Arrow batches/shards | Transfer/writer buffering | Backend query memory or total disk space |
+
+Export manifests retain physical Parquet `byte_count` for storage and integrity;
+that value does not satisfy an Arrow-output budget. A capped export replay
+re-reads the pinned Arrow stream to enforce the same byte limit before returning
+the verified export. An uncapped replay does not add this read.
+
 
 Native DuckDB scan cost is unknown. A strict scan-byte request refuses with
 `terrine.budget.scan_unknown` before integrity/source reads; use an independently

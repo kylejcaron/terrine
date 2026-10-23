@@ -14,12 +14,12 @@ from terrine.errors import TerrineError
 
 __all__ = ["dialect_of", "dialect_scope", "unavailable"]
 
-_DIALECT: ContextVar[str] = ContextVar("terrine_compile_dialect", default="duckdb")
+_DIALECT: ContextVar[str | None] = ContextVar("terrine_compile_dialect", default=None)
 
 
 @contextmanager
 def dialect_scope(dialect: str) -> Generator[None]:
-    """Compile expressions without a bound operand, such as literals, for ``dialect``."""
+    """Compile every expression inside the block, bound or literal, for ``dialect``."""
     token = _DIALECT.set(dialect.casefold())
     try:
         yield
@@ -28,17 +28,22 @@ def dialect_scope(dialect: str) -> Generator[None]:
 
 
 def dialect_of(*values: ir.Value) -> str:
-    """The backend of the first bound operand, else the enclosing scope's dialect.
+    """The enclosing scope's dialect, else the backend of the first bound operand.
 
-    Ibis cannot infer a backend from unbound literals, so callers compiling one
-    Design set the scope from the Catalog dialect.
+    A compile scope is set from the Catalog dialect, which binding matched to
+    the execution backend, so operands need no graph traversal there. Ibis
+    cannot infer a backend from unbound literals; outside any scope those
+    default to DuckDB.
     """
+    scoped = _DIALECT.get()
+    if scoped is not None:
+        return scoped
     for value in values:
         try:
             return value._find_backend(use_default=False).name
         except IbisError:
             continue
-    return _DIALECT.get()
+    return "duckdb"
 
 
 def unavailable(operation: str, dialect: str) -> TerrineError:
