@@ -4,6 +4,12 @@ A `Trajectory` builds period and cumulative metric datasets; a `CohortTable`
 aggregates values by cohort age. Both preserve observation completeness, null
 reasons, and cohort denominators. See the dataset constructors and examples in
 [`synthetic-worlds.md`](synthetic-worlds.md) for raw-source workflows.
+Exact decimal cumulative values retain their declared precision and scale. If
+all contributing periods are present but the cumulative total cannot fit that
+exact output type, materialization refuses with
+`terrine.temporal.exact_overflow` rather than returning a null value. When an
+earlier period is unavailable, its null and reason remain visible in cumulative
+outputs instead of being reported as arithmetic overflow.
 
 `TimeToEvent` builds one per-unit record containing event time, duration, entry
 time, censor time, and completeness/reason metadata. These are observed dataset

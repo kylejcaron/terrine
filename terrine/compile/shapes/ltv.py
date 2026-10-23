@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import ibis
 
-from terrine.backends.numeric import exact_literal, exact_sum
+from terrine.backends.numeric import EXACT_OVERFLOW, exact_literal, exact_sum
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
@@ -204,7 +204,9 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
             assert scale is not None
             decimal_text = table.period_value.cast("string")
             separator = decimal_text.find(".")
-            fractional_digits = ibis.ifelse(separator < 0, 0, decimal_text.length() - separator - 1)
+            fractional_digits = ibis.ifelse(
+                separator < 0, 0, decimal_text.length() - separator - 1
+            )
             coefficient_text = decimal_text.replace(".", "")
             coefficient = coefficient_text.rpad(
                 coefficient_text.length() + scale - fractional_digits, "0"
@@ -215,6 +217,23 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
             total = table.period_value.sum().over(frame)
         # Through INT: PostgreSQL cannot cast boolean to BIGINT.
         missing = table.period_value.isnull().cast("int32").sum().over(frame) > 0
+        if table.period_value.type().is_decimal():
+            failure_column = "failed_cumulative_exact_overflow"
+            check_table = table.filter(~missing & total.isnull()).aggregate(
+                ibis._.count().cast("string").name(failure_column)
+            )
+            checks.append(
+                _Check(
+                    check_table,
+                    (
+                        _Failure(
+                            failure_column,
+                            EXACT_OVERFLOW,
+                            {"output": "cumulative_value"},
+                        ),
+                    ),
+                )
+            )
         cumulative = missing.ifelse(ibis.null().cast(total.type()), total)
         table = table.mutate(cumulative_value=cumulative)
         table = table.mutate(
