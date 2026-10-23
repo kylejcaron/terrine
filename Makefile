@@ -1,4 +1,4 @@
-.PHONY: test test-scale test-postgres lint typecheck fmt check complexity
+.PHONY: test test-scale test-postgres test-bigquery test-snowflake lint typecheck fmt check complexity
 
 TESTS ?= tests
 SCALE_TESTS ?= integration
@@ -24,6 +24,12 @@ test-postgres:
 # fails without them. Each probe creates and drops its own dataset.
 test-bigquery:
 	uv run --extra duckdb --extra bigquery pytest integration -m bigquery
+
+# Live Snowflake probes; requires TERRINE_TEST_SNOWFLAKE_{ACCOUNT,USER,PRIVATE_KEY,
+# WAREHOUSE,DATABASE,SCHEMA} (key-pair service user) and fails without them. Each
+# probe creates and drops its own schema in the test database.
+test-snowflake:
+	uv run --extra duckdb --extra snowflake pytest integration -m snowflake
 
 lint:
 	uv run ruff check terrine tests integration

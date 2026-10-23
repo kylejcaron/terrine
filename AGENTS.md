@@ -90,6 +90,14 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   `TERRINE_TEST_BIGQUERY_ACCESS_TOKEN="$(gcloud auth print-access-token)"` is
   enough. Each probe creates and drops its own dataset; queries are billed, so
   keep fixtures tiny. CI runs them weekly and on dispatch, serialized.
+- `make test-snowflake` runs the live Snowflake probes (`@pytest.mark.snowflake`,
+  deselected by default); they fail, never skip, without
+  `TERRINE_TEST_SNOWFLAKE_{ACCOUNT,USER,PRIVATE_KEY,WAREHOUSE,DATABASE,SCHEMA}`
+  (a key-pair service user; `TERRINE_TEST_SNOWFLAKE_PRIVATE_KEY_PASSPHRASE` is
+  optional). There are no local credentials: dispatch the `warehouse-backends`
+  workflow with `backend_mode=snowflake`. Each probe creates and drops its own
+  schema in the test database; warehouse time is billed, so keep fixtures tiny.
+  CI runs them weekly and on dispatch, serialized.
 - The ordinary suite lists unit tests slower than 5 s (well above the 2 s
   target, so contention does not trip it); a healthy run lists none. Fix any
   listed test.
