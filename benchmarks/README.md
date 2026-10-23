@@ -94,6 +94,41 @@ eligibility and output query. Import time is measured in a fresh interpreter.
 Raw SQL is not stored and source scan bytes are not measured. Timings are local
 observations for comparing two commits on one machine, not CI thresholds.
 
+### Measured overhead
+
+Warm medians of five unprofiled samples on one machine (Apple M3 Pro, Python
+3.13.5, Ibis 12.0.0, DuckDB 1.5.6, one DuckDB thread), build plus
+materialization in seconds, before and after staging window intermediates in
+shared projections and resolving the compile dialect from the Design scope.
+No before/after ranges overlap; every case matched the independent reference.
+
+| Case | Rows | Before | After | Ratio | Compilations | Compile s before → after |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| one_row_count | 1 | 0.635 | 0.473 | 0.74 | 7 | 0.42 → 0.31 |
+| one_row_decimal_sum | 1 | 0.776 | 0.553 | 0.71 | 7 | 0.52 → 0.34 |
+| one_row_float_average | 1 | 2.698 | 1.369 | 0.51 | 7 | 1.81 → 0.80 |
+| one_row_ratio | 1 | 2.883 | 1.643 | 0.57 | 7 | 1.77 → 1.04 |
+| one_row_four_columns | 1 | 6.972 | 3.802 | 0.55 | 16 | 4.50 → 2.54 |
+| few_rows_four_columns | 3 | 7.089 | 3.811 | 0.54 | 16 | 4.66 → 2.54 |
+| events_10k_count | 100 | 0.712 | 0.532 | 0.75 | 7 | 0.46 → 0.33 |
+| events_10k_four_columns | 100 | 7.404 | 4.136 | 0.56 | 16 | 4.60 → 2.52 |
+| events_100k_count | 100 | 0.786 | 0.625 | 0.80 | 7 | 0.42 → 0.25 |
+| events_100k_four_columns | 100 | 7.868 | 4.636 | 0.59 | 16 | 4.59 → 2.50 |
+
+The seven compilations of a one-column materialization are distinct queries:
+two anchor checks, one window-alignment check, two deferred window checks, the
+eligibility audit and the output stream. Four columns add two checks per
+column; only the alignment check repeats identically (about 4 ms each). The
+cost was the size of each query, not duplicated queries: every intermediate of
+a float average nested another projection (about seventy nested selects and
+150 KB of SQL for one row), and Ibis's select-merging analysis traverses the
+whole graph per nested pair. DuckDB executed each of those queries in roughly
+20 ms; native-function admission took about 20 ms per query. The remaining
+cost is proportional to the number of distinct queries and their dependency
+depth. Merging the eligibility audit with the output stream, or batching each
+column's deferred checks into one aggregate, would need a session-scoped
+relation or a different check structure and were not pursued here.
+
 ## Explicit test tiers
 
 ```sh
