@@ -50,12 +50,13 @@ Terrine's descriptive reports make no p-value, interval or causal pass/fail clai
 
 Finite timestamp and numeric representations cannot encode every requested
 endpoint or exact result. A coded refusal is preferable to silently narrowing a
-timestamp or overflowing an amount. Float facts enter exact state as their
-shortest decimal text, so a window sum is that exact sum rounded once to
-binary64; averages and ratios carry a stated relative bound
-([temporal engine](temporal-engine.md)). Eligibility predicates and state bins
-compare the rounded value. Approximate sketches have only their documented
-error properties.
+timestamp or overflowing an amount. On DuckDB and PostgreSQL, float facts enter
+exact state as their shortest decimal text, so a window sum is that exact sum
+rounded once to binary64; BigQuery first rounds each value to 38 fractional
+digits ([backend compatibility](backend-compatibility.md#bigquery)). Averages
+and ratios carry a stated relative bound ([temporal engine](temporal-engine.md)).
+Eligibility predicates and state bins compare the rounded value. Approximate
+sketches have only their documented error properties.
 
 Output cardinality and bytes cannot certify the work needed to produce them.
 A tiny result can require a large scan, join or sort. Bounded client batches do
