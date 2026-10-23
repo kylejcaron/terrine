@@ -16,6 +16,8 @@
   three-valued eligibility and descriptive treatment/cluster/weight roles.
 - Preserve source-specific completeness, numeric nulls and exact unavailable
   reasons; distinguish fully observed zero activity from missing follow-up.
+- Preserve evaluated null reasons on event-relative results after a selector
+  resolves, independently of completeness.
 - Build sequential/calendar/event panels, bounded state pairs, LTV trajectories,
   cohort summaries, per-unit time-to-event records and risk-set counts/plain
   rates. Retain row identity, temporal support and typed shape provenance.

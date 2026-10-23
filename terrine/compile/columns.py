@@ -999,8 +999,7 @@ def compile_columns(
                 combined_reason: ibis.cases(
                     (~origin_complete, result_table[origin_reason_name]),
                     (~has_origin, "missing_selector_origin"),
-                    (~result_complete, result_reason),
-                    else_=ibis.null().cast("string"),
+                    else_=result_reason,
                 ),
             }
             if meta.absolute_error_column is not None:

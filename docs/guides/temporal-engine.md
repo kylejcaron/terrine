@@ -521,11 +521,15 @@ one-based occurrence. Its optional paired `label_property` and `equals`
 arguments refine selection. An expression can use that timestamp as its origin:
 `agg("metric", window=("0s", "1h"), relative_to=selector)` or
 `asof("property", before="0s", relative_to=selector)`. Runtime time bounds are
-retained separately from the measured window. Static validation propagates
-every selector's possible support and refuses feature or eligibility chains
-that may cross the configured gap, without executing source queries or clipping
-the window. Baseline estimators refuse outcomes with event-time origins until
-they support that timing model.
+retained separately from the measured window. After the selector resolves to a
+present origin, the relative result preserves the underlying value,
+completeness, and null reason independently; a complete result can still carry a
+reason such as `all_values_null`. An incomplete selector or missing origin
+retains precedence over the result's reason. Static validation propagates every
+selector's possible support and refuses feature or eligibility chains that may
+cross the configured gap, without executing source queries or clipping the
+window. Baseline estimators refuse outcomes with event-time origins until they
+support that timing model.
 
 Materialized provenance records the sequence schema and each expression's
 selector references, conservative support intervals, and resolved time-column
