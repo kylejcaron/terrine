@@ -204,9 +204,12 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   ruff (`TID251`) rejects `ibis.udf` and `ibis.to_sql` outside the allowed
   packages.
 - When Ibis lacks or mistranslates an operation on a supported backend, add a
-  dispatched helper in `terrine/backends/` (`dialect`, `numeric`, `timestamps`)
-  with a live parity test, not a workaround at each call site. Supporting a new
-  warehouse means implementing those helpers for it.
+  dispatched helper in `terrine/backends/` (`dialect`, `numeric`, `timestamps`,
+  `joins`, `extrema`) with a live parity test, not a workaround at each call
+  site. Supporting a new warehouse means implementing those helpers for it.
+  Known Ibis gaps: no ASOF JOIN on BigQuery, NULL-propagating LEAST/GREATEST
+  there, and `interval * column` lowered through `EXTRACT(SECOND ...)` (multiply
+  integer seconds, then `.as_interval("s")`).
 - Raw SQL is acceptable only for: terrine's own DuckDB runtime state tables
   (`terrine/runtime/`), backend-provider catalog introspection and transaction
   control (`terrine/execution/`), and admitted user SQL relations.

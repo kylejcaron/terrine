@@ -80,6 +80,8 @@ select = ["E", "F", "I", "UP", "B", "TID251"]
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "ibis.udf".msg = "Bind native functions only in terrine/backends/ (AGENTS.md: Backend portability)."
 "ibis.to_sql".msg = "Build study queries as Ibis expressions, not SQL text (AGENTS.md: Backend portability)."
+"ibis.least".msg = "Use terrine.backends.extrema.least: BigQuery's LEAST returns NULL for any NULL."
+"ibis.greatest".msg = "Use terrine.backends.extrema.greatest: BigQuery's GREATEST returns NULL for any NULL."
 
 [tool.ruff.lint.per-file-ignores]
 "terrine/backends/*.py" = ["TID251"]

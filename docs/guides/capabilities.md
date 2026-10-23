@@ -27,12 +27,12 @@ hidden full rebuild. For a fresh ordinary build, use `Design.build(model)`.
 
 ## Backend, conversion and adapter status
 
-Local **Ibis DuckDB** is the reference dataset execution provider, and an
-**Ibis PostgreSQL** backend materializes Frames for counts, exact sums, as-of
-attributes and the panel and time-to-event shapes. Raw DuckDB connections are
-valid for owner runtime state, not as an Ibis Model provider. Snowflake, BigQuery
-and arbitrary Ibis backends are unverified; an accepted backend name or compiled
-SQL is not execution evidence. Remote driver,
+Local **Ibis DuckDB** is the reference dataset execution provider, and **Ibis
+PostgreSQL** and **Ibis BigQuery** backends materialize Frames for counts, sums,
+averages, ratios, as-of attributes and the panel and time-to-event shapes. Raw
+DuckDB connections are valid for owner runtime state, not as an Ibis Model
+provider. Snowflake and arbitrary Ibis backends are unverified; an accepted
+backend name or compiled SQL is not execution evidence. Remote driver,
 object-store and reviewed dbt relation bridges are not advertised by the local
 path. See [backend compatibility](backend-compatibility.md) for operation-level
 capabilities and [semantic-layer interoperability](semantic-layer-interop.md)
