@@ -316,7 +316,6 @@ def _apply_training_view(compiled: CompiledStudy, view: _TrainingView) -> Compil
             metadata.observed_until_column,
             metadata.complete_column,
             metadata.reason_column,
-            metadata.absolute_error_column,
         ):
             if support is not None and support not in names:
                 names.append(support)
@@ -700,7 +699,6 @@ class Frame:
                         (meta.observed_until_column, "max"),
                         (meta.complete_column, "all"),
                         (meta.reason_column, "reasons"),
-                        (meta.absolute_error_column, "max"),
                     ):
                         if column is not None:
                             group_supports.setdefault(column, policy)

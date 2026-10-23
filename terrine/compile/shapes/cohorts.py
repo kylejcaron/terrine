@@ -25,13 +25,7 @@ from terrine.temporal.aggregate import (
     _scaled_text,
     narrow_exact,
 )
-from terrine.temporal.prefix import (
-    FLOAT64_PRECISION,
-    float64_rounding_radius,
-    float64_tolerance,
-    outward_add,
-    outward_multiply,
-)
+from terrine.temporal.prefix import FLOAT64_PRECISION
 
 __all__ = ["compile_cohorts"]
 
@@ -79,20 +73,11 @@ def _compile_cohorts(
         .distinct()
     )
     risk = entrants.group_by("bucket_index").aggregate(at_risk=ibis._.count())
-    value_meta = study.columns.get(value_column)
-    error_column = value_meta.absolute_error_column if value_meta is not None else None
-    checked_float = (
-        value_meta is not None
-        and value_meta.numeric_policy == "checked_float64_v1"
-        and error_column is not None
-        and error_column in table.columns
-    )
     # One first-event anchor per unit makes each (bucket, age, unit) a single row,
     # and later joined state is constant per group, so min() selects that value;
     # unlike FIRST it exists on every backend. Reasons choose deterministically.
     per_unit = table.group_by("bucket_index", "age", "unit").aggregate(
         _value=table[value_column].min(),
-        _absolute_error=table[error_column].min() if checked_float else ibis.null().cast("float64"),
         _complete=table[complete_column].min().fill_null(ibis.literal(False)),
         _mature=table.period_value_mature.min(),
         _reason=table[f"{value_column}_reason"].min()
@@ -176,7 +161,6 @@ def _compile_cohorts(
         )
         scaled = per_unit.left_join(scales, ["bucket_index", "age"])
         reduction_table = scaled.mutate(
-            _magnitude=scaled._scale,
             _scale=ibis.ifelse(scaled._scale == 0.0, 1.0, scaled._scale),
         )
         normalized = reduction_table._value / reduction_table._scale
@@ -185,35 +169,10 @@ def _compile_cohorts(
         decimal_mean_failure = ibis.literal(False)
     if decimal_total_failure is None:
         decimal_total_failure = ibis.literal(False)
-    if checked_float and grouping.statistic == "total":
-        error_count = per_unit._value.notnull().cast("float64").sum()
-        inherited_error = per_unit._absolute_error.sum()
-        inherited_rounding = outward_multiply(
-            float64_rounding_radius(per_unit._absolute_error.abs().sum()),
-            outward_multiply(error_count, 2.0),
-        )
-        value_rounding = outward_multiply(
-            float64_rounding_radius(per_unit._value.abs().sum()),
-            outward_multiply(error_count, 2.0),
-        )
-        absolute_error = outward_add(
-            outward_add(inherited_error, inherited_rounding), value_rounding
-        )
-    elif checked_float:
-        input_error = per_unit._absolute_error.max()
-        error_count = per_unit._value.notnull().cast("float64").sum()
-        reduction_error = outward_multiply(
-            float64_rounding_radius(reduction_table._magnitude.min()),
-            outward_multiply(error_count, 4.0),
-        )
-        absolute_error = outward_add(input_error, reduction_error)
-    else:
-        absolute_error = ibis.null().cast("float64")
     groups = reduction_table.group_by("bucket_index", "age").aggregate(
         observable=reduction_table._complete.cast("int32").sum(),
         _value_count=reduction_table._value.notnull().cast("int32").sum(),
         _observed_value=observed_value,
-        _absolute_error=absolute_error,
         _mature=reduction_table._mature.max(),
         _reason=reduction_table._reason.min(),
         _mean_unrepresentable=decimal_mean_failure,
@@ -245,29 +204,9 @@ def _compile_cohorts(
                 "administrative_cutoff",
             ),
         ),
-        **(
-            {
-                "value_absolute_error": complete.ifelse(
-                    joined._absolute_error, ibis.null().cast("float64")
-                )
-            }
-            if checked_float
-            else {}
-        ),
     )
     roles = Roles("bucket_index", "bucket_index", "bucket_start", None, (), ("value",))
-    columns = {
-        "value": ColumnMeta(
-            None,
-            "outcome",
-            None,
-            None,
-            "complete",
-            "reason",
-            numeric_policy=value_meta.numeric_policy if checked_float else None,
-            absolute_error_column="value_absolute_error" if checked_float else None,
-        )
-    }
+    columns = {"value": ColumnMeta(None, "outcome", None, None, "complete", "reason")}
     checks = list(study._checks)
     if numeric_type.is_decimal() and grouping.statistic == "total":
         failure_column = "failed_cohort_exact_total"
@@ -317,27 +256,6 @@ def _compile_cohorts(
                             "measure": value_column,
                             "output": "value",
                         },
-                    ),
-                ),
-            )
-        )
-    if checked_float:
-        failed = result.value.notnull() & (
-            result.value_absolute_error.isnull()
-            | (result.value_absolute_error < 0.0)
-            | ~float_is_finite(result.value)
-            | ~float_is_finite(result.value_absolute_error)
-            | (result.value_absolute_error > float64_tolerance(result.value))
-        )
-        failure_column = "failed_cohort_tolerance"
-        checks.append(
-            _Check(
-                result.filter(failed).aggregate(ibis._.count().cast("string").name(failure_column)),
-                (
-                    _Failure(
-                        failure_column,
-                        FLOAT64_PRECISION,
-                        {"failure": "tolerance", "output": "value"},
                     ),
                 ),
             )

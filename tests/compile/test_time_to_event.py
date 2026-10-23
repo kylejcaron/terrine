@@ -195,7 +195,6 @@ def test_prevalent_events_are_excluded_and_cutoff_equality_is_censored():
                 treatment_meta.observed_until_column,
                 treatment_meta.complete_column,
                 treatment_meta.reason_column,
-                treatment_meta.absolute_error_column,
             )
         )
     finally:

@@ -218,7 +218,7 @@ def check(result: MaterializedFrame, expected: Mapping[str, Mapping[str, Any]]) 
                 mismatches += (
                     value is None
                     or reason is not None
-                    or meta.absolute_error_column is not None
+                    or meta.numeric_policy is not None
                     or abs(Fraction(value) - target)
                     > _QUOTIENT_RELATIVE * abs(target) + _QUOTIENT_ABSOLUTE
                 )

@@ -9,7 +9,7 @@ import ibis
 import pyarrow as pa
 import pytest
 
-from terrine.backends.numeric import exact_literal, exact_subtract, is_exact_type
+from terrine.backends.numeric import exact_subtract, is_exact_type
 from terrine.errors import TerrineError
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import (
@@ -23,16 +23,7 @@ from terrine.semantic.models import (
 )
 from terrine.temporal.attributes import enrich_events
 from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
-from terrine.temporal.prefix import (
-    float64_certificate,
-    float64_rounding_radius,
-    outward_add,
-    outward_divide,
-    outward_multiply,
-    outward_subtract,
-    sparse_prefix,
-    validate_float64,
-)
+from terrine.temporal.prefix import sparse_prefix
 
 
 @pytest.fixture
@@ -288,91 +279,6 @@ def test_nonfinite_float_leaves_are_counted_not_summed(connection):
     assert all(row["float64_unrepresentable_count"] == "0" for row in rows)
 
 
-def test_outward_primitives_enclose_elementary_exact_operations(connection):
-    table = connection.create_table(
-        "scalars",
-        ibis.memtable(
-            {"a": [1.0, math.ulp(0.0), math.nextafter(1.0, 2.0)], "b": [2**-53, 2.0, 3.0]}
-        ),
-    )
-    for function, oracle in (
-        (outward_add, lambda a, b: a + b),
-        (outward_subtract, lambda a, b: a - b),
-        (outward_multiply, lambda a, b: a * b),
-        (outward_divide, lambda a, b: a / b),
-    ):
-        bounds = table.select(
-            a=table.a,
-            b=table.b,
-            lo=function(table.a, table.b, upper=False),
-            hi=function(table.a, table.b),
-        )
-        for row in _rows(connection, bounds):
-            exact = oracle(Fraction.from_float(row["a"]), Fraction.from_float(row["b"]))
-            assert Fraction.from_float(row["lo"]) <= exact <= Fraction.from_float(row["hi"])
-    for row in _rows(connection, table.select(a=table.a, r=float64_rounding_radius(table.a))):
-        exact_radius = (
-            Fraction(1, 2**53) * abs(Fraction.from_float(row["a"])) + Fraction(1, 2**1074)
-        ) / (1 - Fraction(1, 2**53))
-        assert Fraction.from_float(row["r"]) >= exact_radius
-
-
-def test_certificate_count_limit_empty_identity_and_bound_overflow(connection):
-    state = connection.create_table(
-        "constructed",
-        ibis.memtable(
-            {
-                "n": ["0", "2251799813685248", "2251799813685249", "-1"],
-                "s": [0.0] * 4,
-                "a": [0.0, 1.0, 1.0, 0.0],
-            }
-        ),
-    )
-    checked = float64_certificate(
-        state.select(
-            n=state.n,
-            sum_value=state.s,
-            sum_abs_value=state.a,
-            nonnull_count=state.n.cast(exact_literal(0).type()),
-        )
-    ).mutate(
-        float64_nonfinite_input=ibis.literal(False),
-        float64_conformance_failure=ibis.literal(False),
-    )
-    rows = _rows(connection, checked)
-    assert rows[0]["prefix_error"] == 0.0
-    assert [row["float64_count_limit"] for row in rows] == [False, False, True, True]
-    with pytest.raises(TerrineError) as caught:
-        validate_float64(
-            checked.filter(checked.n == "2251799813685249"),
-            execute=connection.to_pyarrow,
-            source="postings",
-            measure="revenue",
-            output="prefix",
-        )
-    assert caught.value.context["failure"] == "count_limit"
-    checked_huge = float64_certificate(
-        state.limit(1).select(
-            sum_value=ibis.literal(1.7e308),
-            sum_abs_value=ibis.literal(1.7e308),
-            nonnull_count=exact_literal(2**51),
-        )
-    ).mutate(
-        float64_nonfinite_input=ibis.literal(False),
-        float64_conformance_failure=ibis.literal(False),
-    )
-    assert _rows(connection, checked_huge)[0]["float64_bound_overflow"] is True
-    with pytest.raises(TerrineError) as caught:
-        validate_float64(
-            checked_huge,
-            execute=connection.to_pyarrow,
-            source="postings",
-            measure="revenue",
-            output="prefix",
-        )
-    assert caught.value.context["failure"] == "bound_overflow"
-
-
 def test_construction_never_executes_queries(connection, monkeypatch):
     raw = _events(connection, [1.25, 2.5])
     source = _source()
@@ -540,30 +446,6 @@ def test_native_integer_alias_filter_does_not_trust_decimal38_range(
     assert [(row["_unit"], row["event_count"], row["sum_value"]) for row in rows] == [
         ("u", "1", value)
     ]
-
-
-def test_outward_overflow_cannot_become_a_finite_endpoint(connection):
-    for function, right in (
-        (outward_add, [1.7e308, -1.7e308]),
-        (outward_subtract, [-1.7e308, 1.7e308]),
-        (outward_multiply, [2.0, 2.0]),
-        (outward_divide, [0.5, 0.5]),
-    ):
-        table = connection.create_table(
-            "overflow_scalars",
-            ibis.memtable({"a": [1.7e308, -1.7e308], "b": right}),
-            overwrite=True,
-        )
-        rows = _rows(
-            connection,
-            table.select(
-                a=table.a,
-                lo=function(table.a, table.b, upper=False),
-                hi=function(table.a, table.b),
-            ),
-        )
-        for row in rows:
-            assert row["lo"] == row["hi"] == math.copysign(math.inf, row["a"])
 
 
 @pytest.mark.parametrize(

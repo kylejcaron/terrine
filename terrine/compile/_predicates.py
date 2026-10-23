@@ -1,4 +1,4 @@
-"""Exact typed comparisons and certified three-valued eligibility."""
+"""Exact typed comparisons and three-valued eligibility."""
 
 from __future__ import annotations
 
@@ -8,13 +8,11 @@ from dataclasses import dataclass
 import ibis
 
 from terrine.backends.extrema import greatest, least
-from terrine.backends.numeric import float_is_finite
 from terrine.data import ColumnMeta, FeatureCutoff
 from terrine.semantic.models import BoundFilter
 from terrine.spec.expressions import And, Eq, Expr, Gt, IsNull, Predicate
-from terrine.temporal.aggregate import _Builder, _Check
-from terrine.temporal.daily import _filter_comparison, _filter_literal
-from terrine.temporal.prefix import FLOAT64_PRECISION, outward_add, outward_subtract
+from terrine.temporal.aggregate import _Builder
+from terrine.temporal.daily import _filter_comparison
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,7 +27,6 @@ class CompiledPredicate:
     table: ibis.Table
     meta: ColumnMeta
     cutoff: FeatureCutoff
-    checks: tuple[_Check, ...]
 
 
 def conjunction_cutoff(cutoffs: tuple[FeatureCutoff, ...]) -> FeatureCutoff:
@@ -52,7 +49,6 @@ def compile_predicate(
 ) -> CompiledPredicate:
     """Gt is certain outside its threshold; Eq is true only for an equal singleton."""
     builder = _Builder(table, output)
-    checks: list[_Check] = []
 
     def compile_node(node):
         if isinstance(node, And):
@@ -92,58 +88,10 @@ def compile_predicate(
                 comparison = _filter_comparison(
                     value, BoundFilter(compiled.name, op, (node.value,))
                 )
-                uncertain = ibis.literal(False)
-                if meta.numeric_policy == "checked_float64_v1":
-                    assert meta.absolute_error_column is not None
-                    error = builder.col(meta.absolute_error_column)
-                    low_name, high_name = builder.put_many(
-                        (
-                            "comparison_lower",
-                            (error == 0.0).ifelse(
-                                value, outward_subtract(value, error, upper=False)
-                            ),
-                        ),
-                        (
-                            "comparison_upper",
-                            (error == 0.0).ifelse(value, outward_add(value, error)),
-                        ),
-                    )
-                    lo, hi = builder.col(low_name), builder.col(high_name)
-                    threshold = _filter_literal(value, node.value, compiled.name)
-                    invalid = builder.put(
-                        "invalid_comparison_bound", ~float_is_finite(lo) | ~float_is_finite(hi)
-                    )
-                    checks.append(
-                        builder.check(
-                            [
-                                (
-                                    invalid,
-                                    FLOAT64_PRECISION,
-                                    {"output": output, "failure": "bound_overflow"},
-                                )
-                            ],
-                            active=builder.col(meta.complete_column)
-                            & builder.col(compiled.name).notnull(),
-                        )
-                    )
-                    if isinstance(node, Gt):
-                        comparison = ibis.cases(
-                            (lo > threshold, True),
-                            (hi <= threshold, False),
-                            else_=ibis.null().cast("boolean"),
-                        )
-                    else:
-                        comparison = ibis.cases(
-                            ((lo == hi) & (lo == threshold), True),
-                            ((threshold < lo) | (threshold > hi), False),
-                            else_=ibis.null().cast("boolean"),
-                        )
-                    uncertain = value.notnull() & threshold.notnull() & comparison.isnull()
                 comparison = complete.ifelse(comparison, ibis.null().cast("boolean"))
                 reason = ibis.cases(
                     (~complete, cause),
                     (value.isnull(), cause.fill_null("all_values_null")),
-                    (uncertain, "uncertain_comparison"),
                     (comparison.isnull(), "null_comparison"),
                     else_=ibis.null().cast("string"),
                 )
@@ -157,4 +105,4 @@ def compile_predicate(
     complete = builder.put("predicate_complete", builder.col(value).notnull())
     result = builder.table.mutate(**{output: builder.col(value)})
     meta = ColumnMeta(None, "eligibility", lower, upper, complete, reason)
-    return CompiledPredicate(result, meta, cutoff, tuple(checks))
+    return CompiledPredicate(result, meta, cutoff)

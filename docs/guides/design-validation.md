@@ -25,9 +25,9 @@ definitions do not prevent building a feature-only design.
 Safe Frame execution runs all deferred producer checks before export, including
 checks for candidates later excluded by eligibility. Known false excludes a
 candidate even when another conjunct is unknown. Otherwise unresolved eligibility
-refuses with aggregate counts, not customer rows. Checked numeric comparisons use
-certified intervals; an overlapping threshold is unknown, and an overflowing
-required interval is a numerical refusal.
+refuses with aggregate counts, not customer rows. Numeric comparisons use exact
+integer/decimal predicates, or the rounded binary64 value of a float window,
+against the declared threshold.
 
 A fixed-date cross-sectional Boolean treatment at zero is classified as baseline
 binary only when `known_at_t0=True` was explicitly declared. Other treatments stay

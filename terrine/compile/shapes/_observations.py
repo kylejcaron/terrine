@@ -358,7 +358,6 @@ def compile_observed_state_panel(
                 "observed_until_column",
                 "complete_column",
                 "reason_column",
-                "absolute_error_column",
             ):
                 old = getattr(meta, attribute)
                 if old is not None:
@@ -440,7 +439,6 @@ def compile_observed_state_panel(
             meta.observed_until_column,
             meta.complete_column,
             meta.reason_column,
-            meta.absolute_error_column,
         ):
             if name is not None and name not in projection_names:
                 projection_names.append(name)

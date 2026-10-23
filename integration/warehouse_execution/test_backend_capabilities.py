@@ -68,7 +68,6 @@ def test_duckdb_typed_dataset_arrow_parquet_and_generation_parity(tmp_path):
         )
         score = metadata.columns["score"]
         assert score.numeric_policy is None
-        assert score.absolute_error_column is None
         assert expected.schema.field("amount").type == pa.decimal128(38, 2)
         assert expected.schema.field("t0").type == pa.timestamp("us", tz="UTC")
 

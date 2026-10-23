@@ -175,7 +175,6 @@ def test_float_feature_metadata_survives_exact_trajectory_compilation():
         table = _collect(con, frame)
         feature = frame.columns["float_feature"]
         assert feature.numeric_policy is None
-        assert feature.absolute_error_column is None
         for column in (
             feature.observed_from_column,
             feature.observed_until_column,
@@ -208,7 +207,7 @@ def test_cutoff_nulls_immature_float_period_value():
         table = con.to_pyarrow(frame.table).to_pylist()
         young = next(row for row in table if row["unit"] == "u3" and row["age"] == 1)
         meta = frame.columns["period_value"]
-        assert meta.numeric_policy is None and meta.absolute_error_column is None
+        assert meta.numeric_policy is None
         assert young["period_value"] is None
         assert young[meta.reason_column] == "administrative_cutoff"
     finally:

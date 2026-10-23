@@ -257,6 +257,8 @@ def test_dataset_view_resolved_instant_round_trips_json_and_arrow():
 
 
 def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values():
+    from terrine.windows import Window
+
     table = pa.table(
         {
             "unit": pa.array(["a", "b"], type=pa.string()),
@@ -265,11 +267,12 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values():
             ),
             "treated": pa.array([True, None], type=pa.bool_()),
             "amount": pa.array([Decimal("12.3400"), None], type=pa.decimal128(12, 4)),
+            "spend": pa.array([0.30000000000000004, None], type=pa.float64()),
         }
     )
     frame = MaterializedFrame(
         table=table,
-        roles=Roles("unit", "anchor", "t0", "treated", (), ("amount",)),
+        roles=Roles("unit", "anchor", "t0", "treated", ("spend",), ("amount",)),
         columns={
             "amount": ColumnMeta(
                 None,
@@ -285,7 +288,15 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values():
                     parameters={"precision": 12},
                     error_description="HLL relative standard error ≈ 1.04/√m",
                 ),
-            )
+            ),
+            "spend": ColumnMeta(
+                Window(-86400, 0),
+                "feature",
+                "spend_observed_from",
+                "spend_observed_until",
+                "spend_complete",
+                "spend_reason",
+            ),
         },
         provenance=_provenance(),
     )
@@ -299,6 +310,20 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values():
     assert restored.table.column("treated").to_pylist() == [True, None]
     assert json.loads(frame.to_json())["roles"]["unit"] == "unit"
     payload = json.loads(frame.to_json())
+    # A float window column is published rounded once, with no precision policy
+    # and no companion error column in the saved metadata.
+    assert restored.columns["spend"].numeric_policy is None
+    assert set(payload["columns"]["spend"]) == {
+        "window",
+        "role",
+        "observed_from_column",
+        "observed_until_column",
+        "complete_column",
+        "reason_column",
+        "numeric_policy",
+        "approximation",
+        "transformation",
+    }
     payload["provenance"]["unknown_policy"] = True
     with pytest.raises(ValueError):
         MaterializedFrame.from_json(json.dumps(payload))

@@ -26,8 +26,6 @@ from terrine.backends.numeric import (
     exact_sum,
     exact_to_float,
     exact_type,
-    float_is_finite,
-    ieee_subtract,
     normalized,
     normalized_quotient,
     rounded_normalized,
@@ -49,13 +47,7 @@ from terrine.semantic.rules import (
 from terrine.semantic.time import boundary_timezone
 from terrine.temporal.daily import _UNKNOWN_FIELDS
 from terrine.temporal.lookup import lookup_prefix
-from terrine.temporal.prefix import (
-    FLOAT64_PRECISION,
-    FLOAT64_UNSUPPORTED,
-    float64_rounding_radius,
-    float64_tolerance,
-    outward_add,
-)
+from terrine.temporal.prefix import FLOAT64_PRECISION, Float64Failure
 from terrine.temporal.readiness import Readiness
 from terrine.windows import Window
 
@@ -174,7 +166,7 @@ class _Builder:
     def col(self, name: str):
         return (self.table if name in self._staged else self._table)[name]
 
-    def flag(self, expression, failure: str, context: Mapping[str, Any]) -> None:
+    def flag(self, expression, failure: Float64Failure, context: Mapping[str, Any]) -> None:
         name = self.put(failure, expression)
         self.numeric.append((name, FLOAT64_PRECISION, {**context, "failure": failure}))
 
@@ -196,7 +188,6 @@ class _Quantity:
     value: str
     reason: str
     known_zero: str
-    error: str | None = None
     # A decimal's literal scale, or the state column holding a float fact's
     # per-unit scale on DuckDB.
     scale: int | str = 0
@@ -252,18 +243,6 @@ def _aligned(timestamp, minutes: int):
         minutes=minutes
     )
     return timestamp == utc_instant(midnight)
-
-
-def _check_quantity(builder: _Builder, quantity: _Quantity, context) -> None:
-    assert quantity.error is not None
-    value, error = builder.col(quantity.value), builder.col(quantity.error)
-    failures = (
-        ("nonfinite_state", ~float_is_finite(value) | value.isnull()),
-        ("bound_overflow", ~float_is_finite(error) | error.isnull() | (error < 0.0)),
-    )
-    columns = builder.put_many(*failures)
-    for column, (failure, _) in zip(columns, failures, strict=True):
-        builder.numeric.append((column, FLOAT64_PRECISION, {**context, "failure": failure}))
 
 
 def _exact_decimal(builder: _Builder, quantity: _Quantity) -> ir.Value:
@@ -375,7 +354,6 @@ def _component(
         return _Quantity(value, reason, empty)
     if measure.aggregation == "count":
         return _Quantity(event_count, reason, empty, count=True)
-    floating = builder.col(end["sum_value"]).type().is_floating()
     sums = []
     for endpoint in (start, end):
         # A matched all-null prefix has the mathematical sum zero, not a missing state.
@@ -383,127 +361,49 @@ def _component(
         sums.append(
             builder.put(
                 "endpoint_sum",
-                (count == zero).ifelse(
-                    0.0 if floating else zero, builder.col(endpoint["sum_value"])
-                ),
+                (count == zero).ifelse(zero, builder.col(endpoint["sum_value"])),
             )
         )
-    if floating:
-        history_flags = []
+    assert measure.value_type is not None  # callers pass resolved measures
+    dtype = dt.dtype(measure.value_type)
+    difference = exact_subtract(builder.col(sums[1]), builder.col(sums[0]))
+    if dtype.is_floating():
+        # Exact float state: an empty window is zero even when non-finite
+        # history makes the prefix difference NaN.
+        value = builder.put("sum", builder.col(empty).ifelse(zero, difference))
+        invalid = cast(ir.BooleanValue, ibis.literal(False))
+        # Inputs the exact state could not hold, at or before the window end,
+        # refuse a non-empty window.
         for name, failure in (
-            ("float64_conformance_failure", None),
-            ("float64_nonfinite_input", "nonfinite_input"),
-            ("float64_nonfinite_state", "nonfinite_state"),
-            ("float64_count_limit", "count_limit"),
-            ("float64_bound_overflow", "bound_overflow"),
+            ("float64_nonfinite_count", "nonfinite_input"),
+            ("float64_unrepresentable_count", "bound_overflow"),
         ):
-            flag = builder.put(
-                "endpoint_flag",
-                ~builder.col(empty)
-                & (
-                    builder.col(start[name]).fill_null(True)
-                    | builder.col(end[name]).fill_null(True)
-                ),
-            )
-            history_flags.append(flag)
-            if failure is None:
-                builder.numeric.append(
-                    (
-                        flag,
-                        FLOAT64_UNSUPPORTED,
-                        {
-                            "backend": "duckdb",
-                            "capability": "execution-thread RN binary64 and gradual underflow",
-                            **context,
-                        },
-                    )
-                )
-            else:
-                builder.numeric.append((flag, FLOAT64_PRECISION, {"failure": failure, **context}))
-        value = builder.put(
-            "sum",
-            builder.col(empty).ifelse(
-                0.0, ieee_subtract(builder.col(sums[1]), builder.col(sums[0]))
-            ),
+            flag = ~builder.col(empty) & (builder.col(end[name]).fill_null(zero) > zero)
+            builder.flag(flag, failure, context)
+            invalid = invalid | flag
+        # BigQuery's SAFE_SUBTRACT returns NULL on overflow.
+        builder.flag(
+            builder.col(value).isnull()
+            & builder.col(sums[0]).notnull()
+            & builder.col(sums[1]).notnull(),
+            "bound_overflow",
+            context,
         )
-        errors = []
-        for endpoint in (start, end):
-            errors.append(
-                builder.put(
-                    "endpoint_error",
-                    (builder.col(endpoint["nonnull_count"]) == zero).ifelse(
-                        0.0, builder.col(endpoint["prefix_error"])
-                    ),
-                )
-            )
-        valid_history = ibis.literal(True)
-        for flag in history_flags:
-            valid_history = valid_history & ~builder.col(flag)
-        known_zero = builder.put(
-            "sum_zero",
-            builder.col(empty)
-            | (
-                (builder.col(sums[0]) == builder.col(sums[1]))
-                & float_is_finite(builder.col(sums[0]))
-                & float_is_finite(builder.col(sums[1]))
-                & (builder.col(errors[0]) == 0.0)
-                & (builder.col(errors[1]) == 0.0)
-                & valid_history
-            ),
-        )
-        endpoint_error = builder.put(
-            "endpoint_errors", outward_add(builder.col(errors[0]), builder.col(errors[1]))
-        )
-        radius = builder.put("subtraction_radius", float64_rounding_radius(builder.col(value)))
-        error = builder.put(
-            "sum_error",
-            builder.col(known_zero).ifelse(
-                0.0, outward_add(builder.col(endpoint_error), builder.col(radius))
-            ),
-        )
-        quantity = _Quantity(value, reason, known_zero, error)
-        _check_quantity(builder, quantity, context)
+        # A sum that only looks zero because inputs were dropped is not a zero
+        # denominator: its refusal must not be masked by a zero_denominator reason.
+        known_zero = builder.put("sum_zero", (builder.col(value) == zero) & ~invalid)
+        # DuckDB holds the unit's coefficients at the state's scale; the exact
+        # types of PostgreSQL and BigQuery hold the shortest text unscaled.
+        scale = end["exact_scale"] if dialect_of(builder.table.t0) == "duckdb" else 0
+        quantity = _Quantity(value, reason, known_zero, scale=scale, binary64=True)
     else:
-        assert measure.value_type is not None  # callers pass resolved measures
-        dtype = dt.dtype(measure.value_type)
-        difference = exact_subtract(builder.col(sums[1]), builder.col(sums[0]))
-        if dtype.is_floating():
-            # Exact float state: an empty window is zero even when non-finite
-            # history makes the prefix difference NaN.
-            value = builder.put("sum", builder.col(empty).ifelse(zero, difference))
-            invalid = cast(ir.BooleanValue, ibis.literal(False))
-            # Inputs the exact state could not hold, at or before the window end,
-            # refuse a non-empty window.
-            for name, failure in (
-                ("float64_nonfinite_count", "nonfinite_input"),
-                ("float64_unrepresentable_count", "bound_overflow"),
-            ):
-                flag = ~builder.col(empty) & (builder.col(end[name]).fill_null(zero) > zero)
-                builder.flag(flag, failure, context)
-                invalid = invalid | flag
-            # BigQuery's SAFE_SUBTRACT returns NULL on overflow.
-            builder.flag(
-                builder.col(value).isnull()
-                & builder.col(sums[0]).notnull()
-                & builder.col(sums[1]).notnull(),
-                "bound_overflow",
-                context,
-            )
-            # A sum that only looks zero because inputs were dropped is not a zero
-            # denominator: its refusal must not be masked by a zero_denominator reason.
-            known_zero = builder.put("sum_zero", (builder.col(value) == zero) & ~invalid)
-            # DuckDB holds the unit's coefficients at the state's scale; the exact
-            # types of PostgreSQL and BigQuery hold the shortest text unscaled.
-            scale = end["exact_scale"] if dialect_of(builder.table.t0) == "duckdb" else 0
-            quantity = _Quantity(value, reason, known_zero, scale=scale, binary64=True)
-        else:
-            value = builder.put("sum", difference)
-            known_zero = builder.put("sum_zero", builder.col(value) == zero)
-            scale = 0
-            if isinstance(dtype, dt.Decimal):
-                assert dtype.scale is not None
-                scale = dtype.scale
-            quantity = _Quantity(value, reason, known_zero, scale=scale)
+        value = builder.put("sum", difference)
+        known_zero = builder.put("sum_zero", builder.col(value) == zero)
+        scale = 0
+        if isinstance(dtype, dt.Decimal):
+            assert dtype.scale is not None
+            scale = dtype.scale
+        quantity = _Quantity(value, reason, known_zero, scale=scale)
     if measure.aggregation in {"avg_event", "avg_calendar_day"}:
         divisor = (
             nonnull_count
@@ -715,13 +615,7 @@ def aggregate_window(
         "measure": ",".join(m.fact for m in metric.measures),
         "output": output,
     }
-    if quantity.error is not None:
-        builder.flag(
-            builder.col(quantity.error) > float64_tolerance(builder.col(quantity.value)),
-            "tolerance",
-            numeric_context,
-        )
-    exact_output = metric.kind != "conversion" and quantity.error is None and not quantity.binary64
+    exact_output = metric.kind != "conversion" and not quantity.binary64
     if exact_output:
         assert isinstance(quantity.scale, int)
         target = "int64" if quantity.count else dt.Decimal(38, quantity.scale)
@@ -773,12 +667,6 @@ def aggregate_window(
     public_value = builder.col(evaluated).ifelse(
         builder.col(value), ibis.null().cast(builder.col(value).type())
     )
-    error_column = None
-    if quantity.error is not None:
-        error_column = builder.put(
-            "absolute_error",
-            builder.col(evaluated).ifelse(builder.col(quantity.error), ibis.null().cast("float64")),
-        )
     result = builder.table.select(
         *anchors.columns,
         public_value.name(output),
@@ -786,7 +674,6 @@ def aggregate_window(
         observed_until,
         available,
         final_reason,
-        *([error_column] if error_column else []),
     )
     meta = ColumnMeta(
         window=window,
@@ -795,13 +682,6 @@ def aggregate_window(
         observed_until_column=observed_until,
         complete_column=available,
         reason_column=final_reason,
-        numeric_policy=(
-            None
-            if metric.kind == "conversion" or quantity.binary64
-            else "checked_float64_v1"
-            if quantity.error is not None
-            else "exact"
-        ),
-        absolute_error_column=error_column,
+        numeric_policy=None if metric.kind == "conversion" or quantity.binary64 else "exact",
     )
     return TemporalResult(result, {output: meta}, tuple(checks))

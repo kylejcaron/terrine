@@ -192,7 +192,6 @@ def test_float_cohort_mean_of_huge_values_avoids_overflow(con):
     assert rows[0]["value"] == 1e308
     meta = result.columns["value"]
     assert meta.numeric_policy is None
-    assert meta.absolute_error_column is None
 
 
 def test_large_zero_float_cohort_mean_remains_available(con):

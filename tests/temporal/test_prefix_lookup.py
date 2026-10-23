@@ -74,7 +74,7 @@ def test_strict_lookup_preserves_equal_cutoffs_null_states_and_duplicate_points(
 
 
 @pytest.mark.parametrize("strategy", ["native", "union_window"])
-def test_lookup_aliases_are_collision_safe_and_keep_certificate_row_coherent(strategy):
+def test_lookup_aliases_are_collision_safe_and_keep_state_row_coherent(strategy):
     from terrine.temporal.lookup import lookup_prefix
 
     con = ibis.duckdb.connect()
@@ -83,13 +83,13 @@ def test_lookup_aliases_are_collision_safe_and_keep_certificate_row_coherent(str
             SELECT unit AS _unit, ts::TIMESTAMPTZ AS _timestamp,
                    total::BIGNUM AS sum_value, events::BIGNUM AS event_count,
                    nonnulls::BIGNUM AS nonnull_count,
-                   cert::VARCHAR AS float64_certificate_id,
-                   failed::BOOLEAN AS float64_nonfinite_state,
+                   label::VARCHAR AS state_label,
+                   flagged::BOOLEAN AS flagged,
                    scale::INTEGER AS value_scale
             FROM (VALUES
                 ('a', '2025-01-01 12:00:00+00', NULL, 1, 0, 'old', false, 3),
                 ('a', '2025-01-01 13:00:00+00', '9', 2, 1, 'new', true, 7)
-            ) AS states(unit, ts, total, events, nonnulls, cert, failed, scale)
+            ) AS states(unit, ts, total, events, nonnulls, label, flagged, scale)
         """)
         points = con.sql("""
             SELECT request, unit, cutoff::TIMESTAMPTZ AS cutoff,
@@ -115,8 +115,8 @@ def test_lookup_aliases_are_collision_safe_and_keep_certificate_row_coherent(str
             "__TERRINE_LOOKUP_0",
             total=table[result.columns["sum_value"]].cast("string"),
             count=table[result.columns["event_count"]].cast("string"),
-            certificate=table[result.columns["float64_certificate_id"]],
-            failed=table[result.columns["float64_nonfinite_state"]],
+            label=table[result.columns["state_label"]],
+            flagged=table[result.columns["flagged"]],
             scale=table[result.columns["value_scale"]],
             found=table[result.matched_column],
         ).order_by("request")
@@ -127,8 +127,8 @@ def test_lookup_aliases_are_collision_safe_and_keep_certificate_row_coherent(str
                 "__TERRINE_LOOKUP_0": 17,
                 "total": None,
                 "count": "1",
-                "certificate": "old",
-                "failed": False,
+                "label": "old",
+                "flagged": False,
                 "scale": 3,
                 "found": True,
             },
@@ -138,8 +138,8 @@ def test_lookup_aliases_are_collision_safe_and_keep_certificate_row_coherent(str
                 "__TERRINE_LOOKUP_0": 17,
                 "total": "9",
                 "count": "2",
-                "certificate": "new",
-                "failed": True,
+                "label": "new",
+                "flagged": True,
                 "scale": 7,
                 "found": True,
             },
@@ -149,8 +149,8 @@ def test_lookup_aliases_are_collision_safe_and_keep_certificate_row_coherent(str
                 "__TERRINE_LOOKUP_0": 17,
                 "total": "0",
                 "count": "0",
-                "certificate": None,
-                "failed": False,
+                "label": None,
+                "flagged": False,
                 "scale": None,
                 "found": False,
             },
@@ -167,7 +167,7 @@ def test_mixed_nanosecond_state_and_wide_utc_requests_keep_strict_order(strategy
     try:
         prefix = con.sql("""
             SELECT 'a' AS _unit, ts::TIMESTAMP_NS AS _timestamp, n::BIGINT AS event_count,
-                   'state-' || n::VARCHAR AS certificate
+                   'state-' || n::VARCHAR AS label
             FROM (VALUES
                 ('1969-12-31 23:59:59.999999999', 1),
                 ('2025-01-02 11:59:59.999999999', 2),
@@ -190,16 +190,16 @@ def test_mixed_nanosecond_state_and_wide_utc_requests_keep_strict_order(strategy
             table.select(
                 "request",
                 n=table[result.columns["event_count"]],
-                certificate=table[result.columns["certificate"]],
+                label=table[result.columns["label"]],
                 found=table[result.matched_column],
             ).order_by("request")
         ).to_pylist()
         assert rows == [
-            {"request": 1, "n": 0, "certificate": None, "found": False},
-            {"request": 2, "n": 1, "certificate": "state-1", "found": True},
-            {"request": 3, "n": 2, "certificate": "state-2", "found": True},
-            {"request": 4, "n": 4, "certificate": "state-4", "found": True},
-            {"request": 5, "n": 0, "certificate": None, "found": False},
+            {"request": 1, "n": 0, "label": None, "found": False},
+            {"request": 2, "n": 1, "label": "state-1", "found": True},
+            {"request": 3, "n": 2, "label": "state-2", "found": True},
+            {"request": 4, "n": 4, "label": "state-4", "found": True},
+            {"request": 5, "n": 0, "label": None, "found": False},
         ]
     finally:
         con.disconnect()

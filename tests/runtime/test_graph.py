@@ -14,6 +14,19 @@ def test_dependency_graph_orders_daily_prefix_anchor_frame():
     )
 
 
+def test_design_graph_connects_prefixes_straight_to_anchors():
+    from types import SimpleNamespace
+
+    design = SimpleNamespace(spec_hash="d", shape="cross_section")
+    graph = dependency_graph(design=design, sources=("events",), partitions=("p1", "p2"))
+    assert {node.layer for node in graph.nodes} == {"daily", "prefix", "anchor", "frame"}
+    for partition in ("p1", "p2"):
+        anchor = next(
+            node for node in graph.nodes if node.layer == "anchor" and node.partition == partition
+        )
+        assert [node.layer for node in graph.dependencies(anchor)] == ["prefix"]
+
+
 def test_state_panel_graph_tracks_point_period_and_frame_dependencies():
     from types import SimpleNamespace
 

@@ -5,9 +5,8 @@ PostgreSQL ``NUMERIC`` or BigQuery ``BIGNUMERIC``. On DuckDB a float enters
 exact state as an integer coefficient at a data-derived decimal scale, built
 from its shortest round-trip text, and leaves it through text, which DuckDB
 rounds to binary64 correctly; quotients divide 19-digit normalized
-significands as 128-bit integers and round once at output. The IEEE binary64
-primitives back DuckDB's certified float reductions only; other backends
-validate floats against DuckDB within a tolerance instead.
+significands as 128-bit integers and round once at output. PostgreSQL and
+BigQuery hold the same text unscaled in their exact types and divide there.
 """
 
 from __future__ import annotations
@@ -38,12 +37,7 @@ __all__ = [
     "exact_type",
     "float_is_finite",
     "float_scale",
-    "ieee_add",
-    "ieee_divide",
-    "ieee_multiply",
-    "ieee_subtract",
     "is_exact_type",
-    "next_toward",
     "normalized",
     "normalized_quotient",
     "rounded_normalized",
@@ -230,7 +224,7 @@ def exact_float(
 def exact_ratio(numerator: ir.Value, denominator: ir.Value) -> ir.Value:
     """Exact-state ``numerator / denominator``; NULL for a zero denominator.
 
-    Not for DuckDB, whose certified path encloses quotients in float intervals.
+    Not for DuckDB, which divides normalized significands (``normalized_quotient``).
     PostgreSQL divides to at least 16 significant digits; BigQuery to 38
     fractional digits.
     """
@@ -526,28 +520,3 @@ def float_is_finite(value) -> ir.BooleanValue:
     # PostgreSQL has no isfinite(double precision), and NaN equals NaN there.
     nonfinite = [ibis.literal(item, type=dt.float64) for item in (math.inf, -math.inf, math.nan)]
     return cast(ir.FloatingValue, value.cast(dt.float64)).notin(nonfinite)
-
-
-@ibis.udf.scalar.builtin(name="nextafter", signature=((dt.float64, dt.float64), dt.float64))
-def next_toward(value, _direction):
-    """DuckDB's adjacent binary64 value toward ``direction``."""
-
-
-@ibis.udf.scalar.builtin(name="add", signature=((dt.float64, dt.float64), dt.float64))
-def ieee_add(left, right):
-    """DuckDB binary64 addition."""
-
-
-@ibis.udf.scalar.builtin(name="subtract", signature=((dt.float64, dt.float64), dt.float64))
-def ieee_subtract(left, right):
-    """DuckDB binary64 subtraction."""
-
-
-@ibis.udf.scalar.builtin(name="multiply", signature=((dt.float64, dt.float64), dt.float64))
-def ieee_multiply(left, right):
-    """DuckDB binary64 multiplication."""
-
-
-@ibis.udf.scalar.builtin(name="divide", signature=((dt.float64, dt.float64), dt.float64))
-def ieee_divide(left, right):
-    """DuckDB binary64 division."""

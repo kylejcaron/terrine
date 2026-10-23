@@ -70,14 +70,16 @@ There is no billion-event or universal scale claim from local calibration.
 
 `benchmarks/run_overhead.py` times the ordinary public path, `Design.build`
 followed by `Frame.materialize`, on tiny deterministic DuckDB workloads: count,
-exact decimal sum, certified float average and ratio over one row, a few rows,
-and 10,000/100,000 events, requesting one or four columns. Materialization
+exact decimal sum, float average and ratio over one row, a few rows, and
+10,000/100,000 events, requesting one or four columns. Materialization
 includes declared snapshot validation and the output stream. Expected values
 are computed independently with integer, `Decimal` and `Fraction` arithmetic
-over the generated events. Every run, including each timed sample, is verified
-after its timed interval: `oracle_match` requires exactly the expected unit
-roster once each, equality for exact outputs and certificate enclosure for
-checked floats, and a failed case exits unsuccessfully.
+over the generated events, each float standing for its shortest round-trip
+decimal. Every run, including each timed sample, is verified after its timed
+interval: `oracle_match` requires exactly the expected unit roster once each,
+equality for exact outputs, and averages and ratios within the quotient bound
+`6·2⁻⁵³·|p/q| + 2⁻¹⁰⁷⁵` of the exact quotient; a failed case exits
+unsuccessfully.
 
 ```sh
 uv run python -m benchmarks.run_overhead --repeats 5 --output /tmp/terrine-overhead.json

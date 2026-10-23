@@ -192,7 +192,6 @@ def test_long_history_small_window_is_exact(con):
     assert row["requested"] == float(_shortest(window)) == 6.91
     meta = result.columns["requested"]
     assert meta.numeric_policy is None
-    assert meta.absolute_error_column is None
 
 
 def test_float_window_cancels_history_beyond_binary64_precision(con):
@@ -258,7 +257,7 @@ def test_mixed_scale_ratio_and_average_meet_bound(con, numerator, denominator):
     row = _rows(con, result)[0]
     _assert_quotient(row["requested"], p, q)
     meta = result.columns["requested"]
-    assert meta.numeric_policy is None and meta.absolute_error_column is None
+    assert meta.numeric_policy is None
 
 
 def test_ratio_of_averages_divides_the_exact_averages(con):
@@ -440,7 +439,6 @@ def test_count_and_conversion_ignore_nonfinite_float_inputs(con):
     conversion = _result(_anchors(con), [pair], kind="conversion")
     assert _rows(con, conversion)[0]["requested"] is True
     assert conversion.columns["requested"].numeric_policy is None
-    assert conversion.columns["requested"].absolute_error_column is None
     measure, state = pair
     count = replace(measure, aggregation="count")
     state = state.mutate(event_count=exact_literal(2**63))

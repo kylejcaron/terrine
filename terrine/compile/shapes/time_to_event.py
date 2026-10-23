@@ -425,7 +425,6 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
             base.columns[name].observed_until_column,
             base.columns[name].complete_column,
             base.columns[name].reason_column,
-            base.columns[name].absolute_error_column,
         )
         if column is not None
     }

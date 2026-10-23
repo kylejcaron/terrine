@@ -164,12 +164,10 @@ def test_exact_overflow_is_a_coded_refusal_and_the_boundary_succeeds(postgres_sc
 
 
 def _assert_close(actual, expected):
-    """Equal rows, except floats within a tight relative tolerance; PostgreSQL omits
-    DuckDB's certified absolute-error columns."""
+    """Equal rows, except floats within a tight relative tolerance."""
     assert len(actual) == len(expected)
     for got, want in zip(actual, expected, strict=True):
-        extra = set(want) - set(got)
-        assert all(name.endswith("_absolute_error") for name in extra), extra
+        assert set(got) == set(want)
         for name, value in got.items():
             if isinstance(value, float) and want[name] is not None:
                 assert math.isclose(value, want[name], rel_tol=1e-12, abs_tol=1e-300), name
