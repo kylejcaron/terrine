@@ -77,6 +77,7 @@ Correct the named Catalog field or source declaration.
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
 | `terrine.catalog.duplicate_yaml_key` | <code>Catalog YAML repeats key {key!r}.</code> | `key` | [terrine/semantic/io.py](../../terrine/semantic/io.py) |
+| `terrine.catalog.invalid_definition` | <code>Catalog definition is invalid:<br>{diagnostics}</code> | `diagnostics` | [terrine/semantic/io.py](../../terrine/semantic/io.py) |
 | `terrine.catalog.invalid_yaml` | <code>Catalog YAML is not safe valid YAML: {reason}.</code> | `reason` | [terrine/semantic/io.py](../../terrine/semantic/io.py) |
 
 ## cohort

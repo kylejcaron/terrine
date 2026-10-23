@@ -7,6 +7,16 @@ Python mapping with `Catalog.model_validate(...)` or loaded from safe YAML with
 unknown fields, duplicate YAML keys, unsafe YAML tags, and unsupported schema
 versions are rejected.
 
+Schema failures from `load_catalog` raise `TerrineError` with code
+`terrine.catalog.invalid_definition`. Inspect its immutable `context["issues"]`
+for ordered locations, stable validation categories, and package-owned recovery
+hints; the same actionable locations and corrections appear in the displayed
+error. For example, `day_boundary: UTC+14:01` points to `day_boundary`: use
+`UTC`, a signed `HH:MM` offset, or a `UTC`-prefixed fixed offset within ±14:00
+(the endpoints are limited to exactly `14:00`). Correct the YAML and load it
+again. Direct `Catalog.model_validate(...)` construction continues to use
+Pydantic's `ValidationError`.
+
 ```yaml
 schema_version: 1
 day_boundary: UTC
