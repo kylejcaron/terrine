@@ -22,6 +22,8 @@ from terrine.errors import RefusalSpec
 
 __all__ = [
     "EXACT_OVERFLOW",
+    "decimal_coefficient",
+    "exact_float",
     "exact_is_nonfinite",
     "exact_literal",
     "exact_ratio",
@@ -108,6 +110,30 @@ def decimal_coefficient(value: ir.Value, scale: int) -> ir.Value:
         return _bq_exact_multiply(exact, exact_literal(10**scale, value)) if scale else exact
     text = value.cast("string")
     return (text.replace(".", "") if scale else text).cast(exact_type(value))
+
+
+def exact_float(value: ir.Value) -> tuple[ir.Value, ir.BooleanValue, ir.BooleanValue]:
+    """Exact state for a float from its round-trip text, within half an ulp of it.
+
+    Returns (exact, nonfinite, unrepresentable). PostgreSQL NUMERIC keeps NaN and
+    infinities, which poison later arithmetic, so both flags are false there.
+    BigQuery BIGNUMERIC has neither and holds magnitudes below about 5.7e38 to 38
+    fractional digits; non-finite and out-of-range values become NULL and are
+    flagged so the caller can refuse them.
+    """
+    widened = value.cast(dt.float64)
+    text = widened.cast("string")
+    never = cast(ir.BooleanValue, ibis.literal(False))
+    dialect = dialect_of(value)
+    if dialect == "postgres":
+        return text.cast(_PG_EXACT), never, never
+    if dialect != "bigquery":
+        raise unavailable("exact_float", dialect)
+    floating = cast(ir.FloatingValue, widened)
+    nonfinite = (floating.isnan() | floating.isinf()).fill_null(ibis.literal(False))
+    exact = nonfinite.ifelse(ibis.null().cast(_BQ_EXACT), text.try_cast(_BQ_EXACT))
+    unrepresentable = ~nonfinite & widened.notnull() & exact.isnull()
+    return exact, nonfinite, unrepresentable
 
 
 def exact_ratio(numerator: ir.Value, denominator: ir.Value) -> ir.Value:

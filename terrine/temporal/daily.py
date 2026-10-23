@@ -18,6 +18,7 @@ import ibis.expr.types as ir
 from terrine.backends.dialect import dialect_of
 from terrine.backends.numeric import (
     decimal_coefficient,
+    exact_float,
     exact_literal,
     exact_subtract,
     exact_sum,
@@ -392,7 +393,16 @@ def _sparse_group(
     else:
         source_value = leaf.__terrine_value
         if exact_floats:
-            exact = source_value.cast("float64").cast("string").cast(exact_type())
+            exact, nonfinite_value, unrepresentable = exact_float(source_value)
+            selected_value = leaf.__terrine_selected & source_value.notnull()
+            aggregates.update(
+                float64_nonfinite_count=exact_sum(
+                    (selected_value & nonfinite_value).ifelse(exact_literal(1), exact_literal(0))
+                ),
+                float64_unrepresentable_count=exact_sum(
+                    (selected_value & unrepresentable).ifelse(exact_literal(1), exact_literal(0))
+                ),
+            )
         else:
             scale = dtype.scale if isinstance(dtype, dt.Decimal) else 0
             exact = decimal_coefficient(source_value, scale or 0)

@@ -507,6 +507,18 @@ def _component(
             value = builder.put("sum", builder.col(empty).ifelse(zero, difference))
             known_zero = builder.put("sum_zero", builder.col(value) == zero)
             quantity = _Quantity(value, reason, known_zero, rounded=True)
+            # Inputs the exact state could not hold, at or before the window end,
+            # refuse a non-empty window, as non-finite history does on DuckDB.
+            for name, failure in (
+                ("float64_nonfinite_count", "nonfinite_input"),
+                ("float64_unrepresentable_count", "bound_overflow"),
+            ):
+                if name in end:
+                    builder.flag(
+                        ~builder.col(empty) & (builder.col(end[name]).fill_null(zero) > zero),
+                        failure,
+                        context,
+                    )
         else:
             value = builder.put("sum", difference)
             known_zero = builder.put("sum_zero", builder.col(value) == zero)

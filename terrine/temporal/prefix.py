@@ -234,6 +234,8 @@ _COUNT_FIELDS = (
     "unknown_filter_literal_count",
     "unknown_filter_nonfinite_count",
 )
+# Inputs exact float state cannot hold: non-finite, or beyond the exact type.
+_EXACT_FLOAT_COUNTS = ("float64_nonfinite_count", "float64_unrepresentable_count")
 
 
 def _ever(value, window):
@@ -271,6 +273,10 @@ def sparse_prefix(
     }
     if not floating:
         fields["sum_value"] = exact_sum(state.sum_value).over(window).fill_null(exact_literal(0))
+        # Exact float state (non-certifying backends) counts inputs it cannot hold.
+        for name in _EXACT_FLOAT_COUNTS:
+            if name in state.columns:
+                fields[name] = exact_sum(state[name]).over(window).fill_null(exact_literal(0))
         cumulative = state.mutate(**fields)
         return cumulative.mutate(
             observed_null_count=exact_subtract(cumulative.event_count, cumulative.nonnull_count)
