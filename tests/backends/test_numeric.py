@@ -13,7 +13,8 @@ from terrine.backends.numeric import (
     exact_type,
     float_scale,
     normalized,
-    rounded_quotient,
+    normalized_quotient,
+    rounded_normalized,
 )
 
 # |r - p/q| <= 6 * 2**-53 * |p/q| + 2**-1075 for a quotient r of exact p and q.
@@ -126,20 +127,33 @@ def test_float_scale_is_per_partition(connection):
     assert {(row["grp"], row["scale"]) for row in rows} == {("a", 5), ("b", 0), ("c", 0)}
 
 
-def test_normalized_mantissa_stays_below_ten(connection):
-    # Twenty nines round to 10.0 in binary64; the carry moves into the exponent.
+def test_normalized_truncates_to_nineteen_significant_digits(connection):
     table = connection.create_table(
         "coefficients",
-        ibis.memtable({"c": ["99999999999999999999", "-99999999999999999999", "5", "0"]}),
+        ibis.memtable(
+            {"c": ["99999999999999999999", "-123456789012345678901", "5", "0"], "f": [4.4e-323] * 4}
+        ),
     )
-    mantissa, exponent = normalized(table.c.cast(exact_type(table.c)), 3)
-    rows = _rows(connection, table.select(mantissa=mantissa, exponent=exponent))
-    assert [(row["mantissa"], row["exponent"]) for row in rows] == [
-        (1.0, 17),
-        (-1.0, 17),
-        (5.0, -3),
-        (0.0, 0),
+    significand, exponent = normalized(table.c.cast(exact_type(table.c)), 3)
+    float_significand, float_exponent = normalized(table.f)
+    rows = _rows(
+        connection,
+        table.select(
+            significand=significand.cast("string"),
+            exponent=exponent,
+            float_significand=float_significand.cast("string"),
+            float_exponent=float_exponent,
+        ),
+    )
+    assert [(row["significand"], row["exponent"]) for row in rows] == [
+        ("9999999999999999999", 16),
+        ("-1234567890123456789", 17),
+        ("5000000000000000000", -3),
+        ("0", 0),
     ]
+    assert {(row["float_significand"], row["float_exponent"]) for row in rows} == {
+        ("4400000000000000000", -323)
+    }
 
 
 _QUOTIENTS = [
@@ -153,6 +167,12 @@ _QUOTIENTS = [
     ("5.93238734504564181e308", "3.3"),
     ("-1.7976931348623158e308", "1"),
 ]
+
+
+def _quotient(table, numerator, denominator):
+    significand, exponent = normalized_quotient(*numerator, *denominator)
+    value, overflow = rounded_normalized(significand, exponent)
+    return table.select(value=value, overflow=overflow)
 
 
 @pytest.mark.parametrize(("numerator", "denominator"), _QUOTIENTS)
@@ -171,10 +191,12 @@ def test_quotient_of_exact_operands_meets_bound(connection, numerator, denominat
         ),
     )
     exact = exact_type(table.n)
-    n_mantissa, n_exponent = normalized(table.n.cast(exact), table.n_scale)
-    d_mantissa, d_exponent = normalized(table.d.cast(exact), table.d_scale)
-    value, overflow = rounded_quotient(n_mantissa, n_exponent, d_mantissa, d_exponent)
-    row = _rows(connection, table.select(value=value, overflow=overflow))[0]
+    quotient = _quotient(
+        table,
+        normalized(table.n.cast(exact), table.n_scale),
+        normalized(table.d.cast(exact), table.d_scale),
+    )
+    row = _rows(connection, quotient)[0]
     _assert_quotient_within_bound(row, Fraction(numerator) / Fraction(denominator))
 
 
@@ -184,31 +206,33 @@ def test_quotient_of_exact_operands_meets_bound(connection, numerator, denominat
 )
 def test_quotient_of_rounded_operands_meets_bound(connection, numerator, denominator):
     table = _floats(connection, "operands", n=[float(numerator)], d=[float(denominator)])
-    n_mantissa, n_exponent = normalized(table.n, 0)
-    d_mantissa, d_exponent = normalized(table.d, 0)
-    value, overflow = rounded_quotient(n_mantissa, n_exponent, d_mantissa, d_exponent)
-    row = _rows(connection, table.select(value=value, overflow=overflow))[0]
+    row = _rows(connection, _quotient(table, normalized(table.n), normalized(table.d)))[0]
     # A rounded operand stands for its shortest decimal, not its binary expansion.
     reference = Fraction(repr(float(numerator))) / Fraction(repr(float(denominator)))
     _assert_quotient_within_bound(row, reference)
 
 
+def test_nested_quotients_keep_their_precision(connection):
+    # (5e-324 / 3) / 5e-324 ≈ 1/3 although 5e-324 / 3 alone rounds to 0.0.
+    table = _floats(connection, "operands", n=[5e-324], d=[5e-324], members=["3"])
+    members = normalized(table.members.cast(exact_type(table.members)))
+    average = normalized_quotient(*normalized(table.n), *members)
+    row = _rows(connection, _quotient(table, average, normalized(table.d)))[0]
+    _assert_quotient_within_bound(row, Fraction(1, 3))
+    row = _rows(connection, table.select(value=rounded_normalized(*average)[0]))[0]
+    assert row["value"] == 0.0
+
+
 def test_quotient_overflow_is_flagged(connection):
     table = _floats(connection, "operands", n=[1e308], d=[1e-10])
-    n_mantissa, n_exponent = normalized(table.n, 0)
-    d_mantissa, d_exponent = normalized(table.d, 0)
-    value, overflow = rounded_quotient(n_mantissa, n_exponent, d_mantissa, d_exponent)
-    row = _rows(connection, table.select(value=value, overflow=overflow))[0]
+    row = _rows(connection, _quotient(table, normalized(table.n), normalized(table.d)))[0]
     assert row == {"value": None, "overflow": True}
 
 
 @pytest.mark.parametrize(("numerator", "denominator"), [(1.0, 0.0), (math.nan, 2.0)])
 def test_quotient_without_a_finite_ratio_is_null(connection, numerator, denominator):
     table = _floats(connection, "operands", n=[numerator], d=[denominator])
-    n_mantissa, n_exponent = normalized(table.n, 0)
-    d_mantissa, d_exponent = normalized(table.d, 0)
-    value, overflow = rounded_quotient(n_mantissa, n_exponent, d_mantissa, d_exponent)
-    row = _rows(connection, table.select(value=value, overflow=overflow))[0]
+    row = _rows(connection, _quotient(table, normalized(table.n), normalized(table.d)))[0]
     assert row == {"value": None, "overflow": False}
 
 

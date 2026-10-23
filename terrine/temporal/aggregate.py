@@ -29,7 +29,8 @@ from terrine.backends.numeric import (
     float_is_finite,
     ieee_subtract,
     normalized,
-    rounded_quotient,
+    normalized_quotient,
+    rounded_normalized,
 )
 from terrine.backends.timestamps import utc_instant, utc_wall_clock
 from terrine.data import ColumnMeta
@@ -201,9 +202,10 @@ class _Quantity:
     scale: int | str = 0
     count: bool = False
     # Published as binary64: an exact coefficient at ``scale`` rounds once at
-    # output, unless ``rounded`` marks a value that is already a binary64 quotient.
+    # output, as does a DuckDB quotient held as a normalized significand with
+    # its decimal exponent in the ``exponent`` column.
     binary64: bool = False
-    rounded: bool = False
+    exponent: str | None = None
 
 
 def _scaled_text(coefficient, scale: int):
@@ -273,24 +275,24 @@ def _exact_decimal(builder: _Builder, quantity: _Quantity) -> ir.Value:
     return _scaled_text(value, quantity.scale).cast(exact_type(value))
 
 
-def _normalized(builder: _Builder, quantity: _Quantity) -> tuple[ir.FloatingValue, ir.IntegerValue]:
-    """A DuckDB operand's ``(mantissa, exponent)``: exact at its scale, or already binary64."""
-    value = builder.col(quantity.value)
-    if quantity.rounded:
-        return normalized(value)
+def _normalized(builder: _Builder, quantity: _Quantity) -> tuple[ir.Value, ir.IntegerValue]:
+    """A DuckDB operand's ``(significand, exponent)``: exact at its scale, or a quotient's."""
+    if quantity.exponent is not None:
+        return builder.col(quantity.value), builder.col(quantity.exponent)
     scale = builder.col(quantity.scale) if isinstance(quantity.scale, str) else quantity.scale
-    return normalized(value, scale)
+    return normalized(builder.col(quantity.value), scale)
 
 
 def _quotient(
     builder: _Builder, numerator: _Quantity, denominator: _Quantity, reason: str, context
 ) -> _Quantity:
-    """Divide once into a binary64 within the documented quotient bound.
+    """Divide once; ``aggregate_window`` rounds the result to binary64 within the bound.
 
-    DuckDB normalizes each operand, exact or already rounded, to a mantissa and
-    decimal exponent and divides those; PostgreSQL and BigQuery divide exactly
-    in NUMERIC and ``aggregate_window`` rounds the result once. A non-finite
-    exact component refuses here: division could erase it (1/Infinity = 0).
+    DuckDB normalizes each operand, exact or itself a quotient, to a 19-digit
+    significand and decimal exponent and divides those, so a quotient feeds a
+    later ratio unrounded; PostgreSQL and BigQuery divide exactly in NUMERIC.
+    A non-finite exact component refuses here: division could erase it
+    (1/Infinity = 0).
     """
     known_zero = builder.put(
         "quotient_zero",
@@ -306,10 +308,11 @@ def _quotient(
                 )
             )
         )
-        quotient, overflow = rounded_quotient(*(builder.col(name) for name in operands))
-        value = builder.put("quotient", quotient)
-        builder.flag(overflow, "bound_overflow", context)
-        return _Quantity(value, reason, known_zero, binary64=True, rounded=True)
+        significand, exponent = normalized_quotient(*(builder.col(name) for name in operands))
+        value, exponent = builder.put_many(
+            ("quotient", significand), ("quotient_exponent", exponent)
+        )
+        return _Quantity(value, reason, known_zero, binary64=True, exponent=exponent)
     for component in (numerator, denominator):
         if component.binary64:
             nonfinite = exact_is_nonfinite(builder.col(component.value)).fill_null(
@@ -751,8 +754,12 @@ def aggregate_window(
                 active=builder.col(evaluated),
             )
         )
-    elif quantity.rounded:
-        value = quantity.value
+    elif quantity.exponent is not None:
+        rounded, overflow = rounded_normalized(
+            builder.col(quantity.value), builder.col(quantity.exponent)
+        )
+        value = builder.put("rounded", rounded)
+        builder.flag(overflow, "bound_overflow", numeric_context)
     elif quantity.binary64:
         scale = builder.col(quantity.scale) if isinstance(quantity.scale, str) else quantity.scale
         rounded, nonfinite, out_of_range = exact_to_float(builder.col(quantity.value), scale)

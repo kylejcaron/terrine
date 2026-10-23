@@ -84,13 +84,13 @@ def test_decimal_average_and_ratio_meet_the_quotient_bound(con):
     _assert_quotient(_rows(con, result)[0]["requested"], Fraction(3, 20), Fraction(7, 10))
 
 
-def test_float_average_divides_exactly_and_its_ratio_divides_the_published_average(con):
+def test_float_average_and_its_ratio_divide_the_exact_operands(con):
     numerator = _state(con, [0.1, 0.2, -0.05], aggregation="avg_event", name="numerator")
     average = _rows(con, _result(_anchors(con), [numerator]))[0]["requested"]
     _assert_quotient(average, Fraction(1, 4), Fraction(3))
     denominator = _state(con, [3.0, 4.0], name="denominator")
     ratio = _result(_anchors(con), [numerator, denominator], kind="ratio")
-    _assert_quotient(_rows(con, ratio)[0]["requested"], Fraction(repr(average)), Fraction(7))
+    _assert_quotient(_rows(con, ratio)[0]["requested"], Fraction(1, 4) / 3, Fraction(7))
 
 
 def test_zero_numerator_ratio_is_exactly_zero(con):

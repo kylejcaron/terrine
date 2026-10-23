@@ -4,9 +4,10 @@ Exact state uses an arbitrary-precision native type: DuckDB ``BIGNUM``,
 PostgreSQL ``NUMERIC`` or BigQuery ``BIGNUMERIC``. On DuckDB a float enters
 exact state as an integer coefficient at a data-derived decimal scale, built
 from its shortest round-trip text, and leaves it through text, which DuckDB
-rounds to binary64 correctly. The IEEE binary64 primitives back DuckDB's
-certified float reductions only; other backends validate floats against DuckDB
-within a tolerance instead.
+rounds to binary64 correctly; quotients divide 19-digit normalized
+significands as 128-bit integers and round once at output. The IEEE binary64
+primitives back DuckDB's certified float reductions only; other backends
+validate floats against DuckDB within a tolerance instead.
 """
 
 from __future__ import annotations
@@ -44,7 +45,8 @@ __all__ = [
     "is_exact_type",
     "next_toward",
     "normalized",
-    "rounded_quotient",
+    "normalized_quotient",
+    "rounded_normalized",
     "truncating_quotient",
 ]
 
@@ -122,11 +124,6 @@ def decimal_coefficient(value: ir.Value, scale: int) -> ir.Value:
 @ibis.udf.scalar.builtin(name="ltrim", signature=((dt.string, dt.string), dt.string))
 def _duckdb_ltrim(value, _characters):
     """DuckDB ``ltrim`` removing the given characters."""
-
-
-@ibis.udf.scalar.builtin(name="printf", signature=((dt.string, dt.float64), dt.string))
-def _duckdb_printf(_template, value):
-    """DuckDB ``printf`` of one binary64 value."""
 
 
 def _decimal_parts(
@@ -315,19 +312,40 @@ def exact_to_float(
     )
 
 
+_DUCKDB_HUGE = dt.Unknown(raw_type=sge.DataType.build("HUGEINT", dialect="duckdb"))
+# A normalized value holds this many leading significant digits in a 128-bit
+# integer; a quotient of two such significands, shifted to as many digits,
+# stays below 10**38 and so within the integer's range.
+_SIGNIFICAND_DIGITS = 19
+
+
+@ibis.udf.scalar.builtin(name="divide", signature=((_DUCKDB_HUGE, _DUCKDB_HUGE), _DUCKDB_HUGE))
+def _duckdb_huge_quotient(value, divisor):
+    """DuckDB 128-bit integer division truncating toward zero."""
+
+
+@ibis.udf.scalar.builtin(name="abs", signature=((_DUCKDB_HUGE,), _DUCKDB_HUGE))
+def _duckdb_huge_abs(value):
+    """DuckDB 128-bit integer magnitude."""
+
+
+def _huge(text: str) -> ir.Value:
+    return ibis.literal(text).cast(_DUCKDB_HUGE)
+
+
 def normalized(
     value: ir.Value, scale: int | ir.IntegerValue = 0
-) -> tuple[ir.FloatingValue, ir.IntegerValue]:
-    """``(mantissa, exponent)`` with ``value · 10**-scale = mantissa · 10**exponent``.
+) -> tuple[ir.Value, ir.IntegerValue]:
+    """``(significand, exponent)`` with ``value · 10**-scale ≈ significand · 10**(exponent − 18)``.
 
-    DuckDB only. The mantissa is a binary64 with ``1 ≤ |mantissa| < 10`` (0 for
-    zero), keeping the sign; the exponent is an integer. An exact coefficient
-    normalizes from its integer text; an already rounded binary64 operand from
-    its shortest round-trip text, so it stands for that decimal rather than its
-    binary expansion. The mantissa is the significant digits rounded once, so
-    it is within 2**-53 relative of the exact mantissa; digits that round up to
-    10 carry into the exponent as 1 · 10**(exponent + 1), still within 2**-53.
-    A NULL or non-finite float gives NULL.
+    DuckDB only. The significand is a signed 128-bit integer holding the
+    value's leading 19 significant digits, so ``10**18 ≤ |significand| < 10**19``
+    (0 with exponent 0 for zero); the exponent is that of the leading digit. An
+    exact coefficient normalizes from its integer text, an already rounded
+    binary64 from its shortest round-trip text (at most 17 digits, held
+    exactly), so it stands for that decimal rather than its binary expansion.
+    Digits past the 19th are dropped, perturbing the value by less than
+    ``10**-18`` relative. A NULL or non-finite float gives NULL.
     """
     dialect = dialect_of(value)
     if dialect != "duckdb":
@@ -337,101 +355,86 @@ def normalized(
     significant = cast(ir.StringValue, _duckdb_ltrim(digits, "0"))
     count = significant.length()
     zero = count == ibis.literal(0)
-    leading = cast(ir.StringValue, zero.ifelse(ibis.literal("0"), sign + significant))
-    mantissa = cast(ir.FloatingValue, (leading + "e" + (1 - count).cast("string")).cast(dt.float64))
-    carries = mantissa.abs() == ibis.literal(10.0)
-    mantissa = cast(ir.FloatingValue, carries.ifelse(mantissa / 10.0, mantissa))
-    carry = cast(ir.IntegerValue, carries.cast(dt.int64))
-    decimal_exponent = exponent - fraction_digits + count - 1 + carry - scale
-    return mantissa, cast(ir.IntegerValue, zero.ifelse(ibis.literal(0), decimal_exponent))
+    leading = significant.substr(0, _SIGNIFICAND_DIGITS).rpad(_SIGNIFICAND_DIGITS, "0")
+    significand = zero.ifelse(ibis.literal("0"), sign + leading).cast(_DUCKDB_HUGE)
+    decimal_exponent = exponent - fraction_digits + count - 1 - scale
+    return significand, cast(ir.IntegerValue, zero.ifelse(ibis.literal(0), decimal_exponent))
 
 
-_DUCKDB_HUGE = dt.Unknown(raw_type=sge.DataType.build("HUGEINT", dialect="duckdb"))
-# A mantissa in [1, 10) printed with 18 fractional digits has this many digits.
-_MANTISSA_DIGITS = 19
-# The 19 significant digits of MAX · (1 + 3.5 · 2**-53) at decimal exponent 308:
-# a quotient whose pre-rounding value is at most this returns ±MAX within the bound.
-_QUOTIENT_CLAMP = "1797693134862316406"
-_FLOAT64_MAX_EXPONENT = 308
-
-
-@ibis.udf.scalar.builtin(name="divide", signature=((_DUCKDB_HUGE, _DUCKDB_HUGE), _DUCKDB_HUGE))
-def _duckdb_huge_quotient(value, divisor):
-    """DuckDB 128-bit integer division truncating toward zero."""
-
-
-def _mantissa_digits(mantissa: ir.FloatingValue) -> ir.Value:
-    """``|mantissa| · 10**18`` rounded to an integer: 19 digits as HUGEINT."""
-    text = cast(ir.StringValue, _duckdb_printf("%.18f", mantissa.abs()))
-    return text.replace(".", "").cast(_DUCKDB_HUGE)
-
-
-def rounded_quotient(
-    n_mantissa: ir.FloatingValue,
+def normalized_quotient(
+    n_significand: ir.Value,
     n_exponent: ir.IntegerValue,
-    d_mantissa: ir.FloatingValue,
+    d_significand: ir.Value,
     d_exponent: ir.IntegerValue,
-) -> tuple[ir.FloatingValue, ir.BooleanValue]:
-    """Binary64 quotient of two ``normalized`` operands on DuckDB.
+) -> tuple[ir.Value, ir.IntegerValue]:
+    """The quotient of two ``normalized`` operands, itself normalized, on DuckDB.
 
-    Returns (float, overflow). Each mantissa's 19 significant digits divide
-    exactly as 128-bit integers, shifted so the quotient has 19 digits, and
-    the exponent difference is applied by rounding that digit text once, so
-    operands beyond binary64's range and subnormal results are handled alike.
-    A zero denominator or a NULL operand gives NULL without ``overflow``. A
-    pre-rounding value that rounds to infinity but is within 3.5u of the
-    largest finite binary64 returns ±MAX; beyond that gives NULL with
-    ``overflow``.
-
-    Error model for exact operands ``p = M_n · 10**e_n`` and ``q = M_d · 10**e_d``
-    with ``u = 2**-53``: each mantissa ``m = M(1 + ε)`` with ``|ε| ≤ u``
-    (``normalized``); its 19-digit text and the integer quotient's truncation
-    each perturb by less than ``10**-18`` relative, so the pre-rounding value
-    is ``t = (p / q)(1 + δ)`` with ``|δ| ≤ 2.03u``. A finite text-to-binary64
-    cast is correctly rounded, within ``u`` relative for a normal result and
-    within ``2**-1075`` absolute for a subnormal one, so
-    ``|r − p / q| ≤ 3.03u · |p / q| + 2**-1075``. When ``|t|`` rounds to
-    infinity but ``|t| ≤ MAX(1 + 3.5u)``, ``|p / q|`` lies in
-    ``[MAX(1 − 1.53u), MAX(1 + 5.53u)]``, so ``±MAX`` is within ``6u · |p / q|``;
-    a representable ``p / q`` gives ``|t| ≤ MAX(1 + 2.03u)`` and is never
-    flagged. Hence ``|r − p / q| ≤ 6u · |p / q| + 2**-1075`` for every finite
-    result.
+    The significands' magnitudes divide as 128-bit integers, the numerator
+    shifted by 18 or 19 digits so the truncated integer quotient has 19 digits,
+    and the exponents subtract, so operands beyond binary64's range and
+    subnormal results are handled alike, and a quotient can divide again
+    losing nothing but its truncation (less than ``10**-18`` relative). A zero
+    denominator or a NULL operand gives NULL.
     """
-    zero = ibis.literal(0.0)
-    divides = d_mantissa != zero
-    numerator = _mantissa_digits(n_mantissa)
-    denominator = divides.ifelse(_mantissa_digits(d_mantissa), ibis.null().cast(_DUCKDB_HUGE))
+    zero = _huge("0")
+    numerator = _duckdb_huge_abs(n_significand)
+    denominator = (d_significand != zero).ifelse(
+        _duckdb_huge_abs(d_significand), ibis.null().cast(_DUCKDB_HUGE)
+    )
     # |n / d| lies in (0.1, 10): shift so the integer quotient has 19 digits.
     shift = cast(
         ir.IntegerValue,
         (numerator >= denominator).ifelse(
-            ibis.literal(_MANTISSA_DIGITS - 1), ibis.literal(_MANTISSA_DIGITS)
+            ibis.literal(_SIGNIFICAND_DIGITS - 1), ibis.literal(_SIGNIFICAND_DIGITS)
         ),
     )
     zeros = cast(ir.StringValue, ibis.literal("0")).repeat(shift)
     digits = _duckdb_huge_quotient(
         (numerator.cast("string") + zeros).cast(_DUCKDB_HUGE), denominator
     )
-    # t = digits · 10**(exponent − 18) with 10**exponent ≤ |t| < 10**(exponent + 1).
-    exponent = cast(ir.IntegerValue, n_exponent - d_exponent + (_MANTISSA_DIGITS - 1) - shift)
-    negative = (n_mantissa < zero) != (d_mantissa < zero)
+    negative = (n_significand < zero) != (d_significand < zero)
     sign = cast(ir.StringValue, negative.ifelse(ibis.literal("-"), ibis.literal("")))
-    magnitude = digits.cast("string") + "e" + (exponent - (_MANTISSA_DIGITS - 1)).cast("string")
-    result = cast(ir.FloatingValue, (sign + magnitude).cast(dt.float64))
-    clamp = ibis.literal(_QUOTIENT_CLAMP).cast(_DUCKDB_HUGE)
-    largest_exponent = ibis.literal(_FLOAT64_MAX_EXPONENT)
-    within_clamp = (exponent < largest_exponent) | (
-        (exponent == largest_exponent) & (digits <= clamp)
+    significand = (sign + digits.cast("string")).cast(_DUCKDB_HUGE)
+    exponent = n_exponent - d_exponent + (_SIGNIFICAND_DIGITS - 1) - shift
+    is_zero = n_significand == zero
+    return (
+        is_zero.ifelse(zero, significand),
+        cast(
+            ir.IntegerValue,
+            ibis.cases(
+                (significand.isnull(), ibis.null(dt.int64)),
+                (is_zero, ibis.literal(0)),
+                else_=exponent,
+            ),
+        ),
     )
-    beyond = (digits.notnull() & ~float_is_finite(result)).fill_null(ibis.literal(False))
-    overflow = beyond & ~within_clamp
-    largest = negative.ifelse(ibis.literal(-sys.float_info.max), ibis.literal(sys.float_info.max))
-    rounded = ibis.cases(
-        (overflow, ibis.null().cast(dt.float64)),
-        (beyond, largest),
-        else_=result,
-    )
-    return cast(ir.FloatingValue, rounded), overflow
+
+
+def rounded_normalized(
+    significand: ir.Value, exponent: ir.IntegerValue
+) -> tuple[ir.FloatingValue, ir.BooleanValue]:
+    """Round a ``normalized`` value once to binary64 on DuckDB.
+
+    Returns (float, overflow): a magnitude beyond binary64's range is NULL
+    with ``overflow``; a NULL value is NULL without it. DuckDB's
+    string-to-double conversion rounds ``significand || 'e' || (exponent − 18)``
+    correctly, within ``u = 2**-53`` relative for a normal result and
+    ``2**-1075`` absolute for a subnormal one.
+
+    Error model for a quotient of exact ``p`` and ``q``: normalizing each
+    operand and dividing truncate to 19 digits, each by less than ``10**-18``
+    (``0.01u``) relative, so the value rounded is ``t = (p / q)(1 + δ)`` with
+    ``|δ| < 3 · 10**-18``; a quotient of ``k`` nested divisions has
+    ``|δ| < (2k + 1) · 10**-18``. Hence
+    ``|r − p / q| ≤ (1 + 0.01(2k + 1))u(1 + u) · |p / q| + 2**-1075``, below
+    ``1.1u`` for a ratio of two averages (``k = 2``) and inside the published
+    ``6u · |p / q| + 2**-1075`` for any practical depth. A representable
+    ``p / q`` never rounds to infinity: that needs ``|t| ≥ MAX(1 + u / 2)``.
+    """
+    text = significand.cast("string") + "e" + (exponent - (_SIGNIFICAND_DIGITS - 1)).cast("string")
+    result = cast(ir.FloatingValue, text.cast(dt.float64))
+    overflow = (significand.notnull() & ~float_is_finite(result)).fill_null(ibis.literal(False))
+    return cast(ir.FloatingValue, overflow.ifelse(ibis.null().cast(dt.float64), result)), overflow
 
 
 @ibis.udf.agg.builtin(name="sum", signature=((_DUCKDB_EXACT,), _DUCKDB_EXACT))

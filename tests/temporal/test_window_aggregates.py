@@ -261,14 +261,31 @@ def test_mixed_scale_ratio_and_average_meet_bound(con, numerator, denominator):
     assert meta.numeric_policy is None and meta.absolute_error_column is None
 
 
-def test_ratio_of_averages_divides_the_published_operands(con):
-    first = _state(con, [0.1, 0.2, -0.05], aggregation="avg_event", name="first")
-    second = _state(con, [3.0, 4.0, 0.3], aggregation="avg_event", name="second")
-    averages = [
-        _rows(con, _result(_anchors(con), [pair]))[0]["requested"] for pair in (first, second)
+def test_ratio_of_averages_divides_the_exact_averages(con):
+    first, second = [0.1, 0.2, -0.05], [3.0, 4.0, 0.3]
+    pairs = [
+        _state(con, first, aggregation="avg_event", name="first"),
+        _state(con, second, aggregation="avg_event", name="second"),
     ]
-    ratio = _rows(con, _result(_anchors(con), [first, second], kind="ratio"))[0]["requested"]
-    _assert_quotient(ratio, Fraction(repr(averages[0])), Fraction(repr(averages[1])))
+    ratio = _rows(con, _result(_anchors(con), pairs, kind="ratio"))[0]["requested"]
+    _assert_quotient(ratio, _shortest(first) / 3, _shortest(second) / 3)
+
+
+def test_ratio_composes_an_average_before_it_is_rounded(con):
+    # 5e-324 / 3 rounds to 0.0 on its own; a ratio must divide the unrounded average.
+    tiny = Fraction(repr(5e-324))
+    average = _state(con, [5e-324, 0.0, 0.0], aggregation="avg_event", name="average")
+    total = _state(con, [5e-324], name="total")
+    assert _rows(con, _result(_anchors(con), [average]))[0]["requested"] == 0.0
+    forward = _rows(con, _result(_anchors(con), [average, total], kind="ratio"))[0]
+    _assert_quotient(forward["requested"], tiny / 3, tiny)
+    reverse = _rows(con, _result(_anchors(con), [total, average], kind="ratio"))[0]
+    _assert_quotient(reverse["requested"], tiny, tiny / 3)
+    cancelled = _state(con, [1.0, -1.0], aggregation="avg_event", name="cancelled")
+    result = _result(_anchors(con), [total, cancelled], kind="ratio")
+    row = _rows(con, result)[0]
+    assert row["requested"] is None
+    assert row[result.columns["requested"].reason_column] == "zero_denominator"
 
 
 def test_quotient_overflow_refuses(con):

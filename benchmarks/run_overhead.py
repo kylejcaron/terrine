@@ -50,6 +50,8 @@ _COLUMNS = {
     "ratio": "spend_per_purchase",
 }
 _ALL_COLUMNS = tuple(_COLUMNS)
+_QUOTIENT_RELATIVE = 6 * Fraction(1, 2**53)
+_QUOTIENT_ABSOLUTE = Fraction(1, 2**1075)
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +162,8 @@ def reference(events: pa.Table, units: int) -> dict[str, dict[str, Any]]:
         unit = row["user_id"]
         counts[unit] = counts.get(unit, 0) + 1
         amounts[unit] = amounts.get(unit, Decimal(0)) + row["amount"]
-        prices[unit] = prices.get(unit, Fraction(0)) + Fraction.from_float(row["price"])
+        # A float stands for its shortest round-trip decimal on every backend.
+        prices[unit] = prices.get(unit, Fraction(0)) + Fraction(repr(row["price"]))
     expected = {}
     for index in range(units):
         unit = _unit(index)
@@ -185,7 +188,11 @@ def _design(workload: Workload) -> Design:
 
 
 def check(result: MaterializedFrame, expected: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
-    """Require the expected roster once each, then compare exact values and certificates."""
+    """Require the expected roster once each, then compare exact values and quotients.
+
+    Counts and decimal sums must match exactly; an average or ratio ``r`` of
+    exact ``p / q`` must satisfy ``|r − p / q| ≤ 6 · 2**-53 · |p / q| + 2**-1075``.
+    """
     rows = result.table.to_pylist()
     returned = sorted(row["unit"] for row in rows)
     roster_match = returned == sorted(expected)
@@ -208,14 +215,12 @@ def check(result: MaterializedFrame, expected: Mapping[str, Mapping[str, Any]]) 
                 missing = {"float_average": "no_observations", "ratio": "zero_denominator"}[name]
                 mismatches += value is not None or reason != missing
             else:
-                assert meta.absolute_error_column is not None
-                error = row[meta.absolute_error_column]
                 mismatches += (
                     value is None
                     or reason is not None
-                    or error is None
-                    or error < 0
-                    or abs(Fraction.from_float(value) - target) > Fraction.from_float(error)
+                    or meta.absolute_error_column is not None
+                    or abs(Fraction(value) - target)
+                    > _QUOTIENT_RELATIVE * abs(target) + _QUOTIENT_ABSOLUTE
                 )
     return {
         "oracle_match": roster_match and mismatches == 0,
