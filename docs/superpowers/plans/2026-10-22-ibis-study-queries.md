@@ -37,7 +37,7 @@
 - Test: `tests/backends/test_expressions.py`
 
 **Interfaces:**
-- Produces (`terrine.backends.dialect`): `dialect_scope(dialect: str) -> ContextManager[None]`; `dialect_of(*values: ir.Value) -> str` (first bound backend's name, else the scope's dialect, default `"duckdb"`); `unavailable(operation: str, dialect: str) -> TerrineError`.
+- Produces (`terrine.backends.dialect`): `dialect_scope(dialect: str) -> ContextManager[None]`; `dialect_of(*values: ir.Value) -> str` (the enclosing scope's dialect when one is set, else the first bound backend's name inferred from the operands, default `"duckdb"`); `unavailable(operation: str, dialect: str) -> TerrineError`.
 - Produces (`terrine.backends.numeric`): `exact_type()`, `is_exact_type(dtype)`, `exact_literal(value: int)`, `exact_sum(value)`, `exact_subtract(left, right)`, `truncating_quotient(value, divisor, *, like: ir.Value) -> ir.IntegerValue`, `float_is_finite(value) -> ir.BooleanValue`, DuckDB-only `next_toward(value, direction)`, `ieee_add/ieee_subtract/ieee_multiply/ieee_divide(left, right)`.
 - Produces (`terrine.backends.timestamps`): everything `_timestamps.py` exported (`timestamp_parts`, `timestamp_order_key`, `compare_timestamps`, `_struct_key`, `_backend` → replaced by `dialect_of`), plus `timestamp_is_finite(value)`, `utc_wall_clock(value: aware) -> naive`, `utc_instant(value: naive) -> aware`. `epoch_us_sql` is removed in Task 2.
 

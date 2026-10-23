@@ -89,6 +89,10 @@
   execution, including reads through already-resolved relations.
 - Execute admitted SQL directly for Arrow tables and streams rather than
   compiling each expression again after validation.
+- Stage window-arithmetic intermediates in shared projections and resolve the
+  compile dialect from the Design's scope, so one-row float averages, ratios and
+  multi-column Frames materialize in roughly half the time with identical
+  values, metadata and refusals (`benchmarks/run_overhead.py`).
 - Save destination-bound plans and track authoritative run status, bounded event
   pages, request-key replay, cancellation requests, renewable fences and atomic
   generation publication through Python, CLI and owner-local IPC.
