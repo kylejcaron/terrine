@@ -1,14 +1,20 @@
 # Your first dataset
 
-Install Python 3.13 or 3.14 and the `duckdb` extra. No sibling project, warehouse
-account or semantic adapter is required. The complete executable tutorial lives
-in the [README](../../README.md#build-a-study-dataset); run it from a checkout with:
+Requires CPython 3.13 or 3.14 and the `duckdb` extra. For an installed
+distribution:
+
+```sh
+uv pip install 'terrine[duckdb]'
+```
+
+No sibling project, warehouse account or semantic adapter is required. The
+complete executable tutorial lives in the
+[README](../../README.md#build-a-study-dataset). To run it from a source checkout:
 
 ```sh
 uv sync --extra duckdb
 uv run python examples/first_dataset.py
 ```
-
 
 --8<-- "README.md:first-dataset"
 ## Four objects
@@ -26,6 +32,12 @@ uv run python examples/first_dataset.py
    file-backed local DuckDB owner and retained inputs. `Dataset.from_manifest`
    reopens the exact generation; bounded Arrow batches do not consult a moving
    current-generation pointer.
+
+Configure the Catalog, unit roster and source readiness once when creating the
+Model, then reuse that Model for each Design. Start with
+`frame.materialize(budget)` to collect an ordinary bounded result. Staging is
+optional and separate: use `frame.stage(name, budget=budget)` only when you need
+a durable pinned generation, manifest/reopen or later streaming/export lifecycle.
 
 The tutorial uses two roster users, one without events. A complete empty window
 is zero. The event at exactly time zero is excluded from `[-1d,0s)` and included

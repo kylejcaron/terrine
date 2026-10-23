@@ -6,6 +6,8 @@
 
 - Build typed, point-in-time analytical and ML datasets with a standalone native
   Model → Design → Frame → Dataset workflow and a complete executable tutorial.
+- Lead onboarding with consumer installation, bounded collection and a real
+  output-refusal recovery; stream common-stack batches incrementally.
 - Describe sources, entities, dimensions, facts and metrics in a strict native
   Catalog; bind existing tables or admitted read-only SQL without requiring a
   semantic adapter or sibling checkout.
