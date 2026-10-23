@@ -21,6 +21,7 @@
   rates. Retain row identity, temporal support and typed shape provenance.
 - Refuse exact cumulative LTV totals that exceed the declared decimal output
   type; preserve unavailable cumulative values and their reasons.
+- Retain declared treatment values and support metadata in time-to-event output.
 - Build deterministic bounded event sequences, sessions, funnels, transitions
   and event-relative selectors with explicit tie, missing-predecessor and
   temporal-leakage rules.

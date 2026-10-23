@@ -434,6 +434,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         for name in (
             *design.features,
             *design.eligibility,
+            *((base.roles.treatment,) if base.roles.treatment else ()),
             *(name for name in base.table.columns if name.startswith("_observed_")),
             *support_columns,
         )
