@@ -43,8 +43,8 @@
 
 **Files:** `pyproject.toml` (extra `snowflake` = `ibis-framework[snowflake]>=12,<13`, marker, addopts `not snowflake`), `uv.lock`, `Makefile` (`test-snowflake`), `integration/warehouse_execution/snowflake_fixtures.py`, `.github/workflows/warehouse-backends.yml` (job `snowflake`, modes `snowflake`/`bigquery` for targeted dispatch), `AGENTS.md`
 
-- [ ] Fixture `snowflake_scratch` yields `(con, database, schema)` for a fresh schema and drops it; key-pair auth as in increment's `integration/warehouse_execution/conftest.py::snowflake_con`.
-- [ ] Probe `test_scratch_schema_is_isolated` (create, insert, read back `NUMBER(12,2)` and `TIMESTAMP_TZ`); dispatch passes; commit.
+- [x] Fixture `snowflake_scratch` yields `(con, database, schema)` for a fresh schema and drops it; key-pair auth as in increment's `integration/warehouse_execution/conftest.py::snowflake_con`.
+- [ ] Probe `test_scratch_schema_is_isolated` (create, insert, read back `NUMBER(12,2)` and `TIMESTAMP_TZ`); dispatch passes; commit. (Committed; the dispatch is blocked, see Status.)
 
 ### Task 2: Provider, Time Travel snapshot and admission
 
@@ -72,3 +72,76 @@
 **Files:** workflow, `examples/snowflake/dataset.py`, `docs/guides/{backend-compatibility,capabilities,common-stack-interop}.md`, `README.md`, `CHANGELOG.md`
 
 - [ ] Weekly + dispatch job runs `make test-snowflake` and the example; docs state the snapshot model, retention requirement, session requirement, DECFLOAT bound, refusals; commit.
+
+## Status (parked 2026-10-23)
+
+Work stopped because live verification is impossible until two owner actions
+land. Nothing below has run against Snowflake.
+
+**Owner actions (both required before any Snowflake run):**
+
+1. Reactivate billing: every connection fails with
+   `000666 (57014): Your account is suspended due to lack of payment method.`
+   (workflow run 39882619955, 01:12 UTC; run 39881252732 at 00:58 UTC still
+   logged in).
+2. Grant schema creation to the CI role so each probe can own a scratch schema
+   (run 39881252732: `Insufficient privileges to operate on database ...; role
+   must have CREATE SCHEMA granted on DATABASE ...`):
+   `GRANT CREATE SCHEMA ON DATABASE <TERRINE_TEST_SNOWFLAKE_DATABASE> TO ROLE
+   <role of TERRINE_TEST_SNOWFLAKE_USER>;`
+
+**Per task:**
+
+- Task 1, partly done. Committed: `snowflake` extra and lock, marker and
+  addopts, `make test-snowflake`, `snowflake_fixtures.py`
+  (`snowflake_scratch`, `connect_snowflake`, `create_object_udfs=False` so Ibis
+  creates no `ibis_udfs` database), `test_snowflake_execution.py`, workflow job
+  `snowflake` plus dispatch modes `snowflake`/`bigquery`, `AGENTS.md`. Remains:
+  a green dispatch of the scratch probe.
+- Task 2, partly done and unverified. Committed as a checkpoint:
+  `terrine/execution/_snowflake.py` (identity from `INFORMATION_SCHEMA.TABLES`
+  joined to `VIEWS` plus `DESCRIBE TABLE`; view closure with routine checks;
+  `pin()` sqlglot `AT (TIMESTAMP => TO_TIMESTAMP_TZ(...))` rewrite on every
+  physical table in the compiled SQL; `SnowflakeSession` executing the pinned SQL
+  on the caller's cursor; NUMBER overflow mapped to `exact_overflow`),
+  `_SnowflakeProvider`, `_open_snowflake_execution`, `SNOWFLAKE_CAPABILITIES`.
+  Remains: every admission probe in `test_snowflake_admission.py` (snapshot
+  isolation through table, view and SQL; read-only query history; replaced
+  table, changed view, zero retention, secure view, routine view, non-UTC
+  session, `open_generation` refusals), red checks, measurement, fixes.
+- Task 3, not started. `terrine/backends/*` have no `snowflake` branch yet;
+  `dialect_of()` on Snowflake falls into `unavailable(...)` refusals.
+- Task 4, not started.
+- Task 5, not started beyond the workflow job (which does not yet run an example).
+
+**Measured versus assumed:** the only live observations are the two failures
+above and the login check (run 39782618657: `SUM(NUMBER(38, 2))` returns a
+`Decimal`). Everything else the checkpoint relies on is assumed from
+documentation or local compilation and must be measured by the throwaway probe
+file kept on branch `probe/snowflake-measure` (`test_snowflake_probe_tmp.py`,
+never to be merged):
+
+- `AT (TIMESTAMP => ...)` on a view applies to its base tables; the stamp
+  format `YYYY-MM-DD HH24:MI:SS.FF9 TZHTZM` round-trips `CURRENT_TIMESTAMP(9)`;
+  a `CREATE OR REPLACE` changes `CREATED`; `ALTER TABLE ADD COLUMN` changes
+  `LAST_DDL` and `DESCRIBE TABLE` works on views; retention-0 and replaced
+  tables error under `AT`; `QUERY_HISTORY_BY_SESSION` is visible promptly.
+- `DECFLOAT` and `TO_DECFLOAT` exist; `CAST(FLOAT AS DECFLOAT)` round-trips
+  binary64; `IFF`/`COALESCE` between `DECFLOAT` and `NUMBER(38, 0)` promote to
+  `DECFLOAT`; `SUM(DECFLOAT)` stays `DECFLOAT`; `NaN`/`inf` to `DECFLOAT` error
+  or are unsupported; `DECFLOAT` beyond binary64 cast to `FLOAT` errors.
+- Local compilation facts (measured on ibis 12.0.0, sqlglot 29.0.1): Ibis lowers
+  `try_cast` to a plain `CAST` on Snowflake, so `narrow_exact` needs the
+  PostgreSQL-style range check there; `exp.HistoricalData` exists in sqlglot 29
+  and `traverse_scope` distinguishes CTEs and `TABLE(FLATTEN(...))` from physical
+  tables; `ops.Subtract` rejects `dt.Unknown` operands, so `DECFLOAT` state cannot
+  reuse the BigQuery `dt.Unknown(raw_type=...)` pattern for arithmetic (planned:
+  label `DECFLOAT` values produced by a `TO_DECFLOAT` builtin as a decimal type so
+  `-`, `/`, `abs` and `sum` render natively, and never cast to that label).
+
+**Resume steps:** reactivate and grant (above); dispatch
+`gh workflow run warehouse-backends.yml -R kylejcaron/terrine --ref probe/snowflake-measure -f backend_mode=snowflake`
+and read the `PROBE REPORT` blocks from `gh run view <id> --log-failed`;
+update the assumptions above and `_snowflake.py`; delete branch
+`probe/snowflake-measure`; then continue Task 2's probes with
+`--ref feat/snowflake-execution`, one commit per task.

@@ -11,6 +11,7 @@ from terrine.backends.capabilities import (
     BIGQUERY_CAPABILITIES,
     DUCKDB_CAPABILITIES,
     POSTGRES_CAPABILITIES,
+    SNOWFLAKE_CAPABILITIES,
     UNVERIFIED_CAPABILITIES,
     BackendCapabilities,
 )
@@ -227,10 +228,74 @@ class _BigQueryProvider:
 
 
 _BIGQUERY_PROVIDER = _BigQueryProvider()
+
+
+class _SnowflakeProvider:
+    capabilities = SNOWFLAKE_CAPABILITIES
+
+    def matches(self, con: Any) -> bool:
+        return type(con).__module__ == "ibis.backends.snowflake"
+
+    def dialect(self, con: Any) -> str:
+        return "snowflake"
+
+    def resolve_relation(self, con: Any, relation: RelationSpec) -> ibis.Table:
+        from terrine.execution import _snowflake
+
+        return _snowflake.resolve(con, relation)
+
+    def required_relations(self, catalog, con, *, units=None):
+        from terrine.execution import _snowflake
+
+        return _snowflake.required_relations(catalog, con, units=units)
+
+    def bind_resolver(self, catalog, con, **kwargs):
+        """Resolve relations; with ``snapshot`` (the execution's Time Travel
+        instant) a relation created or altered after it refuses."""
+        from terrine.execution import _snowflake
+        from terrine.execution.inputs import _INVALID
+
+        if kwargs.get("input_binding") is not None:
+            raise _CAPABILITY_UNAVAILABLE.error(
+                backend="snowflake",
+                operation="retained_snapshot",
+                status="unverified",
+                route="Retained input bindings are DuckDB-only; materialize directly.",
+            )
+        snapshot = kwargs.get("snapshot")
+        _snowflake.required_relations(catalog, con, units=kwargs.get("units"))
+        admitted: dict[tuple[str, str], Any] = {}
+        fingerprints: dict[tuple[str, str], str] = {}
+
+        def resolve(relation: RelationSpec) -> Any:
+            key = (relation.kind, relation.name if isinstance(relation, TableRef) else relation.sql)
+            fingerprint = _snowflake.admission_fingerprint(relation, con, snapshot=snapshot)
+            if key in admitted:
+                if fingerprints[key] != fingerprint:
+                    raise _INVALID.error(
+                        reason="relation definition or identity changed after Model binding"
+                    )
+                return admitted[key]
+            admitted[key] = _snowflake.resolve(con, relation, catalog.dialect)
+            fingerprints[key] = fingerprint
+            return admitted[key]
+
+        return resolve
+
+    def open_execution(self, catalog, con, *, units=None, input_binding=None):
+        from terrine.execution.inputs import _open_snowflake_execution
+
+        return _open_snowflake_execution(
+            self, catalog, con, units=units, input_binding=input_binding
+        )
+
+
+_SNOWFLAKE_PROVIDER = _SnowflakeProvider()
 _PROVIDERS: tuple[BackendProvider, ...] = (
     _DUCKDB_PROVIDER,
     _POSTGRES_PROVIDER,
     _BIGQUERY_PROVIDER,
+    _SNOWFLAKE_PROVIDER,
 )
 
 
@@ -264,12 +329,14 @@ def backend_provider(con: Any) -> BackendProvider:
         return _POSTGRES_PROVIDER
     if _BIGQUERY_PROVIDER.matches(con):
         return _BIGQUERY_PROVIDER
+    if _SNOWFLAKE_PROVIDER.matches(con):
+        return _SNOWFLAKE_PROVIDER
     raise _CAPABILITY_UNAVAILABLE.error(
         backend=str(getattr(con, "name", type(con).__name__)).casefold(),
         operation="query",
         status="unverified",
         route=(
-            "Bind a local Ibis DuckDB, PostgreSQL or BigQuery backend; other providers "
-            "are unverified."
+            "Bind a local Ibis DuckDB, PostgreSQL, BigQuery or Snowflake backend; other "
+            "providers are unverified."
         ),
     )
