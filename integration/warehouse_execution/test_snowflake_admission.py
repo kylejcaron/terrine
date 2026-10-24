@@ -177,6 +177,29 @@ def test_relations_changed_during_execution_refuse(snowflake_scratch, tmp_path, 
         with pytest.raises(TerrineError) as error:
             context.execute(table.count())
         assert error.value.code == "terrine.execution.invalid_input_binding"
+        # A streamed read refuses before its first batch, not after the last.
+        with pytest.raises(TerrineError) as error:
+            context.to_arrow_batches(table.select("user_id")).read_next_batch()
+        assert error.value.code == "terrine.execution.invalid_input_binding"
+
+
+def test_pinned_sql_relations_resolve_cte_references_by_snowflake_rules(
+    snowflake_scratch, tmp_path
+):  # noqa: F811
+    scratch = snowflake_scratch
+    _events(scratch)
+    model = _model(scratch, tmp_path)
+    # An unquoted reference folds to the CTE's name: it is pinned through the
+    # table the CTE reads, never as a table of its own.
+    query = SqlQuery(
+        kind="sql",
+        sql='WITH recent AS (SELECT "user_id", "occurred_at", "amount" FROM events) '
+        "SELECT * FROM RECENT",
+    )
+    with open_execution(model.catalog, scratch.con) as context:
+        assert _count(context, query) == 1
+        scratch.sql("INSERT INTO events VALUES ('b', '2025-01-01 13:00:00 +0000', 2)")
+        assert _count(context, query) == 1
 
 
 @pytest.mark.parametrize(

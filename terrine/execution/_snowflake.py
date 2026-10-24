@@ -382,12 +382,14 @@ def pin(sql: str, stamp: str) -> str:
     """Attach ``AT (TIMESTAMP => stamp)`` to every table and view reference.
 
     Common table expressions, derived tables and table functions are not
-    physical references. Snowflake applies a view's pin to the tables it reads.
+    physical references; identifiers are normalized first so a reference
+    resolves to its expression under Snowflake's rules (``CTE`` names
+    ``cte``). Snowflake applies a view's pin to the tables it reads.
     """
     from sqlglot import exp, parse_one
     from sqlglot.optimizer.scope import traverse_scope
 
-    statement = parse_one(sql, read=DIALECT)
+    statement = _normalized(parse_one(sql, read=DIALECT))
     for scope in traverse_scope(statement):
         for source in scope.sources.values():
             if isinstance(source, exp.Table) and isinstance(source.this, exp.Identifier):
@@ -471,10 +473,12 @@ class SnowflakeSession:
 
         invalidate_metadata()
         target = query.as_table().schema().to_pyarrow()
-        with _query_refusal(), _arrow_refusal(), raw_connection(con).cursor() as cursor:
-            cursor.execute(pin(sql, self.stamp))
-            result = cursor.fetch_arrow_all()
-        self.verify()
+        with raw_connection(con).cursor() as cursor:
+            with _query_refusal():
+                cursor.execute(pin(sql, self.stamp))
+            self.verify()
+            with _query_refusal(), _arrow_refusal():
+                result = cursor.fetch_arrow_all()
         if result is None:
             result = target.empty_table()
         with _arrow_refusal():
@@ -487,6 +491,9 @@ class SnowflakeSession:
         try:
             with _query_refusal():
                 cursor.execute(pin(sql, self.stamp))
+            # The statement has completed and its result is held by Snowflake:
+            # identity is settled before any batch reaches the caller.
+            self.verify()
         except Exception:
             cursor.close()
             raise
@@ -500,7 +507,6 @@ class SnowflakeSession:
                             .cast(target)
                             .to_batches(max_chunksize=chunk_size)
                         )
-                self.verify()
             finally:
                 cursor.close()
 
