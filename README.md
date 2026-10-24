@@ -280,16 +280,18 @@ issued generations, while replay equivalence is still `unverified`.
 
 Window endpoints represent elapsed durations, not calendar dates.
 
-## Build directly from PostgreSQL or BigQuery
+## Build directly from PostgreSQL, BigQuery or Snowflake
 
-With `terrine[postgres]` or `terrine[bigquery]`, a Model can bind an Ibis
-PostgreSQL or BigQuery connection and `Frame.materialize()` reads the source
-tables in one consistent snapshot, without copying them out first. Counts, exact
+With `terrine[postgres]`, `terrine[bigquery]` or `terrine[snowflake]`, a Model
+can bind an Ibis PostgreSQL, BigQuery or Snowflake connection and
+`Frame.materialize()` reads the source tables in one consistent snapshot (a
+Time Travel instant on Snowflake), without copying them out first. Counts, exact
 integer/decimal sums, as-of attributes and the panel and time-to-event shapes
 produce the same rows as DuckDB; averages, ratios and float windows match it
 within a tight tolerance. Staging and publishing Dataset generations stay on
-DuckDB. [`examples/postgres/dataset.py`](examples/postgres/dataset.py) and
-[`examples/bigquery/dataset.py`](examples/bigquery/dataset.py) are complete
+DuckDB. [`examples/postgres/dataset.py`](examples/postgres/dataset.py),
+[`examples/bigquery/dataset.py`](examples/bigquery/dataset.py) and
+[`examples/snowflake/dataset.py`](examples/snowflake/dataset.py) are complete
 examples, and [backend compatibility](docs/guides/backend-compatibility.md#postgresql)
 lists exactly what is supported on each.
 

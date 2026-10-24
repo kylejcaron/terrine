@@ -24,8 +24,8 @@ uv pip install -e '.[duckdb,polars]'
 Core/backend metadata imports do not load optional dataframe or warehouse drivers.
 Requesting an unavailable dataframe extra raises
 `terrine.convert.missing_dependency` before executing the Frame, with the extra's
-install route. PostgreSQL execution needs `terrine[postgres]` and BigQuery
-execution `terrine[bigquery]`; Snowflake execution is unverified. See
+install route. PostgreSQL execution needs `terrine[postgres]`, BigQuery
+execution `terrine[bigquery]` and Snowflake execution `terrine[snowflake]`. See
 [backend compatibility](backend-compatibility.md).
 
 ## Bounded Frames

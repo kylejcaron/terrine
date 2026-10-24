@@ -70,6 +70,19 @@
   state in `BIGNUMERIC` (sums and float facts beyond its range refuse with a
   code). Views calling dataset-qualified routines refuse. Live BigQuery probes run
   weekly and on dispatch (`make test-bigquery`).
+- Materialize Frames directly from Snowflake (`terrine[snowflake]`): each run
+  pins every table and view read to one Time Travel instant on the caller's
+  connection (reads only; tables need `DATA_RETENTION_TIME_IN_DAYS >= 1`, the
+  session `TIMEZONE` must be `UTC`) and re-verifies every relation's `CREATED`
+  and `LAST_DDL` after each query, so a table swapped, renamed or replaced into
+  place during a run refuses. Names follow Snowflake's identifier rules. The
+  PostgreSQL coverage and tolerance contract carry over with exact state in
+  `NUMBER(38, 0)`: float facts follow the DuckDB design (shortest round-trip
+  text from a `VARIANT`, per-unit scale, one rounding), coefficients or sums
+  beyond 38 digits refuse with a code, and nanosecond timestamps are exact in
+  SQL while Arrow outputs outside 1677-2262 refuse
+  (`terrine.execution.arrow_timestamp_range`). Live Snowflake probes run
+  weekly and on dispatch (`make test-snowflake`).
 - Refuse decimal sources without a declared precision and scale
   (`terrine.semantic.decimal_scale_required`) and non-finite PostgreSQL numerics
   (`terrine.backend.nonfinite_decimal`).

@@ -95,6 +95,7 @@ jobs:
           python-version: "3.13"
       - run: uv sync --locked --group dev --extra duckdb --extra snowflake
       - run: make test-snowflake
+      - run: uv run python examples/snowflake/dataset.py
 
   # Each probe owns a scratch dataset, but queries are billed: serialize runs.
   bigquery:

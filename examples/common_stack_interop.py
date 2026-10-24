@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
 import json
+from decimal import Decimal
 from importlib.util import find_spec
 from pathlib import Path
 from tempfile import TemporaryDirectory
