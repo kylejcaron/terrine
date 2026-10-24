@@ -153,15 +153,15 @@ near-halfway cases. Each value's shortest text and its 18-digit rounding both
 lie within half an ulp of it, so the exact window sums on the two backends
 differ by at most `1.05 · 2⁻⁵³ · Σ|x|` and the rounded float windows by at most
 `2⁻⁵¹ · Σ|x|`: equal or adjacent doubles unless the window cancels, not
-always bit for bit (the parity probe's `spend_per_weight` differs in the last
-bit). Quotients divide 19-digit normalized significands in `NUMBER(38, 0)`
-within the same `|r − p/q| ≤ 6·2⁻⁵³·|p/q| + 2⁻¹⁰⁷⁵` bound. A coefficient
-needing more than 38 digits (a value's 18 digits padded to its unit's scale,
-the most fractional digits any finite value's text in that unit needs: `0.1`
-needs 18, `1e-20` needs 38) refuses with `terrine.temporal.float64_precision`
-(`bound_overflow`), as does a sum or quotient beyond binary64's range, for
-which `TRY_TO_DOUBLE` returns NULL; a non-finite value at or before the end of
-a non-empty window refuses with `nonfinite_input`.
+always bit for bit. Quotients divide 19-digit normalized significands in
+`NUMBER(38, 0)` within the same `|r − p/q| ≤ 6·2⁻⁵³·|p/q| + 2⁻¹⁰⁷⁵` bound. A
+coefficient needing more than 38 digits (a value's 18 digits padded to its
+unit's scale, the most fractional digits any finite value's text in that unit
+needs: `0.1` needs 18, `1e-20` needs 38) refuses with
+`terrine.temporal.float64_precision` (`bound_overflow`), as does a sum or
+quotient beyond binary64's range, for which `TRY_TO_DOUBLE` returns NULL; a
+non-finite value at or before the end of a non-empty window refuses with
+`nonfinite_input`.
 
 Timestamps are exact at their declared scale, nanoseconds by default, from year
 1 to 9999 (`TIMESTAMP_TZ`, `TIMESTAMP_LTZ` and `TIMESTAMP_NTZ`; naive values

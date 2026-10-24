@@ -28,7 +28,7 @@
 1. **Snapshot by Time Travel.** One snapshot timestamp per materialization; every base table reached (directly, through views, or in admitted SQL) must be a permanent or transient table with `RETENTION_TIME >= 1`, else `snapshot_unavailable` naming the route (`ALTER TABLE ... SET DATA_RETENTION_TIME_IN_DAYS = 1`). External tables, materialized views, secure views (definition hidden) and views calling a routine refuse. A relation created or altered after the snapshot time refuses (`invalid_input_binding`), and so does one whose `CREATED`/`LAST_DDL` changed by the time a query's rows are returned: a swap, rename, replace or view redefinition between admission and the read (measured: every such DDL advances `LAST_DDL`, and `AT` on a swapped-in table answers from that object's own history).
 2. **Caller's connection, read-only.** A private connection would need the caller's private key, which the connector does not expose. Terrine issues only `SELECT`/`SHOW`/`DESCRIBE`/`INFORMATION_SCHEMA` reads; it checks `TIMEZONE = 'UTC'` in the session and refuses otherwise (route: `ALTER SESSION SET TIMEZONE = 'UTC'`).
 3. **Identifier rules.** `TableRef` names, admitted SQL and view definitions resolve with Snowflake's rules through sqlglot (`normalize_identifiers`): unquoted parts fold to upper case, quoted parts are exact and may contain dots; unqualified names resolve in the connection's (or the referencing view's) database and schema. Column names are exact as the connection reports them.
-4. **Floats as on DuckDB.** The previous DECFLOAT-with-guard design is obsolete: main now holds floats exactly from their shortest round-trip text on every backend. Snowflake's `TO_VARCHAR(FLOAT)` keeps at most 15 significant digits (measured: `0.3333333333333333 → '0.3333333333'`), but `TO_VARIANT(x)::VARCHAR` renders the shortest round-trip decimal (`'0.3333333333333333'`, `'1.2345678901234568E17'`, `'4.9E-324'`); that text, lower-cased with a `.0` fraction dropped, feeds the shared coefficient construction. Coefficients are `NUMBER(38, 0)` built with `TRY_TO_NUMBER(text, 38, 0)` (NULL beyond 38 digits → `float64_precision`/`bound_overflow`); prefix sums and window differences that overflow raise Snowflake's `Value overflow in a SUM aggregate` / `Number out of representable range`, mapped to `exact_overflow`. Quotients divide 19-digit normalized significands in `NUMBER(38, 0)`: `(a − a % b) / b` is exact (measured: plain `a / b` rounds to six fractional digits and `TRUNC` of it can round up). Output rounding uses `TRY_TO_DOUBLE`, measured correctly rounded on halfway cases and subnormals (`'9007199254740993' → 9007199254740992`, `'4e-324' → 5e-324`, `'2e-324' → 0`) and returning `inf` beyond the range (flagged `bound_overflow`).
+4. **Floats as on DuckDB, from 18-digit text.** The previous DECFLOAT-with-guard design is obsolete: main now holds floats exactly from their shortest round-trip text on every backend. Snowflake has no row-wise shortest text (measured in run 40106855757 on 143 vectors read back through Arrow): `TO_VARCHAR(FLOAT)` and `TO_VARIANT(x)::VARCHAR` keep 15 significant digits (10 for negative exponents; the shortest `'1.2345678901234568E17'` form seen earlier was constant folding), `TO_JSON` and the `TM`/`TME` formats 16, and `TO_VARCHAR(x, '9.99…EEEE')` prints `##` beyond two exponent digits; `TO_DECFLOAT(x)::VARCHAR` is the one text that always round-trips: the binary value correctly rounded to 18 significant digits (max relative error 4.5e-18, e.g. `0.1 → '0.100000000000000006'`, `5e-324 → '4.94065645841246544e-324'`, `1e23 → '99999999999999991600000'`). That text, lower-cased, feeds the shared coefficient construction. Coefficients are `NUMBER(38, 0)` built with `TRY_TO_NUMBER(text, 38, 0)` (NULL beyond 38 digits → `float64_precision`/`bound_overflow`); prefix sums and window differences that overflow raise Snowflake's `Value overflow in a SUM aggregate` / `Number out of representable range`, mapped to `exact_overflow`. Quotients divide 19-digit normalized significands in `NUMBER(38, 0)`: `(a − a % b) / b` is exact (measured: plain `a / b` rounds to six fractional digits and `TRUNC` of it can round up). Output rounding uses `TRY_TO_DOUBLE`, correctly rounded on all 143 vectors (halfway, subnormal and 17-19-digit near-halfway cases; `TO_DOUBLE(TO_DECFLOAT(text))` double-rounds); row-wise it returns NULL beyond binary64's range (constant folding gives `Infinity`) and 0.0 below it, so a NULL conversion of a non-NULL operand is flagged `bound_overflow`. Float windows therefore match DuckDB within `2⁻⁵¹ · Σ|x|` (each value's shortest text and 18-digit rounding both lie within half an ulp of it), not bit for bit.
 5. **Timestamps.** Snowflake timestamps are exact at their scale (9 by default) from year 1 to 9999 with no infinities; `DATEDIFF(NANOSECOND, epoch, ts)` is exact over the whole range (measured `-62135596800000000000` for year 1), so parts split from it; a `TIMESTAMP_TZ` keeps its stored offset through a plain cast (measured), so `utc_wall_clock` is `TO_TIMESTAMP_NTZ(CONVERT_TIMEZONE('UTC', ts))`. The connector returns microsecond Arrow timestamps when a result holds an instant outside 1677-09-21..2262-04-11 (measured), and the cast to the nanosecond output type then fails: such outputs refuse with `terrine.execution.arrow_timestamp_range` (route: declare `TIMESTAMP_TZ(6)` or cast in a SQL relation); in-range results keep nanoseconds.
 6. **As-of joins.** Ibis lowers `asof_join` to Snowflake's native `ASOF JOIN ... MATCH_CONDITION`, whose semantics match (measured for `>=`, `>`, timestamps and negated decimal keys).
 
@@ -52,7 +52,7 @@
 
 **Files:** `terrine/execution/_snowflake.py`, `terrine/execution/backend.py` (`_SnowflakeProvider`), `terrine/execution/inputs.py` (`_open_snowflake_execution`), `terrine/backends/capabilities.py` (`SNOWFLAKE_CAPABILITIES`), `integration/warehouse_execution/test_snowflake_admission.py`
 
-- [x] Probes: concurrent insert after open invisible via table, view, SQL relation and Arrow batches; a materialization issues only `SELECT`/`DESCRIBE`/`SHOW` (`QUERY_HISTORY_BY_SESSION`); replaced table / changed view refuse after binding; swap, replace, add-column and view redefinition between resolution and the read refuse; zero-retention table, secure view and routine-calling views refuse; non-UTC session refuses; Snowflake identifier rules; nanosecond outputs beyond Arrow's range refuse; `Dataset.open_generation` refuses. Red checks against a live warehouse are still owed (see Status).
+- [x] Probes: concurrent insert after open invisible via table, view, SQL relation and Arrow batches; a materialization issues only `SELECT`/`DESCRIBE`/`SHOW` (`QUERY_HISTORY_BY_SESSION`); replaced table / changed view refuse after binding; swap, replace, add-column and view redefinition between resolution and the read refuse, a streamed read before its first batch; zero-retention table, secure view and routine-calling views refuse; non-UTC session refuses; Snowflake identifier rules, inside admitted SQL (a cased CTE reference) too; nanosecond outputs beyond Arrow's range refuse; `Dataset.open_generation` refuses. Red-checked live (Status).
 - [x] Implement identity (table type, `CREATED`, `LAST_DDL`, retention, columns, view text), view closure with Snowflake identifier rules, sqlglot `AT` rewrite, post-read identity re-verification, overflow and lost-history error mapping; commit.
 
 ### Task 3: Dialect helpers for Snowflake
@@ -60,20 +60,20 @@
 **Files:** `terrine/backends/{numeric,timestamps,joins,extrema,dialect}.py`, dialect gates (`semantic/rules.py`, `temporal/{first,prefix}.py`, `compile/anchors.py`), `integration/warehouse_execution/test_snowflake_parity.py`
 
 - [x] Probes: parity with DuckDB for every PostgreSQL window and shape design (reuse `test_postgres_windows`/`test_postgres_shapes` data and helpers), event-id tie breaking, cohort summaries, nanosecond timestamp parts and comparisons over years 1-9999, exact overflow boundary.
-- [ ] Implement until parity passes; commit (committed; the live run after the last fix is pending, see Status).
+- [x] Implement until parity passes; commit (Schedule anchors use `terrine/backends/sequences.py` on Snowflake; integer filters compare `NUMBER(p, 0)` columns against their 38-digit range; green in run 40107656757).
 
 ### Task 4: Float facts on Snowflake
 
 **Files:** `terrine/temporal/aggregate.py`, `terrine/backends/numeric.py` (landed with Task 3: the float state reuses the same helpers)
 
-- [x] Probes: float windows match DuckDB bit for bit (one rounding of the same decimal sums, history with `1e15` cancelling exactly); non-finite history refuses `nonfinite_input`; coefficients beyond 38 digits refuse `bound_overflow` (including a dropped float denominator and a unit whose smallest value sets a wide scale); a prefix sum beyond 38 digits refuses `exact_overflow`.
-- [ ] Implement scaled `NUMBER(38, 0)` state from `VARIANT` text and normalized-significand quotients; committed, live verification pending (see Status).
+- [x] Probes: float windows match DuckDB within one ulp (the same decimal sums rounded once, history with `1e15` cancelling exactly, the `0.1 + 0.2 + 0.30000000000000004` window equal bit for bit); non-finite history refuses `nonfinite_input`; coefficients beyond 38 digits refuse `bound_overflow` (including a dropped float denominator, a quotient beyond binary64's range and a unit whose widest text sets a 38-digit scale); a prefix sum beyond 38 digits refuses `exact_overflow`.
+- [x] Implement scaled `NUMBER(38, 0)` state from `DECFLOAT` text and normalized-significand quotients; green in run 40107656757.
 
 ### Task 5: CI, example and docs
 
 **Files:** workflow, `examples/snowflake/dataset.py`, `docs/guides/{backend-compatibility,capabilities,common-stack-interop}.md`, `README.md`, `CHANGELOG.md`
 
-- [x] Weekly + dispatch job runs `make test-snowflake` and `examples/snowflake/dataset.py`; docs state the snapshot model, identity re-verification, retention and session requirements, identifier rules, the 38-digit exact bound, the Arrow nanosecond range and the refusals; commit. The example's own live run is pending.
+- [x] Weekly + dispatch job runs `make test-snowflake` and `examples/snowflake/dataset.py`; docs state the snapshot model, identity re-verification, retention and session requirements, identifier rules, the 38-digit exact bound, the 18-digit float text, the Arrow nanosecond range and the refusals; commit. Both steps green in run 40107656757.
 
 ## Status (resumed 2026-10-24)
 
@@ -97,8 +97,8 @@ range`; `NUMBER(38,0) / NUMBER(38,0)` is `NUMBER(38,6)` and overflows for
 -1)` is `''`; `TO_VARCHAR(NUMBER(12,2))` keeps the full scale (`'1.50'`); the
 connector returns `timestamp[ns]` Arrow columns for in-range results and raises
 `252005 ... overflows int64 range` (or returns truncated `timestamp[us]`) for
-results holding an out-of-range instant; `DECFLOAT(38)` exists and
-`TO_DECFLOAT(FLOAT)` is the exact binary expansion to 38 digits (unused);
+results holding an out-of-range instant; `DECFLOAT(38)` exists (its text of
+a `FLOAT` was later measured as 18 significant digits, see below);
 `'1e20'` in `INSERT ... VALUES` parses as a NUMBER and fails on a FLOAT column
 (tests write `'1e20'::FLOAT`).
 
@@ -122,40 +122,76 @@ fails with Snowflake `000904 invalid identifier '_U.POS'`: Ibis lowers the
 Schedule anchor's range/unnest to `TABLE(FLATTEN(...))` with a `_u` alias whose
 `POS` column Snowflake rejects (an Ibis Snowflake lowering gap to work around
 in `terrine/backends/` or `compile/anchors.py`); (b) `weight_week` came back
-`0.6` where DuckDB gives `0.6000000000000001` for the decimal
-`0.60000000000000004`: `TRY_TO_DOUBLE('60000000000000004e-17')` is one ulp
-off although the measured halfway and subnormal cases were correct, so the
-guide now claims within-one-ulp agreement and the test asserts that; a
-correctly rounded route (for example `TO_DOUBLE(TO_DECFLOAT(text))`) is
-unmeasured; (c) two `5e37` coefficients summed to `1e38` without an error:
-Snowflake's `NUMBER(38, 0)` window sum holds values to about `1.7e38` (its
-128-bit accumulator) and raises beyond, so the test now sums `9e37` twice.
+`0.6` where DuckDB gives `0.6000000000000001`, at first attributed to
+`TRY_TO_DOUBLE` (wrong, see below); (c) two `5e37` coefficients summed to
+`1e38` without an error: Snowflake's `NUMBER(38, 0)` window sum holds values
+to about `1.7e38` (its 128-bit accumulator) and raises beyond, so the test
+now sums `9e37` twice.
 
 Run 40103934563 (full `make test-snowflake` on `feat/snowflake-execution`,
-head 7f2776d): 32 passed, 1 failed (`test_design_matches_duckdb[schedule]`,
-the `FLATTEN` lowering above), 1 skipped; the example step did not run because
-the test step failed. Push CI run 40103924095 on the same head passed.
+head 7f2776d): 32 passed, 1 failed (`test_design_matches_duckdb[schedule]`),
+1 skipped. Push CI run 40103924095 on the same head passed.
 
-**Remaining before this plan is done:**
+**Finished 2026-10-24 (head ae0ac93).** Fixes after the review of 7f2776d:
+Schedule anchors on Snowflake build their sequence from the cross product of
+decimal-digit relations (`terrine/backends/sequences.py`) instead of Ibis's
+`TABLE(FLATTEN(...))` lowering; a streamed read verifies relation identity
+once the statement completes and before its first batch (it used to verify
+after the last, and a one-batch reader never did); `pin()` normalizes
+identifiers before scope traversal, so an unquoted `RECENT` names the CTE
+`recent` and gets no `AT`; integer filters compare `NUMBER(p, 0)` columns,
+which Ibis reads as `int64`, against the 38-digit physical range through
+`integer_bounds`, and a threshold outside the column's range settles without
+a literal (a 20-digit value used to pass a 21-digit `gt` threshold clipped to
+`2**63`).
 
-- Fix the Schedule-anchor `FLATTEN` lowering (a) and decide the float output
-  conversion (b); then dispatch
-  `backend_mode=snowflake` on `feat/snowflake-execution` (full
-  `make test-snowflake` plus `examples/snowflake/dataset.py`) and record it.
-- Red checks for the live probes (one dispatch per file with deliberate
-  one-line breaks: drop the `AT` pin, make `verify()` a no-op, skip the
-  retention and routine checks, issue a write in `SnowflakeSession.open`, skip
-  coefficient padding, flip the as-of inclusivity) and their recorded failures.
-- The quotient-overflow refusal (`spend_per_weight` with a `1e-320` weight
-  → `bound_overflow`) did not raise in run 40102138510; the case was removed
-  from `test_float_window_failures_are_coded_refusals` pending a measurement
-  of `TRY_TO_DOUBLE('1000000000000000000e303')` and of the inserted value.
-- PostgreSQL and BigQuery live tiers for the shared changes (`numeric.py`,
-  `timestamps.py`, `first.py` reverse key now in nanoseconds for all three
-  warehouses, `time_to_event.py` nanosecond gating), `make lint`,
-  `make typecheck`, `uv run pytest tests -q` (passed locally before the last
-  fixes: 1251), the non-live integration tier, and the docs build.
-- `SNOWFLAKE_CAPABILITIES` marks `dialect_admission`, `transaction_view`,
-  `arrow_batches`, `exact_timestamps` and `exact_decimals` verified; the
-  admission probes exercised the first three in run 40102138510, and the
-  parity run that exercises the last two is the pending one.
+**Measured on Snowflake (throwaway branch `probe/snowflake-measure-2`, runs
+40106215765 and 40106855757, since deleted):** row-wise `TO_VARIANT(x)::VARCHAR`
+and `TO_CHAR(x)` keep 15 significant digits (10 with a negative exponent),
+`TO_JSON` and `TM`/`TME` 16, so the earlier one-ulp deviation came from lossy
+input text (`0.30000000000000004` entered as `0.3`); the shortest form seen in
+the first measurement was constant folding. `TO_DECFLOAT(x)::VARCHAR` is 18
+significant digits, correctly rounded, round-tripping on all 143 vectors
+(max relative error 4.5e-18) and is now the float text (Design decision 4).
+`TRY_TO_DOUBLE`, `TO_DOUBLE` and `::DOUBLE` were correctly rounded on all 143
+vectors read back through Arrow; `TO_DOUBLE(TO_DECFLOAT(text))` double-rounds.
+Row-wise `TRY_TO_DOUBLE` returns NULL beyond binary64's range (`TO_DOUBLE`
+errors `100038`; constant folding returns `Infinity`) and `0.0` below it;
+`1e-320` is stored as the subnormal `9.99988867182683e-321`. The quotient
+case `10 / 1e-320` was therefore a silent NULL; a NULL conversion of a
+non-NULL operand is now `bound_overflow` and the parity case is restored.
+
+Run 40107656757 (full `make test-snowflake` plus `examples/snowflake/dataset.py`
+on head ae0ac93): 36 passed, 1 skipped, both steps green (10 m 51 s). Push CI
+run 40107656532 on the same head passed. Red checks on throwaway branches
+from ae0ac93 (since deleted): run 40108635983 (`probe/snowflake-red-1`) with
+no `AT` pin, batch verification moved after the last batch, retention,
+routine and UTC checks skipped, a `CREATE TEMPORARY TABLE` in `open()`, the
+Arrow range mapping and the overflow mapping dropped, `int64` filter bounds,
+Ibis's range unnest, 15-digit float text and nanoseconds dropped from
+timestamp parts: 17 failed, 19 passed, each break caught by its own probe
+(the pin and CTE tests saw 2 rows, the four `during_execution` cases failed
+at the batch assertion only, retention and both routine cases and the UTC
+case did not raise, `only_reads` saw `CREATE_TABLE`, the Arrow and overflow
+tests raised raw connector errors, the beyond-int64 filter counted `[0, 0, 0,
+3]`, `[schedule]` failed with `000904`, `weight_week` came back `0.6`, the
+timestamp parts mismatched). Run 40108666238 (`probe/snowflake-red-2`) with
+`verify()` a no-op, coefficient padding skipped, as-of inclusivity flipped in
+`backends/joins.py`, NULL conversions passing and the `first_occurrence` tie
+order reversed: 8 failed, 28 passed: the swap, add-column and view cases of
+`during_execution` did not raise (the replace case still refuses through the
+`time travel data is not available` mapping, by design), the `1e39`, dropped
+`1e39` denominator and `1e-20`/`1e20` cases and the float window test failed
+from the missing padding, and the `1e-320` quotient did not raise. Two breaks
+went undetected: the as-of inclusivity flip (no parity row sits exactly on a
+window boundary) and the reversed tie order in `first_occurrence` (the tie
+probe exercises another path). Both are probe-sensitivity gaps, not product
+faults; a boundary-instant row in the shapes data and a tie case through
+`first_occurrence` are owed before the as-of and tie claims count as
+red-checked on Snowflake.
+
+Local gates on ae0ac93: `uv run pytest tests -q` 1266 passed; the non-live
+integration tier 197 passed; `make lint`, `make typecheck`,
+`python -m tests.documentation` and the strict docs build green; PostgreSQL
+live tier 45 passed; BigQuery live tier 23 passed. Dispatches used in this
+pass: 5 (two measurements, the full run, two red checks); 12 in total.
