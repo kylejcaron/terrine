@@ -137,7 +137,9 @@ Every physical reference, inside admitted SQL too, is resolved against the
 connection's database and schema at binding and rewritten fully qualified, so
 a later `USE SCHEMA` on the caller's connection cannot redirect a pinned read;
 a new materialization after such a change re-resolves the names and refuses
-when they now denote other objects. Columns are referenced exactly as the
+when they now denote other objects. A reference in admitted SQL that already
+carries its own `AT`/`BEFORE` clause keeps it, and admitted SQL calling a user
+routine by name refuses as a view does. Columns are referenced exactly as the
 connection's schema reports them. Every admitted relation binds with its
 `CREATED` and `LAST_DDL` instants, which must not postdate the snapshot, and
 the session re-reads them once each statement has completed and before any of

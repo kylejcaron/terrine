@@ -308,9 +308,11 @@ def _called_names(definition: str) -> set[str]:
 _FUNCTIONS_SQL = "SELECT FUNCTION_NAME FROM {database}.INFORMATION_SCHEMA.FUNCTIONS"
 
 
-def _check_view_routines(con: Any, definition: str, name: str, databases: Iterable[str]) -> None:
-    """Refuse a view calling any user routine by the name written in its
-    definition: Snowflake resolves an unqualified call to a user function of
+def _check_routines_by_name(
+    con: Any, definition: str, subject: str, databases: Iterable[str]
+) -> None:
+    """Refuse a view or SQL relation calling any user routine by the name written
+    in its text: Snowflake resolves an unqualified call to a user function of
     that name, in the view's own database or the session's, and a SQL function
     may read tables outside the snapshot. Built-ins are evaluated per query."""
     names = _called_names(definition)
@@ -322,16 +324,16 @@ def _check_view_routines(con: Any, definition: str, name: str, databases: Iterab
             rows = _rows(con, _FUNCTIONS_SQL.format(database=_quote(database)))
         except Exception as exc:
             raise _snapshot_error(
-                f"user routines of database {database!r} could not be listed to admit view "
-                f"{name!r}; materialize its rows into a table"
+                f"user routines of database {database!r} could not be listed to admit "
+                f"{subject}; materialize its rows into a table"
             ) from exc
         # The catalog stores unquoted names upper-cased and quoted names as written.
         routines.update(str(row[0]) for row in rows)
     called = sorted(names & routines)
     if called:
         raise _snapshot_error(
-            f"view {name!r} calls the user routine {', '.join(called)}, whose result is not "
-            "pinned; materialize its rows into a table, or bind a view using only built-ins"
+            f"{subject} calls the user routine {', '.join(called)}, whose result is not "
+            "pinned; materialize its rows into a table, or use only built-ins"
         )
 
 
@@ -385,8 +387,11 @@ def _closure(
         assert relation.view_text is not None
         statement = _view_query(relation.view_text)
         _check_qualified_routines(statement)
-        _check_view_routines(
-            con, relation.view_text, relation.name, (relation.database, _defaults(con)[0])
+        _check_routines_by_name(
+            con,
+            relation.view_text,
+            f"view {relation.name!r}",
+            (relation.database, _defaults(con)[0]),
         )
         for dependency in qualify(con, statement, (relation.database, relation.schema)):
             _closure(con, dependency, seen, path | {key})
@@ -462,6 +467,9 @@ def resolve(
             source=con,
             namespace=ops.Namespace(catalog=item.database, database=item.schema),
         ).to_expr()
+    # sqlglot may rewrite a user routine named like a built-in (STR_POSITION
+    # renders as CHARINDEX), so the names as written are checked first.
+    _check_routines_by_name(con, relation.sql, "the SQL relation", (_defaults(con)[0],))
     statement = _admit_read_query_ast(relation.sql, catalog_dialect, DIALECT)
     qualify(con, statement)
     sql = statement.sql(dialect=DIALECT)
@@ -504,7 +512,9 @@ def pin(sql: str, stamp: str) -> str:
 
     statement = _normalized(parse_one(sql, read=DIALECT))
     for table in _physical_tables(statement):
-        table.set("when", _historical(stamp))
+        # An explicit AT/BEFORE already names one fixed instant; keep it.
+        if table.args.get("when") is None:
+            table.set("when", _historical(stamp))
     return statement.sql(dialect=DIALECT)
 
 

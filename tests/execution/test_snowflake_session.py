@@ -10,7 +10,7 @@ from sqlglot import exp, parse_one
 from terrine.errors import TerrineError
 from terrine.execution import _snowflake
 from terrine.execution._snowflake import pin
-from terrine.semantic.models import TableRef
+from terrine.semantic.models import SqlQuery, TableRef
 
 _INSTANT = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -45,6 +45,13 @@ def test_pin_leaves_a_quoted_name_that_differs_from_its_cte_as_a_table():
         "EVENTS": True,
         "cte": True,
     }
+
+
+def test_pin_keeps_an_explicit_historical_instant():
+    sql = "SELECT * FROM events AT (TIMESTAMP => '2025-01-01'::TIMESTAMP_TZ)"
+    pinned = parse_one(pin(sql, "2026-01-01 00:00:00.000000000 +0000"), read="snowflake")
+    (table,) = pinned.find_all(exp.Table)
+    assert "2025-01-01" in table.args["when"].sql(dialect="snowflake")
 
 
 def _qualified_names(sql: str) -> set[str]:
@@ -177,3 +184,12 @@ def test_resolved_schemas_keep_integer_precision_beyond_int64(monkeypatch):
             "at": dt.Timestamp(timezone="UTC", scale=9),
         }
     )
+
+
+def test_sql_relation_calling_a_user_routine_named_like_a_built_in_refuses(monkeypatch):
+    # sqlglot renders STR_POSITION as CHARINDEX, so the written name is checked.
+    _metadata(monkeypatch, routines=("STR_POSITION",))
+    relation = SqlQuery(kind="sql", sql="SELECT STR_POSITION(user_id, 'a') AS n FROM events")
+    with pytest.raises(TerrineError) as error:
+        _snowflake.resolve(object(), relation)
+    assert error.value.code == "terrine.execution.snapshot_unavailable"
