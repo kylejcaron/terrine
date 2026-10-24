@@ -12,6 +12,7 @@ import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 import pyarrow as pa
 
+from terrine.backends.sequences import integer_sequence
 from terrine.backends.timestamps import has_submicrosecond, utc_instant, utc_wall_clock
 from terrine.errors import RefusalSpec
 from terrine.model import Model
@@ -290,7 +291,7 @@ def _roster_anchors(
         if elapsed_seconds <= 0:
             raise _INVALID.error(reason="schedule interval has no elapsed time")
         stop = (elapsed_seconds + schedule.every - 1) // schedule.every
-        sequence = ibis.range(0, stop).unnest().cast("int64").name("ordinal").as_table()
+        sequence = integer_sequence(stop, "ordinal", dialect=model.catalog.dialect)
         ordinal = sequence.ordinal
         # An integer-seconds interval: Ibis lowers `interval * column` on BigQuery
         # through EXTRACT(SECOND ...), which normalizes 86400 s to zero.
