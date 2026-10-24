@@ -40,6 +40,7 @@ __all__ = [
     "float_is_finite",
     "float_scale",
     "has_scaled_float_state",
+    "integer_bounds",
     "is_exact_type",
     "normalized",
     "normalized_quotient",
@@ -130,6 +131,25 @@ def decimal_coefficient(value: ir.Value, scale: int) -> ir.Value:
         return _bq_exact_multiply(exact, exact_literal(10**scale, value)) if scale else exact
     text = value.cast("string")
     return (text.replace(".", "") if scale else text).cast(exact_type(value))
+
+
+# Snowflake's integer types are all NUMBER(p <= 38, 0).
+_SF_INTEGER_MAXIMUM = 10**38 - 1
+
+
+def integer_bounds(value: ir.Value) -> tuple[int, int]:
+    """The physical range of an integer column.
+
+    Ibis reports every Snowflake ``NUMBER(p, 0)`` as ``int64``, but the column
+    holds up to 38 digits; the other backends' integer types are fixed-width.
+    """
+    if dialect_of(value) == "snowflake":
+        return -_SF_INTEGER_MAXIMUM, _SF_INTEGER_MAXIMUM
+    dtype = value.type()
+    if not isinstance(dtype, (dt.SignedInteger, dt.UnsignedInteger)):
+        raise TypeError(f"{dtype} is not an integer type")
+    lower, upper = dtype.bounds
+    return lower, upper
 
 
 @ibis.udf.scalar.builtin(name="ltrim", signature=((dt.string, dt.string), dt.string))

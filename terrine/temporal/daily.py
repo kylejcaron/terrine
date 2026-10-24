@@ -24,6 +24,7 @@ from terrine.backends.numeric import (
     exact_type,
     float_is_finite,
     float_scale,
+    integer_bounds,
 )
 from terrine.backends.timestamps import utc_instant, utc_wall_clock
 from terrine.semantic.bind import _MISSING, _SCHEMA
@@ -211,16 +212,35 @@ def _numeric_threshold(item, scale, bounds, name):
     return _clip_threshold(floor, ceil, rational.denominator == 1, bounds)
 
 
+# Every coefficient lies below a threshold above the column's range, and above
+# one below it; equality never holds either way.
+_ABOVE_RANGE = {"gt": False, "gte": False, "lt": True, "lte": True}
+
+
+def _known(value, result: bool):
+    """A comparison settled without a literal, still NULL for a NULL value."""
+    return value.isnull().ifelse(ibis.null().cast("boolean"), result)
+
+
 def _exact_comparison(value, coefficient, scale, bounds, item, op, name):
-    """Lower an exact coefficient/rational comparison without native division."""
+    """Lower an exact coefficient/rational comparison without native division.
+
+    A threshold outside the column's physical range settles the comparison
+    without a literal, which the exact type might not hold (Snowflake's
+    NUMBER(38, 0) has no 39th digit for one past a 38-digit column).
+    """
     if item is None:
-        threshold = ibis.null().cast(exact_type())
-    else:
-        floor, ceil, integral = _numeric_threshold(item, scale, bounds, name)
-        if op in {"equals", "not_equals"} and not integral:
-            return value.isnull().ifelse(ibis.null().cast("boolean"), op == "not_equals")
-        threshold = exact_literal(ceil if op in {"gte", "lt"} else floor)
-    return _COMPARISONS[op](coefficient, threshold)
+        return _COMPARISONS[op](coefficient, ibis.null().cast(exact_type()))
+    floor, ceil, integral = _numeric_threshold(item, scale, bounds, name)
+    if op in {"equals", "not_equals"} and not integral:
+        return _known(value, op == "not_equals")
+    threshold = ceil if op in {"gte", "lt"} else floor
+    lower, upper = bounds
+    if threshold > upper or threshold < lower:
+        if op in {"equals", "not_equals"}:
+            return _known(value, op == "not_equals")
+        return _known(value, _ABOVE_RANGE[op] if threshold > upper else not _ABOVE_RANGE[op])
+    return _COMPARISONS[op](coefficient, exact_literal(threshold))
 
 
 def _filter_literal(value, item, name):
@@ -267,7 +287,7 @@ def _filter_comparison(value, filt):
             maximum = 10**dtype.precision - 1
             bounds = (-maximum, maximum)
         else:
-            bounds = dtype.bounds
+            bounds = integer_bounds(value)
         coefficient = decimal_coefficient(value, scale)
     elif dtype.is_floating():
         value = value.cast("float64")

@@ -125,6 +125,76 @@ def test_exact_overflow_is_a_coded_refusal_and_the_boundary_succeeds(snowflake_s
     assert error.value.code == "terrine.temporal.exact_overflow"
 
 
+_SIZE_CATALOG = """schema_version: 1
+day_boundary: UTC
+dialect: snowflake
+sources:
+  orders:
+    relation: {kind: table, name: events}
+    timestamp: occurred_at
+    entities: {user: user_id}
+    facts: [order]
+    properties: [size]
+    dimensions: []
+facts:
+  order: {source: orders, column: null}
+properties:
+  size: {source: orders, column: qty, dtype: int, as_of: event_time}
+dimensions: {}
+measures:
+  above_1e19:
+    fact: order
+    aggregation: count
+    filters: [{property: size, op: gt, values: [10000000000000000000]}]
+  from_1e19:
+    fact: order
+    aggregation: count
+    filters: [{property: size, op: gte, values: [10000000000000000000]}]
+  above_1e20:
+    fact: order
+    aggregation: count
+    filters: [{property: size, op: gt, values: [100000000000000000000]}]
+  below_1e40:
+    fact: order
+    aggregation: count
+    filters: [{property: size, op: lt, values: ["1e40"]}]
+metrics:
+  above_1e19: {kind: mean, entity: user, measure: above_1e19}
+  from_1e19: {kind: mean, entity: user, measure: from_1e19}
+  above_1e20: {kind: mean, entity: user, measure: above_1e20}
+  below_1e40: {kind: mean, entity: user, measure: below_1e40}
+"""
+
+
+def test_integer_filters_compare_number_columns_beyond_int64(snowflake_scratch, tmp_path):  # noqa: F811
+    # Ibis reads NUMBER(38, 0) as int64; thresholds must not clip to that range.
+    scratch = snowflake_scratch
+    scratch.sql('CREATE TABLE users("user_id" VARCHAR)')
+    scratch.sql(
+        'CREATE TABLE events("user_id" VARCHAR, "occurred_at" TIMESTAMP_TZ(9), "qty" NUMBER(38, 0))'
+    )
+    scratch.sql("INSERT INTO users VALUES ('d')")
+    scratch.sql(
+        "INSERT INTO events VALUES "
+        + ", ".join(
+            f"('d', '2025-01-01 {hour:02d}:00:00 +0000', {qty})"
+            for hour, qty in enumerate((1, 10**19, 12345678901234567890123))
+        )
+    )
+    path = tmp_path / "size.yaml"
+    path.write_text(_SIZE_CATALOG, encoding="utf-8")
+    model = tr.Model.from_catalog(
+        path,
+        con=scratch.con,
+        units={"user": tr.UnitSource("users", "user_id")},
+        readiness={"orders": tr.Coverage("2024-12-01", "2025-02-01")},
+    )
+    names = ("above_1e19", "from_1e19", "above_1e20", "below_1e40")
+    design = windows._design(**{name: tr.agg(name, window=("-1d", "0s")) for name in names})
+    (row,) = windows._rows(model, design)
+    assert [row[name] for name in names] == [1, 2, 1, 3]
+
+
 @pytest.mark.parametrize("name", sorted(shapes._DESIGNS))
 def test_design_matches_duckdb(snowflake_scratch, tmp_path, name):  # noqa: F811
     _load_shapes(snowflake_scratch)
