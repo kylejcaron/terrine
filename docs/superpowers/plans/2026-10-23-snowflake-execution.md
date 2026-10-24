@@ -131,6 +131,11 @@ unmeasured; (c) two `5e37` coefficients summed to `1e38` without an error:
 Snowflake's `NUMBER(38, 0)` window sum holds values to about `1.7e38` (its
 128-bit accumulator) and raises beyond, so the test now sums `9e37` twice.
 
+Run 40103934563 (full `make test-snowflake` on `feat/snowflake-execution`,
+head 7f2776d): 32 passed, 1 failed (`test_design_matches_duckdb[schedule]`,
+the `FLATTEN` lowering above), 1 skipped; the example step did not run because
+the test step failed. Push CI run 40103924095 on the same head passed.
+
 **Remaining before this plan is done:**
 
 - Fix the Schedule-anchor `FLATTEN` lowering (a) and decide the float output
