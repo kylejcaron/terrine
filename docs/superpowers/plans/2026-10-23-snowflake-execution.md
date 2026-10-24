@@ -187,8 +187,16 @@ went undetected: the as-of inclusivity flip (no parity row sits exactly on a
 window boundary) and the reversed tie order in `first_occurrence` (the tie
 probe exercises another path). Both are probe-sensitivity gaps, not product
 faults; a boundary-instant row in the shapes data and a tie case through
-`first_occurrence` are owed before the as-of and tie claims count as
-red-checked on Snowflake.
+`first_occurrence` were added (`test_boundary_and_tied_first_events_match_duckdb`)
+and run with both breaks applied in run 40111552297 (`probe/snowflake-red-3`,
+deleted): they passed, so neither break is consumer-visible through the
+TimeToEvent shapes (events are confined to `[lower, upper)` before the as-of
+join, and the tie-ranked event id is not an output); the as-of inclusivity is
+observable only through as-of attributes, so the probe now also runs
+`as_of_interleaved_units` with events exactly at `t0` and `t0 − 1d` (unrun on
+Snowflake: covered by the next full or weekly run). The repeated-subnormal
+probe (200 × `5e-324`) passed in the same run, within
+`2⁻⁵¹ · Σ|x| + (n + 1) · 2⁻¹⁰⁷⁴`.
 
 Local gates on ae0ac93: `uv run pytest tests -q` 1266 passed; the non-live
 integration tier 197 passed; `make lint`, `make typecheck`,

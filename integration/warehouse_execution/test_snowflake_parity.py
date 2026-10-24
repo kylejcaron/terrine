@@ -427,6 +427,9 @@ def test_boundary_and_tied_first_events_match_duckdb(snowflake_scratch, tmp_path
         ("d", "2025-01-01 12:00:00", "2.00", "silver", "00000000-0000-0000-0000-000000000101"),
         ("d", "2025-01-01 12:00:00", "1.00", "gold", "00000000-0000-0000-0000-000000000100"),
         ("c", "2025-01-01 12:00:00", "3.00", "gold", "00000000-0000-0000-0000-000000000102"),
+        # Exactly at the as-of instants of as_of_interleaved_units (t0 and t0 - 1d).
+        ("d", "2025-01-02 03:00:00", "4.00", "bronze", "00000000-0000-0000-0000-000000000103"),
+        ("d", "2025-01-01 03:00:00", "5.00", "silver", "00000000-0000-0000-0000-000000000104"),
     ]
     snowflake_scratch.sql(
         "INSERT INTO events VALUES "
@@ -442,7 +445,11 @@ def test_boundary_and_tied_first_events_match_duckdb(snowflake_scratch, tmp_path
         )
     )
     event_ids = {"orders": "event_id"}
-    for name in ("time_to_first_order", "time_to_order_with_entry_and_exit"):
+    for name in (
+        "time_to_first_order",
+        "time_to_order_with_entry_and_exit",
+        "as_of_interleaved_units",
+    ):
         design = shapes._DESIGNS[name]
         expected = shapes._rows(shapes._model(duckdb, tmp_path, "duckdb", event_ids), design)
         actual = shapes._rows(
