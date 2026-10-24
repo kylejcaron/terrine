@@ -91,6 +91,7 @@ def _metadata(
     policies=(),
     tags=(),
     view=None,
+    routines=(),
 ):
     """Stub the catalog reads behind one relation's identity; ``view`` is the
     stored definition of ``SHAPED``, every other name being a base table."""
@@ -108,6 +109,8 @@ def _metadata(
             return list(policies)
         if "TAG_REFERENCES_ALL_COLUMNS" in sql:
             return list(tags)
+        if "INFORMATION_SCHEMA.FUNCTIONS" in sql:
+            return [(routine,) for routine in routines]
         raise AssertionError(sql)
 
     monkeypatch.setattr(_snowflake, "_rows", rows)
@@ -166,6 +169,21 @@ def test_views_over_admitted_built_ins_bind_their_closure(monkeypatch):
     monkeypatch.setattr(_snowflake, "_defaults", lambda con: ("DB", "S"))
     closure = _snowflake.closure_for(TableRef(kind="table", name="shaped"), object())
     assert [item.kind for item in closure.values()] == ["view", "table"]
+
+
+def test_views_calling_a_user_routine_named_like_a_built_in_refuse(monkeypatch):
+    # sqlglot parses STR_POSITION as a built-in and renders CHARINDEX, which the
+    # whitelist admits, while Snowflake would run the user's STR_POSITION.
+    _metadata(
+        monkeypatch,
+        view='CREATE VIEW shaped AS SELECT STR_POSITION("user_id", \'a\') AS "amount" FROM events',
+        routines=("STR_POSITION",),
+    )
+    monkeypatch.setattr(_snowflake, "_defaults", lambda con: ("DB", "S"))
+    with pytest.raises(TerrineError) as error:
+        _snowflake.closure_for(TableRef(kind="table", name="shaped"), object())
+    assert error.value.code == "terrine.execution.snapshot_unavailable"
+    assert "STR_POSITION" in error.value.context["reason"]
 
 
 def test_resolved_schemas_keep_integer_precision_beyond_int64(monkeypatch):

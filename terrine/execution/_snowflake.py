@@ -324,6 +324,57 @@ def _view_query(definition: str, name: str) -> Any:
     return admitted_view_query(definition, DIALECT, name=name)
 
 
+def _called_names(definition: str) -> set[str]:
+    """Every function name as written in a definition: an identifier directly
+    followed by ``(``. Taken from the tokens, not the parse, because sqlglot
+    maps some names to other built-ins (``STR_POSITION`` becomes ``CHARINDEX``)
+    while Snowflake would execute a user routine of the written name."""
+    from sqlglot.dialects.dialect import Dialect
+    from sqlglot.tokens import TokenType
+
+    tokens = Dialect.get_or_raise(DIALECT).tokenize(definition)
+    names: set[str] = set()
+    for token, following in zip(tokens, tokens[1:], strict=False):
+        if following.token_type is TokenType.L_PAREN and token.token_type not in (
+            TokenType.L_PAREN,
+            TokenType.R_PAREN,
+            TokenType.COMMA,
+        ):
+            quoted = token.token_type is TokenType.IDENTIFIER
+            names.add(token.text if quoted else token.text.upper())
+    return names
+
+
+_FUNCTIONS_SQL = "SELECT FUNCTION_NAME FROM {database}.INFORMATION_SCHEMA.FUNCTIONS"
+
+
+def _check_view_routines(con: Any, definition: str, name: str, databases: Iterable[str]) -> None:
+    """Refuse a view calling any user routine by the name written in its
+    definition, whatever built-in that name parses to: Snowflake resolves an
+    unqualified call to a user function of that name before any built-in, in
+    the view's own database and schema or the session's search path, and a SQL
+    function may evaluate anything, ``RANDOM()`` included."""
+    names = _called_names(definition)
+    if not names:
+        return
+    routines: set[str] = set()
+    for database in dict.fromkeys(databases):
+        try:
+            rows = _rows(con, _FUNCTIONS_SQL.format(database=_quote(database)))
+        except Exception as exc:
+            raise _snapshot_error(
+                f"user routines of database {database!r} could not be listed to admit view "
+                f"{name!r}; materialize its rows into a table"
+            ) from exc
+        routines.update(str(row[0]).upper() for row in rows)
+    called = sorted(names & routines)
+    if called:
+        raise _snapshot_error(
+            f"view {name!r} calls the user routine {', '.join(called)}, whose result is not "
+            "pinned; materialize its rows into a table, or bind a view using only built-ins"
+        )
+
+
 def _physical_tables(statement: Any) -> list[Any]:
     """Physical relation references in every scope of a normalized statement:
     common table expressions, derived tables and table functions are not."""
@@ -373,6 +424,9 @@ def _closure(
     if relation.kind == "view":
         assert relation.view_text is not None
         statement = _view_query(relation.view_text, relation.name)
+        _check_view_routines(
+            con, relation.view_text, relation.name, (relation.database, _defaults(con)[0])
+        )
         for dependency in qualify(con, statement, (relation.database, relation.schema)):
             _closure(con, dependency, seen, path | {key})
 

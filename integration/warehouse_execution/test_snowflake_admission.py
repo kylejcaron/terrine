@@ -242,6 +242,16 @@ def test_pinned_sql_relations_resolve_cte_references_by_snowflake_rules(
             ),
             "shaped",
         ),
+        # A user routine whose name sqlglot maps to another built-in (STR_POSITION
+        # renders as CHARINDEX) passes the whitelist; Snowflake runs the routine.
+        (
+            (
+                "CREATE FUNCTION str_position(x VARCHAR, y VARCHAR) RETURNS FLOAT AS 'RANDOM()'",
+                'CREATE VIEW shaped AS SELECT "user_id", "occurred_at", '
+                'STR_POSITION("user_id", \'a\') AS "amount" FROM events',
+            ),
+            "shaped",
+        ),
         # A tag, on a column or inherited from the table or schema, can gain a
         # masking policy (ALTER TAG ... SET MASKING POLICY) between reads
         # without any DDL on the relation.
