@@ -4,11 +4,12 @@ Exact state uses a native type that adds and subtracts without rounding:
 DuckDB ``BIGNUM`` and PostgreSQL ``NUMERIC`` (arbitrary precision), BigQuery
 ``BIGNUMERIC`` and Snowflake ``NUMBER(38, 0)`` (38 digits; overflow is an
 error). On DuckDB and Snowflake a float enters exact state as an integer
-coefficient at a data-derived decimal scale, built from its shortest
-round-trip text, and leaves it through text, which both convert to binary64
-with correct rounding; quotients divide 19-digit normalized significands as
-wide integers and round once at output. PostgreSQL and BigQuery hold the same
-text unscaled in their exact types and divide there.
+coefficient at a data-derived decimal scale, built from its decimal text
+(DuckDB's shortest round-trip text; on Snowflake the DECFLOAT value, 18
+significant digits), and leaves it through text, which both convert to
+binary64 with correct rounding; quotients divide 19-digit normalized
+significands as wide integers and round once at output. PostgreSQL and
+BigQuery hold the shortest text unscaled in their exact types and divide there.
 """
 
 from __future__ import annotations
@@ -157,12 +158,13 @@ def _ltrim(value, _characters):
     """DuckDB and Snowflake ``ltrim`` removing the given characters."""
 
 
-_SF_VARIANT = dt.Unknown(raw_type=sge.DataType.build("VARIANT", dialect="snowflake"))
+_SF_DECFLOAT = dt.Unknown(raw_type=sge.DataType.build("DECFLOAT", dialect="snowflake"))
 
 
-@ibis.udf.scalar.builtin(name="to_variant", signature=((dt.float64,), _SF_VARIANT))
-def _sf_variant(value):
-    """A binary64 as a Snowflake VARIANT, whose text is its shortest round-trip decimal."""
+@ibis.udf.scalar.builtin(name="to_decfloat", signature=((dt.float64,), _SF_DECFLOAT))
+def _sf_decfloat(value):
+    """A binary64 as a Snowflake DECFLOAT: its value correctly rounded to 18
+    significant digits (measured), which always round-trips."""
 
 
 @ibis.udf.scalar.builtin(
@@ -174,7 +176,8 @@ def _sf_try_number(text, precision, scale):
 
 @ibis.udf.scalar.builtin(name="try_to_double", signature=((dt.string,), dt.float64))
 def _sf_try_double(text):
-    """Snowflake binary64 from decimal text, correctly rounded; infinite beyond its range."""
+    """Snowflake binary64 from decimal text, correctly rounded (measured on halfway,
+    subnormal and 19-digit near-halfway cases); NULL beyond binary64's range."""
 
 
 def _decimal_parts(
@@ -206,20 +209,20 @@ def _decimal_parts(
 
 
 def _finite_text(value: ir.Value) -> tuple[ir.FloatingValue, ir.StringValue]:
-    """A float widened to binary64 and its shortest round-trip text, NULL unless finite.
+    """A float widened to binary64 and its decimal text, NULL unless finite.
 
-    DuckDB prints it directly. Snowflake's VARCHAR conversion keeps at most 15
-    significant digits, but a VARIANT renders the shortest round-trip decimal
-    as ``[-]D.F[E±N]`` with a mandatory fraction digit; it is lower-cased and a
-    ``.0`` fraction is dropped so the text is the DuckDB form.
+    DuckDB prints the shortest round-trip text. Snowflake's row-wise VARCHAR,
+    VARIANT and JSON renderings keep at most 15 or 16 significant digits, so
+    the text there is the DECFLOAT value: 18 significant digits, correctly
+    rounded, within ``0.5 · 10**-17`` relative of the binary value.
     """
     widened = cast(ir.FloatingValue, value.cast(dt.float64))
+    finite = float_is_finite(widened).ifelse(widened, ibis.null(dt.float64))
     if dialect_of(value) == "snowflake":
-        text = _sf_variant(widened).cast("string").lower().re_replace(r"\.0(e|$)", r"\1")
+        text = _sf_decfloat(finite).cast("string").lower()
     else:
-        text = widened.cast("string")
-    text = float_is_finite(widened).ifelse(text, ibis.null(dt.string))
-    return widened, cast(ir.StringValue, text)
+        text = finite.cast("string")
+    return widened, text
 
 
 def _binary64(text: ir.StringValue, dialect: str) -> ir.FloatingValue:
@@ -227,6 +230,12 @@ def _binary64(text: ir.StringValue, dialect: str) -> ir.FloatingValue:
     if dialect == "snowflake":
         return cast(ir.FloatingValue, _sf_try_double(text))
     return cast(ir.FloatingValue, text.cast(dt.float64))
+
+
+def _not_converted(result: ir.FloatingValue) -> ir.BooleanValue:
+    """Whether ``_binary64`` had no finite result: NULL (Snowflake beyond
+    binary64's range) or an infinity (DuckDB)."""
+    return result.isnull() | ~float_is_finite(result)
 
 
 def _scale_text(scale: int | ir.IntegerValue) -> ir.StringValue:
@@ -239,7 +248,7 @@ def float_scale(value: ir.Column, by: Sequence[ir.Column]) -> ir.IntegerValue:
     """The decimal scale at which every float in each ``by`` partition is an integer.
 
     DuckDB and Snowflake: the largest ``fraction_digits − exponent`` over the
-    partition's non-null finite values' shortest round-trip text, floored at
+    partition's non-null finite values' text (``_finite_text``), floored at
     0, so one tiny value widens only its own partition's coefficients.
     PostgreSQL and BigQuery hold float text as unscaled exact state, so their
     scale is 0.
@@ -256,7 +265,7 @@ def float_scale(value: ir.Column, by: Sequence[ir.Column]) -> ir.IntegerValue:
 def exact_float(
     value: ir.Value, scale: int | ir.IntegerValue | None = None
 ) -> tuple[ir.Value, ir.BooleanValue, ir.BooleanValue]:
-    """Exact state for a float from its shortest round-trip text.
+    """Exact state for a float from its decimal text (``_finite_text``).
 
     Returns (exact, nonfinite, unrepresentable). DuckDB and Snowflake hold a
     finite binary64 as the coefficient ``value · 10**scale``: the text's digits
@@ -350,10 +359,11 @@ def exact_to_float(
 
     Returns (float, nonfinite, out_of_range); the float is NULL for either flag.
     DuckDB and Snowflake parse ``coefficient || 'e-' || scale`` text, which
-    their string-to-double conversions round correctly (ties to even), and flag
-    a magnitude beyond binary64's range. PostgreSQL and BigQuery hold unscaled
-    exact state, so ``scale`` is 0 there. Magnitudes at or below 2**-1075 become
-    0.0, as round-to-nearest gives.
+    their string-to-double conversions round correctly (ties to even); a
+    magnitude beyond binary64's range is an infinity on DuckDB and NULL from
+    Snowflake's ``TRY_TO_DOUBLE``, flagged either way. PostgreSQL and BigQuery
+    hold unscaled exact state, so ``scale`` is 0 there. Magnitudes at or
+    below 2**-1075 become 0.0, as round-to-nearest gives.
     """
     false = ibis.literal(False)
     never = cast(ir.BooleanValue, false)
@@ -361,7 +371,7 @@ def exact_to_float(
     if dialect in _SCALED:
         text = value.cast("string") + "e-" + _scale_text(scale)
         result = _binary64(text, dialect)
-        out_of_range = (value.notnull() & ~float_is_finite(result)).fill_null(false)
+        out_of_range = (value.notnull() & _not_converted(result)).fill_null(false)
         rounded = out_of_range.ifelse(ibis.null().cast(dt.float64), result)
         return cast(ir.FloatingValue, rounded), never, out_of_range
     if not isinstance(scale, int) or scale:
@@ -449,8 +459,8 @@ def normalized(
     value's leading 19 significant digits, so ``10**18 ≤ |significand| < 10**19``
     (0 with exponent 0 for zero); the exponent is that of the leading digit. An
     exact coefficient normalizes from its integer text, an already rounded
-    binary64 from its shortest round-trip text (at most 17 digits, held
-    exactly), so it stands for that decimal rather than its binary expansion.
+    binary64 from its ``_finite_text`` (at most 18 digits, held exactly), so
+    it stands for that decimal rather than its binary expansion.
     Digits past the 19th are dropped, perturbing the value by less than
     ``10**-18`` relative. A NULL or non-finite float gives NULL.
     """
@@ -521,8 +531,9 @@ def rounded_normalized(
 ) -> tuple[ir.FloatingValue, ir.BooleanValue]:
     """Round a ``normalized`` value once to binary64 on DuckDB or Snowflake.
 
-    Returns (float, overflow): a magnitude beyond binary64's range is NULL
-    with ``overflow``; a NULL value is NULL without it. Both backends'
+    Returns (float, overflow): a magnitude beyond binary64's range (an
+    infinity on DuckDB, NULL from Snowflake's ``TRY_TO_DOUBLE``) is NULL with
+    ``overflow``; a NULL value is NULL without it. Both backends'
     string-to-double conversions round ``significand || 'e' || (exponent − 18)``
     correctly, within ``u = 2**-53`` relative for a normal result and
     ``2**-1075`` absolute for a subnormal one.
@@ -539,7 +550,7 @@ def rounded_normalized(
     """
     text = significand.cast("string") + "e" + (exponent - (_SIGNIFICAND_DIGITS - 1)).cast("string")
     result = _binary64(text, dialect_of(significand))
-    overflow = (significand.notnull() & ~float_is_finite(result)).fill_null(ibis.literal(False))
+    overflow = (significand.notnull() & _not_converted(result)).fill_null(ibis.literal(False))
     return cast(ir.FloatingValue, overflow.ifelse(ibis.null().cast(dt.float64), result)), overflow
 
 

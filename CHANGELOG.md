@@ -74,15 +74,20 @@
   pins every table and view read to one Time Travel instant on the caller's
   connection (reads only; tables need `DATA_RETENTION_TIME_IN_DAYS >= 1`, the
   session `TIMEZONE` must be `UTC`) and re-verifies every relation's `CREATED`
-  and `LAST_DDL` after each query, so a table swapped, renamed or replaced into
-  place during a run refuses. Names follow Snowflake's identifier rules. The
-  PostgreSQL coverage and tolerance contract carry over with exact state in
-  `NUMBER(38, 0)`: float facts follow the DuckDB design (shortest round-trip
-  text from a `VARIANT`, per-unit scale, one rounding), coefficients or sums
-  beyond 38 digits refuse with a code, and nanosecond timestamps are exact in
-  SQL while Arrow outputs outside 1677-2262 refuse
-  (`terrine.execution.arrow_timestamp_range`). Live Snowflake probes run
-  weekly and on dispatch (`make test-snowflake`).
+  and `LAST_DDL` once each statement completes, before any row reaches the
+  caller, so a table swapped, renamed or replaced into place during a run
+  refuses. Names follow Snowflake's identifier rules, inside admitted SQL too.
+  The PostgreSQL coverage and tolerance contract carry over with exact state in
+  `NUMBER(38, 0)`: float facts follow the DuckDB design (per-unit scale, one
+  correctly rounded `TRY_TO_DOUBLE` rounding) from each value's 18-digit
+  `DECFLOAT` text, since Snowflake's row-wise text renderings of a double are
+  lossy, so float windows match DuckDB within `2⁻⁵¹` of the window's absolute
+  sum rather than bit for bit; coefficients or sums beyond 38 digits and
+  results beyond binary64's range refuse with a code; integer filters compare
+  `NUMBER(p, 0)` columns, which Ibis reads as `int64`, against their 38-digit
+  range; and nanosecond timestamps are exact in SQL while Arrow outputs
+  outside 1677-2262 refuse (`terrine.execution.arrow_timestamp_range`). Live
+  Snowflake probes run weekly and on dispatch (`make test-snowflake`).
 - Refuse decimal sources without a declared precision and scale
   (`terrine.semantic.decimal_scale_required`) and non-finite PostgreSQL numerics
   (`terrine.backend.nonfinite_decimal`).

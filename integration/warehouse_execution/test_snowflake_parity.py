@@ -351,11 +351,15 @@ def test_float_windows_match_duckdb_within_tolerance(snowflake_scratch, tmp_path
     windows._assert_close(actual, expected)
     by_unit = {row["unit"]: row for row in actual}
     reference = {row["unit"]: row for row in expected}
-    # Both backends round the same decimal sums; Snowflake's string-to-double
-    # conversion was measured one ulp off DuckDB's on a 17-digit text.
+    # Snowflake rounds each float to 18 significant digits on entry (its
+    # shortest text is not available row-wise), so the exact window sums can
+    # differ from DuckDB's by under an ulp before the single rounding; here
+    # 0.100000000000000006 + 0.200000000000000011 + 0.300000000000000044 and
+    # DuckDB's 0.60000000000000004 round to the same double.
     for name in ("weight_before", "weight_week", "spend_per_weight"):
         got, want = by_unit["d"][name], reference["d"][name]
         assert abs(got - want) <= math.ulp(want), (name, got, want)
+    assert by_unit["d"]["weight_week"] == reference["d"]["weight_week"] == 0.6000000000000001
 
 
 @pytest.mark.parametrize(
@@ -371,7 +375,11 @@ def test_float_windows_match_duckdb_within_tolerance(snowflake_scratch, tmp_path
         ((("2025-01-01 12:00:00", "1e39"),), "weight", "bound_overflow"),
         # A dropped denominator must not read as a zero denominator.
         ((("2025-01-01 12:00:00", "1e39"),), "spend_per_weight", "bound_overflow"),
-        # The unit's scale comes from its smallest value: 1e20 then needs 41 digits.
+        # A quotient beyond binary64's range (10 / 1e-320): TRY_TO_DOUBLE returns
+        # NULL for it, which must not pass as a missing value.
+        ((("2025-01-01 12:00:00", "1e-320"),), "spend_per_weight", "bound_overflow"),
+        # The unit's scale is the most fractional digits any value's text needs:
+        # 1e-20's 18-digit text 9.99999999999999945e-21 sets 38, so 1e20 needs 59.
         (
             (("2024-12-31 12:00:00", "'1e-20'::FLOAT"), ("2025-01-01 12:00:00", "'1e20'::FLOAT")),
             "weight",

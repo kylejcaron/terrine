@@ -50,10 +50,11 @@ with `terrine.temporal.exact_overflow`.
 
 Averages, ratios and float-valued windows match DuckDB within a tight tolerance
 rather than bit for bit. On every backend a float fact enters exact state as
-the decimal value of its shortest round-trip text (`REAL` is widened first),
-which lies within half an ulp of the stored float, so history outside the
-window cancels exactly and a window sum is that decimal sum rounded to binary64
-once. DuckDB holds the text as a `BIGNUM` coefficient at a per-unit scale and
+the decimal value of its shortest round-trip text (`REAL` is widened first;
+Snowflake uses an 18-significant-digit text, see below), which lies within
+half an ulp of the stored float, so history outside the window cancels exactly
+and a window sum is that decimal sum rounded to binary64 once. DuckDB holds
+the text as a `BIGNUM` coefficient at a per-unit scale and
 rounds through its correctly rounded string-to-double conversion; PostgreSQL
 keeps each window quantity exact in `NUMERIC` and rounds to binary64 once.
 Averages and ratios divide before that rounding: PostgreSQL to at least 16
@@ -120,33 +121,47 @@ or a view that calls a user-defined function refuses with
 
 Relation names follow Snowflake's identifier rules: an unquoted name such as
 `events` resolves to `EVENTS`, a quoted `"events"` is exact, and
-`database.schema.name` qualifies. Columns are referenced exactly as the
-connection's schema reports them. Every admitted relation binds with its
-`CREATED` and `LAST_DDL` instants, which must not postdate the snapshot, and the
-session re-reads them after each query: Time Travel follows the object rather
-than the name, so a table swapped (`ALTER TABLE ... SWAP WITH`), renamed or
-replaced into place during a run, or a view redefined during it, refuses with
+`database.schema.name` qualifies; the same rules resolve the names inside an
+admitted SQL relation, so `RECENT` names a `recent` common table expression.
+Columns are referenced exactly as the connection's schema reports them. Every
+admitted relation binds with its `CREATED` and `LAST_DDL` instants, which must
+not postdate the snapshot, and the session re-reads them once each statement
+has completed and before any of its rows, batched or not, reach the caller:
+Time Travel follows the object rather than the name, so a table swapped
+(`ALTER TABLE ... SWAP WITH`), renamed or replaced into place during a run, or
+a view redefined during it, refuses with
 `terrine.execution.invalid_input_binding` instead of answering from the other
-object's history.
+object's history. Ibis reads every `NUMBER(p, 0)` column, Snowflake's integer
+types included, as `int64`; sums of such columns stay exact in `NUMBER(38, 0)`
+and property filters compare against the column's 38-digit range, not
+`int64`'s, so a 20-digit value is correctly excluded by a 21-digit threshold.
 
 Supported, matching the DuckDB reference ([parity probes][snowflake]): everything
 listed for PostgreSQL above, with the same tolerance contract for averages,
 ratios and float windows. Exact state is `NUMBER(38, 0)`; counts and decimal
 sums are exact, and a sum or difference beyond 38 digits refuses with
-`terrine.temporal.exact_overflow`. A float fact follows the DuckDB design: its
-shortest round-trip decimal text (taken from a `VARIANT`, since Snowflake's
-`VARCHAR` conversion keeps at most 15 significant digits) becomes an integer
-coefficient at a per-unit scale, so history outside the window cancels exactly
-and the window sum rounds once through Snowflake's string-to-double
-conversion, measured correctly rounded on halfway and subnormal cases but one
-ulp off DuckDB's on a 17-digit text, so float windows match DuckDB within one
-ulp rather than bit for bit; quotients divide 19-digit normalized significands
-in `NUMBER(38, 0)` within the same `|r − p/q| ≤ 6·2⁻⁵³·|p/q| + 2⁻¹⁰⁷⁵` bound.
-A coefficient needing more than 38 digits (a value's digits padded to its
-unit's scale, which the unit's smallest value sets) refuses with
-`terrine.temporal.float64_precision` (`bound_overflow`), as does a result
-beyond binary64's range; a non-finite value at or before the end of a
-non-empty window refuses with `nonfinite_input`.
+`terrine.temporal.exact_overflow`. A float fact follows the DuckDB design with
+one measured difference: Snowflake's row-wise `VARCHAR`, `VARIANT` and JSON
+renderings of a double keep at most 15 or 16 significant digits (lossy), so
+each float enters exact state as its `DECFLOAT` value, the binary value
+correctly rounded to 18 significant digits (always round-tripping, within
+`0.5 · 10⁻¹⁷` relative), rather than its shortest round-trip text. That text's
+digits become an integer coefficient at a per-unit scale, so history outside
+the window cancels exactly, and the window sum rounds once through
+`TRY_TO_DOUBLE`, measured correctly rounded on 143 halfway, subnormal and
+near-halfway cases. Each value's shortest text and its 18-digit rounding both
+lie within half an ulp of it, so the exact window sums on the two backends
+differ by at most `1.05 · 2⁻⁵³ · Σ|x|` and the rounded float windows by at most
+`2⁻⁵¹ · Σ|x|`: equal or adjacent doubles unless the window cancels, not
+always bit for bit (the parity probe's `spend_per_weight` differs in the last
+bit). Quotients divide 19-digit normalized significands in `NUMBER(38, 0)`
+within the same `|r − p/q| ≤ 6·2⁻⁵³·|p/q| + 2⁻¹⁰⁷⁵` bound. A coefficient
+needing more than 38 digits (a value's 18 digits padded to its unit's scale,
+the most fractional digits any finite value's text in that unit needs: `0.1`
+needs 18, `1e-20` needs 38) refuses with `terrine.temporal.float64_precision`
+(`bound_overflow`), as does a sum or quotient beyond binary64's range, for
+which `TRY_TO_DOUBLE` returns NULL; a non-finite value at or before the end of
+a non-empty window refuses with `nonfinite_input`.
 
 Timestamps are exact at their declared scale, nanoseconds by default, from year
 1 to 9999 (`TIMESTAMP_TZ`, `TIMESTAMP_LTZ` and `TIMESTAMP_NTZ`; naive values

@@ -405,10 +405,11 @@ counts, plus `float64_nonfinite_count` and `float64_unrepresentable_count` for
 inputs the exact state cannot hold: NaN and infinities, on BigQuery values
 beyond `BIGNUMERIC`'s range, and on Snowflake coefficients beyond
 `NUMBER(38, 0)`'s 38 digits. Snowflake holds the same scaled coefficients as
-DuckDB (its shortest round-trip text comes from a `VARIANT`); PostgreSQL and
-BigQuery hold the shortest text unscaled in `NUMERIC`/`BIGNUMERIC`, and
-PostgreSQL's `NUMERIC` admits NaN and infinities, which the output rounding
-refuses instead.
+DuckDB, built from each value's `DECFLOAT` text (18 significant digits,
+correctly rounded, since its row-wise text renderings of a double are lossy);
+PostgreSQL and BigQuery hold the shortest text unscaled in
+`NUMERIC`/`BIGNUMERIC`, and PostgreSQL's `NUMERIC` admits NaN and infinities,
+which the output rounding refuses instead.
 
 Window aggregation exposes its data-dependent checks through
 `TemporalResult.validate(pinned_executor)`. Checks and export must use the
