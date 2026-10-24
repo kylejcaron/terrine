@@ -124,9 +124,7 @@ Schedule anchor's range/unnest to `TABLE(FLATTEN(...))` with a `_u` alias whose
 in `terrine/backends/` or `compile/anchors.py`); (b) `weight_week` came back
 `0.6` where DuckDB gives `0.6000000000000001`, at first attributed to
 `TRY_TO_DOUBLE` (wrong, see below); (c) two `5e37` coefficients summed to
-`1e38` without an error: Snowflake's `NUMBER(38, 0)` window sum holds values
-to about `1.7e38` (its 128-bit accumulator) and raises beyond, so the test
-now sums `9e37` twice.
+`1e38` without an error, so the test now sums `9e37` twice.
 
 Run 40103934563 (full `make test-snowflake` on `feat/snowflake-execution`,
 head 7f2776d): 32 passed, 1 failed (`test_design_matches_duckdb[schedule]`),
@@ -307,3 +305,20 @@ check are unverified live (the unit test `test_views_calling_a_user_routine_name
 fails with the match disabled and passes on 556c3d8), and the final full run
 is pending the monitor's reset or a raised quota. Dispatches used in this
 pass: 1; 17 in total.
+
+**Simplified by owner decision (2026-10-24).** The policy and tag refusals
+(`POLICY_REFERENCES`, `TAG_REFERENCES_ALL_COLUMNS`), the read-only function
+whitelist on stored view definitions on all three backends, and their tests
+and docs are removed: row access and masking policies are evaluated for the
+reading role at query time (results reflect that role's view; a policy or
+mapping-table change during a run is not pinned), and built-ins inside views
+are evaluated per query. Kept: Time Travel pinning, identity re-checks (a
+policy attached by `ALTER TABLE` still advances `LAST_DDL`), fully qualified
+admission, NULL `CREATED`/`LAST_DDL` refusal, wide-integer precision,
+timestamp text and scale promotion, DECFLOAT float text, the Schedule
+sequence helper, the coded overflow mapping, and one user-routine check per
+backend (PostgreSQL `pg_depend`, BigQuery dataset-qualified routines,
+Snowflake written names against `INFORMATION_SCHEMA.FUNCTIONS` plus qualified
+calls). The final Snowflake run is the owner's. Of the verified refusals
+listed above, the policy, tag, `RANDOM()` and `CURRENT_TIMESTAMP()` view
+cases no longer apply.

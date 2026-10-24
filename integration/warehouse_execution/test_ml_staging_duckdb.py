@@ -515,7 +515,6 @@ def test_export_discards_unfinished_shard_and_rewrites_on_retry(
     assert error.value.code == "terrine.budget.output_bytes_exceeded"
     assert len(list(partial.glob("**/*.parquet"))) == 1
 
-
     writers = 0
     original_writer = export_module.pq.ParquetWriter
 

@@ -439,9 +439,8 @@ def test_float_window_failures_are_coded_refusals(
 
 def test_float_sum_beyond_38_digits_is_an_exact_overflow(snowflake_scratch, tmp_path):  # noqa: F811
     _load_windows(snowflake_scratch)
-    # Each coefficient fits; their running sum (1.8e38) leaves NUMBER(38, 0)'s
-    # 128-bit accumulator, where Snowflake raises (sums between 1e38 and about
-    # 1.7e38 are held exactly without an error).
+    # Each coefficient fits; their running sum leaves NUMBER(38, 0), where
+    # Snowflake raises.
     snowflake_scratch.sql(
         "INSERT INTO events VALUES "
         "('d', '2025-01-01 11:00:00 +0000', 1, 10, 9e37, NULL), "

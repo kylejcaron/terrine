@@ -203,53 +203,6 @@ FROM {database}.INFORMATION_SCHEMA.TABLES
 WHERE TABLE_SCHEMA = %s AND TABLE_NAME IN ({names})
 """
 
-_POLICY_SQL = """
-SELECT POLICY_KIND
-FROM TABLE({database}.INFORMATION_SCHEMA.POLICY_REFERENCES(
-    REF_ENTITY_NAME => %s, REF_ENTITY_DOMAIN => %s))
-"""
-# Every tag on any column, set directly or inherited from the table, schema or
-# database; the domain is TABLE for views as well.
-_TAG_SQL = """
-SELECT TAG_DATABASE, TAG_SCHEMA, TAG_NAME
-FROM TABLE({database}.INFORMATION_SCHEMA.TAG_REFERENCES_ALL_COLUMNS(%s, 'TABLE'))
-"""
-_PROTECTION_ROUTE = "read from an unprotected copy or view, or materialize the rows first"
-_PROTECTION_GRANTS = "APPLY ROW ACCESS POLICY, APPLY MASKING POLICY and APPLY TAG"
-
-
-def _check_protections(con: Any, database: str, schema: str, name: str, kind: str) -> None:
-    """Refuse a relation carrying any policy or tag. Row access, masking and the
-    other policies are evaluated at query time against the current role and
-    their mapping tables, none of which Time Travel pins, so two reads at one
-    instant can differ while the relation's identity is unchanged; a tag can
-    gain a masking policy (``ALTER TAG ... SET MASKING POLICY``) between reads
-    without any DDL on the relation. Snowflake reports attachments only to a
-    role allowed to apply them, and errors for one that is not, which is just
-    as unverifiable."""
-    qualified = _qualified(database, schema, name)
-    domain = "TABLE" if kind == "table" else "VIEW"
-    try:
-        policies = _rows(con, _POLICY_SQL.format(database=_quote(database)), (qualified, domain))
-        tags = _rows(con, _TAG_SQL.format(database=_quote(database)), (qualified,))
-    except Exception as exc:
-        raise _snapshot_error(
-            f"policy and tag attachments of {kind} {name!r} could not be inspected; grant the "
-            f"role {_PROTECTION_GRANTS}, or {_PROTECTION_ROUTE}"
-        ) from exc
-    if policies:
-        kinds = ", ".join(sorted({str(row[0]).lower().replace("_", " ") for row in policies}))
-        raise _snapshot_error(
-            f"{kind} {name!r} carries a {kinds}, which Time Travel does not pin; "
-            f"{_PROTECTION_ROUTE}"
-        )
-    if tags:
-        names = ", ".join(sorted({".".join(str(part) for part in row[:3]) for row in tags}))
-        raise _snapshot_error(
-            f"{kind} {name!r} carries the tag {names}, whose masking policy can change between "
-            f"reads without any DDL; {_PROTECTION_ROUTE}"
-        )
-
 
 def _relation(con: Any, database: str, schema: str, name: str) -> _Relation:
     try:
@@ -278,7 +231,6 @@ def _relation(con: Any, database: str, schema: str, name: str) -> _Relation:
         raise _snapshot_error(
             f"table {name!r} keeps no Time Travel history; run {_RETENTION_ROUTE}"
         )
-    _check_protections(con, database, schema, name, kind)
     columns = _rows(con, f"DESCRIBE TABLE {_qualified(database, schema, name)}")
     definition = json.dumps(
         {"columns": [[row[0], row[1], row[3]] for row in columns], "view": view_text},
@@ -318,10 +270,18 @@ def _check_qualified_routines(statement: Any) -> None:
             raise _snapshot_error("query calls a user-defined routine")
 
 
-def _view_query(definition: str, name: str) -> Any:
-    from terrine.execution._views import admitted_view_query
+def _view_query(definition: str) -> Any:
+    from sqlglot import exp, parse_one
 
-    return admitted_view_query(definition, DIALECT, name=name)
+    try:
+        statement = parse_one(definition, read=DIALECT)
+    except Exception as exc:
+        raise _snapshot_error("view definition could not be parsed") from exc
+    if isinstance(statement, exp.Create):
+        statement = statement.expression
+    if not isinstance(statement, exp.Query):
+        raise _snapshot_error("view definition is not a query")
+    return statement
 
 
 def _called_names(definition: str) -> set[str]:
@@ -350,10 +310,9 @@ _FUNCTIONS_SQL = "SELECT FUNCTION_NAME FROM {database}.INFORMATION_SCHEMA.FUNCTI
 
 def _check_view_routines(con: Any, definition: str, name: str, databases: Iterable[str]) -> None:
     """Refuse a view calling any user routine by the name written in its
-    definition, whatever built-in that name parses to: Snowflake resolves an
-    unqualified call to a user function of that name before any built-in, in
-    the view's own database and schema or the session's search path, and a SQL
-    function may evaluate anything, ``RANDOM()`` included."""
+    definition: Snowflake resolves an unqualified call to a user function of
+    that name, in the view's own database or the session's, and a SQL function
+    may read tables outside the snapshot. Built-ins are evaluated per query."""
     names = _called_names(definition)
     if not names:
         return
@@ -423,7 +382,8 @@ def _closure(
     seen[key] = relation
     if relation.kind == "view":
         assert relation.view_text is not None
-        statement = _view_query(relation.view_text, relation.name)
+        statement = _view_query(relation.view_text)
+        _check_qualified_routines(statement)
         _check_view_routines(
             con, relation.view_text, relation.name, (relation.database, _defaults(con)[0])
         )

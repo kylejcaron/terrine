@@ -35,11 +35,7 @@ snapshot. The caller's connection, and any transaction open on it, is never used
 or changed. Schemas of SQL relations are read without creating database objects.
 A query that calls a name also defined as a user function outside the system
 catalogs refuses, as does a view whose stored definition depends on such a
-function. A view's definition is also admitted like a SQL relation (see
-Snowflake below): the transaction pins rows, not evaluation, so a view
-selecting `random()`, filtering on `clock_timestamp()` or calling any function
-outside the read-only whitelist refuses with
-`terrine.execution.snapshot_unavailable`.
+function. Built-in functions inside a view are evaluated on each query.
 
 Supported: counts and exact integer/decimal sums over windows, as-of attributes,
 fixed, scheduled and event anchors, time-to-event shapes, cohort trajectories
@@ -84,11 +80,10 @@ query sees one snapshot of the tables it reads. The caller's client, and any
 session or job configuration it holds, is never used. Tables, table snapshots,
 views and admitted SQL relations bind with an identity fingerprint (type,
 creation time, schema and view text), so a replaced table or changed view
-refuses after binding. A view's definition is admitted like a SQL relation
-(see Snowflake below): one calling a dataset-qualified routine (a persistent
-UDF or remote function), `RAND()`, `CURRENT_TIMESTAMP()` or any other function
-outside the read-only whitelist refuses with
-`terrine.execution.snapshot_unavailable`; external tables are not admitted.
+refuses after binding. A view that calls a dataset-qualified routine (a
+persistent UDF or remote function) refuses with
+`terrine.execution.snapshot_unavailable`; built-in functions inside a view are
+evaluated on each query; external tables are not admitted.
 
 Supported, matching the DuckDB reference ([live probes][bigquery]): everything
 listed for PostgreSQL above, with the same tolerance contract for averages,
@@ -119,30 +114,17 @@ tables a view reads. Only reads are issued on the connection: no `USE`,
 check the session's query history). Every table reached, directly, through a
 view or through admitted SQL, must be a permanent or transient table with
 `DATA_RETENTION_TIME_IN_DAYS >= 1`; a zero-retention table, an external or
-dynamic table, a materialized view or a secure view (its definition is hidden)
-refuses with `terrine.execution.snapshot_unavailable`. A view's stored
-definition is admitted exactly like a SQL relation, on every backend: Time
-Travel (and the PostgreSQL and BigQuery transactions) pins rows, not
-evaluation, so a view selecting `RANDOM()`, filtering on
-`CURRENT_TIMESTAMP()` or calling any function outside the read-only whitelist
-(user-defined routines included) would answer differently on each read
-without any DDL and refuses with the same code; materialize its rows into a
-table, or bind a view using only admitted built-ins. So does any table or view
-in the closure carrying a row access, masking or other policy, or any tag:
-policies are evaluated at query time against the current role and their
-mapping tables, which Time Travel does not pin, so two reads at one instant
-could differ, and a tag, set on a column or inherited from the table, schema or
-database, can gain a masking policy (`ALTER TAG ... SET MASKING POLICY`)
-between reads without any DDL on the relation (read from an unprotected copy
-or view, or materialize the rows first). Attachments are inspected through
-`INFORMATION_SCHEMA.POLICY_REFERENCES` and `TAG_REFERENCES_ALL_COLUMNS`, which
-Snowflake answers only for a role allowed to apply the policies and tags
-involved and errors for any other; an error refuses too, so grant the reading
-role `APPLY ROW ACCESS POLICY`, `APPLY MASKING POLICY` and `APPLY TAG` where
-protected objects exist. A relation without `CREATED` or `LAST_DDL` metadata
-(predating it, or
-newly replicated) refuses with the same code; read from a copy made with
-`CREATE TABLE ... AS SELECT` or `CLONE`. The session's `TIMEZONE` must be `UTC`
+dynamic table, a materialized view, a secure view (its definition is hidden)
+or a view that calls a user-defined function (by the name written in its
+definition, or schema-qualified) refuses with
+`terrine.execution.snapshot_unavailable`, as does a relation without `CREATED`
+or `LAST_DDL` metadata (predating it, or newly replicated; read from a copy
+made with `CREATE TABLE ... AS SELECT` or `CLONE`). Built-in functions inside
+a view, `CURRENT_TIMESTAMP()` or `CONVERT_TIMEZONE` included, are evaluated
+on each query. Snowflake evaluates row access and masking policies for the
+reading role at query time, so results reflect that role's view of the data,
+and a policy or mapping-table change during a run is not pinned by Time
+Travel. The session's `TIMEZONE` must be `UTC`
 (Ibis sets it at connect); any other value refuses with the same code and the
 `ALTER SESSION` route.
 
@@ -160,8 +142,8 @@ connection's schema reports them. Every admitted relation binds with its
 the session re-reads them once each statement has completed and before any of
 its rows, batched or not, reach the caller: Time Travel follows the object
 rather than the name, so a table swapped (`ALTER TABLE ... SWAP WITH`), renamed
-or replaced into place during a run, a view redefined during it, or a policy
-attached to a table during it, refuses with
+or replaced into place during a run, or a view redefined during it, refuses
+with
 `terrine.execution.invalid_input_binding` instead of answering from the other
 object's history. A `NUMBER(p, 0)` column (Snowflake's integer types are
 `NUMBER(38, 0)`) resolves as `decimal(p, 0)` when `p` exceeds the 18 digits

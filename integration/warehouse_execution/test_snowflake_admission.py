@@ -226,54 +226,11 @@ def test_pinned_sql_relations_resolve_cte_references_by_snowflake_rules(
             ),
             "shaped",
         ),
-        # Time Travel pins rows, not evaluation: these built-ins change the
-        # view's rows between pinned reads without any DDL.
-        (
-            (
-                'CREATE VIEW shaped AS SELECT "user_id", "occurred_at", RANDOM() AS "amount" '
-                "FROM events",
-            ),
-            "shaped",
-        ),
-        (
-            (
-                'CREATE VIEW shaped AS SELECT "user_id", "occurred_at", "amount" FROM events '
-                'WHERE "occurred_at" < CURRENT_TIMESTAMP()',
-            ),
-            "shaped",
-        ),
-        # A user routine whose name sqlglot maps to another built-in (STR_POSITION
-        # renders as CHARINDEX) passes the whitelist; Snowflake runs the routine.
-        (
-            (
-                "CREATE FUNCTION str_position(x VARCHAR, y VARCHAR) RETURNS FLOAT AS 'RANDOM()'",
-                'CREATE VIEW shaped AS SELECT "user_id", "occurred_at", '
-                'STR_POSITION("user_id", \'a\') AS "amount" FROM events',
-            ),
-            "shaped",
-        ),
-        # A tag, on a column or inherited from the table or schema, can gain a
-        # masking policy (ALTER TAG ... SET MASKING POLICY) between reads
-        # without any DDL on the relation.
-        (
-            ("CREATE TAG pii", "ALTER TABLE events MODIFY COLUMN \"user_id\" SET TAG pii = 'x'"),
-            "events",
-        ),
-        (("CREATE TAG pii", "ALTER TABLE events SET TAG pii = 'x'"), "events"),
-        (("CREATE TAG pii", "ALTER SCHEMA \"{schema}\" SET TAG pii = 'x'"), "events"),
-        (
-            (
-                "CREATE TAG pii",
-                'CREATE VIEW shaped AS SELECT "user_id", "occurred_at", "amount" FROM events',
-                "ALTER VIEW shaped MODIFY COLUMN \"user_id\" SET TAG pii = 'x'",
-            ),
-            "shaped",
-        ),
     ],
 )
 def test_relations_without_a_usable_history_refuse(snowflake_scratch, tmp_path, setup, relation):  # noqa: F811
     scratch = snowflake_scratch
-    if relation == "events" and setup[0].startswith("DATA_RETENTION"):
+    if relation == "events":
         _events(scratch, options=setup[0])
     else:
         _events(scratch)
@@ -282,50 +239,6 @@ def test_relations_without_a_usable_history_refuse(snowflake_scratch, tmp_path, 
     with pytest.raises(TerrineError) as error:
         _model(scratch, tmp_path, relation=f"{{kind: table, name: {relation}}}")
     assert error.value.code == "terrine.execution.snapshot_unavailable"
-
-
-@pytest.mark.parametrize(
-    "attach",
-    [
-        # Policies are evaluated at query time against mapping tables and the
-        # current role, which Time Travel does not pin; a view over a protected
-        # table is as unpinnable as the table.
-        (
-            'CREATE ROW ACCESS POLICY visible AS ("user_id" VARCHAR) RETURNS BOOLEAN -> TRUE',
-            'ALTER TABLE events ADD ROW ACCESS POLICY visible ON ("user_id")',
-        ),
-        (
-            "CREATE MASKING POLICY plain AS (val VARCHAR) RETURNS VARCHAR -> val",
-            'ALTER TABLE events MODIFY COLUMN "user_id" SET MASKING POLICY plain',
-        ),
-    ],
-    ids=["row_access", "masking"],
-)
-def test_relations_with_policies_refuse(snowflake_scratch, tmp_path, attach):  # noqa: F811
-    scratch = snowflake_scratch
-    _events(scratch)
-    scratch.sql('CREATE VIEW shaped AS SELECT "user_id", "occurred_at", "amount" FROM events')
-    for statement in attach:
-        scratch.sql(statement)
-    for relation in ("events", "shaped"):
-        with pytest.raises(TerrineError) as error:
-            _model(scratch, tmp_path, relation=f"{{kind: table, name: {relation}}}")
-        assert error.value.code == "terrine.execution.snapshot_unavailable", relation
-
-
-def test_policies_attached_during_execution_refuse(snowflake_scratch, tmp_path):  # noqa: F811
-    scratch = snowflake_scratch
-    _events(scratch)
-    scratch.sql('CREATE ROW ACCESS POLICY visible AS ("user_id" VARCHAR) RETURNS BOOLEAN -> TRUE')
-    model = _model(scratch, tmp_path)
-    with open_execution(model.catalog, scratch.con) as context:
-        table = context.resolve(TableRef(kind="table", name="events"))
-        assert int(context.execute(table.count()).as_py()) == 1
-        # Attaching a policy is table DDL, so identity re-verification catches it.
-        scratch.sql('ALTER TABLE events ADD ROW ACCESS POLICY visible ON ("user_id")')
-        with pytest.raises(TerrineError) as error:
-            context.execute(table.count())
-        assert error.value.code == "terrine.execution.invalid_input_binding"
 
 
 def test_resolved_relations_ignore_a_later_session_schema_change(snowflake_scratch, tmp_path):  # noqa: F811
