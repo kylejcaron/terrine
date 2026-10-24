@@ -265,3 +265,45 @@ both steps green (12 m 26 s); push CI run 40123931273 passed. Local gates on
 0bf3159: unit 1294 passed, non-live integration 197 passed, lint, typecheck,
 documentation and strict docs build green. Dispatches used in this pass: 2;
 16 in total.
+
+**Routine-name fix (2026-10-24, head 556c3d8).** The whitelist judges a view
+by its parse, and sqlglot maps `STR_POSITION` to `CHARINDEX`, so a user
+routine of that name passed while Snowflake would run it. The routine check
+is restored on the stored text as written (`_called_names`: every token
+directly before `(`, quoted names exact), matched against
+`INFORMATION_SCHEMA.FUNCTIONS` of the view's database and the session's
+current database (every schema of each, a superset of the search path), in
+addition to the whitelist. The alias bypass cannot apply to the siblings:
+PostgreSQL's check follows `pg_depend` from the view's stored rule to
+`pg_proc` OIDs, independent of any name or rendering; BigQuery persistent
+UDFs and remote functions must be dataset-qualified in a view, and the
+whitelist refuses every `Dot`-qualified call and backticked path before
+looking at the rendered name.
+
+Verified refusals, exactly (all `terrine.execution.snapshot_unavailable`
+unless noted): zero-retention table; secure view; view calling an unqualified
+user routine `same`, a schema-qualified `{schema}.same`, or a user routine
+`STR_POSITION` whose name parses as a built-in; view selecting `RANDOM()`;
+view filtering on `CURRENT_TIMESTAMP()`; table with a row access policy;
+table with a masking policy on a column; view over such a table; table with
+a tag on a column, on the table, or inherited from its schema; view with a
+tag on a column; table or view with NULL `CREATED`/`LAST_DDL` (unit test,
+stubbed metadata); relation whose policy, tag or routine inspection errors
+(unit test, stubbed error); non-UTC session. `invalid_input_binding`: a row
+access policy attached to an admitted table during execution; a table
+swapped, replaced or column-extended, or a view redefined, between
+resolution and the read; a fresh materialization after `USE SCHEMA` to a
+schema holding a same-named table. Not verified live: `ALTER TAG ... SET
+MASKING POLICY` between reads (the tag refusal happens at admission, so the
+case cannot be reached), and a reader role lacking the APPLY grants.
+
+Run 40125792491 (throwaway `probe/snowflake-fixes-focused-3`, deleted) was
+to run the green and red passes of
+`test_relations_without_a_usable_history_refuse` (red: routine match
+disabled), but every case failed at connect: Snowflake error 90073,
+"Warehouse cannot be resumed because resource monitor 'TERRINE_MONTHLY_CAP'
+has exceeded its quota". No test ran; the `STR_POSITION` case and its red
+check are unverified live (the unit test `test_views_calling_a_user_routine_named_like_a_built_in_refuse`
+fails with the match disabled and passes on 556c3d8), and the final full run
+is pending the monitor's reset or a raised quota. Dispatches used in this
+pass: 1; 17 in total.
