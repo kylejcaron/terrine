@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
+import ibis
+import ibis.expr.datatypes as dt
 import pytest
 from sqlglot import exp, parse_one
 
+from terrine.errors import TerrineError
+from terrine.execution import _snowflake
 from terrine.execution._snowflake import pin
+
+_INSTANT = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _pinned(sql: str) -> dict[str, bool]:
@@ -36,3 +44,106 @@ def test_pin_leaves_a_quoted_name_that_differs_from_its_cte_as_a_table():
         "EVENTS": True,
         "cte": True,
     }
+
+
+def _qualified_names(sql: str) -> set[str]:
+    statement = parse_one(sql, read="snowflake")
+    return {
+        ".".join(part.sql(dialect="snowflake") for part in table.parts)
+        for table in statement.find_all(exp.Table)
+        if isinstance(table.this, exp.Identifier) and table.args.get("catalog") is not None
+    }
+
+
+def test_admitted_sql_is_qualified_with_the_resolved_database_and_schema(monkeypatch):
+    monkeypatch.setattr(_snowflake, "_defaults", lambda con: ("DB", "A"))
+    statement = parse_one(
+        'WITH recent AS (SELECT * FROM events) SELECT * FROM recent JOIN "events" USING (id) '
+        "JOIN other.t2 USING (id) JOIN db2.s3.t3 USING (id)",
+        read="snowflake",
+    )
+    keys = _snowflake.qualify(object(), statement)
+    assert keys == [
+        ("DB", "A", "EVENTS"),
+        ("DB", "A", "events"),
+        ("DB", "OTHER", "T2"),
+        ("DB2", "S3", "T3"),
+    ]
+    sql = statement.sql(dialect="snowflake")
+    assert _qualified_names(sql) == {
+        '"DB"."A"."EVENTS"',
+        '"DB"."A"."events"',
+        '"DB"."OTHER"."T2"',
+        '"DB2"."S3"."T3"',
+    }
+    # The CTE reference is not a physical table and the pin follows the
+    # qualified names, so a later change of the session's schema is irrelevant.
+    assert _pinned(sql) == {"EVENTS": True, "events": True, "T2": True, "T3": True, "RECENT": False}
+
+
+def _metadata(
+    monkeypatch,
+    *,
+    created=_INSTANT,
+    last_ddl=_INSTANT,
+    columns=(("user_id", "VARCHAR(16777216)", "Y"),),
+    policies=(),
+):
+    """Stub the catalog reads behind one relation's identity."""
+
+    def rows(con, sql, params=None):
+        if "INFORMATION_SCHEMA.TABLES" in sql:
+            return [("BASE TABLE", 1, created, last_ddl, None, None)]
+        if sql.startswith("DESCRIBE TABLE"):
+            return [(name, type_text, "COLUMN", nullable) for name, type_text, nullable in columns]
+        if "POLICY_REFERENCES" in sql:
+            if isinstance(policies, Exception):
+                raise policies
+            return list(policies)
+        raise AssertionError(sql)
+
+    monkeypatch.setattr(_snowflake, "_rows", rows)
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        # Objects predating the identity metadata, or freshly replicated, have
+        # no CREATED or LAST_DDL to verify against.
+        {"created": None},
+        {"last_ddl": None},
+        # Policies are evaluated at query time and their mapping tables are
+        # not pinned, whether the attachment is visible or not inspectable.
+        {"policies": [("DB", "S", "P", "ROW_ACCESS_POLICY")]},
+        {"policies": [("DB", "S", "M", "MASKING_POLICY")]},
+        {"policies": RuntimeError("not authorized")},
+    ],
+)
+def test_relations_without_verifiable_identity_refuse(monkeypatch, metadata):
+    _metadata(monkeypatch, **metadata)
+    with pytest.raises(TerrineError) as error:
+        _snowflake._relation(object(), "DB", "S", "EVENTS")
+    assert error.value.code == "terrine.execution.snapshot_unavailable"
+
+
+def test_resolved_schemas_keep_integer_precision_beyond_int64(monkeypatch):
+    _metadata(
+        monkeypatch,
+        columns=(
+            ("n18", "NUMBER(18,0)", "Y"),
+            ("n19", "NUMBER(19,0)", "N"),
+            ("n38", "NUMBER(38,0)", "Y"),
+            ("amount", "NUMBER(12,2)", "Y"),
+            ("at", "TIMESTAMP_TZ(9)", "Y"),
+        ),
+    )
+    relation = _snowflake._relation(object(), "DB", "S", "EVENTS")
+    assert relation.columns == ibis.schema(
+        {
+            "n18": dt.int64,
+            "n19": dt.Decimal(19, 0, nullable=False),
+            "n38": dt.Decimal(38, 0),
+            "amount": dt.Decimal(12, 2),
+            "at": dt.Timestamp(timezone="UTC", scale=9),
+        }
+    )

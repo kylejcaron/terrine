@@ -8,9 +8,11 @@ object, not the name: a table swapped or renamed into place after admission
 would answer a pinned read with another object's history, and a replaced view
 has no history at all, so the session re-reads every admitted relation's
 ``CREATED`` and ``LAST_DDL`` after each query (every DDL, including swap and
-rename, advances ``LAST_DDL``) and refuses the result on any change. Only reads
-are issued on the caller's connection: no ``USE``, ``ALTER SESSION``,
-transaction or temporary object.
+rename, advances ``LAST_DDL``) and refuses the result on any change. Every
+physical reference, inside admitted SQL too, is resolved and fully qualified
+at admission, so the session's current database and schema never matter at
+read time. Only reads are issued on the caller's connection: no ``USE``,
+``ALTER SESSION``, transaction or temporary object.
 """
 
 from __future__ import annotations
@@ -23,12 +25,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+import ibis
+import ibis.expr.datatypes as dt
 import pyarrow as pa
 
 from terrine.errors import RefusalSpec
 from terrine.execution._metadata import invalidate_metadata
 from terrine.semantic.models import Catalog, RelationSpec, SqlQuery, TableRef
-from terrine.semantic.sql import _admit_read_query_ast, admit_read_query
+from terrine.semantic.sql import _admit_read_query_ast
 
 DIALECT = "snowflake"
 # Physical row sources with Time Travel, and views over them. Temporary tables
@@ -37,6 +41,8 @@ DIALECT = "snowflake"
 _TABLE_TYPES = {"BASE TABLE": "table", "VIEW": "view"}
 _STAMP_FORMAT = "YYYY-MM-DD HH24:MI:SS.FF9 TZHTZM"
 _RETENTION_ROUTE = "ALTER TABLE ... SET DATA_RETENTION_TIME_IN_DAYS = 1"
+# Every NUMBER(p, 0) up to this precision fits int64; wider ones keep their digits.
+_INT64_DIGITS = 18
 # Snowflake's own wording for NUMBER(38, 0) sums and differences that leave the
 # type, which terrine maps to its exact-overflow refusal.
 _OVERFLOW_MESSAGES = ("value overflow in a sum aggregate", "number out of representable range")
@@ -96,6 +102,7 @@ class _Relation:
     last_ddl: datetime
     definition_hash: str
     view_text: str | None
+    columns: ibis.Schema
 
     @property
     def key(self) -> Key:
@@ -132,6 +139,19 @@ def _table_parts(table: Any) -> tuple[str, ...]:
     return tuple(part.name for part in parts if part is not None)
 
 
+def _resolved(parts: tuple[str, ...], scope: tuple[str, str]) -> Key:
+    """An unqualified name resolves in ``scope``: the current (or the
+    referencing view's) database and schema."""
+    database, schema = scope
+    if len(parts) == 1:
+        return database, schema, parts[0]
+    if len(parts) == 2:
+        return database, parts[0], parts[1]
+    if len(parts) == 3:
+        return parts[0], parts[1], parts[2]
+    raise _snapshot_error("relation name is not database.schema.table")
+
+
 def _reference(con: Any, name: str, scope: tuple[str, str] | None = None) -> Key:
     """Resolve a relation name as Snowflake would: with its identifier rules, and
     unqualified names in the current (or the referencing view's) database and
@@ -142,15 +162,31 @@ def _reference(con: Any, name: str, scope: tuple[str, str] | None = None) -> Key
         table = _normalized(exp.to_table(name, dialect=DIALECT))
     except Exception as exc:
         raise _snapshot_error(f"relation name {name!r} is not database.schema.table") from exc
-    parts = _table_parts(table)
-    database, schema = scope or _defaults(con)
-    if len(parts) == 1:
-        return database, schema, parts[0]
-    if len(parts) == 2:
-        return database, parts[0], parts[1]
-    if len(parts) == 3:
-        return parts[0], parts[1], parts[2]
-    raise _snapshot_error(f"relation name {name!r} is not database.schema.table")
+    return _resolved(_table_parts(table), scope or _defaults(con))
+
+
+def column_type(type_text: str, *, nullable: bool) -> dt.DataType:
+    """Ibis's reading of a Snowflake column type, except that a ``NUMBER(p, 0)``
+    wider than the 18 digits every ``int64`` holds keeps its precision as
+    ``decimal(p, 0)``, so a wide integer key or property survives the Arrow
+    export instead of failing its cast."""
+    from ibis.backends.sql.datatypes import SnowflakeType
+    from sqlglot import exp
+
+    dtype = SnowflakeType.from_string(type_text, nullable=nullable)
+    if not dtype.is_int64():
+        return dtype
+    parsed = exp.DataType.build(type_text, dialect=DIALECT)
+    digits = [int(param.name) for param in parsed.expressions]
+    precision, scale = digits if len(digits) == 2 else (38, 0)
+    if scale == 0 and precision > _INT64_DIGITS:
+        return dt.Decimal(precision, 0, nullable=nullable)
+    return dtype
+
+
+def _schema(described: Iterable[tuple[Any, ...]]) -> ibis.Schema:
+    """Columns from ``DESCRIBE`` rows ``(name, type, kind, null?, ...)``."""
+    return ibis.schema({row[0]: column_type(row[1], nullable=row[3] == "Y") for row in described})
 
 
 _IDENTITY_SQL = """
@@ -167,6 +203,39 @@ FROM {database}.INFORMATION_SCHEMA.TABLES
 WHERE TABLE_SCHEMA = %s AND TABLE_NAME IN ({names})
 """
 
+_POLICY_SQL = """
+SELECT POLICY_KIND
+FROM TABLE({database}.INFORMATION_SCHEMA.POLICY_REFERENCES(
+    REF_ENTITY_NAME => %s, REF_ENTITY_DOMAIN => %s))
+"""
+_POLICY_ROUTE = "read from an unprotected copy or view, or materialize the rows first"
+
+
+def _check_policies(con: Any, database: str, schema: str, name: str, kind: str) -> None:
+    """Refuse a relation carrying any policy. Row access, masking and the other
+    policies are evaluated at query time against the current role and their
+    mapping tables, none of which Time Travel pins, so two reads at one instant
+    can differ while the relation's identity is unchanged. Snowflake reports
+    attachments only to a role allowed to apply the policy, and errors for one
+    that is not, which is just as unverifiable."""
+    domain = "TABLE" if kind == "table" else "VIEW"
+    try:
+        rows = _rows(
+            con,
+            _POLICY_SQL.format(database=_quote(database)),
+            (_qualified(database, schema, name), domain),
+        )
+    except Exception as exc:
+        raise _snapshot_error(
+            f"policy attachments of {kind} {name!r} could not be inspected; grant the role "
+            f"APPLY ROW ACCESS POLICY and APPLY MASKING POLICY, or {_POLICY_ROUTE}"
+        ) from exc
+    if rows:
+        kinds = ", ".join(sorted({str(row[0]).lower().replace("_", " ") for row in rows}))
+        raise _snapshot_error(
+            f"{kind} {name!r} carries a {kinds}, which Time Travel does not pin; {_POLICY_ROUTE}"
+        )
+
 
 def _relation(con: Any, database: str, schema: str, name: str) -> _Relation:
     try:
@@ -179,6 +248,13 @@ def _relation(con: Any, database: str, schema: str, name: str) -> _Relation:
     kind = _TABLE_TYPES.get(table_type)
     if kind is None:
         raise _snapshot_error(f"relation {name!r} has unsupported type {table_type!r}")
+    if created is None or last_ddl is None:
+        # Objects predating the identity metadata or newly replicated into the
+        # account have nothing to verify a pinned read against.
+        raise _snapshot_error(
+            f"{kind} {name!r} has no CREATED or LAST_DDL instant to verify its identity; "
+            "read from a copy made with CREATE TABLE ... AS SELECT or CLONE, which records both"
+        )
     if kind == "view":
         if secure == "YES" or not view_text:
             raise _snapshot_error(
@@ -188,6 +264,7 @@ def _relation(con: Any, database: str, schema: str, name: str) -> _Relation:
         raise _snapshot_error(
             f"table {name!r} keeps no Time Travel history; run {_RETENTION_ROUTE}"
         )
+    _check_policies(con, database, schema, name, kind)
     columns = _rows(con, f"DESCRIBE TABLE {_qualified(database, schema, name)}")
     definition = json.dumps(
         {"columns": [[row[0], row[1], row[3]] for row in columns], "view": view_text},
@@ -202,6 +279,7 @@ def _relation(con: Any, database: str, schema: str, name: str) -> _Relation:
         last_ddl,
         hashlib.sha256(definition.encode()).hexdigest(),
         view_text,
+        _schema(columns),
     )
 
 
@@ -269,17 +347,38 @@ def _view_query(definition: str) -> Any:
     return statement
 
 
-def _sources(statement: Any) -> list[str]:
-    """Physical relation names a query reads, rendered with exact identifiers."""
+def _physical_tables(statement: Any) -> list[Any]:
+    """Physical relation references in every scope of a normalized statement:
+    common table expressions, derived tables and table functions are not."""
     from sqlglot import exp
     from sqlglot.optimizer.scope import traverse_scope
 
     found = []
-    for scope in traverse_scope(_normalized(statement.copy())):
+    for scope in traverse_scope(statement):
         for source in scope.sources.values():
             if isinstance(source, exp.Table) and isinstance(source.this, exp.Identifier):
-                found.append(".".join(_quote(part) for part in _table_parts(source)))
+                found.append(source)
     return found
+
+
+def qualify(con: Any, statement: Any, scope: tuple[str, str] | None = None) -> list[Key]:
+    """Resolve every physical reference of ``statement`` under Snowflake's
+    identifier rules and rewrite it, in place, as its fully qualified name, so
+    the query reads the admitted objects whatever the session's current
+    database and schema become. Returns the references' keys in order."""
+    from sqlglot import exp
+
+    keys: list[Key] = []
+    tables = _physical_tables(_normalized(statement))
+    if not tables:
+        return keys
+    resolved_scope = scope or _defaults(con)
+    for table in tables:
+        key = _resolved(_table_parts(table), resolved_scope)
+        for argument, part in zip(("catalog", "db", "this"), key, strict=True):
+            table.set(argument, exp.to_identifier(part, quoted=True))
+        keys.append(key)
+    return keys
 
 
 def _closure(
@@ -298,8 +397,7 @@ def _closure(
         assert relation.view_text is not None
         statement = _view_query(relation.view_text)
         _check_view_routines(con, relation.database, statement)
-        for name in _sources(statement):
-            dependency = _reference(con, name, (relation.database, relation.schema))
+        for dependency in qualify(con, statement, (relation.database, relation.schema)):
             _closure(con, dependency, seen, path | {key})
 
 
@@ -310,8 +408,8 @@ def closure_for(relation: RelationSpec, con: Any) -> dict[Key, _Relation]:
         _closure(con, _reference(con, relation.name), seen, frozenset())
     elif isinstance(relation, SqlQuery):
         statement = _admit_read_query_ast(relation.sql, DIALECT, DIALECT)
-        for name in _sources(statement):
-            _closure(con, _reference(con, name), seen, frozenset())
+        for key in qualify(con, statement):
+            _closure(con, key, seen, frozenset())
     return seen
 
 
@@ -357,15 +455,40 @@ def resolve(
     catalog_dialect: str = DIALECT,
     closure: Mapping[Key, _Relation] | None = None,
 ) -> Any:
+    """The relation as an Ibis table whose columns keep their physical precision
+    and whose physical references are fully qualified."""
+    from ibis.expr import operations as ops
+
     if isinstance(relation, TableRef):
         item = (
             next(iter(closure.values()))
             if closure
             else _relation(con, *_reference(con, relation.name))
         )
-        return con.table(item.name, database=(item.database, item.schema))
-    sql = admit_read_query(relation.sql, catalog_dialect, DIALECT)
-    return con.sql(sql)
+        return ops.DatabaseTable(  # ty: ignore[call-non-callable]
+            item.name,
+            schema=item.columns,
+            source=con,
+            namespace=ops.Namespace(catalog=item.database, database=item.schema),
+        ).to_expr()
+    statement = _admit_read_query_ast(relation.sql, catalog_dialect, DIALECT)
+    qualify(con, statement)
+    sql = statement.sql(dialect=DIALECT)
+    return con.sql(sql, schema=_query_schema(con, sql))
+
+
+def _query_schema(con: Any, sql: str) -> ibis.Schema:
+    """An admitted query's columns, typed like a table's: described from an
+    empty result rather than Ibis's own inference, which reads every
+    ``NUMBER(p, 0)`` as ``int64``."""
+    probe = f"SELECT * FROM ({sql}) LIMIT 0"
+    try:
+        with raw_connection(con).cursor() as cursor:
+            cursor.execute(probe)
+            described = cursor.execute("DESCRIBE RESULT LAST_QUERY_ID()").fetchall()
+    except Exception as exc:
+        raise _snapshot_error("query schema could not be determined") from exc
+    return _schema(described)
 
 
 def require_utc_session(con: Any) -> None:
@@ -386,14 +509,11 @@ def pin(sql: str, stamp: str) -> str:
     resolves to its expression under Snowflake's rules (``CTE`` names
     ``cte``). Snowflake applies a view's pin to the tables it reads.
     """
-    from sqlglot import exp, parse_one
-    from sqlglot.optimizer.scope import traverse_scope
+    from sqlglot import parse_one
 
     statement = _normalized(parse_one(sql, read=DIALECT))
-    for scope in traverse_scope(statement):
-        for source in scope.sources.values():
-            if isinstance(source, exp.Table) and isinstance(source.this, exp.Identifier):
-                source.set("when", _historical(stamp))
+    for table in _physical_tables(statement):
+        table.set("when", _historical(stamp))
     return statement.sql(dialect=DIALECT)
 
 

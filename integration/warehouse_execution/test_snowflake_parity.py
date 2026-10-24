@@ -167,7 +167,8 @@ metrics:
 
 
 def test_integer_filters_compare_number_columns_beyond_int64(snowflake_scratch, tmp_path):  # noqa: F811
-    # Ibis reads NUMBER(38, 0) as int64; thresholds must not clip to that range.
+    # NUMBER(38, 0) resolves as decimal(38, 0): thresholds compare against its
+    # 38-digit range, and one beyond it settles without a literal.
     scratch = snowflake_scratch
     scratch.sql('CREATE TABLE users("user_id" VARCHAR)')
     scratch.sql(
@@ -193,6 +194,40 @@ def test_integer_filters_compare_number_columns_beyond_int64(snowflake_scratch, 
     design = windows._design(**{name: tr.agg(name, window=("-1d", "0s")) for name in names})
     (row,) = windows._rows(model, design)
     assert [row[name] for name in names] == [1, 2, 1, 3]
+
+
+def test_wide_integer_keys_and_properties_keep_their_digits(snowflake_scratch, tmp_path):  # noqa: F811
+    # A NUMBER(38, 0) unit key or integer property beyond int64 reaches the
+    # output with its digits instead of failing the Arrow export's cast.
+    scratch = snowflake_scratch
+    scratch.sql('CREATE TABLE users("user_id" NUMBER(38, 0))')
+    scratch.sql(
+        'CREATE TABLE events("user_id" NUMBER(38, 0), "occurred_at" TIMESTAMP_TZ(9), '
+        '"qty" NUMBER(38, 0))'
+    )
+    wide = 10**19
+    scratch.sql(f"INSERT INTO users VALUES ({wide}), (7)")
+    scratch.sql(
+        "INSERT INTO events VALUES "
+        f"({wide}, '2025-01-01 00:00:00 +0000', {wide}), (7, '2025-01-01 00:00:00 +0000', 7)"
+    )
+    path = tmp_path / "size.yaml"
+    path.write_text(_SIZE_CATALOG, encoding="utf-8")
+    model = tr.Model.from_catalog(
+        path,
+        con=scratch.con,
+        units={"user": tr.UnitSource("users", "user_id")},
+        readiness={"orders": tr.Coverage("2024-12-01", "2025-02-01")},
+    )
+    design = windows._design(
+        size_now=tr.asof("size", before="0d"),
+        from_1e19=tr.agg("from_1e19", window=("-1d", "0s")),
+    )
+    rows = {row["unit"]: row for row in windows._rows(model, design)}
+    assert set(rows) == {wide, 7}
+    assert rows[wide]["size_now"] == wide
+    assert rows[7]["size_now"] == 7
+    assert [rows[unit]["from_1e19"] for unit in (wide, 7)] == [1, 0]
 
 
 @pytest.mark.parametrize("name", sorted(shapes._DESIGNS))

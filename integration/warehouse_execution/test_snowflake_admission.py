@@ -241,6 +241,92 @@ def test_relations_without_a_usable_history_refuse(snowflake_scratch, tmp_path, 
     assert error.value.code == "terrine.execution.snapshot_unavailable"
 
 
+@pytest.mark.parametrize(
+    "attach",
+    [
+        # Policies are evaluated at query time against mapping tables and the
+        # current role, which Time Travel does not pin; a view over a protected
+        # table is as unpinnable as the table.
+        (
+            'CREATE ROW ACCESS POLICY visible AS ("user_id" VARCHAR) RETURNS BOOLEAN -> TRUE',
+            'ALTER TABLE events ADD ROW ACCESS POLICY visible ON ("user_id")',
+        ),
+        (
+            "CREATE MASKING POLICY plain AS (val VARCHAR) RETURNS VARCHAR -> val",
+            'ALTER TABLE events MODIFY COLUMN "user_id" SET MASKING POLICY plain',
+        ),
+    ],
+    ids=["row_access", "masking"],
+)
+def test_relations_with_policies_refuse(snowflake_scratch, tmp_path, attach):  # noqa: F811
+    scratch = snowflake_scratch
+    _events(scratch)
+    scratch.sql('CREATE VIEW shaped AS SELECT "user_id", "occurred_at", "amount" FROM events')
+    for statement in attach:
+        scratch.sql(statement)
+    for relation in ("events", "shaped"):
+        with pytest.raises(TerrineError) as error:
+            _model(scratch, tmp_path, relation=f"{{kind: table, name: {relation}}}")
+        assert error.value.code == "terrine.execution.snapshot_unavailable", relation
+
+
+def test_policies_attached_during_execution_refuse(snowflake_scratch, tmp_path):  # noqa: F811
+    scratch = snowflake_scratch
+    _events(scratch)
+    scratch.sql('CREATE ROW ACCESS POLICY visible AS ("user_id" VARCHAR) RETURNS BOOLEAN -> TRUE')
+    model = _model(scratch, tmp_path)
+    with open_execution(model.catalog, scratch.con) as context:
+        table = context.resolve(TableRef(kind="table", name="events"))
+        assert int(context.execute(table.count()).as_py()) == 1
+        # Attaching a policy is table DDL, so identity re-verification catches it.
+        scratch.sql('ALTER TABLE events ADD ROW ACCESS POLICY visible ON ("user_id")')
+        with pytest.raises(TerrineError) as error:
+            context.execute(table.count())
+        assert error.value.code == "terrine.execution.invalid_input_binding"
+
+
+def test_resolved_relations_ignore_a_later_session_schema_change(snowflake_scratch, tmp_path):  # noqa: F811
+    scratch = snowflake_scratch
+    _events(scratch)
+    other = f"{scratch.schema}_B"
+    # CREATE SCHEMA switches the session to the new schema.
+    scratch.sql(f'CREATE SCHEMA "{scratch.database}"."{other}"')
+    try:
+        scratch.sql(
+            'CREATE TABLE events("user_id" VARCHAR, "occurred_at" TIMESTAMP_TZ(9), '
+            '"amount" NUMBER(12, 2))'
+        )
+        scratch.sql(
+            "INSERT INTO events VALUES ('x', '2025-01-01 12:00:00 +0000', 1), "
+            "('y', '2025-01-01 12:00:00 +0000', 1)"
+        )
+        scratch.sql(f'USE SCHEMA "{scratch.database}"."{scratch.schema}"')
+        model = _model(scratch, tmp_path)
+        query = SqlQuery(kind="sql", sql='SELECT "user_id", "occurred_at", "amount" FROM events')
+        with open_execution(model.catalog, scratch.con) as context:
+            # Resolved once in the model's schema: the admitted SQL names its
+            # tables fully, so the pinned read ignores the session's new schema.
+            table = context.resolve(query)
+            scratch.sql(f'USE SCHEMA "{scratch.database}"."{other}"')
+            assert int(context.execute(table.count()).as_py()) == 1
+            assert context.to_arrow_batches(table.select("user_id")).read_all().num_rows == 1
+        # A fresh resolution under the other schema names another object than
+        # the one the Model bound, so a new materialization refuses rather than
+        # silently reading the other table.
+        design = tr.Design(
+            "user",
+            tr.EventAnchor("session", which="first"),
+            features={"n": tr.agg("sessions", window=("-1d", "0s"))},
+        )
+        with pytest.raises(TerrineError) as error:
+            design.build(model).materialize(
+                tr.Budget(max_rows=10, max_output_bytes=1_000_000, strict_scan=False)
+            )
+        assert error.value.code == "terrine.execution.invalid_input_binding"
+    finally:
+        scratch.sql(f'DROP SCHEMA IF EXISTS "{scratch.database}"."{other}" CASCADE')
+
+
 def test_non_utc_session_refuses(snowflake_scratch, tmp_path):  # noqa: F811
     scratch = snowflake_scratch
     _events(scratch)
