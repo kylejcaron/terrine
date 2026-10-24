@@ -10,6 +10,7 @@ from sqlglot import exp, parse_one
 from terrine.errors import TerrineError
 from terrine.execution import _snowflake
 from terrine.execution._snowflake import pin
+from terrine.semantic.models import TableRef
 
 _INSTANT = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -88,11 +89,16 @@ def _metadata(
     last_ddl=_INSTANT,
     columns=(("user_id", "VARCHAR(16777216)", "Y"),),
     policies=(),
+    tags=(),
+    view=None,
 ):
-    """Stub the catalog reads behind one relation's identity."""
+    """Stub the catalog reads behind one relation's identity; ``view`` is the
+    stored definition of ``SHAPED``, every other name being a base table."""
 
     def rows(con, sql, params=None):
         if "INFORMATION_SCHEMA.TABLES" in sql:
+            if view is not None and params and params[1] == "SHAPED":
+                return [("VIEW", None, created, last_ddl, view, "NO")]
             return [("BASE TABLE", 1, created, last_ddl, None, None)]
         if sql.startswith("DESCRIBE TABLE"):
             return [(name, type_text, "COLUMN", nullable) for name, type_text, nullable in columns]
@@ -100,6 +106,8 @@ def _metadata(
             if isinstance(policies, Exception):
                 raise policies
             return list(policies)
+        if "TAG_REFERENCES_ALL_COLUMNS" in sql:
+            return list(tags)
         raise AssertionError(sql)
 
     monkeypatch.setattr(_snowflake, "_rows", rows)
@@ -117,6 +125,9 @@ def _metadata(
         {"policies": [("DB", "S", "P", "ROW_ACCESS_POLICY")]},
         {"policies": [("DB", "S", "M", "MASKING_POLICY")]},
         {"policies": RuntimeError("not authorized")},
+        # A tag, direct or inherited, can gain a masking policy without DDL.
+        {"tags": [("DB", "S", "PII", "x", "MANUAL", "COLUMN")]},
+        {"tags": [("DB", "S", "PII", "x", "INHERITED", "SCHEMA")]},
     ],
 )
 def test_relations_without_verifiable_identity_refuse(monkeypatch, metadata):
@@ -124,6 +135,37 @@ def test_relations_without_verifiable_identity_refuse(monkeypatch, metadata):
     with pytest.raises(TerrineError) as error:
         _snowflake._relation(object(), "DB", "S", "EVENTS")
     assert error.value.code == "terrine.execution.snapshot_unavailable"
+
+
+@pytest.mark.parametrize(
+    "definition",
+    [
+        # Each read evaluates the view: a nondeterministic or clock-dependent
+        # built-in, or any function outside the read-only whitelist, changes
+        # the rows without DDL.
+        'CREATE VIEW shaped AS SELECT "user_id", RANDOM() AS "amount" FROM events',
+        'CREATE VIEW shaped AS SELECT "user_id" FROM events WHERE "at" > CURRENT_TIMESTAMP()',
+        'CREATE VIEW shaped AS SELECT same("user_id") AS "user_id" FROM events',
+        'CREATE VIEW shaped AS SELECT s.same("user_id") AS "user_id" FROM events',
+    ],
+)
+def test_views_outside_the_read_only_policy_refuse(monkeypatch, definition):
+    _metadata(monkeypatch, view=definition)
+    monkeypatch.setattr(_snowflake, "_defaults", lambda con: ("DB", "S"))
+    with pytest.raises(TerrineError) as error:
+        _snowflake.closure_for(TableRef(kind="table", name="shaped"), object())
+    assert error.value.code == "terrine.execution.snapshot_unavailable"
+
+
+def test_views_over_admitted_built_ins_bind_their_closure(monkeypatch):
+    _metadata(
+        monkeypatch,
+        view='CREATE VIEW shaped AS SELECT "user_id", COALESCE("amount", 0) AS "amount" '
+        'FROM events WHERE "amount" > 0',
+    )
+    monkeypatch.setattr(_snowflake, "_defaults", lambda con: ("DB", "S"))
+    closure = _snowflake.closure_for(TableRef(kind="table", name="shaped"), object())
+    assert [item.kind for item in closure.values()] == ["view", "table"]
 
 
 def test_resolved_schemas_keep_integer_precision_beyond_int64(monkeypatch):

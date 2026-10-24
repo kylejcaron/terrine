@@ -15,6 +15,7 @@ import pyarrow as pa
 
 from terrine.errors import RefusalSpec
 from terrine.execution._metadata import invalidate_metadata
+from terrine.execution._views import admitted_view_query
 from terrine.semantic.models import Catalog, RelationSpec, SqlQuery, TableRef
 from terrine.semantic.sql import _admit_read_query_ast, _parse_read_query_ast, admit_read_query
 
@@ -64,6 +65,7 @@ class _Relation:
     name: str
     kind: str
     definition_hash: str | None
+    definition: str | None
 
     @property
     def identity(self) -> str:
@@ -104,7 +106,7 @@ def _relation(raw: Any, oid: int) -> _Relation:
     else:
         raise _snapshot_error(f"relation {name!r} has unsupported kind {relkind!r}")
     digest = hashlib.sha256(definition.encode()).hexdigest() if definition is not None else None
-    return _Relation(oid, database, schema, name, kind, digest)
+    return _Relation(oid, database, schema, name, kind, digest, definition)
 
 
 def _lookup(raw: Any, name: str) -> int:
@@ -123,6 +125,7 @@ def _closure(raw: Any, oid: int, seen: dict[int, _Relation], path: frozenset[int
     seen[oid] = relation
     if relation.kind == "view":
         _check_view_functions(raw, oid)
+        admitted_view_query(relation.definition or "", DIALECT, name=relation.name)
         for (dependency,) in _rows(raw, _VIEW_DEPENDENCIES_SQL, (oid, oid)):
             _closure(raw, int(dependency), seen, path | {oid})
 

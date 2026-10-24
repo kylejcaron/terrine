@@ -76,9 +76,14 @@
   session `TIMEZONE` must be `UTC`) and re-verifies every relation's `CREATED`
   and `LAST_DDL` once each statement completes, before any row reaches the
   caller, so a table swapped, renamed or replaced into place during a run
-  refuses; a relation carrying a row access, masking or other policy, or one
-  without identity metadata, refuses with a route, since Time Travel pins
-  neither. Names follow Snowflake's identifier rules, inside admitted SQL too,
+  refuses; a relation carrying a row access, masking or other policy, or any
+  tag (a tag can gain a masking policy without DDL), or one without identity
+  metadata, refuses with a route, since Time Travel pins neither. On every
+  backend a view's stored definition is admitted like a SQL relation, so a
+  view selecting `RANDOM()`, filtering on `CURRENT_TIMESTAMP()` or calling an
+  unlisted function refuses (`terrine.execution.snapshot_unavailable`): a
+  snapshot pins rows, not evaluation. Names follow Snowflake's identifier
+  rules, inside admitted SQL too,
   and every physical reference is rewritten fully qualified at binding, so a
   later `USE SCHEMA` cannot redirect a pinned read. `NUMBER(p, 0)` columns
   beyond int64's 18 digits resolve as `decimal(p, 0)`, so wide integer keys

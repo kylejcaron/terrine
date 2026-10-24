@@ -12,6 +12,7 @@ from typing import Any
 import pyarrow as pa
 
 from terrine.execution._metadata import invalidate_metadata
+from terrine.execution._views import admitted_view_query
 from terrine.semantic.models import Catalog, RelationSpec, SqlQuery, TableRef
 from terrine.semantic.sql import _admit_read_query_ast, admit_read_query
 
@@ -123,13 +124,12 @@ def _tables_in(sql: str, con: Any) -> list[tuple[str, str, str]]:
     return found
 
 
-def _view_tables(sql: str, con: Any) -> list[tuple[str, str, str]]:
-    from sqlglot import exp, parse_one
+def _view_tables(sql: str, con: Any, name: str) -> list[tuple[str, str, str]]:
+    from sqlglot import exp
     from sqlglot.optimizer.scope import traverse_scope
 
-    check_routines(sql)
     found = []
-    for scope in traverse_scope(parse_one(sql, read=DIALECT)):
+    for scope in traverse_scope(admitted_view_query(sql, DIALECT, name=name)):
         for source in scope.sources.values():
             if isinstance(source, exp.Table):
                 parts = [part for part in (source.catalog, source.db, source.name) if part]
@@ -151,7 +151,7 @@ def _closure(
     seen[key] = relation
     if relation.kind == "view":
         table = client_of(con).get_table(".".join(key))
-        for dependency in _view_tables(table.view_query, con):
+        for dependency in _view_tables(table.view_query, con, key[-1]):
             _closure(con, dependency, seen, path | {key})
 
 

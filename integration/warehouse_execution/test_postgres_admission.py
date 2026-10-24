@@ -195,6 +195,25 @@ def test_view_calling_a_user_function_is_refused(postgres_scratch, tmp_path):  #
     assert error.value.code == "terrine.execution.snapshot_unavailable"
 
 
+@pytest.mark.parametrize(
+    "expression",
+    ["random() AS amount", "amount FROM events WHERE occurred_at < clock_timestamp()"],
+    ids=["random", "clock"],
+)
+def test_view_evaluating_outside_the_read_only_policy_is_refused(
+    postgres_scratch, tmp_path, expression
+):  # noqa: F811
+    # The transaction pins rows, not evaluation: these built-ins change the
+    # view's rows between reads without any DDL.
+    con = postgres_scratch.con
+    _events(con)
+    select = expression if "FROM" in expression else f"{expression} FROM events"
+    con.raw_sql(f"CREATE VIEW shaped AS SELECT user_id, occurred_at, {select}").close()
+    with pytest.raises(TerrineError) as error:
+        _model(con, tmp_path, relation="{kind: table, name: shaped}")
+    assert error.value.code == "terrine.execution.snapshot_unavailable"
+
+
 def test_uuid_entities_read_as_text(postgres_scratch, tmp_path):  # noqa: F811
     con = postgres_scratch.con
     con.raw_sql(

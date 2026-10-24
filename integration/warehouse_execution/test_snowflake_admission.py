@@ -226,11 +226,44 @@ def test_pinned_sql_relations_resolve_cte_references_by_snowflake_rules(
             ),
             "shaped",
         ),
+        # Time Travel pins rows, not evaluation: these built-ins change the
+        # view's rows between pinned reads without any DDL.
+        (
+            (
+                'CREATE VIEW shaped AS SELECT "user_id", "occurred_at", RANDOM() AS "amount" '
+                "FROM events",
+            ),
+            "shaped",
+        ),
+        (
+            (
+                'CREATE VIEW shaped AS SELECT "user_id", "occurred_at", "amount" FROM events '
+                'WHERE "occurred_at" < CURRENT_TIMESTAMP()',
+            ),
+            "shaped",
+        ),
+        # A tag, on a column or inherited from the table or schema, can gain a
+        # masking policy (ALTER TAG ... SET MASKING POLICY) between reads
+        # without any DDL on the relation.
+        (
+            ("CREATE TAG pii", "ALTER TABLE events MODIFY COLUMN \"user_id\" SET TAG pii = 'x'"),
+            "events",
+        ),
+        (("CREATE TAG pii", "ALTER TABLE events SET TAG pii = 'x'"), "events"),
+        (("CREATE TAG pii", "ALTER SCHEMA \"{schema}\" SET TAG pii = 'x'"), "events"),
+        (
+            (
+                "CREATE TAG pii",
+                'CREATE VIEW shaped AS SELECT "user_id", "occurred_at", "amount" FROM events',
+                "ALTER VIEW shaped MODIFY COLUMN \"user_id\" SET TAG pii = 'x'",
+            ),
+            "shaped",
+        ),
     ],
 )
 def test_relations_without_a_usable_history_refuse(snowflake_scratch, tmp_path, setup, relation):  # noqa: F811
     scratch = snowflake_scratch
-    if relation == "events":
+    if relation == "events" and setup[0].startswith("DATA_RETENTION"):
         _events(scratch, options=setup[0])
     else:
         _events(scratch)

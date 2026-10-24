@@ -117,6 +117,25 @@ def test_view_calling_a_user_routine_is_refused(bigquery_scratch, tmp_path, call
     assert error.value.code == "terrine.execution.snapshot_unavailable"
 
 
+@pytest.mark.parametrize(
+    "expression",
+    ["RAND() AS amount", "amount FROM events WHERE occurred_at < CURRENT_TIMESTAMP()"],
+    ids=["rand", "clock"],
+)
+def test_view_evaluating_outside_the_read_only_policy_is_refused(
+    bigquery_scratch, tmp_path, expression
+):  # noqa: F811
+    # The session snapshot pins rows, not evaluation: these built-ins change
+    # the view's rows between reads without any DDL.
+    scratch = bigquery_scratch
+    _events(scratch)
+    select = expression if "FROM" in expression else f"{expression} FROM events"
+    scratch.sql(f"CREATE VIEW shaped AS SELECT user_id, occurred_at, {select}")
+    with pytest.raises(TerrineError) as error:
+        _model(scratch, tmp_path, relation="{kind: table, name: shaped}")
+    assert error.value.code == "terrine.execution.snapshot_unavailable"
+
+
 def test_unqualified_sql_relation_resolves_in_the_default_dataset(bigquery_scratch, tmp_path):  # noqa: F811
     scratch = bigquery_scratch
     _events(scratch)
