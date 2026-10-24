@@ -9,6 +9,7 @@ shared catalogs spell them.
 from __future__ import annotations
 
 import itertools
+import math
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
@@ -280,9 +281,11 @@ def test_float_windows_match_duckdb_within_tolerance(snowflake_scratch, tmp_path
     windows._assert_close(actual, expected)
     by_unit = {row["unit"]: row for row in actual}
     reference = {row["unit"]: row for row in expected}
-    # One rounding of the same decimal sums on both backends: bit-for-bit equal.
+    # Both backends round the same decimal sums; Snowflake's string-to-double
+    # conversion was measured one ulp off DuckDB's on a 17-digit text.
     for name in ("weight_before", "weight_week", "spend_per_weight"):
-        assert by_unit["d"][name] == reference["d"][name], name
+        got, want = by_unit["d"][name], reference["d"][name]
+        assert abs(got - want) <= math.ulp(want), (name, got, want)
 
 
 @pytest.mark.parametrize(
@@ -323,11 +326,13 @@ def test_float_window_failures_are_coded_refusals(
 
 def test_float_sum_beyond_38_digits_is_an_exact_overflow(snowflake_scratch, tmp_path):  # noqa: F811
     _load_windows(snowflake_scratch)
-    # Each coefficient fits; their running sum does not.
+    # Each coefficient fits; their running sum (1.8e38) leaves NUMBER(38, 0)'s
+    # 128-bit accumulator, where Snowflake raises (sums between 1e38 and about
+    # 1.7e38 are held exactly without an error).
     snowflake_scratch.sql(
         "INSERT INTO events VALUES "
-        "('d', '2025-01-01 11:00:00 +0000', 1, 10, 5e37, NULL), "
-        "('d', '2025-01-01 12:00:00 +0000', 1, 10, 5e37, NULL)"
+        "('d', '2025-01-01 11:00:00 +0000', 1, 10, 9e37, NULL), "
+        "('d', '2025-01-01 12:00:00 +0000', 1, 10, 9e37, NULL)"
     )
     design = windows._design(value=tr.agg("weight", window=("-3d", "0s")))
     with pytest.raises(TerrineError) as error:

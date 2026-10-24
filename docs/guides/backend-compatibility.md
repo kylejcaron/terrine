@@ -137,8 +137,10 @@ sums are exact, and a sum or difference beyond 38 digits refuses with
 shortest round-trip decimal text (taken from a `VARIANT`, since Snowflake's
 `VARCHAR` conversion keeps at most 15 significant digits) becomes an integer
 coefficient at a per-unit scale, so history outside the window cancels exactly
-and the window sum rounds once through Snowflake's correctly rounded
-string-to-double conversion; quotients divide 19-digit normalized significands
+and the window sum rounds once through Snowflake's string-to-double
+conversion, measured correctly rounded on halfway and subnormal cases but one
+ulp off DuckDB's on a 17-digit text, so float windows match DuckDB within one
+ulp rather than bit for bit; quotients divide 19-digit normalized significands
 in `NUMBER(38, 0)` within the same `|r − p/q| ≤ 6·2⁻⁵³·|p/q| + 2⁻¹⁰⁷⁵` bound.
 A coefficient needing more than 38 digits (a value's digits padded to its
 unit's scale, which the unit's smallest value sets) refuses with

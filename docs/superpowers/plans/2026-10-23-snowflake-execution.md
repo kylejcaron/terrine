@@ -117,11 +117,24 @@ bit-for-bit comparison with DuckDB's rows). `time_to_first_order`,
 `time_to_order_with_entry_and_exit`, `observed_state_panel`, event-id ties,
 timestamp parts/comparisons, the nonfinite and 38-digit float refusals and the
 float sum overflow passed. Run 40103027788 (same selection, with the fixes)
-was dispatched and its result is not yet recorded here.
+gave 29 passed, 3 failed, 1 skipped: (a) `test_design_matches_duckdb[schedule]`
+fails with Snowflake `000904 invalid identifier '_U.POS'`: Ibis lowers the
+Schedule anchor's range/unnest to `TABLE(FLATTEN(...))` with a `_u` alias whose
+`POS` column Snowflake rejects (an Ibis Snowflake lowering gap to work around
+in `terrine/backends/` or `compile/anchors.py`); (b) `weight_week` came back
+`0.6` where DuckDB gives `0.6000000000000001` for the decimal
+`0.60000000000000004`: `TRY_TO_DOUBLE('60000000000000004e-17')` is one ulp
+off although the measured halfway and subnormal cases were correct, so the
+guide now claims within-one-ulp agreement and the test asserts that; a
+correctly rounded route (for example `TO_DOUBLE(TO_DECFLOAT(text))`) is
+unmeasured; (c) two `5e37` coefficients summed to `1e38` without an error:
+Snowflake's `NUMBER(38, 0)` window sum holds values to about `1.7e38` (its
+128-bit accumulator) and raises beyond, so the test now sums `9e37` twice.
 
 **Remaining before this plan is done:**
 
-- Read run 40103027788; fix any remaining parity failure; dispatch
+- Fix the Schedule-anchor `FLATTEN` lowering (a) and decide the float output
+  conversion (b); then dispatch
   `backend_mode=snowflake` on `feat/snowflake-execution` (full
   `make test-snowflake` plus `examples/snowflake/dataset.py`) and record it.
 - Red checks for the live probes (one dispatch per file with deliberate
