@@ -23,10 +23,10 @@ _DUPLICATE_EVENT_ID = RefusalSpec(
 )
 _UNSUPPORTED_BACKEND = RefusalSpec(
     "terrine.temporal.first_occurrence_unsupported_backend",
-    "First-occurrence point lookup requires the DuckDB, PostgreSQL or BigQuery "
-    "backend; got {backend!r}.",
+    "First-occurrence point lookup requires the DuckDB, PostgreSQL, BigQuery or "
+    "Snowflake backend; got {backend!r}.",
 )
-_SUPPORTED_BACKENDS = frozenset({"duckdb", "postgres", "bigquery"})
+_SUPPORTED_BACKENDS = frozenset({"duckdb", "postgres", "bigquery", "snowflake"})
 _INVALID = RefusalSpec(
     "terrine.temporal.first_occurrence_invalid_relation",
     "First-occurrence input relation is invalid ({reason}).",
@@ -47,17 +47,17 @@ def _validate_timestamp(table: ibis.Table, column: str, name: str) -> dt.Timesta
 def _reverse_time_key(value: ir.TimestampValue) -> ir.Value:
     """A key whose ascending order is the instants' descending order."""
     dialect = dialect_of(value)
-    if dialect in {"postgres", "bigquery"}:
-        # One exact scalar: their microsecond ranges stay below 10**19.
+    if dialect in {"postgres", "bigquery", "snowflake"}:
+        # One exact scalar: finite instants' nanoseconds stay far below 10**38.
         rank, seconds, nanos = timestamp_parts(value, backend=dialect)
         wide = dt.Decimal(38, 0)
-        million = cast(ir.DecimalValue, ibis.literal(10**6, type=wide))
-        rank_weight = cast(ir.DecimalValue, ibis.literal(10**20, type=wide))
-        micros = cast(ir.DecimalValue, seconds.cast(wide)) * million + cast(
-            ir.DecimalValue, (nanos // 1000).cast(wide)
+        billion = cast(ir.DecimalValue, ibis.literal(10**9, type=wide))
+        rank_weight = cast(ir.DecimalValue, ibis.literal(10**23, type=wide))
+        coordinate = cast(ir.DecimalValue, seconds.cast(wide)) * billion + cast(
+            ir.DecimalValue, nanos.cast(wide)
         )
         return cast(ir.DecimalValue, ibis.literal(0, type=wide)) - (
-            cast(ir.DecimalValue, rank.cast(wide)) * rank_weight + micros
+            cast(ir.DecimalValue, rank.cast(wide)) * rank_weight + coordinate
         )
     key = _struct_key(value)
     return ibis.struct(

@@ -1,0 +1,335 @@
+"""Snowflake window metrics, study shapes, timestamps and floats against DuckDB.
+
+Data, catalogs and designs are shared with the PostgreSQL probes; only loading
+differs, so the backends are checked on identical inputs. Tables are created
+with Snowflake's default upper-case names and quoted lower-case columns, as the
+shared catalogs spell them.
+"""
+
+from __future__ import annotations
+
+import itertools
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from typing import Literal
+
+import ibis
+import pytest
+
+import terrine as tr
+from integration.warehouse_execution import test_postgres_shapes as shapes
+from integration.warehouse_execution import test_postgres_windows as windows
+from integration.warehouse_execution.snowflake_fixtures import (
+    snowflake_scratch as snowflake_scratch,  # noqa: F401
+)
+from terrine.errors import TerrineError
+
+pytestmark = pytest.mark.snowflake
+
+_STAMP = "YYYY-MM-DD HH24:MI:SS.FF9 TZHTZM"
+
+
+def _quote(value) -> str:
+    return "NULL" if value is None else repr(value)
+
+
+def _load_windows(scratch, amount_type: str = "NUMBER(12, 2)") -> None:
+    scratch.sql('CREATE TABLE users("user_id" VARCHAR)')
+    scratch.sql(
+        'CREATE TABLE events("user_id" VARCHAR, "occurred_at" TIMESTAMP_TZ(9), '
+        f'"qty" NUMBER(38, 0), "amount" {amount_type}, "weight" FLOAT, "light" FLOAT)'
+    )
+    scratch.sql("INSERT INTO users VALUES " + ", ".join(f"('{user}')" for user in windows._USERS))
+    scratch.sql(
+        "INSERT INTO events VALUES "
+        + ", ".join(
+            f"('{user}', '{at} +0000', {qty}, {amount}, {weight}, NULL)"
+            for user, at, qty, amount, weight in windows._EVENTS
+        )
+    )
+
+
+def _load_shapes(scratch) -> None:
+    scratch.sql('CREATE TABLE users("user_id" VARCHAR)')
+    scratch.sql(
+        'CREATE TABLE events("user_id" VARCHAR, "occurred_at" TIMESTAMP_TZ(9), '
+        '"amount" NUMBER(10, 2), "tier" VARCHAR, "event_id" VARCHAR)'
+    )
+    scratch.sql("INSERT INTO users VALUES " + ", ".join(f"('{user}')" for user in shapes._USERS))
+    scratch.sql(
+        "INSERT INTO events VALUES "
+        + ", ".join(
+            f"('{user}', '{at} +0000', {amount}, {_quote(tier)}, "
+            f"'00000000-0000-0000-0000-{index:012d}')"
+            for index, (user, at, amount, tier) in enumerate(shapes._EVENTS)
+        )
+    )
+    scratch.sql(
+        'CREATE TABLE states("user_id" VARCHAR, "observed_at" TIMESTAMP_TZ(9), "state" VARCHAR)'
+    )
+    scratch.sql(
+        "INSERT INTO states VALUES "
+        + ", ".join(f"('{user}', '{at} +0000', '{state}')" for user, at, state in shapes._STATES)
+    )
+
+
+def _duckdb_windows():
+    con = ibis.duckdb.connect()
+    windows._load(con, timestamp_type="TIMESTAMPTZ", amount_type="DECIMAL(12, 2)")
+    return con
+
+
+def _duckdb_shapes():
+    con = ibis.duckdb.connect()
+    shapes._load(con, timestamp_type="TIMESTAMPTZ", amount_type="DECIMAL(10, 2)")
+    return con
+
+
+def test_window_metrics_match_duckdb(snowflake_scratch, tmp_path):  # noqa: F811
+    _load_windows(snowflake_scratch)
+    design = windows._design(
+        outcomes={
+            "orders_after": tr.agg("orders", window=("0s", "1d")),
+            "spend_after": tr.agg("spend", window=("0s", "1d")),
+        },
+        orders_before=tr.agg("orders", window=("-1d", "0s")),
+        quantity_before=tr.agg("quantity", window=("-1d", "0s")),
+        heavy_orders_week=tr.agg("heavy_orders", window=("-7d", "0s")),
+        spend_three_days=tr.agg("spend", window=("-3d", "0s")),
+        average_week=tr.agg("average_spend", window=("-7d", "0s")),
+        per_order_before=tr.agg("spend_per_order", window=("-3d", "0s")),
+    )
+    expected = windows._rows(windows._model(_duckdb_windows(), tmp_path, "duckdb"), design)
+    actual = windows._rows(windows._model(snowflake_scratch.con, tmp_path, "snowflake"), design)
+    windows._assert_close(actual, expected)
+    by_unit = {row["unit"]: row for row in actual}
+    assert by_unit["a"]["quantity_before"] == 9_000_000_000_001
+    assert by_unit["a"]["spend_three_days"] == Decimal("7.15")
+
+
+def test_exact_overflow_is_a_coded_refusal_and_the_boundary_succeeds(snowflake_scratch, tmp_path):  # noqa: F811
+    scratch = snowflake_scratch
+    _load_windows(scratch, amount_type="NUMBER(38, 0)")
+    model = windows._model(scratch.con, tmp_path, "snowflake")
+    design = windows._design(spend=tr.agg("spend", window=("-30d", "0s")))
+    big = 10**38 - 1
+    scratch.sql(
+        f"INSERT INTO events VALUES ('d', '2025-01-01 00:00:00 +0000', 0, {big - 1}, 1.0, NULL), "
+        "('d', '2025-01-01 01:00:00 +0000', 0, 1, 1.0, NULL)"
+    )
+    assert {row["unit"]: row["spend"] for row in windows._rows(model, design)}["d"] == Decimal(big)
+    scratch.sql("INSERT INTO events VALUES ('d', '2025-01-01 02:00:00 +0000', 0, 1, 1.0, NULL)")
+    with pytest.raises(TerrineError) as error:
+        windows._rows(model, design)
+    assert error.value.code == "terrine.temporal.exact_overflow"
+
+
+@pytest.mark.parametrize("name", sorted(shapes._DESIGNS))
+def test_design_matches_duckdb(snowflake_scratch, tmp_path, name):  # noqa: F811
+    _load_shapes(snowflake_scratch)
+    design = shapes._DESIGNS[name]
+    expected = shapes._rows(shapes._model(_duckdb_shapes(), tmp_path, "duckdb"), design)
+    actual = shapes._rows(shapes._model(snowflake_scratch.con, tmp_path, "snowflake"), design)
+    assert expected, "the DuckDB reference produced no rows"
+    assert actual == expected
+
+
+def test_event_ids_break_first_event_ties(snowflake_scratch, tmp_path):  # noqa: F811
+    _load_shapes(snowflake_scratch)
+    event_ids = {"orders": "event_id"}
+    design = shapes._DESIGNS["time_to_first_order"]
+    expected = shapes._rows(shapes._model(_duckdb_shapes(), tmp_path, "duckdb", event_ids), design)
+    actual = shapes._rows(
+        shapes._model(snowflake_scratch.con, tmp_path, "snowflake", event_ids), design
+    )
+    assert actual == expected
+
+
+def test_cohort_summaries_match_duckdb(snowflake_scratch, tmp_path):  # noqa: F811
+    _load_shapes(snowflake_scratch)
+    design = tr.Design(
+        "user",
+        tr.EventAnchor("order", which="first"),
+        shape=tr.CohortSpec("order", tr.Trajectory("spend", "1d", periods=2, cumulative=True)),
+        administrative_cutoff=datetime(2025, 1, 6, tzinfo=UTC),
+    )
+
+    def summary(model, statistic):
+        grouping = tr.CohortGrouping("1d", datetime(2025, 1, 1, tzinfo=UTC), statistic=statistic)
+        cohorts = design.build(model).cohorts(grouping=grouping, value_column="cumulative_value")
+        rows = cohorts.to_pyarrow(budget=shapes._BUDGET).to_pylist()
+        return sorted(rows, key=lambda row: tuple(str(value) for value in row.values()))
+
+    duckdb = _duckdb_shapes()
+    for statistic in ("total", "mean"):
+        expected = summary(shapes._model(duckdb, tmp_path, "duckdb"), statistic)
+        actual = summary(shapes._model(snowflake_scratch.con, tmp_path, "snowflake"), statistic)
+        assert expected, "the DuckDB reference produced no rows"
+        windows._assert_close(actual, expected)
+
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+# Nanosecond instants over Snowflake's whole range, including both sides of the
+# epoch and both Arrow-unrepresentable extremes.
+_INSTANTS = {
+    "earliest": "0001-01-01 00:00:00",
+    "before_epoch_ns": "1969-12-31 23:59:59.999999999",
+    "before_epoch": "1969-12-31 23:59:59.999999",
+    "epoch": "1970-01-01 00:00:00",
+    "after_epoch_ns": "1970-01-01 00:00:00.000000001",
+    "ordinary": "2025-06-01 12:34:56.123456789",
+    "next_second": "2025-06-01 12:34:57.123456789",
+    "latest": "9999-12-31 23:59:59.999999999",
+    "missing": None,
+}
+
+
+def _reference(text: str | None) -> tuple[int, int, int] | None:
+    """``(rank, seconds, nanos)`` truncated toward zero, in exact integers."""
+    if text is None:
+        return None
+    clock, _, fraction = text.partition(".")
+    whole = datetime.fromisoformat(clock + "+00:00")
+    nanoseconds = (whole - _EPOCH) // timedelta(microseconds=1) * 1000
+    nanoseconds += int(fraction.ljust(9, "0")) if fraction else 0
+    seconds = abs(nanoseconds) // 10**9 * (1 if nanoseconds >= 0 else -1)
+    return (0, seconds, nanoseconds - seconds * 10**9)
+
+
+def test_timestamp_parts_and_comparisons_match_the_reference(snowflake_scratch):  # noqa: F811
+    from integration.warehouse_execution import test_postgres_timestamps as reference
+    from terrine.backends.dialect import dialect_scope
+    from terrine.backends.timestamps import compare_timestamps, timestamp_parts
+
+    scratch = snowflake_scratch
+    scratch.sql('CREATE TABLE instants("name" VARCHAR, "instant" TIMESTAMP_TZ(9))')
+    for name, text in _INSTANTS.items():
+        value = "NULL" if text is None else f"TO_TIMESTAMP_TZ('{text} +0000', '{_STAMP}')"
+        scratch.sql(f"INSERT INTO instants SELECT '{name}', {value}")
+    table = scratch.con.table("INSTANTS", database=(scratch.database, scratch.schema))
+    with dialect_scope("snowflake"):
+        rank, seconds, nanos = timestamp_parts(table["instant"])
+        parts = {
+            row["name"]: None
+            if row["rank"] is None
+            else (row["rank"], row["seconds"], row["nanos"])
+            for row in table.select("name", rank=rank, seconds=seconds, nanos=nanos)
+            .to_pyarrow()
+            .to_pylist()
+        }
+        assert parts == {name: _reference(text) for name, text in _INSTANTS.items()}
+
+        left = table.select(left_name=table["name"], left_at=table["instant"])
+        right = table.select(right_name=table["name"], right_at=table["instant"])
+        pairs = left.cross_join(right)
+        ops: tuple[Literal["lt", "le", "gt", "ge", "eq"], ...] = ("lt", "le", "gt", "ge", "eq")
+        cases = list(itertools.product(ops, (0, 1, -86_400)))
+        result = pairs.select(
+            "left_name",
+            "right_name",
+            **{
+                f"{op}_{index}": compare_timestamps(
+                    pairs.left_at, pairs.right_at, op, right_offset_seconds=offset
+                )
+                for index, (op, offset) in enumerate(cases)
+            },
+        ).to_pyarrow()
+    for row in result.to_pylist():
+        for index, (op, offset) in enumerate(cases):
+            expected = reference._compare(
+                _reference(_INSTANTS[row["left_name"]]),
+                _reference(_INSTANTS[row["right_name"]]),
+                op,
+                offset,
+            )
+            assert row[f"{op}_{index}"] == expected, (
+                op,
+                offset,
+                row["left_name"],
+                row["right_name"],
+            )
+
+
+def test_float_windows_match_duckdb_within_tolerance(snowflake_scratch, tmp_path):  # noqa: F811
+    _load_windows(snowflake_scratch)
+    # History holds 1e15: a binary64 running sum would lose the window's small
+    # values, while exact state cancels the history and rounds the decimal sum once.
+    rows = (
+        ("2024-12-20 00:00:00", "1e15"),
+        ("2024-12-31 12:00:00", "0.1"),
+        ("2025-01-01 06:00:00", "0.2"),
+        ("2025-01-01 12:00:00", "0.30000000000000004"),
+    )
+    snowflake_scratch.sql(
+        "INSERT INTO events VALUES "
+        + ", ".join(f"('d', '{at} +0000', 1, 10, {weight}, NULL)" for at, weight in rows)
+    )
+    duckdb = _duckdb_windows()
+    duckdb.raw_sql(
+        "INSERT INTO events VALUES "
+        + ", ".join(f"('d', '{at}+00', 1, 10, {weight}, NULL)" for at, weight in rows)
+    )
+    design = windows._design(
+        outcomes={"weight_after": tr.agg("weight", window=("0s", "1d"))},
+        weight_before=tr.agg("weight", window=("-1d", "0s")),
+        weight_week=tr.agg("weight", window=("-7d", "0s")),
+        spend_per_weight=tr.agg("spend_per_weight", window=("-7d", "0s")),
+    )
+    expected = windows._rows(windows._model(duckdb, tmp_path, "duckdb"), design)
+    actual = windows._rows(windows._model(snowflake_scratch.con, tmp_path, "snowflake"), design)
+    windows._assert_close(actual, expected)
+    by_unit = {row["unit"]: row for row in actual}
+    reference = {row["unit"]: row for row in expected}
+    # One rounding of the same decimal sums on both backends: bit-for-bit equal.
+    for name in ("weight_before", "weight_week", "spend_per_weight"):
+        assert by_unit["d"][name] == reference["d"][name], name
+
+
+@pytest.mark.parametrize(
+    ("rows", "metric", "failure"),
+    [
+        # Non-finite history before a non-empty window refuses, as on DuckDB.
+        (
+            (("2024-12-20 00:00:00", "'NaN'::FLOAT"), ("2025-01-01 12:00:00", "1.0")),
+            "weight",
+            "nonfinite_input",
+        ),
+        # A coefficient beyond NUMBER(38, 0)'s digits.
+        ((("2025-01-01 12:00:00", "1e39"),), "weight", "bound_overflow"),
+        # A dropped denominator must not read as a zero denominator.
+        ((("2025-01-01 12:00:00", "1e39"),), "spend_per_weight", "bound_overflow"),
+        # The unit's scale comes from its smallest value: 1e20 then needs 41 digits.
+        (
+            (("2024-12-31 12:00:00", "'1e-20'::FLOAT"), ("2025-01-01 12:00:00", "'1e20'::FLOAT")),
+            "weight",
+            "bound_overflow",
+        ),
+    ],
+)
+def test_float_window_failures_are_coded_refusals(
+    snowflake_scratch, tmp_path, rows, metric, failure
+):  # noqa: F811
+    _load_windows(snowflake_scratch)
+    snowflake_scratch.sql(
+        "INSERT INTO events VALUES "
+        + ", ".join(f"('d', '{at} +0000', 1, 10, {weight}, NULL)" for at, weight in rows)
+    )
+    design = windows._design(value=tr.agg(metric, window=("-3d", "0s")))
+    with pytest.raises(TerrineError) as error:
+        windows._rows(windows._model(snowflake_scratch.con, tmp_path, "snowflake"), design)
+    assert error.value.code == "terrine.temporal.float64_precision"
+    assert error.value.context["failure"] == failure
+
+
+def test_float_sum_beyond_38_digits_is_an_exact_overflow(snowflake_scratch, tmp_path):  # noqa: F811
+    _load_windows(snowflake_scratch)
+    # Each coefficient fits; their running sum does not.
+    snowflake_scratch.sql(
+        "INSERT INTO events VALUES "
+        "('d', '2025-01-01 11:00:00 +0000', 1, 10, 5e37, NULL), "
+        "('d', '2025-01-01 12:00:00 +0000', 1, 10, 5e37, NULL)"
+    )
+    design = windows._design(value=tr.agg("weight", window=("-3d", "0s")))
+    with pytest.raises(TerrineError) as error:
+        windows._rows(windows._model(snowflake_scratch.con, tmp_path, "snowflake"), design)
+    assert error.value.code == "terrine.temporal.exact_overflow"

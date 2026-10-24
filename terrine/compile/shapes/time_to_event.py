@@ -10,6 +10,7 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+from terrine.backends.dialect import dialect_of
 from terrine.backends.extrema import greatest, least
 from terrine.backends.timestamps import _UNSUPPORTED as _TIMESTAMP_ORDER_UNSUPPORTED
 from terrine.backends.timestamps import (
@@ -38,8 +39,14 @@ _INVALID = RefusalSpec(
 _INCOMPLETE_HISTORY = "incomplete_initial_history"
 
 
+def _bounded_nanoseconds(scale: int | None) -> bool:
+    """Whether a nanosecond axis is DuckDB's, bounded by int64 nanoseconds
+    (1677-2262); Snowflake's spans years 1 to 9999 like a microsecond axis."""
+    return scale == 9 and dialect_of() == "duckdb"
+
+
 def _validate_nanosecond_axis(design: Design, timestamp_types) -> None:
-    if not any(dtype.scale == 9 for dtype in timestamp_types):
+    if not any(_bounded_nanoseconds(dtype.scale) for dtype in timestamp_types):
         return
     ns_min = datetime(1677, 9, 21, 0, 12, 43, 145225, tzinfo=UTC)
     ns_max = datetime(2262, 4, 11, 23, 47, 16, 854775, tzinfo=UTC)
@@ -90,7 +97,7 @@ def _narrow_bound(value, lower, upper, time_type) -> ir.TimestampValue:
         lower_timestamp,
         ibis.ifelse(above_upper, upper_timestamp, normalized.try_cast(time_type)),
     )
-    if time_type.scale == 9:
+    if _bounded_nanoseconds(time_type.scale):
         key = _struct_key(normalized)
         seconds = cast(ir.IntegerValue, key["seconds"])
         nanos = cast(ir.IntegerValue, key["nanos"])
@@ -193,7 +200,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
     coverage = model.readiness.sources.get(event_source.name)
     if coverage is None:
         raise _INVALID.error(reason="event_source_coverage_required")
-    if time_type.scale == 9:
+    if _bounded_nanoseconds(time_type.scale):
         ns_min = datetime(1677, 9, 21, 0, 12, 43, 145225, tzinfo=UTC)
         ns_max = datetime(2262, 4, 11, 23, 47, 16, 854775, tzinfo=UTC)
         start = (
@@ -233,9 +240,9 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         cutoff_value = design.administrative_cutoff
         cutoff = (
             ibis.literal("-infinity").cast(time_type)
-            if time_type.scale == 9 and cutoff_value < ns_min
+            if _bounded_nanoseconds(time_type.scale) and cutoff_value < ns_min
             else ibis.literal("infinity").cast(time_type)
-            if time_type.scale == 9 and cutoff_value > ns_max
+            if _bounded_nanoseconds(time_type.scale) and cutoff_value > ns_max
             else utc_wall_clock(ibis.literal(cutoff_value)).cast(time_type)
         )
         supported_end = least(supported_end, cutoff)

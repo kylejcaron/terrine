@@ -144,7 +144,12 @@ def _range_filter_raw(
         return table
     dtype = table.schema()[column]
     naive = dtype.timezone is None
-    if naive and model.catalog.dialect.casefold() not in {"duckdb", "postgres", "bigquery"}:
+    if naive and model.catalog.dialect.casefold() not in {
+        "duckdb",
+        "postgres",
+        "bigquery",
+        "snowflake",
+    }:
         raise _UTC_CONVERSION_UNSUPPORTED.error(backend=model.catalog.dialect)
     start, end = _bound(model, anchor_range.start), _bound(model, anchor_range.end)
     for bound, lower in ((start, True), (end, False)):

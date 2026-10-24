@@ -2,7 +2,9 @@
 
 DuckDB keys finite instants by truncated seconds and a signed remainder taken from
 Ibis's exact microsecond/nanosecond ``delta``; PostgreSQL timestamps are exact at
-microseconds and are their own key.
+microseconds and are their own key; BigQuery and Snowflake instants are finite
+within years 1 to 9999, their own key, and split into seconds and nanoseconds
+from an exact epoch delta.
 """
 
 from __future__ import annotations
@@ -36,6 +38,8 @@ _UNSUPPORTED = RefusalSpec(
 )
 _KEY = dt.Struct.from_tuples((("rank", dt.int8), ("seconds", dt.int64), ("nanos", dt.int64)))
 _NATIVE = frozenset({"duckdb", "postgres"})
+# Backends without timestamp infinities, bounded by years 1 and 9999.
+_FINITE = frozenset({"bigquery", "snowflake"})
 
 
 @ibis.udf.scalar.builtin(name="isfinite")
@@ -46,8 +50,7 @@ def _isfinite(value) -> bool:
 
 def timestamp_is_finite(value: ir.TimestampValue) -> ir.BooleanValue:
     dialect = dialect_of(value)
-    if dialect == "bigquery":
-        # BigQuery timestamps have no infinities.
+    if dialect in _FINITE:
         return cast(ir.BooleanValue, ibis.literal(True))
     if dialect not in _NATIVE:
         raise unavailable("timestamp_is_finite", dialect)
@@ -56,9 +59,12 @@ def timestamp_is_finite(value: ir.TimestampValue) -> ir.BooleanValue:
 
 def timestamp_extremes(dtype: dt.Timestamp) -> tuple[ir.TimestampScalar, ir.TimestampScalar]:
     """The lowest and highest values of ``dtype``: infinities where the backend has
-    them (DuckDB, PostgreSQL), else BigQuery's year 1 and year 9999 limits."""
-    if dialect_of() == "bigquery":
-        low, high = "0001-01-01 00:00:00", "9999-12-31 23:59:59.999999"
+    them (DuckDB, PostgreSQL), else the year 1 and year 9999 limits at the type's
+    precision (BigQuery microseconds; Snowflake its declared scale, 9 by default)."""
+    dialect = dialect_of()
+    if dialect in _FINITE:
+        digits = 6 if dialect == "bigquery" else (dtype.scale if dtype.scale is not None else 9)
+        low, high = "0001-01-01 00:00:00", "9999-12-31 23:59:59." + "9" * digits
     else:
         low, high = "-infinity", "infinity"
     return (
@@ -93,12 +99,37 @@ def _utc_aware(zone, timestamp):
     """Attach UTC explicitly to a naive UTC wall-clock value."""
 
 
+@ibis.udf.scalar.builtin(
+    name="convert_timezone",
+    signature=((dt.string, dt.Timestamp(timezone="UTC")), dt.Timestamp(timezone="UTC")),
+)
+def _sf_in_zone(zone, timestamp):
+    """A Snowflake TIMESTAMP_TZ re-expressed in a zone; the instant is unchanged."""
+
+
+@ibis.udf.scalar.builtin(
+    name="to_timestamp_ntz", signature=((dt.Timestamp(timezone="UTC"),), dt.timestamp)
+)
+def _sf_wall_clock(timestamp):
+    """A Snowflake TIMESTAMP_TZ's wall clock in its own offset, as TIMESTAMP_NTZ."""
+
+
+@ibis.udf.scalar.builtin(
+    name="to_timestamp_tz", signature=((dt.timestamp,), dt.Timestamp(timezone="UTC"))
+)
+def _sf_instant(timestamp):
+    """A TIMESTAMP_NTZ read in the session zone, which execution requires to be UTC."""
+
+
 def utc_wall_clock(value: ir.Value) -> ir.TimestampValue:
     """An instant's naive UTC wall clock, independent of the session time zone."""
     dialect = dialect_of(value)
     if dialect == "bigquery":
         # TIMESTAMP -> DATETIME converts in UTC; terrine's session sets no time zone.
         return cast(ir.TimestampValue, value.cast(dt.Timestamp()))
+    if dialect == "snowflake":
+        # A plain cast keeps the value's stored offset; re-express it in UTC first.
+        return cast(ir.TimestampValue, _sf_wall_clock(_sf_in_zone("UTC", value)))
     if dialect not in _NATIVE:
         raise unavailable("utc_wall_clock", dialect)
     return cast(ir.TimestampValue, _utc_naive("UTC", value))
@@ -109,6 +140,8 @@ def utc_instant(value: ir.Value) -> ir.TimestampValue:
     dialect = dialect_of(value)
     if dialect == "bigquery":
         return cast(ir.TimestampValue, value.cast(dt.Timestamp(timezone="UTC")))
+    if dialect == "snowflake":
+        return cast(ir.TimestampValue, _sf_instant(value))
     if dialect not in _NATIVE:
         raise unavailable("utc_instant", dialect)
     return cast(ir.TimestampValue, _utc_aware("UTC", value))
@@ -168,6 +201,8 @@ def timestamp_parts(
     dialect = backend or dialect_of(value)
     if dialect == "bigquery":
         return _bigquery_parts(value)
+    if dialect == "snowflake":
+        return _snowflake_parts(value)
     if dialect != "postgres":
         key = _struct_key(value)
         return (
@@ -215,17 +250,38 @@ def _bigquery_parts(
     return cast(ir.IntegerValue, rank), seconds, nanos
 
 
+def _snowflake_parts(
+    value: ir.TimestampValue,
+) -> tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue]:
+    """Snowflake instants are finite within years 1-9999 and exact at their
+    scale; their nanoseconds since the epoch are an exact NUMBER(38, 0)
+    (``DATEDIFF`` counts whole nanoseconds), split into truncated seconds and a
+    signed remainder below one second."""
+    dtype = value.type()
+    if not isinstance(dtype, dt.Timestamp):
+        raise _UNSUPPORTED.error(dtype=str(dtype))
+    coefficient = value.delta(_epoch(dtype), unit="nanosecond")
+    seconds = truncating_quotient(coefficient, 10**9, like=value)
+    nanos = cast(ir.IntegerValue, (coefficient - seconds * 10**9).cast(dt.int64))
+    rank = value.isnull().ifelse(ibis.null(dt.int64), ibis.literal(0, type=dt.int64))
+    return cast(ir.IntegerValue, rank), seconds, nanos
+
+
 def timestamp_order_key(value: ir.TimestampValue) -> ir.Value:
     """Return a value whose ordering and equality are exactly the instants'.
 
-    PostgreSQL timestamps are exact at microseconds and order infinities natively, so
-    they are their own key (Ibis's PostgreSQL struct lowering is not valid SQL).
-    Other backends use the struct key from ``_struct_key``.
+    PostgreSQL, BigQuery and Snowflake timestamps are exact at their precision
+    and order natively (PostgreSQL's infinities included), so they are their
+    own key (Ibis's PostgreSQL struct lowering is not valid SQL). DuckDB uses
+    the struct key from ``_struct_key``.
     """
     dtype = value.type()
     if not isinstance(dtype, dt.Timestamp):
         raise _UNSUPPORTED.error(dtype=str(dtype))
-    if dialect_of(value) in {"postgres", "bigquery"}:
+    dialect = dialect_of(value)
+    if dialect == "snowflake":
+        return value
+    if dialect in {"postgres", "bigquery"}:
         if dtype.scale not in (None, 6):
             raise _UNSUPPORTED.error(dtype=str(dtype))
         return value
