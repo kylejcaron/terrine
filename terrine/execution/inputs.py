@@ -764,6 +764,40 @@ def _open_bigquery_execution(
             session.close()
 
 
+@contextlib.contextmanager
+def _open_snowflake_execution(
+    provider: Any,
+    catalog: Catalog,
+    con: Any,
+    *,
+    units: Mapping[str, Any] | None = None,
+    input_binding: VerifiedInputBinding | None = None,
+) -> Generator[ExecutionContext]:
+    """Pin every read to one Time Travel instant; only reads touch the caller's
+    connection, so there is no private session to open or close."""
+    from terrine.execution import _snowflake
+
+    session = _snowflake.SnowflakeSession.open(con)
+    context = None
+    try:
+        resolver = provider.bind_resolver(
+            catalog, con, units=units, input_binding=input_binding, session=session
+        )
+        context = ExecutionContext(
+            con,
+            _execution_snapshot(catalog, units, backend="snowflake"),
+            resolver,
+            _session=session,
+            owner_con=con,
+        )
+        yield context
+    finally:
+        if context is not None:
+            context.close()
+        else:
+            session.close()
+
+
 def required_relations(
     catalog: Catalog, con: Any, *, units: Mapping[str, Any] | None = None
 ) -> tuple[PhysicalRelationId, ...]:

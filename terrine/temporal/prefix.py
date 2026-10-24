@@ -38,7 +38,7 @@ def _require_backend(table: ibis.Table) -> None:
     except IbisError:
         backend = "unbound"
     supported = (backend == "duckdb" and version("duckdb") == "1.5.6") or (
-        backend in {"postgres", "bigquery"} and dialect_of() == backend
+        backend in {"postgres", "bigquery", "snowflake"} and dialect_of() == backend
     )
     if not supported:
         raise _EXACT_UNSUPPORTED.error(backend=backend)

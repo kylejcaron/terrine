@@ -63,7 +63,9 @@ def _dtype_ok(dtype: Any, expected: str) -> bool:
     if expected == "string":
         return dtype.is_string()
     if expected == "int":
-        return dtype.is_integer()
+        # A scale-zero decimal is an integer column wider than int64, such as
+        # Snowflake's NUMBER(38, 0) or DuckDB's HUGEINT.
+        return dtype.is_integer() or (dtype.is_decimal() and dtype.scale == 0)
     if expected == "float":
         return dtype.is_floating() or dtype.is_decimal()
     if expected == "bool":

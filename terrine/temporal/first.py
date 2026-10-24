@@ -10,7 +10,12 @@ import ibis.expr.types as ir
 
 from terrine.backends.dialect import dialect_of
 from terrine.backends.joins import asof_join
-from terrine.backends.timestamps import _struct_key, timestamp_order_key, timestamp_parts
+from terrine.backends.timestamps import (
+    _struct_key,
+    lossless_timestamp,
+    timestamp_order_key,
+    timestamp_parts,
+)
 from terrine.data import ColumnMeta
 from terrine.errors import RefusalSpec
 from terrine.temporal.aggregate import TemporalResult, _Check, _Failure
@@ -23,10 +28,10 @@ _DUPLICATE_EVENT_ID = RefusalSpec(
 )
 _UNSUPPORTED_BACKEND = RefusalSpec(
     "terrine.temporal.first_occurrence_unsupported_backend",
-    "First-occurrence point lookup requires the DuckDB, PostgreSQL or BigQuery "
-    "backend; got {backend!r}.",
+    "First-occurrence point lookup requires the DuckDB, PostgreSQL, BigQuery or "
+    "Snowflake backend; got {backend!r}.",
 )
-_SUPPORTED_BACKENDS = frozenset({"duckdb", "postgres", "bigquery"})
+_SUPPORTED_BACKENDS = frozenset({"duckdb", "postgres", "bigquery", "snowflake"})
 _INVALID = RefusalSpec(
     "terrine.temporal.first_occurrence_invalid_relation",
     "First-occurrence input relation is invalid ({reason}).",
@@ -39,25 +44,36 @@ def _validate_timestamp(table: ibis.Table, column: str, name: str) -> dt.Timesta
     dtype = table.schema()[column]
     if not isinstance(dtype, dt.Timestamp) or dtype.timezone not in (None, "UTC"):
         raise _INVALID.error(reason=f"{name}_must_be_utc_timestamp")
-    if dtype.scale not in (None, 6, 9):
+    if dtype.scale is not None and dtype.scale > 9:
         raise _INVALID.error(reason=f"{name}_timestamp_precision_unsupported")
     return dtype
+
+
+def _lossless(table: ibis.Table, *columns: str) -> ibis.Table:
+    """``table`` with each timestamp column at the supported scale holding it
+    exactly: a scale below 6 promotes to microseconds, 7 or 8 to nanoseconds."""
+    promoted = {
+        column: value
+        for column in columns
+        if (value := lossless_timestamp(table[column])).type() != table.schema()[column]
+    }
+    return table.mutate(**promoted) if promoted else table
 
 
 def _reverse_time_key(value: ir.TimestampValue) -> ir.Value:
     """A key whose ascending order is the instants' descending order."""
     dialect = dialect_of(value)
-    if dialect in {"postgres", "bigquery"}:
-        # One exact scalar: their microsecond ranges stay below 10**19.
+    if dialect in {"postgres", "bigquery", "snowflake"}:
+        # One exact scalar: finite instants' nanoseconds stay far below 10**38.
         rank, seconds, nanos = timestamp_parts(value, backend=dialect)
         wide = dt.Decimal(38, 0)
-        million = cast(ir.DecimalValue, ibis.literal(10**6, type=wide))
-        rank_weight = cast(ir.DecimalValue, ibis.literal(10**20, type=wide))
-        micros = cast(ir.DecimalValue, seconds.cast(wide)) * million + cast(
-            ir.DecimalValue, (nanos // 1000).cast(wide)
+        billion = cast(ir.DecimalValue, ibis.literal(10**9, type=wide))
+        rank_weight = cast(ir.DecimalValue, ibis.literal(10**23, type=wide))
+        coordinate = cast(ir.DecimalValue, seconds.cast(wide)) * billion + cast(
+            ir.DecimalValue, nanos.cast(wide)
         )
         return cast(ir.DecimalValue, ibis.literal(0, type=wide)) - (
-            cast(ir.DecimalValue, rank.cast(wide)) * rank_weight + micros
+            cast(ir.DecimalValue, rank.cast(wide)) * rank_weight + coordinate
         )
     key = _struct_key(value)
     return ibis.struct(
@@ -98,6 +114,8 @@ def first_occurrence(
     _validate_timestamp(events, timestamp, "event")
     _validate_timestamp(candidates, lower, "lower_bound")
     _validate_timestamp(candidates, upper, "upper_bound")
+    events = _lossless(events, timestamp)
+    candidates = _lossless(candidates, lower, upper)
     if event_id is not None:
         if not isinstance(event_id, str) or event_id not in events.columns:
             raise _INVALID.error(reason="missing_event_id_column")
@@ -254,6 +272,8 @@ def last_event_value(
     _validate_timestamp(events, timestamp, "event")
     _validate_timestamp(candidates, lower, "lower_bound")
     _validate_timestamp(candidates, upper, "upper_bound")
+    events = _lossless(events, timestamp)
+    candidates = _lossless(candidates, lower, upper)
     if event_id.casefold() in {name.casefold() for name in candidates.columns}:
         raise _INVALID.error(reason="event_id_collides_with_candidate_column")
 

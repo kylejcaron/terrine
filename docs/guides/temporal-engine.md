@@ -402,10 +402,15 @@ widens only its own unit's coefficients. Every finite binary64 is held
 exactly; no input is rounded on entry, and a long or large history is never a
 reason to refuse. The float state carries `exact_scale` alongside the exact
 counts, plus `float64_nonfinite_count` and `float64_unrepresentable_count` for
-inputs the exact state cannot hold: NaN and infinities, and on BigQuery values
-beyond `BIGNUMERIC`'s range. PostgreSQL and BigQuery hold the same shortest
-text unscaled in `NUMERIC`/`BIGNUMERIC`; PostgreSQL's `NUMERIC` admits NaN and
-infinities, which the output rounding refuses instead.
+inputs the exact state cannot hold: NaN and infinities, on BigQuery values
+beyond `BIGNUMERIC`'s range, and on Snowflake coefficients beyond
+`NUMBER(38, 0)`'s 38 digits. Snowflake holds scaled coefficients of the same
+shape, but built from each value's `DECFLOAT` text (18 significant digits,
+correctly rounded, since its row-wise text renderings of a double are lossy),
+so its coefficients differ from DuckDB's for values with longer binary expansions;
+PostgreSQL and BigQuery hold the shortest text unscaled in
+`NUMERIC`/`BIGNUMERIC`, and PostgreSQL's `NUMERIC` admits NaN and infinities,
+which the output rounding refuses instead.
 
 Window aggregation exposes its data-dependent checks through
 `TemporalResult.validate(pinned_executor)`. Checks and export must use the
@@ -457,12 +462,17 @@ no numeric precision policy.
 
 A float window differences the exact prefix state, so history before the
 window cancels exactly, and rounds the result to binary64 once through the
-backend's correctly rounded decimal-text parser: a window sum is
-`RN(Σ shortest decimal of each value)`, one rounding, so `0.1 + 0.2 − 0.3` is
-`0.0`. An average or ratio of exact quantities `p / q` divides before that
-rounding. DuckDB normalizes each operand to a signed 19-digit significand with
-a decimal exponent, divides those as 128-bit integers (each truncation below
-`10**-18` relative) and rounds the quotient once, so the published value `r`
+backend's correctly rounded decimal-text parser: on DuckDB and PostgreSQL (and
+BigQuery, within `BIGNUMERIC`'s 38 digits) a window sum is `RN(Σ shortest
+decimal of each value)`, one rounding, so `0.1 + 0.2 − 0.3` is `0.0`; Snowflake
+enters each value's 18-significant-digit `DECFLOAT` text instead, so that
+window gives `2.8e-17` there (`0.100000000000000006 + 0.200000000000000011 −
+0.299999999999999989`). An average or ratio of exact quantities `p / q` divides
+before that
+rounding. DuckDB and Snowflake normalize each operand to a signed 19-digit
+significand with a decimal exponent, divide those as wide integers (DuckDB's
+128-bit `HUGEINT`, Snowflake's `NUMBER(38, 0)`; each truncation below
+`10**-18` relative) and round the quotient once, so the published value `r`
 satisfies `|r − p/q| ≤ 6·2⁻⁵³·|p/q| + 2⁻¹⁰⁷⁵` for normal and subnormal results
 alike, for operands beyond binary64's range, and for a ratio of averages,
 which divides the unrounded averages. PostgreSQL and BigQuery divide in

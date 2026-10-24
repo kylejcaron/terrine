@@ -23,6 +23,7 @@ def _model(
     exit_start="2025-01-01",
     exit_end="2025-01-11",
     nanosecond_outcomes=False,
+    millisecond_outcomes=False,
     unit=None,
 ):
 
@@ -41,6 +42,15 @@ def _model(
               ('u1', TIMESTAMP_NS '2025-01-03 00:00:00'),
               ('u2', TIMESTAMP_NS '2025-01-02 00:00:00.000000002'),
               ('u3', TIMESTAMP_NS '2025-01-01 00:00:00')
+            ) AS e(user_id, ts)
+        """)
+    elif millisecond_outcomes:
+        con.raw_sql("""
+            CREATE TABLE outcomes AS SELECT * FROM (VALUES
+              ('u1', TIMESTAMP_MS '2025-01-01 00:00:00.001'),
+              ('u1', TIMESTAMP_MS '2025-01-03 00:00:00'),
+              ('u2', TIMESTAMP_MS '2025-01-02 00:00:00.002'),
+              ('u3', TIMESTAMP_MS '2025-01-01 00:00:00')
             ) AS e(user_id, ts)
         """)
     elif naive_outcomes:
@@ -617,6 +627,20 @@ def test_nanosecond_events_survive_time_to_event_compilation_in_any_session_time
             Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn")), model
         )
         assert result.schema.field("duration").type.tz == "UTC"
+    finally:
+        con.disconnect()
+
+
+def test_millisecond_events_promote_losslessly_to_the_microsecond_axis():
+    con, model = _model(millisecond_outcomes=True)
+    try:
+        result = _collect(
+            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn")), model
+        )
+        rows = {row["unit"]: row for row in result.to_pylist()}
+        assert result.schema.field("event_time").type.unit == "us"
+        assert rows["u1"]["event_time"] == datetime(2025, 1, 1, 0, 0, 0, 1000, tzinfo=UTC)
+        assert rows["u2"]["event_time"] == datetime(2025, 1, 2, 0, 0, 0, 2000, tzinfo=UTC)
     finally:
         con.disconnect()
 

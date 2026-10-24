@@ -11,7 +11,7 @@ from terrine.backends.dialect import dialect_of
 
 __all__ = ["asof_join", "has_native_asof"]
 
-_NATIVE_ASOF = frozenset({"duckdb", "postgres"})
+_NATIVE_ASOF = frozenset({"duckdb", "postgres", "snowflake"})
 
 
 def has_native_asof(*values: ibis.Value) -> bool:

@@ -53,7 +53,8 @@ endpoint or exact result. A coded refusal is preferable to silently narrowing a
 timestamp or overflowing an amount. On DuckDB and PostgreSQL, float facts enter
 exact state as their shortest decimal text, so a window sum is that exact sum
 rounded once to binary64; BigQuery first rounds each value to 38 fractional
-digits ([backend compatibility](backend-compatibility.md#bigquery)). Averages
+digits and Snowflake refuses a coefficient or sum beyond 38 digits
+([backend compatibility](backend-compatibility.md#bigquery)). Averages
 and ratios carry a stated relative bound ([temporal engine](temporal-engine.md)).
 Eligibility predicates and state bins compare the rounded value. Approximate
 sketches have only their documented error properties.

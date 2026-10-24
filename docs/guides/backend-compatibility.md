@@ -2,9 +2,10 @@
 
 Terrine distinguishes verified execution from SQL compilation. Native local Ibis
 DuckDB is the reference execution provider. An Ibis PostgreSQL backend
-(`terrine[postgres]`, Ibis 12 or newer) and an Ibis BigQuery backend
-(`terrine[bigquery]`) materialize Frames directly from their tables. An
-unrecognized connection—including a raw driver connection
+(`terrine[postgres]`, Ibis 12 or newer), an Ibis BigQuery backend
+(`terrine[bigquery]`) and an Ibis Snowflake backend (`terrine[snowflake]`)
+materialize Frames directly from their tables. An unrecognized
+connection—including a raw driver connection
 or one that only declares `name = "duckdb"`—refuses before source schema access
 with `terrine.backend.capability_unavailable`. Raw DuckDB connections remain
 valid for native runtime protocols; they are not Ibis relation/execution providers.
@@ -12,17 +13,18 @@ valid for native runtime protocols; they are not Ibis relation/execution provide
 Execution and publication share an immutable capability record without making
 Model or the compiler depend on runtime. The provider preserves the caller-owned
 connection, admits read-only SQL in its execution dialect, and verifies physical
-relation identity. Each materialization opens an owned private session with a
-transaction view and closes it after success, error or cancellation. The caller's
+relation identity. Each materialization reads through one consistent view (a
+private transaction, or on Snowflake a Time Travel instant on the caller's
+connection) and releases it after success, error or cancellation. The caller's
 connection remains open. A transaction view is **not** a durable replay snapshot.
 
 Runtime DuckDB publication retains its fenced, transactional manifest switch;
 Ibis SQL compilation or DDL support alone does not establish publication safety.
 
-Snowflake execution is unverified. The local workflow accesses no paid warehouse,
-credentials or remote resources; BigQuery is reached only when a Model binds an
-Ibis BigQuery connection. Named dbt relation binding is owner-gated; an existing
-dbt recipe is not evidence of a reviewed relation-to-Catalog bridge.
+The local workflow accesses no paid warehouse, credentials or remote resources;
+BigQuery and Snowflake are reached only when a Model binds an Ibis connection to
+them. Named dbt relation binding is owner-gated; an existing dbt recipe is not
+evidence of a reviewed relation-to-Catalog bridge.
 
 ## PostgreSQL
 
@@ -33,7 +35,7 @@ snapshot. The caller's connection, and any transaction open on it, is never used
 or changed. Schemas of SQL relations are read without creating database objects.
 A query that calls a name also defined as a user function outside the system
 catalogs refuses, as does a view whose stored definition depends on such a
-function.
+function. Built-in functions inside a view are evaluated on each query.
 
 Supported: counts and exact integer/decimal sums over windows, as-of attributes,
 fixed, scheduled and event anchors, time-to-event shapes, cohort trajectories
@@ -48,10 +50,11 @@ with `terrine.temporal.exact_overflow`.
 
 Averages, ratios and float-valued windows match DuckDB within a tight tolerance
 rather than bit for bit. On every backend a float fact enters exact state as
-the decimal value of its shortest round-trip text (`REAL` is widened first),
-which lies within half an ulp of the stored float, so history outside the
-window cancels exactly and a window sum is that decimal sum rounded to binary64
-once. DuckDB holds the text as a `BIGNUM` coefficient at a per-unit scale and
+the decimal value of its shortest round-trip text (`REAL` is widened first;
+Snowflake uses an 18-significant-digit text, see below), which lies within
+half an ulp of the stored float, so history outside the window cancels exactly
+and a window sum is that decimal sum rounded to binary64 once. DuckDB holds
+the text as a `BIGNUM` coefficient at a per-unit scale and
 rounds through its correctly rounded string-to-double conversion; PostgreSQL
 keeps each window quantity exact in `NUMERIC` and rounds to binary64 once.
 Averages and ratios divide before that rounding: PostgreSQL to at least 16
@@ -79,7 +82,8 @@ views and admitted SQL relations bind with an identity fingerprint (type,
 creation time, schema and view text), so a replaced table or changed view
 refuses after binding. A view that calls a dataset-qualified routine (a
 persistent UDF or remote function) refuses with
-`terrine.execution.snapshot_unavailable`; external tables are not admitted.
+`terrine.execution.snapshot_unavailable`; built-in functions inside a view are
+evaluated on each query; external tables are not admitted.
 
 Supported, matching the DuckDB reference ([live probes][bigquery]): everything
 listed for PostgreSQL above, with the same tolerance contract for averages,
@@ -98,6 +102,110 @@ to the connection's project.
 
 Refused on BigQuery, with a route: retained input capture, Dataset staging,
 publication and reopening (`terrine.backend.capability_unavailable`).
+
+## Snowflake
+
+Snowflake isolates per statement, so a transaction gives no multi-statement
+snapshot. Each materialization instead reads `CURRENT_TIMESTAMP()` once on the
+caller's connection and pins every table and view reference in every query it
+runs with Time Travel (`AT (TIMESTAMP => ...)`), which Snowflake applies to the
+tables a view reads. Only reads are issued on the connection: no `USE`,
+`ALTER SESSION`, transaction or temporary object ([live probes][snowflake-admission]
+check the session's query history). Every table reached, directly, through a
+view or through admitted SQL, must be a permanent or transient table with
+`DATA_RETENTION_TIME_IN_DAYS >= 1`; a zero-retention table, an external or
+dynamic table, a materialized view, a secure view (its definition is hidden)
+or a view that calls a user-defined function (by the name written in its
+definition, or schema-qualified; only routines the reading role can see in
+`INFORMATION_SCHEMA.FUNCTIONS` are detected) refuses with
+`terrine.execution.snapshot_unavailable`, as does a relation without `CREATED`
+or `LAST_DDL` metadata (predating it, or newly replicated; read from a copy
+made with `CREATE TABLE ... AS SELECT` or `CLONE`). Built-in functions inside
+a view, `CURRENT_TIMESTAMP()` or `CONVERT_TIMEZONE` included, are evaluated
+on each query. Snowflake evaluates row access and masking policies for the
+reading role at query time, so results reflect that role's view of the data,
+and a policy or mapping-table change during a run is not pinned by Time
+Travel. The session's `TIMEZONE` must be `UTC`
+(Ibis sets it at connect); any other value refuses with the same code and the
+`ALTER SESSION` route.
+
+Relation names follow Snowflake's identifier rules: an unquoted name such as
+`events` resolves to `EVENTS`, a quoted `"events"` is exact, and
+`database.schema.name` qualifies; the same rules resolve the names inside an
+admitted SQL relation, so `RECENT` names a `recent` common table expression.
+Every physical reference, inside admitted SQL too, is resolved against the
+connection's database and schema at binding and rewritten fully qualified, so
+a later `USE SCHEMA` on the caller's connection cannot redirect a pinned read;
+a new materialization after such a change re-resolves the names and refuses
+when they now denote other objects. A reference in admitted SQL that already
+carries its own `AT`/`BEFORE` clause naming a timestamp or statement keeps it
+(a relative `OFFSET` refuses), and admitted SQL calling a user
+routine by name refuses as a view does. Columns are referenced exactly as the
+connection's schema reports them. Every admitted relation binds with its
+`CREATED` and `LAST_DDL` instants, which must not postdate the snapshot, and
+the session re-reads them once each statement has completed and before any of
+its rows, batched or not, reach the caller: Time Travel follows the object
+rather than the name, so a table swapped (`ALTER TABLE ... SWAP WITH`), renamed
+or replaced into place during a run, or a view redefined during it, refuses
+with
+`terrine.execution.invalid_input_binding` instead of answering from the other
+object's history. A `NUMBER(p, 0)` column (Snowflake's integer types are
+`NUMBER(38, 0)`) resolves as `decimal(p, 0)` when `p` exceeds the 18 digits
+every `int64` holds, so a unit key or integer property beyond `int64` reaches
+the output with its digits (as an Arrow decimal) instead of failing the export;
+`dtype: int` properties accept such scale-zero decimal columns. Sums of these
+columns stay exact in `NUMBER(38, 0)` and property filters compare against the
+column's 38-digit range, so a 20-digit value is correctly excluded by a
+21-digit threshold and a threshold beyond 38 digits settles without a literal.
+
+Supported, matching the DuckDB reference ([parity probes][snowflake]): everything
+listed for PostgreSQL above, with the same tolerance contract for averages,
+ratios and float windows. Exact state is `NUMBER(38, 0)`; counts and decimal
+sums are exact, and a sum or difference beyond 38 digits refuses with
+`terrine.temporal.exact_overflow`. A float fact follows the DuckDB design with
+one measured difference: Snowflake's row-wise `VARCHAR`, `VARIANT` and JSON
+renderings of a double keep at most 15 or 16 significant digits (lossy), so
+each float enters exact state as its `DECFLOAT` value, the binary value
+correctly rounded to 18 significant digits (always round-tripping, within
+`0.5 · 10⁻¹⁷` relative), rather than its shortest round-trip text. That text's
+digits become an integer coefficient at a per-unit scale, so history outside
+the window cancels exactly, and the window sum rounds once through
+`TRY_TO_DOUBLE`, measured correctly rounded on 143 halfway, subnormal and
+near-halfway cases. Each value's shortest text and its 18-digit rounding both
+lie within half an ulp of it (a normal value's within `2⁻⁵³ · |x|`, a
+subnormal's within `2⁻¹⁰⁷⁵`), so with `n` subnormal inputs the exact window
+sums on the two backends differ by at most `1.05 · 2⁻⁵³ · Σ|x| + n · 2⁻¹⁰⁷⁴`
+and, after each side's rounding, the float windows by at most
+`2⁻⁵¹ · Σ|x| + (n + 1) · 2⁻¹⁰⁷⁴`: equal or adjacent doubles for a window of
+normal values that does not cancel, several subnormal ulps apart otherwise
+(200 values of `5e-324` sum to `1e-321` from the shortest texts and to
+`9.88e-322` from the 18-digit ones), not always bit for bit. Quotients divide
+19-digit normalized significands in
+`NUMBER(38, 0)` within the same `|r − p/q| ≤ 6·2⁻⁵³·|p/q| + 2⁻¹⁰⁷⁵` bound. A
+coefficient needing more than 38 digits (a value's 18 digits padded to its
+unit's scale, the most fractional digits any finite value's text in that unit
+needs: `0.1` needs 18, `1e-20` needs 38) refuses with
+`terrine.temporal.float64_precision` (`bound_overflow`), as does a sum or
+quotient beyond binary64's range, for which `TRY_TO_DOUBLE` returns NULL; a
+non-finite value at or before the end of a non-empty window refuses with
+`nonfinite_input`.
+
+Timestamps are exact at their declared scale, nanoseconds by default, from year
+1 to 9999 (`TIMESTAMP_TZ`, `TIMESTAMP_LTZ` and `TIMESTAMP_NTZ`; naive values
+denote UTC). A scale other than 6 or 9 promotes losslessly for time-to-event
+and first-event lookups: `TIMESTAMP_NTZ(3)` and the other scales up to 6 to
+the microsecond axis, 7 and 8 to nanoseconds. Event-anchor identities render
+the instant with an explicit full-precision format rather than the session's
+`TIMESTAMP_NTZ_OUTPUT_FORMAT` (three fractional digits by default), so events
+a microsecond apart anchor separately. Arrow carries nanosecond timestamps only
+between 1677-09-21 and 2262-04-11: a nanosecond output column holding an
+instant outside that range refuses with `terrine.execution.arrow_timestamp_range`
+(declare the column `TIMESTAMP_TZ(6)` or cast it in a SQL relation).
+Snowflake's native `ASOF JOIN` serves as-of lookups.
+
+Refused on Snowflake, with a route: retained input capture, Dataset staging,
+publication and reopening (`terrine.backend.capability_unavailable`).
+Warehouse time is billed to the connection's warehouse.
 
 ## Operation evidence
 
@@ -131,9 +239,9 @@ Capabilities distinguish verified (`True`), unsupported (`False`), and unverifie
   cancellation support.
 
 `terrine.execution.backend.backend_capabilities(con)` inspects evidence without
-admitting the connection or reading source schema. Snowflake and unregistered
-backend connections return unverified operation values; attempting execution
-still refuses.
+admitting the connection or reading source schema. Unregistered backend
+connections return unverified operation values; attempting execution still
+refuses.
 
 ## Python and dependency support
 
@@ -221,12 +329,12 @@ Python 3.14 distribution/tutorial checks above do not replace these operation te
 
 | Operation | Local DuckDB versions above | PostgreSQL | Snowflake | BigQuery | Route or limitation |
 | --- | --- | --- | --- | --- | --- |
-| Read-only dialect admission, relation identity | [Verified][provider] | [Verified][postgres] | Unverified | [Verified][bigquery] | Use native local DuckDB, PostgreSQL or BigQuery; an Ibis dialect/name is not execution evidence |
-| Accepted UTC timestamps, exact decimals, strict t0 and SCD2 boundaries | [Verified][acceptance] | [Verified][postgres]; microsecond timestamps, declared `numeric(p, s)` | Unverified | [Verified][bigquery]; microsecond timestamps, `NUMERIC` read as `decimal(38, 9)` | Existing timestamp precision/domain and decimal overflow refusals remain active |
-| Private transaction view and owned-session cleanup | [Verified][provider] | [Verified][postgres]; consistent `REPEATABLE READ` snapshot | Unverified | [Verified][bigquery]; session transaction snapshot | Does not promise a durable source snapshot or native query cancellation |
+| Read-only dialect admission, relation identity | [Verified][provider] | [Verified][postgres] | [Verified][snowflake-admission]; Snowflake identifier rules, identity re-verified after each read | [Verified][bigquery] | Use native local DuckDB, PostgreSQL, Snowflake or BigQuery; an Ibis dialect/name is not execution evidence |
+| Accepted UTC timestamps, exact decimals, strict t0 and SCD2 boundaries | [Verified][acceptance] | [Verified][postgres]; microsecond timestamps, declared `numeric(p, s)` | [Verified][snowflake]; nanosecond timestamps (Arrow outputs within 1677-2262), `NUMBER(p, s)` | [Verified][bigquery]; microsecond timestamps, `NUMERIC` read as `decimal(38, 9)` | Existing timestamp precision/domain and decimal overflow refusals remain active |
+| Private transaction view and owned-session cleanup | [Verified][provider] | [Verified][postgres]; consistent `REPEATABLE READ` snapshot | [Verified][snowflake-admission]; Time Travel instant on the caller's connection, reads only | [Verified][bigquery]; session transaction snapshot | Does not promise a durable source snapshot or native query cancellation |
 | Retained immutable inputs and pinned generation reads | [Verified][acceptance] | Unverified | Unverified | Unverified | Use the owner-retained snapshot receipt; native source revisions remain unknown |
 | Table publication and atomic fenced manifest switch | [Verified][publication] | Unverified | Unverified | Unverified | Materialize a bounded Frame if publication is unavailable |
-| Bounded Arrow batch reads | [Verified][acceptance] | [Verified][postgres] | Unverified | [Verified][bigquery] | Requires independent Arrow-batch evidence |
+| Bounded Arrow batch reads | [Verified][acceptance] | [Verified][postgres] | [Verified][snowflake-admission] | [Verified][bigquery] | Requires independent Arrow-batch evidence |
 | Local Parquet streaming and metadata readback | [Verified][handoffs] | Unverified | Unverified | Unverified | Bounded Arrow/PyArrow path; caller-owned local destination only |
 | Output row/byte limits | [Verified][exports] | Unverified | Unverified | Unverified | Do not certify source scan work or peak query memory |
 | Native durable/replay snapshot | Unsupported | Unverified | Unverified | Unverified | Use retained immutable capture, not a transaction-view claim |
@@ -235,13 +343,13 @@ Python 3.14 distribution/tutorial checks above do not replace these operation te
 | Native query cancellation | Unverified | Unverified | Unverified | Unverified | Cooperative runtime cancellation remains distinct |
 | Native Parquet unload | Unverified | Unverified | Unverified | Unverified | Use verified local Arrow streaming instead |
 
-Snowflake remains owner-gated; no warehouse versions, auth integrations or
-paid-resource support are claimed for it. PostgreSQL evidence was measured on
-PostgreSQL 16, BigQuery evidence on the US multi-region with
-google-cloud-bigquery 3.46. Unknown backends refuse with an actionable local route before
-schema or source access. The [operation-gate tests][gates] separately prove that
-missing publication, retained capture or Arrow evidence does not disable unrelated
-work.
+PostgreSQL evidence was measured on PostgreSQL 16, BigQuery evidence on the US
+multi-region with google-cloud-bigquery 3.46, and Snowflake evidence on an
+X-Small warehouse with snowflake-connector-python 5.1 through the
+`warehouse-backends` workflow (key-pair service user; no local credentials).
+Unknown backends refuse with an actionable local route before schema or source
+access. The [operation-gate tests][gates] separately prove that missing
+publication, retained capture or Arrow evidence does not disable unrelated work.
 
 | Common-stack component | Measured version | Exercised contract |
 | --- | --- | --- |
@@ -270,3 +378,5 @@ without increment; unsupported semantic mappings are listed separately in the
 [libraries]: library-handoffs.md
 [postgres]: ../../integration/warehouse_execution/test_postgres_windows.py
 [bigquery]: ../../integration/warehouse_execution/test_bigquery_parity.py
+[snowflake]: ../../integration/warehouse_execution/test_snowflake_parity.py
+[snowflake-admission]: ../../integration/warehouse_execution/test_snowflake_admission.py

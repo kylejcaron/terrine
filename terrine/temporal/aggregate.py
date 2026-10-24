@@ -26,6 +26,7 @@ from terrine.backends.numeric import (
     exact_sum,
     exact_to_float,
     exact_type,
+    has_scaled_float_state,
     normalized,
     normalized_quotient,
     rounded_normalized,
@@ -217,11 +218,11 @@ def _scaled_text(coefficient, scale: int):
 def narrow_exact(coefficient, scale: int, target: str | dt.DataType):
     """Convert an exact coefficient to ``target``; NULL when it does not fit.
 
-    PostgreSQL lowers TRY_CAST to an ordinary CAST that aborts the transaction on
+    PostgreSQL and Snowflake lower TRY_CAST to an ordinary CAST that fails on
     overflow, so the range is checked on the exact coefficient before casting.
     """
     text = _scaled_text(coefficient, scale)
-    if not dialect_of() == "postgres":
+    if dialect_of() not in {"postgres", "snowflake"}:
         return text.try_cast(target)
     target_type = dt.dtype(target)
     if isinstance(target_type, dt.SignedInteger):
@@ -267,17 +268,17 @@ def _quotient(
 ) -> _Quantity:
     """Divide once; ``aggregate_window`` rounds the result to binary64 within the bound.
 
-    DuckDB normalizes each operand, exact or itself a quotient, to a 19-digit
-    significand and decimal exponent and divides those, so a quotient feeds a
-    later ratio unrounded; PostgreSQL and BigQuery divide exactly in NUMERIC.
-    A non-finite exact component refuses here: division could erase it
-    (1/Infinity = 0).
+    DuckDB and Snowflake normalize each operand, exact or itself a quotient, to
+    a 19-digit significand and decimal exponent and divide those, so a quotient
+    feeds a later ratio unrounded; PostgreSQL and BigQuery divide exactly in
+    NUMERIC. A non-finite exact component refuses here: division could erase
+    it (1/Infinity = 0).
     """
     known_zero = builder.put(
         "quotient_zero",
         builder.col(numerator.known_zero) & ~builder.col(denominator.known_zero),
     )
-    if dialect_of(builder.table.t0) == "duckdb":
+    if has_scaled_float_state(builder.table.t0):
         operands = builder.put_many(
             *(
                 (label, part)
@@ -392,9 +393,9 @@ def _component(
         # A sum that only looks zero because inputs were dropped is not a zero
         # denominator: its refusal must not be masked by a zero_denominator reason.
         known_zero = builder.put("sum_zero", (builder.col(value) == zero) & ~invalid)
-        # DuckDB holds the unit's coefficients at the state's scale; the exact
-        # types of PostgreSQL and BigQuery hold the shortest text unscaled.
-        scale = end["exact_scale"] if dialect_of(builder.table.t0) == "duckdb" else 0
+        # DuckDB and Snowflake hold the unit's coefficients at the state's scale;
+        # the exact types of PostgreSQL and BigQuery hold the shortest text unscaled.
+        scale = end["exact_scale"] if has_scaled_float_state(builder.table.t0) else 0
         quantity = _Quantity(value, reason, known_zero, scale=scale, binary64=True)
     else:
         value = builder.put("sum", difference)
