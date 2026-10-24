@@ -99,15 +99,23 @@ def snowflake_scratch(worker_id: str) -> Iterator[SnowflakeScratch]:
     schema = f"TERRINE_CI_{worker_id}_{uuid.uuid4().hex[:12]}".upper()
     admin = connect_snowflake()
     database = admin.current_catalog
-    with admin.con.cursor() as cursor:
-        cursor.execute(f'CREATE SCHEMA "{database}"."{schema}"')
-        # CREATE SCHEMA switches the session to the new schema; the admin session
-        # is used only for cleanup, so nothing else depends on it.
-    con = connect_snowflake(schema)
+    con = None
     try:
+        with admin.con.cursor() as cursor:
+            cursor.execute(f'CREATE SCHEMA "{database}"."{schema}"')
+            # CREATE SCHEMA switches the session to the new schema; the admin
+            # session is used only for cleanup, so nothing else depends on it.
+        con = connect_snowflake(schema)
         yield SnowflakeScratch(con, database, schema)
     finally:
-        con.disconnect()
-        with admin.con.cursor() as cursor:
-            cursor.execute(f'DROP SCHEMA IF EXISTS "{database}"."{schema}" CASCADE')
-        admin.disconnect()
+        # The schema is dropped whatever failed after its creation: the second
+        # connection, the test, or closing the test connection.
+        try:
+            if con is not None:
+                con.disconnect()
+        finally:
+            try:
+                with admin.con.cursor() as cursor:
+                    cursor.execute(f'DROP SCHEMA IF EXISTS "{database}"."{schema}" CASCADE')
+            finally:
+                admin.disconnect()
