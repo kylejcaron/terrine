@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import ibis
 
-from terrine.backends.numeric import exact_literal, exact_sum
+from terrine.backends.numeric import EXACT_OVERFLOW, exact_literal, exact_sum, float_is_finite
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
@@ -15,13 +15,7 @@ from terrine.spec.design import Design
 from terrine.spec.expressions import MetricAgg
 from terrine.spec.trajectory import CohortSpec
 from terrine.temporal.aggregate import _Check, _Failure, narrow_exact
-from terrine.temporal.prefix import (
-    FLOAT64_PRECISION,
-    float64_rounding_radius,
-    float64_tolerance,
-    outward_add,
-    outward_multiply,
-)
+from terrine.temporal.prefix import FLOAT64_PRECISION
 from terrine.windows import Window
 
 _INVALID = RefusalSpec(
@@ -52,11 +46,9 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         "period_value_observed_from",
         "period_value_observed_until",
         "period_value_mature",
-        "period_value_absolute_error",
         "cumulative_value",
         "cumulative_value_complete",
         "cumulative_value_reason",
-        "cumulative_value_absolute_error",
     }
     for feature in (*design.features, *design.eligibility):
         if feature.casefold() in reserved:
@@ -98,14 +90,11 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         complete = source[meta.complete_column].fill_null(ibis.literal(False))
         reason = source[meta.reason_column]
         end_time = source.t0 + ibis.interval(seconds=(age + 1) * trajectory.period)
-        error = source[meta.absolute_error_column] if meta.absolute_error_column else None
         if design.administrative_cutoff is not None:
             immature = end_time > ibis.literal(design.administrative_cutoff)
             value = immature.ifelse(ibis.null().cast(value.type()), value)
             complete = complete & ~immature
             reason = immature.ifelse("administrative_cutoff", reason)
-            if error is not None:
-                error = immature.ifelse(ibis.null().cast(error.type()), error)
         mature = (
             ibis.literal(True)
             if design.administrative_cutoff is None
@@ -124,10 +113,6 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
             "period_value_observed_until": source[meta.observed_until_column],
             "period_value_mature": mature,
         }
-        if meta.numeric_policy == "checked_float64_v1":
-            if error is None:
-                raise _INVALID.error(reason="missing_numeric_certificate")
-            projection["period_value_absolute_error"] = error
         for feature in (*compiled.roles.features, *design.eligibility):
             feature_meta = compiled.columns[feature]
             for column in (
@@ -135,7 +120,6 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
                 feature_meta.observed_until_column,
                 feature_meta.complete_column,
                 feature_meta.reason_column,
-                feature_meta.absolute_error_column,
             ):
                 if column is not None:
                     projection[column] = source[column]
@@ -148,7 +132,6 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
                     treatment_meta.observed_until_column,
                     treatment_meta.complete_column,
                     treatment_meta.reason_column,
-                    treatment_meta.absolute_error_column,
                 ):
                     if column is not None:
                         projection[column] = source[column]
@@ -184,11 +167,6 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         "period_value_complete",
         "period_value_reason",
         numeric_policy=compiled.columns[names[0]].numeric_policy,
-        absolute_error_column=(
-            "period_value_absolute_error"
-            if "period_value_absolute_error" in table.columns
-            else None
-        ),
     )
     outcome_names = ["period_value"]
     checks = list(compiled._checks)
@@ -215,8 +193,44 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
             total = table.period_value.sum().over(frame)
         # Through INT: PostgreSQL cannot cast boolean to BIGINT.
         missing = table.period_value.isnull().cast("int32").sum().over(frame) > 0
+        if table.period_value.type().is_decimal():
+            failure_column = "failed_cumulative_exact_overflow"
+            check_table = table.filter(~missing & total.isnull()).aggregate(
+                ibis._.count().cast("string").name(failure_column)
+            )
+            checks.append(
+                _Check(
+                    check_table,
+                    (
+                        _Failure(
+                            failure_column,
+                            EXACT_OVERFLOW,
+                            {"output": "cumulative_value"},
+                        ),
+                    ),
+                )
+            )
         cumulative = missing.ifelse(ibis.null().cast(total.type()), total)
         table = table.mutate(cumulative_value=cumulative)
+        if table.cumulative_value.type().is_floating():
+            # A native binary64 running total that leaves the finite range
+            # refuses instead of publishing an infinity or NaN.
+            failure_column = "failed_cumulative_nonfinite"
+            check_table = table.filter(
+                table.cumulative_value.notnull() & ~float_is_finite(table.cumulative_value)
+            ).aggregate(ibis._.count().cast("string").name(failure_column))
+            checks.append(
+                _Check(
+                    check_table,
+                    (
+                        _Failure(
+                            failure_column,
+                            FLOAT64_PRECISION,
+                            {"failure": "bound_overflow", "output": "cumulative_value"},
+                        ),
+                    ),
+                )
+            )
         table = table.mutate(
             cumulative_value_complete=~missing & table.period_value_complete.fill_null(False)
         )
@@ -233,45 +247,10 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
                 ibis.null().cast("string"),
             )
         )
-        if "period_value_absolute_error" in table.columns:
-            cumulative_error = table.period_value_absolute_error.sum().over(frame)
-            cumulative_error = missing.ifelse(
-                ibis.null().cast(cumulative_error.type()), cumulative_error
-            )
-            reduction_magnitude = table.period_value.abs().sum().over(frame)
-            reduction_error = outward_multiply(
-                float64_rounding_radius(reduction_magnitude), trajectory.periods
-            )
-            cumulative_error = outward_add(cumulative_error, reduction_error)
-            table = table.mutate(cumulative_value_absolute_error=cumulative_error)
-            failed = table.cumulative_value.notnull() & (
-                table.cumulative_value_absolute_error > float64_tolerance(table.cumulative_value)
-            )
-            failure_column = "failed_cumulative_tolerance"
-            check_table = table.filter(failed).aggregate(
-                ibis._.count().cast("string").name(failure_column)
-            )
-            checks.append(
-                _Check(
-                    check_table,
-                    (
-                        _Failure(
-                            failure_column,
-                            FLOAT64_PRECISION,
-                            {"failure": "tolerance", "output": "cumulative_value"},
-                        ),
-                    ),
-                )
-            )
         output_columns["cumulative_value"] = replace(
             output_columns["period_value"],
             complete_column="cumulative_value_complete",
             reason_column="cumulative_value_reason",
-            absolute_error_column=(
-                "cumulative_value_absolute_error"
-                if "cumulative_value_absolute_error" in table.columns
-                else None
-            ),
         )
         outcome_names.append("cumulative_value")
     expression_timings = {}

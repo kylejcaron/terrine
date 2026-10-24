@@ -23,7 +23,6 @@ from terrine.spec.state_panel import (
     StateObservations,
     StatePanel,
 )
-from terrine.temporal.prefix import outward_add, outward_subtract
 from terrine.windows import Window
 
 if TYPE_CHECKING:
@@ -95,39 +94,24 @@ def _cut_literal(cut: int | float | Decimal, source_type: dt.DataType):
     return ibis.literal(format(decimal_cut, "f")).cast(dt.Decimal(precision, scale))
 
 
-def _label(value, state: BinnedMetricState, numeric_meta: ColumnMeta):
-    """Classify only values whose full certified interval belongs to one bin."""
+def _label(value, state: BinnedMetricState):
+    """Classify each value by the bin its exact comparison with the cutpoints selects."""
     dtype = value.schema()["_state_period"]
     cuts = tuple(_cut_literal(cut, dtype) for cut in state.cutpoints)
-    if numeric_meta.numeric_policy == "checked_float64_v1":
-        error = value[numeric_meta.absolute_error_column]
-        zero_error = error == 0.0
-        lower = ibis.ifelse(
-            zero_error,
-            value._state_period,
-            outward_subtract(value._state_period, error, upper=False),
-        )
-        upper = ibis.ifelse(
-            zero_error,
-            value._state_period,
-            outward_add(value._state_period, error),
-        )
-    else:
-        lower = upper = value._state_period
+    period = value._state_period
     branches = []
     for index, cut in enumerate(cuts):
-        condition = upper <= cut if index == 0 else (lower > cuts[index - 1]) & (upper <= cut)
+        condition = period <= cut if index == 0 else (period > cuts[index - 1]) & (period <= cut)
         branches.append((condition, ibis.literal(state.levels[index])))
-    branches.append((lower > cuts[-1], ibis.literal(state.levels[-1])))
+    branches.append((period > cuts[-1], ibis.literal(state.levels[-1])))
     return ibis.cases(*branches, else_=ibis.null().cast("string"))
 
 
-def _state_value(relation, state: BinnedMetricState, meta: ColumnMeta):
+def _state_value(relation, state: BinnedMetricState):
     raw = relation._state_period
-    label = _label(relation, state, meta)
+    label = _label(relation, state)
     available = relation.__terrine_state_complete.fill_null(False)
     value = ibis.ifelse(available, label, ibis.literal(None, type="string"))
-    ambiguous = available & raw.notnull() & label.isnull()
     reason = ibis.cases(
         (
             ~available,
@@ -137,7 +121,6 @@ def _state_value(relation, state: BinnedMetricState, meta: ColumnMeta):
             available & raw.isnull(),
             relation.__terrine_state_reason.fill_null("state_value_null"),
         ),
-        (ambiguous, "ambiguous_state_bin"),
         else_=ibis.null().cast("string"),
     )
     return value.cast("string"), (available & label.notnull()), reason
@@ -216,8 +199,8 @@ def _binned(
             (source.unit == response.unit)
             & (source.t0 + ibis.interval(seconds=schedule.every) == response.t0),
         )
-        from_state, from_complete, from_reason = _state_value(prior, spec, state_meta)
-        to_state, to_complete, to_reason = _state_value(response, spec, state_meta)
+        from_state, from_complete, from_reason = _state_value(prior, spec)
+        to_state, to_complete, to_reason = _state_value(response, spec)
         projection = {name: source[name] for name in source.columns}
         projection.update(
             from_time=source.t0,
@@ -273,7 +256,6 @@ def _binned(
                 "observed_until_column",
                 "complete_column",
                 "reason_column",
-                "absolute_error_column",
             ):
                 original = getattr(meta, attribute)
                 if original is not None:
@@ -374,7 +356,6 @@ def _binned(
             meta.observed_until_column,
             meta.complete_column,
             meta.reason_column,
-            meta.absolute_error_column,
         ):
             if name is not None and name not in required_columns:
                 required_columns.append(name)

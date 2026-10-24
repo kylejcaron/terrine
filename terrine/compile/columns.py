@@ -99,7 +99,6 @@ _META_COLUMNS = (
     "observed_until_column",
     "complete_column",
     "reason_column",
-    "absolute_error_column",
 )
 
 
@@ -999,17 +998,9 @@ def compile_columns(
                 combined_reason: ibis.cases(
                     (~origin_complete, result_table[origin_reason_name]),
                     (~has_origin, "missing_selector_origin"),
-                    (~result_complete, result_reason),
-                    else_=ibis.null().cast("string"),
+                    else_=result_reason,
                 ),
             }
-            if meta.absolute_error_column is not None:
-                error_column = meta.absolute_error_column
-                relative_values[error_column] = ibis.ifelse(
-                    origin_complete & has_origin,
-                    result_table[error_column],
-                    ibis.null().cast(result_table[error_column].type()),
-                )
             result_table = result_table.mutate(**relative_values)
             meta = replace(meta, complete_column=combined_complete, reason_column=combined_reason)
         # Each value derives from the candidates independently, then joins back by
@@ -1115,7 +1106,6 @@ def compile_columns(
     for name, node in design.eligibility.items():
         result = compile_predicate(table, node, values, output=name)
         table = result.table
-        checks.extend(result.checks)
         public[name] = name
         columns[name] = result.meta
         eligibility_cutoffs[name] = result.cutoff
@@ -1148,7 +1138,6 @@ def compile_columns(
             meta.observed_until_column,
             meta.complete_column,
             meta.reason_column,
-            meta.absolute_error_column,
         ):
             if name is not None and name not in support:
                 support.append(name)

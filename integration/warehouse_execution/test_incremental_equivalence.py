@@ -12,7 +12,6 @@ from terrine.compile.columns import compile_columns
 from terrine.compile.layers import measure_identity, plan_layers
 from terrine.compile.materialize import compose_materialized_frame
 from terrine.data import Coverage, UnitSource
-from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import Catalog
@@ -555,7 +554,7 @@ def test_same_snapshot_incremental_compilation_matches_clean_values_and_eligibil
     assert clean.columns == incremental.columns
 
 
-def test_historical_1e16_insert_has_identical_float64_refusal(column_model):
+def test_historical_1e16_insert_has_identical_exact_total(column_model):
     model = _float_model(column_model)
     model = Model.from_catalog(
         model.catalog,
@@ -585,14 +584,13 @@ def test_historical_1e16_insert_has_identical_float64_refusal(column_model):
     incremental = compose_materialized_frame(
         design, model, persisted=_same_snapshot_prefixes(design, model)
     )
-    refusals = []
+    audits = []
     for compiled in (clean, incremental):
-        with pytest.raises(TerrineError) as error:
-            compiled.validate(execute=model.con.to_pyarrow)
-            model.con.to_pyarrow(compiled.audit_table)
-        refusals.append((error.value.code, error.value.context))
-    assert refusals[0] == refusals[1]
-    assert refusals[0][0] == "terrine.temporal.float64_precision"
+        compiled.validate(execute=model.con.to_pyarrow)
+        audits.append(model.con.to_pyarrow(compiled.audit_table.order_by("unit")))
+    assert audits[0].equals(audits[1])
+    assert clean.columns == incremental.columns
+    assert [row["total"] for row in audits[0].to_pylist()] == [2.0, None]
 
 
 @pytest.mark.parametrize(

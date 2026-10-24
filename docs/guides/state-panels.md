@@ -35,7 +35,7 @@ materialized = design.build(model).materialize(
 )
 ```
 
-Each period value is reused as one transition's response and its successor's prior state. Missing or ambiguous values remain null with per-side completeness and reason columns; a certified Float64 interval that crosses a cutpoint is reported as `ambiguous_state_bin`. Cutpoints keep their exact integer, Decimal, or Float64 representation in the safe design format. Binned state windows preserve the metric's aggregation and readiness semantics.
+Each period value is reused as one transition's response and its successor's prior state. Missing values remain null with per-side completeness and reason columns. A Float64 metric is binned by its rounded value, so a value equal to a cutpoint belongs to the lower bin. Cutpoints keep their exact integer, Decimal, or Float64 representation in the safe design format. Binned state windows preserve the metric's aggregation and readiness semantics.
 
 ## Point-observed states
 

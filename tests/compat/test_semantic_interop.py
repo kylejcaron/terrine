@@ -5,8 +5,8 @@ import subprocess
 import sys
 
 import pytest
-from pydantic import ValidationError
 
+from terrine.errors import TerrineError
 from terrine.semantic.io import load_catalog
 from tests.compat.test_optional_increment import _BLOCK_INCREMENT, _NATIVE_CATALOG
 
@@ -54,9 +54,10 @@ finally:
 def test_native_catalog_does_not_guess_foreign_semantic_mappings(tmp_path, foreign_key, definition):
     path = tmp_path / "foreign.yaml"
     path.write_text(json.dumps({foreign_key: [definition]}), encoding="utf-8")
-    with pytest.raises(ValidationError) as error:
+    with pytest.raises(TerrineError) as error:
         load_catalog(path)
+    assert error.value.code == "terrine.catalog.invalid_definition"
     assert any(
-        detail["type"] == "extra_forbidden" and detail["loc"] == (foreign_key,)
-        for detail in error.value.errors()
+        issue["location"] == (foreign_key,) and issue["kind"] == "extra_forbidden"
+        for issue in error.value.context["issues"]
     )

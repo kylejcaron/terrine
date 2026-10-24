@@ -490,7 +490,6 @@ class DesignExecutor:
         if task.layer in {
             "daily",
             "roster",
-            "prefix_certificate",
             "selector",
             "state_point",
             "state_period",

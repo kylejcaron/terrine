@@ -9,7 +9,7 @@ import ibis
 import pyarrow as pa
 import pytest
 
-from terrine.backends.numeric import exact_literal, exact_subtract
+from terrine.backends.numeric import exact_subtract, is_exact_type
 from terrine.errors import TerrineError
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import (
@@ -23,16 +23,7 @@ from terrine.semantic.models import (
 )
 from terrine.temporal.attributes import enrich_events
 from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
-from terrine.temporal.prefix import (
-    float64_certificate,
-    float64_rounding_radius,
-    outward_add,
-    outward_divide,
-    outward_multiply,
-    outward_subtract,
-    sparse_prefix,
-    validate_float64,
-)
+from terrine.temporal.prefix import sparse_prefix
 
 
 @pytest.fixture
@@ -237,16 +228,11 @@ def test_event_grouping_uses_same_filters_and_exact_original_counts(connection):
     assert (row["event_count"], row["nonnull_count"], row["sum_value"]) == ("3", "3", "3")
 
 
-@pytest.mark.parametrize(
-    "values",
-    [
-        [10.0, -3.0, 0.25, 0.125],
-        [1e16, 1.0, -1e16],
-        [math.ulp(0.0), math.ulp(0.0), -math.ulp(0.0)],
-    ],
-)
-def test_float_prefix_certificates_enclose_exact_stored_leaves(connection, values):
-    _assert_float_prefix_certificates(connection, values, orders=[values])
+def _need(value: float) -> int:
+    """Fractional digits of the value's shortest round-trip decimal."""
+    exponent = Decimal(repr(value)).as_tuple().exponent
+    assert isinstance(exponent, int)
+    return max(0, -exponent)
 
 
 @pytest.mark.parametrize(
@@ -256,154 +242,41 @@ def test_float_prefix_certificates_enclose_exact_stored_leaves(connection, value
         [1e16, 1.0, -1e16],
         [math.nextafter(1.0, 2.0), 1.0, -0.5],
         [math.ulp(0.0), math.ulp(0.0), -math.ulp(0.0)],
+        [1e308, 1e308, -1e308],
     ],
 )
-def test_float_prefix_certificates_enclose_reordered_and_partitioned_leaves(connection, values):
-    _assert_float_prefix_certificates(
-        connection, values, orders=list(dict.fromkeys(permutations(values)))[:3]
-    )
-
-
-def _assert_float_prefix_certificates(connection, values, *, orders):
-    # Reordering and splitting groups must retain leaf counts and absolute leaves.
-    for order in orders:
+def test_float_prefix_state_is_the_exact_shortest_decimal_sum(connection, values):
+    # Reordering and splitting days must leave every prefix the same exact sum,
+    # held at the unit's scale: the most fractional digits any of its values needs.
+    scale = max(_need(value) for value in values)
+    for order in list(dict.fromkeys(permutations(values)))[:3]:
         for days in ([1] * len(order), list(range(1, len(order) + 1))):
             times = [datetime(2025, 3, day, tzinfo=UTC) for day in days]
             daily, measure = _daily(connection, list(order), times=times)
             prefix = sparse_prefix(daily, measure, resolution="day")
-            validate_float64(
-                prefix,
-                execute=connection.to_pyarrow,
-                source="postings",
-                measure="revenue",
-                output="prefix",
-            )
             rows = _rows(connection, prefix.order_by("local_day"))
+            assert len(rows) == len(set(days))
             for row in rows:
                 leaves = [
                     x for x, day in zip(order, days, strict=True) if day <= row["local_day"].day
                 ]
-                exact = sum(map(Fraction.from_float, leaves), Fraction())
-                absolute = sum((abs(Fraction.from_float(x)) for x in leaves), Fraction())
-                error = Fraction.from_float(row["prefix_error"])
-                assert abs(Fraction.from_float(row["sum_value"]) - exact) <= error
-                assert absolute <= Fraction.from_float(row["sum_abs_upper"])
+                exact = sum((Fraction(repr(x)) for x in leaves), Fraction())
+                assert row["exact_scale"] == scale
+                assert Fraction(int(row["sum_value"]), 10**scale) == exact
                 assert int(row["nonnull_count"]) == len(leaves)
-                assert row["numeric_policy"] == "checked_float64_v1"
-            if values[0] == 10.0:
-                assert rows[-1]["prefix_error"] <= 2**-40 + 2**-30 * abs(rows[-1]["sum_value"])
+                assert row["numeric_policy"] == "exact"
 
 
-def test_outward_primitives_enclose_elementary_exact_operations(connection):
-    table = connection.create_table(
-        "scalars",
-        ibis.memtable(
-            {"a": [1.0, math.ulp(0.0), math.nextafter(1.0, 2.0)], "b": [2**-53, 2.0, 3.0]}
-        ),
-    )
-    for function, oracle in (
-        (outward_add, lambda a, b: a + b),
-        (outward_subtract, lambda a, b: a - b),
-        (outward_multiply, lambda a, b: a * b),
-        (outward_divide, lambda a, b: a / b),
-    ):
-        bounds = table.select(
-            a=table.a,
-            b=table.b,
-            lo=function(table.a, table.b, upper=False),
-            hi=function(table.a, table.b),
-        )
-        for row in _rows(connection, bounds):
-            exact = oracle(Fraction.from_float(row["a"]), Fraction.from_float(row["b"]))
-            assert Fraction.from_float(row["lo"]) <= exact <= Fraction.from_float(row["hi"])
-    for row in _rows(connection, table.select(a=table.a, r=float64_rounding_radius(table.a))):
-        exact_radius = (
-            Fraction(1, 2**53) * abs(Fraction.from_float(row["a"])) + Fraction(1, 2**1074)
-        ) / (1 - Fraction(1, 2**53))
-        assert Fraction.from_float(row["r"]) >= exact_radius
-
-
-@pytest.mark.parametrize(
-    "values,failure",
-    [
-        ([math.inf], "nonfinite_input"),
-        ([math.nan], "nonfinite_input"),
-        ([1e308, 1e308, -1e308], "nonfinite_state"),
-    ],
-)
-def test_float_failure_is_deferred_and_row_free(connection, values, failure):
-    times = [datetime(2025, 3, index + 1, tzinfo=UTC) for index in range(len(values))]
-    daily, measure = _daily(connection, values, times=times)
+def test_nonfinite_float_leaves_are_counted_not_summed(connection):
+    times = [datetime(2025, 3, day, tzinfo=UTC) for day in (1, 2, 3)]
+    daily, measure = _daily(connection, [math.inf, 2.5, math.nan], times=times)
     prefix = sparse_prefix(daily, measure, resolution="day")
-    prefix = prefix.filter(prefix.local_day == date(2025, 3, len(values)))
-    with pytest.raises(TerrineError) as caught:
-        validate_float64(
-            prefix,
-            execute=connection.to_pyarrow,
-            source="postings",
-            measure="revenue",
-            output="prefix",
-        )
-    assert caught.value.code == "terrine.temporal.float64_precision"
-    assert caught.value.context["failure"] == failure
-    assert caught.value.context["failed_count"] >= 1
-    assert set(caught.value.context) == {"failure", "failed_count", "source", "measure", "output"}
-
-
-def test_certificate_count_limit_empty_identity_and_bound_overflow(connection):
-    state = connection.create_table(
-        "constructed",
-        ibis.memtable(
-            {
-                "n": ["0", "2251799813685248", "2251799813685249", "-1"],
-                "s": [0.0] * 4,
-                "a": [0.0, 1.0, 1.0, 0.0],
-            }
-        ),
-    )
-    checked = float64_certificate(
-        state.select(
-            n=state.n,
-            sum_value=state.s,
-            sum_abs_value=state.a,
-            nonnull_count=state.n.cast(exact_literal(0).type()),
-        )
-    ).mutate(
-        float64_nonfinite_input=ibis.literal(False),
-        float64_conformance_failure=ibis.literal(False),
-    )
-    rows = _rows(connection, checked)
-    assert rows[0]["prefix_error"] == 0.0
-    assert [row["float64_count_limit"] for row in rows] == [False, False, True, True]
-    with pytest.raises(TerrineError) as caught:
-        validate_float64(
-            checked.filter(checked.n == "2251799813685249"),
-            execute=connection.to_pyarrow,
-            source="postings",
-            measure="revenue",
-            output="prefix",
-        )
-    assert caught.value.context["failure"] == "count_limit"
-    checked_huge = float64_certificate(
-        state.limit(1).select(
-            sum_value=ibis.literal(1.7e308),
-            sum_abs_value=ibis.literal(1.7e308),
-            nonnull_count=exact_literal(2**51),
-        )
-    ).mutate(
-        float64_nonfinite_input=ibis.literal(False),
-        float64_conformance_failure=ibis.literal(False),
-    )
-    assert _rows(connection, checked_huge)[0]["float64_bound_overflow"] is True
-    with pytest.raises(TerrineError) as caught:
-        validate_float64(
-            checked_huge,
-            execute=connection.to_pyarrow,
-            source="postings",
-            measure="revenue",
-            output="prefix",
-        )
-    assert caught.value.context["failure"] == "bound_overflow"
+    rows = _rows(connection, prefix.order_by("local_day"))
+    assert [
+        (row["sum_value"], row["exact_scale"], row["float64_nonfinite_count"], row["nonnull_count"])
+        for row in rows
+    ] == [("0", 1, "1", "1"), ("25", 1, "1", "2"), ("25", 1, "2", "3")]
+    assert all(row["float64_unrepresentable_count"] == "0" for row in rows)
 
 
 def test_construction_never_executes_queries(connection, monkeypatch):
@@ -419,7 +292,9 @@ def test_construction_never_executes_queries(connection, monkeypatch):
     monkeypatch.setattr(connection, "to_pyarrow", blocked)
     measure = resolve_measure(events, _measure(), source=source)
     daily = sparse_daily(events, measure, "UTC", "user_id", source=source)
-    assert sparse_prefix(daily, measure, resolution="day").schema()["sum_value"].is_float64()
+    schema = sparse_prefix(daily, measure, resolution="day").schema()
+    assert is_exact_type(schema["sum_value"])
+    assert schema["exact_scale"].is_integer()
 
 
 def test_numeric_filters_do_not_round_integer_properties_or_fractional_thresholds(connection):
@@ -573,30 +448,6 @@ def test_native_integer_alias_filter_does_not_trust_decimal38_range(
     ]
 
 
-def test_outward_overflow_cannot_become_a_finite_endpoint(connection):
-    for function, right in (
-        (outward_add, [1.7e308, -1.7e308]),
-        (outward_subtract, [-1.7e308, 1.7e308]),
-        (outward_multiply, [2.0, 2.0]),
-        (outward_divide, [0.5, 0.5]),
-    ):
-        table = connection.create_table(
-            "overflow_scalars",
-            ibis.memtable({"a": [1.7e308, -1.7e308], "b": right}),
-            overwrite=True,
-        )
-        rows = _rows(
-            connection,
-            table.select(
-                a=table.a,
-                lo=function(table.a, table.b, upper=False),
-                hi=function(table.a, table.b),
-            ),
-        )
-        for row in rows:
-            assert row["lo"] == row["hi"] == math.copysign(math.inf, row["a"])
-
-
 @pytest.mark.parametrize(
     "boundary,offset_seconds",
     (
@@ -690,28 +541,3 @@ def test_nonfinite_filter_properties_remain_unknown_without_poisoning_other_days
         == 0
     )
     assert int(cumulative[1]["sum_value"]) - int(cumulative[0]["sum_value"]) == 11
-
-
-def test_constant_native_float_reduction_keeps_original_leaf_budget(connection):
-    raw = connection.sql(
-        "SELECT 'u' AS user_id, 'a' AS account_id, "
-        "TIMESTAMP '2025-03-01' AS occurred_at, 0.1::DOUBLE AS amount FROM range(17)"
-    )
-    source = _source()
-    events = normalize_events(raw, source, "user_id")
-    measure = resolve_measure(events, _measure(), source=source)
-    state = sparse_prefix(
-        sparse_daily(events, measure, "UTC", "user_id", source=source),
-        measure,
-        resolution="day",
-    )
-    validate_float64(
-        state, execute=connection.to_pyarrow, source="postings", measure="revenue", output="value"
-    )
-    row = _rows(connection, state)[0]
-    truth = 17 * Fraction.from_float(0.1)
-    assert int(row["nonnull_count"]) == 17
-    assert abs(Fraction.from_float(row["sum_value"]) - truth) <= Fraction.from_float(
-        row["prefix_error"]
-    )
-    assert truth <= Fraction.from_float(row["sum_abs_upper"])

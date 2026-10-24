@@ -66,6 +66,116 @@ are observed empirical errors with their algorithm/version/error metadata;
 HLL/t-digest are not advertised as exact or given an invented hard tolerance.
 There is no billion-event or universal scale claim from local calibration.
 
+## Fixed compiler overhead
+
+`benchmarks/run_overhead.py` times the ordinary public path, `Design.build`
+followed by `Frame.materialize`, on tiny deterministic DuckDB workloads: count,
+exact decimal sum, float average and ratio over one row, a few rows, and
+10,000/100,000 events, requesting one or four columns. Materialization
+includes declared snapshot validation and the output stream. Expected values
+are computed independently with integer, `Decimal` and `Fraction` arithmetic
+over the generated events, each float standing for its shortest round-trip
+decimal. Every run, including each timed sample, is verified after its timed
+interval: `oracle_match` requires exactly the expected unit roster once each,
+equality for exact outputs, and averages and ratios within the quotient bound
+`6·2⁻⁵³·|p/q| + 2⁻¹⁰⁷⁵` of the exact quotient; a failed case exits
+unsuccessfully.
+
+```sh
+uv run python -m benchmarks.run_overhead --repeats 5 --output /tmp/terrine-overhead.json
+# Optional separate profiled pass; it is never a timing sample.
+uv run python -m benchmarks.run_overhead --repeats 5 --profile /tmp/terrine-overhead.pstats
+# Select cases by name and label the record for before/after comparison.
+uv run python -m benchmarks.run_overhead --case one_row_float_average --label before
+```
+
+Each case records the environment (one DuckDB thread by default), workload,
+setup time, the first sample, every warm sample, warm medians and spread for
+the build and materialization phases, emitted rows, output Arrow bytes and
+diagnostics from one separate instrumented run: the number of SQL
+compilations, repeated identical expressions, and time per validation,
+eligibility and output query. Import time is measured in a fresh interpreter.
+Raw SQL is not stored and source scan bytes are not measured. Timings are local
+observations for comparing two commits on one machine, not CI thresholds.
+
+### Measured overhead
+
+Warm medians of five unprofiled samples on one machine (Apple M3 Pro, Python
+3.13.5, Ibis 12.0.0, DuckDB 1.5.6, one DuckDB thread), build plus
+materialization in seconds, before and after staging window intermediates in
+shared projections and resolving the compile dialect from the Design scope.
+No before/after ranges overlap; every case matched the independent reference.
+
+| Case | Rows | Before | After | Ratio | Compilations | Compile s before → after |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| one_row_count | 1 | 0.635 | 0.473 | 0.74 | 7 | 0.42 → 0.31 |
+| one_row_decimal_sum | 1 | 0.776 | 0.553 | 0.71 | 7 | 0.52 → 0.34 |
+| one_row_float_average | 1 | 2.698 | 1.369 | 0.51 | 7 | 1.81 → 0.80 |
+| one_row_ratio | 1 | 2.883 | 1.643 | 0.57 | 7 | 1.77 → 1.04 |
+| one_row_four_columns | 1 | 6.972 | 3.802 | 0.55 | 16 | 4.50 → 2.54 |
+| few_rows_four_columns | 3 | 7.089 | 3.811 | 0.54 | 16 | 4.66 → 2.54 |
+| events_10k_count | 100 | 0.712 | 0.532 | 0.75 | 7 | 0.46 → 0.33 |
+| events_10k_four_columns | 100 | 7.404 | 4.136 | 0.56 | 16 | 4.60 → 2.52 |
+| events_100k_count | 100 | 0.786 | 0.625 | 0.80 | 7 | 0.42 → 0.25 |
+| events_100k_four_columns | 100 | 7.868 | 4.636 | 0.59 | 16 | 4.59 → 2.50 |
+
+The seven compilations of a one-column materialization are distinct queries:
+two anchor checks, one window-alignment check, two deferred window checks, the
+eligibility audit and the output stream. Four columns add two checks per
+column; only the alignment check repeats identically (about 4 ms each). The
+cost was the size of each query, not duplicated queries: every intermediate of
+a float average nested another projection (about seventy nested selects and
+150 KB of SQL for one row), and Ibis's select-merging analysis traverses the
+whole graph per nested pair. DuckDB executed each of those queries in roughly
+20 ms; native-function admission took about 20 ms per query. The remaining
+cost is proportional to the number of distinct queries and their dependency
+depth. Merging the eligibility audit with the output stream, or batching each
+column's deferred checks into one aggregate, would need a session-scoped
+relation or a different check structure and were not pursued here.
+
+### Exact float windows
+
+Warm medians and ranges of five unprofiled samples on the same machine (Apple
+M3 Pro, Python 3.13.5, Ibis 12.0.0, DuckDB 1.5.6, one DuckDB thread), build
+plus materialization in seconds, before and after DuckDB float windows moved
+from certified native sums to exact shortest-decimal state rounded once. Every
+case matched the independent reference on both sides; the "after" oracle
+treats each float as its shortest decimal and holds averages and ratios to the
+quotient bound.
+
+| Case | Rows | Before | After | Ratio |
+| --- | ---: | --- | --- | ---: |
+| one_row_count | 1 | 0.458 (0.447–0.493) | 0.480 (0.459–0.552) | 1.05 |
+| one_row_decimal_sum | 1 | 0.573 (0.531–0.581) | 0.579 (0.535–0.583) | 1.01 |
+| one_row_float_average | 1 | 1.395 (1.349–1.423) | 0.946 (0.944–0.948) | 0.68 |
+| one_row_ratio | 1 | 1.694 (1.630–1.721) | 1.223 (1.191–1.260) | 0.72 |
+| one_row_four_columns | 1 | 4.107 (3.981–4.299) | 3.143 (3.085–4.361) | 0.77 |
+| few_rows_four_columns | 3 | 4.112 (3.981–4.580) | 3.153 (3.094–4.032) | 0.77 |
+| events_10k_count | 100 | 0.631 (0.558–0.636) | 0.591 (0.532–0.610) | 0.94 |
+| events_10k_four_columns | 100 | 4.421 (4.390–4.671) | 3.475 (3.473–3.550) | 0.79 |
+| events_100k_count | 100 | 0.646 (0.604–0.655) | 0.688 (0.621–0.817) | 1.07 |
+| events_100k_four_columns | 100 | 4.821 (4.713–4.925) | 4.661 (4.510–5.123) | 0.97 |
+
+Float averages and ratios got cheaper: the exact path's text-built
+coefficients and one normalized division compile to smaller queries than the
+certified intervals did (instrumented compile time 0.87 → 0.57 s for the
+one-row average, 1.09 → 0.78 s for the ratio). Count and decimal cases do not
+touch the changed code and their ranges overlap; the `events_100k_count`
+diagnostics run happened to be uniformly slow (its first sample too), which
+the overlapping warm range reflects.
+
+The per-unit scale makes one extreme value cost only its own unit. With one
+`5e-324` added to one of 1,000 units in 1M cents-like float events, measured
+five times each: on a disposable Ibis pipeline of the daily/prefix shape (per
+unit scale window, string-built `BIGNUM` coefficients, 365 daily sums,
+cumulative per-unit sums and text rounding of all 341,387 cumulative states)
+the clean median was 0.272 s (0.266–0.278) and the outlier median 0.272 s
+(0.269–0.297), ratio 1.001, with the outlier unit at scale 324 and every other
+unit at scale 2 (native `DOUBLE` sums on the same shape: 0.030 s); through the
+public `Design.build(model).materialize()` with a 30-day window, a sum and an
+`avg_event` column, the clean median was 6.300 s (5.461–6.445) and the outlier
+median 6.393 s (6.139–6.654), ratio 1.015, and no other unit's result changed.
+
 ## Explicit test tiers
 
 ```sh

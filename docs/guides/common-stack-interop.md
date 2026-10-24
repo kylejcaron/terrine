@@ -5,7 +5,15 @@ handoff; pandas and Polars are optional bounded views, not portable Terrine
 metadata containers. No trainer, hosted service, or relationship to increment is
 required.
 
-## Install only the integrations you use
+Install from a released distribution with only the integrations used:
+
+```sh
+uv pip install 'terrine[duckdb]'
+uv pip install 'terrine[duckdb,pandas]'
+uv pip install 'terrine[duckdb,polars]'
+```
+
+For development from a source checkout, use editable installs instead:
 
 ```sh
 uv pip install -e '.[duckdb]'
@@ -33,6 +41,11 @@ pandas_frame = frame.to_pandas(budget=budget)
 polars_frame = frame.to_polars(budget=budget)
 ```
 
+Omitting `budget` is intentionally unbounded output, not a safe default. Output
+row/byte limits do not cap source scans, backend memory or retained inputs; they
+bound only the collected output. Choose a limit appropriate to the expected
+result size and reuse it for each Frame materialization or export.
+
 Each conversion executes independently under the same integrity checks and
 budget; retain one Arrow table when sharing an already materialized result.
 `to_pandas` uses nullable Arrow-backed dtypes, not floating-point coercion of
@@ -44,8 +57,8 @@ imply physical Arrow schema identity. Neither dataframe carries a promise to
 round-trip Terrine schema metadata.
 
 `MaterializedFrame.to_arrow()` stores roles, design/model identities, temporal
-cutoffs, completeness/null-reason references and numeric policy/error-bound
-references under the reserved `terrine.materialized_frame.v1` schema key.
+cutoffs, completeness/null-reason references and numeric policy references
+under the reserved `terrine.materialized_frame.v1` schema key.
 `MaterializedFrame.from_arrow()` restores typed metadata. Unrelated schema
 metadata is retained; stale content at the reserved key is replaced by current
 Terrine metadata. Do not zero-fill unavailable values or discard their reason

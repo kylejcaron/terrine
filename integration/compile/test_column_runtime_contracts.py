@@ -50,7 +50,9 @@ def test_named_windows_asof_treatment_and_independent_completeness(column_model_
     assert all(r[missing_meta.reason_column] == "incomplete_coverage" for r in rows)
 
 
-def test_checked_predicate_interval_is_unknown_but_empty_zero_is_singleton(column_model_fixture):
+def test_float_predicates_compare_the_rounded_value_and_empty_zero_is_singleton(
+    column_model_fixture,
+):
     con = column_model_fixture.con
     con.raw_sql("ALTER TABLE events ALTER amount TYPE DOUBLE")
     con.raw_sql("UPDATE events SET amount = 0.1 WHERE user_id = 'a'")
@@ -75,18 +77,20 @@ def test_checked_predicate_interval_is_unknown_but_empty_zero_is_singleton(colum
     compiled.validate(execute=con.to_pyarrow)
     rows = con.to_pyarrow(compiled.audit_table.order_by("unit")).to_pylist()
     assert [r["zero"] for r in rows] == [True, True]
-    assert rows[0]["near"] is None
-    assert rows[0][compiled.columns["near"].reason_column] == "uncertain_comparison"
-    assert (rows[0]["above"], rows[0]["below"], rows[0]["overlap"], rows[0]["outside"]) == (
-        True,
-        False,
-        None,
-        False,
+    assert (
+        rows[0]["near"],
+        rows[0]["above"],
+        rows[0]["below"],
+        rows[0]["overlap"],
+        rows[0]["outside"],
+    ) == (True, True, False, False, False)
+    assert all(
+        rows[0][compiled.columns[name].reason_column] is None
+        for name in ("near", "above", "below", "overlap", "outside")
     )
-    assert rows[0][compiled.columns["overlap"].reason_column] == "uncertain_comparison"
 
 
-def test_required_predicate_endpoint_overflow_refuses_even_with_false_conjunct(
+def test_required_predicate_window_overflow_refuses_even_with_false_conjunct(
     column_model_fixture,
 ):
     con = column_model_fixture.con
@@ -107,6 +111,10 @@ def test_required_predicate_endpoint_overflow_refuses_even_with_false_conjunct(
     admitted.validate(execute=con.to_pyarrow)
     rows = con.to_pyarrow(admitted.table.order_by("unit")).to_pylist()
     assert rows[0]["huge"] == float.fromhex("0x1.fffffffffffffp+1023")
+    con.raw_sql("""
+        INSERT INTO events VALUES
+            ('a', TIMESTAMPTZ '2025-01-02 11:59:59.5+00', 1.7976931348623157e308, 'old')
+    """)
     compiled = _compile(
         model,
         eligibility={

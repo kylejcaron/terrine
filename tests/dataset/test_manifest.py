@@ -35,14 +35,14 @@ def test_manifest_recipe_reference_requires_owner_storage_and_verifies_digest(tm
         DatasetManifest.from_json(manifest.to_json(), recipe_store=other)
 
 
-def test_dataset_manifest_round_trip_preserves_generation_schema_roles_and_certificates() -> None:
+def test_dataset_manifest_round_trip_preserves_generation_schema_roles_and_metadata() -> None:
     recipe = DatasetRecipe(
         schema_version=1, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
     )
     manifest = DatasetManifest(
         recipe,
         ManifestGeneration("ds", "g1", ("table:g1",), ("sha256:x",), 2),
-        (ManifestColumn("y", "int64", "outcome", {"certificate": "cert-1"}),),
+        (ManifestColumn("y", "int64", "outcome", {"numeric_policy": "exact"}),),
         "design",
         "model",
         {"source": "coverage"},

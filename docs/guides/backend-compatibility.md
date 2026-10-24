@@ -47,19 +47,21 @@ microsecond precision. Decimal columns need a declared `numeric(p, s)` with
 with `terrine.temporal.exact_overflow`.
 
 Averages, ratios and float-valued windows match DuckDB within a tight tolerance
-rather than bit for bit. PostgreSQL keeps each window quantity exact in `NUMERIC`
-and rounds to binary64 once. A float fact enters as the decimal value of its
-shortest round-trip text (`REAL` is widened first), which lies within half an ulp
-of the stored float, so history outside the window cancels exactly. A window
-sum's error is therefore at most the sum of its values' half-ulps (at most
-2^-53·Σ|xᵢ|, plus 2^-1075 per subnormal value) and one final rounding. The bound
-is relative to the window's absolute sum, not to the result: under cancellation,
-such as 1.000001 + (-1.0), the relative difference from DuckDB can reach about
-1e-10. A quotient is divided to at least 16 significant digits before rounding
-(relative error below 1e-15 of its exact inputs). These columns carry
-`numeric_policy=None` and no absolute-error column; DuckDB's certified
-`checked_float64_v1` results are unchanged. A non-finite value at or before the
-end of a non-empty window, or a result beyond binary64 range, refuses with
+rather than bit for bit. On every backend a float fact enters exact state as
+the decimal value of its shortest round-trip text (`REAL` is widened first),
+which lies within half an ulp of the stored float, so history outside the
+window cancels exactly and a window sum is that decimal sum rounded to binary64
+once. DuckDB holds the text as a `BIGNUM` coefficient at a per-unit scale and
+rounds through its correctly rounded string-to-double conversion; PostgreSQL
+keeps each window quantity exact in `NUMERIC` and rounds to binary64 once.
+Averages and ratios divide before that rounding: PostgreSQL to at least 16
+significant digits (relative error below 1e-15 of its exact inputs), DuckDB
+within `|r − p/q| ≤ 6·2⁻⁵³·|p/q| + 2⁻¹⁰⁷⁵` of the exact quotient. The parity
+contract stays relative to the window's absolute sum, not to the result, since
+cancellation defeats a purely relative bound. These columns carry
+`numeric_policy=None` and no error column on every backend. A non-finite value
+at or before the end of a non-empty window, or a result beyond binary64 range,
+refuses with
 `terrine.temporal.float64_precision` (`nonfinite_input` / `bound_overflow`); an
 empty window is zero, as on DuckDB.
 
@@ -86,7 +88,7 @@ below about 5.7e38 with 38 fractional digits: an exact sum beyond it refuses wit
 `terrine.temporal.exact_overflow`, a float fact beyond it or non-finite refuses
 with `terrine.temporal.float64_precision` (`bound_overflow` / `nonfinite_input`),
 and a float fact's round-trip text is rounded to 38 fractional digits, which
-adds at most 5e-39 per value to the PostgreSQL error bound. Quotients divide to
+perturbs the exact window sum by at most 5e-39 per value. Quotients divide to
 38 fractional digits before the single rounding to binary64. Timestamps are
 microsecond-exact from year 1 to 9999; `DATETIME` columns denote UTC. Ibis reads
 every `NUMERIC` column as `decimal(38, 9)`, so decimal outputs carry scale 9 even

@@ -6,19 +6,29 @@ Terrine builds immutable datasets from a `Design` and a bound `Model`; it does n
 
 Select outcome labels and, optionally, a subset of declared features. The default incomplete-label policy drops rows with unavailable or known-null labels; `keep` preserves null values and their reason metadata. Excluded-label and unassigned-split reason counts survive ordinary materialization, staged Arrow metadata, and `DatasetManifest.frame_metadata`.
 
+Choose an explicit output budget and reuse it for materialization, staging,
+fitting and Parquet export. Omitting it is intentionally unbounded output, not a
+safe default; output limits do not cap scans, backend memory or retained inputs.
+
 ```python
+from terrine import Budget
+
+budget = Budget(max_rows=100_000, max_output_bytes=64_000_000)
 frame = design.build(model)
 training = frame.training_set(
     label="churned",
     features=("past_sessions", "plan_tier"),
     incomplete_labels="drop",
 )
-dataset = training.stage("training")
+dataset = training.stage("training", budget=budget)
 
 for batch in dataset.to_arrow_batches(batch_size=65_536):
     consume(batch)
 
-export = dataset.export_parquet(destination="./training-export")
+export = dataset.export_parquet(
+    destination="./training-export",
+    budget=budget,
+)
 ```
 
 Pass a `TimeSplit` or `GroupSplit` from `terrine.dataset.splits` to `training_set(split=...)` to append `__terrine_split` and `__terrine_split_reason`. Calendar-date cutoffs resolve at the Catalog-local day boundary and persist as absolute instants. Time splits use the complete selected-label support, not merely the anchor: half-open interval labels may end at a cutoff, while observed point labels must precede it. Overlaps, embargoes, unavailable labels, and combined time/group mismatches remain `unassigned`; they are never reassigned to test. Group keys select unit or cluster-unit identity and use the versioned typed deterministic codec. Fit downstream preprocessing only on rows explicitly assigned to `train`.
@@ -26,6 +36,13 @@ Pass a `TimeSplit` or `GroupSplit` from `terrine.dataset.splits` to `training_se
 Relative labels also retain the selector origin as point support and the compiler's conservative selector-search intervals. A label window ending before a cutoff is insufficient when the event used to select that window depends on later observations. Group-only assignment tests label completeness independently of temporal endpoints. Version-1 manifests that predate optional frame metadata remain reopenable without changing their persisted encoding.
 
 The result is a pinned reference. It does not collect the full Frame into a client-side table. Export shards are checksummed and recorded in a manifest; a retry to the same destination resumes only verified shards for the same dataset generation and export layout. Existing destinations with a different generation, layout, or configuration are refused without overwriting them.
+
+`Budget.max_output_bytes` limits the cumulative Arrow bytes read for export,
+before each batch is partitioned or written; it does not limit the smaller
+compressed Parquet files. The manifest's physical `byte_count` remains storage
+metadata, not budget accounting. Replaying a completed export with this byte cap
+re-reads its pinned Arrow stream to enforce the limit; uncapped replay remains
+metadata-only apart from verifying the existing files.
 
 ## Scoring snapshots
 
@@ -38,7 +55,11 @@ scoring_frame = design.snapshot(
     eligibility={"eligible": eligibility_predicate},
     features=("past_sessions", "plan_tier"),
 )
-scoring = scoring_frame.stage("scoring")
+scoring = scoring_frame.stage("scoring", budget=budget)
+scoring_export = scoring.export_parquet(
+    destination="./scoring-export",
+    budget=budget,
+)
 ```
 
 A scoring snapshot does not establish historical recorded-at availability. Shared feature definitions reduce definition drift but do not prove that a retrospectively corrected value was known at a past prediction time. A new scoring date is a new explicit snapshot; it does not mutate an older pinned generation.

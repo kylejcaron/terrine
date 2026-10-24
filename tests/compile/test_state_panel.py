@@ -314,38 +314,24 @@ def test_state_panel_rejects_generated_status_name_collisions(panel_model, name)
     assert error.value.code == "terrine.spec.reserved_output_name"
 
 
-def test_float_bin_certificate_rounds_upper_endpoint_outward():
+def test_float_bin_edge_uses_rounded_value():
+    import math
+
     import ibis
-    import pandas as pd
     import pyarrow as pa
 
     from terrine.compile.shapes.state_panel import _label
-    from terrine.data import ColumnMeta
 
     cut = float.fromhex("0x1.0000000000001p+0")
     state = BinnedMetricState("sessions", (cut,), ("low", "high"))
-    meta = ColumnMeta(
-        None,
-        "state",
-        None,
-        None,
-        None,
-        None,
-        numeric_policy="checked_float64_v1",
-        absolute_error_column="error",
-    )
     relation = ibis.memtable(
-        pa.table(
-            {
-                "_state_period": pa.array([1.0]),
-                "error": pa.array([2.2204460492503136e-16]),
-            }
-        )
+        pa.table({"_state_period": pa.array([1.0, cut, math.nextafter(cut, math.inf), None])})
     )
     con = ibis.duckdb.connect()
     try:
-        value = con.execute(relation.select(label=_label(relation, state, meta)))["label"].iloc[0]
-        assert pd.isna(value)
+        labels = con.execute(relation.select(label=_label(relation, state)))["label"]
+        assert labels.tolist()[:3] == ["low", "low", "high"]
+        assert labels.isna().tolist() == [False, False, False, True]
     finally:
         con.disconnect()
 
@@ -462,59 +448,16 @@ def test_binned_classifier_preserves_huge_decimal_cuts_and_lower_equality():
     import pyarrow as pa
 
     from terrine.compile.shapes.state_panel import _label
-    from terrine.data import ColumnMeta
 
     lower = Decimal(2**80)
     upper = lower + Decimal(1)
     state = BinnedMetricState("sessions", (lower, upper), ("low", "mid", "high"))
-    meta = ColumnMeta(None, "state", None, None, None, None, numeric_policy="exact")
     values = pa.array([lower, upper, upper + 1], type=pa.decimal128(30, 0))
     relation = ibis.memtable(pa.table({"_state_period": values}))
-    labels = relation.select(label=_label(relation, state, meta))
+    labels = relation.select(label=_label(relation, state))
     con = ibis.duckdb.connect()
     try:
         assert con.execute(labels)["label"].tolist() == ["low", "mid", "high"]
-    finally:
-        con.disconnect()
-
-
-def test_binned_classifier_refuses_a_float_certificate_spanning_a_cut():
-    import ibis
-    import pandas as pd
-    import pyarrow as pa
-
-    from terrine.compile.shapes.state_panel import _state_value
-    from terrine.data import ColumnMeta
-
-    state = BinnedMetricState("sessions", (0.0,), ("low", "high"))
-    meta = ColumnMeta(
-        None,
-        "state",
-        None,
-        None,
-        "__terrine_state_complete",
-        "__terrine_state_reason",
-        numeric_policy="checked_float64_v1",
-        absolute_error_column="error",
-    )
-    relation = ibis.memtable(
-        pa.table(
-            {
-                "_state_period": pa.array([0.0]),
-                "error": pa.array([0.01]),
-                "__terrine_state_complete": pa.array([True]),
-                "__terrine_state_reason": pa.array([None], type=pa.string()),
-            }
-        )
-    )
-    value, complete, reason = _state_value(relation, state, meta)
-    classified = relation.select(value=value, complete=complete, reason=reason)
-    con = ibis.duckdb.connect()
-    try:
-        result = con.execute(classified).iloc[0]
-        assert pd.isna(result["value"])
-        assert not result["complete"]
-        assert result["reason"] == "ambiguous_state_bin"
     finally:
         con.disconnect()
 
@@ -682,8 +625,7 @@ def test_known_null_after_absorption_does_not_count_as_recovery(observed_model_f
     assert len([row for row in rows if row["unit"] == "a"]) == 1
 
 
-@pytest.mark.parametrize(("cut", "ambiguous"), [(Decimal("0.1"), False)])
-def test_float_metric_cut_precision_and_near_boundary(native_inputs, cut, ambiguous):
+def test_float_metric_refuses_decimal_cutpoints(native_inputs):
     import pyarrow as pa
 
     from terrine.semantic.models import Catalog
@@ -720,35 +662,17 @@ def test_float_metric_cut_precision_and_near_boundary(native_inputs, cut, ambigu
         readiness={"events": Coverage("2025-01-01", "2025-01-31")},
         units={"user": UnitSource("users", "user_id")},
     )
-    if not ambiguous:
-        design = Design(
-            "user",
-            Schedule("1d", "2025-01-03", "2025-01-04"),
-            shape=StatePanel(
-                BinnedMetricState("score_avg", cutpoints=(cut,), levels=("low", "high")),
-                max_periods=1,
-            ),
-        )
-        with pytest.raises(TerrineError) as error:
-            design.build(model)
-        assert error.value.code == "terrine.state_panel.unsupported_combination"
-        return
     design = Design(
         "user",
         Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
-            BinnedMetricState("score_avg", cutpoints=(cut,), levels=("low", "high")),
+            BinnedMetricState("score_avg", cutpoints=(Decimal("0.1"),), levels=("low", "high")),
             max_periods=1,
         ),
     )
-    rows = (
+    with pytest.raises(TerrineError) as error:
         design.build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
-        .table.to_pylist()
-    )
-    row = next(row for row in rows if row["unit"] == "a")
-    assert row["to_state"] is None
-    assert row["to_state_reason"] == "ambiguous_state_bin"
+    assert error.value.code == "terrine.state_panel.unsupported_combination"
 
 
 def test_binned_state_preserves_metric_null_reasons():
@@ -756,10 +680,8 @@ def test_binned_state_preserves_metric_null_reasons():
     import pyarrow as pa
 
     from terrine.compile.shapes.state_panel import _state_value
-    from terrine.data import ColumnMeta
 
     state = BinnedMetricState("sessions", (0,), ("none", "some"))
-    meta = ColumnMeta(None, "state", None, None, None, None)
     relation = ibis.memtable(
         pa.table(
             {
@@ -772,7 +694,7 @@ def test_binned_state_preserves_metric_null_reasons():
             }
         )
     )
-    value, complete, reason = _state_value(relation, state, meta)
+    value, complete, reason = _state_value(relation, state)
     con = ibis.duckdb.connect()
     try:
         result = con.execute(relation.select(value=value, complete=complete, reason=reason))

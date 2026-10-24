@@ -167,8 +167,16 @@ def _existing_export(
     if budget is not None:
         if budget.max_rows is not None and manifest.row_count > budget.max_rows:
             raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
-        if budget.max_output_bytes is not None and manifest.byte_count > budget.max_output_bytes:
-            raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
+        if budget.max_output_bytes is not None:
+            batches = dataset.to_arrow_batches()
+            output_bytes = 0
+            try:
+                for batch in batches:
+                    output_bytes += batch.nbytes
+                    if output_bytes > budget.max_output_bytes:
+                        raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
+            finally:
+                batches.close()
     return manifest
 
 
@@ -306,7 +314,7 @@ def _export_dataset_locked(
         partial.mkdir()
         records = []
     by_path = {record.path: record for record in records}
-    row_count = byte_count = 0
+    row_count = byte_count = output_bytes = 0
     shard_index = 0
     active_path: Path | None = None
     active_key: tuple[Any, ...] | None = None
@@ -372,6 +380,10 @@ def _export_dataset_locked(
         for batch in batches:
             if batch.schema != schema:
                 raise _INVALID.error(reason="Arrow batch schema changed during export")
+            if budget is not None and budget.max_output_bytes is not None:
+                output_bytes += batch.nbytes
+                if output_bytes > budget.max_output_bytes:
+                    raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
             row_count += batch.num_rows
             if budget is not None and budget.max_rows is not None and row_count > budget.max_rows:
                 raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
@@ -415,12 +427,6 @@ def _export_dataset_locked(
             writer = pq.ParquetWriter(active_path, schema, compression="zstd")
         close_writer()
         byte_count = sum(shard.byte_count for shard in records)
-        if (
-            budget is not None
-            and budget.max_output_bytes is not None
-            and byte_count > budget.max_output_bytes
-        ):
-            raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
         manifest = ExportManifest(
             dataset.manifest.generation.dataset_id,
             dataset.manifest.generation.generation_id,

@@ -1,7 +1,11 @@
+import copy
+import pickle
 from pathlib import Path
 
 import pytest
 
+from terrine.errors import TerrineError
+from terrine.model import Model
 from terrine.semantic.io import dump_catalog, load_catalog
 from terrine.semantic.models import Catalog
 
@@ -60,6 +64,118 @@ def test_catalog_rejects_untrusted_callbacks():
     }
     with pytest.raises(ValueError):
         Catalog.model_validate(unsafe)
+
+
+@pytest.mark.parametrize(
+    ("definition", "location", "kind"),
+    [
+        ({**CATALOG, "surprise": True}, ("surprise",), "extra_forbidden"),
+        (
+            {key: value for key, value in CATALOG.items() if key != "dialect"},
+            ("dialect",),
+            "missing",
+        ),
+        ({**CATALOG, "day_boundary": "UTC+14:01"}, ("day_boundary",), "invalid_day_boundary"),
+        (
+            {
+                **CATALOG,
+                "dimensions": {
+                    "accounts": {
+                        **CATALOG["dimensions"]["accounts"],
+                        "validity": {"valid_from": "start", "changed_at": "change"},
+                    }
+                },
+            },
+            ("dimensions", "accounts", "validity"),
+            "invalid_validity_axis",
+        ),
+        (
+            {
+                **CATALOG,
+                "measures": {
+                    "count": {
+                        "fact": "session",
+                        "aggregation": "count",
+                        "filters": [{"property": "active", "op": "equals", "values": [1, 2]}],
+                    }
+                },
+            },
+            ("measures", "count", "filters", 0),
+            "invalid_filter_arity",
+        ),
+        (
+            {
+                **CATALOG,
+                "measures": {
+                    "count": {
+                        "fact": "session",
+                        "aggregation": "count",
+                        "filters": [{"property": "active", "op": "in", "values": [[1]]}],
+                    }
+                },
+            },
+            ("measures", "count", "filters", 0),
+            "invalid_filter_values",
+        ),
+        (
+            {**CATALOG, "metrics": {"sessions": {"kind": "mean", "entity": "user"}}},
+            ("metrics", "sessions"),
+            "invalid_metric_shape",
+        ),
+        (
+            {
+                **CATALOG,
+                "metrics": {
+                    "sessions": {
+                        "kind": "mean",
+                        "entity": "user",
+                        "measure": "count",
+                        "winsorization": {"not_json": {1}},
+                    }
+                },
+            },
+            ("metrics", "sessions"),
+            "unsafe_transform",
+        ),
+    ],
+)
+def test_loader_reports_coded_actionable_catalog_schema_errors(
+    tmp_path: Path, definition, location, kind
+):
+    import yaml
+
+    path = tmp_path / "invalid.yaml"
+    path.write_text(yaml.safe_dump(definition), encoding="utf-8")
+    with pytest.raises(TerrineError) as caught:
+        load_catalog(path)
+
+    error = caught.value
+    assert error.code == "terrine.catalog.invalid_definition"
+    assert any(
+        issue["location"] == location and issue["kind"] == kind for issue in error.context["issues"]
+    )
+    assert all(
+        isinstance(issue["hint"], str) and issue["hint"] for issue in error.context["issues"]
+    )
+    if kind == "invalid_day_boundary":
+        assert "day_boundary" in str(error)
+        assert "UTC" in str(error)
+        assert "14:00" in str(error)
+        # Loading fails before Model binding can inspect any backend schema.
+        with pytest.raises(TerrineError) as model_error:
+            Model.from_catalog(path, con=object(), readiness={})
+        assert model_error.value.code == error.code
+        definition["day_boundary"] = "UTC"
+        path.write_text(yaml.safe_dump(definition), encoding="utf-8")
+        assert load_catalog(path).day_boundary == "UTC"
+
+    issues = error.context["issues"]
+    with pytest.raises(TypeError):
+        issues[0]["kind"] = "changed"
+    for restored in (copy.deepcopy(error), pickle.loads(pickle.dumps(error))):
+        assert restored.code == error.code
+
+        assert restored.context == error.context
 
 
 def test_catalog_rejects_unknown_fields_and_unsupported_versions():

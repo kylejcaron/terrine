@@ -77,6 +77,7 @@ Correct the named Catalog field or source declaration.
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
 | `terrine.catalog.duplicate_yaml_key` | <code>Catalog YAML repeats key {key!r}.</code> | `key` | [terrine/semantic/io.py](../../terrine/semantic/io.py) |
+| `terrine.catalog.invalid_definition` | <code>Catalog definition is invalid:<br>{diagnostics}</code> | `diagnostics` | [terrine/semantic/io.py](../../terrine/semantic/io.py) |
 | `terrine.catalog.invalid_yaml` | <code>Catalog YAML is not safe valid YAML: {reason}.</code> | `reason` | [terrine/semantic/io.py](../../terrine/semantic/io.py) |
 
 ## cohort
@@ -439,8 +440,7 @@ Check exact endpoints, coverage and arithmetic validity.
 | `terrine.temporal.exact_unsupported` | <code>Backend {backend!r} lacks exact sparse BIGNUM state. Use the supported DuckDB backend.</code> | `backend` | [terrine/temporal/prefix.py](../../terrine/temporal/prefix.py) |
 | `terrine.temporal.first_occurrence_invalid_relation` | <code>First-occurrence input relation is invalid ({reason}).</code> | `reason` | [terrine/temporal/first.py](../../terrine/temporal/first.py) |
 | `terrine.temporal.first_occurrence_unsupported_backend` | <code>First-occurrence point lookup requires the DuckDB, PostgreSQL or BigQuery backend; got {backend!r}.</code> | `backend` | [terrine/temporal/first.py](../../terrine/temporal/first.py) |
-| `terrine.temporal.float64_precision` | <code>Float64 certification failed ({failure}). Use correctly declared exact facts or a smaller semantically sufficient history with explicit completeness.</code> | `failure` | [terrine/temporal/prefix.py](../../terrine/temporal/prefix.py) |
-| `terrine.temporal.float64_unsupported` | <code>Backend {backend!r} lacks {capability}. Use a supported checked backend or correctly declared integer/decimal facts.</code> | `backend`, `capability` | [terrine/temporal/prefix.py](../../terrine/temporal/prefix.py) |
+| `terrine.temporal.float64_precision` | <code>Float64 result unavailable ({failure}). Use finite inputs whose result fits binary64, or correctly declared integer/decimal facts.</code> | `failure` | [terrine/temporal/prefix.py](../../terrine/temporal/prefix.py) |
 | `terrine.temporal.malformed_history` | <code>Dimension history contains null keys, null starts, or malformed validity intervals.</code> | None | [terrine/temporal/attributes.py](../../terrine/temporal/attributes.py) |
 | `terrine.temporal.missing_join_key` | <code>Dimension {dimension!r} cannot resolve its declared event-side entity key.</code> | `dimension` | [terrine/temporal/attributes.py](../../terrine/temporal/attributes.py) |
 | `terrine.temporal.overlapping_history` | <code>Dimension history contains overlapping validity intervals.</code> | None | [terrine/temporal/attributes.py](../../terrine/temporal/attributes.py) |

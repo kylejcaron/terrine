@@ -401,7 +401,7 @@ def test_state_panel_incremental_change_routes_to_clean_rebuild():
     assert incremental.tasks == clean.tasks
 
 
-def test_historical_float64_prefix_change_revalidates_certificates_and_results():
+def test_historical_prefix_change_replans_prefixes_and_frames():
     from datetime import UTC, datetime
     from types import SimpleNamespace
 
@@ -431,9 +431,7 @@ def test_historical_float64_prefix_change_revalidates_certificates_and_results()
             "change_feed",
         ),
     )
+    assert {task.layer for task in plan.tasks} == {"daily", "prefix", "anchor", "frame"}
     for partition in ("p1", "p2"):
-        assert any(
-            task.layer == "prefix_certificate" and task.partition == partition
-            for task in plan.tasks
-        )
+        assert any(task.layer == "prefix" and task.partition == partition for task in plan.tasks)
         assert any(task.layer == "frame" and task.partition == partition for task in plan.tasks)
