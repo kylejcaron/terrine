@@ -325,7 +325,8 @@ def _check_view_routines(con: Any, definition: str, name: str, databases: Iterab
                 f"user routines of database {database!r} could not be listed to admit view "
                 f"{name!r}; materialize its rows into a table"
             ) from exc
-        routines.update(str(row[0]).upper() for row in rows)
+        # The catalog stores unquoted names upper-cased and quoted names as written.
+        routines.update(str(row[0]) for row in rows)
     called = sorted(names & routines)
     if called:
         raise _snapshot_error(

@@ -116,7 +116,8 @@ view or through admitted SQL, must be a permanent or transient table with
 `DATA_RETENTION_TIME_IN_DAYS >= 1`; a zero-retention table, an external or
 dynamic table, a materialized view, a secure view (its definition is hidden)
 or a view that calls a user-defined function (by the name written in its
-definition, or schema-qualified) refuses with
+definition, or schema-qualified; only routines the reading role can see in
+`INFORMATION_SCHEMA.FUNCTIONS` are detected) refuses with
 `terrine.execution.snapshot_unavailable`, as does a relation without `CREATED`
 or `LAST_DDL` metadata (predating it, or newly replicated; read from a copy
 made with `CREATE TABLE ... AS SELECT` or `CLONE`). Built-in functions inside

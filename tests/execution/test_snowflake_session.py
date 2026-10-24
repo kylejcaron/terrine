@@ -130,8 +130,13 @@ def test_relations_without_identity_instants_refuse(monkeypatch, metadata):
             'CREATE VIEW shaped AS SELECT STR_POSITION("user_id", \'a\') AS "n" FROM events',
             ("STR_POSITION",),
         ),
+        # A quoted routine name keeps its case in the catalog and in the call.
+        (
+            'CREATE VIEW shaped AS SELECT "str_position"("user_id", \'a\') AS "n" FROM events',
+            ("str_position",),
+        ),
     ],
-    ids=["unqualified", "qualified", "named_like_a_built_in"],
+    ids=["unqualified", "qualified", "named_like_a_built_in", "quoted_lowercase"],
 )
 def test_views_calling_a_user_routine_refuse(monkeypatch, definition, routines):
     _metadata(monkeypatch, view=definition, routines=routines)
