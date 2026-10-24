@@ -781,11 +781,7 @@ def _open_snowflake_execution(
     context = None
     try:
         resolver = provider.bind_resolver(
-            catalog,
-            con,
-            units=units,
-            input_binding=input_binding,
-            snapshot=session.snapshot,
+            catalog, con, units=units, input_binding=input_binding, session=session
         )
         context = ExecutionContext(
             con,

@@ -2,8 +2,14 @@
 
 Snowflake isolates per statement, so a transaction gives no multi-statement
 snapshot. Each execution reads ``CURRENT_TIMESTAMP()`` once and pins every
-physical table reference in every query it runs with ``AT (TIMESTAMP => ...)``.
-Only reads are issued on the caller's connection: no ``USE``, ``ALTER SESSION``,
+table and view reference in every query it runs with ``AT (TIMESTAMP => ...)``,
+which Snowflake applies to the tables a view reads. Time Travel follows the
+object, not the name: a table swapped or renamed into place after admission
+would answer a pinned read with another object's history, and a replaced view
+has no history at all, so the session re-reads every admitted relation's
+``CREATED`` and ``LAST_DDL`` after each query (every DDL, including swap and
+rename, advances ``LAST_DDL``) and refuses the result on any change. Only reads
+are issued on the caller's connection: no ``USE``, ``ALTER SESSION``,
 transaction or temporary object.
 """
 
@@ -11,7 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Generator, Mapping
+from collections.abc import Generator, Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -19,16 +25,32 @@ from typing import Any
 
 import pyarrow as pa
 
+from terrine.errors import RefusalSpec
 from terrine.execution._metadata import invalidate_metadata
 from terrine.semantic.models import Catalog, RelationSpec, SqlQuery, TableRef
 from terrine.semantic.sql import _admit_read_query_ast, admit_read_query
 
 DIALECT = "snowflake"
 # Physical row sources with Time Travel, and views over them. Temporary tables
-# are session-scoped, external tables and materialized views have no history.
+# are session-scoped; external, dynamic and event tables and materialized views
+# have no usable history.
 _TABLE_TYPES = {"BASE TABLE": "table", "VIEW": "view"}
 _STAMP_FORMAT = "YYYY-MM-DD HH24:MI:SS.FF9 TZHTZM"
 _RETENTION_ROUTE = "ALTER TABLE ... SET DATA_RETENTION_TIME_IN_DAYS = 1"
+# Snowflake's own wording for NUMBER(38, 0) sums and differences that leave the
+# type, which terrine maps to its exact-overflow refusal.
+_OVERFLOW_MESSAGES = ("value overflow in a sum aggregate", "number out of representable range")
+# A pinned read of an object created after the snapshot instant.
+_HISTORY_UNAVAILABLE = "time travel data is not available"
+_FUTURE_UNAVAILABLE = "future data is not yet available"
+_TIMESTAMP_RANGE = RefusalSpec(
+    "terrine.execution.arrow_timestamp_range",
+    "A nanosecond timestamp output lies outside Arrow's range (1677-09-21 to 2262-04-11): "
+    "{detail}. Declare the column with microsecond precision, such as TIMESTAMP_TZ(6), or "
+    "cast it in a SQL relation.",
+)
+
+Key = tuple[str, str, str]
 
 
 def _snapshot_error(reason: str):
@@ -76,8 +98,12 @@ class _Relation:
     view_text: str | None
 
     @property
+    def key(self) -> Key:
+        return (self.database, self.schema, self.name)
+
+    @property
     def identity(self) -> str:
-        return json.dumps([self.database, self.schema, self.name])
+        return json.dumps(list(self.key))
 
 
 def _defaults(con: Any) -> tuple[str, str]:
@@ -89,11 +115,34 @@ def _defaults(con: Any) -> tuple[str, str]:
     return database, schema
 
 
-def _reference(con: Any, name: str, scope: tuple[str, str] | None = None) -> tuple[str, str, str]:
-    """Resolve ``name`` like Snowflake does: unqualified names in the current (or
-    the referencing view's) database and schema. Identifiers are exact, as Ibis
-    quotes every name it binds."""
-    parts = name.split(".")
+def _normalized(expression: Any) -> Any:
+    """Apply Snowflake's identifier rules: unquoted names fold to upper case,
+    quoted names are exact (and may contain dots or lower case)."""
+    from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
+
+    return normalize_identifiers(expression, dialect=DIALECT)
+
+
+def _table_parts(table: Any) -> tuple[str, ...]:
+    from sqlglot import exp
+
+    parts = (table.args.get("catalog"), table.args.get("db"), table.this)
+    if not all(part is None or isinstance(part, exp.Identifier) for part in parts):
+        raise _snapshot_error("relation name is not database.schema.table")
+    return tuple(part.name for part in parts if part is not None)
+
+
+def _reference(con: Any, name: str, scope: tuple[str, str] | None = None) -> Key:
+    """Resolve a relation name as Snowflake would: with its identifier rules, and
+    unqualified names in the current (or the referencing view's) database and
+    schema."""
+    from sqlglot import exp
+
+    try:
+        table = _normalized(exp.to_table(name, dialect=DIALECT))
+    except Exception as exc:
+        raise _snapshot_error(f"relation name {name!r} is not database.schema.table") from exc
+    parts = _table_parts(table)
     database, schema = scope or _defaults(con)
     if len(parts) == 1:
         return database, schema, parts[0]
@@ -110,6 +159,12 @@ FROM {database}.INFORMATION_SCHEMA.TABLES AS t
 LEFT JOIN {database}.INFORMATION_SCHEMA.VIEWS AS v
   ON v.TABLE_SCHEMA = t.TABLE_SCHEMA AND v.TABLE_NAME = t.TABLE_NAME
 WHERE t.TABLE_SCHEMA = %s AND t.TABLE_NAME = %s
+"""
+
+_CURRENT_SQL = """
+SELECT TABLE_NAME, CREATED, LAST_DDL
+FROM {database}.INFORMATION_SCHEMA.TABLES
+WHERE TABLE_SCHEMA = %s AND TABLE_NAME IN ({names})
 """
 
 
@@ -215,23 +270,23 @@ def _view_query(definition: str) -> Any:
 
 
 def _sources(statement: Any) -> list[str]:
+    """Physical relation names a query reads, rendered with exact identifiers."""
     from sqlglot import exp
     from sqlglot.optimizer.scope import traverse_scope
 
     found = []
-    for scope in traverse_scope(statement):
+    for scope in traverse_scope(_normalized(statement.copy())):
         for source in scope.sources.values():
             if isinstance(source, exp.Table) and isinstance(source.this, exp.Identifier):
-                parts = [part for part in (source.catalog, source.db, source.name) if part]
-                found.append(".".join(parts))
+                found.append(".".join(_quote(part) for part in _table_parts(source)))
     return found
 
 
 def _closure(
     con: Any,
-    key: tuple[str, str, str],
-    seen: dict[tuple[str, str, str], _Relation],
-    path: frozenset[tuple[str, str, str]],
+    key: Key,
+    seen: dict[Key, _Relation],
+    path: frozenset[Key],
 ) -> None:
     if key in path:
         raise _snapshot_error("view dependency cycle")
@@ -248,8 +303,9 @@ def _closure(
             _closure(con, dependency, seen, path | {key})
 
 
-def _closure_for(relation: RelationSpec, con: Any) -> dict[tuple[str, str, str], _Relation]:
-    seen: dict[tuple[str, str, str], _Relation] = {}
+def closure_for(relation: RelationSpec, con: Any) -> dict[Key, _Relation]:
+    """Every table and view a relation reads, the relation itself first."""
+    seen: dict[Key, _Relation] = {}
     if isinstance(relation, TableRef):
         _closure(con, _reference(con, relation.name), seen, frozenset())
     elif isinstance(relation, SqlQuery):
@@ -271,9 +327,9 @@ def required_relations(
 ) -> tuple[Any, ...]:
     from terrine.execution.inputs import PhysicalRelationId
 
-    seen: dict[tuple[str, str, str], _Relation] = {}
+    seen: dict[Key, _Relation] = {}
     for relation in roots(catalog, units):
-        seen.update(_closure_for(relation, con))
+        seen.update(closure_for(relation, con))
     return tuple(
         sorted(
             (
@@ -286,21 +342,8 @@ def required_relations(
     )
 
 
-def admission_fingerprint(
-    relation: RelationSpec, con: Any, *, snapshot: datetime | None = None
-) -> str:
-    """Return the identity of a relation's closure; any change alters it.
-
-    With ``snapshot``, a relation created or altered after the snapshot instant
-    refuses: its Time Travel history does not reach back to it.
-    """
-    closure = _closure_for(relation, con)
-    if snapshot is not None:
-        for item in closure.values():
-            if item.created > snapshot or item.last_ddl > snapshot:
-                raise _binding_error(
-                    f"relation {item.name!r} was created or altered after the snapshot"
-                )
+def fingerprint(closure: Mapping[Key, _Relation]) -> str:
+    """The identity of a relation's closure; any change alters it."""
     payload = sorted(
         (item.identity, item.kind, item.created.isoformat(), item.definition_hash)
         for item in closure.values()
@@ -308,10 +351,18 @@ def admission_fingerprint(
     return hashlib.sha256(json.dumps(payload, separators=(",", ":")).encode()).hexdigest()
 
 
-def resolve(con: Any, relation: RelationSpec, catalog_dialect: str = DIALECT) -> Any:
+def resolve(
+    con: Any,
+    relation: RelationSpec,
+    catalog_dialect: str = DIALECT,
+    closure: Mapping[Key, _Relation] | None = None,
+) -> Any:
     if isinstance(relation, TableRef):
-        database, schema, name = _reference(con, relation.name)
-        item = _relation(con, database, schema, name)
+        item = (
+            next(iter(closure.values()))
+            if closure
+            else _relation(con, *_reference(con, relation.name))
+        )
         return con.table(item.name, database=(item.database, item.schema))
     sql = admit_read_query(relation.sql, catalog_dialect, DIALECT)
     return con.sql(sql)
@@ -328,11 +379,10 @@ def require_utc_session(con: Any) -> None:
 
 
 def pin(sql: str, stamp: str) -> str:
-    """Attach ``AT (TIMESTAMP => stamp)`` to every physical table reference.
+    """Attach ``AT (TIMESTAMP => stamp)`` to every table and view reference.
 
     Common table expressions, derived tables and table functions are not
-    physical references; a view reference is pinned, which Snowflake applies to
-    the tables the view reads.
+    physical references. Snowflake applies a view's pin to the tables it reads.
     """
     from sqlglot import exp, parse_one
     from sqlglot.optimizer.scope import traverse_scope
@@ -364,6 +414,7 @@ class SnowflakeSession:
         self.con = con
         self.snapshot = snapshot
         self.stamp = stamp
+        self._bound: dict[Key, _Relation] = {}
 
     @classmethod
     def open(cls, con: Any) -> SnowflakeSession:
@@ -378,6 +429,40 @@ class SnowflakeSession:
         snapshot, stamp = rows[0]
         return cls(con, snapshot, stamp)
 
+    def admit(self, closure: Iterable[_Relation]) -> None:
+        """Bind relations to the snapshot: one created or altered after it has no
+        history reaching back to it, and every one is re-verified after each read."""
+        for item in closure:
+            if item.created > self.snapshot or item.last_ddl > self.snapshot:
+                raise _binding_error(
+                    f"relation {item.name!r} was created or altered after the snapshot"
+                )
+            self._bound[item.key] = item
+
+    def verify(self) -> None:
+        """Refuse when any admitted relation saw DDL since admission.
+
+        ``LAST_DDL`` is monotonic and advances on replace, swap, rename and
+        column changes, so an unchanged value after a read proves the name
+        denoted the admitted object throughout.
+        """
+        by_schema: dict[tuple[str, str], list[_Relation]] = {}
+        for item in self._bound.values():
+            by_schema.setdefault((item.database, item.schema), []).append(item)
+        for (database, schema), items in by_schema.items():
+            names = ", ".join("%s" for _ in items)
+            sql = _CURRENT_SQL.format(database=_quote(database), names=names)
+            try:
+                rows = _rows(self.con, sql, (schema, *(item.name for item in items)))
+            except Exception as exc:
+                raise _binding_error("relation identity could not be re-verified") from exc
+            current = {row[0]: (row[1], row[2]) for row in rows}
+            for item in items:
+                if current.get(item.name) != (item.created, item.last_ddl):
+                    raise _binding_error(
+                        f"relation {item.name!r} was replaced or altered during execution"
+                    )
+
     def check_query(self, sql: str) -> None:
         check_routines(sql)
 
@@ -386,19 +471,21 @@ class SnowflakeSession:
 
         invalidate_metadata()
         target = query.as_table().schema().to_pyarrow()
-        with _overflow_refusal(), raw_connection(con).cursor() as cursor:
+        with _query_refusal(), _arrow_refusal(), raw_connection(con).cursor() as cursor:
             cursor.execute(pin(sql, self.stamp))
             result = cursor.fetch_arrow_all()
+        self.verify()
         if result is None:
             result = target.empty_table()
-        return query.__pyarrow_result__(result, data_mapper=SnowflakePyArrowData)
+        with _arrow_refusal():
+            return query.__pyarrow_result__(result, data_mapper=SnowflakePyArrowData)
 
     def batches(self, con: Any, query: Any, sql: str, *, chunk_size: int) -> pa.RecordBatchReader:
         invalidate_metadata()
         target = query.as_table().schema().to_pyarrow()
         cursor = raw_connection(con).cursor()
         try:
-            with _overflow_refusal():
+            with _query_refusal():
                 cursor.execute(pin(sql, self.stamp))
         except Exception:
             cursor.close()
@@ -406,13 +493,14 @@ class SnowflakeSession:
 
         def batches():
             try:
-                with _overflow_refusal():
+                with _query_refusal(), _arrow_refusal():
                     for table in cursor.fetch_arrow_batches():
                         yield from (
                             table.rename_columns(target.names)
                             .cast(target)
                             .to_batches(max_chunksize=chunk_size)
                         )
+                self.verify()
             finally:
                 cursor.close()
 
@@ -423,13 +511,32 @@ class SnowflakeSession:
 
 
 @contextmanager
-def _overflow_refusal() -> Generator[None]:
-    """Snowflake reports NUMBER overflow as a query error; refuse with the code."""
+def _query_refusal() -> Generator[None]:
+    """Map Snowflake's query errors for exact overflow and lost history to refusals."""
     from terrine.backends.numeric import EXACT_OVERFLOW
 
     try:
         yield
     except Exception as exc:
-        if "out of representable range" in str(exc).casefold():
+        message = str(exc).casefold()
+        if any(text in message for text in _OVERFLOW_MESSAGES):
             raise EXACT_OVERFLOW.error() from exc
+        if _HISTORY_UNAVAILABLE in message:
+            raise _binding_error("a relation was replaced after the snapshot") from exc
+        if _FUTURE_UNAVAILABLE in message:
+            raise _snapshot_error("the snapshot instant is ahead of the table's clock") from exc
+        raise
+
+
+@contextmanager
+def _arrow_refusal() -> Generator[None]:
+    """An instant outside Arrow's nanosecond range either fails in the connector
+    (its nanosecond conversion overflows int64) or arrives as a microsecond
+    column whose cast to the nanosecond output type fails."""
+    try:
+        yield
+    except Exception as exc:
+        message = str(exc)
+        if "out of bounds timestamp" in message or "overflows int64 range" in message:
+            raise _TIMESTAMP_RANGE.error(detail=message.split(":")[-1].strip()[:200]) from exc
         raise

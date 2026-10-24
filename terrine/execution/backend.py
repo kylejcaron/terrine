@@ -250,8 +250,8 @@ class _SnowflakeProvider:
         return _snowflake.required_relations(catalog, con, units=units)
 
     def bind_resolver(self, catalog, con, **kwargs):
-        """Resolve relations; with ``snapshot`` (the execution's Time Travel
-        instant) a relation created or altered after it refuses."""
+        """Resolve relations; with ``session`` (the execution's Time Travel pin)
+        every relation is admitted to it and re-verified after each read."""
         from terrine.execution import _snowflake
         from terrine.execution.inputs import _INVALID
 
@@ -262,21 +262,24 @@ class _SnowflakeProvider:
                 status="unverified",
                 route="Retained input bindings are DuckDB-only; materialize directly.",
             )
-        snapshot = kwargs.get("snapshot")
+        session = kwargs.get("session")
         _snowflake.required_relations(catalog, con, units=kwargs.get("units"))
         admitted: dict[tuple[str, str], Any] = {}
         fingerprints: dict[tuple[str, str], str] = {}
 
         def resolve(relation: RelationSpec) -> Any:
             key = (relation.kind, relation.name if isinstance(relation, TableRef) else relation.sql)
-            fingerprint = _snowflake.admission_fingerprint(relation, con, snapshot=snapshot)
+            closure = _snowflake.closure_for(relation, con)
+            if session is not None:
+                session.admit(closure.values())
+            fingerprint = _snowflake.fingerprint(closure)
             if key in admitted:
                 if fingerprints[key] != fingerprint:
                     raise _INVALID.error(
                         reason="relation definition or identity changed after Model binding"
                     )
                 return admitted[key]
-            admitted[key] = _snowflake.resolve(con, relation, catalog.dialect)
+            admitted[key] = _snowflake.resolve(con, relation, catalog.dialect, closure)
             fingerprints[key] = fingerprint
             return admitted[key]
 

@@ -184,6 +184,7 @@ Use owned native sessions or retained inputs.
 
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
+| `terrine.execution.arrow_timestamp_range` | <code>A nanosecond timestamp output lies outside Arrow&#x27;s range (1677-09-21 to 2262-04-11): {detail}. Declare the column with microsecond precision, such as TIMESTAMP_TZ(6), or cast it in a SQL relation.</code> | `detail` | [terrine/execution/_snowflake.py](../../terrine/execution/_snowflake.py) |
 | `terrine.execution.invalid_input_binding` | <code>Execution inputs are not an exact verified binding: {reason}.</code> | `reason` | [terrine/execution/inputs.py](../../terrine/execution/inputs.py) |
 | `terrine.execution.snapshot_unavailable` | <code>A coherent native execution snapshot is unavailable: {reason}.</code> | `reason` | [terrine/execution/inputs.py](../../terrine/execution/inputs.py) |
 
