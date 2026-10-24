@@ -13,7 +13,12 @@ import ibis.expr.types as ir
 import pyarrow as pa
 
 from terrine.backends.sequences import integer_sequence
-from terrine.backends.timestamps import has_submicrosecond, utc_instant, utc_wall_clock
+from terrine.backends.timestamps import (
+    has_submicrosecond,
+    timestamp_text,
+    utc_instant,
+    utc_wall_clock,
+)
 from terrine.errors import RefusalSpec
 from terrine.model import Model
 from terrine.semantic.models import TableRef
@@ -334,13 +339,18 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
     identity_column = event_id_column or source.timestamp_column
     identity_dtype = events.schema()[identity_column]
     identity_text = None
-    if identity_dtype.is_timestamp() and identity_dtype.timezone is not None:
+    if identity_dtype.is_timestamp():
+        # The identity text must separate instants the type's scale separates:
+        # a plain cast is lossy on Snowflake, and an aware value renders its
+        # UTC wall clock so the session time zone cannot change it.
         alias = "_anchor_identity_text"
         names = {name.casefold() for name in events.columns}
         while alias.casefold() in names:
             alias = f"_{alias}"
-        utc_text = utc_wall_clock(events[identity_column]).cast("string")
-        events = events.mutate(**{alias: utc_text})
+        instant = events[identity_column]
+        if identity_dtype.timezone is not None:
+            instant = utc_wall_clock(instant)
+        events = events.mutate(**{alias: timestamp_text(instant)})
         identity_text = events[alias]
     raw_timestamp = events[source.timestamp_column]
     checks: list[_AnchorCheck] = [
@@ -357,7 +367,8 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
     else:
         event_id = raw_timestamp
         dtype = events.schema()[source.timestamp_column]
-        text = identity_text if identity_text is not None else raw_timestamp.cast("string")
+        assert identity_text is not None
+        text = identity_text
         type_tag = str(dtype)
     identity = cast(ir.StringValue, ibis.literal(f"event:{len(type_tag)}:{type_tag}:")).concat(
         text.length().cast("string"), ":", text

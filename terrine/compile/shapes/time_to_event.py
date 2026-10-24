@@ -16,6 +16,7 @@ from terrine.backends.timestamps import _UNSUPPORTED as _TIMESTAMP_ORDER_UNSUPPO
 from terrine.backends.timestamps import (
     _struct_key,
     compare_timestamps,
+    lossless_scale,
     timestamp_extremes,
     utc_wall_clock,
 )
@@ -192,7 +193,10 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         for name in source_names
     ]
     _validate_nanosecond_axis(design, timestamp_types)
-    time_type = dt.Timestamp(scale=max(dtype.scale or 6 for dtype in timestamp_types))
+    # The axis holds every source instant exactly: a scale below 6 promotes to
+    # microseconds, 7 or 8 to nanoseconds.
+    scale = lossless_scale(max(dtype.scale or 6 for dtype in timestamp_types))
+    time_type = dt.Timestamp(scale=scale)
     event_timestamp = event_relation._timestamp
     if event_relation.schema()["_timestamp"].timezone is not None:
         event_timestamp = utc_wall_clock(event_timestamp)

@@ -10,7 +10,12 @@ import ibis.expr.types as ir
 
 from terrine.backends.dialect import dialect_of
 from terrine.backends.joins import asof_join
-from terrine.backends.timestamps import _struct_key, timestamp_order_key, timestamp_parts
+from terrine.backends.timestamps import (
+    _struct_key,
+    lossless_timestamp,
+    timestamp_order_key,
+    timestamp_parts,
+)
 from terrine.data import ColumnMeta
 from terrine.errors import RefusalSpec
 from terrine.temporal.aggregate import TemporalResult, _Check, _Failure
@@ -39,9 +44,20 @@ def _validate_timestamp(table: ibis.Table, column: str, name: str) -> dt.Timesta
     dtype = table.schema()[column]
     if not isinstance(dtype, dt.Timestamp) or dtype.timezone not in (None, "UTC"):
         raise _INVALID.error(reason=f"{name}_must_be_utc_timestamp")
-    if dtype.scale not in (None, 6, 9):
+    if dtype.scale is not None and dtype.scale > 9:
         raise _INVALID.error(reason=f"{name}_timestamp_precision_unsupported")
     return dtype
+
+
+def _lossless(table: ibis.Table, *columns: str) -> ibis.Table:
+    """``table`` with each timestamp column at the supported scale holding it
+    exactly: a scale below 6 promotes to microseconds, 7 or 8 to nanoseconds."""
+    promoted = {
+        column: value
+        for column in columns
+        if (value := lossless_timestamp(table[column])).type() != table.schema()[column]
+    }
+    return table.mutate(**promoted) if promoted else table
 
 
 def _reverse_time_key(value: ir.TimestampValue) -> ir.Value:
@@ -98,6 +114,8 @@ def first_occurrence(
     _validate_timestamp(events, timestamp, "event")
     _validate_timestamp(candidates, lower, "lower_bound")
     _validate_timestamp(candidates, upper, "upper_bound")
+    events = _lossless(events, timestamp)
+    candidates = _lossless(candidates, lower, upper)
     if event_id is not None:
         if not isinstance(event_id, str) or event_id not in events.columns:
             raise _INVALID.error(reason="missing_event_id_column")
@@ -254,6 +272,8 @@ def last_event_value(
     _validate_timestamp(events, timestamp, "event")
     _validate_timestamp(candidates, lower, "lower_bound")
     _validate_timestamp(candidates, upper, "upper_bound")
+    events = _lossless(events, timestamp)
+    candidates = _lossless(candidates, lower, upper)
     if event_id.casefold() in {name.casefold() for name in candidates.columns}:
         raise _INVALID.error(reason="event_id_collides_with_candidate_column")
 

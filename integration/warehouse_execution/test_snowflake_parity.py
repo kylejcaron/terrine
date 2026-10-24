@@ -498,6 +498,102 @@ def test_boundary_and_tied_first_events_match_duckdb(snowflake_scratch, tmp_path
     compare("as_of_interleaved_units")
 
 
+def test_microsecond_apart_events_anchor_separately(snowflake_scratch, tmp_path):  # noqa: F811
+    """Event-anchor identities render the instant at full precision: the
+    session's default timestamp text keeps three fractional digits, which would
+    merge these two orders into one ambiguous anchor."""
+    _load_shapes(snowflake_scratch)
+    duckdb = _duckdb_shapes()
+    rows = [
+        ("d", "2025-01-01 12:00:00.000001", "1.00", "gold", "00000000-0000-0000-0000-000000000201"),
+        ("d", "2025-01-01 12:00:00.000002", "2.00", "gold", "00000000-0000-0000-0000-000000000202"),
+    ]
+    snowflake_scratch.sql(
+        "INSERT INTO events VALUES "
+        + ", ".join(
+            f"('{u}', '{at} +0000', {amount}, '{tier}', '{eid}')"
+            for u, at, amount, tier, eid in rows
+        )
+    )
+    duckdb.raw_sql(
+        "INSERT INTO events VALUES "
+        + ", ".join(
+            f"('{u}', '{at}+00', {amount}, '{tier}', '{eid}')" for u, at, amount, tier, eid in rows
+        )
+    )
+    design = tr.Design(
+        "user",
+        tr.EventAnchor("order", which="each"),
+        outcomes={"spend_next_day": tr.agg("spend", window=("0s", "1d"))},
+    )
+    expected = shapes._rows(shapes._model(duckdb, tmp_path, "duckdb"), design)
+    actual = shapes._rows(shapes._model(snowflake_scratch.con, tmp_path, "snowflake"), design)
+    assert actual == expected
+    assert sum(row["unit"] == "d" for row in actual) == 2
+
+
+def _load_millisecond_shapes(scratch, duckdb) -> None:
+    """The shapes data at millisecond precision, in TIMESTAMP_NTZ(3) and
+    DuckDB's TIMESTAMP_MS, with instants exact at that scale on both."""
+    events = [
+        ("a", "2025-01-01 08:00:00.001", "5.00", "bronze"),
+        ("b", "2025-01-01 09:00:00.500", "1.00", "silver"),
+        ("a", "2025-01-02 00:00:00.999", "2.50", "gold"),
+        ("b", "2025-01-02 06:00:00.000", "4.00", None),
+        ("a", "2025-01-03 12:00:00.250", "1.25", "gold"),
+        ("c", "2025-01-03 23:59:59.999", "9.99", "bronze"),
+        ("b", "2025-01-04 00:00:00.001", "3.00", "gold"),
+    ]
+    states = [
+        ("a", "2025-01-02 00:00:00.001", "active"),
+        ("a", "2025-01-04 00:00:00.000", "closed"),
+    ]
+    scratch.sql('CREATE TABLE users("user_id" VARCHAR)')
+    scratch.sql(
+        'CREATE TABLE events("user_id" VARCHAR, "occurred_at" TIMESTAMP_NTZ(3), '
+        '"amount" NUMBER(10, 2), "tier" VARCHAR, "event_id" VARCHAR)'
+    )
+    scratch.sql(
+        'CREATE TABLE states("user_id" VARCHAR, "observed_at" TIMESTAMP_NTZ(3), "state" VARCHAR)'
+    )
+    duckdb.raw_sql("CREATE TABLE users(user_id VARCHAR)")
+    duckdb.raw_sql(
+        "CREATE TABLE events(user_id VARCHAR, occurred_at TIMESTAMP_MS, amount DECIMAL(10, 2), "
+        "tier VARCHAR, event_id VARCHAR)"
+    )
+    duckdb.raw_sql("CREATE TABLE states(user_id VARCHAR, observed_at TIMESTAMP_MS, state VARCHAR)")
+    for run in (scratch.sql, duckdb.raw_sql):
+        run("INSERT INTO users VALUES " + ", ".join(f"('{user}')" for user in shapes._USERS))
+        run(
+            "INSERT INTO events VALUES "
+            + ", ".join(
+                f"('{user}', '{at}', {amount}, {_quote(tier)}, "
+                f"'00000000-0000-0000-0000-{index:012d}')"
+                for index, (user, at, amount, tier) in enumerate(events)
+            )
+        )
+        run(
+            "INSERT INTO states VALUES "
+            + ", ".join(f"('{user}', '{at}', '{state}')" for user, at, state in states)
+        )
+
+
+def test_millisecond_sources_match_duckdb(snowflake_scratch, tmp_path):  # noqa: F811
+    """A TIMESTAMP_NTZ(3) event source promotes to the microsecond axis without
+    loss, on Snowflake as on DuckDB's TIMESTAMP_MS."""
+    duckdb = ibis.duckdb.connect()
+    _load_millisecond_shapes(snowflake_scratch, duckdb)
+    design = shapes._DESIGNS["time_to_first_order"]
+    expected = shapes._rows(shapes._model(duckdb, tmp_path, "duckdb"), design)
+    actual = shapes._rows(shapes._model(snowflake_scratch.con, tmp_path, "snowflake"), design)
+    assert actual == expected
+    by_unit = {row["unit"]: row for row in actual}
+    # Units with an order before t0 are not at risk; c's first order keeps its
+    # millisecond and d is censored at the cutoff.
+    assert set(by_unit) == {"c", "d"}
+    assert by_unit["c"]["event_time"] == datetime(2025, 1, 3, 23, 59, 59, 999_000, tzinfo=UTC)
+
+
 def test_repeated_subnormal_window_stays_within_the_absolute_bound(snowflake_scratch, tmp_path):  # noqa: F811
     """DuckDB sums the shortest text 5e-324 of each value; Snowflake sums its
     18-digit text 4.94065645841246544e-324, so with n subnormal inputs the two

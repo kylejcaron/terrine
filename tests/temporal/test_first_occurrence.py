@@ -145,6 +145,43 @@ def test_mixed_timestamp_precisions_preserve_half_open_bounds():
         con.disconnect()
 
 
+def test_millisecond_timestamps_promote_losslessly_to_microseconds():
+    con = ibis.duckdb.connect()
+    try:
+        instant_ms = 1_735_689_600_000
+        events = con.create_table(
+            "millisecond_events",
+            pa.table(
+                {
+                    "unit": ["u", "u"],
+                    "event_id": ["a", "b"],
+                    "event_time": pa.array(
+                        [instant_ms + 1, instant_ms + 2], type=pa.timestamp("ms")
+                    ),
+                }
+            ),
+        )
+        # A microsecond lower bound between the two events keeps the first one out.
+        candidates = con.create_table(
+            "millisecond_candidates",
+            pa.table(
+                {
+                    "unit": ["u"],
+                    "anchor_id": ["a"],
+                    "lower": pa.array([instant_ms * 1000 + 1500], type=pa.timestamp("us")),
+                    "upper": pa.array([instant_ms * 1000 + 5000], type=pa.timestamp("us")),
+                }
+            ),
+        )
+        result = _table(con, _lookup(events, candidates))
+        assert result.column("first_event_id").to_pylist() == ["b"]
+        assert result.column("first_timestamp").cast(pa.int64()).to_pylist() == [
+            instant_ms * 1000 + 2000
+        ]
+    finally:
+        con.disconnect()
+
+
 def test_unspecified_timestamp_scale_uses_native_microsecond_precision():
     con = ibis.duckdb.connect()
     try:

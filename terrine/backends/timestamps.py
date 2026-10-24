@@ -23,10 +23,13 @@ from terrine.errors import RefusalSpec
 __all__ = [
     "compare_timestamps",
     "has_submicrosecond",
+    "lossless_scale",
+    "lossless_timestamp",
     "timestamp_extremes",
     "timestamp_is_finite",
     "timestamp_order_key",
     "timestamp_parts",
+    "timestamp_text",
     "utc_instant",
     "utc_wall_clock",
 ]
@@ -40,6 +43,27 @@ _KEY = dt.Struct.from_tuples((("rank", dt.int8), ("seconds", dt.int64), ("nanos"
 _NATIVE = frozenset({"duckdb", "postgres"})
 # Backends without timestamp infinities, bounded by years 1 and 9999.
 _FINITE = frozenset({"bigquery", "snowflake"})
+# Snowflake renders a timestamp's text through the session's output format,
+# whose default keeps three fractional digits; an explicit format keeps all.
+_SF_TEXT_FORMAT = "YYYY-MM-DD HH24:MI:SS.FF9"
+
+
+def lossless_scale(scale: int | None) -> Literal[6, 9] | None:
+    """The supported timestamp scale holding every instant of ``scale`` exactly:
+    the native scale for ``None``, microseconds up to 6 and nanoseconds above."""
+    if scale is None:
+        return None
+    return 6 if scale <= 6 else 9
+
+
+def lossless_timestamp(value: ir.TimestampValue) -> ir.TimestampValue:
+    """``value`` at the supported scale that holds it exactly."""
+    dtype = cast(dt.Timestamp, value.type())
+    scale = lossless_scale(dtype.scale)
+    if scale == dtype.scale:
+        return value
+    promoted = dt.Timestamp(timezone=dtype.timezone, scale=scale, nullable=dtype.nullable)
+    return cast(ir.TimestampValue, value.cast(promoted))
 
 
 @ibis.udf.scalar.builtin(name="isfinite")
@@ -145,6 +169,35 @@ def utc_instant(value: ir.Value) -> ir.TimestampValue:
     if dialect not in _NATIVE:
         raise unavailable("utc_instant", dialect)
     return cast(ir.TimestampValue, _utc_aware("UTC", value))
+
+
+@ibis.udf.scalar.builtin(name="to_varchar", signature=((dt.timestamp, dt.string), dt.string))
+def _sf_naive_text(timestamp, format):
+    """A Snowflake TIMESTAMP_NTZ rendered in an explicit format."""
+
+
+@ibis.udf.scalar.builtin(
+    name="to_varchar", signature=((dt.Timestamp(timezone="UTC"), dt.string), dt.string)
+)
+def _sf_aware_text(timestamp, format):
+    """A Snowflake TIMESTAMP_TZ or TIMESTAMP_LTZ rendered in an explicit format."""
+
+
+def timestamp_text(value: ir.TimestampValue) -> ir.StringValue:
+    """A timestamp's text, distinct for distinct instants at the type's scale.
+
+    DuckDB, PostgreSQL and BigQuery print every fractional digit through a plain
+    cast; Snowflake's cast follows the session's output format, so it renders
+    with an explicit full-precision format instead.
+    """
+    dialect = dialect_of(value)
+    if dialect == "snowflake":
+        if cast(dt.Timestamp, value.type()).timezone is None:
+            return cast(ir.StringValue, _sf_naive_text(value, _SF_TEXT_FORMAT))
+        return cast(ir.StringValue, _sf_aware_text(value, _SF_TEXT_FORMAT + " TZHTZM"))
+    if dialect != "bigquery" and dialect not in _NATIVE:
+        raise unavailable("timestamp_text", dialect)
+    return value.cast(dt.string)
 
 
 @ibis.udf.scalar.builtin(

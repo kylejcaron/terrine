@@ -59,6 +59,53 @@ def test_last_event_value_orders_by_time_then_canonical_event_id():
         con.disconnect()
 
 
+def test_last_event_value_promotes_millisecond_timestamps_losslessly():
+    con = ibis.duckdb.connect()
+    try:
+        instant_ms = 1_735_689_600_000
+        events = con.create_table(
+            "millisecond_events",
+            pa.table(
+                {
+                    "unit": ["u", "u"],
+                    "event_id": ["a", "b"],
+                    "event_time": pa.array(
+                        [instant_ms + 1, instant_ms + 2], type=pa.timestamp("ms")
+                    ),
+                    "value": [10, 20],
+                }
+            ),
+        )
+        # A microsecond upper bound between the two events keeps the later one out.
+        candidates = con.create_table(
+            "millisecond_candidates",
+            pa.table(
+                {
+                    "unit": ["u"],
+                    "anchor_id": ["a1"],
+                    "lower": pa.array([instant_ms * 1000], type=pa.timestamp("us")),
+                    "upper": pa.array([instant_ms * 1000 + 1500], type=pa.timestamp("us")),
+                }
+            ),
+        )
+        result = last_event_value(
+            events,
+            candidates,
+            unit="unit",
+            timestamp="event_time",
+            value="value",
+            lower="lower",
+            upper="upper",
+            event_id="event_id",
+        )
+        result.validate(con.to_pyarrow)
+        actual = con.to_pyarrow(result.table).to_pylist()
+        assert [row["last_value"] for row in actual] == [10]
+        assert actual[0]["last_timestamp"].microsecond == 1000
+    finally:
+        con.disconnect()
+
+
 def test_last_event_value_preserves_value_named_like_internal_rank():
     con = ibis.duckdb.connect()
     try:
