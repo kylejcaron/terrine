@@ -76,18 +76,27 @@
   session `TIMEZONE` must be `UTC`) and re-verifies every relation's `CREATED`
   and `LAST_DDL` once each statement completes, before any row reaches the
   caller, so a table swapped, renamed or replaced into place during a run
-  refuses. Names follow Snowflake's identifier rules, inside admitted SQL too.
-  The PostgreSQL coverage and tolerance contract carry over with exact state in
-  `NUMBER(38, 0)`: float facts follow the DuckDB design (per-unit scale, one
-  correctly rounded `TRY_TO_DOUBLE` rounding) from each value's 18-digit
-  `DECFLOAT` text, since Snowflake's row-wise text renderings of a double are
-  lossy, so float windows match DuckDB within `2⁻⁵¹ · Σ|x| + (n + 1) · 2⁻¹⁰⁷⁴`
-  (`n` subnormal inputs) rather than bit for bit; coefficients or sums beyond 38 digits and
-  results beyond binary64's range refuse with a code; integer filters compare
-  `NUMBER(p, 0)` columns, which Ibis reads as `int64`, against their 38-digit
-  range; and nanosecond timestamps are exact in SQL while Arrow outputs
-  outside 1677-2262 refuse (`terrine.execution.arrow_timestamp_range`). Live
-  Snowflake probes run weekly and on dispatch (`make test-snowflake`).
+  refuses; a relation carrying a row access, masking or other policy, or one
+  without identity metadata, refuses with a route, since Time Travel pins
+  neither. Names follow Snowflake's identifier rules, inside admitted SQL too,
+  and every physical reference is rewritten fully qualified at binding, so a
+  later `USE SCHEMA` cannot redirect a pinned read. `NUMBER(p, 0)` columns
+  beyond int64's 18 digits resolve as `decimal(p, 0)`, so wide integer keys
+  and properties reach the output (integer properties accept scale-zero
+  decimal columns on every backend). The PostgreSQL coverage and tolerance
+  contract carry over with exact state in `NUMBER(38, 0)`: float facts follow
+  the DuckDB design (per-unit scale, one correctly rounded `TRY_TO_DOUBLE`
+  rounding) from each value's 18-digit `DECFLOAT` text, since Snowflake's
+  row-wise text renderings of a double are lossy, so float windows match
+  DuckDB within `2⁻⁵¹ · Σ|x| + (n + 1) · 2⁻¹⁰⁷⁴` (`n` subnormal inputs) rather
+  than bit for bit; coefficients or sums beyond 38 digits and results beyond
+  binary64's range refuse with a code; integer filters compare `NUMBER(p, 0)`
+  columns against their physical range; event-anchor identities render
+  timestamps at full precision; timestamp scales other than 6 and 9 promote
+  losslessly for time-to-event and first-event lookups; and nanosecond
+  timestamps are exact in SQL while Arrow outputs outside 1677-2262 refuse
+  (`terrine.execution.arrow_timestamp_range`). Live Snowflake probes run
+  weekly and on dispatch (`make test-snowflake`).
 - Refuse decimal sources without a declared precision and scale
   (`terrine.semantic.decimal_scale_required`) and non-finite PostgreSQL numerics
   (`terrine.backend.nonfinite_decimal`).

@@ -115,7 +115,18 @@ view or through admitted SQL, must be a permanent or transient table with
 `DATA_RETENTION_TIME_IN_DAYS >= 1`; a zero-retention table, an external or
 dynamic table, a materialized view, a secure view (its definition is hidden)
 or a view that calls a user-defined function refuses with
-`terrine.execution.snapshot_unavailable`. The session's `TIMEZONE` must be `UTC`
+`terrine.execution.snapshot_unavailable`. So does any table or view in that
+closure carrying a row access, masking or other policy: policies are evaluated
+at query time against the current role and their mapping tables, which Time
+Travel does not pin, so two reads at one instant could differ (read from an
+unprotected copy or view, or materialize the rows first). Attachments are
+inspected through `INFORMATION_SCHEMA.POLICY_REFERENCES`, which Snowflake
+answers only for a role allowed to apply the policies involved and errors for
+any other; an error refuses too, so grant the reading role
+`APPLY ROW ACCESS POLICY` and `APPLY MASKING POLICY` where protected objects
+exist. A relation without `CREATED` or `LAST_DDL` metadata (predating it, or
+newly replicated) refuses with the same code; read from a copy made with
+`CREATE TABLE ... AS SELECT` or `CLONE`. The session's `TIMEZONE` must be `UTC`
 (Ibis sets it at connect); any other value refuses with the same code and the
 `ALTER SESSION` route.
 
@@ -123,18 +134,27 @@ Relation names follow Snowflake's identifier rules: an unquoted name such as
 `events` resolves to `EVENTS`, a quoted `"events"` is exact, and
 `database.schema.name` qualifies; the same rules resolve the names inside an
 admitted SQL relation, so `RECENT` names a `recent` common table expression.
-Columns are referenced exactly as the connection's schema reports them. Every
-admitted relation binds with its `CREATED` and `LAST_DDL` instants, which must
-not postdate the snapshot, and the session re-reads them once each statement
-has completed and before any of its rows, batched or not, reach the caller:
-Time Travel follows the object rather than the name, so a table swapped
-(`ALTER TABLE ... SWAP WITH`), renamed or replaced into place during a run, or
-a view redefined during it, refuses with
+Every physical reference, inside admitted SQL too, is resolved against the
+connection's database and schema at binding and rewritten fully qualified, so
+a later `USE SCHEMA` on the caller's connection cannot redirect a pinned read;
+a new materialization after such a change re-resolves the names and refuses
+when they now denote other objects. Columns are referenced exactly as the
+connection's schema reports them. Every admitted relation binds with its
+`CREATED` and `LAST_DDL` instants, which must not postdate the snapshot, and
+the session re-reads them once each statement has completed and before any of
+its rows, batched or not, reach the caller: Time Travel follows the object
+rather than the name, so a table swapped (`ALTER TABLE ... SWAP WITH`), renamed
+or replaced into place during a run, a view redefined during it, or a policy
+attached to a table during it, refuses with
 `terrine.execution.invalid_input_binding` instead of answering from the other
-object's history. Ibis reads every `NUMBER(p, 0)` column, Snowflake's integer
-types included, as `int64`; sums of such columns stay exact in `NUMBER(38, 0)`
-and property filters compare against the column's 38-digit range, not
-`int64`'s, so a 20-digit value is correctly excluded by a 21-digit threshold.
+object's history. A `NUMBER(p, 0)` column (Snowflake's integer types are
+`NUMBER(38, 0)`) resolves as `decimal(p, 0)` when `p` exceeds the 18 digits
+every `int64` holds, so a unit key or integer property beyond `int64` reaches
+the output with its digits (as an Arrow decimal) instead of failing the export;
+`dtype: int` properties accept such scale-zero decimal columns. Sums of these
+columns stay exact in `NUMBER(38, 0)` and property filters compare against the
+column's 38-digit range, so a 20-digit value is correctly excluded by a
+21-digit threshold and a threshold beyond 38 digits settles without a literal.
 
 Supported, matching the DuckDB reference ([parity probes][snowflake]): everything
 listed for PostgreSQL above, with the same tolerance contract for averages,
@@ -170,11 +190,16 @@ non-finite value at or before the end of a non-empty window refuses with
 
 Timestamps are exact at their declared scale, nanoseconds by default, from year
 1 to 9999 (`TIMESTAMP_TZ`, `TIMESTAMP_LTZ` and `TIMESTAMP_NTZ`; naive values
-denote UTC). Arrow carries nanosecond timestamps only between 1677-09-21 and
-2262-04-11: a nanosecond output column holding an instant outside that range
-refuses with `terrine.execution.arrow_timestamp_range` (declare the column
-`TIMESTAMP_TZ(6)` or cast it in a SQL relation). Snowflake's native
-`ASOF JOIN` serves as-of lookups.
+denote UTC). A scale other than 6 or 9 promotes losslessly for time-to-event
+and first-event lookups: `TIMESTAMP_NTZ(3)` and the other scales up to 6 to
+the microsecond axis, 7 and 8 to nanoseconds. Event-anchor identities render
+the instant with an explicit full-precision format rather than the session's
+`TIMESTAMP_NTZ_OUTPUT_FORMAT` (three fractional digits by default), so events
+a microsecond apart anchor separately. Arrow carries nanosecond timestamps only
+between 1677-09-21 and 2262-04-11: a nanosecond output column holding an
+instant outside that range refuses with `terrine.execution.arrow_timestamp_range`
+(declare the column `TIMESTAMP_TZ(6)` or cast it in a SQL relation).
+Snowflake's native `ASOF JOIN` serves as-of lookups.
 
 Refused on Snowflake, with a route: retained input capture, Dataset staging,
 publication and reopening (`terrine.backend.capability_unavailable`).
