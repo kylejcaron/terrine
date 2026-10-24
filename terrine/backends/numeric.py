@@ -29,6 +29,7 @@ from terrine.errors import RefusalSpec
 
 __all__ = [
     "EXACT_OVERFLOW",
+    "coefficient_bounds",
     "decimal_coefficient",
     "exact_float",
     "exact_is_nonfinite",
@@ -41,7 +42,6 @@ __all__ = [
     "float_is_finite",
     "float_scale",
     "has_scaled_float_state",
-    "integer_bounds",
     "is_exact_type",
     "normalized",
     "normalized_quotient",
@@ -134,23 +134,24 @@ def decimal_coefficient(value: ir.Value, scale: int) -> ir.Value:
     return (text.replace(".", "") if scale else text).cast(exact_type(value))
 
 
-# Snowflake's integer types are all NUMBER(p <= 38, 0).
-_SF_INTEGER_MAXIMUM = 10**38 - 1
+def coefficient_bounds(value: ir.Value) -> tuple[int, int]:
+    """The physical range of an exact column's integer coefficient (its value
+    times ``10**scale``).
 
-
-def integer_bounds(value: ir.Value) -> tuple[int, int]:
-    """The physical range of an integer column.
-
-    Ibis reports every Snowflake ``NUMBER(p, 0)`` as ``int64``, but the column
-    holds up to 38 digits; the other backends' integer types are fixed-width.
+    Integer types are fixed-width; a ``decimal(p, s)`` holds ``p`` digits, except
+    that DuckDB reports its wider HUGEINT as ``decimal(38, 0)``. Snowflake's
+    ``NUMBER(p, 0)`` columns beyond int64 resolve as ``decimal(p, 0)``.
     """
-    if dialect_of(value) == "snowflake":
-        return -_SF_INTEGER_MAXIMUM, _SF_INTEGER_MAXIMUM
     dtype = value.type()
-    if not isinstance(dtype, (dt.SignedInteger, dt.UnsignedInteger)):
-        raise TypeError(f"{dtype} is not an integer type")
-    lower, upper = dtype.bounds
-    return lower, upper
+    if isinstance(dtype, (dt.SignedInteger, dt.UnsignedInteger)):
+        lower, upper = dtype.bounds
+        return lower, upper
+    if not isinstance(dtype, dt.Decimal) or dtype.precision is None:
+        raise TypeError(f"{dtype} is not an exact type with a known precision")
+    if dtype.precision == 38 and dtype.scale == 0 and dialect_of(value) == "duckdb":
+        return -(1 << 127), (1 << 127) - 1
+    maximum = 10**dtype.precision - 1
+    return -maximum, maximum
 
 
 @ibis.udf.scalar.builtin(name="ltrim", signature=((dt.string, dt.string), dt.string))

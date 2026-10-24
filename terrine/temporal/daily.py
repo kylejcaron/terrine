@@ -16,6 +16,7 @@ import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
 from terrine.backends.numeric import (
+    coefficient_bounds,
     decimal_coefficient,
     exact_float,
     exact_literal,
@@ -24,7 +25,6 @@ from terrine.backends.numeric import (
     exact_type,
     float_is_finite,
     float_scale,
-    integer_bounds,
 )
 from terrine.backends.timestamps import utc_instant, utc_wall_clock
 from terrine.semantic.bind import _MISSING, _SCHEMA
@@ -280,14 +280,7 @@ def _filter_comparison(value, filt):
     exact = dtype.is_integer() or dtype.is_decimal()
     if exact:
         scale = dtype.scale if dtype.is_decimal() else 0
-        if dtype.is_decimal() and dtype.precision == 38 and scale == 0:
-            # DuckDB HUGEINT is reported as decimal38 but has a wider signed range.
-            bounds = (-(1 << 127), (1 << 127) - 1)
-        elif dtype.is_decimal():
-            maximum = 10**dtype.precision - 1
-            bounds = (-maximum, maximum)
-        else:
-            bounds = integer_bounds(value)
+        bounds = coefficient_bounds(value)
         coefficient = decimal_coefficient(value, scale)
     elif dtype.is_floating():
         value = value.cast("float64")

@@ -188,6 +188,35 @@ def test_nested_physical_types_are_not_scalar_bindings(event_catalog, semantic_c
     assert error.value.code == "terrine.semantic.schema_mismatch"
 
 
+@pytest.mark.parametrize(
+    ("dtype", "accepted"),
+    [("int64", True), ("decimal(38, 0)", True), ("decimal(12, 2)", False), ("float64", False)],
+)
+def test_integer_properties_accept_integer_valued_exact_columns(
+    event_catalog, semantic_con, dtype, accepted
+):
+    # A scale-zero decimal holds integers a warehouse's int64 reading would
+    # not, such as Snowflake's NUMBER(38, 0) or DuckDB's HUGEINT.
+    definition = event_catalog.model_dump(mode="python")
+    definition["sources"]["events"]["properties"] = ["size"]
+    definition["properties"]["size"] = {
+        "source": "events",
+        "column": "size",
+        "dtype": "int",
+        "as_of": "event_time",
+    }
+    schema = {"ts": "timestamp('UTC')", "user_id": "string", "workspace_id": "string"}
+    schema["size"] = dtype
+    semantic_con.create_table("events", schema=schema)
+    catalog = Catalog.model_validate(definition)
+    if accepted:
+        assert normalize_source(semantic_con, catalog, "events").properties["size"].dtype == "int"
+        return
+    with pytest.raises(TerrineError) as error:
+        normalize_source(semantic_con, catalog, "events")
+    assert error.value.code == "terrine.semantic.schema_mismatch"
+
+
 def test_dimension_filter_requires_dimension_property_membership(event_catalog, semantic_con):
     definition = event_catalog.model_dump(mode="python")
     definition["sources"]["events"]["properties"] = ["tier"]

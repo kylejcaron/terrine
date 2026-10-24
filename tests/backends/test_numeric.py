@@ -260,12 +260,24 @@ def test_exact_to_float_flags_overflow(connection):
     }
 
 
-def test_integer_bounds_follow_the_physical_type(connection):
+def test_coefficient_bounds_follow_the_physical_type(connection):
     from terrine.backends.dialect import dialect_scope
-    from terrine.backends.numeric import integer_bounds
+    from terrine.backends.numeric import coefficient_bounds
 
-    table = connection.create_table("integers", pa.table({"n": pa.array([1], pa.int64())}))
-    assert integer_bounds(table.n) == (-(1 << 63), (1 << 63) - 1)
-    # Snowflake reports every NUMBER(p, 0) as int64; the column may hold 38 digits.
+    table = connection.create_table(
+        "exact_columns",
+        pa.table(
+            {
+                "n": pa.array([1], pa.int64()),
+                "wide": pa.array([1], pa.decimal128(38, 0)),
+                "money": pa.array([1], pa.decimal128(12, 2)),
+            }
+        ),
+    )
+    assert coefficient_bounds(table.n) == (-(1 << 63), (1 << 63) - 1)
+    # DuckDB reports HUGEINT as decimal(38, 0), with a wider signed range.
+    assert coefficient_bounds(table.wide) == (-(1 << 127), (1 << 127) - 1)
+    assert coefficient_bounds(table.money) == (-(10**12 - 1), 10**12 - 1)
+    # Snowflake's NUMBER(38, 0) holds exactly 38 digits.
     with dialect_scope("snowflake"):
-        assert integer_bounds(table.n) == (-(10**38 - 1), 10**38 - 1)
+        assert coefficient_bounds(table.wide) == (-(10**38 - 1), 10**38 - 1)
