@@ -471,9 +471,24 @@ def resolve(
     # renders as CHARINDEX), so the names as written are checked first.
     _check_routines_by_name(con, relation.sql, "the SQL relation", (_defaults(con)[0],))
     statement = _admit_read_query_ast(relation.sql, catalog_dialect, DIALECT)
+    _refuse_relative_time_travel(statement)
     qualify(con, statement)
     sql = statement.sql(dialect=DIALECT)
     return con.sql(sql, schema=_query_schema(con, sql))
+
+
+def _refuse_relative_time_travel(statement: Any) -> None:
+    """An explicit ``AT``/``BEFORE`` naming a timestamp or statement is one fixed
+    instant and is kept; an ``OFFSET`` is relative to each query's start, so
+    successive reads would see different data."""
+    from sqlglot import exp
+
+    for clause in statement.find_all(exp.HistoricalData):
+        if str(clause.args.get("kind")).upper() == "OFFSET":
+            raise _snapshot_error(
+                "a Time Travel OFFSET is evaluated per query; name a fixed instant with "
+                "AT (TIMESTAMP => ...) or AT (STATEMENT => ...)"
+            )
 
 
 def _query_schema(con: Any, sql: str) -> ibis.Schema:

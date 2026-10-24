@@ -193,3 +193,12 @@ def test_sql_relation_calling_a_user_routine_named_like_a_built_in_refuses(monke
     with pytest.raises(TerrineError) as error:
         _snowflake.resolve(object(), relation)
     assert error.value.code == "terrine.execution.snapshot_unavailable"
+
+
+def test_sql_relation_with_a_relative_time_travel_offset_refuses(monkeypatch):
+    # An OFFSET is evaluated per query, so it cannot hold one instant.
+    _metadata(monkeypatch)
+    relation = SqlQuery(kind="sql", sql="SELECT * FROM events AT (OFFSET => -60)")
+    with pytest.raises(TerrineError) as error:
+        _snowflake.resolve(object(), relation)
+    assert error.value.code == "terrine.execution.snapshot_unavailable"
