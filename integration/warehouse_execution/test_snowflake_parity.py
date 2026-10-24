@@ -445,17 +445,22 @@ def test_boundary_and_tied_first_events_match_duckdb(snowflake_scratch, tmp_path
         )
     )
     event_ids = {"orders": "event_id"}
-    for name in (
-        "time_to_first_order",
-        "time_to_order_with_entry_and_exit",
-        "as_of_interleaved_units",
-    ):
+
+    def compare(name: str) -> None:
         design = shapes._DESIGNS[name]
         expected = shapes._rows(shapes._model(duckdb, tmp_path, "duckdb", event_ids), design)
         actual = shapes._rows(
             shapes._model(snowflake_scratch.con, tmp_path, "snowflake", event_ids), design
         )
         assert actual == expected, name
+
+    compare("time_to_first_order")
+    compare("time_to_order_with_entry_and_exit")
+    # Tied rows would give the tier property two values at one instant.
+    tied = "00000000-0000-0000-0000-000000000101"
+    snowflake_scratch.sql(f"""DELETE FROM events WHERE "event_id" = '{tied}'""")
+    duckdb.raw_sql(f"DELETE FROM events WHERE event_id = '{tied}'")
+    compare("as_of_interleaved_units")
 
 
 def test_repeated_subnormal_window_stays_within_the_absolute_bound(snowflake_scratch, tmp_path):  # noqa: F811
