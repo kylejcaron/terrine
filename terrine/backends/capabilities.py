@@ -99,17 +99,12 @@ BIGQUERY_CAPABILITIES = BackendCapabilities(
 )
 # Materialization pins every read to one Time Travel instant on the caller's
 # connection (Snowflake isolates per statement, so a transaction would not).
-# Timestamps are exact at nanoseconds; staging, retained snapshots and
-# publication stay on DuckDB. Unverified until the live tier runs.
+# Staging, retained snapshots and publication stay on DuckDB. Operations are
+# marked verified only once a live probe has exercised them.
 SNOWFLAKE_CAPABILITIES = BackendCapabilities(
     snapshot=False,
     change_evidence=frozenset(),
     scan_estimate=None,
     cancellation=None,
-    dialect_admission=True,
-    exact_timestamps=True,
-    exact_decimals=True,
-    transaction_view=True,
-    arrow_batches=True,
 )
 UNVERIFIED_CAPABILITIES = BackendCapabilities()
