@@ -238,3 +238,30 @@ both steps green (11 m 14 s). Push CI run 40120572886 passed. Local gates:
 lint, typecheck, documentation and the strict docs build green; PostgreSQL
 live tier 45 passed; BigQuery live tier 23 passed. Dispatches used in this
 pass: 2; 14 in total.
+
+**Re-review fixes (2026-10-24, head 0bf3159).** Two findings on 614fe1b:
+(1) view definitions are admitted under the SQL relation's read-only function
+whitelist (`terrine/execution/_views.py`, shared by Snowflake, PostgreSQL and
+BigQuery, refusing `snapshot_unavailable` with a materialize-first route), so
+`RANDOM()`/`CURRENT_TIMESTAMP()`/unlisted or user functions in a view refuse;
+the sibling providers had the same gap (PostgreSQL refused only user
+functions, BigQuery only qualified routines) and now share the policy
+(PostgreSQL tier 47 passed locally with `random()` and `clock_timestamp()`
+cases, BigQuery tier 25 passed with `RAND()` and `CURRENT_TIMESTAMP()`
+cases). (2) Relations whose columns carry any tag, direct or inherited
+(`INFORMATION_SCHEMA.TAG_REFERENCES_ALL_COLUMNS`, which the CI role reads on
+its own tables and views), refuse `snapshot_unavailable`, since `ALTER TAG
+... SET MASKING POLICY` changes values between reads without DDL; an
+uninspectable relation refuses naming the APPLY grants.
+
+Run 40123899141 (throwaway `probe/snowflake-fixes-focused-2`, deleted): green
+pass 14 passed (view `RANDOM()`, view `CURRENT_TIMESTAMP()`, column, table,
+schema-inherited and view-column tags all refuse); red pass with the view
+policy replaced by a plain parse and the tag check skipped: 8 failed as
+intended (the two nondeterministic views, the four tag cases and the two
+user-routine views, now covered by the same policy). Run 40124072495 (full
+`make test-snowflake` plus the example on 0bf3159): 51 passed, 1 skipped,
+both steps green (12 m 26 s); push CI run 40123931273 passed. Local gates on
+0bf3159: unit 1294 passed, non-live integration 197 passed, lint, typecheck,
+documentation and strict docs build green. Dispatches used in this pass: 2;
+16 in total.
