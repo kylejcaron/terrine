@@ -203,3 +203,38 @@ integration tier 197 passed; `make lint`, `make typecheck`,
 `python -m tests.documentation` and the strict docs build green; PostgreSQL
 live tier 45 passed; BigQuery live tier 23 passed. Dispatches used in this
 pass: 5 (two measurements, the full run, two red checks); 12 in total.
+
+**Branch review fixes (2026-10-24, head 614fe1b).** Six findings on fa5e06c:
+(1) relations carrying a row access, masking or other policy, anywhere in the
+closure, refuse `snapshot_unavailable` (policies and their mapping tables are
+not pinned); attachments are read through `INFORMATION_SCHEMA.POLICY_REFERENCES`
+(`REF_ENTITY_NAME`/`REF_ENTITY_DOMAIN`), which worked for the CI role on tables
+and views it owns, and an uninspectable relation refuses too; measured: `ALTER
+TABLE ... ADD ROW ACCESS POLICY` advances `LAST_DDL`, so an attachment during a
+run refuses through re-verification. (2) Every physical reference in admitted
+SQL is rewritten fully qualified at admission (`qualify`, sqlglot, Snowflake
+rules), so `USE SCHEMA` after resolution no longer redirects a pinned read
+(measured: the broken build read the other schema's 2 rows). (3) Resolved
+schemas keep `NUMBER(p > 18, 0)` as `decimal(p, 0)` (`DESCRIBE TABLE`, and
+`DESCRIBE RESULT` of an empty admitted query); `dtype: int` accepts scale-zero
+decimals; filter bounds come from `coefficient_bounds` (DuckDB's HUGEINT
+special case is DuckDB-only). (4) `timestamp_text` renders anchor identities
+with `FF9` on Snowflake. (5) Scales other than 6/9 promote losslessly in
+`first_occurrence`/`last_event_value` and on the time-to-event axis. (6) NULL
+`CREATED`/`LAST_DDL` refuses `snapshot_unavailable` (unit test with a stubbed
+metadata row).
+
+Run 40120538048 (throwaway `probe/snowflake-fixes-focused`, deleted): green
+pass of the 7 new and 5 affected probes, 12 passed; red pass with one-line
+breaks (policy check, qualification, wide-integer typing, anchor text, scale
+promotion plus the old scale check): 6 failed as intended (policy cases did
+not raise, the schema-change case counted 2, the wide key failed the Arrow
+cast, the millisecond case refused `timestamp_order_unsupported`; the
+microsecond case failed through the helper's unavailability rather than a
+lossy cast, so the collision itself is unmeasured live). Run 40120861209 (full
+`make test-snowflake` plus the example on 614fe1b): 45 passed, 1 skipped,
+both steps green (11 m 14 s). Push CI run 40120572886 passed. Local gates:
+`uv run pytest tests -q` 1287 passed; non-live integration tier 197 passed;
+lint, typecheck, documentation and the strict docs build green; PostgreSQL
+live tier 45 passed; BigQuery live tier 23 passed. Dispatches used in this
+pass: 2; 14 in total.
