@@ -81,8 +81,8 @@
   `NUMBER(38, 0)`: float facts follow the DuckDB design (per-unit scale, one
   correctly rounded `TRY_TO_DOUBLE` rounding) from each value's 18-digit
   `DECFLOAT` text, since Snowflake's row-wise text renderings of a double are
-  lossy, so float windows match DuckDB within `2⁻⁵¹` of the window's absolute
-  sum rather than bit for bit; coefficients or sums beyond 38 digits and
+  lossy, so float windows match DuckDB within `2⁻⁵¹ · Σ|x| + (n + 1) · 2⁻¹⁰⁷⁴`
+  (`n` subnormal inputs) rather than bit for bit; coefficients or sums beyond 38 digits and
   results beyond binary64's range refuse with a code; integer filters compare
   `NUMBER(p, 0)` columns, which Ibis reads as `int64`, against their 38-digit
   range; and nanosecond timestamps are exact in SQL while Arrow outputs

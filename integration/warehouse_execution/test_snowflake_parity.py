@@ -416,3 +416,68 @@ def test_float_sum_beyond_38_digits_is_an_exact_overflow(snowflake_scratch, tmp_
     with pytest.raises(TerrineError) as error:
         windows._rows(windows._model(snowflake_scratch.con, tmp_path, "snowflake"), design)
     assert error.value.code == "terrine.temporal.exact_overflow"
+
+
+def test_boundary_and_tied_first_events_match_duckdb(snowflake_scratch, tmp_path):  # noqa: F811
+    """An order exactly at the anchor instant is the first one (the as-of join is
+    inclusive there), and two orders at one instant are ordered by event id."""
+    _load_shapes(snowflake_scratch)
+    duckdb = _duckdb_shapes()
+    rows = [
+        ("d", "2025-01-01 12:00:00", "2.00", "silver", "00000000-0000-0000-0000-000000000101"),
+        ("d", "2025-01-01 12:00:00", "1.00", "gold", "00000000-0000-0000-0000-000000000100"),
+        ("c", "2025-01-01 12:00:00", "3.00", "gold", "00000000-0000-0000-0000-000000000102"),
+    ]
+    snowflake_scratch.sql(
+        "INSERT INTO events VALUES "
+        + ", ".join(
+            f"('{u}', '{at} +0000', {amount}, '{tier}', '{eid}')"
+            for u, at, amount, tier, eid in rows
+        )
+    )
+    duckdb.raw_sql(
+        "INSERT INTO events VALUES "
+        + ", ".join(
+            f"('{u}', '{at}+00', {amount}, '{tier}', '{eid}')" for u, at, amount, tier, eid in rows
+        )
+    )
+    event_ids = {"orders": "event_id"}
+    for name in ("time_to_first_order", "time_to_order_with_entry_and_exit"):
+        design = shapes._DESIGNS[name]
+        expected = shapes._rows(shapes._model(duckdb, tmp_path, "duckdb", event_ids), design)
+        actual = shapes._rows(
+            shapes._model(snowflake_scratch.con, tmp_path, "snowflake", event_ids), design
+        )
+        assert actual == expected, name
+
+
+def test_repeated_subnormal_window_stays_within_the_absolute_bound(snowflake_scratch, tmp_path):  # noqa: F811
+    """DuckDB sums the shortest text 5e-324 of each value; Snowflake sums its
+    18-digit text 4.94065645841246544e-324, so with n subnormal inputs the two
+    results may differ by subnormal ulps:
+    |s_sf - s_duckdb| <= 2**-51 * sum|x| + (n + 1) * 2**-1074."""
+    _load_windows(snowflake_scratch)
+    duckdb = _duckdb_windows()
+    n = 200
+    rows = [(f"2025-01-01 {i // 60:02d}:{i % 60:02d}:00", "5e-324") for i in range(n)]
+    snowflake_scratch.sql(
+        "INSERT INTO events VALUES "
+        + ", ".join(f"('d', '{at} +0000', 1, 10, '{weight}'::FLOAT, NULL)" for at, weight in rows)
+    )
+    duckdb.raw_sql(
+        "INSERT INTO events VALUES "
+        + ", ".join(f"('d', '{at}+00', 1, 10, {weight}, NULL)" for at, weight in rows)
+    )
+    design = windows._design(weight=tr.agg("weight", window=("-1d", "0s")))
+    want = {
+        row["unit"]: row["weight"]
+        for row in windows._rows(windows._model(duckdb, tmp_path, "duckdb"), design)
+    }["d"]
+    got = {
+        row["unit"]: row["weight"]
+        for row in windows._rows(
+            windows._model(snowflake_scratch.con, tmp_path, "snowflake"), design
+        )
+    }["d"]
+    assert got > 0 and want > 0
+    assert abs(got - want) <= 2**-51 * (n * 5e-324) + (n + 1) * 2**-1074, (got, want)

@@ -150,10 +150,15 @@ digits become an integer coefficient at a per-unit scale, so history outside
 the window cancels exactly, and the window sum rounds once through
 `TRY_TO_DOUBLE`, measured correctly rounded on 143 halfway, subnormal and
 near-halfway cases. Each value's shortest text and its 18-digit rounding both
-lie within half an ulp of it, so the exact window sums on the two backends
-differ by at most `1.05 · 2⁻⁵³ · Σ|x|` and the rounded float windows by at most
-`2⁻⁵¹ · Σ|x|`: equal or adjacent doubles unless the window cancels, not
-always bit for bit. Quotients divide 19-digit normalized significands in
+lie within half an ulp of it (a normal value's within `2⁻⁵³ · |x|`, a
+subnormal's within `2⁻¹⁰⁷⁵`), so with `n` subnormal inputs the exact window
+sums on the two backends differ by at most `1.05 · 2⁻⁵³ · Σ|x| + n · 2⁻¹⁰⁷⁴`
+and, after each side's rounding, the float windows by at most
+`2⁻⁵¹ · Σ|x| + (n + 1) · 2⁻¹⁰⁷⁴`: equal or adjacent doubles for a window of
+normal values that does not cancel, several subnormal ulps apart otherwise
+(200 values of `5e-324` sum to `1e-321` from the shortest texts and to
+`9.88e-322` from the 18-digit ones), not always bit for bit. Quotients divide
+19-digit normalized significands in
 `NUMBER(38, 0)` within the same `|r − p/q| ≤ 6·2⁻⁵³·|p/q| + 2⁻¹⁰⁷⁵` bound. A
 coefficient needing more than 38 digits (a value's 18 digits padded to its
 unit's scale, the most fractional digits any finite value's text in that unit
