@@ -8,7 +8,7 @@
 
 **Tech Stack:** pytest 8, pytest-xdist, pytest-split, DuckDB 1.5.6, Ibis 12, GitHub Actions `ubuntu-latest`.
 
-**Spec:** owner request 2026-10-24 ("lets do it") approving steps 1–3 of the test-audit proposal; `AGENTS.md` § Tests and validation; the global test-tier rules (unit 1–20 ms, mark slow above 1 s).
+**Spec:** owner request 2026-10-24 ("lets do it") approving steps 1–3 of the test-audit proposal; `AGENTS.md` § Tests and validation (unit tests under about 2 s alone; composition and unit-boundary tests that cannot meet the budget move to `integration/`, which runs on every push). This repository has no `slow` marker; do not add one.
 
 ## Scope ledger
 
@@ -24,7 +24,7 @@
 
 - Baseline (local M3 Pro, `-n 8`, 2026-10-24, main 61a505a): 1,292 items; 306 s summed test time; 52 s wall; collection 3 s; 89 items over 1 s; half the time in 58 items; `compile` 135 s, `temporal` 71 s, `backends` 47 s. CI `checks` job: 9 min 25 s, of which pytest 528 s.
 - No test loses its oracle: a rewritten test asserts the same contract (values, codes, tolerances) and is red-checked with a deliberate one-line break of the code it guards (never `git stash`); record the break and failure per rewritten test.
-- No deletions for redundancy; item count may drop only by grid collapse (Task 3) with one representative per equivalence class kept.
+- No deletions for redundancy. Item count may drop only by grid collapse (one representative per equivalence class kept) or by deleting a test verified to assert no consumer-visible behavior (Task 3, reason recorded). Report unit-tier and combined unit + integration counts separately, since moves change the former but not the latter.
 - Tests assert contracts, never message wording (`AGENTS.md`).
 - Repository-wide: `make check` must still run the full unit tier locally; CI shards are a CI concern.
 
@@ -50,16 +50,16 @@
 
 **Files:** the 89 tests over 1 s, starting with `tests/backends/test_numeric.py` (47 s), `tests/compile/test_time_to_event.py` (42 s), `tests/temporal/test_window_aggregates.py` (32 s), `tests/temporal/test_retention.py` (28 s), `tests/compile/test_columns.py` (19 s), `tests/compile/test_state_panel.py` (18 s).
 
-- [ ] For each, classify the cost: (a) one compile/query per case → evaluate all cases in one table/query; (b) a full Design pipeline for one narrow rule → test the rule at its owning function; (c) setup rebuilt per test → module-scoped fixture; (d) genuinely composition-level → move to `integration/` (or mark `slow`) unchanged.
+- [ ] For each, classify the cost: (a) one compile/query per case → evaluate all cases in one table/query; (b) a full Design pipeline for one narrow rule → test the rule at its owning function; (c) setup rebuilt per test → module-scoped fixture; (d) genuinely composition-level, or a unit-boundary test that cannot meet the budget → move to the matching `integration/` module. For each move, bring its fixture chain along (e.g. `native_inputs` lives in `tests/conftest.py`, which `integration/` does not inherit), keep or update existing helper imports (e.g. `integration/state_panels/test_state_panel_workflows.py` imports from `tests`), and run the destination module on its own.
 - [ ] Rewrite, keeping each test's assertions and oracle; red-check each rewritten test. Commit per file group (`test: …`).
-- [ ] Re-measure with `--durations=0`; target: no unit item over 1 s without a stated reason in its docstring or a move to integration.
+- [ ] Re-measure with `--durations=0 --durations-min=0` at the same worker count as the baseline (and `-n 0` alone for any remaining overrun, to rule out contention). Target: no unit item over 2 s; record any remaining 1–2 s items with their reason. Refresh `integration/.test_durations` for moved tests.
 
 ### Task 3: Structural cleanup
 
 **Files:** the 44 `match=` sites, 14 no-assert tests and 2 grids > 12 listed by the inventory (`/tmp/inv.json` regenerated on the branch).
 
-- [ ] Replace `match=` on message wording with the stable code/context assertion; where an exception has no code, assert the type only.
-- [ ] Read each no-assert test: import-isolation and "computed by helper" tests stay (note why); give the rest an assertion or delete if they assert nothing consumer-visible.
+- [ ] Replace `match=` that pins message wording with the stable code/context assertion. Where `match=` actually identifies *which* failure occurred (e.g. an injected I/O error in `tests/dataset/test_recipe.py`), keep that identity by asserting the injected exception object, its type and structured attributes, or `__cause__`, plus the observable postcondition (e.g. temporary file removed); red-check each replacement with a deliberate break.
+- [ ] Read each no-assert test: import-isolation and "asserted in a helper" tests stay (note why); give the rest an assertion, or delete one that verifiably asserts nothing consumer-visible and record the reason.
 - [ ] Collapse the two large grids to boundary cases (plus a Hypothesis property where values vary along one path).
 - [ ] Commit `test: assert codes instead of wording and collapse value grids`.
 
