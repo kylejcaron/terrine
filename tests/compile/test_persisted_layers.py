@@ -76,12 +76,15 @@ def test_layer_substitution_checks_measure_unit_grain_and_resolution_identity(co
         FixedDate("2025-01-02T12:00:00+00:00"),
         features={"total": agg("total", window=("-1d", "0s"))},
     )
-    key = next(key for key in plan_layers(design, column_model).keys if key.layer == "prefix")
+    key, relation = next(
+        (key, relation)
+        for key, relation in _persisted_prefixes(design, column_model).items()
+        if key.layer == "prefix"
+    )
+    # A valid relation under a key whose grain or unit is wrong must still refuse.
     for bad in (replace(key, grain="event"), replace(key, unit="other")):
         with pytest.raises(ValueError):
-            compose_materialized_frame(
-                design, column_model, persisted={bad: ibis.memtable({"x": []})}
-            )
+            compose_materialized_frame(design, column_model, persisted={bad: relation})
 
 
 def test_layer_substitution_rejects_cross_snapshot_relations(column_model):
