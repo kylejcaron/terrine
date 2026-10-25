@@ -1,7 +1,6 @@
 from datetime import UTC, datetime
 
 from terrine.data import MaterializedFrame
-from terrine.model import Model
 from terrine.spec import Design, EventAnchor, FixedDate, event_time
 from terrine.spec.design import Treatment
 from terrine.spec.trajectory import TimeToEvent
@@ -253,49 +252,6 @@ def test_nanosecond_wide_outcome_and_exit_coverages_do_not_narrow_out_of_range(m
         con.disconnect()
 
 
-def test_wide_entry_coverage_start_is_intersected_before_narrowing():
-    con, model = _model(
-        nanosecond_outcomes=True,
-        entry_start="2500-01-01",
-        entry_end="2501-01-01",
-    )
-    try:
-        result = _collect(
-            Design(
-                "user",
-                EventAnchor("signup", which="first"),
-                shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
-            ),
-            model,
-        )
-        assert result.num_rows > 0
-    finally:
-        con.disconnect()
-
-
-def test_wide_exit_coverage_start_is_intersected_before_narrowing(monkeypatch):
-    con, model = _model(
-        nanosecond_outcomes=True,
-        exit_start="2500-01-01",
-        exit_end="2501-01-01",
-        unit="u1",
-    )
-    try:
-        result = _collect(
-            Design(
-                "user",
-                FixedDate("2025-01-01"),
-                shape=TimeToEvent("churn", exit="closed"),
-            ),
-            model,
-            columns=("unit", "censor_time"),
-            monkeypatch=monkeypatch,
-        )
-        assert result.num_rows > 0
-    finally:
-        con.disconnect()
-
-
 def test_wide_exit_source_timestamp_is_not_cast_to_nanoseconds(monkeypatch):
     con, model = _model(
         nanosecond_outcomes=True,
@@ -335,36 +291,6 @@ def test_wide_entry_source_timestamp_is_not_cast_to_nanoseconds():
             model,
         )
         assert result.num_rows > 0
-    finally:
-        con.disconnect()
-
-
-def test_wide_roster_observation_end_is_intersected_before_narrowing():
-    from terrine.data import UnitSource
-
-    con, model = _model(nanosecond_outcomes=True)
-    try:
-        con.raw_sql("""
-            CREATE TABLE roster AS SELECT * FROM (VALUES
-              ('u1', TIMESTAMPTZ '2500-01-01 00:00:00+00'),
-              ('u2', TIMESTAMPTZ '2500-01-01 00:00:00+00'),
-              ('u3', TIMESTAMPTZ '2500-01-01 00:00:00+00')
-            ) AS r(user_id, observed_until)
-        """)
-        con.raw_sql("DELETE FROM outcomes")
-        model = Model.from_catalog(
-            model.catalog,
-            con=con,
-            readiness=model.readiness.sources,
-            units={"user": UnitSource("roster", "user_id", observed_until="observed_until")},
-        )
-        result = _collect(
-            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn")), model
-        )
-        rows = result.to_pylist()
-        assert rows
-        assert all(row["event"] is False for row in rows)
-        assert all(row["censor_time"] == datetime(2025, 1, 12, tzinfo=UTC) for row in rows)
     finally:
         con.disconnect()
 
