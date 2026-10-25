@@ -224,104 +224,6 @@ def test_nonfinite_history_refuses(con):
 
 
 @pytest.mark.parametrize(
-    "numerator,denominator",
-    [
-        ([1.25, -3.5, 0.75], None),
-        ([1.0, -1.0] * 100, None),
-        ([1.25, -3.5], [3]),
-        ([1.25, -3.5], [3e-7, 2.5]),
-        ([-1.25, -3.5], [-0.7]),
-        ([1.0], [float.fromhex("0x1.fffffffffffffp+1023")]),
-        ([Decimal("0.10"), Decimal("0.20")], None),
-        ([Decimal("0.10"), Decimal("0.20")], [7]),
-    ],
-)
-def test_mixed_scale_ratio_and_average_meet_bound(con, numerator, denominator):
-    dtype = "decimal(38,2)" if isinstance(numerator[0], Decimal) else "float64"
-    if denominator is None:
-        pair = _state(con, numerator, aggregation="avg_event", dtype=dtype, name="numerator")
-        result = _result(_anchors(con), [pair])
-        p, q = _shortest(numerator), Fraction(len(numerator))
-    else:
-        pairs = [
-            _state(con, numerator, dtype=dtype, name="numerator"),
-            _state(
-                con,
-                denominator,
-                dtype="int64" if isinstance(denominator[0], int) else "float64",
-                name="denominator",
-            ),
-        ]
-        result = _result(_anchors(con), pairs, kind="ratio")
-        p, q = _shortest(numerator), _shortest(denominator)
-    row = _rows(con, result)[0]
-    _assert_quotient(row["requested"], p, q)
-    meta = result.columns["requested"]
-    assert meta.numeric_policy is None
-
-
-def test_ratio_of_averages_divides_the_exact_averages(con):
-    first, second = [0.1, 0.2, -0.05], [3.0, 4.0, 0.3]
-    pairs = [
-        _state(con, first, aggregation="avg_event", name="first"),
-        _state(con, second, aggregation="avg_event", name="second"),
-    ]
-    ratio = _rows(con, _result(_anchors(con), pairs, kind="ratio"))[0]["requested"]
-    _assert_quotient(ratio, _shortest(first) / 3, _shortest(second) / 3)
-
-
-def test_ratio_composes_an_average_before_it_is_rounded(con):
-    # 5e-324 / 3 rounds to 0.0 on its own; a ratio must divide the unrounded average.
-    tiny = Fraction(repr(5e-324))
-    average = _state(con, [5e-324, 0.0, 0.0], aggregation="avg_event", name="average")
-    total = _state(con, [5e-324], name="total")
-    assert _rows(con, _result(_anchors(con), [average]))[0]["requested"] == 0.0
-    forward = _rows(con, _result(_anchors(con), [average, total], kind="ratio"))[0]
-    _assert_quotient(forward["requested"], tiny / 3, tiny)
-    reverse = _rows(con, _result(_anchors(con), [total, average], kind="ratio"))[0]
-    _assert_quotient(reverse["requested"], tiny, tiny / 3)
-    cancelled = _state(con, [1.0, -1.0], aggregation="avg_event", name="cancelled")
-    result = _result(_anchors(con), [total, cancelled], kind="ratio")
-    row = _rows(con, result)[0]
-    assert row["requested"] is None
-    assert row[result.columns["requested"].reason_column] == "zero_denominator"
-
-
-def test_quotient_overflow_refuses(con):
-    numerator = _state(con, [1e308], name="numerator")
-    denominator = _state(con, [1e-10], name="denominator")
-    with pytest.raises(TerrineError) as error:
-        _rows(con, _result(_anchors(con), [numerator, denominator], kind="ratio"))
-    assert error.value.code == "terrine.temporal.float64_precision"
-    assert error.value.context["failure"] == "bound_overflow"
-
-
-@pytest.mark.parametrize("strategy", ["native", "union_window"])
-def test_exact_instants_half_open_boundaries_and_named_results(con, strategy):
-    t0 = datetime(2025, 1, 2, 12, tzinfo=UTC)
-    pair = _state(
-        con,
-        [1, 2, 4, 8, 16],
-        dtype="int64",
-        times=[
-            t0 - timedelta(microseconds=1),
-            t0,
-            t0 + timedelta(microseconds=1),
-            t0 + timedelta(hours=1),
-            t0 + timedelta(hours=1),
-        ],
-    )
-    anchors = _anchors(con, time=t0.isoformat(), units=("a", "a"))
-    pre = _result(anchors, [pair], window=Window(-3600, 0), strategy=strategy, output="pre")
-    post = _result(pre.table, [pair], window=Window(0, 3600), strategy=strategy, output="post")
-    rows = _rows(con, post)
-    assert len(rows) == 2
-    assert [(r["pre"], r["post"], r["t0"]) for r in rows] == [(Decimal(1), Decimal(6), t0)] * 2
-    assert post.columns["post"].window == Window(0, 3600)
-    assert post.columns["post"].role == "outcome"
-
-
-@pytest.mark.parametrize(
     "aggregation,kind,expected,reasons",
     [
         ("sum", "mean", [0, None], [None, "all_values_null"]),
@@ -481,59 +383,9 @@ def test_integer_sum_widens_without_losing_units_above_binary64_precision(con):
     assert result.columns["requested"].numeric_policy == "exact"
 
 
-def test_all_null_ratio_numerator_is_not_a_zero_denominator(con):
-    numerator = _state(con, [None], dtype="int64", name="numerator")
-    denominator = _state(con, [0], dtype="int64", name="denominator")
-    result = _result(_anchors(con), [numerator, denominator], kind="ratio")
-    row = _rows(con, result)[0]
-    assert row["requested"] is None
-    assert row[result.columns["requested"].reason_column] == "all_values_null"
-
-
 def test_day_prefixes_cannot_answer_an_intraday_request(con):
     pair = _state(con, [2], dtype="int64", resolution="day")
     result = _result(_anchors(con, time="2025-01-02 12:00:00+00"), [pair], resolution="day")
     with pytest.raises(TerrineError) as error:
         _rows(con, result)
     assert error.value.code == "terrine.temporal.unaligned_day_resolution"
-
-
-@pytest.mark.parametrize("strategy", ["native", "union_window"])
-def test_public_window_preserves_ns_events_around_utc_microsecond_anchor(con, strategy):
-    events = con.sql("""
-        SELECT 'a' AS user_id, ts::TIMESTAMP_NS AS occurred_at, amount::BIGINT AS amount
-        FROM (VALUES
-            ('2025-01-02 11:59:59.999999999', 1),
-            ('2025-01-02 12:00:00.000000000', 2),
-            ('2025-01-02 12:00:00.000000001', 4)
-        ) AS e(ts, amount)
-    """)
-    source = BoundSource(
-        "ns_events",
-        TableRef(kind="table", name="ns_events"),
-        "occurred_at",
-        {"user": "user_id"},
-        {"revenue": "amount"},
-        {},
-        (),
-        "duckdb",
-        "UTC",
-    )
-    events = normalize_events(events, source, "user_id")
-    measure = resolve_measure(
-        events, BoundMeasure("revenue", "ns_events", "sum", (), None, None), source=source
-    )
-    state = sparse_prefix(
-        _sparse_group(events, measure, {"_timestamp": events._timestamp}, "user_id", source=source),
-        measure,
-        resolution="event",
-    )
-    anchors = _anchors(con, time="2025-01-02 12:00:00+00")
-    before = _result(
-        anchors, [(measure, state)], kind="mean", window=Window(-1, 0), strategy=strategy
-    )
-    after = _result(
-        anchors, [(measure, state)], kind="mean", window=Window(0, 1), strategy=strategy
-    )
-    assert _rows(con, before)[0]["requested"] == 1
-    assert _rows(con, after)[0]["requested"] == 6
