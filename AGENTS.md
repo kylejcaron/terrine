@@ -76,6 +76,9 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   `integration/.test_durations`. Tests without a stored time still run (they
   are assigned the average); after large changes refresh it with
   `uv run pytest integration --store-durations --durations-path integration/.test_durations`.
+  CI splits the unit tier into four groups balanced from `tests/.test_durations`.
+  Run the full unit tier locally with `uv run pytest tests`; refresh its
+  durations with `uv run pytest tests --store-durations --durations-path tests/.test_durations`.
 - `make test-postgres` runs the live PostgreSQL probes (`@pytest.mark.postgres`,
   deselected by default); they fail, never skip, without
   `TERRINE_TEST_POSTGRES_*` settings. Start a throwaway local server with
