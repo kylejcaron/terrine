@@ -62,7 +62,8 @@ packages = ["terrine"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --durations=0 --durations-min=5.0 -n 8 -m 'not scale and not postgres and not bigquery and not snowflake'"
+addopts = "-ra --strict-markers --strict-config --durations=0 --durations-min=5.0 -n auto -m 'not scale and not postgres and not bigquery and not snowflake'"
+xfail_strict = true
 markers = [
     "scale: resource-bound scale, oracle and live-warehouse checks; scheduled tier only",
     "postgres: live PostgreSQL probes; need TERRINE_TEST_POSTGRES_* settings",
