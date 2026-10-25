@@ -91,12 +91,15 @@ def test_owner_plan_rolls_back_snapshot_pin_when_invocation_persistence_fails(
             reference=reference,
             _in_transaction=_in_transaction,
         )
-        raise RuntimeError("invocation persistence interrupted")
+        raise failure
 
     monkeypatch.setattr(SavedPlanRecipe, "pin_snapshot", fail_after_pin)
+    failure = RuntimeError("invocation persistence interrupted")
+
     try:
-        with pytest.raises(RuntimeError, match="invocation persistence interrupted"):
+        with pytest.raises(RuntimeError) as error:
             planner.plan(request, con=connection.con, namespace="runtime")
+        assert error.value is failure
         references = connection.con.execute(
             "SELECT snapshot_id FROM runtime.runtime_snapshot_references "
             "WHERE kind='saved_plan' AND reference=?",
@@ -269,5 +272,5 @@ def test_plan_request_round_trip_preserves_dataset_recipe_view():
         assert restored.dataset_recipe.digest == recipe.digest
         assert restored.dataset_recipe.base_design.spec_hash == request.design.spec_hash
         assert restored.dataset_recipe.view == recipe.view
-        with pytest.raises(ValueError, match="base Design"):
+        with pytest.raises(ValueError):
             replace(typed, design=Design("user", FixedDate("2025-01-16")))

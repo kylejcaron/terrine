@@ -221,13 +221,15 @@ def test_nanosecond_source_refuses_administrative_cutoff_beyond_ns_range():
 def test_internal_timestamp_aliases_are_reserved_feature_names():
     con, model = _model()
     try:
-        with pytest.raises(TerrineError, match="generated_column_collision"):
+        with pytest.raises(TerrineError) as error:
             Design(
                 "user",
                 EventAnchor("signup", which="first"),
                 features={"_t0_naive": agg("signup", window=("-1d", "0d"))},
                 shape=TimeToEvent("churn"),
             ).build(model)
+        assert error.value.code == "terrine.survival.invalid_compilation"
+        assert error.value.context["reason"].startswith("generated_column_collision_")
     finally:
         con.disconnect()
 

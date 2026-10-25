@@ -139,6 +139,8 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
         def resolve(self, reference):
             return model
 
+    failure = RuntimeError("retry saved recipe")
+
     class SnapshotExecutor:
         def __init__(self):
             self.observed = []
@@ -147,7 +149,7 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
         def run_snapshot_task(self, context, task, dependencies):
             if self.fail_first:
                 self.fail_first = False
-                raise RuntimeError("retry saved recipe")
+                raise failure
             relation = context.resolve(catalog.sources["events"].relation)
             self.observed.append(context.execute(relation).to_pylist()[0]["value"])
             if len(self.observed) == 1:
@@ -158,7 +160,7 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
             return "generation-1"
 
     executor = SnapshotExecutor()
-    with pytest.raises(RuntimeError, match="retry saved recipe"):
+    with pytest.raises(RuntimeError) as error:
         runtime.run_serialized_plan(
             recipe.to_json(),
             con=con.con,
@@ -168,6 +170,7 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
             resolver=Resolver(),
             snapshot_authority=authority,
         )
+    assert error.value is failure
     failed = runtime.find_run_by_request_key(
         "saved-run",
         destination=DestinationRef("output.duckdb", "analytics", "orders"),

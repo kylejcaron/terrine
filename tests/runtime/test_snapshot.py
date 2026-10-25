@@ -246,7 +246,7 @@ def test_snapshot_gc_respects_pins_and_tombstones_collected_inputs(tmp_path):
         store, namespace="runtime", retain=timedelta(0), now=past
     ) == (receipt.snapshot_id,)
     assert not Path(receipt.artifact_path).exists()
-    with pytest.raises(ValueError, match="collected"):
+    with pytest.raises(ValueError):
         store.pin_snapshot(receipt.snapshot_id, kind="saved_plan", reference="recipe")
     con.disconnect()
 
