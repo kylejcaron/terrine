@@ -145,6 +145,9 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   their connections before returning. Keep compiler/execution compositions in
   the matching `integration/` module; retain cheap admission and expression
   rules in `tests/`. Both tiers share the worker DuckDB resource fixture.
+  For native arithmetic primitives, persist exact wide-integer intermediates
+  between operations instead of repeatedly inlining their input normalization.
+  Keep a separate end-to-end composition probe for expression wiring.
 - Plan acceptance lists and suggested test names specify required behaviors,
   not a quota of test functions. Each acceptance check names the owning
   function and tier. Consolidate without losing acceptance coverage, and update
