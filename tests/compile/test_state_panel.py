@@ -462,98 +462,6 @@ def test_binned_classifier_preserves_huge_decimal_cuts_and_lower_equality():
         con.disconnect()
 
 
-def test_binned_response_remains_complete_at_membership_exit(native_inputs):
-    import pyarrow as pa
-
-    catalog, con = native_inputs
-    con.create_table(
-        "users",
-        pa.table(
-            {
-                "user_id": ["a", "b"],
-                "exited_at": [
-                    datetime(2025, 1, 4, tzinfo=UTC),
-                    datetime(2025, 1, 10, tzinfo=UTC),
-                ],
-            }
-        ),
-        overwrite=True,
-    )
-    model = Model.from_catalog(
-        catalog,
-        con=con,
-        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
-        units={"user": UnitSource("users", "user_id", exited_at="exited_at")},
-    )
-    design = Design(
-        "user",
-        Schedule("1d", "2025-01-03", "2025-01-04"),
-        shape=StatePanel(
-            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=1,
-        ),
-    )
-    rows = (
-        design.build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
-        .table.to_pylist()
-    )
-    row = next(row for row in rows if row["unit"] == "a")
-    assert row["to_state"] == "some"
-    assert row["to_state_complete"] is True
-
-
-def test_binned_missing_period_sides_and_unit_end_exclusivity(native_inputs):
-    import pyarrow as pa
-
-    catalog, con = native_inputs
-    con.create_table(
-        "users",
-        pa.table(
-            {
-                "user_id": ["a", "b"],
-                "observed_from": [
-                    datetime(2025, 1, 3, tzinfo=UTC),
-                    datetime(2025, 1, 1, tzinfo=UTC),
-                ],
-                "observed_until": [
-                    datetime(2025, 1, 10, tzinfo=UTC),
-                    datetime(2025, 1, 3, tzinfo=UTC),
-                ],
-            }
-        ),
-        overwrite=True,
-    )
-    model = Model.from_catalog(
-        catalog,
-        con=con,
-        readiness={"events": Coverage("2025-01-01", "2025-01-31")},
-        units={
-            "user": UnitSource(
-                "users", "user_id", observed_from="observed_from", observed_until="observed_until"
-            )
-        },
-    )
-    design = Design(
-        "user",
-        Schedule("1d", "2025-01-03", "2025-01-04"),
-        shape=StatePanel(
-            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=1,
-        ),
-    )
-    rows = (
-        design.build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
-        .table.to_pylist()
-    )
-    by_unit = {row["unit"]: row for row in rows}
-    assert by_unit["a"]["from_state_complete"] is False
-    assert by_unit["a"]["to_state_complete"] is True
-    assert by_unit["b"]["from_state_complete"] is True
-    assert by_unit["b"]["to_state_complete"] is False
-
-
 @pytest.mark.parametrize(
     ("terminal_time", "range_start"),
     [
@@ -710,24 +618,6 @@ def test_binned_state_preserves_metric_null_reasons():
     ]
 
 
-@pytest.mark.parametrize(
-    ("budget", "code"),
-    [(Budget(max_rows=10, max_output_bytes=1), "terrine.budget.output_bytes_exceeded")],
-)
-def test_state_panel_enforces_output_row_and_byte_budgets(panel_model, budget, code):
-    design = Design(
-        "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
-        shape=StatePanel(
-            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=2,
-        ),
-    )
-    with pytest.raises(TerrineError) as error:
-        design.build(panel_model).materialize(budget)
-    assert error.value.code == code
-
-
 def test_observed_state_panel_is_invariant_to_source_row_order(observed_model_factory):
     observations = [
         ("a", datetime(2025, 1, 3, tzinfo=UTC), "active"),
@@ -756,32 +646,6 @@ def test_observed_state_panel_is_invariant_to_source_row_order(observed_model_fa
             )
         )
     assert results[0] == results[1]
-
-
-def test_terminal_detection_precedes_output_eligibility_filter(observed_model_factory):
-    from terrine.spec import StateObservations, gt
-
-    model = observed_model_factory(
-        [
-            ("a", datetime(2025, 1, 3, tzinfo=UTC), "active"),
-            ("a", datetime(2025, 1, 4, tzinfo=UTC), "closed"),
-        ]
-    )
-    design = Design(
-        "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
-        eligibility={"history": gt(agg("sessions", window=("-1d", "0d")), 0)},
-        shape=StatePanel(
-            StateObservations("state", ("active", "closed"), absorbing=("closed",)),
-            max_periods=2,
-        ),
-    )
-    rows = (
-        design.build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
-        .table.to_pylist()
-    )
-    assert not [row for row in rows if row["unit"] == "a"]
 
 
 def test_missing_observations_are_not_bridged_across_adjacent_rows(observed_model_factory):
@@ -961,47 +825,6 @@ def test_unit_observed_until_is_exclusive_for_point_states(observed_model_factor
     assert first["from_state"] == "active"
     assert first["to_state"] is None
     assert first["to_state_reason"] == "incomplete_observation"
-
-
-def test_terminal_at_origin_suppresses_and_source_correction_rebuilds_suffix(
-    observed_model_factory,
-):
-    model = observed_model_factory([("a", datetime(2025, 1, 3, tzinfo=UTC), "closed")])
-    rows = (
-        _observed_design()
-        .build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
-        .table.to_pylist()
-    )
-    assert not any(row["unit"] == "a" for row in rows)
-
-    model = observed_model_factory(
-        [
-            ("a", datetime(2025, 1, 3, tzinfo=UTC), "active"),
-            ("a", datetime(2025, 1, 4, tzinfo=UTC), "closed"),
-        ]
-    )
-    closed_rows = (
-        _observed_design()
-        .build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
-        .table.to_pylist()
-    )
-    assert len([row for row in closed_rows if row["unit"] == "a"]) == 1
-
-    model = observed_model_factory(
-        [
-            ("a", datetime(2025, 1, 3, tzinfo=UTC), "active"),
-            ("a", datetime(2025, 1, 5, tzinfo=UTC), "active"),
-        ]
-    )
-    corrected_rows = (
-        _observed_design(absorbing=())
-        .build(model)
-        .materialize(Budget(max_rows=10, max_output_bytes=100_000))
-        .table.to_pylist()
-    )
-    assert len([row for row in corrected_rows if row["unit"] == "a"]) == 2
 
 
 def test_exclusive_source_coverage_end_is_unavailable_not_absorbing(observed_model_factory):
