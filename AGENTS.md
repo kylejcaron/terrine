@@ -137,6 +137,11 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   terrine costs users too. Cut test work before tuning workers or threads, and
   compare in-suite with `-n 0` timings before blaming contention. Do not use
   wall-clock assertions as performance gates.
+- Batch independent numeric cases into one query while keeping a separate oracle
+  for each case. Module-scoped result fixtures must be immutable and release
+  their connections before returning. Keep compiler/execution compositions in
+  the matching `integration/` module; retain cheap admission and expression
+  rules in `tests/`. Both tiers share the worker DuckDB resource fixture.
 - Plan acceptance lists and suggested test names specify required behaviors,
   not a quota of test functions. Each acceptance check names the owning
   function and tier. Consolidate without losing acceptance coverage, and update
