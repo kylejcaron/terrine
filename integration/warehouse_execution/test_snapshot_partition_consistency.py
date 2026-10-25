@@ -119,6 +119,8 @@ def test_partition_and_retry_reopen_same_retained_input_authority(
             assert reference == recipe.model
             return model
 
+    failure = RuntimeError("retry partition")
+
     class SnapshotExecutor:
         def __init__(self):
             self.seen = []
@@ -139,7 +141,7 @@ def test_partition_and_retry_reopen_same_retained_input_authority(
             if task.partition == "p1" and task.partition not in self.attempted:
                 self.attempted.add(task.partition)
                 con.raw_sql("UPDATE events SET value=99")
-                raise RuntimeError("retry partition")
+                raise failure
             if task.partition == "p1":
                 con.raw_sql("UPDATE events SET value=101")
                 con.raw_sql("UPDATE user_tier SET tier='silver'")
@@ -172,7 +174,7 @@ def test_partition_and_retry_reopen_same_retained_input_authority(
 
     executor = SnapshotExecutor()
     try:
-        with pytest.raises(RuntimeError, match="retry partition"):
+        with pytest.raises(RuntimeError) as error:
             run_serialized_plan(
                 recipe.to_json(),
                 con=con.con,
@@ -182,6 +184,7 @@ def test_partition_and_retry_reopen_same_retained_input_authority(
                 resolver=Resolver(),
                 snapshot_authority=authority,
             )
+        assert error.value is failure
         if corrupt_after_partial_output:
             with pytest.raises(TerrineError) as error:
                 run_serialized_plan(

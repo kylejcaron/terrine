@@ -211,12 +211,15 @@ def test_response_loss_recovers_manifest_without_reopening_sources(owner_tools, 
     receipt = _prepare(tools)
     finish = module.dataset_from_run
 
+    failure = RuntimeError("response lost before dataset receipt")
+
     def lost_response(*args, **kwargs):
-        raise RuntimeError("response lost before dataset receipt")
+        raise failure
 
     monkeypatch.setattr(module, "dataset_from_run", lost_response)
-    with pytest.raises(RuntimeError, match="response lost"):
+    with pytest.raises(RuntimeError) as error:
         tools.stage(receipt, request_key="lost")
+    assert error.value is failure
     monkeypatch.setattr(module, "dataset_from_run", finish)
 
     def reopen_forbidden(*args, **kwargs):

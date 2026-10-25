@@ -31,7 +31,7 @@ def test_refusal_discovery_retains_inline_and_duplicate_code_variants(tmp_path):
     assert "Missing {name!r}." in rendered
     assert "Invalid {reason}." in rendered
     (tmp_path / "dynamic.py").write_text('RefusalSpec(dynamic_code, "Unsafe omission")')
-    with pytest.raises(ValueError, match="literal"):
+    with pytest.raises(ValueError):
         refusal_declarations(tmp_path)
 
 

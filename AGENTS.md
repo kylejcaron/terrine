@@ -76,6 +76,9 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   `integration/.test_durations`. Tests without a stored time still run (they
   are assigned the average); after large changes refresh it with
   `uv run pytest integration --store-durations --durations-path integration/.test_durations`.
+  CI splits the unit tier into four groups balanced from `tests/.test_durations`.
+  Run the full unit tier locally with `uv run pytest tests`; refresh its
+  durations with `uv run pytest tests --store-durations --durations-path tests/.test_durations`.
 - `make test-postgres` runs the live PostgreSQL probes (`@pytest.mark.postgres`,
   deselected by default); they fail, never skip, without
   `TERRINE_TEST_POSTGRES_*` settings. Start a throwaway local server with
@@ -137,6 +140,14 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   terrine costs users too. Cut test work before tuning workers or threads, and
   compare in-suite with `-n 0` timings before blaming contention. Do not use
   wall-clock assertions as performance gates.
+- Batch independent numeric cases into one query while keeping a separate oracle
+  for each case. Module-scoped result fixtures must be immutable and release
+  their connections before returning. Keep compiler/execution compositions in
+  the matching `integration/` module; retain cheap admission and expression
+  rules in `tests/`. Both tiers share the worker DuckDB resource fixture.
+  For native arithmetic primitives, persist exact wide-integer intermediates
+  between operations instead of repeatedly inlining their input normalization.
+  Keep a separate end-to-end composition probe for expression wiring.
 - Plan acceptance lists and suggested test names specify required behaviors,
   not a quota of test functions. Each acceptance check names the owning
   function and tier. Consolidate without losing acceptance coverage, and update

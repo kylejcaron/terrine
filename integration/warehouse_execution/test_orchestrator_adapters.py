@@ -647,6 +647,8 @@ def test_dagster_same_root_failed_retry_reuses_fence_scoped_outputs(monkeypatch,
             assert reference == reference_model
             return model
 
+    failure = RuntimeError("transient task failure")
+
     class FailsOnce:
         def __init__(self):
             self.completed = []
@@ -655,7 +657,7 @@ def test_dagster_same_root_failed_retry_reuses_fence_scoped_outputs(monkeypatch,
         def _run(self, task):
             if len(self.completed) == 1 and not self.failed:
                 self.failed = True
-                raise RuntimeError("transient task failure")
+                raise failure
             self.completed.append(task.task_id)
             return pa.table({"task_id": [task.task_id]})
 
@@ -739,8 +741,9 @@ def test_dagster_same_root_failed_retry_reuses_fence_scoped_outputs(monkeypatch,
 
     compute = asset.node_def.compute_fn.decorated_fn
     try:
-        with pytest.raises(RuntimeError, match="transient task failure"):
+        with pytest.raises(RuntimeError) as error:
             compute(Context())
+        assert error.value is failure
         failed = find_run_by_request_key(
             invocations[0].request_key,
             destination=invocations[0].destination,

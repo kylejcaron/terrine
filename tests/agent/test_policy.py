@@ -2,6 +2,8 @@ from dataclasses import FrozenInstanceError
 from typing import Any, cast
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from terrine.agent.policy import AgentPolicy, effective_budget
 from terrine.data import Budget
@@ -51,18 +53,19 @@ def test_policy_permissions_are_operation_specific_and_owner_configured(tmp_path
     )
 
 
-@pytest.mark.parametrize(
-    "field",
-    [
-        "max_run_seconds",
-        "max_concurrency",
-        "max_requests",
-        "max_preview_rows",
-        "batch_cap",
-        "max_bounded_count",
-    ],
+@given(
+    field=st.sampled_from(
+        (
+            "max_run_seconds",
+            "max_concurrency",
+            "max_requests",
+            "max_preview_rows",
+            "batch_cap",
+            "max_bounded_count",
+        )
+    ),
+    value=st.one_of(st.integers(max_value=0), st.booleans()),
 )
-@pytest.mark.parametrize("value", [0, -1, True])
 def test_owner_resource_bounds_require_positive_integers(field, value):
     with pytest.raises(ValueError):
         AgentPolicy(**{field: value})

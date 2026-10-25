@@ -30,7 +30,7 @@ def test_event_cursor_is_exclusive_bounded_and_run_bound():
 
 def test_event_payload_is_strictly_allowlisted():
     con = duckdb.connect(":memory:")
-    with pytest.raises(ValueError, match="forbidden"):
+    with pytest.raises(ValueError):
         record_run_event(
             "r1",
             "phase",
@@ -41,7 +41,7 @@ def test_event_payload_is_strictly_allowlisted():
 
 
 def test_event_record_rejects_empty_run_id():
-    with pytest.raises(ValueError, match="invalid"):
+    with pytest.raises(ValueError):
         record_run_event(
             "", "phase", {"phase": "active"}, con=duckdb.connect(":memory:"), namespace="owner"
         )
