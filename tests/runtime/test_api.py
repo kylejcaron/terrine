@@ -533,6 +533,7 @@ def test_failed_run_retry_reuses_run_id_outputs_and_advances_fence():
             sources=("events",), definition_hash="definition", partitions=("p1",)
         ),
     )
+    failure = RuntimeError("transient task failure")
 
     class FailsOnce(_Executor):
         def __init__(self):
@@ -542,12 +543,12 @@ def test_failed_run_retry_reuses_run_id_outputs_and_advances_fence():
         def run_task(self, task, dependencies):
             if self.fail and self.calls == 1:
                 self.fail = False
-                raise RuntimeError("transient task failure")
+                raise failure
             self.calls += 1
             return pa.table({"id": [self.calls]})
 
     executor = FailsOnce()
-    with pytest.raises(RuntimeError, match="transient task failure"):
+    with pytest.raises(RuntimeError) as error:
         runtime.run_plan(
             plan,
             con=con,
@@ -556,6 +557,7 @@ def test_failed_run_retry_reuses_run_id_outputs_and_advances_fence():
             destination=destination,
             executor=executor,
         )
+    assert error.value is failure
     failed_receipt = runtime.find_run_by_request_key(
         "stable-request", destination=destination, con=con, namespace="owner"
     )

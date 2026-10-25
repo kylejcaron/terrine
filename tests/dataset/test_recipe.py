@@ -124,10 +124,13 @@ def test_recipe_put_removes_temporary_file_after_io_failure(tmp_path, monkeypatc
     recipe = DatasetRecipe(schema_version=1, base_design=design())
     store = DatasetRecipeStore(tmp_path / "owner-a", owner="owner-a")
 
+    failure = OSError("injected fsync failure")
+
     def fail_fsync(_):
-        raise OSError("injected fsync failure")
+        raise failure
 
     monkeypatch.setattr(os, "fsync", fail_fsync)
-    with pytest.raises(OSError, match="injected fsync failure"):
+    with pytest.raises(OSError) as error:
         store.put(recipe)
+    assert error.value is failure
     assert list(store.root.iterdir()) == []

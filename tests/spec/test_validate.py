@@ -645,13 +645,18 @@ def test_dimension_property_inline_and_dimension_bindings_are_one_logical_proper
         validity=None,
         properties={"region": prop},
     )
-    Design(
-        "workspace", FixedDate(date(2025, 3, 1)), features={"region": asof("region", before="0d")}
-    ).validate(
-        model(
-            properties={"region": prop},
-            dimensions=[dimension],
+    assert (
+        Design(
+            "workspace",
+            FixedDate(date(2025, 3, 1)),
+            features={"region": asof("region", before="0d")},
+        ).validate(
+            model(
+                properties={"region": prop},
+                dimensions=[dimension],
+            )
         )
+        is None
     )
 
 
@@ -692,17 +697,23 @@ def test_static_dimension_and_static_inline_properties_do_not_need_event_resolut
         validity=None,
         properties={"region": dimension_property},
     )
-    Design(
-        "workspace",
-        date_anchor,
-        features={"region": asof("region", before="-1d")},
-    ).validate(model(dimensions=[static_dimension], dialect="sqlite"))
+    assert (
+        Design(
+            "workspace",
+            date_anchor,
+            features={"region": asof("region", before="-1d")},
+        ).validate(model(dimensions=[static_dimension], dialect="sqlite"))
+        is None
+    )
     inline_static = SimpleNamespace(dimension_name=None, as_of="static")
-    Design(
-        "user",
-        date_anchor,
-        features={"enabled": asof("enabled", before="-1d")},
-    ).validate(model(properties={"enabled": inline_static}, dialect="sqlite"))
+    assert (
+        Design(
+            "user",
+            date_anchor,
+            features={"enabled": asof("enabled", before="-1d")},
+        ).validate(model(properties={"enabled": inline_static}, dialect="sqlite"))
+        is None
+    )
 
 
 @pytest.mark.parametrize("as_of", ("event_time", "static"))

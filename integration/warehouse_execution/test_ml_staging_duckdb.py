@@ -178,6 +178,8 @@ def test_export_recovers_durable_shard_and_discards_interrupted_shard(tmp_path, 
     def one_row_batches(self, *, batch_size=65_536):
         return original_batches(self, batch_size=1)
 
+    failure = OSError("interrupted shard")
+
     class Writer:
         def __init__(self, path, *args, **kwargs):
             self.path = Path(path)
@@ -187,7 +189,7 @@ def test_export_recovers_durable_shard_and_discards_interrupted_shard(tmp_path, 
         def write_table(self, table):
             self.raw.write_table(table)
             if len(writers) == 2:
-                raise OSError("interrupted shard")
+                raise failure
 
         def close(self):
             self.raw.close()
@@ -196,8 +198,9 @@ def test_export_recovers_durable_shard_and_discards_interrupted_shard(tmp_path, 
     monkeypatch.setattr(Dataset, "to_arrow_batches", one_row_batches)
     with monkeypatch.context() as patch:
         patch.setattr(exports.pq, "ParquetWriter", Writer)
-        with pytest.raises(OSError, match="interrupted shard"):
+        with pytest.raises(OSError) as error:
             dataset.export_parquet(destination=str(destination), target_file_bytes=1)
+    assert error.value is failure
     assert not destination.exists()
     partial = tmp_path / ".export.partial"
     checkpoint = ExportManifest.from_json((partial / "export-state.json").read_bytes())
@@ -491,16 +494,19 @@ def test_export_discards_unfinished_shard_and_rewrites_on_retry(
 
     monkeypatch.setattr(export_module, "_partition_rows", partition_first_batch)
 
+    failure = OSError("simulated interruption in an unfinished shard")
+
     def interrupted(*, batch_size=65_536):
         batch = next(iter(original(batch_size=batch_size)))
         yield batch
-        raise OSError("simulated interruption in an unfinished shard")
+        raise failure
 
     monkeypatch.setattr(
         type(dataset), "to_arrow_batches", lambda self, **kwargs: interrupted(**kwargs)
     )
-    with pytest.raises(OSError, match="unfinished shard"):
+    with pytest.raises(OSError) as error:
         dataset.export_parquet(destination=str(destination), target_file_bytes=1)
+    assert error.value is failure
     assert len(list(partial.glob("**/*.parquet"))) == 1
 
     monkeypatch.setattr(
@@ -600,6 +606,8 @@ def test_export_does_not_checkpoint_a_shard_when_fsync_fails(events_world, tmp_p
     original_fsync = os.fsync
     failed = False
 
+    failure = OSError("shard persistence interrupted")
+
     def sync(descriptor):
         nonlocal failed
         stat = os.fstat(descriptor)
@@ -607,12 +615,13 @@ def test_export_does_not_checkpoint_a_shard_when_fsync_fails(events_world, tmp_p
             target = path.stat()
             if not failed and (stat.st_dev, stat.st_ino) == (target.st_dev, target.st_ino):
                 failed = True
-                raise OSError("shard persistence interrupted")
+                raise failure
         original_fsync(descriptor)
 
     monkeypatch.setattr(export_module.os, "fsync", sync)
-    with pytest.raises(OSError, match="shard persistence"):
+    with pytest.raises(OSError) as error:
         dataset.export_parquet(destination=str(destination), target_file_bytes=1)
+    assert error.value is failure
     state = export_module.ExportManifest.from_json((partial / "export-state.json").read_bytes())
     assert state.shards == ()
     assert list(partial.glob("**/*.parquet")) == []
@@ -640,19 +649,22 @@ def test_export_retry_resyncs_parent_after_interrupted_publication(
         original_rename(source, target)
         renamed = True
 
+    failure = OSError("publication directory persistence interrupted")
+
     def sync(descriptor):
         nonlocal parent_syncs
         stat = os.fstat(descriptor)
         if renamed and (stat.st_dev, stat.st_ino) == (parent.st_dev, parent.st_ino):
             parent_syncs += 1
             if parent_syncs == 1:
-                raise OSError("publication directory persistence interrupted")
+                raise failure
         original_fsync(descriptor)
 
     monkeypatch.setattr(export_module.os, "rename", rename)
     monkeypatch.setattr(export_module.os, "fsync", sync)
-    with pytest.raises(OSError, match="publication directory"):
+    with pytest.raises(OSError) as error:
         dataset.export_parquet(destination=str(destination))
+    assert error.value is failure
     assert destination.is_dir()
     result = dataset.export_parquet(destination=str(destination))
     assert result.row_count == 2

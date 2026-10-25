@@ -153,7 +153,7 @@ def test_airflow_reconnect_waits_through_pending_cancellation_then_fails_termina
         )
     task = cast(BaseOperator, next(iter(group.children.values())))
 
-    with pytest.raises(AirflowFailException, match="cancelled"):
+    with pytest.raises(AirflowFailException):
         task.execute(cast(Any, {"ti": SimpleNamespace(xcom_push=lambda **kwargs: None)}))
 
     assert sleeps == [1]

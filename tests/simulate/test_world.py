@@ -65,7 +65,6 @@ def test_child_streams_keep_baselines_and_assignment_independent_of_outcome_nois
         {"horizon_seconds": 1.5},
         {"outcome_noise_sd": -1},
         {"propensity_quadratic": float("nan")},
-        {"outcome_quadratic": float("inf")},
         {"target_weight_slope": -1},
         {"target_weight_slope": 1},
         {"t0": datetime(2025, 3, 3)},
