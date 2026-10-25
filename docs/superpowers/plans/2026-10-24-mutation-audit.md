@@ -16,15 +16,17 @@
 | --- | --- | --- | --- |
 | Mutation runner target and configuration | Owner: "lets do mutmut" | Yes | 1 |
 | Kill matrices and evidence-based deletions on the heaviest modules | Same (proposal step 4) | Yes | 2, 3 |
-| Per-capability test cost table for a capability-cut decision | Owner: "and the rest" (proposal step 5 needs the numbers first) | Yes, as a report only | 4 |
+| Per-capability test cost table for a capability-cut decision | Owner: "lets do mutmut and the rest", replying to the proposal whose step 5 read "Capability cuts: your decision, with the per-capability numbers in hand" and the offer "I can list test count and time per capability" | Yes, as a report only | 4 |
 | Capability (public API) cuts | Proposal step 5: product decision | No; owner decides from Task 4's table | — |
 | New tests for surviving mutants | test-audit: survivors are a to-do list, not part of the audit | No; recorded only | — |
 
 ## Global Constraints
 
 - Delete only with evidence: a test outside the greedy cover, with no regression/issue link and no distinct oracle (tolerance, error code, parity, cross-path equivalence). Keep the better-specified of interchangeable tests.
-- Discount string-literal mutants (message wording) in the cover.
-- After deletions, re-run mutation on the same module and selection: score must be unchanged; restore any test whose removal lowers it.
+- Exclude only reviewed mutations to non-contract message prose (exception/log text). Keep behavioral string mutations (refusal codes, null reasons, output field names, aggregation selectors, parsed literals). Record every exclusion, identically across campaigns.
+- After deletions, discard all cached mutant results, refresh mutmut's copied test tree and test discovery, and freshly execute the baseline mutant set: every previously killed, non-excluded mutant must still be killed; restore any test whose removal breaks that.
+- Mutation and kill-matrix pytest runs use `-n 0` (mutmut needs in-process collection to associate tests with functions; the repository default is `-n auto`), keep the agent-slots plugin, and bound mutmut's own parallelism to the allocated cores.
+- Evidence completeness gates every deletion: a green baseline on the selection, the expected test identities collected, every mutant run completed, and a reproduced failing test for each killed mutant counted in the cover. Crashes, timeouts, missing reports or unattributed mutants are unresolved and block deletions that depend on them.
 - Mutation runs are local and on demand, never in the PR gate; wrap with `agent-slots -j <cores> --`.
 - Module selection, in order: `terrine/backends/numeric.py`, `terrine/temporal/aggregate.py`, `terrine/compile/columns.py`, then the compile shapes with the most test time (`time_to_event.py`, `state_panel.py`). Each module's test selection is its unit file(s) plus the integration modules that exercise it; record the selection.
 - Baseline (main 5fb0218): unit 1,214 items (27 s local), non-live integration 257 items; CI 5 min 40 s.
@@ -43,12 +45,12 @@
 
 **Files:** `pyproject.toml` (dev dependency `mutmut`, `[tool.mutmut]`), `uv.lock`, `Makefile` (`mutate` target), `.gitignore` (`mutants/`), `AGENTS.md` (command).
 
-- [ ] `make mutate MODULE=terrine/backends/numeric.py TESTS="tests/backends/test_numeric.py integration/backends/test_numeric.py"` runs mutmut on that module only, selects those tests, and prints `mutmut results --all`. Verify on `numeric.py`.
+- [ ] `make mutate MODULE=terrine/backends/numeric.py TESTS="tests/backends/test_numeric.py integration/backends/test_numeric.py"` runs mutmut on that module only, selects those tests with `-n 0`, and prints `mutmut results --all`. Verify on `numeric.py`: non-empty test-to-function associations, and one known mutant reproduced as killed by a named test in the matrix pass.
 - [ ] Commit `test: add an on-demand mutation runner`.
 
 ### Task 2: Kill matrices
 
-- [ ] For each module in order: run Task 1's target, then `kill_matrix.py --tests … --module …`. Record score, survivors (to-do list), cover, candidates, tests that killed nothing, runtime.
+- [ ] For each module in order: run Task 1's target, then `kill_matrix.py --tests … --module … --pytest-args "-n 0 -p no:randomly"`, keeping the campaign workspace until attribution is done. Check completeness (Global Constraints). Record score, survivors (to-do list), equivalent mutants, exclusions, cover, candidates, tests that killed nothing, unresolved rows, runtime.
 
 ### Task 3: Evidence-based deletions
 
