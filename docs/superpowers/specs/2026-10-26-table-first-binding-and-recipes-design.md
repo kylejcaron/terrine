@@ -56,7 +56,7 @@ For each event source name `source`, the source name itself is the generated eve
 - `<source>_<v>_sum`: sum of value fact `<source>_<v>`;
 - `<source>_<v>_mean`: mean of value fact `<source>_<v>`.
 
-There are no `tr.count` or `tr.sum` shorthands. Use existing `agg(metric, window)` expressions to consume metrics. Any name collision among generated source, fact, or metric names refuses before binding with stable code `terrine.model.generated_metric_collision`; context identifies the conflicting name and source names. If an explicit Catalog is allowed to mix with generated definitions, a generated name also colliding with an explicit Catalog name refuses with that same code. Unrepresentable names refuse rather than silently rewrite.
+There are no `tr.count` or `tr.sum` shorthands. Use existing `agg(metric, window)` expressions to consume metrics. The event source name intentionally equals its own event-fact name. Any other collision among generated source, fact, or metric names refuses before binding with stable code `terrine.model.generated_metric_collision`; context identifies the conflicting name and source names. A generated name colliding with a different key in explicit `readiness` refuses with the same code (the event's own readiness key is allowed). There is no explicit Catalog-mixing parameter; use `Model.from_catalog` when Catalog names or multi-unit source semantics must be combined. Unrepresentable names refuse rather than silently rewrite.
 
 Aggregation semantics are exactly those of equivalent hand-written Catalog metrics: in complete windows, an empty count and sum are `0`; an event mean is null with reason `no_observations`. An incomplete window is null with the existing incompleteness reason, regardless of aggregation. Null values within a nonempty event set follow existing aggregate semantics.
 
@@ -101,8 +101,9 @@ def survival(
 def life_table(
     unit: str, *, start_event: str, end_event: str, bin: str | int,
     occurrence: Literal["first", "nth"] = "first", n: int | None = None,
-    features=None, eligibility=None, treatment: Treatment | None = None,
-    anchor_range=None, gap="0d", administrative_cutoff: datetime | None = None,
+    features: Mapping[str, Expr] | None = None, group_by: tuple[str, ...] = (),
+    eligibility=None, anchor_range=None, gap="0d",
+    administrative_cutoff: datetime | None = None,
 ) -> Design
 
 def state_panel(
@@ -123,11 +124,13 @@ def event_sequence(
 
 `event_panel` builds an `EventAnchor` and applies `EventPanel(base, periods=..., period_seconds=..., reference_period=...)`. It accepts no `treatment`, because `EventPanel` rejects a Design that carries treatment. `ltv` uses the start event as the `CohortSpec.origin` and a cumulative `Trajectory`; it accepts no arbitrary outcomes because the trajectory defines the shape's outcome. LTV accepts a `Treatment` when supplied, as the low-level compiler preserves that role. The origin event contributes to age 0 in the existing half-open `[t0, t0 + period)` window; this preserves the current low-level behavior and does not change the compiler.
 
-`survival` uses `TimeToEvent`; `life_table` uses `TimeToEvent` plus `LifeTable`. These recipes select either the first start event by default or a requested nth start event; they do not accept `each`. They require both start and terminal event facts. Neither shape has a relative duration horizon: follow-up ends according to existing observation coverage or the optional absolute `administrative_cutoff`. They accept `Treatment` as supported by the underlying time-to-event compiler, but no arbitrary `outcomes` mapping. `life_table` is separate because it returns risk-set bins, not merely a display option.
+`survival` uses `TimeToEvent`; `life_table` uses `TimeToEvent` plus `LifeTable`. These recipes select either the first start event by default or a requested nth start event; they do not accept `each`. They require both start and terminal event facts. Neither shape has a relative duration horizon: follow-up ends according to existing observation coverage or the optional absolute `administrative_cutoff`. `survival` accepts a `Treatment` as supported by the time-to-event compiler; `life_table` accepts no treatment because its materialized output clears treatment roles.
+
+For `life_table`, `group_by` explicitly names the grouping columns, and every name must be present in `features`. `features` may contain only names in `group_by`; any extra feature is rejected with `ValueError` before building, rather than silently disappearing at materialization. The output grouping columns are features, together with `time_bin`; its outcome roles are `at_risk`, `events`, `censored`, `delayed_entries`, `event_rate`, and `censor_rate`, and treatment is absent.
 
 `state_panel` uses `Schedule` and `StatePanel`; it accepts no `outcomes` or `treatment`, which the shape does not support. `event_sequence` uses `EventSequence` and requires its bounded window (`horizon`) and `max_events`. For the event-selected anchors in panel/survival/sequence recipes, occurrence defaults to `first`; `each` is exposed only where the low-level shape accepts it, and `n` is required and positive for `nth`. For `first` or `each`, `n` is omitted. Conditional events remain an expression pattern: use an `EventAnchor` and an expression selector with `relative_to=event_time(...)`; there is no conditional-event constructor.
 
-Shared Design keywords are not a catch-all: each signature above lists only supported parameters. `features`, `eligibility`, `anchor_range`, and `gap` are accepted where the underlying shape preserves/uses them. `outcomes` are accepted only by time-series, trial-panel, event-panel, and event-sequence designs; `treatment` is accepted as a treatment role only by time-series, LTV, survival, and life-table designs (trial-panel takes a required `Initiation`/`PersistentAdoption` treatment definition instead); and `administrative_cutoff` is accepted only by LTV, survival, and life-table designs. Recipe tests and examples assert an observable effect for every accepted keyword.
+Shared Design keywords are not a catch-all: each signature above lists only supported parameters. `features`, `eligibility`, `anchor_range`, and `gap` are accepted where the underlying shape preserves/uses them. `outcomes` are accepted only by time-series, trial-panel, event-panel, and event-sequence designs; `treatment` is accepted as a treatment role only by time-series, LTV, and survival (trial-panel takes a required `Initiation`/`PersistentAdoption` treatment definition instead); and `administrative_cutoff` is accepted only by LTV, survival, and life-table designs. Life-table `features` are restricted to the names in `group_by`. Recipe tests and examples assert an observable effect for every accepted keyword.
 
 
 ## Public documentation and policy updates
@@ -136,8 +139,8 @@ Update `AGENTS.md` under “Public API and refusals” to state: constructors in
 
 ## Acceptance and review focus
 
-- A single integration composition compares rows from `Model.from_tables` with a hand-written native Catalog for count, sum and mean metrics, including zero-activity roster units, complete/incomplete windows, and a nonzero LTV origin amount plus later contribution proving that age 0 includes the origin event.
+- A single integration composition compares rows from `Model.from_tables` with a hand-written native Catalog for count, sum and mean metrics, including zero-activity roster units, complete/incomplete windows, and a nonzero LTV origin amount plus later contribution proving age 0 includes the origin event. The valid source/event-fact name sharing is exercised; a conflicting readiness key refuses.
 - A `from_tables`-bound source is used as an event fact by a recipe in a runnable table-first example.
-- Every constructor has a runnable example executed by CI; `trial_panel` demonstrates schedule dates.
-- Tests pin required row-defining arguments, occurrence restrictions/defaults, explicit completeness, exactly-one-unit key restriction, stable collision/missing-completeness/multi-unit refusal codes and refusal pickle/deepcopy, the empty-window value/reason contract, and unchanged low-level construction/serialization behavior.
+- Every constructor has a runnable example executed by CI; `trial_panel` demonstrates schedule dates, and `life_table` demonstrates declared grouping columns plus materialized feature/outcome roles and no treatment role.
+- Tests pin required row-defining arguments, occurrence restrictions/defaults, explicit completeness, exactly-one-unit key restriction, permitted source/fact name sharing, source/fact/metric/readiness collisions, stable refusal codes with pickle/deepcopy, the empty-window value/reason contract, and unchanged low-level construction/serialization behavior. Life-table tests prove features exactly match `group_by`, output grouping columns are materialized with roles `features=(<group_by...>, "time_bin")`, and treatment is absent.
 - Preserve null versus zero and per-cell null reasons through Arrow, manifests and exports; preserve the version and all repository validation constraints in `AGENTS.md`.
