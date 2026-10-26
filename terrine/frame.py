@@ -12,6 +12,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import pyarrow as pa
+import pyarrow.compute as pc
 
 import terrine.compile.provenance as _provenance
 from terrine.compile.cost import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED, _scan_policy
@@ -685,6 +686,8 @@ class Frame:
             from terrine.compile.columns import resolve_sketch_sidecars
 
             table = resolve_sketch_sidecars(table, compiled, context.con)
+            if isinstance(self._design.shape, LifeTable):
+                table = self._normalize_output(table)
             roles = compiled.roles
             columns = compiled.columns
             if isinstance(self._design.shape, LifeTable):
@@ -885,8 +888,11 @@ class Frame:
         )
 
     def _normalize_output(self, table: pa.Table) -> pa.Table:
-        if isinstance(self._design.shape, TimeToEvent):
-            for name in ("event_time", "censor_time", "duration", "entry_time"):
+        shape = self._design.shape
+        if isinstance(shape, LifeTable):
+            shape = shape.time_to_event
+        if isinstance(shape, TimeToEvent):
+            for name in ("event_time", "censor_time", "entry_time"):
                 if name in table.column_names:
                     dtype = table.schema.field(name).type
                     if pa.types.is_timestamp(dtype) and dtype.tz is None:
@@ -895,6 +901,36 @@ class Frame:
                             name,
                             table[name].cast(pa.timestamp(dtype.unit, tz="UTC")),
                         )
+            if "duration" in table.column_names:
+                # Subtract Arrow ticks so ns axes remain exact across backends.
+                terminal = table["duration"]
+                if pa.types.is_timestamp(terminal.type):
+                    t0 = table["t0"]
+                    unit = terminal.type.unit
+                    timestamp_type = pa.timestamp(unit, tz="UTC")
+                    terminal_ticks = terminal.cast(timestamp_type).cast(pa.int64())
+                    origin_ticks = t0.cast(timestamp_type).cast(pa.int64())
+                    try:
+                        # pyarrow.compute lacks a stub for this checked Arrow kernel.
+                        elapsed = pc.subtract_checked(  # ty: ignore[unresolved-attribute]
+                            terminal_ticks, origin_ticks
+                        )
+                    except pa.ArrowInvalid as exc:
+                        if unit == "ns" and any(
+                            source.dialect == "snowflake"
+                            for source in self._model.sources.values()
+                        ):
+                            from terrine.execution._snowflake import _TIMESTAMP_RANGE
+
+                            raise _TIMESTAMP_RANGE.error(
+                                detail="elapsed duration exceeds Arrow's int64 nanosecond range"
+                            ) from exc
+                        raise
+                    table = table.set_column(
+                        table.schema.get_field_index("duration"),
+                        "duration",
+                        elapsed.cast(pa.duration(unit)),
+                    )
         if isinstance(self._design.shape, StatePanel):
             index = table.schema.get_field_index("gap")
             table = table.set_column(index, "gap", table.column(index).cast(pa.duration("us")))

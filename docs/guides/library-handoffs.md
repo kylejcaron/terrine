@@ -153,12 +153,13 @@ model = CoxPHFitter().fit(
 )
 ```
 
-Terrine's `duration` field is a **timestamp endpoint**. The helper computes
-`(duration - t0)` and `(entry_time - t0)` in elapsed seconds, subtracting integer
-timestamps before float conversion. Valid records satisfy `0 <= entry <= duration`;
-Cox additionally requires strict `entry < duration`. Conversion rounds elapsed
-seconds, not epoch timestamps; it introduces no statistical error model. The unit
-test pins nanosecond-scale elapsed differences at modern calendar dates.
+Terrine's `duration` field is an **elapsed Arrow duration from `t0`**. The
+lifelines helper consumes it directly and computes `(entry_time - t0)` in
+elapsed seconds, subtracting integer timestamps before float conversion. Valid
+records satisfy `0 <= entry <= duration`; Cox additionally requires strict
+`entry < duration`. Conversion rounds elapsed seconds, not epoch timestamps; it
+introduces no statistical error model. The unit test pins nanosecond-scale
+elapsed differences at modern calendar dates.
 
 The KM result carries only durations, event flags, entry and declared row weights,
 plus immutable exclusion counts. KM's fit interface has no cluster argument:

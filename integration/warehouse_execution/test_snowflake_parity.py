@@ -240,6 +240,51 @@ def test_design_matches_duckdb(snowflake_scratch, tmp_path, name):  # noqa: F811
     assert actual == expected
 
 
+def test_time_to_event_duration_keeps_submicrosecond_precision(snowflake_scratch, tmp_path):
+    import pyarrow as pa
+
+    _load_shapes(snowflake_scratch)
+    scratch = snowflake_scratch
+    scratch.sql(
+        "UPDATE events SET occurred_at = '2025-01-02 00:00:00.000000001 +0000' "
+        "WHERE user_id = 'a' AND amount = 2.50"
+    )
+    model = shapes._model(scratch.con, tmp_path, "snowflake")
+    table = shapes._DESIGNS["time_to_first_order"].build(model).materialize(shapes._BUDGET).table
+    row = next(index for index, unit in enumerate(table["unit"].to_pylist()) if unit == "a")
+    assert table.schema.field("duration").type == pa.duration("ns")
+    assert table["duration"].cast(pa.int64())[row].as_py() == 43_200_000_000_001
+
+
+def test_time_to_event_duration_outside_nanosecond_range_refuses(snowflake_scratch, tmp_path):
+    scratch = snowflake_scratch
+    _load_shapes(scratch)
+    scratch.sql("DELETE FROM events")
+    scratch.sql(
+        "INSERT INTO events VALUES "
+        "('a', '2200-01-01 00:00:00 +0000', 1.00, 'gold', "
+        "'00000000-0000-0000-0000-999999999999')"
+    )
+    path = tmp_path / "snowflake-duration.yaml"
+    path.write_text(shapes._CATALOG.format(dialect="snowflake"), encoding="utf-8")
+    model = tr.Model.from_catalog(
+        path,
+        con=scratch.con,
+        units={"user": tr.UnitSource("users", "user_id")},
+        readiness={
+            "orders": tr.Coverage("1600-01-01", "2301-01-01"),
+            "states": tr.Coverage("1600-01-01", "2301-01-01"),
+        },
+    )
+    design = tr.Design(
+        "user",
+        tr.FixedDate("1700-01-01"),
+        shape=tr.TimeToEvent("order"),
+        administrative_cutoff=datetime(2300, 1, 1, tzinfo=UTC),
+    )
+    with pytest.raises(TerrineError) as error:
+        design.build(model).materialize(shapes._BUDGET)
+    assert error.value.code == "terrine.execution.arrow_timestamp_range"
 def test_event_ids_break_first_event_ties(snowflake_scratch, tmp_path):  # noqa: F811
     _load_shapes(snowflake_scratch)
     event_ids = {"orders": "event_id"}

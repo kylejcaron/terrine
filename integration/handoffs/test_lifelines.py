@@ -16,10 +16,7 @@ def test_lifelines_fits_record_km_cox_and_compressed_risk_counts(handoff_frame, 
     t0 = handoff_frame.table["t0"].to_pylist()
     durations = [3, 7, 2, 9, 6, 4, 10, 8, 5, 11, 12, 13]
     table = handoff_frame.table.append_column(
-        "duration",
-        pa.array(
-            [origin + timedelta(days=days) for origin, days in zip(t0, durations, strict=True)]
-        ),
+        "duration", pa.array([timedelta(days=days) for days in durations], type=pa.duration("us"))
     )
     table = table.append_column(
         "entry_time", pa.array([origin + timedelta(days=i % 2) for i, origin in enumerate(t0)])

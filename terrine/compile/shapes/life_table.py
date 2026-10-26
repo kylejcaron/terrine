@@ -39,6 +39,15 @@ def _nanoseconds(table: pa.Table, name: str) -> list[int | None]:
     return [None if value is None else value * multiplier for value in values]
 
 
+def _duration_nanoseconds(table: pa.Table, name: str) -> list[int | None]:
+    column = table[name]
+    dtype = column.type
+    if not pa.types.is_duration(dtype):
+        raise TypeError(f"{name} must be a duration")
+    multiplier = _NS_PER_UNIT[dtype.unit]
+    values = column.cast(pa.int64()).to_pylist()
+    return [None if value is None else value * multiplier for value in values]
+
 def aggregate_life_table(
     records: pa.Table,
     *,
@@ -58,7 +67,7 @@ def aggregate_life_table(
         raise ValueError("life-table grouping column is missing")
 
     t0 = _nanoseconds(records, "t0")
-    duration = _nanoseconds(records, "duration")
+    duration = _duration_nanoseconds(records, "duration")
     entry = _nanoseconds(records, "entry_time")
     events = records["event"].to_pylist()
     complete = (
@@ -91,11 +100,10 @@ def aggregate_life_table(
         key = tuple(column[index] for column in groups)
         if complete[index] is not True:
             incomplete_by_group[key].add(record_reasons[index] or "reason_unavailable")
-        terminal = duration[index]
+        terminal_elapsed = duration[index]
         entered = entry[index]
-        if origin is None or terminal is None or entered is None:
+        if origin is None or terminal_elapsed is None or entered is None:
             continue
-        terminal_elapsed = terminal - origin
         entry_elapsed = entered - origin
         if terminal_elapsed < 0 or entry_elapsed < 0:
             continue

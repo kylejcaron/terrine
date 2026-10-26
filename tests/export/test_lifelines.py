@@ -13,10 +13,7 @@ def survival(frame):
     origin = 1_735_689_600_000_000_000
     table = frame.table.append_column(
         "duration",
-        pa.array(
-            [origin + 1, origin + 86_400_000_000_000 + 2_000_000_001],
-            type=pa.timestamp("ns", tz="UTC"),
-        ),
+        pa.array([1, 2_000_000_001], type=pa.duration("ns")),
     )
     table = table.set_column(
         2, "t0", pa.array([origin, origin + 86_400_000_000_000], type=pa.timestamp("ns", tz="UTC"))
@@ -199,8 +196,8 @@ def test_risk_aggregation_retains_incomplete_reasons_for_preflight(frame):
     records = pa.table(
         {
             "t0": [origin, origin],
+            "duration": pa.array([timedelta(days=1)] * 2, type=pa.duration("us")),
             "entry_time": [origin, origin],
-            "duration": [origin + timedelta(days=1)] * 2,
             "event": [False, False],
             "complete": [False, False],
             "reason": ["incomplete_initial_history", "missing_delayed_entry"],
