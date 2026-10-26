@@ -84,6 +84,9 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   `MUTATION_CORES` defaults to 2; execution uses at most the cores agent-slots
   grants. Each pytest invocation starts a fresh interpreter with `-n 0`, retaining
   the ordinary live-warehouse exclusions and avoiding native-library fork hazards.
+  Every mutant runs the entire selection without fail-fast, including every
+  consumer of shared fixtures. A kill requires a named failing test and a complete
+  JUnit identity set; internal errors, crashes and incomplete reports are unresolved.
   Every invocation rebuilds `mutants/` and discards cached results; archive its
   evidence before another campaign. Keep that ignored workspace for kill
   attribution. `MUTATION_SAMPLE=0.25 MUTATION_SEED=20261025` selects a reproducible

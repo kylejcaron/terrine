@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -35,6 +36,18 @@ def collect_stats() -> int:
     if result == 0:
         save_stats()
     return result
+
+
+def read_report(path: Path) -> tuple[set[str], set[str]]:
+    seen, failed = set(), set()
+    for case in ET.parse(path).iter("testcase"):
+        if not case.get("file") or not case.get("name"):
+            raise ValueError("A test report has no attributable test identity")
+        identity = f"{case.get('file')}::{case.get('name')}"
+        seen.add(identity)
+        if case.find("failure") is not None or case.find("error") is not None:
+            failed.add(identity)
+    return seen, failed
 
 
 def main() -> int:
@@ -116,17 +129,19 @@ def main() -> int:
     campaign["baseline_seconds"] = baseline_seconds
     campaign["associated_functions"] = len(associations)
     campaign["test_count"] = len(stats["duration_by_test"])
+    expected, baseline_failures = read_report(workspace / "baseline.xml")
+    if baseline_failures or len(expected) != campaign["test_count"]:
+        raise RuntimeError("The baseline report does not match the collected test identities")
     timeout = max(60.0, 15 * baseline_seconds)
     reports = workspace / "reports"
     reports.mkdir()
 
     def execute(index: int, mutant: str) -> tuple[str, dict]:
-        tests = sorted(associations.get(mutant.rsplit("__mutmut_", 1)[0], [])) or args.tests
+        tests = args.tests
         command = [
             sys.executable,
             "-m",
             "pytest",
-            "-x",
             "-q",
             *settings.pytest_add_cli_args,
             "-o",
@@ -135,6 +150,8 @@ def main() -> int:
             *tests,
         ]
         before = time.monotonic()
+        raw_code = None
+        timed_out = False
         with (reports / f"{index}.log").open("w") as log:
             try:
                 result = subprocess.run(
@@ -145,11 +162,30 @@ def main() -> int:
                     stderr=subprocess.STDOUT,
                     timeout=timeout,
                 )
-                code = result.returncode
+                raw_code = result.returncode
             except subprocess.TimeoutExpired:
-                code = 36
+                timed_out = True
+        report_error = None
+        seen, failed = set(), set()
+        try:
+            seen, failed = read_report(reports / f"{index}.xml")
+        except (OSError, ValueError, ET.ParseError) as error:
+            report_error = str(error)
+        if timed_out:
+            code = 36
+        elif seen == expected and not report_error and raw_code == 0 and not failed:
+            code = 0
+        elif seen == expected and not report_error and raw_code == 1 and failed:
+            code = 1
+        else:
+            code = 35
         return mutant, {
             "exit_code": code,
+            "raw_exit_code": raw_code,
+            "timed_out": timed_out,
+            "report_error": report_error,
+            "failures": sorted(failed),
+            "test_identities_match": seen == expected,
             "seconds": time.monotonic() - before,
             "tests": tests,
             "report": f"reports/{index}.xml",
