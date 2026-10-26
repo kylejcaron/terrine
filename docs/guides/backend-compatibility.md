@@ -247,8 +247,10 @@ Capabilities distinguish verified (`True`), unsupported (`False`), and unverifie
   runtime cancellation and closing owned sessions do not establish native query
   cancellation support.
 
-`terrine.execution.backend.backend_capabilities(con)` inspects evidence without
-admitting the connection or reading source schema. Unregistered backend
+`terrine.execution.backend.backend_capabilities(con)` inspects backend identity
+without reading source schema. For PostgreSQL it performs only the read-only
+`SELECT version()` check; a PostgreSQL-compatible server that is not verified
+refuses with `terrine.backend.capability_unavailable`. Unregistered backend
 connections return unverified operation values; attempting execution still
 refuses.
 

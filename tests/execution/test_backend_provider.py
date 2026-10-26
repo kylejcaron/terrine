@@ -207,6 +207,7 @@ def test_postgres_admission_refuses_lookalike_before_source_schema_access():
     import pickle
 
     from terrine import Model
+    from terrine.execution import backend as backend_module
     from terrine.execution.backend import backend_provider
 
     class DriverConnection:
@@ -248,6 +249,7 @@ def test_postgres_admission_refuses_lookalike_before_source_schema_access():
     for operation in (
         lambda con: backend_provider(con),
         lambda con: Model.from_catalog(_catalog(), con=con, readiness={}),
+        lambda con: backend_module.backend_capabilities(con),
     ):
         with pytest.raises(TerrineError) as error:
             operation(PostgresBackend())
