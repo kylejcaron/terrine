@@ -11,10 +11,14 @@ test:
 	uv run pytest $(TESTS)
 
 # Local, on-demand campaigns; keep mutants/ until kill attribution is finished.
+# MUTATION_TESTS names the module's own tests: the whole tree is too slow per
+# mutant and needs repository files mutmut does not copy.
 mutate:
+	@test -n "$(MODULE)" -a -n "$(MUTATION_TESTS)" || \
+		{ echo "usage: make mutate MODULE=terrine/x.py MUTATION_TESTS='tests/x.py ...'"; exit 2; }
 	agent-slots -j $(MUTATION_CORES) -- uv run python scripts/mutate.py \
 		--module "$(MODULE)" --cores $(MUTATION_CORES) \
-		--sample $(MUTATION_SAMPLE) --seed $(MUTATION_SEED) $(TESTS)
+		--sample $(MUTATION_SAMPLE) --seed $(MUTATION_SEED) $(MUTATION_TESTS)
 
 # Scheduled scale tier: resource-bound scale, oracle and live-warehouse checks.
 test-scale:

@@ -75,7 +75,7 @@ markers = [
 
 [tool.mutmut]
 source_paths = ["terrine"]
-also_copy = ["integration"]
+also_copy = ["integration", "scripts"]
 pytest_add_cli_args = ["-n", "0", "-p", "no:randomly"]
 
 [tool.ruff]

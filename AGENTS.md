@@ -79,7 +79,7 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   CI splits the unit tier into four groups balanced from `tests/.test_durations`.
   Run the full unit tier locally with `uv run pytest tests`; refresh its
   durations with `uv run pytest tests --store-durations --durations-path tests/.test_durations`.
-- `make mutate MODULE=terrine/backends/numeric.py TESTS="tests/backends/test_numeric.py integration/backends/test_numeric.py"`
+- `make mutate MODULE=terrine/backends/numeric.py MUTATION_TESTS="tests/backends/test_numeric.py integration/backends/test_numeric.py"`
   runs an on-demand, single-module mutation campaign and prints every result.
   `MUTATION_CORES` defaults to 2; execution uses at most the cores agent-slots
   grants. Each pytest invocation starts a fresh interpreter with `-n 0`, retaining

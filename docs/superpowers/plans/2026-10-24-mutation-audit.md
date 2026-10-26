@@ -4,7 +4,7 @@
 
 **Goal:** Find, with mutation evidence, which tests on terrine's most expensive modules catch no fault another test does not catch, delete those that have no distinct oracle, and record the faults no test catches.
 
-**Architecture:** A reproducible `make mutate MODULE=… TESTS=…` target runs mutmut on one module against its own test selection, then the test-audit kill-matrix script records which tests kill each mutant and computes a greedy set cover. Candidates outside the cover are reviewed by hand and deleted only when they have no regression link and no distinct oracle; mutation score must be unchanged after deletion.
+**Architecture:** A reproducible `make mutate MODULE=… MUTATION_TESTS=…` target runs mutmut on one module against its own test selection, then the test-audit kill-matrix script records which tests kill each mutant and computes a greedy set cover. Candidates outside the cover are reviewed by hand and deleted only when they have no regression link and no distinct oracle; mutation score must be unchanged after deletion.
 
 **Tech Stack:** mutmut 3, pytest, the test-audit skill's `kill_matrix.py` and `test_inventory.py`, `agent-slots` for core budget.
 
@@ -60,7 +60,7 @@
 
 **Files:** `pyproject.toml` (dev dependency `mutmut`, `[tool.mutmut]`), `uv.lock`, `Makefile` (`mutate` target), `.gitignore` (`mutants/`), `AGENTS.md` (command).
 
-- [ ] `make mutate MODULE=terrine/backends/numeric.py TESTS="tests/backends/test_numeric.py integration/backends/test_numeric.py"` runs mutmut on that module only, selects those tests with `-n 0`, and prints `mutmut results --all`. Verify on `numeric.py`: non-empty test-to-function associations, and one known mutant reproduced as killed by a named test in the matrix pass.
+- [ ] `make mutate MODULE=terrine/backends/numeric.py MUTATION_TESTS="tests/backends/test_numeric.py integration/backends/test_numeric.py"` runs mutmut on that module only, selects those tests with `-n 0`, and prints `mutmut results --all`. Verify on `numeric.py`: non-empty test-to-function associations, and one known mutant reproduced as killed by a named test in the matrix pass.
 - [ ] Commit `test: add an on-demand mutation runner`.
 
 ### Task 2: Kill matrices
