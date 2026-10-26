@@ -1748,7 +1748,7 @@ def common_frame(request, tmp_path, interop_world):
 
 def test_local_arrow_preserves_exact_temporal_values_and_semantic_metadata(common_frame):
     materialized = common_frame.materialize(Budget(max_rows=3))
-    arrow = materialized.to_arrow().sort_by("unit")
+    arrow = materialized.to_arrow(include_observation_metadata=True).sort_by("unit")
     assert arrow.schema.field("amount").type == pa.decimal128(38, 2)
     assert arrow.schema.field("t0").type == pa.timestamp("us", tz="UTC")
     restored = MaterializedFrame.from_arrow(arrow)
@@ -1799,7 +1799,9 @@ def test_optional_dataframe_values_are_lossless_but_metadata_stays_in_arrow(comm
 
 def test_dataset_batches_and_parquet_preserve_typed_metadata(common_frame, tmp_path):
     budget = Budget(max_rows=3, max_output_bytes=1_000_000)
-    expected = common_frame.to_pyarrow(budget=budget).sort_by("unit")
+    expected = common_frame.to_pyarrow(budget=budget, include_observation_metadata=True).sort_by(
+        "unit"
+    )
     expected_metadata = MaterializedFrame.from_arrow(expected)
     dataset = common_frame.stage("common_stack", budget=budget)
     batches = list(dataset.to_arrow_batches(batch_size=1))

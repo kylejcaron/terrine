@@ -10,6 +10,11 @@ exact output type, materialization refuses with
 `terrine.temporal.exact_overflow` rather than returning a null value. When an
 earlier period is unavailable, its null and reason remain visible in cumulative
 outputs instead of being reported as arithmetic overflow.
+The value/support triples are `period_value, period_value__complete,
+period_value__reason` and `cumulative_value, cumulative_value__complete,
+cumulative_value__reason`. Cohort summaries use `value__complete` and
+`value__reason`, with the same adjacency rule.
+
 
 `TimeToEvent` builds one per-unit record containing elapsed `duration`, the
 terminal `event_time` or `censor_time`, entry time, and completeness/reason
@@ -17,6 +22,11 @@ metadata. `duration` is an Arrow duration measured from `t0`; delayed entry does
 not change its origin. These are observed dataset rows: Terrine does not fit a
 curve or infer a survival probability. Use the records with a downstream
 package such as lifelines when a model or curve is required.
+Per-unit survival columns use `duration__complete`/`duration__reason`,
+`event__complete`/`event__reason`, and `event_time__complete`/`event_time__reason`.
+`censor_reason` remains a distinct value describing censoring, not a shared
+completeness field.
+
 
 Nanosecond axes retain nanoseconds in the Arrow duration. DuckDB's lazy
 published-generation relation cannot express nanosecond intervals and refuses
@@ -48,6 +58,10 @@ Delayed entry contributes to the risk set starting at its actual entry bin;
 events and censoring are recorded in their terminal-time bin. Censor reasons
 remain explicit counts in `censored_by_reason`; no incomplete record is
 zero-filled or reclassified as an event.
+Every risk-set value has its own adjacent support columns, such as
+`events__complete` and `events__reason`. The latter is `list<string>` and retains
+all distinct exact incompleteness reasons for the trajectory, not just one.
+
 
 Arrow dataset export is available independently of any survival calculation:
 `to_surrogate_arrow(frame, features=..., outcomes=...)` returns an

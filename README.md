@@ -148,10 +148,16 @@ export rather than silently dropping a row. Only sources selected by the design
 need readiness declarations, even when the original catalog also defines labels.
 
 `frame.materialize(budget)` returns a `MaterializedFrame` with roles, column
-metadata, eligibility totals and execution provenance. `to_pandas` uses nullable
-Arrow-backed types; `to_polars` and `to_pandas` require their respective extras.
-Arrow exports carry the same metadata. `frame.expr` is an explicitly unsafe Ibis
-escape hatch: executing it directly bypasses validation, budgets and provenance.
+metadata, eligibility totals and execution provenance. Each value is immediately
+followed by `<name>__complete` and `<name>__reason`; for example,
+`sessions_before, sessions_before__complete, sessions_before__reason`.
+Default `to_pandas`, `to_polars` and `to_pyarrow` conversions omit observation
+bounds and anchor provenance from visible columns. Pass
+`include_observation_metadata=True` to inspect them. Arrow stores that evidence
+in schema metadata, restored by `MaterializedFrame.from_arrow`.
+`to_pandas` uses nullable Arrow-backed types; `to_polars` and `to_pandas` require
+their respective extras. `frame.expr` is an explicitly unsafe Ibis escape hatch:
+executing it directly bypasses validation, budgets and provenance.
 
 See [library hand-offs](docs/guides/library-handoffs.md) for preflight-backed
 DoubleML, DoWhy and same-connection duckreg workflows, plus lifelines and diff-diff

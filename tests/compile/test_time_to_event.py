@@ -280,8 +280,8 @@ def test_life_table_delayed_entries_and_incomplete_records_preserve_reason():
             "duration": pa.array([timedelta(hours=18)], type=duration),
             "entry_time": pa.array([origin + timedelta(hours=12)], type=timestamp),
             "event": pa.array([True]),
-            "complete": pa.array([False]),
-            "reason": pa.array(["incomplete_initial_history"]),
+            "duration__complete": pa.array([False]),
+            "duration__reason": pa.array(["incomplete_initial_history"]),
             "censor_reason": pa.array([None], type=pa.string()),
         }
     )
@@ -376,15 +376,14 @@ def test_life_table_keeps_boundary_censor_at_risk_and_group_support():
     )
     assert without_support_metadata.num_rows == 2
 
+
 def test_duration_is_elapsed_from_t0_for_event_and_censored_rows():
     import pyarrow as pa
 
     con, model = _model(outcome_end="2025-01-23")
     try:
         con.raw_sql("DELETE FROM outcomes")
-        con.raw_sql(
-            "INSERT INTO outcomes VALUES ('u1', TIMESTAMPTZ '2025-01-11 00:00:00+00')"
-        )
+        con.raw_sql("INSERT INTO outcomes VALUES ('u1', TIMESTAMPTZ '2025-01-11 00:00:00+00')")
         design = Design(
             "user",
             EventAnchor("signup", which="first"),
@@ -406,9 +405,7 @@ def test_duration_with_delayed_entry_is_measured_from_t0():
     con, model = _model(outcome_end="2025-01-22")
     try:
         con.raw_sql("DELETE FROM outcomes")
-        con.raw_sql(
-            "INSERT INTO outcomes VALUES ('u1', TIMESTAMPTZ '2025-01-11 00:00:00+00')"
-        )
+        con.raw_sql("INSERT INTO outcomes VALUES ('u1', TIMESTAMPTZ '2025-01-11 00:00:00+00')")
         con.raw_sql(
             "UPDATE entries SET ts = TIMESTAMPTZ '2025-01-03 00:00:00+00' WHERE user_id = 'u1'"
         )
@@ -440,12 +437,9 @@ def test_nanosecond_duration_keeps_submicrosecond_elapsed():
     try:
         con.raw_sql("DELETE FROM outcomes")
         con.raw_sql(
-            "INSERT INTO outcomes VALUES "
-            "('u1', TIMESTAMP_NS '2025-01-02 00:00:00.000000001')"
+            "INSERT INTO outcomes VALUES ('u1', TIMESTAMP_NS '2025-01-02 00:00:00.000000001')"
         )
-        design = Design(
-            "user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn")
-        )
+        design = Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
         frame = design.build(model).materialize()
         result = frame.table
         row_index = result["unit"].to_pylist().index("u1")
@@ -460,13 +454,8 @@ def test_nanosecond_duration_keeps_submicrosecond_elapsed():
             .cast(pa.timestamp("ns", tz="UTC"))
             .cast(pa.int64())[row_index]
             .as_py()
-            - result["t0"]
-            .cast(pa.timestamp("ns", tz="UTC"))
-            .cast(pa.int64())[row_index]
-            .as_py()
+            - result["t0"].cast(pa.timestamp("ns", tz="UTC")).cast(pa.int64())[row_index].as_py()
         ) / 1e9
         assert exported.durations[row_index] == legacy_duration
     finally:
         con.disconnect()
-
-

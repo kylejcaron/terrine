@@ -36,6 +36,10 @@ materialized = design.build(model).materialize(
 ```
 
 Each period value is reused as one transition's response and its successor's prior state. Missing values remain null with per-side completeness and reason columns. A Float64 metric is binned by its rounded value, so a value equal to a cutpoint belongs to the lower bin. Cutpoints keep their exact integer, Decimal, or Float64 representation in the safe design format. Binned state windows preserve the metric's aggregation and readiness semantics.
+The published triples use `from_state__complete`/`from_state__reason` and
+`to_state__complete`/`to_state__reason`; named covariates and baseline values use
+the same suffixes immediately after each value.
+
 
 ## Point-observed states
 

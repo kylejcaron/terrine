@@ -489,14 +489,14 @@ def test_sequence_sessions_are_compiled_per_anchor(sequence_model):
     events = [row for row in rows if row["is_event"]]
     assert events
     assert {row["session_index"] for row in events} == {0}
-    assert sum(row["transition_reason"] == "missing_predecessor" for row in events) == len(
+    assert sum(row["transition__reason"] == "missing_predecessor" for row in events) == len(
         {row["anchor_id"] for row in events}
     )
     headers = [row for row in rows if not row["is_event"]]
     for header in headers:
         anchor_events = [row for row in events if row["anchor_id"] == header["anchor_id"]]
-        assert header["sessions_complete"] is True
-        assert header["sessions_reason"] is None
+        assert header["sessions__complete"] is True
+        assert header["sessions__reason"] is None
         assert header["sessions"] == [
             {
                 "session_index": 0,
@@ -731,12 +731,12 @@ def test_sequence_compiler_projects_dimension_backed_property(sequence_model, ha
     rows = model.con.to_pyarrow(compiled.table).to_pylist()
     if not has_history_match:
         header = next(row for row in rows if not row["is_event"])
-        assert header["funnel_attempts_complete"] is False
-        assert header["funnel_attempts_reason"] == "missing_history"
+        assert header["funnel_attempts__complete"] is False
+        assert header["funnel_attempts__reason"] == "missing_history"
     assert [row["region"] for row in rows if row["is_event"]] == (
         ["west", "west", "west"] if has_history_match else [None, None, None]
     )
-    assert [row["region_reason"] for row in rows if row["is_event"]] == (
+    assert [row["region__reason"] for row in rows if row["is_event"]] == (
         [None, None, None] if has_history_match else ["missing_history"] * 3
     )
 

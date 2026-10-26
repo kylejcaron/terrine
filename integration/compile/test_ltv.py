@@ -138,8 +138,8 @@ def test_missing_decimal_period_preserves_cumulative_reason_when_known_subtotal_
             Decimal("60000000000000000000000000000000000000"),
         ]
         assert all(row["cumulative_value"] is None for row in rows)
-        assert all(not row["cumulative_value_complete"] for row in rows)
-        assert [row["cumulative_value_reason"] for row in rows] == [
+        assert all(not row["cumulative_value__complete"] for row in rows)
+        assert [row["cumulative_value__reason"] for row in rows] == [
             "all_values_null",
             "all_values_null",
             "all_values_null",

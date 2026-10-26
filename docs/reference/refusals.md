@@ -382,7 +382,7 @@ Use typed constructors, supported fields and unique output names.
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
 | `terrine.spec.output_name_conflict` | <code>Study output name {name!r} conflicts with {other!r}.</code> | `name`, `other` | [terrine/compile/columns.py](../../terrine/compile/columns.py) |
-| `terrine.spec.reserved_output_name` | <code>Study output name {name!r} is reserved.</code> | `name` | [terrine/compile/columns.py](../../terrine/compile/columns.py) |
+| `terrine.spec.reserved_output_name` | <code>Study output name {name!r} is reserved.</code> | `name` | [terrine/spec/design.py](../../terrine/spec/design.py) |
 
 ## sql
 

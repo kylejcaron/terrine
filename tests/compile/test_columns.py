@@ -11,6 +11,7 @@ from terrine.semantic.models import Catalog
 from terrine.spec import (
     Design,
     FixedDate,
+    Schedule,
     agg,
     asof,
     eq,
@@ -133,6 +134,53 @@ def test_reserved_output_names_refuse(column_model, name):
     with pytest.raises(TerrineError) as error:
         _compile(column_model, features={name: asof("tier", before=0)})
     assert error.value.code == "terrine.spec.reserved_output_name"
+
+
+def test_time_series_columns_are_values_with_named_support(column_model):
+    frame = Design(
+        "user",
+        Schedule("1d", "2025-01-02", "2025-01-04"),
+        features={"rev_14d": agg("total", window=("-14d", "0d"))},
+        outcomes={"rev_next_7d": agg("total", window=("0d", "7d"))},
+    ).build(column_model)
+    assert list(frame.to_pandas().columns) == [
+        "unit",
+        "anchor_id",
+        "t0",
+        "rev_14d",
+        "rev_14d__complete",
+        "rev_14d__reason",
+        "rev_next_7d",
+        "rev_next_7d__complete",
+        "rev_next_7d__reason",
+    ]
+    full = frame.to_pyarrow(include_observation_metadata=True)
+    assert "_observed_from" in full.column_names
+    assert frame.columns["rev_14d"].complete_column == "rev_14d__complete"
+
+
+@pytest.mark.parametrize("field", ["features", "outcomes", "eligibility"])
+@pytest.mark.parametrize("name", ["revenue__complete", "revenue__reason", "x__REASON"])
+def test_reserved_support_suffix_refuses(field, name):
+    import copy
+    import pickle
+
+    with pytest.raises(TerrineError) as error:
+        nodes = {name: is_null(asof("tier", before=0))}
+        Design(
+            "user",
+            FixedDate("2025-01-01"),
+            features=nodes if field == "features" else None,
+            outcomes=nodes if field == "outcomes" else None,
+            eligibility=nodes if field == "eligibility" else None,
+        )
+    for restored in (
+        error.value,
+        copy.deepcopy(error.value),
+        pickle.loads(pickle.dumps(error.value)),
+    ):
+        assert restored.code == "terrine.spec.reserved_output_name"
+        assert restored.context["name"] == name
 
 
 def test_reobserved_null_is_known_and_duplicate_inline_observations_dedupe(column_model):
@@ -492,6 +540,8 @@ def test_event_time_selector_treats_value_less_fact_as_row_occurrence(column_mod
     rows = con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
     assert rows[0]["selected_at"] == datetime(2025, 1, 2, 12, tzinfo=UTC)
     assert rows[1]["selected_at"] is None
+
+
 def test_last_occurrence_selects_latest_event_before_t0(column_model):
     con = column_model.con
     con.raw_sql("DROP TABLE events")
@@ -545,9 +595,7 @@ def _dimension_label_model(
         )
     """)
     for timestamp, event_id in events:
-        workspace = (
-            workspace_by_event_id[event_id] if workspace_by_event_id is not None else "a"
-        )
+        workspace = workspace_by_event_id[event_id] if workspace_by_event_id is not None else "a"
         con.raw_sql(
             "INSERT INTO events VALUES "
             f"('a', TIMESTAMPTZ '{timestamp}', 1, NULL, '{event_id}', '{workspace}')"
@@ -669,7 +717,6 @@ def test_last_occurrence_tied_unknown_label_before_match_is_complete(column_mode
     assert row[meta.reason_column] is None
 
 
-
 def test_last_occurrence_tied_known_events_use_latest_event_id(column_model):
     model = _dimension_label_model(
         column_model,
@@ -692,4 +739,3 @@ def test_last_occurrence_tied_known_events_use_latest_event_id(column_model):
     assert row["selected_at"] == datetime(2025, 1, 1, 12, tzinfo=UTC)
     assert row[meta.complete_column] is True
     assert row[meta.reason_column] is None
-

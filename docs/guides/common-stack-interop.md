@@ -56,13 +56,24 @@ large-string Arrow offsets on readback; this does not change string values or
 imply physical Arrow schema identity. Neither dataframe carries a promise to
 round-trip Terrine schema metadata.
 
-`MaterializedFrame.to_arrow()` stores roles, design/model identities, temporal
-cutoffs, completeness/null-reason references and numeric policy references
-under the reserved `terrine.materialized_frame.v1` schema key.
-`MaterializedFrame.from_arrow()` restores typed metadata. Unrelated schema
-metadata is retained; stale content at the reserved key is replaced by current
-Terrine metadata. Do not zero-fill unavailable values or discard their reason
-columns when preparing downstream data.
+Each output value `name` is followed by `name__complete` (Boolean) and
+`name__reason` (string, or a list of exact reasons for LifeTable aggregates).
+This includes boolean features/outcomes, treatment and eligibility. Output
+names ending in `__complete` or `__reason` are reserved.
+
+Default Frame conversions and `MaterializedFrame.to_arrow()` keep observation
+bounds, anchor provenance and resolved-time bookkeeping out of visible columns.
+Pass `include_observation_metadata=True` to expose them. Full materializations,
+staged generations, manifests and JSON fixtures retain the observation columns.
+Arrow stores the hidden columns as a lossless IPC payload alongside roles,
+design/model identities, temporal cutoffs, completeness/null-reason references
+and numeric policies under `terrine.materialized_frame.v1`.
+`MaterializedFrame.from_arrow()` restores the original columns and typed metadata.
+Restore the materialization before filtering, sorting or otherwise editing a
+compact Arrow table; the embedded observation evidence belongs to its original
+rows and order. Unrelated schema metadata is retained. Neither pandas nor Polars
+promises to retain Terrine schema metadata. Do not zero-fill unavailable values
+or discard their reason columns when preparing downstream data.
 
 Output row/byte limits do not bound upstream scan work or peak query memory.
 Strict scan budgets refuse when no verified scan bound exists. Non-strict scan

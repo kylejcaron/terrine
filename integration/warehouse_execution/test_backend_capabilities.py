@@ -53,7 +53,9 @@ def test_duckdb_typed_dataset_arrow_parquet_and_generation_parity(tmp_path):
     try:
         frame = interop_frame(con)
         budget = Budget(max_rows=3, max_output_bytes=1_000_000)
-        expected = frame.to_pyarrow(budget=budget).sort_by("unit")
+        expected = frame.to_pyarrow(budget=budget, include_observation_metadata=True).sort_by(
+            "unit"
+        )
         metadata = MaterializedFrame.from_arrow(expected)
         rows = expected.to_pylist()
         assert [row["amount"] for row in rows] == [
@@ -330,13 +332,13 @@ def test_trajectory_preserves_event_feature_timing_through_arrow_round_trip():
         assert prior.point_time_column == "cohort_time"
         assert prior.point_time_column in arrow.column_names
         if prior.start_bound_column is not None:
-            assert prior.start_bound_column in arrow.column_names
+            assert prior.start_bound_column in restored.table.column_names
         if prior.end_bound_column is not None:
-            assert prior.end_bound_column in arrow.column_names
+            assert prior.end_bound_column in restored.table.column_names
         timing = restored.provenance.expression_timings["purchase_time"]
         assert timing.point_time_column in arrow.column_names
-        assert timing.start_bound_column in arrow.column_names
-        assert timing.end_bound_column in arrow.column_names
+        assert timing.start_bound_column in restored.table.column_names
+        assert timing.end_bound_column in restored.table.column_names
     finally:
         con.disconnect()
 
@@ -500,7 +502,7 @@ def test_named_retention_roundtrip_frame_matches_independent_occurrences(retenti
     assert from_json(to_json(design)) == from_yaml(to_yaml(design)) == design
     assert from_json(to_json(design)).spec_hash == design.spec_hash
     result = design.build(retention_model).materialize()
-    table = result.to_arrow()
+    table = result.to_arrow(include_observation_metadata=True)
     meta = result.columns["retained"]
     rows = {row["unit"]: row for row in table.to_pylist()}
     events = (

@@ -10,6 +10,16 @@
 
 ### Breaking changes
 
+- Publish per-value completeness as adjacent `<name>__complete` and
+  `<name>__reason` columns across every dataset shape, including boolean outputs
+  and eligibility. Life-table reason columns retain lists of exact reasons.
+  User output names ending in either suffix now refuse during Design validation
+  with `terrine.spec.reserved_output_name`.
+- Hide row observation bounds and anchor provenance in default Frame dataframe
+  and Arrow conversions. Arrow retains them losslessly in schema metadata;
+  `MaterializedFrame.from_arrow` restores the full materialization. Pass
+  `include_observation_metadata=True` to expose bookkeeping columns explicitly.
+  Staged datasets and manifests retain full observation evidence.
 - Rename the saved recipe family without compatibility aliases:
   `DatasetRecipe` → `DatasetDefinition`,
   `DatasetRecipeStore` → `DatasetDefinitionStore`,

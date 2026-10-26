@@ -27,6 +27,9 @@ def test_lifelines_fits_record_km_cox_and_compressed_risk_counts(handoff_frame, 
         pa.array([None if i % 3 != 1 else "administrative_cutoff" for i in range(12)]),
     )
     table = table.append_column("w", pa.array([1 + i % 2 for i in range(12)]))
+    for name in ("duration", "event"):
+        table = table.append_column(f"{name}__complete", table["complete"])
+        table = table.append_column(f"{name}__reason", table["reason"])
     data = replace(
         handoff_frame,
         table=table,
@@ -36,7 +39,9 @@ def test_lifelines_fits_record_km_cox_and_compressed_risk_counts(handoff_frame, 
         columns={
             **handoff_frame.columns,
             **{
-                name: ColumnMeta(None, "outcome", None, None, "complete", "reason")
+                name: ColumnMeta(
+                    None, "outcome", None, None, f"{name}__complete", f"{name}__reason"
+                )
                 for name in ("duration", "event")
             },
         },
@@ -70,7 +75,7 @@ def test_lifelines_fits_record_km_cox_and_compressed_risk_counts(handoff_frame, 
         table=risk_table,
         roles=Roles("unit", "anchor_id", "t0", None, ("time_bin",), ("events", "censored")),
         columns={
-            name: ColumnMeta(None, "outcome", None, None, "complete", "reason")
+            name: ColumnMeta(None, "outcome", None, None, f"{name}__complete", f"{name}__reason")
             for name in ("events", "censored")
         },
         provenance=replace(data.provenance, shape="life_table"),

@@ -739,7 +739,9 @@ class Frame:
                 columns["time_bin"] = ColumnMeta(None, "feature", None, None, None, None)
                 columns.update(
                     {
-                        name: ColumnMeta(None, "outcome", None, None, "complete", "reason")
+                        name: ColumnMeta(
+                            None, "outcome", None, None, f"{name}__complete", f"{name}__reason"
+                        )
                         for name in roles.outcomes
                     }
                 )
@@ -933,19 +935,33 @@ class Frame:
             table = table.set_column(index, "gap", table.column(index).cast(pa.duration("us")))
         return table
 
-    def to_pyarrow(self, *, budget: Budget | None = None) -> pa.Table:
-        """Execute once and attach portable study metadata to the Arrow schema."""
-        return self.materialize(budget).to_arrow()
+    def to_pyarrow(
+        self, *, budget: Budget | None = None, include_observation_metadata: bool = False
+    ) -> pa.Table:
+        """Execute once; optionally expose the observation columns stored in Arrow metadata."""
+        return self.materialize(budget).to_arrow(
+            include_observation_metadata=include_observation_metadata
+        )
 
-    def to_pandas(self, *, budget: Budget | None = None):
+    def to_pandas(
+        self, *, budget: Budget | None = None, include_observation_metadata: bool = False
+    ):
         """Convert using nullable Arrow-backed dtypes; import pandas only on demand."""
         pandas = _optional_dependency("pandas")
-        return self.to_pyarrow(budget=budget).to_pandas(types_mapper=pandas.ArrowDtype)
+        return self.to_pyarrow(
+            budget=budget, include_observation_metadata=include_observation_metadata
+        ).to_pandas(types_mapper=pandas.ArrowDtype)
 
-    def to_polars(self, *, budget: Budget | None = None):
+    def to_polars(
+        self, *, budget: Budget | None = None, include_observation_metadata: bool = False
+    ):
         """Convert using the optional native Polars Arrow conversion."""
         polars = _optional_dependency("polars")
-        return polars.from_arrow(self.to_pyarrow(budget=budget))
+        return polars.from_arrow(
+            self.to_pyarrow(
+                budget=budget, include_observation_metadata=include_observation_metadata
+            )
+        )
 
     def cohorts(self, *, grouping: CohortGrouping, value_column: str) -> CohortTable:
         if not isinstance(self._design.shape, CohortSpec):

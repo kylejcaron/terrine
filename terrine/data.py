@@ -1137,15 +1137,45 @@ class MaterializedFrame:
         """Return a detached JSON-compatible metadata value."""
         return thaw(freeze(_metadata_payload(self.roles, self.columns, self.provenance)))
 
-    def to_arrow(self) -> pa.Table:
-        """Return the Arrow table with canonical JSON metadata attached to its schema."""
+    def to_arrow(self, *, include_observation_metadata: bool = False) -> pa.Table:
+        """Attach portable metadata, hiding observation bookkeeping unless requested."""
         payload = self.to_metadata()
+        table = self.table
+        if not include_observation_metadata:
+            hidden = {"_observed_from", "_observed_until", "anchor_provenance"}
+            for meta in self.columns.values():
+                hidden.update(
+                    name
+                    for name in (meta.observed_from_column, meta.observed_until_column)
+                    if name is not None
+                )
+            for timing in self.provenance.expression_timings.values():
+                hidden.update(
+                    name
+                    for name in (
+                        timing.point_time_column,
+                        timing.start_bound_column,
+                        timing.end_bound_column,
+                    )
+                    if name is not None and name not in self.columns and name != self.roles.t0
+                )
+            hidden_columns = [name for name in table.column_names if name in hidden]
+            if hidden_columns:
+                sink = pa.BufferOutputStream()
+                observation = table.select(hidden_columns)
+                with pa.ipc.new_stream(sink, observation.schema) as writer:
+                    writer.write_table(observation)
+                payload["observation_columns"] = {
+                    "order": table.column_names,
+                    "arrow_ipc": b64encode(sink.getvalue().to_pybytes()).decode("ascii"),
+                }
+                table = table.drop(hidden_columns)
         encoded = json.dumps(
             payload, sort_keys=True, separators=(",", ":"), allow_nan=False
         ).encode("utf-8")
-        metadata = dict(self.table.schema.metadata or {})
+        metadata = dict(table.schema.metadata or {})
         metadata[_ARROW_METADATA_KEY] = encoded
-        return self.table.replace_schema_metadata(metadata)
+        return table.replace_schema_metadata(metadata)
 
     @classmethod
     def from_arrow(cls, table: pa.Table) -> MaterializedFrame:
@@ -1162,7 +1192,17 @@ class MaterializedFrame:
         provenance = _decode(payload["provenance"], Provenance)
         clean = dict(table.schema.metadata or {})
         del clean[_ARROW_METADATA_KEY]
-        return cls(table.replace_schema_metadata(clean or None), roles, columns, provenance)
+        table = table.replace_schema_metadata(clean or None)
+        observation = payload.get("observation_columns")
+        if observation is not None:
+            raw_columns = b64decode(observation["arrow_ipc"], validate=True)
+            hidden = pa.ipc.open_stream(pa.py_buffer(raw_columns)).read_all()
+            if hidden.num_rows != table.num_rows:
+                raise ValueError("observation metadata row count does not match the Arrow table")
+            for name in hidden.column_names:
+                table = table.append_column(hidden.schema.field(name), hidden[name])
+            table = table.select(observation["order"])
+        return cls(table, roles, columns, provenance)
 
     def to_json(self) -> str:
         """Serialize metadata plus an Arrow IPC stream, without pickle."""
