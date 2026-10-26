@@ -22,7 +22,7 @@
 | 6 | `event_time(occurrence="last")`; predicates as feature/outcome values; both in phase 1 | Owner: "should we come up to solutions for these now?"; "ok can you make a plan for this?" (reply to "If you agree, I'll move k79m and hvhz to priority 1") | Yes |
 | 7a | Engine registry and conformance suite for 10-15+ engines | Owner: "assume we'll support 10-15 in the near future and might expand further beyond that"; "yes please!" | Yes |
 | 7b | Opt-in generic default for unregistered Ibis backends | Owner: "isnt it as easy as seeing which ibis backend is provided and giving a warning?"; "does your proposed solution have a default operation, ie just default unverified ibis?"; "yes please!" | Yes |
-| 7c | Which engines to add first, and in what order | Agent-proposed list (Trino, ClickHouse, SQL Server, Oracle, Spark); the capability itself is row 7a | **No** - T12 starts only with owner-picked engines; listed in the needs-human issue |
+| 7c | Adding new engines (Trino, ClickHouse, SQL Server, Oracle, Spark, ...) | Owner: "we wont add additional engines as part of this work" | **Out of scope** - no tasks; kata `6dmp` stays in the backlog outside this plan |
 | 8 | Refuse PostgreSQL-wire look-alikes (Redshift etc. admitted as PostgreSQL); moved before publication | Owner standing rule (global AGENTS.md): "Do not defer related defects found while working". Placement in phase 1 is provisional (plan review, high finding) | Yes (placement provisional; see Open decisions) |
 | 9 | `from_catalog` accepts a mapping; examples import public modules only (kata `tcv2`) | Agent-proposed | **No** - no tasks; listed in the needs-human issue |
 | 10 | Readable, consistent completeness columns across shapes (kata `12j7`) | Agent-proposed | **No** - no tasks; listed in the needs-human issue |
@@ -66,7 +66,7 @@ flowchart LR
   end
   subgraph P3[Phase 3: engines]
     T9[T9 j60e registry refactor] --> T11[T11 14ff generic opt-in]
-    T10[T10 w6pn conformance] --> T11 --> T12[T12 6dmp Docker engines]
+    T10[T10 w6pn conformance] --> T11
     T13[T13 9btd anchor offset]
   end
   T3 --> WB
@@ -85,7 +85,7 @@ flowchart LR
 | Gate | Owner decides publication (`v9yy`) | Owner-reserved |
 | 4 | T9, T10, T13 | T9 is a pure refactor of `terrine/backends/` and `terrine/execution/`; T10 adds tests only; T13 touches `compile/anchors.py` near the engine list T9 removes (`anchors.py:154`): rebase whichever lands second |
 | 5 | T11 (after T9 + T10) | Needs the registry and the suite |
-| 6 | T12 (after T11), one child issue per owner-picked engine | Engines are independent of each other |
+| - | No new engines | Owner decision; T12 removed |
 
 Concurrency cap: at most four worktrees at once; waves 1 and 2 stay within it.
 
@@ -215,9 +215,9 @@ Owner chooses version and license and authorizes making the repository public (k
 
 **Path:** architectural; short spec from the `7zj3` parent design, then plan. **After:** T9, T10. **Branch:** `feat/generic-backend`.
 
-### Task 12: Docker-runnable engines (kata `6dmp`)
+### Task 12: removed
 
-**Path:** one child issue and branch per owner-picked engine (candidates: Trino, ClickHouse, SQL Server, Oracle, Spark), each: conformance with the generic dialect, overrides, session strategy, identity check, CI job, docs. **After:** T11.
+Adding engines is out of scope for this plan (owner: "we wont add additional engines as part of this work"). The registry, conformance suite and generic opt-in (T9-T11) make a later engine a single dialect file plus a CI job; kata `6dmp` holds that backlog.
 
 ### Task 13: `EventAnchor` offset for landmark datasets (kata `9btd`)
 
@@ -226,5 +226,5 @@ Owner chooses version and license and authorizes making the repository public (k
 ## Open decisions
 
 - T8 placement: moved before publication (phase 1, wave 2) because the plan review rated shipping the look-alike gap publicly as high severity and the owner's standing rule says not to defer related defects. The owner ordered warehouse work third; T8 is a defect fix rather than warehouse feature work. Revert to phase 3 if the owner prefers.
-- Unconfirmed rows 7c, 9 and 10 (engine selection; kata `tcv2`, `12j7`) await the owner; the needs-human issue lists them. If confirmed, `12j7` belongs after T3 and T5 (it renames columns those tasks touch) and before T7.
+- Unconfirmed rows 9 and 10 (kata `tcv2`, `12j7`) await the owner; the needs-human issue lists them. If confirmed, `12j7` belongs after T3 and T5 (it renames columns those tasks touch) and before T7.
 - Plan review finding "allow a README milestone on the current API before T6" was rejected: the owner ordered API changes before the README ("1) focus on public api / usability changes 2) update the readme").
