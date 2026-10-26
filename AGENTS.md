@@ -71,7 +71,7 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
 - `make test-scale` runs the scheduled scale tier (`SCALE_TESTS` overrides the
   `integration/` default); `make complexity` reports without gating. The
   integration tier, the smoke script and examples run in CI on every push and
-  before merges; the scale tier runs nightly and on demand.
+  before merges; the scale tier runs weekly and on demand.
 - CI splits the integration tier into balanced groups from
   `integration/.test_durations`. Tests without a stored time still run (they
   are assigned the average); after large changes refresh it with
@@ -129,7 +129,7 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
     moves here. Runs on every push.
   - **Scale** (`@pytest.mark.scale`, under `integration/`): resource-bound
     scale, independent-oracle and owner-approved live-warehouse checks.
-    Deselected by default; runs nightly and on demand. Keep them few.
+    Deselected by default; runs weekly and on demand. Keep them few.
   - A unit test that drives a full pipeline to check one narrow rule is
     misplaced: rewrite it at the owning function.
 - Use tiny deterministic fixtures and bounded property-based cases. Avoid sleeps

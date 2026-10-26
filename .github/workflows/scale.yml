@@ -1,10 +1,10 @@
 name: scale
 
 # Resource-bound scale, oracle and live-warehouse checks. Too slow for every
-# push; run nightly and on demand.
+# push; run weekly and on demand.
 on:
   schedule:
-    - cron: "0 7 * * *"
+    - cron: "0 7 * * 1"
   workflow_dispatch:
 
 concurrency:
@@ -12,8 +12,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Size pytest-xdist to the runner (2 CPUs on private-repo runners).
-  PYTEST_ADDOPTS: -n auto
+  # One test at a time: each scale test saturates the 2-CPU runner (DuckDB uses
+  # every core), so parallel workers only contend and trip the hang guards.
+  PYTEST_ADDOPTS: -n 0
 
 jobs:
   scale:
