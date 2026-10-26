@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ibis
 
+from terrine import recipes
 from terrine.data import Coverage, Events, UnitSource
 from terrine.model import Model
 from terrine.semantic.models import Catalog
@@ -149,7 +150,7 @@ def test_from_tables_ltv_cumulative_age_zero_includes_origin_event():
             },
         )
         native = _native_model(con)
-        design = Design(
+        low_level = Design(
             "user",
             EventAnchor("orders", which="first"),
             shape=CohortSpec(
@@ -157,8 +158,17 @@ def test_from_tables_ltv_cumulative_age_zero_includes_origin_event():
                 Trajectory("orders_amount_sum", "30d", periods=2, cumulative=True),
             ),
         )
+        design = recipes.ltv(
+            "user",
+            start_event="orders",
+            metric="orders_amount_sum",
+            period="30d",
+            periods=2,
+        )
+        assert design == low_level
+        assert design.spec_hash == low_level.spec_hash
         generated_frame, generated_rows = _collect(generated, design)
-        _, native_rows = _collect(native, design)
+        _, native_rows = _collect(native, low_level)
         assert generated_rows == native_rows
         u1 = [row for row in generated_rows if row["unit"] == "u1"]
         age_zero = next(row for row in u1 if row["age"] == 0)

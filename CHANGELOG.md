@@ -4,6 +4,11 @@
 
 ### Public API
 
+- Construct common dataset types with `terrine.recipes`: time series, trial
+  panels, event panels, cumulative LTV, survival, life tables, state panels and
+  bounded event sequences. Each returns a plain low-level `Design`, retains
+  supported row/role options and refuses unsupported keywords. Life-table
+  features must exactly match its explicit grouping names.
 - Bind table-backed events with immutable `Events` descriptors and
   `Model.from_tables`, retaining explicit unit rosters and completeness.
   Generate event/value facts and count, sum and event-mean metrics; refuse
