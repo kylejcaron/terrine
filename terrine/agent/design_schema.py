@@ -75,7 +75,7 @@ def design_schema() -> dict[str, Any]:
             "window": ref("Window"),
             "label_property": nullable(text),
             "equals": scalar,
-            "occurrence": text,
+            "occurrence": {"enum": ["first", "last", "nth"]},
             "n": nullable(integer),
             "relative_to": nullable(ref("EventTime")),
         },

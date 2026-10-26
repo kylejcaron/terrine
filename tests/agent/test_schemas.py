@@ -123,7 +123,9 @@ def test_discovery_schema_matches_existing_tagged_codec(variant):
         )
     else:
         design = Design(
-            "user", FixedDate("2025-01-01"), features={"when": EventTime("value", Window(-10, 0))}
+            "user",
+            FixedDate("2025-01-01"),
+            features={"when": EventTime("value", Window(-10, 0), occurrence="last")},
         )
     payload = json.loads(to_json(design))
     validator = Draft202012Validator(design_schema())

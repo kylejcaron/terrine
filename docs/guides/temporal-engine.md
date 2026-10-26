@@ -509,10 +509,15 @@ carry progress/status when a selected observation window ends before a
 deadline.
 
 `EventTime(fact, window)` selects the first matching fact occurrence in its
-strict half-open window; `occurrence="nth"` selects the corresponding
-one-based occurrence. Its optional paired `label_property` and `equals`
-arguments refine selection. An expression can use that timestamp as its origin:
-`agg("metric", window=("0s", "1h"), relative_to=selector)` or
+strict half-open window; `occurrence="last"` selects the last matching event,
+and `occurrence="nth"` selects the corresponding one-based occurrence. Both
+endpoints follow `(timestamp, configured event ID)` order, so tied events choose
+opposite IDs for first and last. Sources without a configured event ID continue
+to refuse tied timestamps. Its optional paired `label_property` and `equals`
+arguments refine selection. A complete window with no matching event returns
+null with `complete=True`; do not fill this with zero, which would imply an
+event occurred at the origin. An expression can use the selected timestamp as
+its origin: `agg("metric", window=("0s", "1h"), relative_to=selector)` or
 `asof("property", before="0s", relative_to=selector)`. Runtime time bounds are
 retained separately from the measured window. After the selector resolves to a
 present origin, the relative result preserves the underlying value,

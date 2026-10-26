@@ -492,3 +492,150 @@ def test_event_time_selector_treats_value_less_fact_as_row_occurrence(column_mod
     rows = con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
     assert rows[0]["selected_at"] == datetime(2025, 1, 2, 12, tzinfo=UTC)
     assert rows[1]["selected_at"] is None
+def test_last_occurrence_selects_latest_event_before_t0(column_model):
+    con = column_model.con
+    con.raw_sql("DROP TABLE events")
+    con.raw_sql("""
+        CREATE TABLE events (
+            user_id VARCHAR, ts TIMESTAMPTZ, amount BIGINT, tier VARCHAR
+        )
+    """)
+    con.raw_sql("""
+        INSERT INTO events VALUES
+            ('a', TIMESTAMPTZ '2024-12-28 12:00:00+00', 1, 'old'),
+            ('a', TIMESTAMPTZ '2025-01-01 12:00:00+00', 2, 'new')
+    """)
+    model = Model.from_catalog(
+        column_model.catalog,
+        con=con,
+        readiness={"events": Coverage("2024-12-20", "2025-01-03")},
+        units=column_model.units,
+    )
+    selected = event_time("amount", window=("-5d", "0s"), occurrence="last")
+    compiled = _compile(model, features={"selected_at": selected})
+    rows = con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
+    assert rows[0]["selected_at"] == datetime(2025, 1, 1, 12, tzinfo=UTC)
+
+
+def test_last_occurrence_empty_complete_lookback_is_null_complete(column_model):
+    selected = event_time("amount", window=("-1d", "0s"), occurrence="last")
+    compiled = _compile(column_model, features={"selected_at": selected})
+    rows = column_model.con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
+    meta = compiled.columns["selected_at"]
+    assert rows[1]["selected_at"] is None
+    assert rows[1][meta.complete_column] is True
+    assert rows[1][meta.reason_column] is None
+
+
+def test_last_occurrence_ties_mirror_first(column_model):
+    con = column_model.con
+    con.raw_sql("""
+        CREATE TABLE tied_events AS
+        SELECT user_id, ts, amount, tier,
+            CASE WHEN user_id = 'a' THEN 'b' ELSE 'a' END AS event_id
+        FROM events WHERE ts = TIMESTAMPTZ '2025-01-02 11:59:59+00'
+        UNION ALL
+        SELECT user_id, ts, amount, tier,
+            CASE WHEN user_id = 'a' THEN 'a' ELSE 'b' END AS event_id
+        FROM events WHERE ts = TIMESTAMPTZ '2025-01-02 11:59:59+00'
+    """)
+    definition = column_model.catalog.model_dump(mode="python")
+    definition["sources"]["events"]["relation"] = {"kind": "table", "name": "tied_events"}
+    model = Model.from_catalog(
+        Catalog.model_validate(definition),
+        con=con,
+        readiness=column_model.readiness,
+        units=column_model.units,
+        event_ids={"events": "event_id"},
+    )
+    compiled = _compile(
+        model,
+        features={
+            "first_at": event_time("amount", window=("-1s", "0s"), occurrence="first"),
+            "last_at": event_time("amount", window=("-1s", "0s"), occurrence="last"),
+        },
+    )
+    rows = con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
+    assert rows[0]["first_at"] == rows[0]["last_at"] == datetime(
+        2025, 1, 2, 11, 59, 59, tzinfo=UTC
+    )
+    # The timestamps tie; distinct event IDs determine opposite endpoint rows.
+    assert rows[0]["first_at"] == rows[0]["last_at"]
+def _dimension_label_model(column_model, events, *, starts, ends):
+    con = column_model.con
+    con.raw_sql("DROP TABLE events")
+    con.raw_sql("""
+        CREATE TABLE events (
+            user_id VARCHAR, ts TIMESTAMPTZ, amount BIGINT, tier VARCHAR, event_id VARCHAR
+        )
+    """)
+    for timestamp, event_id in events:
+        con.raw_sql(
+            "INSERT INTO events VALUES "
+            f"('a', TIMESTAMPTZ '{timestamp}', 1, NULL, '{event_id}')"
+        )
+    con.raw_sql("""
+        CREATE TABLE tier_history (
+            id VARCHAR, tier VARCHAR, starts TIMESTAMPTZ, ends TIMESTAMPTZ
+        )
+    """)
+    con.raw_sql(
+        "INSERT INTO tier_history VALUES "
+        f"('a', 'gold', TIMESTAMPTZ '{starts}', TIMESTAMPTZ '{ends}')"
+    )
+    definition = column_model.catalog.model_dump(mode="python")
+    definition["sources"]["events"]["dimensions"] = ("history",)
+    definition["sources"]["events"]["relation"] = {"kind": "table", "name": "events"}
+    definition["properties"]["tier"]["dimension"] = "history"
+    definition["dimensions"]["history"] = {
+        "relation": {"kind": "table", "name": "tier_history"},
+        "source_entity": "user",
+        "entity_column": "id",
+        "properties": ("tier",),
+        "validity": {"valid_from": "starts", "valid_to": "ends"},
+    }
+    return Model.from_catalog(
+        Catalog.model_validate(definition),
+        con=con,
+        readiness={"events": Coverage("2024-12-20", "2025-01-03")},
+        units=column_model.units,
+        event_ids={"events": "event_id"},
+    )
+
+
+def test_last_occurrence_unknown_label_after_latest_match_is_incomplete(column_model):
+    model = _dimension_label_model(
+        column_model,
+        [("2024-12-30 12:00:00+00", "a"), ("2025-01-01 12:00:00+00", "b")],
+        starts="2024-12-29 00:00:00+00",
+        ends="2024-12-31 00:00:00+00",
+    )
+    selector = event_time(
+        "amount", window=("-6d", "0s"), label_property="tier", equals="gold", occurrence="last"
+    )
+    compiled = _compile(model, features={"selected_at": selector})
+    row = model.con.to_pyarrow(compiled.table).to_pylist()[0]
+    meta = compiled.columns["selected_at"]
+    assert row["selected_at"] is None
+    assert row[meta.complete_column] is False
+    assert row[meta.reason_column] == "incomplete_label_history"
+
+
+def test_last_occurrence_unknown_label_before_latest_match_is_complete(column_model):
+    model = _dimension_label_model(
+        column_model,
+        [("2024-12-28 12:00:00+00", "a"), ("2025-01-01 12:00:00+00", "b")],
+        starts="2024-12-31 00:00:00+00",
+        ends="2025-01-03 00:00:00+00",
+    )
+    selector = event_time(
+        "amount", window=("-6d", "0s"), label_property="tier", equals="gold", occurrence="last"
+    )
+    compiled = _compile(model, features={"selected_at": selector})
+    row = model.con.to_pyarrow(compiled.table).to_pylist()[0]
+    meta = compiled.columns["selected_at"]
+    assert row["selected_at"] == datetime(2025, 1, 1, 12, tzinfo=UTC)
+    assert row[meta.complete_column] is True
+    assert row[meta.reason_column] is None
+
+

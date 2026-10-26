@@ -20,6 +20,8 @@
   reasons; distinguish fully observed zero activity from missing follow-up.
 - Preserve evaluated null reasons on event-relative results after a selector
   resolves, independently of completeness.
+- Select the last matching event in event-time selector windows with deterministic
+  timestamp and event-ID ordering; keep complete empty lookbacks as null.
 - Build sequential/calendar/event panels, bounded state pairs, LTV trajectories,
   cohort summaries, per-unit time-to-event records and risk-set counts/plain
   rates. Retain row identity, temporal support and typed shape provenance.
@@ -29,9 +31,9 @@
 - Build deterministic bounded event sequences, sessions, funnels, transitions
   and event-relative selectors with explicit tie, missing-predecessor and
   temporal-leakage rules.
-- Support exact retention occurrence bands and deterministic last-event values,
-  exact min/max/distinct/type-7 quantiles, explicit native approximate distinct,
-  and optional cross-sectional DataSketches quantile sidecars.
+- Support exact retention occurrence bands, exact min/max/distinct/type-7
+  quantiles, explicit native approximate distinct, and optional cross-sectional
+  DataSketches quantile sidecars.
 
 ### Reproducibility and ML
 

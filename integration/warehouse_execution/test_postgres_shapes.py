@@ -121,6 +121,15 @@ _DESIGNS = {
         },
         outcomes={},
     ),
+    "last_event_time": tr.Design(
+        "user",
+        tr.FixedDate("2025-01-04T00:00:00+00:00"),
+        features={
+            "last_order_at": tr.event_time(
+                "order", window=("-4d", "0s"), occurrence="last"
+            )
+        },
+    ),
     "schedule": tr.Design(
         "user",
         tr.Schedule("1d", "2025-01-01", "2025-01-05"),
