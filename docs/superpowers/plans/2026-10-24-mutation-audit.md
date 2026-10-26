@@ -20,6 +20,21 @@
 | Capability (public API) cuts | Proposal step 5: product decision | No; owner decides from Task 4's table | — |
 | New tests for surviving mutants | test-audit: survivors are a to-do list, not part of the audit | No; recorded only | — |
 
+## Divergence — owner-approved scope revision, 2026-10-25
+
+- Finish `terrine/backends/numeric.py` with a full campaign, kill attribution,
+  candidate review, and the fresh post-deletion gate if any tests are removed.
+- For `terrine/temporal/aggregate.py`, run a seeded random approximately 25%
+  sample. Record the seed and every sampled mutant name. Apply the same
+  completeness and deletion safeguards within the sample; its score is an
+  estimate, not an exact whole-module score. Prefer keeping uncertain candidates.
+- Do not start `terrine/compile/columns.py` or the compile shapes. If the first
+  two selections show substantial redundancy (more than 15% of selected tests
+  outside the cover and lacking a distinct oracle), report that finding and stop
+  rather than expand the campaigns.
+- Retain the per-capability cost table and final unit/non-live integration
+  verification. Target the remaining audit at approximately two to three hours.
+
 ## Global Constraints
 
 - Delete only with evidence: a test outside the greedy cover, with no regression/issue link and no distinct oracle (tolerance, error code, parity, cross-path equivalence). Keep the better-specified of interchangeable tests.

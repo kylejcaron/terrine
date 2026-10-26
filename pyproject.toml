@@ -50,6 +50,7 @@ dev = [
     "vulture>=2.14,<3",
     "complexipy>=4,<6",
     "prek>=0.2,<1",
+    "mutmut>=3.8,<3.9",
 ]
 docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9.6,<10"]
 
@@ -71,6 +72,11 @@ markers = [
     "snowflake: live Snowflake probes; need TERRINE_TEST_SNOWFLAKE_* settings",
     "handoffs: optional downstream library integration examples",
 ]
+
+[tool.mutmut]
+source_paths = ["terrine"]
+also_copy = ["integration"]
+pytest_add_cli_args = ["-n", "0", "-p", "no:randomly"]
 
 [tool.ruff]
 target-version = "py313"

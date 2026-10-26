@@ -79,6 +79,16 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   CI splits the unit tier into four groups balanced from `tests/.test_durations`.
   Run the full unit tier locally with `uv run pytest tests`; refresh its
   durations with `uv run pytest tests --store-durations --durations-path tests/.test_durations`.
+- `make mutate MODULE=terrine/backends/numeric.py TESTS="tests/backends/test_numeric.py integration/backends/test_numeric.py"`
+  runs an on-demand, single-module mutation campaign and prints every result.
+  `MUTATION_CORES` defaults to 2; execution uses at most the cores agent-slots
+  grants. Each pytest invocation starts a fresh interpreter with `-n 0`, retaining
+  the ordinary live-warehouse exclusions and avoiding native-library fork hazards.
+  Every invocation rebuilds `mutants/` and discards cached results; archive its
+  evidence before another campaign. Keep that ignored workspace for kill
+  attribution. `MUTATION_SAMPLE=0.25 MUTATION_SEED=20261025` selects a reproducible
+  random sample without replacement; the default executes every mutant.
+  Campaigns are local only, not part of ordinary checks or CI.
 - `make test-postgres` runs the live PostgreSQL probes (`@pytest.mark.postgres`,
   deselected by default); they fail, never skip, without
   `TERRINE_TEST_POSTGRES_*` settings. Start a throwaway local server with
