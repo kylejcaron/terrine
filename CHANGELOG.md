@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Public API
+
+- `Model.from_catalog` accepts plain Catalog mappings and validates them with
+  the same coded refusal contract as YAML-loaded definitions. `GroupSplit` and
+  `TimeSplit` are public through `terrine.dataset` for training-set workflows.
+
 ### Breaking changes
 
 - Rename the saved recipe family without compatibility aliases:

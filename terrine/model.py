@@ -15,7 +15,7 @@ from terrine.data import BoundCoverage, Coverage, UnitSource
 from terrine.errors import RefusalSpec
 from terrine.execution._metadata import metadata_operation
 from terrine.semantic.bind import _SCHEMA, bind_metric, normalize_source
-from terrine.semantic.io import load_catalog
+from terrine.semantic.io import load_catalog, validate_catalog
 from terrine.semantic.models import BoundMetric, BoundSource, Catalog, RelationSpec, TableRef
 from terrine.semantic.time import boundary_timezone
 from terrine.temporal.readiness import Readiness
@@ -93,7 +93,7 @@ class Model:
     @metadata_operation()
     def from_catalog(
         cls,
-        path_or_catalog: str | Path | Catalog,
+        path_or_catalog: str | Path | Catalog | Mapping[str, Any],
         *,
         con: Any,
         readiness: Readiness | Mapping[str, Coverage | BoundCoverage],
@@ -105,6 +105,8 @@ class Model:
         catalog = (
             path_or_catalog
             if isinstance(path_or_catalog, Catalog)
+            else validate_catalog(path_or_catalog)
+            if isinstance(path_or_catalog, Mapping)
             else load_catalog(path_or_catalog)
         )
         day = _boundary_function(catalog.day_boundary)
