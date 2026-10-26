@@ -84,6 +84,11 @@ conservative declared support even when another conjunct already determines
 `False`. Boolean outcomes can be selected directly with
 `frame.training_set(label="converted_7d")`.
 
+For plain as well as boolean outcomes, sequential follow-up includes every
+event-selector search window, recursively through `relative_to`. A measurement
+window ending before its selector does not shorten follow-up: the full search
+must still be observed, including sustained-control initiation checks.
+
 Approximate-quantile sidecars cannot be predicate operands in any role. These
 requests refuse during validation and persisted-runtime admission with
 `terrine.metric.approx_eligibility_unavailable`; use exact `quantile` or output

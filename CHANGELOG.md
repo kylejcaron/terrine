@@ -25,6 +25,9 @@
   reuse `terrine.metric.approx_eligibility_unavailable` across predicate roles
   and ordinary/persisted-runtime admission.
   Use exact quantiles or output the approximate value without a predicate.
+- Include every nested event-selector dependency in sequential outcome
+  follow-up, even when a plain or boolean outcome measures before its selector.
+  Preserve sustained-control initiation checks through the full search horizon.
 - Preserve evaluated null reasons on event-relative results after a selector
   resolves, independently of completeness.
 - Select the last matching event in event-time selector windows with deterministic

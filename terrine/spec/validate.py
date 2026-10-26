@@ -37,7 +37,6 @@ from terrine.spec.expressions import (
     MetricQuantile,
     Predicate,
     RetentionMetric,
-    _expression_support_seconds,
     _output_leaves,
 )
 from terrine.spec.sequence import EventSequence
@@ -210,7 +209,9 @@ def _outcome_bounds(design: Design, model: Model) -> tuple[tuple[int, ...], tupl
             else:
                 offsets.append(expression.finite_horizon_seconds)
         else:
-            offsets.append(_expression_support_seconds(expression)[1])
+            support, dependencies = _expression_timing(expression)
+            offsets.append(support[1])
+            offsets.extend(end for _, end in dependencies)
     return tuple(offsets), tuple(cutoffs)
 
 
