@@ -916,10 +916,7 @@ class Frame:
                             terminal_ticks, origin_ticks
                         )
                     except pa.ArrowInvalid as exc:
-                        if unit == "ns" and any(
-                            source.dialect == "snowflake"
-                            for source in self._model.sources.values()
-                        ):
+                        if unit == "ns":
                             from terrine.execution._snowflake import _TIMESTAMP_RANGE
 
                             raise _TIMESTAMP_RANGE.error(
