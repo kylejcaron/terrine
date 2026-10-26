@@ -47,6 +47,7 @@ Use verified local DuckDB operation capabilities.
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
 | `terrine.backend.capability_unavailable` | <code>Backend {backend!r} cannot provide {operation!r}: {status}. {route}</code> | `backend`, `operation`, `route`, `status` | [terrine/backends/capabilities.py](../../terrine/backends/capabilities.py) |
+| `terrine.backend.capability_unavailable` | <code>The detected database server is not verified for PostgreSQL execution. {route}</code> | `route` | [terrine/execution/_postgres.py](../../terrine/execution/_postgres.py) |
 | `terrine.backend.nonfinite_decimal` | <code>Exact decimal column {column!r} contains {value}, which has no exact decimal value. Filter or replace non-finite numeric values in the relation SQL.</code> | `column`, `value` | [terrine/execution/_postgres.py](../../terrine/execution/_postgres.py) |
 
 ## budget
