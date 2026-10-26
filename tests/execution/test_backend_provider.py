@@ -156,3 +156,106 @@ def test_raw_driver_connection_is_not_an_ibis_execution_provider():
         assert backend_capabilities(raw).dialect_admission is None
     finally:
         raw.close()
+
+@pytest.mark.parametrize(
+    ("version", "server", "status"),
+    [
+        (
+            "PostgreSQL 16.4 on aarch64-apple-darwin23.4.0, compiled by Apple clang",
+            "PostgreSQL",
+            "admitted",
+        ),
+        (
+            "PostgreSQL 15.8 on x86_64-pc-linux-gnu, compiled by GCC",
+            "PostgreSQL",
+            "unverified",
+        ),
+        (
+            "PostgreSQL 17.0 on x86_64-pc-linux-gnu, compiled by GCC",
+            "PostgreSQL",
+            "unverified",
+        ),
+        (
+            "PostgreSQL 8.0.2 on i686-pc-linux-gnu, compiled by GCC gcc (GCC) 3.4.2 20041017 "
+            "(Red Hat 3.4.2-6.fc3), Redshift 1.0.77467",
+            "Redshift",
+            "unsupported",
+        ),
+        (
+            "PostgreSQL 12.12 (Greenplum Database 7.0.0 build commit:abc) on x86_64-pc-linux-gnu",
+            "Greenplum",
+            "unsupported",
+        ),
+        (
+            "CockroachDB CCL v23.1.11 (x86_64-pc-linux-gnu, built 2023/09/27)",
+            "CockroachDB",
+            "unsupported",
+        ),
+    ],
+)
+def test_server_identity_classification(version, server, status):
+    from terrine.execution._postgres import classify_server_version
+
+    identity = classify_server_version(version)
+    assert identity.server == server
+    assert identity.status == status
+
+
+def test_postgres_admission_refuses_lookalike_before_source_schema_access():
+
+    import copy
+    import pickle
+
+    from terrine import Model
+    from terrine.execution.backend import backend_provider
+
+    class DriverConnection:
+        def cursor(self):
+            class Cursor:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def execute(self, sql, params=None):
+                    assert sql == "SELECT version()"
+
+                def fetchall(self):
+                    return [
+                        (
+                            "PostgreSQL 8.0.2 on i686-pc-linux-gnu, compiled by GCC "
+                            "gcc (GCC) 3.4.2 20041017 (Red Hat 3.4.2-6.fc3), Redshift 1.0.77467",
+                        )
+                    ]
+
+            return Cursor()
+
+    DriverConnection.__module__ = "psycopg"
+
+    class PostgresBackend:
+        __module__ = "ibis.backends.postgres"
+
+        def __init__(self):
+            self.con = DriverConnection()
+
+        def table(self, *args, **kwargs):
+            raise AssertionError("source schema was accessed before identity admission")
+
+        def sql(self, *args, **kwargs):
+            raise AssertionError("source schema was accessed before identity admission")
+
+    for operation in (
+        lambda con: backend_provider(con),
+        lambda con: Model.from_catalog(_catalog(), con=con, readiness={}),
+    ):
+        with pytest.raises(TerrineError) as error:
+            operation(PostgresBackend())
+        assert error.value.code == "terrine.backend.capability_unavailable"
+        assert error.value.context["backend"] == "Redshift"
+        assert error.value.context["operation"] == "dialect_admission"
+        assert error.value.context["status"] == "unsupported"
+        assert "DuckDB" in error.value.context["route"]
+        for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
+            assert restored.code == error.value.code
+            assert restored.context == error.value.context

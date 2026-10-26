@@ -28,6 +28,15 @@ evidence of a reviewed relation-to-Catalog bridge.
 
 ## PostgreSQL
 
+Admission reads only `SELECT version()` before source metadata access and admits
+the PostgreSQL 16 major version measured by the compatibility suite. PostgreSQL
+versions not yet measured are unverified; PostgreSQL-wire-compatible servers
+such as Redshift, Greenplum and CockroachDB are unsupported and refuse with
+`terrine.backend.capability_unavailable`. The check performs no writes or
+session-setting changes; its only caller-connection operation is the
+read-only `SELECT version()`. Materialization reads remain on the private owned
+connection described below.
+
 Each materialization opens a private connection with the caller's connection
 parameters and search path, sets `TimeZone` to UTC and reads in one
 `REPEATABLE READ READ ONLY` transaction, so every query sees one consistent

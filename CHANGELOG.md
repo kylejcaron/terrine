@@ -32,6 +32,9 @@
 - Support exact retention occurrence bands and deterministic last-event values,
   exact min/max/distinct/type-7 quantiles, explicit native approximate distinct,
   and optional cross-sectional DataSketches quantile sidecars.
+- Admit PostgreSQL execution only when `SELECT version()` identifies the
+  measured PostgreSQL 16 server; PostgreSQL-wire-compatible forks and unverified
+  PostgreSQL versions refuse before source schema access.
 
 ### Reproducibility and ML
 
