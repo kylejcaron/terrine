@@ -1,11 +1,24 @@
-.PHONY: test test-scale test-postgres test-bigquery test-snowflake lint typecheck fmt check complexity
+.PHONY: test test-scale test-postgres test-bigquery test-snowflake mutate lint typecheck fmt check complexity
 
 TESTS ?= tests
 SCALE_TESTS ?= integration
+MUTATION_CORES ?= 2
+MUTATION_SAMPLE ?= 1
+MUTATION_SEED ?= 20261025
 
 # Ordinary suite; scale checks are deselected by default.
 test:
 	uv run pytest $(TESTS)
+
+# Local, on-demand campaigns; keep mutants/ until kill attribution is finished.
+# MUTATION_TESTS names the module's own tests: the whole tree is too slow per
+# mutant and needs repository files mutmut does not copy.
+mutate:
+	@test -n "$(MODULE)" -a -n "$(MUTATION_TESTS)" || \
+		{ echo "usage: make mutate MODULE=terrine/x.py MUTATION_TESTS='tests/x.py ...'"; exit 2; }
+	agent-slots -j $(MUTATION_CORES) -- uv run python scripts/mutate.py \
+		--module "$(MODULE)" --cores $(MUTATION_CORES) \
+		--sample $(MUTATION_SAMPLE) --seed $(MUTATION_SEED) $(MUTATION_TESTS)
 
 # Scheduled scale tier: resource-bound scale, oracle and live-warehouse checks.
 test-scale:
