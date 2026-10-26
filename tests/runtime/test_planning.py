@@ -1,4 +1,5 @@
 import json
+from importlib.resources import files
 from typing import cast
 
 import duckdb
@@ -274,3 +275,10 @@ def test_plan_request_round_trip_preserves_dataset_definition_view():
         assert restored.dataset_definition.view == saved_plan.view
         with pytest.raises(ValueError):
             replace(typed, design=Design("user", FixedDate("2025-01-16")))
+
+
+def test_pre_rename_plan_request_refuses_instead_of_losing_dataset_view():
+    serialized = files("tests.fixtures").joinpath("pre_rename_plan_request.json").read_text()
+    with pytest.raises(TerrineError) as error:
+        PlanRequest.from_dict(json.loads(serialized))
+    assert error.value.code == "terrine.runtime.plan_request_invalid"

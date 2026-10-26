@@ -8,6 +8,7 @@ import weakref
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from importlib.resources import files
 from pathlib import Path
 
 import ibis
@@ -1822,3 +1823,62 @@ def test_dataset_batches_and_parquet_preserve_typed_metadata(common_frame, tmp_p
     assert restored.provenance.design_hash == expected_metadata.provenance.design_hash
     assert restored.provenance.model_hash == expected_metadata.provenance.model_hash
     assert thaw(dataset.manifest.frame_metadata) == restored.to_metadata()
+
+
+def test_pre_rename_owner_database_refuses_old_generation_and_stages_new(events_world, tmp_path):
+    from terrine.runtime.backends.duckdb import DuckDBBackend
+
+    frame, con = _durable_frame(events_world, tmp_path)
+    fixtures = files("tests.fixtures")
+    serialized = fixtures.joinpath("pre_rename_manifest.json").read_text()
+    saved = fixtures.joinpath("pre_rename_saved_plan.json").read_text()
+    definition = DatasetDefinition.from_json(
+        fixtures.joinpath("pre_rename_definition.json").read_bytes()
+    )
+    namespace = "terrine_runtime"
+    try:
+        raw = con.con
+        backend = DuckDBBackend(raw, namespace=namespace)
+        raw.execute(
+            "CREATE TABLE terrine_runtime.runtime_dataset_recipes "
+            "(dataset VARCHAR,generation VARCHAR,recipe_json VARCHAR,request_key VARCHAR,"
+            "manifest_json VARCHAR,PRIMARY KEY(dataset,generation))"
+        )
+        raw.execute(
+            "CREATE TABLE terrine_runtime.runtime_dataset_requests "
+            "(request_key VARCHAR PRIMARY KEY,recipe_json VARCHAR NOT NULL)"
+        )
+        raw.execute(
+            "INSERT INTO terrine_runtime.runtime_dataset_recipes VALUES (?,?,?,?,?)",
+            ["legacy", "pre-rename-generation", saved, "legacy-request", serialized],
+        )
+        raw.execute(
+            "INSERT INTO terrine_runtime.runtime_dataset_requests VALUES (?,?)",
+            ["legacy-request", saved],
+        )
+        raw.execute(
+            "INSERT INTO terrine_runtime.runtime_manifests VALUES (?,?,?,?)",
+            ["legacy", "pre-rename-generation", 1, "pre-rename-snapshot"],
+        )
+        assert backend.current_generation("legacy") == "pre-rename-generation"
+        with pytest.raises(TerrineError) as error:
+            Dataset.open_generation("legacy", "pre-rename-generation", con=con, namespace=namespace)
+        assert error.value.code == "terrine.dataset.invalid_manifest"
+        new = definition.build(frame._model).stage("legacy", budget=Budget(strict_scan=False))
+        assert new.manifest.generation.generation_id != "pre-rename-generation"
+        assert new.manifest.definition.digest == definition.digest
+        reopened = Dataset.open_generation(
+            "legacy", new.manifest.generation.generation_id, con=con, namespace=namespace
+        )
+        assert sum(batch.num_rows for batch in reopened.to_arrow_batches()) == len(
+            events_world.tables["users"]
+        )
+        assert (
+            raw.execute(
+                "SELECT manifest_json FROM terrine_runtime.runtime_dataset_recipes "
+                "WHERE dataset='legacy' AND generation='pre-rename-generation'"
+            ).fetchone()[0]
+            == serialized
+        )
+    finally:
+        con.disconnect()

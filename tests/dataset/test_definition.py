@@ -1,4 +1,5 @@
 from datetime import date
+from importlib.resources import files
 from typing import cast
 
 import pytest
@@ -138,3 +139,33 @@ def test_definition_put_removes_temporary_file_after_io_failure(tmp_path, monkey
         store.put(definition)
     assert error.value is failure
     assert list(store.root.iterdir()) == []
+
+
+def test_pre_rename_definition_bytes_load_with_same_digest() -> None:
+    serialized = files("tests.fixtures").joinpath("pre_rename_definition.json").read_bytes()
+    definition = DatasetDefinition.from_json(serialized)
+    assert definition.canonical_json() == serialized
+    assert definition.digest == "182ea28be9e0f353fe3f5ad5dc7ccac562b96402b023bee87d5067db0655301e"
+
+
+def test_manifest_json_with_renamed_fields_refuses() -> None:
+    from terrine.dataset.manifest import DatasetManifest
+
+    serialized = files("tests.fixtures").joinpath("pre_rename_manifest.json").read_bytes()
+    with pytest.raises(TerrineError) as error:
+        DatasetManifest.from_json(serialized)
+    assert error.value.code == "terrine.dataset.invalid_manifest"
+
+
+@pytest.mark.parametrize("artifact", ["definition", "transform"])
+def test_pre_rename_fitted_identity_refuses_with_invalid_definition(artifact):
+    from terrine.spec.transforms import Winsorization
+
+    filename, decode = {
+        "definition": ("pre_rename_fitted_definition.json", DatasetDefinition.from_json),
+        "transform": ("pre_rename_fitted_transform.json", Winsorization.from_json),
+    }[artifact]
+    serialized = files("tests.fixtures").joinpath(filename).read_bytes()
+    with pytest.raises(TerrineError) as error:
+        decode(serialized)
+    assert error.value.code == "terrine.dataset.invalid_definition"

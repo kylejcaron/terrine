@@ -123,8 +123,24 @@ class PlanRequest:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> PlanRequest:
         try:
-            if value["schema_version"] != 1:
-                raise ValueError("unsupported request version")
+            optional = {"dataset_definition", "expected_base_manifest", "bind_base_manifest"}
+            required = {
+                "schema_version",
+                "invocation_id",
+                "model",
+                "design",
+                "destination",
+                "changes",
+                "budget",
+                "requested_scope",
+            }
+            if (
+                not isinstance(value, dict)
+                or set(value) - optional != required
+                or type(value["schema_version"]) is not int
+                or value["schema_version"] != 1
+            ):
+                raise ValueError("unsupported request fields or version")
             changes_data = value["changes"]
             changes = None
             if changes_data is not None:

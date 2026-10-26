@@ -1,4 +1,7 @@
+import json
 from datetime import date
+
+import pytest
 
 from terrine.dataset.manifest import DatasetManifest, ManifestColumn, ManifestGeneration
 from terrine.spec import Design, FixedDate
@@ -54,11 +57,24 @@ def test_dataset_manifest_round_trip_preserves_generation_schema_roles_and_metad
     assert reopened.source_snapshots["source"]["status"] == "unknown"
 
 
-def test_corrupt_manifest_definition_hash_uses_invalid_definition_refusal() -> None:
-    import json
-
-    import pytest
-
+@pytest.mark.parametrize(
+    "damage",
+    (
+        "syntax",
+        "envelope",
+        "unknown",
+        "generation",
+        "columns",
+        "definition",
+        "digest",
+        "version",
+        "duplicate",
+        "nonfinite",
+        "row_count",
+        "references",
+    ),
+)
+def test_malformed_manifest_payload_has_coded_refusal(damage) -> None:
     from terrine.errors import TerrineError
 
     definition = DatasetDefinition(
@@ -67,14 +83,45 @@ def test_corrupt_manifest_definition_hash_uses_invalid_definition_refusal() -> N
     manifest = DatasetManifest(
         definition,
         ManifestGeneration("ds", "g1", ("table:g1",), ("sha256:x",), 0),
-        (),
+        (ManifestColumn("unit", "string", "unit"),),
         "design",
         "model",
         {},
         {},
     )
     payload = json.loads(manifest.to_json())
-    payload["definition_hash"] = "corrupt"
+    if damage == "syntax":
+        serialized = "{"
+    elif damage == "envelope":
+        serialized = "null"
+    elif damage == "duplicate":
+        serialized = (
+            manifest.to_json()
+            .decode()
+            .replace('"schema_version":1', '"schema_version":1,"schema_version":1', 1)
+        )
+    elif damage == "nonfinite":
+        payload["source_coverage"]["start"] = float("nan")
+        serialized = json.dumps(payload)
+    else:
+        if damage == "unknown":
+            payload["unknown"] = None
+        elif damage == "generation":
+            payload["generation"]["unknown"] = None
+        elif damage == "columns":
+            payload["columns"][0]["unknown"] = None
+        elif damage == "definition":
+            payload["definition"]["unknown"] = None
+        elif damage == "digest":
+            payload["definition_hash"] = "corrupt"
+        elif damage == "version":
+            payload["schema_version"] = True
+        elif damage == "row_count":
+            payload["generation"]["row_count"] = 0.5
+        elif damage == "references":
+            payload["generation"]["output_refs"] = "table:g1"
+            payload["generation"]["checksums"] = "sha256:x"
+        serialized = json.dumps(payload)
     with pytest.raises(TerrineError) as error:
-        DatasetManifest.from_json(json.dumps(payload))
-    assert error.value.code == "terrine.dataset.invalid_definition"
+        DatasetManifest.from_json(serialized)
+    assert error.value.code == "terrine.dataset.invalid_manifest"

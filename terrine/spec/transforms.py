@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from terrine.errors import RefusalSpec, freeze, thaw
+from terrine.errors import RefusalSpec, TerrineError, freeze, thaw
 
 __all__ = ["Winsorization", "WinsorizationFit"]
 
@@ -122,6 +122,8 @@ class WinsorizationFit:
 
     @classmethod
     def from_record(cls, value: Any) -> WinsorizationFit:
+        from terrine.spec.dataset import INVALID_DEFINITION
+
         fields = {
             "definition_hash",
             "view_hash",
@@ -138,7 +140,7 @@ class WinsorizationFit:
             "version",
         }
         if not isinstance(value, dict) or set(value) != fields:
-            raise _invalid("invalid fit record")
+            raise INVALID_DEFINITION.error(reason="invalid fitted definition identity record")
         if (
             not isinstance(value["probabilities"], list)
             or len(value["probabilities"]) != 2
@@ -252,5 +254,7 @@ class Winsorization:
             return cls.from_record(
                 json.loads(value, object_pairs_hook=_unique_pairs, parse_constant=_bad_constant)
             )
+        except TerrineError:
+            raise
         except (ValueError, TypeError, KeyError) as error:
             raise _invalid("malformed serialized transform") from error

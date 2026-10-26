@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from importlib.resources import files
 
 import ibis
 import pyarrow as pa
@@ -409,3 +410,10 @@ def test_saved_plan_round_trips_typed_dataset_view():
                 SavedPlan.from_json(json.dumps(tampered))
     finally:
         con.disconnect()
+
+
+def test_saved_plan_json_with_renamed_fields_refuses():
+    serialized = files("tests.fixtures").joinpath("pre_rename_saved_plan.json").read_bytes()
+    with pytest.raises(TerrineError) as error:
+        SavedPlan.from_json(serialized)
+    assert error.value.code == "terrine.runtime.saved_plan_mismatch"
