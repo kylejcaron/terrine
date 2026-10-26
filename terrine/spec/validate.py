@@ -360,6 +360,14 @@ def _check_expression_timing(
         raise _GAP.error(role=role, gap=design.gap)
 
 
+def _check_predicate_operands(value: Expr | Predicate) -> None:
+    """Refuse approximate quantile operands before evaluating a boolean rule."""
+    if isinstance(value, (Gt, Eq, IsNull, And)):
+        for leaf in _output_leaves(value):
+            if isinstance(leaf, ApproxMetricQuantile):
+                raise _APPROX_PREDICATE.error()
+
+
 def _expression(
     expr: Expr | Predicate,
     role: str,
@@ -369,9 +377,8 @@ def _expression(
     obligations: list[str],
 ) -> None:
     if isinstance(expr, (Gt, Eq, IsNull, And)):
+        _check_predicate_operands(expr)
         for leaf in _output_leaves(expr):
-            if isinstance(leaf, ApproxMetricQuantile):
-                raise _APPROX_PREDICATE.error()
             _expression(leaf, role, design, model, required, obligations)
         return
     relative_to = getattr(expr, "relative_to", None)

@@ -22,7 +22,8 @@
   outcomes, preserving incomplete-window nulls and reasons, three-valued
   conjunctions and full temporal support for follow-up and training splits.
 - Refuse approximate-quantile operands in boolean outputs before reading data;
-  reuse `terrine.metric.approx_eligibility_unavailable` across predicate roles.
+  reuse `terrine.metric.approx_eligibility_unavailable` across predicate roles
+  and ordinary/persisted-runtime admission.
   Use exact quantiles or output the approximate value without a predicate.
 - Preserve evaluated null reasons on event-relative results after a selector
   resolves, independently of completeness.

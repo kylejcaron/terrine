@@ -150,14 +150,31 @@ def test_is_null_event_time_feature_and_arrow_metadata_round_trip(boolean_result
 
 
 def test_predicate_over_nonadditive_operand_gets_range_plan(boolean_result):
-    assert _states(boolean_result, "many_items") == {
-        "a": (True, True, None),
-        "b": (False, True, None),
-        "c": (None, False, "incomplete_observation"),
-    }
-    for row in boolean_result.table.to_pylist():
-        if row["items_7d"] is not None:
-            assert row["many_items"] == (row["items_7d"] > 2)
+    from terrine.compile.ranges import plan_ranges
+
+    con, model, _ = _inputs()
+    try:
+        operand = tr.agg("items", window=("0s", "7d"))
+        design = tr.Design(
+            "user", tr.FixedDate("2025-01-01"), outcomes={"many_items": tr.gt(operand, 2)}
+        )
+        assert set(plan_ranges(design, model)) == {operand}
+        frame = design.build(model)
+        result = frame.materialize(tr.Budget(max_rows=10, strict_scan=False))
+        predicate_only = BooleanResult(
+            result.table, frame._compiled.columns, frame._compiled.expression_timings
+        )
+        assert _states(predicate_only, "many_items") == {
+            "a": (True, True, None),
+            "b": (False, True, None),
+            "c": (None, False, "incomplete_observation"),
+        }
+        unwrapped = {row["unit"]: row["items_7d"] for row in boolean_result.table.to_pylist()}
+        for row in predicate_only.table.to_pylist():
+            expected = unwrapped[row["unit"]]
+            assert row["many_items"] == (None if expected is None else expected > 2)
+    finally:
+        con.disconnect()
 
 
 def test_time_split_assigns_boolean_label_by_its_window():

@@ -85,7 +85,7 @@ conservative declared support even when another conjunct already determines
 `frame.training_set(label="converted_7d")`.
 
 Approximate-quantile sidecars cannot be predicate operands in any role. These
-requests refuse during validation with
+requests refuse during validation and persisted-runtime admission with
 `terrine.metric.approx_eligibility_unavailable`; use exact `quantile` or output
 the approximate value without wrapping it in a predicate.
 
