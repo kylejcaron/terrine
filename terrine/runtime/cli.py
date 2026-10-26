@@ -10,7 +10,7 @@ from typing import Any
 
 from terrine.errors import TerrineError
 from terrine.runtime.control import ControlClient, ControlEndpoint
-from terrine.runtime.recipe import DestinationRef
+from terrine.runtime.saved_plan import DestinationRef
 
 
 def _parser() -> argparse.ArgumentParser:

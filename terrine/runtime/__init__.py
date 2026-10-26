@@ -21,11 +21,11 @@ from terrine.runtime.events import EventPage, RunEvent
 from terrine.runtime.graph import DependencyGraph, dependency_graph
 from terrine.runtime.owner import RuntimeOwner, SnapshotRetention
 from terrine.runtime.planning import OwnerPlanner, PlanInvocation, PlanRequest
-from terrine.runtime.recipe import (
+from terrine.runtime.saved_plan import (
     DestinationRef,
     ModelReference,
     ModelResolver,
-    SavedPlanRecipe,
+    SavedPlan,
     resolve_plan,
 )
 from terrine.runtime.snapshot import ReopenableSnapshot, SnapshotAuthority
@@ -49,7 +49,7 @@ __all__ = [
     "RunReceipt",
     "RunStatus",
     "RuntimeOwner",
-    "SavedPlanRecipe",
+    "SavedPlan",
     "ScanAuthorization",
     "ScanAuthorizingExecutor",
     "ScanEvidence",

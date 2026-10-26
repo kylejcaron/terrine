@@ -15,7 +15,14 @@ from terrine.runtime.state import LayerNode
 if TYPE_CHECKING:
     from terrine.runtime.backends.base import CostProvider
 
-__all__ = ["Invalidation", "PartitionSpec", "PlanRecipe", "RefreshPlan", "TaskSpec", "plan_refresh"]
+__all__ = [
+    "Invalidation",
+    "PartitionSpec",
+    "PlanDefinition",
+    "RefreshPlan",
+    "TaskSpec",
+    "plan_refresh",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +42,7 @@ class Invalidation:
 
 
 @dataclass(frozen=True, slots=True)
-class PlanRecipe:
+class PlanDefinition:
     schema_version: int
     namespace: str
     dataset: str
@@ -135,7 +142,7 @@ class RefreshPlan:
     definition_hash: str
     snapshot_id: str
     tasks: tuple[TaskSpec, ...]
-    recipe: PlanRecipe
+    definition: PlanDefinition
     budget: Budget | None = None
     scan_bytes: int | None = None
     expected_base_manifest: str | None = None
@@ -216,7 +223,7 @@ class RefreshPlan:
             expected_base_manifest is not None and not isinstance(expected_base_manifest, str)
         ):
             raise ValueError("serialized base-manifest binding is invalid")
-        plan_recipe = PlanRecipe(
+        plan_definition = PlanDefinition(
             schema_version,
             namespace,
             dataset,
@@ -236,7 +243,7 @@ class RefreshPlan:
             definition_hash,
             snapshot_id,
             tasks,
-            plan_recipe,
+            plan_definition,
             budget,
             scan_bytes=scan_bytes,
             expected_base_manifest=expected_base_manifest,
@@ -245,7 +252,7 @@ class RefreshPlan:
         )
 
     def serialize(self) -> bytes:
-        return self.recipe.to_json().encode("utf-8")
+        return self.definition.to_json().encode("utf-8")
 
     def bind_base_manifest(
         self, generation: str | None, *, reconstruction_hash: str | None = None
@@ -254,25 +261,25 @@ class RefreshPlan:
         if generation is not None and (not isinstance(generation, str) or not generation):
             raise ValueError("expected base manifest must be a nonempty generation or None")
         if RefreshPlan.deserialize(self.serialize()) != self:
-            raise ValueError("runtime plan fields differ from its canonical recipe")
-        recipe = replace(
-            self.recipe,
+            raise ValueError("runtime plan fields differ from its canonical definition")
+        definition = replace(
+            self.definition,
             expected_base_manifest=generation,
             expected_base_manifest_bound=True,
             reconstruction_hash=(
-                self.recipe.reconstruction_hash
+                self.definition.reconstruction_hash
                 if reconstruction_hash is None
                 else reconstruction_hash
             ),
         )
-        payload = json.loads(recipe.to_json())
+        payload = json.loads(definition.to_json())
         del payload["fingerprint"]
         fingerprint = hashlib.sha256(
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
         return replace(
             self,
-            recipe=replace(recipe, fingerprint=fingerprint),
+            definition=replace(definition, fingerprint=fingerprint),
             expected_base_manifest=generation,
             expected_base_manifest_bound=True,
         )
@@ -394,7 +401,7 @@ def plan_refresh(
     fingerprint = hashlib.sha256(
         json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    recipe = PlanRecipe(
+    definition = PlanDefinition(
         2,
         namespace,
         dataset,
@@ -411,7 +418,7 @@ def plan_refresh(
         definition_hash,
         snapshot_id,
         tuple(tasks),
-        recipe,
+        definition,
         budget,
         scan_bytes=scan_bytes,
         budget_warnings=warnings,

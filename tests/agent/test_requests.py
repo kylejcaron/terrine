@@ -32,7 +32,7 @@ def test_operation_schemas_reject_executable_and_policy_fields():
                     "dataset": "training",
                     "generation": "generation",
                     "definition_hash": "hash",
-                    "recipe_reference": "opaque",
+                    "definition_reference": "opaque",
                     "model_hash": "model",
                     "manifest_hash": "manifest",
                     "row_count": 0,

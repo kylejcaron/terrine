@@ -14,7 +14,7 @@ import pyarrow as pa
 from terrine.runtime.control import ControlClient, ControlEndpoint, ControlServer
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
-from terrine.runtime.recipe import DestinationRef
+from terrine.runtime.saved_plan import DestinationRef
 from terrine.runtime.state import RuntimeStore
 from tests._timing import HANG_GUARD_SECONDS
 
@@ -28,7 +28,7 @@ import pyarrow as pa
 from terrine.runtime.execute import execute_plan
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
-from terrine.runtime.recipe import DestinationRef
+from terrine.runtime.saved_plan import DestinationRef
 con=duckdb.connect(os.environ['TERRINE_DB'])
 plan=plan_refresh(
     namespace='owner',
@@ -61,7 +61,7 @@ os._exit(73)
     second = r"""
 import json, os, duckdb
 from terrine.runtime.api import find_run_by_request_key
-from terrine.runtime.recipe import DestinationRef
+from terrine.runtime.saved_plan import DestinationRef
 con=duckdb.connect(os.environ['TERRINE_DB'])
 receipt=find_run_by_request_key(
     'lost-key',

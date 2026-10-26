@@ -46,7 +46,7 @@ def main() -> None:
             assert sum(batch.num_rows for batch in reopened.to_arrow_batches()) == rows
             refreshed_rows = sum(batch.num_rows for batch in refreshed.to_arrow_batches())
             assert refreshed_rows == 1
-            assert refreshed.manifest.recipe.view["as_of"] == manifest.recipe.view["as_of"]
+            assert refreshed.manifest.definition.view["as_of"] == manifest.definition.view["as_of"]
             print(
                 json.dumps(
                     {
@@ -56,7 +56,7 @@ def main() -> None:
                         "refreshed_rows": refreshed_rows,
                         "refresh_changed": refreshed.manifest.generation != manifest.generation,
                         "schema_metadata": bool(manifest.frame_metadata),
-                        "as_of": refreshed.manifest.recipe.view["as_of"],
+                        "as_of": refreshed.manifest.definition.view["as_of"],
                     },
                     sort_keys=True,
                 )

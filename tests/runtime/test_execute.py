@@ -337,7 +337,7 @@ def test_retry_reconciles_publication_before_rejecting_its_own_manifest():
     con.execute("INSERT INTO owner.runtime_publications VALUES ('orders','generation-1',1)")
     con.execute(
         "INSERT INTO owner.runtime_runs VALUES ('ambiguous','orders',?,'running',NULL,1)",
-        [plan.recipe.fingerprint],
+        [plan.definition.fingerprint],
     )
     leases = LeaseStore(con, namespace="owner")
     lease = leases.acquire(

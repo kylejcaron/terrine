@@ -1,4 +1,4 @@
-"""Versioned metadata binding staged outputs to their recipe and provenance."""
+"""Versioned metadata binding staged outputs to their definition and provenance."""
 
 from __future__ import annotations
 
@@ -9,10 +9,10 @@ from typing import Any
 
 from terrine.errors import freeze, thaw
 from terrine.spec.dataset import (
-    INVALID_RECIPE,
-    DatasetRecipe,
-    DatasetRecipeReference,
-    DatasetRecipeStore,
+    INVALID_DEFINITION,
+    DatasetDefinition,
+    DatasetDefinitionReference,
+    DatasetDefinitionStore,
 )
 
 __all__ = ["DatasetManifest", "ManifestColumn", "ManifestGeneration"]
@@ -61,7 +61,7 @@ class ManifestGeneration:
 
 @dataclass(frozen=True, slots=True)
 class DatasetManifest:
-    recipe: DatasetRecipe
+    definition: DatasetDefinition
     generation: ManifestGeneration
     columns: tuple[ManifestColumn, ...]
     design_hash: str
@@ -72,18 +72,20 @@ class DatasetManifest:
     split_policy: Any = None
     schema_version: int = 1
     compiler_version: str = "1"
-    recipe_reference: DatasetRecipeReference | None = None
+    definition_reference: DatasetDefinitionReference | None = None
     frame_metadata: Any = None
 
     def __post_init__(self) -> None:
-        if self.schema_version != 1 or not isinstance(self.recipe, DatasetRecipe):
-            raise ValueError("unsupported manifest schema or recipe")
-        if self.recipe_reference is not None:
+        if self.schema_version != 1 or not isinstance(self.definition, DatasetDefinition):
+            raise ValueError("unsupported manifest schema or definition")
+        if self.definition_reference is not None:
             if (
-                not isinstance(self.recipe_reference, DatasetRecipeReference)
-                or self.recipe_reference.digest != self.recipe.digest
+                not isinstance(self.definition_reference, DatasetDefinitionReference)
+                or self.definition_reference.digest != self.definition.digest
             ):
-                raise INVALID_RECIPE.error(reason="recipe reference does not match manifest recipe")
+                raise INVALID_DEFINITION.error(
+                    reason="definition reference does not match manifest definition"
+                )
         if not isinstance(self.generation, ManifestGeneration):
             raise TypeError("generation must be ManifestGeneration")
         if not self.design_hash or not self.model_hash:
@@ -103,8 +105,8 @@ class DatasetManifest:
     def to_json(self) -> bytes:
         payload = {
             "schema_version": 1,
-            "recipe": json.loads(self.recipe.canonical_json()),
-            "recipe_hash": self.recipe.digest,
+            "definition": json.loads(self.definition.canonical_json()),
+            "definition_hash": self.definition.digest,
             "generation": {
                 "dataset_id": self.generation.dataset_id,
                 "generation_id": self.generation.generation_id,
@@ -131,11 +133,11 @@ class DatasetManifest:
         }
         if self.frame_metadata is not None:
             payload["frame_metadata"] = thaw(self.frame_metadata)
-        if self.recipe_reference is not None:
-            del payload["recipe"]
-            payload["recipe_reference"] = {
-                "owner": self.recipe_reference.owner,
-                "digest": self.recipe_reference.digest,
+        if self.definition_reference is not None:
+            del payload["definition"]
+            payload["definition_reference"] = {
+                "owner": self.definition_reference.owner,
+                "digest": self.definition_reference.digest,
             }
         return _canonical(payload)
 
@@ -148,12 +150,12 @@ class DatasetManifest:
         cls,
         value: str | bytes,
         *,
-        recipe_store: DatasetRecipeStore | None = None,
+        definition_store: DatasetDefinitionStore | None = None,
     ) -> DatasetManifest:
         payload = json.loads(value)
         common = {
             "schema_version",
-            "recipe_hash",
+            "definition_hash",
             "generation",
             "columns",
             "design_hash",
@@ -164,8 +166,8 @@ class DatasetManifest:
             "split_policy",
             "compiler_version",
         }
-        is_reference = "recipe_reference" in payload if isinstance(payload, dict) else False
-        expected = common | ({"recipe_reference"} if is_reference else {"recipe"})
+        is_reference = "definition_reference" in payload if isinstance(payload, dict) else False
+        expected = common | ({"definition_reference"} if is_reference else {"definition"})
         if (
             not isinstance(payload, dict)
             or set(payload) - {"frame_metadata"} != expected
@@ -174,23 +176,25 @@ class DatasetManifest:
             raise ValueError("invalid dataset manifest")
         reference = None
         if is_reference:
-            if recipe_store is None:
-                raise INVALID_RECIPE.error(reason="owner-configured recipe storage is required")
-            record = payload["recipe_reference"]
+            if definition_store is None:
+                raise INVALID_DEFINITION.error(
+                    reason="owner-configured definition storage is required"
+                )
+            record = payload["definition_reference"]
             if not isinstance(record, dict) or set(record) != {"owner", "digest"}:
-                raise INVALID_RECIPE.error(reason="invalid recipe reference")
-            reference = DatasetRecipeReference(**record)
-            recipe = recipe_store.resolve(reference)
+                raise INVALID_DEFINITION.error(reason="invalid definition reference")
+            reference = DatasetDefinitionReference(**record)
+            definition = definition_store.resolve(reference)
         else:
-            recipe = DatasetRecipe.from_json(_canonical(payload["recipe"]))
-        if recipe.digest != payload["recipe_hash"]:
-            raise INVALID_RECIPE.error(reason="recipe digest mismatch")
+            definition = DatasetDefinition.from_json(_canonical(payload["definition"]))
+        if definition.digest != payload["definition_hash"]:
+            raise INVALID_DEFINITION.error(reason="definition digest mismatch")
         gen = payload["generation"]
         if set(gen) != {"dataset_id", "generation_id", "output_refs", "checksums", "row_count"}:
             raise ValueError("invalid generation record")
         columns = tuple(ManifestColumn(**col) for col in payload["columns"])
         return cls(
-            recipe,
+            definition,
             ManifestGeneration(**gen),
             columns,
             payload["design_hash"],

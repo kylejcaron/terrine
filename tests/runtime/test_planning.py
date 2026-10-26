@@ -10,7 +10,7 @@ from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.planning import OwnerPlanner, PlanRequest
-from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
+from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.spec import agg
@@ -49,7 +49,7 @@ def test_plan_request_refuses_unknown_wire_version():
 def test_owner_plan_rolls_back_snapshot_pin_when_invocation_persistence_fails(
     tmp_path, monkeypatch
 ):
-    from tests.runtime.test_recipe import _model
+    from tests.runtime.test_saved_plan import _model
 
     database = tmp_path / "catalog-atomic.duckdb"
     connection = ibis.duckdb.connect(database=str(database))
@@ -82,18 +82,18 @@ def test_owner_plan_rolls_back_snapshot_pin_when_invocation_persistence_fails(
         resolver=Resolver(),
         snapshot_authority=SnapshotAuthority(RuntimeOwner(database, tmp_path / "snapshots")),
     )
-    original_pin = SavedPlanRecipe.pin_snapshot
+    original_pin = SavedPlan.pin_snapshot
 
-    def fail_after_pin(recipe, store, *, reference=None, _in_transaction=False):
+    def fail_after_pin(saved_plan, store, *, reference=None, _in_transaction=False):
         original_pin(
-            recipe,
+            saved_plan,
             store,
             reference=reference,
             _in_transaction=_in_transaction,
         )
         raise failure
 
-    monkeypatch.setattr(SavedPlanRecipe, "pin_snapshot", fail_after_pin)
+    monkeypatch.setattr(SavedPlan, "pin_snapshot", fail_after_pin)
     failure = RuntimeError("invocation persistence interrupted")
 
     try:
@@ -166,7 +166,7 @@ def test_owner_plan_refuses_unsupported_runtime_shape_before_resolving_sources()
 def test_owner_planning_refuses_before_staging_on_pinned_inputs(tmp_path, monkeypatch, strict_scan):
     from terrine.data import Budget
     from terrine.spec import gt
-    from tests.runtime.test_recipe import _model
+    from tests.runtime.test_saved_plan import _model
 
     database = tmp_path / "refused.duckdb"
     connection = ibis.duckdb.connect(database=str(database))
@@ -243,10 +243,10 @@ def test_owner_planning_refuses_before_staging_on_pinned_inputs(tmp_path, monkey
         connection.disconnect()
 
 
-def test_plan_request_round_trip_preserves_dataset_recipe_view():
+def test_plan_request_round_trip_preserves_dataset_definition_view():
     from dataclasses import replace
 
-    from terrine.spec.dataset import DatasetRecipe
+    from terrine.spec.dataset import DatasetDefinition
 
     request = _request()
     for view in (
@@ -265,12 +265,12 @@ def test_plan_request_round_trip_preserves_dataset_recipe_view():
             "parent_design_hash": request.design.spec_hash,
         },
     ):
-        recipe = DatasetRecipe(schema_version=1, base_design=request.design, view=view)
-        typed = replace(request, dataset_recipe=recipe)
+        saved_plan = DatasetDefinition(schema_version=1, base_design=request.design, view=view)
+        typed = replace(request, dataset_definition=saved_plan)
         restored = PlanRequest.from_dict(json.loads(json.dumps(typed.to_dict())))
-        assert restored.dataset_recipe is not None
-        assert restored.dataset_recipe.digest == recipe.digest
-        assert restored.dataset_recipe.base_design.spec_hash == request.design.spec_hash
-        assert restored.dataset_recipe.view == recipe.view
+        assert restored.dataset_definition is not None
+        assert restored.dataset_definition.digest == saved_plan.digest
+        assert restored.dataset_definition.base_design.spec_hash == request.design.spec_hash
+        assert restored.dataset_definition.view == saved_plan.view
         with pytest.raises(ValueError):
             replace(typed, design=Design("user", FixedDate("2025-01-16")))

@@ -21,7 +21,7 @@ from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
-from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
+from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
 from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog
 from terrine.spec import Design, FixedDate, agg
@@ -104,7 +104,7 @@ def test_saved_plan_materializes_retained_model_and_design_in_fresh_process(tmp_
         snapshot_id=snapshot.snapshot_id,
         graph=dependency_graph(model, design, sources=("events",), partitions=("all",)),
     )
-    recipe = SavedPlanRecipe.create(
+    saved_plan = SavedPlan.create(
         plan_json=plan.serialize(),
         design=design,
         model=ModelReference.from_model(model, owner_key="workspace/model"),
@@ -114,10 +114,10 @@ def test_saved_plan_materializes_retained_model_and_design_in_fresh_process(tmp_
     )
     store = RuntimeStore(con.con, namespace="runtime")
     store.initialize()
-    recipe.pin_snapshot(store)
-    recipe_path = tmp_path / "plan.json"
+    saved_plan.pin_snapshot(store)
+    saved_plan_path = tmp_path / "plan.json"
     catalog_path = tmp_path / "catalog.json"
-    recipe_path.write_text(recipe.to_json(), encoding="utf-8")
+    saved_plan_path.write_text(saved_plan.to_json(), encoding="utf-8")
     catalog_path.write_text(
         json.dumps(catalog.model_dump(mode="json"), sort_keys=True), encoding="utf-8"
     )
@@ -132,11 +132,11 @@ from terrine.model import Model, UnitSource
 from terrine.runtime import run_serialized_plan, open_published_frame
 from terrine.runtime.api import DesignExecutor
 from terrine.runtime.owner import RuntimeOwner
-from terrine.runtime.recipe import SavedPlanRecipe
+from terrine.runtime.saved_plan import SavedPlan
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.semantic.models import Catalog
 
-state_path, snapshot_root, recipe_path, catalog_path, expected_path, interrupted = sys.argv[1:]
+state_path, snapshot_root, saved_plan_path, catalog_path, expected_path, interrupted = sys.argv[1:]
 connection = ibis.duckdb.connect(state_path)
 class OwnerResolver:
     def resolve(self, reference):
@@ -145,7 +145,7 @@ class OwnerResolver:
         return Model.from_catalog(catalog, con=connection,
             readiness={'events': Coverage('2025-01-01', '2025-02-01')},
             units={'user': UnitSource('users', 'id')})
-serialized = open(recipe_path).read()
+serialized = open(saved_plan_path).read()
 if interrupted == 'True':
     original_task = DesignExecutor.run_snapshot_task
     completed = []
@@ -160,7 +160,7 @@ if interrupted == 'True':
         completed.append(task.task_id)
         return result
     DesignExecutor.run_snapshot_task = interrupted_task
-recipe = SavedPlanRecipe.from_json(serialized)
+saved_plan = SavedPlan.from_json(serialized)
 owner = RuntimeOwner(state_path=state_path, snapshot_root=snapshot_root)
 receipt = run_serialized_plan(serialized, con=connection.con, namespace='runtime',
     request_key='fresh-process', resolver=OwnerResolver(),
@@ -173,7 +173,7 @@ assert published.columns == expected.columns
 assert published.table.schema.remove_metadata() == expected.table.schema.remove_metadata()
 assert published.table.to_pylist()[0]['total'] == 3
 assert published.provenance.execution_snapshot.snapshot_id == (
-    json.loads(recipe.plan_json)['snapshot_id'])
+    json.loads(saved_plan.plan_json)['snapshot_id'])
 assert run_serialized_plan(serialized, con=connection.con, namespace='runtime',
     request_key='fresh-process') == receipt
 assert connection.table('events').execute()['value'].tolist() == [99]
@@ -186,7 +186,7 @@ connection.disconnect()
             script,
             str(state_path),
             str(snapshot_root),
-            str(recipe_path),
+            str(saved_plan_path),
             str(catalog_path),
             str(expected_path),
             str(interrupted),
@@ -248,7 +248,7 @@ connection.disconnect()
                 recovered = client.get_run(run_id)
                 assert recovered.durable_state == "failed"
                 assert recovered.error_code == "terrine.runtime.owner_interrupted"
-                resumed = client.run(recipe.to_json(), request_key="fresh-process")
+                resumed = client.run(saved_plan.to_json(), request_key="fresh-process")
                 assert resumed.run_id == run_id
                 assert resumed.state == "succeeded"
                 frame = open_published_frame(resumed, con=reopened.con, namespace="runtime")
@@ -374,7 +374,7 @@ def test_saved_panel_publication_preserves_ordinary_provenance(column_model, tmp
     from terrine.runtime.graph import dependency_graph
     from terrine.runtime.owner import RuntimeOwner
     from terrine.runtime.planner import plan_refresh
-    from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
+    from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
     from terrine.runtime.snapshot import SnapshotAuthority
     from terrine.spec import EventAnchor, EventPanel, Initiation, Schedule, Sequential
 
@@ -426,7 +426,7 @@ def test_saved_panel_publication_preserves_ordinary_provenance(column_model, tmp
             graph=dependency_graph(model, design, sources=("events",)),
             budget=budget,
         )
-        recipe = SavedPlanRecipe.create(
+        saved_plan = SavedPlan.create(
             plan_json=plan.serialize(),
             design=design,
             model=ModelReference.from_model(model, owner_key="panel-model"),
@@ -436,14 +436,14 @@ def test_saved_panel_publication_preserves_ordinary_provenance(column_model, tmp
         )
         store = RuntimeStore(con.con, namespace="owner")
         store.initialize()
-        recipe.pin_snapshot(store)
+        saved_plan.pin_snapshot(store)
 
         class Resolver:
             def resolve(self, reference):
                 return model
 
         receipt = run_serialized_plan(
-            recipe.to_json(),
+            saved_plan.to_json(),
             con=con.con,
             namespace="owner",
             request_key=shape,

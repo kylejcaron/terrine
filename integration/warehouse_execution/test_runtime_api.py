@@ -18,7 +18,7 @@ from terrine.runtime.graph import dependency_graph
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.planning import OwnerPlanner, PlanInvocation, PlanRequest
-from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
+from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog
@@ -26,13 +26,13 @@ from terrine.spec import Design, FixedDate, agg
 from tests.runtime.test_snapshot import _catalog, _design
 
 
-def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path):
+def test_saved_plan_execution_reopens_retained_snapshot_for_each_task(tmp_path):
     from pathlib import Path
 
     from terrine.data import Budget, Coverage
     from terrine.model import Model, UnitSource
     from terrine.runtime.owner import RuntimeOwner
-    from terrine.runtime.recipe import ModelReference, SavedPlanRecipe
+    from terrine.runtime.saved_plan import ModelReference, SavedPlan
     from terrine.runtime.snapshot import SnapshotAuthority
     from terrine.runtime.state import RuntimeStore
     from terrine.semantic.models import Catalog
@@ -116,7 +116,7 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
         snapshot_id=snapshot.snapshot_id,
         graph=graph,
     )
-    recipe = SavedPlanRecipe.create(
+    saved_plan = SavedPlan.create(
         plan_json=plan.serialize(),
         design=design,
         model=ModelReference.from_model(model, owner_key="model"),
@@ -124,22 +124,22 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
         namespace="runtime",
         expected_base_manifest=None,
     )
-    recipe.pin_snapshot(store)
+    saved_plan.pin_snapshot(store)
     with pytest.raises(TerrineError) as destination_error:
         runtime.run_serialized_plan(
-            recipe.to_json(),
+            saved_plan.to_json(),
             con=con.con,
             namespace="runtime",
             destination=DestinationRef("other.duckdb", "analytics", "orders"),
             request_key="wrong-destination",
         )
-    assert destination_error.value.code == "terrine.runtime.plan_recipe_mismatch"
+    assert destination_error.value.code == "terrine.runtime.saved_plan_mismatch"
 
     class Resolver:
         def resolve(self, reference):
             return model
 
-    failure = RuntimeError("retry saved recipe")
+    failure = RuntimeError("retry saved plan")
 
     class SnapshotExecutor:
         def __init__(self):
@@ -162,7 +162,7 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
     executor = SnapshotExecutor()
     with pytest.raises(RuntimeError) as error:
         runtime.run_serialized_plan(
-            recipe.to_json(),
+            saved_plan.to_json(),
             con=con.con,
             namespace="runtime",
             request_key="saved-run",
@@ -187,7 +187,7 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
         "total_tasks": len(plan.tasks),
     }
     conflicting_plan = plan
-    conflicting_recipe = SavedPlanRecipe.create(
+    conflicting_saved_plan = SavedPlan.create(
         plan_json=conflicting_plan.serialize(),
         design=design,
         model=ModelReference.from_model(model, owner_key="model"),
@@ -197,7 +197,7 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
     )
     with pytest.raises(TerrineError) as error:
         runtime.run_serialized_plan(
-            conflicting_recipe.to_json(),
+            conflicting_saved_plan.to_json(),
             con=con.con,
             namespace="runtime",
             request_key="saved-run",
@@ -205,7 +205,7 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
     assert error.value.code == "terrine.runtime.request_key_conflict"
 
     result = runtime.run_serialized_plan(
-        recipe.to_json(),
+        saved_plan.to_json(),
         con=con.con,
         namespace="runtime",
         request_key="saved-run",
@@ -214,7 +214,7 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
         snapshot_authority=authority,
     )
     replay = runtime.run_serialized_plan(
-        recipe.to_json(),
+        saved_plan.to_json(),
         con=con.con,
         namespace="runtime",
         request_key="saved-run",
@@ -226,23 +226,26 @@ def test_saved_recipe_execution_reopens_retained_snapshot_for_each_task(tmp_path
     from dataclasses import replace
 
     for binding in ModelReference.__dataclass_fields__:
-        changed_reference = replace(recipe.model, **{binding: f"changed-{binding}"})
-        changed_recipe = SavedPlanRecipe.create(
-            plan_json=recipe.plan_json,
+        changed_reference = replace(saved_plan.model, **{binding: f"changed-{binding}"})
+        changed_saved_plan = SavedPlan.create(
+            plan_json=saved_plan.plan_json,
             design=design,
             model=changed_reference,
-            destination=recipe.destination,
+            destination=saved_plan.destination,
             namespace="runtime",
             expected_base_manifest=None,
         )
         with pytest.raises(TerrineError) as changed_error:
             runtime.run_serialized_plan(
-                changed_recipe.to_json(), con=con.con, namespace="runtime", request_key="saved-run"
+                changed_saved_plan.to_json(),
+                con=con.con,
+                namespace="runtime",
+                request_key="saved-run",
             )
         assert changed_error.value.code == "terrine.runtime.request_key_conflict"
 
     built_in = runtime.run_serialized_plan(
-        recipe.to_json(),
+        saved_plan.to_json(),
         con=con.con,
         namespace="runtime",
         request_key="built-in-scoped-model",
@@ -409,7 +412,7 @@ def test_owner_planner_persists_same_snapshot_and_manifest_by_invocation(tmp_pat
 
     monkeypatch.setattr(SnapshotAuthority, "capture", capture)
     monkeypatch.setattr(planning, "validate_compiled_output", validate_on_snapshot)
-    from tests.runtime.test_recipe import _model
+    from tests.runtime.test_saved_plan import _model
 
     database = tmp_path / "catalog.duckdb"
     ibis_connection = ibis.duckdb.connect(database=str(database))
@@ -517,11 +520,11 @@ def test_owner_planner_persists_same_snapshot_and_manifest_by_invocation(tmp_pat
             [request.invocation_id],
         ).fetchone()
         saved_invocation = PlanInvocation.from_dict(json.loads(persisted[0]))
-        assert saved_invocation.recipe_json
-        recipe = SavedPlanRecipe.from_json(saved_invocation.recipe_json)
-        assert recipe.model == request.model
-        assert recipe.design_json
-        assert recipe.expected_base_manifest == first.expected_base_manifest
+        assert saved_invocation.saved_plan_json
+        saved_plan = SavedPlan.from_json(saved_invocation.saved_plan_json)
+        assert saved_plan.model == request.model
+        assert saved_plan.design_json
+        assert saved_plan.expected_base_manifest == first.expected_base_manifest
     finally:
         ibis_connection.disconnect()
 

@@ -55,7 +55,7 @@ def _digest(value: str) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class WinsorizationFit:
-    recipe_hash: str
+    definition_hash: str
     view_hash: str
     design_hash: str
     model_hash: str
@@ -71,7 +71,7 @@ class WinsorizationFit:
 
     def __post_init__(self) -> None:
         for name in (
-            "recipe_hash",
+            "definition_hash",
             "view_hash",
             "design_hash",
             "model_hash",
@@ -105,7 +105,7 @@ class WinsorizationFit:
 
     def to_record(self) -> dict[str, Any]:
         return {
-            "recipe_hash": self.recipe_hash,
+            "definition_hash": self.definition_hash,
             "view_hash": self.view_hash,
             "design_hash": self.design_hash,
             "model_hash": self.model_hash,
@@ -123,7 +123,7 @@ class WinsorizationFit:
     @classmethod
     def from_record(cls, value: Any) -> WinsorizationFit:
         fields = {
-            "recipe_hash",
+            "definition_hash",
             "view_hash",
             "design_hash",
             "model_hash",

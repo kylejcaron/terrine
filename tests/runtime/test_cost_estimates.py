@@ -73,7 +73,7 @@ class FileOwner:
             )
             if fresh != task or self.path.stat().st_size != self.size:
                 raise ValueError("immutable fixture metadata changed")
-        return ScanAuthorization(plan.recipe.fingerprint)
+        return ScanAuthorization(plan.definition.fingerprint)
 
     def run_task(self, task, dependencies):
         self.calls.append(task.task_id)
@@ -250,7 +250,7 @@ def test_cost_evidence_serializes_and_changes_fingerprint(owner):
     assert RefreshPlan.deserialize(plan.serialize()) == plan
     owner.status = "forecast"
     changed = make_plan(owner)
-    assert changed.recipe.fingerprint != plan.recipe.fingerprint
+    assert changed.definition.fingerprint != plan.definition.fingerprint
     altered = json.loads(plan.serialize())
     altered["tasks"][0]["scan_evidence"]["phases"][0]["basis"] = "changed"
     with pytest.raises(ValueError):
@@ -361,12 +361,12 @@ def test_reconstruction_binding_preserves_scan_evidence_and_canonical_fingerprin
     plan = make_plan(owner)
     identity = "a" * 64
     bound = plan.bind_base_manifest("generation-1", reconstruction_hash=identity)
-    assert bound.recipe.reconstruction_hash == identity
+    assert bound.definition.reconstruction_hash == identity
     assert bound.scan_bytes == plan.scan_bytes
     assert bound.tasks == plan.tasks
-    assert bound.recipe.fingerprint != plan.recipe.fingerprint
+    assert bound.definition.fingerprint != plan.definition.fingerprint
     assert RefreshPlan.deserialize(bound.serialize()) == bound
     rebound = bound.bind_base_manifest("generation-2")
-    assert rebound.recipe.reconstruction_hash == identity
+    assert rebound.definition.reconstruction_hash == identity
     assert RefreshPlan.deserialize(rebound.serialize()) == rebound
     assert owner.calls == []

@@ -11,7 +11,7 @@ from dagster import DagsterInstance, materialize
 from terrine.orchestration.dagster import build_materialization_asset
 from terrine.runtime.control import ControlEndpoint
 from terrine.runtime.planning import PlanRequest
-from terrine.runtime.recipe import DestinationRef, ModelReference
+from terrine.runtime.saved_plan import DestinationRef, ModelReference
 from terrine.spec.anchors import FixedDate
 from terrine.spec.design import Design
 
@@ -43,11 +43,11 @@ def test_dagster_partition_reaches_owner_plan_and_receipt_metadata(monkeypatch, 
                 request_key="request-key",
                 destination=request.destination,
                 snapshot_id="snap",
-                recipe_json="saved-recipe",
+                saved_plan_json="saved-plan",
             )
 
         def run(self, serialized, *, request_key, destination):
-            assert serialized == "saved-recipe"
+            assert serialized == "saved-plan"
             return type("Receipt", (), {"run_id": "run-1", "published_generation": 1})()
 
         def get_run(self, run_id):
@@ -102,7 +102,7 @@ def test_dagster_waits_for_cancel_request_and_reports_final_generation(monkeypat
                 request_key="request-key",
                 destination=request.destination,
                 snapshot_id="snap",
-                recipe_json="saved-recipe",
+                saved_plan_json="saved-plan",
             )
 
         def run(self, serialized, *, request_key, destination):
@@ -139,7 +139,7 @@ def test_dagster_rejects_non_succeeded_owner_receipt(monkeypatch, tmp_path):
                 request_key="request-key",
                 destination=request.destination,
                 snapshot_id="snap",
-                recipe_json="saved-recipe",
+                saved_plan_json="saved-plan",
             )
 
         def run(self, serialized, *, request_key, destination):
@@ -173,7 +173,7 @@ def test_dagster_cancelled_run_fails_without_materialization_retry(monkeypatch, 
                 request_key="request-key",
                 destination=request.destination,
                 snapshot_id="snap",
-                recipe_json="saved-recipe",
+                saved_plan_json="saved-plan",
             )
 
         def run(self, serialized, *, request_key, destination):

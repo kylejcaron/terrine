@@ -15,7 +15,7 @@ from terrine.runtime import open_published_frame, run_serialized_plan
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.planner import plan_refresh
-from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
+from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog
@@ -81,7 +81,7 @@ def _clean_rebuild_rows(model: Model, design: Design) -> list[dict[str, object]]
     )
 
 
-def _saved_recipe(
+def _saved_plan(
     *,
     con,
     model: Model,
@@ -91,7 +91,7 @@ def _saved_recipe(
     destination: DestinationRef,
     request_name: str,
     expected_manifest: str | None,
-) -> SavedPlanRecipe:
+) -> SavedPlan:
     snapshot = authority.capture(
         model,
         design=design,
@@ -107,7 +107,7 @@ def _saved_recipe(
         snapshot_id=snapshot.snapshot_id,
         graph=dependency_graph(model, design, partitions=("all",)),
     )
-    recipe = SavedPlanRecipe.create(
+    saved_plan = SavedPlan.create(
         plan_json=plan.serialize(),
         design=design,
         model=ModelReference.from_model(model, owner_key="events-model"),
@@ -115,8 +115,8 @@ def _saved_recipe(
         namespace="analytics_owner",
         expected_base_manifest=expected_manifest,
     )
-    recipe.pin_snapshot(store)
-    return recipe
+    saved_plan.pin_snapshot(store)
+    return saved_plan
 
 
 def main() -> None:
@@ -162,7 +162,7 @@ def main() -> None:
             destination = DestinationRef(str(state_path), "published", "orders")
             resolver = ModelResolver(model)
 
-            recipe = _saved_recipe(
+            saved_plan = _saved_plan(
                 con=con,
                 model=model,
                 design=design,
@@ -173,7 +173,7 @@ def main() -> None:
                 expected_manifest=None,
             )
             saved_path = Path(directory) / "orders.plan.json"
-            saved_path.write_text(recipe.to_json(), encoding="utf-8")
+            saved_path.write_text(saved_plan.to_json(), encoding="utf-8")
             receipt = run_serialized_plan(
                 saved_path.read_bytes(),
                 con=con.con,
@@ -203,10 +203,10 @@ def main() -> None:
                 )
             )
 
-            # This correction is explicit: capture a new input receipt and bind it to a new recipe.
+            # Capture a new input receipt and bind it to a new saved plan for this correction.
             con.raw_sql("INSERT INTO events VALUES ('2025-01-01 11:00:00', 1, 5)")
             con.raw_sql("UPDATE user_tier SET tier='silver'")
-            corrected_recipe = _saved_recipe(
+            corrected_saved_plan = _saved_plan(
                 con=con,
                 model=model,
                 design=design,
@@ -216,7 +216,7 @@ def main() -> None:
                 request_name="correction-1",
                 expected_manifest=receipt.published_generation,
             )
-            saved_path.write_text(corrected_recipe.to_json(), encoding="utf-8")
+            saved_path.write_text(corrected_saved_plan.to_json(), encoding="utf-8")
             corrected = run_serialized_plan(
                 saved_path.read_bytes(),
                 con=con.con,

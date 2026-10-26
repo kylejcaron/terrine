@@ -196,7 +196,7 @@ def authorize_plan_scan(
     from terrine.runtime.planner import RefreshPlan
 
     if RefreshPlan.deserialize(plan.serialize()) != plan:
-        raise ValueError("runtime plan fields differ from its canonical recipe")
+        raise ValueError("runtime plan fields differ from its canonical definition")
     if (
         not plan.tasks
         or plan.budget is None
@@ -207,5 +207,5 @@ def authorize_plan_scan(
     if authorize is None:
         raise _AUTHORITY.error()
     grant = authorize(plan)
-    if not isinstance(grant, ScanAuthorization) or grant.fingerprint != plan.recipe.fingerprint:
+    if not isinstance(grant, ScanAuthorization) or grant.fingerprint != plan.definition.fingerprint:
         raise _AUTHORITY.error()

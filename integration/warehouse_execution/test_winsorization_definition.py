@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 import ibis
 
 from terrine import Budget
-from terrine.dataset.reference import _recipe_for
+from terrine.dataset.reference import _definition_for
 from terrine.dataset.splits import TimeSplit
 from tests._timing import HANG_GUARD_SECONDS
 from tests.fixtures.winsorization import create_model, design
@@ -34,16 +34,17 @@ def test_fitted_transform_reopens_without_training_rows_and_survives_publication
             staged = frame.winsorize(fitted).stage("training", budget=Budget(strict_scan=False))
             stored = next(column for column in staged.manifest.columns if column.name == "value")
             assert (
-                stored.metadata["transformation"]["fit"]["recipe_hash"] == _recipe_for(frame).digest
+                stored.metadata["transformation"]["fit"]["definition_hash"]
+                == _definition_for(frame).digest
             )
-            assert staged.manifest.recipe.transforms == (fitted,)
+            assert staged.manifest.definition.transforms == (fitted,)
             scoring = (
                 design()
                 .snapshot(model, as_of="2025-01-10", features=("value",), eligibility={})
                 .winsorize(fitted)
             )
-            (scoring_root / "training.json").write_bytes(_recipe_for(frame).canonical_json())
-            (scoring_root / "scoring.json").write_bytes(_recipe_for(scoring).canonical_json())
+            (scoring_root / "training.json").write_bytes(_definition_for(frame).canonical_json())
+            (scoring_root / "scoring.json").write_bytes(_definition_for(scoring).canonical_json())
             (scoring_root / "transform.json").write_bytes(fitted.to_json())
         finally:
             con.disconnect()
@@ -60,15 +61,15 @@ import pyarrow as pa
 from terrine import Budget
 from terrine.data import MaterializedFrame
 from terrine.runtime.changes import Change, ChangeSet
-from terrine.spec.dataset import DatasetRecipe
+from terrine.spec.dataset import DatasetDefinition
 from terrine.spec.transforms import Winsorization
 from tests.fixtures.winsorization import bind_model
 root = Path(sys.argv[1])
-training_recipe = DatasetRecipe.from_json((root / "training.json").read_bytes())
-recipe = DatasetRecipe.from_json((root / "scoring.json").read_bytes())
+training_definition = DatasetDefinition.from_json((root / "training.json").read_bytes())
+definition = DatasetDefinition.from_json((root / "scoring.json").read_bytes())
 fitted = Winsorization.from_json((root / "transform.json").read_bytes())
-assert fitted.fit.recipe_hash == training_recipe.digest
-assert recipe.transforms == (fitted,)
+assert fitted.fit.definition_hash == training_definition.digest
+assert definition.transforms == (fitted,)
 con = ibis.duckdb.connect(str(root / "scoring.duckdb"))
 try:
     con.raw_sql("CREATE TABLE users AS SELECT * FROM (VALUES ('a'),('b')) AS units(user_id)")
@@ -78,7 +79,7 @@ try:
                 "('b','2025-01-09 12:00:00+00',5000)) AS points(user_id,ts,amount)")
     assert set(con.list_tables()) == {'events', 'users'}
     model = bind_model(con, scoring=True)
-    frame = recipe.build(model)
+    frame = definition.build(model)
     output = frame.materialize()
     values = output.table.sort_by('unit')['value'].to_pylist()
     assert [str(value) for value in values] == ['5', '15']
@@ -94,8 +95,8 @@ try:
     changed = MaterializedFrame.from_arrow(pa.Table.from_batches(batches))
     values = changed.table.sort_by('unit')['value'].to_pylist()
     assert [str(value) for value in values] == ['15', '5']
-    assert refreshed.manifest.recipe.digest == dataset.manifest.recipe.digest
-    assert refreshed.manifest.recipe.transforms == (fitted,)
+    assert refreshed.manifest.definition.digest == dataset.manifest.definition.digest
+    assert refreshed.manifest.definition.transforms == (fitted,)
     assert 'labels' not in con.list_tables()
     print(json.dumps({'lower': str(fitted.lower), 'upper': str(fitted.upper),
                       'rows': output.table.num_rows, 'changed_rows': changed.table.num_rows}))

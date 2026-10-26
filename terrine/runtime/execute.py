@@ -19,7 +19,7 @@ from terrine.runtime.cost import _ATTEMPTS, ScanAuthorization, authorize_plan_sc
 from terrine.runtime.events import event_transaction, record_run_event
 from terrine.runtime.leases import Lease, LeaseStore
 from terrine.runtime.planner import RefreshPlan, TaskSpec
-from terrine.runtime.recipe import DestinationRef
+from terrine.runtime.saved_plan import DestinationRef
 from terrine.runtime.state import RuntimeStore
 from terrine.runtime.status import _recover_interrupted_runs
 from terrine.runtime.synchronization import run_publication_lock
@@ -171,7 +171,7 @@ def execute_plan(
         if existing_request is not None:
             if (
                 existing_request[1] != plan.dataset
-                or existing_request[2] != plan.recipe.fingerprint
+                or existing_request[2] != plan.definition.fingerprint
             ):
                 raise _REQUEST_KEY_CONFLICT.error()
             if existing_request[0] != run_id:
@@ -198,7 +198,7 @@ def execute_plan(
             if active >= max_active_runs:
                 raise _CONCURRENCY.error(limit=max_active_runs)
         if run is not None:
-            if run[0] != plan.dataset or run[1] != plan.recipe.fingerprint:
+            if run[0] != plan.dataset or run[1] != plan.definition.fingerprint:
                 raise ValueError("run_id is already bound to a different plan")
             if request_key is not None and (run[4] != request_key or run[5] != destination_json):
                 raise _REQUEST_KEY_CONFLICT.error()
@@ -211,7 +211,7 @@ def execute_plan(
                 [
                     run_id,
                     plan.dataset,
-                    plan.recipe.fingerprint,
+                    plan.definition.fingerprint,
                     request_key,
                     destination_json,
                     datetime.now(UTC).replace(tzinfo=None),

@@ -128,10 +128,10 @@ def test_exact_owner_authorization_precedes_any_workspace_source_work(monkeypatc
             assert isinstance(expected_cost, str)
             assert max_cost == Decimal(expected_cost)
             assert currency == document["currency"]
-            self.fingerprints.append(plan.recipe.fingerprint)
+            self.fingerprints.append(plan.definition.fingerprint)
             assert plan.tasks[0].scan_evidence.max_attempts == 1
             assert plan.budget.max_rows == 2 * (2 * 4 + 5)
-            return ScanAuthorization(plan.recipe.fingerprint if authorized else "wrong-scope")
+            return ScanAuthorization(plan.definition.fingerprint if authorized else "wrong-scope")
 
         def isolated_workspace(self):
             self.entered = True

@@ -1,4 +1,4 @@
-"""Typed discovery records for the existing DatasetRecipe codec."""
+"""Typed discovery records for the existing DatasetDefinition codec."""
 
 import json
 from datetime import datetime
@@ -12,7 +12,7 @@ from terrine.dataset.splits import policy_from_record
 from terrine.errors import thaw
 from terrine.model import Model
 from terrine.spec.anchors import FixedDate
-from terrine.spec.dataset import INVALID_RECIPE, DatasetRecipe
+from terrine.spec.dataset import INVALID_DEFINITION, DatasetDefinition
 from terrine.spec.io import from_json
 
 
@@ -75,52 +75,54 @@ class ScoringView(ViewRecord):
 _VIEW = TypeAdapter(Annotated[TrainingView | ScoringView, Field(discriminator="kind")])
 
 
-def parse_recipe(serialized: str, model: Model) -> DatasetRecipe:
-    recipe = DatasetRecipe.from_json(serialized)
-    if recipe.view is not None:
+def parse_definition(serialized: str, model: Model) -> DatasetDefinition:
+    definition = DatasetDefinition.from_json(serialized)
+    if definition.view is not None:
         try:
-            _VIEW.validate_json(json.dumps(thaw(recipe.view)))
-            if recipe.view["kind"] == "training" and recipe.view["split"] is not None:
-                policy_from_record(thaw(recipe.view["split"]))
+            _VIEW.validate_json(json.dumps(thaw(definition.view)))
+            if definition.view["kind"] == "training" and definition.view["split"] is not None:
+                policy_from_record(thaw(definition.view["split"]))
         except (ValueError, OverflowError) as error:
-            raise INVALID_RECIPE.error(
+            raise INVALID_DEFINITION.error(
                 reason="use the discovered typed training or scoring view"
             ) from error
-        if recipe.view["kind"] == "scoring":
-            design = recipe.base_design
+        if definition.view["kind"] == "scoring":
+            design = definition.base_design
             if (
                 design.shape != "cross_section"
                 or not isinstance(design.anchor, FixedDate)
                 or design.outcomes
-                or set(recipe.view["features"]) != set(design.features)
+                or set(definition.view["features"]) != set(design.features)
             ):
-                raise INVALID_RECIPE.error(
+                raise INVALID_DEFINITION.error(
                     reason="scoring view must match its fixed feature-only base Design"
                 )
             anchor = design.anchor.date
             resolved = (
                 utc_instant(anchor) if isinstance(anchor, datetime) else model.day_boundary(anchor)
             )
-            if utc_instant(recipe.view["as_of"]) != resolved:
-                raise INVALID_RECIPE.error(
+            if utc_instant(definition.view["as_of"]) != resolved:
+                raise INVALID_DEFINITION.error(
                     reason="scoring instant must match its base Design anchor"
                 )
-            document = json.loads(recipe.canonical_json())["base_design"]
-            document["eligibility"] = thaw(recipe.view["eligibility"])
+            document = json.loads(definition.canonical_json())["base_design"]
+            document["eligibility"] = thaw(definition.view["eligibility"])
             try:
                 eligibility_design = from_json(
                     json.dumps({"schema_version": 1, "design": document})
                 )
             except (KeyError, TypeError, ValueError, OverflowError) as error:
-                raise INVALID_RECIPE.error(
+                raise INVALID_DEFINITION.error(
                     reason="scoring eligibility must use typed predicates"
                 ) from error
             if eligibility_design.eligibility != design.eligibility:
-                raise INVALID_RECIPE.error(reason="scoring eligibility must match its base Design")
-    return recipe
+                raise INVALID_DEFINITION.error(
+                    reason="scoring eligibility must match its base Design"
+                )
+    return definition
 
 
-def recipe_schema() -> dict[str, Any]:
+def definition_schema() -> dict[str, Any]:
     design = design_schema()
     view = _VIEW.json_schema()
     definitions = {**design["$defs"], **view.pop("$defs", {})}

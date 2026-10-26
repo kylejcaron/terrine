@@ -192,7 +192,7 @@ class ControlServer:
             return plan.serialize().decode("utf-8")
         if operation == "run":
             from terrine.runtime.api import run_serialized_plan
-            from terrine.runtime.recipe import DestinationRef
+            from terrine.runtime.saved_plan import DestinationRef
 
             destination_data = request.get("destination")
             destination = (
@@ -240,7 +240,7 @@ class ControlServer:
                 "status": asdict(result.status),
             }
         if operation == "request_key":
-            from terrine.runtime.recipe import DestinationRef
+            from terrine.runtime.saved_plan import DestinationRef
 
             destination = request.get("destination")
             if not isinstance(destination, dict):
