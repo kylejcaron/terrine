@@ -117,14 +117,14 @@ limits/scales refuse with `terrine.transform.winsorization_precision_unavailable
 Use an exactly representable integer/Decimal feature and limits instead.
 
 The immutable typed record includes algorithm/version, both probabilities,
-training recipe/view/design/model hashes, snapshot and split identity, a
+training definition/view/design/model hashes, snapshot and split identity, a
 training-population digest, counts, source type, and exact frozen limits.
 `limits.to_json()` and `Winsorization.from_json(...)` persist/reopen that record
-without fitting. Dataset recipes embed it; manifests and each transformed
+without fitting. Dataset definitions embed it; manifests and each transformed
 column's `ColumnMeta.transformation` retain it through Arrow, Parquet, staging,
 and refresh. Scoring verifies the original parent design, feature definition,
 and physical source type; it never reads the training population. Refitting
-requires an explicit new training fit and a new recipe.
+requires an explicit new training fit and a new definition.
 Feature identity includes resolved metric/source bindings for aggregates,
 quantiles, and distinct counts. Rebinding a feature to another fact does not
 become compatible merely because its output type is unchanged.
@@ -140,7 +140,7 @@ stage; unsupported declarations still refuse instead of being stripped.
 
 ## Reopening a pinned dataset
 
-Keep the `DatasetManifest` with the consumer-owned export, or persist `DatasetManifest.to_json()` separately from the immutable `DatasetRecipe` stored by the runtime. Reopen the exact committed generation rather than consulting a moving destination:
+Keep the `DatasetManifest` with the consumer-owned export, or persist `DatasetManifest.to_json()` separately from the immutable `DatasetDefinition` stored by the runtime. Reopen the exact committed generation rather than consulting a moving destination:
 
 ```python
 reopened = Dataset.from_manifest(dataset.manifest, con=model.con)
@@ -148,11 +148,27 @@ for batch in reopened.to_arrow_batches():
     consume(batch)
 ```
 
-The manifest binds the canonical construction recipe, selected view, generation, schema, and output checksums. Reopening verifies the committed publication, partition checksums, physical schema, and row count before returning the reference. `DatasetRecipeStore` stores a `DatasetRecipe`, not the manifest; restore a serialized manifest with `DatasetManifest.from_json()` and pass it to `Dataset.from_manifest()`. Credentials, live connections, SQL, and row payloads are not stored in the recipe.
+The manifest binds the canonical construction definition, selected view, generation, schema, and output checksums. Reopening verifies the committed publication, partition checksums, physical schema, and row count before returning the reference. `DatasetDefinitionStore` stores a `DatasetDefinition`, not the manifest; restore a serialized manifest with `DatasetManifest.from_json()` and pass it to `Dataset.from_manifest()`. Credentials, live connections, SQL, and row payloads are not stored in the definition.
+
+Serialized manifests carry `definition` or an owner-bound `definition_reference`,
+plus `definition_hash`. `DatasetDefinitionReference` identifies the configured
+owner and the definition digest; pass its `DatasetDefinitionStore` as
+`DatasetManifest.from_json(serialized, definition_store=store)` to resolve it.
+Malformed, unknown-field and superseded manifest envelopes refuse with
+`terrine.dataset.invalid_manifest`; stage the definition again instead of
+rewriting an old manifest's fields.
+
+Bare definitions without transforms retain their canonical bytes and digest
+across the naming change. Fitted preprocessing records with superseded identity
+fields refuse with `terrine.dataset.invalid_definition`, whether embedded in a
+definition or loaded as a frozen transform. Refit from the original declared
+training population and save a new definition. Existing owner database table
+and column names are unchanged, so a new generation can be staged in the same
+database even when an old manifest cannot be reopened.
 
 Current `arrow-v2` publication checksums normalize timestamp instants to UTC and canonicalize nullable Arrow buffers before hashing, independently of the connection's display timezone or unused null-slot bytes. Recorded earlier checksums retain their original verification format; the original logical timezone remains in the Arrow schema. When consuming only part of a batch iterator, call its `close()` method or use `contextlib.closing`. Parquet export closes its iterator on both success and failure, while retaining only verified completed shards for retry.
 
-## Recipe-backed refresh
+## Definition-backed refresh
 
 `plan_refresh` reconstructs the saved view and produces a metadata-only runtime plan. `refresh` captures current inputs once, reopens that retained snapshot for every runtime task, and publishes a new pinned generation through the built-in executor. It never changes the old reference or a reader already consuming it.
 
@@ -166,7 +182,7 @@ for batch in refreshed.to_arrow_batches():
     consume(batch)
 ```
 
-The local DuckDB path does not discover authoritative upstream revisions. Omitting `changes` conservatively rebuilds the recipe; upstream revision fields remain explicitly unknown even though the retained input receipt is exact. An authoritative empty `ChangeSet` may reuse the pinned generation only while the model definition is unchanged. Refreshing from a superseded generation refuses rather than overwriting a newer publication. A scoring refresh preserves its resolved `as_of`; changing the prediction date requires a new explicit snapshot.
+The local DuckDB path does not discover authoritative upstream revisions. Omitting `changes` conservatively rebuilds the definition; upstream revision fields remain explicitly unknown even though the retained input receipt is exact. An authoritative empty `ChangeSet` may reuse the pinned generation only while the model definition is unchanged. Refreshing from a superseded generation refuses rather than overwriting a newer publication. A scoring refresh preserves its resolved `as_of`; changing the prediction date requires a new explicit snapshot.
 
 Staging requires a file-backed DuckDB Model connection. The runtime namespace defaults to `terrine_runtime` (`TERRINE_RUNTIME_NAMESPACE`); retained inputs and bounded Arrow task outputs default to `<database-parent>/.terrine/snapshots` (`TERRINE_RUNTIME_SNAPSHOT_ROOT`). The built-in executor currently accepts cross-sectional and StatePanel Designs. Unsupported shapes refuse before source capture; specialized local Frame materialization remains available separately.
 

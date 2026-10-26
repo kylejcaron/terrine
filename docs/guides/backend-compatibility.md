@@ -23,7 +23,7 @@ Ibis SQL compilation or DDL support alone does not establish publication safety.
 
 The local workflow accesses no paid warehouse, credentials or remote resources;
 BigQuery and Snowflake are reached only when a Model binds an Ibis connection to
-them. Named dbt relation binding is owner-gated; an existing dbt recipe is not
+them. Named dbt relation binding is owner-gated; an existing dbt workflow is not
 evidence of a reviewed relation-to-Catalog bridge.
 
 ## PostgreSQL

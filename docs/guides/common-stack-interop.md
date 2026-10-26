@@ -114,7 +114,7 @@ and versioned increment contracts from unsupported or owner-gated mappings.
 
 Named dbt relation binding remains owner-gated. This work does not add a dbt
 manifest reader, execute macros, infer metrics from columns, or claim a reviewed
-dbt relation-to-Catalog workflow. Existing orchestrator recipes remain unchanged.
+dbt relation-to-Catalog workflow. Existing orchestrator workflows remain unchanged.
 
 Run `uv run python examples/common_stack_interop.py` for a self-contained local
 Model → Design → Frame → Dataset → Arrow/Parquet workflow and optional dataframe

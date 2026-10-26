@@ -19,7 +19,7 @@ DoWhy 0.14 supports Python 3.13 but not 3.14; its extra is inactive on 3.14.
 The other extras remain independently selectable. CI runs all five on 3.13.
 Increment remains an independent optional [semantic adapter](increment-compatibility.md),
 never a requirement for these workflows. sklearn/Arrow keeps the existing ML
-staging boundary: these recipes are not a replacement for labeled training exports.
+staging boundary: these workflows are not a replacement for labeled training exports.
 
 For local consumers, start with a verified `MaterializedFrame`:
 
@@ -41,7 +41,7 @@ treatment. These hazards use stable `terrine.export.*` codes across all hand-off
 Select a complete analysis population or change the design rather than deleting
 metadata to evade a refusal.
 
-Local recipes explicitly collect the checked rows into pandas. Retain the original
+Local examples explicitly collect the checked rows into pandas. Retain the original
 `MaterializedFrame` alongside the downstream object for role/provenance inspection;
 consumer dataframes are not portable Terrine metadata containers.
 
@@ -63,7 +63,7 @@ consumer = DoubleMLData(
 ```
 
 A repeated-row frame must declare the independent-unit cluster; pass that role to
-`cluster_cols`, not an anchor/trial identifier. This recipe constructs the data
+`cluster_cols`, not an anchor/trial identifier. This example constructs the data
 backend, not an estimator or a claim about valid nuisance learning. Declared weights
 are not consumed by `DoubleMLData`; choosing an appropriately weighted downstream
 method is a separate analyst decision, not a reason to silently discard the role.
@@ -130,7 +130,7 @@ other writes inside it. Do not perform unrelated writes in the context. duckreg
 receives the same caller-owned connection, not a reopened database or exported
 pandas table. Compression groups by the right-hand-side values: high-cardinality
 predictors can yield many aggregate groups; no bound on compression is implied.
-The recipe disables bootstrap, so no unit-ID lists are collected. It does not apply
+The example disables bootstrap, so no unit-ID lists are collected. It does not apply
 declared weight roles; weighted method selection is explicitly downstream.
 
 ## lifelines: distinguish KM arrays from Cox predictors
@@ -231,7 +231,7 @@ unit as never-treated, nor hide a reversal. It preserves emitted row order and
 refuses pre-existing output-name collisions. `excluded_counts` retains exact reasons.
 The helper returns the other source columns unchanged; explicitly select outcomes
 and covariates for the downstream method. Weight roles are retained in the source,
-not silently interpreted as diff-diff survey weights by this recipe.
+not silently interpreted as diff-diff survey weights by this example.
 
 ## API sources and executed examples
 

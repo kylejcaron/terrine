@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- Rename the saved recipe family without compatibility aliases:
+  `DatasetRecipe` → `DatasetDefinition`,
+  `DatasetRecipeStore` → `DatasetDefinitionStore`,
+  `DatasetRecipeReference` → `DatasetDefinitionReference`, and
+  `SavedPlanRecipe` → `SavedPlan`. The canonical runtime `PlanRecipe` becomes
+  `PlanDefinition`, available through `RefreshPlan.definition`.
+- Move `terrine.runtime.recipe` to `terrine.runtime.saved_plan` and
+  `terrine.agent.recipes` to `terrine.agent.definitions`.
+- Rename refusal codes `terrine.dataset.invalid_recipe` →
+  `terrine.dataset.invalid_definition` and `terrine.runtime.plan_recipe_mismatch`
+  → `terrine.runtime.saved_plan_mismatch`. Malformed, unknown-field and old-format
+  manifest JSON now refuses with `terrine.dataset.invalid_manifest`.
+- Rename saved-plan wire fields `dataset_recipe_json` → `dataset_definition_json`
+  and `recipe_hash` → `plan_hash`. Manifest fields become `definition`,
+  `definition_reference` and `definition_hash` instead of `recipe`,
+  `recipe_reference` and `recipe_hash`. Owner requests use `dataset_definition`
+  instead of `dataset_recipe`; invocations use `saved_plan_json` instead of
+  `recipe_json`. Fitted winsorization identities use `definition_hash` instead of
+  `recipe_hash`. Agent receipts and dataset references use the matching
+  `plan_hash`, `definition_reference` and `definition_digest` names.
+- Rename agent tools `get_dataset_recipe_schema` →
+  `get_dataset_definition_schema`, `propose_recipe` → `propose_definition`, and
+  `validate_recipe` → `validate_definition`.
+- Keep canonical bare definitions without transforms readable with identical
+  bytes and digest. Old manifest and saved-plan envelopes refuse with the codes
+  above; old owner planning requests refuse with
+  `terrine.runtime.plan_request_invalid` rather than dropping their saved view.
+  Definitions and fitted transforms carrying the old fitted `recipe_hash` refuse
+  with `terrine.dataset.invalid_definition`; refit from the declared training
+  population and save a new definition. No artifact migration is performed.
+- Preserve persisted owner SQL identifiers: table `runtime_dataset_recipes` and
+  the `recipe_json` columns in `runtime_dataset_requests` and
+  `runtime_dataset_recipes` are unchanged. Existing owner databases still open
+  and accept new generations even when their old manifests cannot be reopened.
+
 ### Dataset construction
 
 - Build typed, point-in-time analytical and ML datasets with a standalone native
