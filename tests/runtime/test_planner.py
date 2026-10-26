@@ -65,7 +65,7 @@ def test_plan_fingerprint_includes_change_evidence():
         graph=graph,
         changes=ChangeSet((Change("insert", "events", revision="r2"),), "change_feed"),
     )
-    assert initial.recipe.fingerprint != changed.recipe.fingerprint
+    assert initial.definition.fingerprint != changed.definition.fingerprint
     from terrine.runtime.planner import RefreshPlan
 
     assert RefreshPlan.deserialize(changed.serialize()) == changed
@@ -95,7 +95,7 @@ def test_plan_fingerprint_includes_change_support_not_only_revision():
             "change_feed",
         ),
     )
-    assert earlier.recipe.fingerprint != later.recipe.fingerprint
+    assert earlier.definition.fingerprint != later.definition.fingerprint
 
 
 def test_planner_limits_work_to_changed_sources_and_skips_readiness_only_advance():
@@ -258,7 +258,7 @@ def test_definition_change_starts_new_fingerprint():
         graph=next_graph,
         changes=ChangeSet((Change("definition", "events"),), "revision"),
     )
-    assert first.recipe.fingerprint != next_plan.recipe.fingerprint
+    assert first.definition.fingerprint != next_plan.definition.fingerprint
 
 
 def test_event_anchor_identity_change_rebuilds_all_source_partitions():
@@ -306,22 +306,22 @@ def test_plan_serialization_preserves_execution_budgets():
         graph=graph,
         budget=Budget(max_rows=7, max_output_bytes=701),
     )
-    recipe = json.loads(plan.serialize())
-    assert recipe["budget"] == {
+    definition = json.loads(plan.serialize())
+    assert definition["budget"] == {
         "max_rows": 7,
         "max_output_bytes": 701,
         "max_scan_bytes": None,
         "strict_scan": True,
     }
     assert (
-        plan.recipe.fingerprint
+        plan.definition.fingerprint
         != plan_refresh(
             namespace="owner",
             dataset="study",
             definition_hash="definition",
             snapshot_id="snap",
             graph=graph,
-        ).recipe.fingerprint
+        ).definition.fingerprint
     )
 
 

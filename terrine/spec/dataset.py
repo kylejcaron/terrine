@@ -1,4 +1,4 @@
-"""Canonical data-only recipes for reproducible staged datasets."""
+"""Canonical data-only definitions for reproducible staged datasets."""
 
 from __future__ import annotations
 
@@ -17,15 +17,17 @@ from terrine.spec.io import from_json as design_from_json
 from terrine.spec.transforms import Winsorization
 
 __all__ = [
-    "DatasetRecipe",
-    "DatasetRecipeReference",
-    "DatasetRecipeStore",
-    "INVALID_RECIPE",
+    "DatasetDefinition",
+    "DatasetDefinitionReference",
+    "DatasetDefinitionStore",
+    "INVALID_DEFINITION",
     "INVALID_VIEW",
     "UNSUPPORTED_VIEW",
 ]
 
-INVALID_RECIPE = RefusalSpec("terrine.dataset.invalid_recipe", "Invalid dataset recipe: {reason}")
+INVALID_DEFINITION = RefusalSpec(
+    "terrine.dataset.invalid_definition", "Invalid dataset definition: {reason}"
+)
 INVALID_VIEW = RefusalSpec("terrine.dataset.invalid_view", "Invalid dataset view: {reason}.")
 UNSUPPORTED_VIEW = RefusalSpec(
     "terrine.dataset.unsupported_view",
@@ -40,7 +42,7 @@ def _canonical(value: Any) -> bytes:
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class DatasetRecipe:
+class DatasetDefinition:
     schema_version: int
     base_design: Design
     view: Any
@@ -55,32 +57,32 @@ class DatasetRecipe:
         transforms: tuple[Winsorization, ...] = (),
     ) -> None:
         if schema_version != 1 or isinstance(schema_version, bool):
-            raise INVALID_RECIPE.error(reason="unsupported schema version")
+            raise INVALID_DEFINITION.error(reason="unsupported schema version")
         if not isinstance(base_design, Design):
             raise TypeError("base_design must be Design")
         if view is not None:
             if not isinstance(view, dict) or not isinstance(view.get("kind"), str):
-                raise INVALID_RECIPE.error(reason="view must be a tagged data mapping")
+                raise INVALID_DEFINITION.error(reason="view must be a tagged data mapping")
             kind = view["kind"]
             fields = {
                 "training": {"kind", "features", "labels", "incomplete_labels", "split"},
                 "scoring": {"kind", "features", "as_of", "eligibility", "parent_design_hash"},
             }
             if kind not in fields or set(view) - fields[kind]:
-                raise INVALID_RECIPE.error(reason="unknown view tag or field")
+                raise INVALID_DEFINITION.error(reason="unknown view tag or field")
             try:
                 view = freeze(view)
             except (TypeError, ValueError) as error:
-                raise INVALID_RECIPE.error(reason="view contains a runtime value") from error
+                raise INVALID_DEFINITION.error(reason="view contains a runtime value") from error
         transforms = tuple(transforms)
         if any(
             not isinstance(item, Winsorization) or item.source_type is None for item in transforms
         ):
-            raise INVALID_RECIPE.error(
+            raise INVALID_DEFINITION.error(
                 reason="transforms must be typed frozen winsorization records"
             )
         if len({item.column for item in transforms}) != len(transforms):
-            raise INVALID_RECIPE.error(reason="duplicate transformed columns")
+            raise INVALID_DEFINITION.error(reason="duplicate transformed columns")
         object.__setattr__(self, "schema_version", 1)
         object.__setattr__(self, "base_design", base_design)
         object.__setattr__(self, "view", view)
@@ -135,7 +137,7 @@ class DatasetRecipe:
         return frame
 
     @classmethod
-    def from_json(cls, value: str | bytes) -> DatasetRecipe:
+    def from_json(cls, value: str | bytes) -> DatasetDefinition:
         try:
             payload = json.loads(
                 value, object_pairs_hook=_unique_pairs, parse_constant=_bad_constant
@@ -145,9 +147,9 @@ class DatasetRecipe:
                 "base_design",
                 "view",
             }:
-                raise ValueError("unknown recipe fields")
+                raise ValueError("unknown definition fields")
             if payload["schema_version"] != 1 or isinstance(payload["schema_version"], bool):
-                raise ValueError("unsupported recipe version")
+                raise ValueError("unsupported definition version")
             design = design_from_json(
                 _canonical({"schema_version": 1, "design": payload["base_design"]})
             )
@@ -160,14 +162,14 @@ class DatasetRecipe:
                 ),
             )
         except Exception as error:
-            if getattr(error, "code", None) == INVALID_RECIPE.code:
+            if getattr(error, "code", None) == INVALID_DEFINITION.code:
                 raise
-            raise INVALID_RECIPE.error(reason="malformed or unsupported content") from error
+            raise INVALID_DEFINITION.error(reason="malformed or unsupported content") from error
 
 
 @dataclass(frozen=True, slots=True)
-class DatasetRecipeReference:
-    """Content-addressed recipe identity scoped to a configured owner."""
+class DatasetDefinitionReference:
+    """Content-addressed definition identity scoped to a configured owner."""
 
     owner: str
     digest: str
@@ -180,12 +182,12 @@ class DatasetRecipeReference:
             or len(self.digest) != 64
             or any(char not in "0123456789abcdef" for char in self.digest)
         ):
-            raise INVALID_RECIPE.error(reason="invalid owner-bound recipe reference")
+            raise INVALID_DEFINITION.error(reason="invalid owner-bound definition reference")
 
 
 @dataclass(frozen=True, slots=True)
-class DatasetRecipeStore:
-    """Immutable local recipe storage configured for one data owner."""
+class DatasetDefinitionStore:
+    """Immutable local definition storage configured for one data owner."""
 
     root: Path
     owner: str
@@ -195,16 +197,16 @@ class DatasetRecipeStore:
         if not isinstance(self.owner, str) or not self.owner:
             raise ValueError("owner must be a non-empty string")
 
-    def put(self, recipe: DatasetRecipe) -> DatasetRecipeReference:
-        if not isinstance(recipe, DatasetRecipe):
-            raise TypeError("recipe must be DatasetRecipe")
-        content = recipe.canonical_json()
-        path = self.root / f"{recipe.digest}.json"
+    def put(self, definition: DatasetDefinition) -> DatasetDefinitionReference:
+        if not isinstance(definition, DatasetDefinition):
+            raise TypeError("definition must be DatasetDefinition")
+        content = definition.canonical_json()
+        path = self.root / f"{definition.digest}.json"
         self.root.mkdir(parents=True, exist_ok=True)
         temporary: Path | None = None
         try:
             with tempfile.NamedTemporaryFile(
-                dir=self.root, prefix=".recipe-", delete=False
+                dir=self.root, prefix=".definition-", delete=False
             ) as stream:
                 temporary = Path(stream.name)
                 stream.write(content)
@@ -216,31 +218,33 @@ class DatasetRecipeStore:
                 try:
                     existing = path.read_bytes()
                 except OSError as read_error:
-                    raise INVALID_RECIPE.error(
-                        reason="immutable recipe object cannot be read"
+                    raise INVALID_DEFINITION.error(
+                        reason="immutable definition object cannot be read"
                     ) from read_error
                 if existing != content:
-                    raise INVALID_RECIPE.error(
-                        reason="immutable recipe content conflicts"
+                    raise INVALID_DEFINITION.error(
+                        reason="immutable definition content conflicts"
                     ) from error
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
-        return DatasetRecipeReference(self.owner, recipe.digest)
+        return DatasetDefinitionReference(self.owner, definition.digest)
 
-    def resolve(self, reference: DatasetRecipeReference) -> DatasetRecipe:
-        if not isinstance(reference, DatasetRecipeReference) or reference.owner != self.owner:
-            raise INVALID_RECIPE.error(reason="recipe reference belongs to another owner")
+    def resolve(self, reference: DatasetDefinitionReference) -> DatasetDefinition:
+        if not isinstance(reference, DatasetDefinitionReference) or reference.owner != self.owner:
+            raise INVALID_DEFINITION.error(reason="definition reference belongs to another owner")
         try:
             content = (self.root / f"{reference.digest}.json").read_bytes()
         except OSError as error:
-            raise INVALID_RECIPE.error(reason="recipe reference object is unavailable") from error
+            raise INVALID_DEFINITION.error(
+                reason="definition reference object is unavailable"
+            ) from error
         if hashlib.sha256(content).hexdigest() != reference.digest:
-            raise INVALID_RECIPE.error(reason="recipe reference digest mismatch")
-        recipe = DatasetRecipe.from_json(content)
-        if recipe.digest != reference.digest:
-            raise INVALID_RECIPE.error(reason="recipe reference digest mismatch")
-        return recipe
+            raise INVALID_DEFINITION.error(reason="definition reference digest mismatch")
+        definition = DatasetDefinition.from_json(content)
+        if definition.digest != reference.digest:
+            raise INVALID_DEFINITION.error(reason="definition reference digest mismatch")
+        return definition
 
 
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

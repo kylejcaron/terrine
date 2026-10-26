@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from terrine import Budget
 from terrine.agent import AgentPolicy, DatasetTools
-from terrine.agent.schemas import AgentDatasetReference
+from terrine.agent.schemas import AgentDatasetReference, PlanReceipt
 from terrine.data import Coverage, UnitSource
 from terrine.model import Model
 from terrine.runtime.api import DesignExecutor, run_serialized_plan
@@ -20,12 +20,12 @@ from terrine.runtime.execute import _EXECUTION_FAILED
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.planner import RefreshPlan
 from terrine.runtime.planning import OwnerPlanner, PlanRequest
-from terrine.runtime.recipe import DestinationRef, ModelReference
+from terrine.runtime.saved_plan import DestinationRef, ModelReference
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.status import cancel_run
 from terrine.semantic.models import Catalog
 from terrine.spec import CohortSpec, Design, EventAnchor, FixedDate, agg
-from terrine.spec.dataset import DatasetRecipe
+from terrine.spec.dataset import DatasetDefinition
 from terrine.spec.io import from_json
 from terrine.spec.trajectory import Trajectory
 
@@ -75,8 +75,8 @@ def owner_tools(tmp_path):
         con.disconnect()
 
 
-def _recipe(window="-1d"):
-    return DatasetRecipe(
+def _definition(window="-1d"):
+    return DatasetDefinition(
         schema_version=1,
         base_design=Design(
             "user",
@@ -87,9 +87,9 @@ def _recipe(window="-1d"):
     )
 
 
-def _prepare(tools, *, invocation="stage", recipe=None):
+def _prepare(tools, *, invocation="stage", definition=None):
     result = tools.prepare_dataset(
-        recipe or _recipe(),
+        definition or _definition(),
         destination=next(iter(tools.policy.allowed_destinations)),
         invocation_id=invocation,
     )
@@ -103,11 +103,15 @@ def test_restricted_runtime_evaluations(case, owner_tools):
     tools = owner_tools
     operation = case["operation"]
     if operation == "strict_preview":
-        result = tools.preview_dataset(_recipe(), budget=Budget(max_scan_bytes=1, strict_scan=True))
+        result = tools.preview_dataset(
+            _definition(), budget=Budget(max_scan_bytes=1, strict_scan=True)
+        )
     elif operation == "unbounded_preview":
-        result = tools.preview_dataset(_recipe(), bounded_count=tools.policy.max_bounded_count + 1)
+        result = tools.preview_dataset(
+            _definition(), bounded_count=tools.policy.max_bounded_count + 1
+        )
     elif operation == "unsupported_shape":
-        recipe = DatasetRecipe(
+        definition = DatasetDefinition(
             schema_version=1,
             view=None,
             base_design=Design(
@@ -117,13 +121,17 @@ def test_restricted_runtime_evaluations(case, owner_tools):
             ),
         )
         result = tools.prepare_dataset(
-            recipe, destination=next(iter(tools.policy.allowed_destinations)), invocation_id="shape"
+            definition,
+            destination=next(iter(tools.policy.allowed_destinations)),
+            invocation_id="shape",
         )
     elif operation == "destination_escalation":
         destination = replace(next(iter(tools.policy.allowed_destinations)), dataset="private")
-        result = tools.prepare_dataset(_recipe(), destination=destination, invocation_id="private")
+        result = tools.prepare_dataset(
+            _definition(), destination=destination, invocation_id="private"
+        )
     elif operation == "stale_receipt":
-        receipt = _prepare(tools).model_copy(update={"recipe_hash": "0" * 64})
+        receipt = _prepare(tools).model_copy(update={"plan_hash": "0" * 64})
         result = tools.execute_plan(
             receipt,
             request_key="stale",
@@ -138,7 +146,7 @@ def test_restricted_runtime_evaluations(case, owner_tools):
             dataset="study",
             generation="private",
             definition_hash="0" * 64,
-            recipe_reference="0" * 64,
+            definition_reference="0" * 64,
             model_hash="0" * 64,
             manifest_hash="0" * 64,
             row_count=0,
@@ -171,13 +179,53 @@ def test_catalog_description_instructions_are_not_executable_metadata(case, owne
     )
 
 
+def test_new_receipts_skip_pre_rename_invocations_but_old_receipts_refuse(owner_tools):
+    tools = owner_tools
+    captured = json.loads((_ROOT / "tests/fixtures/pre_rename_invocation.json").read_text())
+    legacy = captured["invocation"]
+    raw = tools.model.con.con
+    raw.execute("CREATE SCHEMA agent")
+    raw.execute(
+        "CREATE TABLE agent.runtime_plan_invocations ("
+        "invocation_id VARCHAR PRIMARY KEY, request_hash VARCHAR NOT NULL, "
+        "snapshot_id VARCHAR NOT NULL, invocation_json VARCHAR NOT NULL)"
+    )
+    raw.execute(
+        "INSERT INTO agent.runtime_plan_invocations VALUES (?, ?, ?, ?)",
+        [
+            legacy["invocation_id"],
+            "pre-rename-request-hash",
+            legacy["snapshot_id"],
+            json.dumps(legacy, sort_keys=True, separators=(",", ":")),
+        ],
+    )
+    receipt = _prepare(tools, invocation="current")
+    staged = tools.stage(receipt, request_key="current")
+    assert staged.status == "ok", staged.code
+    assert staged.output is not None and staged.output.row_count == 2
+    assert tools.stage(receipt, request_key="current").output == staged.output
+    run_id = raw.execute(
+        "SELECT run_id FROM agent.runtime_runs WHERE request_key='current'"
+    ).fetchone()[0]
+    assert tools.get_run_status(run_id).output.durable_state == "succeeded"
+    assert tools.get_run_events(run_id).status == "ok"
+    assert tools.request_cancel(run_id).output.disposition == "already_terminal"
+    old_receipt = PlanReceipt.model_validate(captured["receipt"])
+    for result in (
+        tools.execute_plan(old_receipt, request_key="old"),
+        tools.stage(old_receipt, request_key="old"),
+    ):
+        assert result.code == "terrine.runtime.saved_plan_mismatch"
+    assert raw.execute("SELECT count(*) FROM agent.runtime_plan_invocations").fetchone()[0] == 2
+
+
 def test_publication_replay_conflict_and_refresh_keep_old_generation(owner_tools):
     tools = owner_tools
     receipt = _prepare(tools)
     first = tools.stage(receipt, request_key="stable")
     assert first.status == "ok" and first.output is not None
     assert tools.stage(receipt, request_key="stable").output == first.output
-    changed = _prepare(tools, invocation="changed", recipe=_recipe("-2d"))
+    changed = _prepare(tools, invocation="changed", definition=_definition("-2d"))
     conflict = tools.stage(changed, request_key="stable")
     assert conflict.code == _EVAL["flow_cases"]["replay_conflict"]["code"]
     assert conflict.suggested_route
@@ -245,15 +293,15 @@ def test_response_loss_recovers_manifest_without_reopening_sources(owner_tools, 
 
 def _executor(tools, receipt):
     invocation, saved = tools._resolve_receipt(receipt, "write")
-    recipe = saved.restore_dataset_recipe()
-    assert recipe is not None
+    definition = saved.restore_dataset_definition()
+    assert definition is not None
     return DesignExecutor(
         tools.model,
-        recipe.base_design,
+        definition.base_design,
         RefreshPlan.deserialize(invocation.serialized_plan),
         tools.model.con.con,
         namespace="agent",
-        dataset_recipe=recipe,
+        dataset_definition=definition,
     )
 
 
@@ -327,11 +375,13 @@ def test_cancellation_during_task_prevents_publication_and_stays_terminal(owner_
 
 
 def _prepare_materialization(tools, invocation="stage"):
-    recipe = DatasetRecipe(
+    definition = DatasetDefinition(
         schema_version=1, base_design=from_json(tools.design_example().output.serialized), view=None
     )
     return tools.prepare_dataset(
-        recipe, destination=next(iter(tools.policy.allowed_destinations)), invocation_id=invocation
+        definition,
+        destination=next(iter(tools.policy.allowed_destinations)),
+        invocation_id=invocation,
     ).output
 
 
@@ -346,7 +396,9 @@ def test_stage_refresh_and_export_require_separate_capabilities(owner_tools, tmp
     assert owner_tools.stage(receipt, request_key="stage").output == first.output
     encoded = first.model_dump_json()
     assert (
-        "recipe_json" not in encoded and "snapshot" not in encoded and "owner.duckdb" not in encoded
+        "saved_plan_json" not in encoded
+        and "snapshot" not in encoded
+        and "owner.duckdb" not in encoded
     )
     assert first.output.row_count == 2
     assert first.output.columns and all(
@@ -417,9 +469,11 @@ def test_typed_dataset_views_survive_preparation_and_staging(owner_tools, kind):
             "as_of": "2025-01-01T00:00:00+00:00",
             "parent_design_hash": original.spec_hash,
         }
-    recipe = DatasetRecipe(schema_version=1, base_design=design, view=view)
+    definition = DatasetDefinition(schema_version=1, base_design=design, view=view)
     prepared = owner_tools.prepare_dataset(
-        recipe, destination=next(iter(owner_tools.policy.allowed_destinations)), invocation_id=kind
+        definition,
+        destination=next(iter(owner_tools.policy.allowed_destinations)),
+        invocation_id=kind,
     )
     assert prepared.status == "ok"
     staged = owner_tools.stage(prepared.output, request_key=kind)
@@ -428,7 +482,7 @@ def test_typed_dataset_views_survive_preparation_and_staging(owner_tools, kind):
         column.name == "history" and column.role == "feature" for column in staged.output.columns
     )
     assert ("label" in {column.name for column in staged.output.columns}) == (kind == "training")
-    assert staged.output.recipe_reference == recipe.digest
+    assert staged.output.definition_reference == definition.digest
 
 
 def test_refresh_preserves_owner_approved_destination_alias(owner_tools, tmp_path):
@@ -508,8 +562,8 @@ def test_refresh_preparation_replays_before_live_inputs_or_current_base_checks(
         assert stale.code == "terrine.runtime.plan_request_invalid"
 
 
-def recipe_for(tools):
-    return DatasetRecipe(
+def definition_for(tools):
+    return DatasetDefinition(
         schema_version=1, base_design=from_json(tools.design_example().output.serialized), view=None
     )
 
@@ -521,9 +575,11 @@ def _unexpected_execution(*args, **kwargs):
 def test_execute_replays_before_source_freshness_and_resolves_exact_invocation(
     owner_tools, monkeypatch
 ):
-    recipe = recipe_for(owner_tools)
+    definition = definition_for(owner_tools)
     destination = next(iter(owner_tools.policy.allowed_destinations))
-    prepared = owner_tools.prepare_dataset(recipe, destination=destination, invocation_id="execute")
+    prepared = owner_tools.prepare_dataset(
+        definition, destination=destination, invocation_id="execute"
+    )
     first = owner_tools.execute_plan(prepared.output, request_key="stable")
     assert first.status == "ok" and first.output.durable_state == "succeeded"
     owner_tools.model.con.raw_sql("DROP TABLE users")
@@ -541,18 +597,18 @@ def test_execute_replays_before_source_freshness_and_resolves_exact_invocation(
     )
 
 
-def test_receipt_binds_dataset_recipe_change_evidence_and_base_generation(owner_tools):
+def test_receipt_binds_dataset_definition_change_evidence_and_base_generation(owner_tools):
     from terrine.dataset.splits import TimeSplit
     from terrine.spec import agg
 
-    base = recipe_for(owner_tools)
+    base = definition_for(owner_tools)
     metric = owner_tools.inspect_catalog().output.metrics[0].name
     design = replace(
         base.base_design,
         features={"history": agg(metric, window=("-1d", "0s"))},
         outcomes={"label": agg(metric, window=("0s", "1d"))},
     )
-    recipe = DatasetRecipe(
+    definition = DatasetDefinition(
         schema_version=1,
         base_design=design,
         view={
@@ -565,11 +621,12 @@ def test_receipt_binds_dataset_recipe_change_evidence_and_base_generation(owner_
     )
     destination = next(iter(owner_tools.policy.allowed_destinations))
     prepared = owner_tools.prepare_dataset(
-        recipe, destination=destination, invocation_id="training"
+        definition, destination=destination, invocation_id="training"
     )
     assert prepared.status == "ok"
     changed = replace(
-        recipe, view={**dict(recipe.view), "split": TimeSplit(train_until="2025-01-16").to_record()}
+        definition,
+        view={**dict(definition.view), "split": TimeSplit(train_until="2025-01-16").to_record()},
     )
     assert (
         owner_tools.prepare_dataset(changed, destination=destination, invocation_id="training").code
@@ -584,7 +641,7 @@ def test_receipt_binds_dataset_recipe_change_evidence_and_base_generation(owner_
             restricted.execute_plan(prepared.output, request_key="not-authorized").code
             == "terrine.agent.scope_denied"
         )
-    forged = prepared.output.model_copy(update={"recipe_hash": "0" * 64})
+    forged = prepared.output.model_copy(update={"plan_hash": "0" * 64})
     assert (
         owner_tools.execute_plan(forged, request_key="forged").code
         == "terrine.agent.receipt_unavailable"
@@ -649,7 +706,7 @@ def test_status_events_and_cancel_require_run_destination_ownership(owner_tools,
 
     from terrine.data import Coverage, UnitSource
     from terrine.model import Model
-    from terrine.runtime.recipe import ModelReference
+    from terrine.runtime.saved_plan import ModelReference
 
     con = ibis.duckdb.connect(database=str(tmp_path / "runtime.duckdb"))
     try:
@@ -691,7 +748,7 @@ def test_status_events_and_cancel_require_run_destination_ownership(owner_tools,
             )
             runs.append(
                 run_serialized_plan(
-                    invocation.recipe_json,
+                    invocation.saved_plan_json,
                     con=con.con,
                     namespace="agent",
                     request_key=invocation.request_key,
@@ -730,25 +787,25 @@ def test_status_events_and_cancel_require_run_destination_ownership(owner_tools,
             feedback.get_run_events(runs[0].run_id, limit=0).code == "terrine.agent.invalid_request"
         )
         safe = json.loads(status.model_dump_json())
-        assert "recipe_json" not in str(safe) and "database" not in str(safe)
+        assert "saved_plan_json" not in str(safe) and "database" not in str(safe)
     finally:
         con.disconnect()
 
 
 def test_dataset_preview_resolves_persisted_destination_before_reading(owner_tools):
-    from terrine.spec.dataset import DatasetRecipe
+    from terrine.spec.dataset import DatasetDefinition
 
     allowed = owner_tools.policy.allowed_destinations
     destination = next(iter(allowed))
     private = DestinationRef(destination.database, destination.schema, "private")
     owner_tools.policy = replace(owner_tools.policy, allowed_destinations=allowed | {private})
-    recipe = DatasetRecipe(
+    definition = DatasetDefinition(
         schema_version=1,
         base_design=from_json(owner_tools.design_example().output.serialized),
         view=None,
     )
     receipt = owner_tools.prepare_dataset(
-        recipe, destination=private, invocation_id="private"
+        definition, destination=private, invocation_id="private"
     ).output
     reference = owner_tools.stage(receipt, request_key="private").output
     assert reference is not None

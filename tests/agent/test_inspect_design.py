@@ -6,7 +6,7 @@ import pytest
 from terrine.agent.tools import DatasetTools
 from terrine.data import Coverage, UnitSource
 from terrine.model import Model
-from terrine.runtime.recipe import ModelReference
+from terrine.runtime.saved_plan import ModelReference
 from terrine.spec.io import from_json
 
 
@@ -113,12 +113,12 @@ def test_design_example_handles_event_only_and_multiple_entity_models(tools, ros
     assert design.unit == ("user" if roster else "account")
 
 
-def test_propose_design_and_recipe_from_discovered_schema(tools, monkeypatch):
+def test_propose_design_and_definition_from_discovered_schema(tools, monkeypatch):
     from jsonschema import Draft202012Validator
 
     from terrine.dataset.splits import TimeSplit
     from terrine.errors import thaw
-    from terrine.spec.dataset import DatasetRecipe
+    from terrine.spec.dataset import DatasetDefinition
 
     example = tools.design_example().output
     document = json.loads(example.serialized)["design"]
@@ -137,7 +137,7 @@ def test_propose_design_and_recipe_from_discovered_schema(tools, monkeypatch):
             "window": {"type": "Window", "start": 0, "end": 86400},
         }
     }
-    recipe = {
+    definition = {
         "schema_version": 1,
         "base_design": document,
         "view": {
@@ -148,32 +148,35 @@ def test_propose_design_and_recipe_from_discovered_schema(tools, monkeypatch):
             "split": TimeSplit(train_until="2025-01-15").to_record(),
         },
     }
-    discovered = tools.get_dataset_recipe_schema()
+    discovered = tools.get_dataset_definition_schema()
     assert discovered.output is not None
-    Draft202012Validator(thaw(discovered.output.document)).validate(recipe)
-    result = tools.propose_recipe(json.dumps(recipe))
+    Draft202012Validator(thaw(discovered.output.document)).validate(definition)
+    result = tools.propose_definition(json.dumps(definition))
     assert result.status == "ok"
-    assert result.output.recipe_digest == DatasetRecipe.from_json(result.output.serialized).digest
-    recipe["view"]["split"] = TimeSplit(train_until="2025-01-16").to_record()
-    changed = tools.propose_recipe(json.dumps(recipe), base=result.output.serialized)
+    assert (
+        result.output.definition_digest
+        == DatasetDefinition.from_json(result.output.serialized).digest
+    )
+    definition["view"]["split"] = TimeSplit(train_until="2025-01-16").to_record()
+    changed = tools.propose_definition(json.dumps(definition), base=result.output.serialized)
     assert changed.output.changed_paths == ("/view/split/train_until",)
     assert tools.save_design("training", changed.output.serialized).status == "ok"
     assert tools.load_design("training").output.serialized == changed.output.serialized
-    recipe["view"]["split"]["callback"] = "builtins.eval"
-    assert tools.propose_recipe(json.dumps(recipe)).status == "refused"
-    del recipe["view"]["split"]["callback"]
+    definition["view"]["split"]["callback"] = "builtins.eval"
+    assert tools.propose_definition(json.dumps(definition)).status == "refused"
+    del definition["view"]["split"]["callback"]
     document["outcomes"] = {}
-    recipe["view"] = {
+    definition["view"] = {
         "kind": "scoring",
         "features": ["history"],
         "as_of": "2025-01-01T00:00:00+00:00",
         "eligibility": {},
         "parent_design_hash": "a" * 64,
     }
-    Draft202012Validator(thaw(discovered.output.document)).validate(recipe)
-    assert tools.validate_recipe(json.dumps(recipe)).status == "ok"
-    recipe["view"]["as_of"] = "2025-01-01"
-    assert tools.validate_recipe(json.dumps(recipe)).status == "refused"
+    Draft202012Validator(thaw(discovered.output.document)).validate(definition)
+    assert tools.validate_definition(json.dumps(definition)).status == "ok"
+    definition["view"]["as_of"] = "2025-01-01"
+    assert tools.validate_definition(json.dumps(definition)).status == "refused"
 
 
 def _scoring_record(tools):
@@ -199,36 +202,40 @@ def _scoring_record(tools):
 
 
 @pytest.mark.parametrize("mutation", ["instant", "precision", "features", "shape", "anchor"])
-def test_scoring_recipe_refuses_inconsistent_reconstruction(tools, mutation):
-    recipe = _scoring_record(tools)
+def test_scoring_definition_refuses_inconsistent_reconstruction(tools, mutation):
+    definition = _scoring_record(tools)
     if mutation == "instant":
-        recipe["view"]["as_of"] = "2025-01-15T00:00:00+00:00"
+        definition["view"]["as_of"] = "2025-01-15T00:00:00+00:00"
     elif mutation == "precision":
-        recipe["view"]["as_of"] = "2025-01-01T00:00:00.000000001Z"
+        definition["view"]["as_of"] = "2025-01-01T00:00:00.000000001Z"
     elif mutation == "features":
-        recipe["view"]["features"] = []
+        definition["view"]["features"] = []
     elif mutation == "shape":
-        recipe["base_design"]["shape"] = "panel"
+        definition["base_design"]["shape"] = "panel"
     else:
-        recipe["base_design"]["anchor"] = {"type": "EventAnchor", "fact": "event", "which": "first"}
-    result = tools.propose_recipe(json.dumps(recipe))
+        definition["base_design"]["anchor"] = {
+            "type": "EventAnchor",
+            "fact": "event",
+            "which": "first",
+        }
+    result = tools.propose_definition(json.dumps(definition))
     assert result.status == "refused"
-    assert result.code == "terrine.dataset.invalid_recipe"
+    assert result.code == "terrine.dataset.invalid_definition"
 
 
-def test_scoring_recipe_canonicalizes_eligibility_defaults(tools):
-    recipe = _scoring_record(tools)
+def test_scoring_definition_canonicalizes_eligibility_defaults(tools):
+    definition = _scoring_record(tools)
     eligibility = {
-        "missing": {"type": "IsNull", "expr": recipe["base_design"]["features"]["history"]}
+        "missing": {"type": "IsNull", "expr": definition["base_design"]["features"]["history"]}
     }
-    recipe["base_design"]["eligibility"] = eligibility
-    recipe["view"]["eligibility"] = eligibility
-    assert tools.propose_recipe(json.dumps(recipe)).status == "ok"
+    definition["base_design"]["eligibility"] = eligibility
+    definition["view"]["eligibility"] = eligibility
+    assert tools.propose_definition(json.dumps(definition)).status == "ok"
 
 
-def test_recipe_split_overflow_is_a_coded_refusal(tools):
-    recipe = _scoring_record(tools)
-    recipe["view"] = {
+def test_definition_split_overflow_is_a_coded_refusal(tools):
+    definition = _scoring_record(tools)
+    definition["view"] = {
         "kind": "training",
         "features": ["history"],
         "labels": ["future"],
@@ -242,23 +249,23 @@ def test_recipe_split_overflow_is_a_coded_refusal(tools):
         },
     }
     for operation in (
-        tools.propose_recipe,
-        tools.validate_recipe,
+        tools.propose_definition,
+        tools.validate_definition,
         lambda value: tools.save_design("overflow", value),
     ):
-        result = operation(json.dumps(recipe))
+        result = operation(json.dumps(definition))
         assert result.status == "refused"
-        assert result.code == "terrine.dataset.invalid_recipe"
+        assert result.code == "terrine.dataset.invalid_definition"
 
 
-def test_scoring_recipe_malformed_eligibility_is_a_coded_refusal(tools):
-    recipe = _scoring_record(tools)
-    recipe["view"]["eligibility"] = {"bad": {"type": "Unknown"}}
+def test_scoring_definition_malformed_eligibility_is_a_coded_refusal(tools):
+    definition = _scoring_record(tools)
+    definition["view"]["eligibility"] = {"bad": {"type": "Unknown"}}
     for operation in (
-        tools.propose_recipe,
-        tools.validate_recipe,
+        tools.propose_definition,
+        tools.validate_definition,
         lambda value: tools.save_design("malformed", value),
     ):
-        result = operation(json.dumps(recipe))
+        result = operation(json.dumps(definition))
         assert result.status == "refused"
-        assert result.code == "terrine.dataset.invalid_recipe"
+        assert result.code == "terrine.dataset.invalid_definition"

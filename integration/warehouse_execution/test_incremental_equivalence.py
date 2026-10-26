@@ -124,7 +124,7 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
     from terrine.runtime.graph import dependency_graph
     from terrine.runtime.owner import RuntimeOwner
     from terrine.runtime.planner import plan_refresh
-    from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
+    from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
     from terrine.runtime.snapshot import SnapshotAuthority
     from terrine.runtime.state import RuntimeStore
     from terrine.spec import (
@@ -260,7 +260,7 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
                 changes=changes,
                 budget=budget,
             )
-            recipe = SavedPlanRecipe.create(
+            saved_plan = SavedPlan.create(
                 plan_json=plan.serialize(),
                 design=design,
                 model=ModelReference.from_model(model, owner_key="events-model"),
@@ -268,9 +268,9 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
                 namespace=namespace,
                 expected_base_manifest=expected_manifest,
             )
-            recipe.pin_snapshot(store)
+            saved_plan.pin_snapshot(store)
             receipt = run_serialized_plan(
-                recipe.to_json(),
+                saved_plan.to_json(),
                 con=con.con,
                 namespace=namespace,
                 request_key=f"runtime:{scenario}:{name}",
@@ -321,7 +321,7 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
                 [receipt.run_id],
             ).fetchone()[0]
             replay = run_serialized_plan(
-                recipe.to_json(),
+                saved_plan.to_json(),
                 con=con.con,
                 namespace=namespace,
                 request_key=f"runtime:{scenario}:{name}",

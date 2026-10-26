@@ -64,7 +64,7 @@ def run_after_dbt_build(
     if invocation.invocation_id != build_id:
         raise RuntimeError("owner returned a mismatched plan invocation")
     receipt = client.run(
-        invocation.recipe_json,
+        invocation.saved_plan_json,
         request_key=invocation.request_key,
         destination=invocation.destination,
     )

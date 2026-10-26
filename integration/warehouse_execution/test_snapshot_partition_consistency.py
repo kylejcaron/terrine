@@ -15,7 +15,7 @@ from terrine.runtime.backends.duckdb import DuckDBBackend
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.planner import plan_refresh
-from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
+from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.semantic.models import Catalog, TableRef
@@ -104,7 +104,7 @@ def test_partition_and_retry_reopen_same_retained_input_authority(
         graph=dependency_graph(model, design, sources=("events",), partitions=("p1", "p2")),
     )
     destination = DestinationRef("output.duckdb", "analytics", "orders")
-    recipe = SavedPlanRecipe.create(
+    saved_plan = SavedPlan.create(
         plan_json=plan.serialize(),
         design=design,
         model=ModelReference.from_model(model, owner_key="model"),
@@ -112,11 +112,11 @@ def test_partition_and_retry_reopen_same_retained_input_authority(
         namespace="runtime",
         expected_base_manifest=None,
     )
-    recipe.pin_snapshot(store)
+    saved_plan.pin_snapshot(store)
 
     class Resolver:
         def resolve(self, reference):
-            assert reference == recipe.model
+            assert reference == saved_plan.model
             return model
 
     failure = RuntimeError("retry partition")
@@ -176,7 +176,7 @@ def test_partition_and_retry_reopen_same_retained_input_authority(
     try:
         with pytest.raises(RuntimeError) as error:
             run_serialized_plan(
-                recipe.to_json(),
+                saved_plan.to_json(),
                 con=con.con,
                 namespace="runtime",
                 request_key="partition-run",
@@ -188,7 +188,7 @@ def test_partition_and_retry_reopen_same_retained_input_authority(
         if corrupt_after_partial_output:
             with pytest.raises(TerrineError) as error:
                 run_serialized_plan(
-                    recipe.to_json(),
+                    saved_plan.to_json(),
                     con=con.con,
                     namespace="runtime",
                     request_key="partition-run",
@@ -209,7 +209,7 @@ def test_partition_and_retry_reopen_same_retained_input_authority(
             ).fetchone() == ("failed", None)
             return
         receipt = run_serialized_plan(
-            recipe.to_json(),
+            saved_plan.to_json(),
             con=con.con,
             namespace="runtime",
             request_key="partition-run",

@@ -26,7 +26,7 @@ from terrine.runtime.graph import DependencyGraph
 from terrine.runtime.materialize import compose_runtime_frame
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.planner import plan_refresh
-from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
+from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import LayerNode, RuntimeStore
 from terrine.simulate.scale import ScaleConfig, correction_batches
@@ -144,7 +144,7 @@ def _runtime(con, model, design, config: ScaleConfig, directory: Path) -> dict[s
             budget=budget,
             changes=changes,
         )
-        recipe = SavedPlanRecipe.create(
+        saved_plan = SavedPlan.create(
             plan_json=plan.serialize(),
             design=design,
             model=ModelReference.from_model(model, owner_key="scale-model"),
@@ -152,9 +152,9 @@ def _runtime(con, model, design, config: ScaleConfig, directory: Path) -> dict[s
             namespace=namespace,
             expected_base_manifest=expected_base,
         )
-        recipe.pin_snapshot(store)
+        saved_plan.pin_snapshot(store)
         receipt = run_serialized_plan(
-            recipe.to_json(),
+            saved_plan.to_json(),
             con=con.con,
             namespace=namespace,
             executor=CompilerExecutor(),

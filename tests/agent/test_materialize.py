@@ -7,7 +7,7 @@ from terrine.agent.schemas import AgentDatasetReference, DatasetColumn
 from terrine.data import Budget
 from terrine.dataset.manifest import DatasetManifest, ManifestColumn, ManifestGeneration
 from terrine.spec import Design, FixedDate
-from terrine.spec.dataset import DatasetRecipe
+from terrine.spec.dataset import DatasetDefinition
 
 
 @pytest.fixture
@@ -18,19 +18,19 @@ def pinned_preview(tools, monkeypatch):
             "unapproved": ["private" * 1000, "private" * 1000],
         }
     )
-    recipe = DatasetRecipe(
+    definition = DatasetDefinition(
         schema_version=1, base_design=Design("user", FixedDate("2025-01-02")), view=None
     )
 
     class PinnedReader:
         manifest = DatasetManifest(
-            recipe=recipe,
+            definition=definition,
             generation=ManifestGeneration("study", "generation", ("p1",), ("checksum",), 2),
             columns=(
                 ManifestColumn("unit", "int32", "unit"),
                 ManifestColumn("unapproved", "string", "support"),
             ),
-            design_hash=recipe.base_design.spec_hash,
+            design_hash=definition.base_design.spec_hash,
             model_hash=tools.model.model_hash,
             source_coverage={},
             source_snapshots={},
@@ -52,7 +52,7 @@ def pinned_preview(tools, monkeypatch):
         dataset="study",
         generation="generation",
         definition_hash=reader.manifest.design_hash,
-        recipe_reference=recipe.digest,
+        definition_reference=definition.digest,
         model_hash=reader.manifest.model_hash,
         manifest_hash=reader.manifest.digest,
         row_count=2,

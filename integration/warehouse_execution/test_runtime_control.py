@@ -49,7 +49,7 @@ def test_separate_process_status_and_cancel_use_owner_connection(tmp_path):
             f"client=ControlClient(ControlEndpoint({str(endpoint.path)!r}), namespace='owner'); "
             "assert client.get_run('r1').run_id=='r1'; "
             "assert client.cancel_run('r1').disposition=='requested'; "
-            "from terrine.runtime.recipe import DestinationRef; "
+            "from terrine.runtime.saved_plan import DestinationRef; "
             "receipt=client.find_run_by_request_key('req', destination="
             "DestinationRef('out.duckdb','analytics','d')); "
             "assert receipt is not None and receipt.run_id=='r1', repr(receipt)"

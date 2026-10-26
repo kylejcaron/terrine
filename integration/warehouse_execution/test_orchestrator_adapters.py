@@ -23,13 +23,13 @@ def test_two_dbt_build_cycles_stop_owner_and_replay_from_separate_processes(tmp_
     from terrine.runtime.execute import RunReceipt
     from terrine.runtime.owner import RuntimeOwner
     from terrine.runtime.planning import OwnerPlanner, PlanInvocation, PlanRequest
-    from terrine.runtime.recipe import DestinationRef, ModelReference
+    from terrine.runtime.saved_plan import DestinationRef, ModelReference
     from terrine.runtime.snapshot import SnapshotAuthority
     from terrine.runtime.state import RuntimeStore
     from terrine.spec import agg
     from terrine.spec.anchors import FixedDate
     from terrine.spec.design import Design
-    from tests.runtime.test_recipe import _model
+    from tests.runtime.test_saved_plan import _model
 
     database = tmp_path / "dbt-shared.duckdb"
     project_dir = tmp_path / "dbt_project"
@@ -291,13 +291,13 @@ def test_airflow_and_dagster_share_owner_state_and_failed_run_fence(tmp_path):
     from terrine.runtime.control import ControlClient, ControlEndpoint, ControlServer
     from terrine.runtime.owner import RuntimeOwner
     from terrine.runtime.planning import OwnerPlanner, PlanRequest
-    from terrine.runtime.recipe import DestinationRef, ModelReference
+    from terrine.runtime.saved_plan import DestinationRef, ModelReference
     from terrine.runtime.snapshot import SnapshotAuthority
     from terrine.runtime.state import RuntimeStore
     from terrine.spec import agg
     from terrine.spec.anchors import FixedDate
     from terrine.spec.design import Design
-    from tests.runtime.test_recipe import _model
+    from tests.runtime.test_saved_plan import _model
 
     database = tmp_path / "shared-adapters.duckdb"
     connection = ibis.duckdb.connect(database=str(database))
@@ -473,10 +473,10 @@ def test_dagster_historical_partitions_publish_distinct_owner_outputs(monkeypatc
     from terrine.runtime.control import ControlEndpoint
     from terrine.runtime.owner import RuntimeOwner
     from terrine.runtime.planning import OwnerPlanner, PlanRequest
-    from terrine.runtime.recipe import DestinationRef, ModelReference
+    from terrine.runtime.saved_plan import DestinationRef, ModelReference
     from terrine.runtime.snapshot import SnapshotAuthority
     from terrine.spec import Design, FixedDate, agg
-    from tests.runtime.test_recipe import _model
+    from tests.runtime.test_saved_plan import _model
 
     database = tmp_path / "historical.duckdb"
     connection = ibis.duckdb.connect(database=str(database))
@@ -623,10 +623,10 @@ def test_dagster_same_root_failed_retry_reuses_fence_scoped_outputs(monkeypatch,
     from terrine.runtime.control import ControlEndpoint
     from terrine.runtime.owner import RuntimeOwner
     from terrine.runtime.planning import OwnerPlanner, PlanRequest
-    from terrine.runtime.recipe import DestinationRef, ModelReference
+    from terrine.runtime.saved_plan import DestinationRef, ModelReference
     from terrine.runtime.snapshot import SnapshotAuthority
     from terrine.spec import Design, FixedDate, agg
-    from tests.runtime.test_recipe import _model
+    from tests.runtime.test_saved_plan import _model
 
     database = tmp_path / "retry.duckdb"
     connection = ibis.duckdb.connect(database=str(database))
@@ -792,11 +792,11 @@ def test_airflow_operator_runs_and_retries_persisted_owner_invocation(tmp_path):
     from terrine.runtime.control import ControlClient, ControlEndpoint, ControlServer
     from terrine.runtime.owner import RuntimeOwner
     from terrine.runtime.planning import OwnerPlanner, PlanRequest
-    from terrine.runtime.recipe import DestinationRef, ModelReference
+    from terrine.runtime.saved_plan import DestinationRef, ModelReference
     from terrine.runtime.snapshot import SnapshotAuthority
     from terrine.runtime.state import RuntimeStore
     from terrine.spec import Design, FixedDate, agg
-    from tests.runtime.test_recipe import _model
+    from tests.runtime.test_saved_plan import _model
 
     database = tmp_path / "operator.duckdb"
     connection = ibis.duckdb.connect(database=str(database))

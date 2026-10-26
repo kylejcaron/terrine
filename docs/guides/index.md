@@ -34,9 +34,9 @@
 - [Materialization runtime](materialization-runtime.md): owner configuration,
   saved plans, CLI/IPC, exact generations, replay, cancellation and corrections.
 - [ML staging](ml-staging.md): training/scoring, leakage-aware splits,
-  frozen preprocessing, persisted recipes and Parquet export.
+  frozen preprocessing, persisted definitions and Parquet export.
 - [Common-stack interoperability](common-stack-interop.md): Arrow/pandas/Polars.
-- [Library hand-offs](library-handoffs.md): shared preflight and downstream recipes.
+- [Library hand-offs](library-handoffs.md): shared preflight and downstream workflows.
 - [Orchestrators](orchestrators.md): optional Airflow, Dagster and dbt Core triggers.
 - [Dataset agent tools](dataset-agent-tools.md): permissions, budgets and redaction.
 

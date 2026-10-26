@@ -1,7 +1,11 @@
 """Data-only study design specifications."""
 
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
-from terrine.spec.dataset import DatasetRecipe, DatasetRecipeReference, DatasetRecipeStore
+from terrine.spec.dataset import (
+    DatasetDefinition,
+    DatasetDefinitionReference,
+    DatasetDefinitionStore,
+)
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import (
     EventTime,
@@ -39,9 +43,9 @@ from terrine.spec.trajectory import CohortGrouping, CohortSpec, LifeTable, TimeT
 from terrine.spec.transforms import Winsorization
 
 __all__ = [
-    "DatasetRecipe",
-    "DatasetRecipeReference",
-    "DatasetRecipeStore",
+    "DatasetDefinition",
+    "DatasetDefinitionReference",
+    "DatasetDefinitionStore",
     "AnchorRange",
     "BinnedMetricState",
     "CalendarComparisonPanel",

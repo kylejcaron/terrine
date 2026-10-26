@@ -225,7 +225,7 @@ event. Source history, source follow-up, and declared roster observation bounds
 must cover the horizon. Finite follow-up requires a known roster observation end;
 an absent end is not evidence of complete finite follow-up. These outcomes may
 not be used as pre-anchor features or eligibility predicates. Their reference
-and threshold declarations round-trip through JSON/YAML and saved recipes;
+and threshold declarations round-trip through JSON/YAML and saved definitions;
 Arrow metadata retains exactness, completeness/reason, conservative support and
 the resolved horizon endpoint. Sequential/calendar treatment checks include the
 retention horizon, even when the occurrence and treatment sources differ.

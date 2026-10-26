@@ -46,7 +46,7 @@ def require_training_split() -> None:
 
 def identity_error(column: str):
     return _IDENTITY.error(
-        column=column, route="Use the original training view or its compatible scoring recipe."
+        column=column, route="Use the original training view or its compatible scoring definition."
     )
 
 
@@ -124,7 +124,7 @@ def fit_winsorization(
     column: str,
     lower: Decimal | str | int,
     upper: Decimal | str | int,
-    recipe_hash: str,
+    definition_hash: str,
     feature_definition_hash: str,
 ) -> Winsorization:
     view = data.provenance.dataset_view
@@ -167,7 +167,7 @@ def fit_winsorization(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     fit = WinsorizationFit(
-        recipe_hash=recipe_hash,
+        definition_hash=definition_hash,
         view_hash=view.view_hash,
         design_hash=data.provenance.design_hash,
         model_hash=data.provenance.model_hash,

@@ -235,19 +235,19 @@ def test_snapshot_gc_respects_pins_and_tombstones_collected_inputs(tmp_path):
     assert Path(receipt.artifact_path).exists()
     store = RuntimeStore(con.con, namespace="runtime")
     store.initialize()
-    store.pin_snapshot(receipt.snapshot_id, kind="saved_plan", reference="recipe")
+    store.pin_snapshot(receipt.snapshot_id, kind="saved_plan", reference="saved-plan")
     past = datetime.now(UTC) + timedelta(seconds=1)
     assert (
         authority.collect_unreferenced(store, namespace="runtime", retain=timedelta(0), now=past)
         == ()
     )
-    authority.release(receipt, store, kind="saved_plan", reference="recipe")
+    authority.release(receipt, store, kind="saved_plan", reference="saved-plan")
     assert authority.collect_unreferenced(
         store, namespace="runtime", retain=timedelta(0), now=past
     ) == (receipt.snapshot_id,)
     assert not Path(receipt.artifact_path).exists()
     with pytest.raises(ValueError):
-        store.pin_snapshot(receipt.snapshot_id, kind="saved_plan", reference="recipe")
+        store.pin_snapshot(receipt.snapshot_id, kind="saved_plan", reference="saved-plan")
     con.disconnect()
 
 

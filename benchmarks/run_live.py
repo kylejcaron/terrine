@@ -247,7 +247,7 @@ def run_approved(document: dict[str, Any]) -> dict[str, Any]:
             budget=budget,
             cost_provider=session.cost_provider,
         )
-        record["budget"]["fingerprint"] = plan.recipe.fingerprint
+        record["budget"]["fingerprint"] = plan.definition.fingerprint
         if any(
             task.scan_evidence is None or task.scan_evidence.max_attempts != 1
             for task in plan.tasks

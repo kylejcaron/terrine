@@ -12,9 +12,9 @@ from terrine.agent import AgentPolicy, DatasetTools
 from terrine.dataset.splits import GroupSplit
 from terrine.runtime.changes import Change, ChangeSet
 from terrine.runtime.owner import RuntimeOwner
-from terrine.runtime.recipe import DestinationRef, ModelReference
+from terrine.runtime.saved_plan import DestinationRef, ModelReference
 from terrine.runtime.snapshot import SnapshotAuthority
-from terrine.spec.dataset import DatasetRecipe
+from terrine.spec.dataset import DatasetDefinition
 
 
 def main() -> None:
@@ -41,7 +41,7 @@ def main() -> None:
                 budget=Budget(max_rows=100, max_output_bytes=1_000_000, strict_scan=False),
             )
             tools = DatasetTools(model, policy, namespace="agent_example")
-            recipe = DatasetRecipe(
+            definition = DatasetDefinition(
                 schema_version=1,
                 base_design=training_design(),
                 view={
@@ -52,16 +52,18 @@ def main() -> None:
                     "split": GroupSplit(seed=17).to_record(),
                 },
             )
-            preview = tools.preview_dataset(recipe)
+            preview = tools.preview_dataset(definition)
             assert preview.status == "ok" and preview.output is not None
             assert (
-                tools.prepare_dataset(recipe, destination=destination, invocation_id="denied").code
+                tools.prepare_dataset(
+                    definition, destination=destination, invocation_id="denied"
+                ).code
                 == "terrine.agent.permission_denied"
             )
             policy = replace(policy, prepare=True)
             tools = DatasetTools(model, policy, namespace="agent_example")
             prepared = tools.prepare_dataset(
-                recipe, destination=destination, invocation_id="training"
+                definition, destination=destination, invocation_id="training"
             )
             assert prepared.status == "ok" and prepared.output is not None
             policy = replace(policy, write=True, read=True)

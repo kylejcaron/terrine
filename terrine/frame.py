@@ -543,13 +543,13 @@ class Frame:
         transforms.require_numeric_type(
             self._active_compiled().table.schema()[column].to_pyarrow(), column
         )
-        recipe = import_module("terrine.dataset.reference")._recipe_for(self)
+        definition = import_module("terrine.dataset.reference")._definition_for(self)
         return transforms.fit_winsorization(
             self.materialize(budget),
             column=column,
             lower=probabilities[0],
             upper=probabilities[1],
-            recipe_hash=recipe.digest,
+            definition_hash=definition.digest,
             feature_definition_hash=_feature_definition_hash(self._design, (column,), self._model),
         )
 
@@ -570,12 +570,12 @@ class Frame:
         if bound.fit is not None:
             fit = bound.fit
             if self._training_view is not None:
-                recipe_hash = (
+                definition_hash = (
                     import_module("terrine.dataset.reference")
-                    ._recipe_for(self, include_transforms=False)
+                    ._definition_for(self, include_transforms=False)
                     .digest
                 )
-                compatible = recipe_hash == fit.recipe_hash
+                compatible = definition_hash == fit.definition_hash
             else:
                 compatible = (
                     self._scoring_view is not None

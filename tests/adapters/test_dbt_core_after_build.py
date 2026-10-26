@@ -9,7 +9,7 @@ pytest.importorskip("dbt")
 
 from terrine.runtime.control import ControlEndpoint
 from terrine.runtime.planning import PlanRequest
-from terrine.runtime.recipe import DestinationRef, ModelReference
+from terrine.runtime.saved_plan import DestinationRef, ModelReference
 from terrine.spec.anchors import FixedDate
 from terrine.spec.design import Design
 
@@ -48,12 +48,12 @@ def _request(invocation_id: str) -> PlanRequest:
 
 
 def test_dbt_after_build_replays_stable_build_invocation(monkeypatch):
-    import examples.orchestrators.dbt_core_after_build as recipe
+    import examples.orchestrators.dbt_core_after_build as adapter
 
     request = _request("build-17")
     invocation = SimpleNamespace(
         invocation_id="build-17",
-        recipe_json="saved-recipe",
+        saved_plan_json="saved-plan",
         request_key="destination-key",
         destination=object(),
     )
@@ -84,9 +84,9 @@ def test_dbt_after_build_replays_stable_build_invocation(monkeypatch):
                 pinned_result_ref=None,
             )
 
-    monkeypatch.setattr(recipe, "ControlClient", Client)
+    monkeypatch.setattr(adapter, "ControlClient", Client)
     for _ in range(2):
-        receipt = recipe.run_after_dbt_build(
+        receipt = adapter.run_after_dbt_build(
             build_id="build-17",
             plan_request_provider=lambda build_id: request,
             endpoint=ControlEndpoint(Path("owner.sock")),
@@ -95,14 +95,14 @@ def test_dbt_after_build_replays_stable_build_invocation(monkeypatch):
         assert receipt.run_id == "runtime-run"
     assert calls == [
         ("plan", "build-17"),
-        ("run", "saved-recipe", "destination-key", invocation.destination),
+        ("run", "saved-plan", "destination-key", invocation.destination),
         ("plan", "build-17"),
-        ("run", "saved-recipe", "destination-key", invocation.destination),
+        ("run", "saved-plan", "destination-key", invocation.destination),
     ]
 
 
 def test_dbt_after_build_rejects_request_for_different_build(monkeypatch):
-    import examples.orchestrators.dbt_core_after_build as recipe
+    import examples.orchestrators.dbt_core_after_build as adapter
 
     request = _request("other-build")
 
@@ -110,9 +110,9 @@ def test_dbt_after_build_rejects_request_for_different_build(monkeypatch):
         def __init__(self, endpoint, *, namespace):
             pass
 
-    monkeypatch.setattr(recipe, "ControlClient", Client)
+    monkeypatch.setattr(adapter, "ControlClient", Client)
     with pytest.raises(ValueError):
-        recipe.run_after_dbt_build(
+        adapter.run_after_dbt_build(
             build_id="build-17",
             plan_request_provider=lambda build_id: request,
             endpoint=ControlEndpoint(Path("owner.sock")),
@@ -121,12 +121,12 @@ def test_dbt_after_build_rejects_request_for_different_build(monkeypatch):
 
 
 def test_dbt_after_build_refuses_non_succeeded_runtime_status(monkeypatch):
-    import examples.orchestrators.dbt_core_after_build as recipe
+    import examples.orchestrators.dbt_core_after_build as adapter
 
     request = _request("build-17")
     invocation = SimpleNamespace(
         invocation_id="build-17",
-        recipe_json="saved-recipe",
+        saved_plan_json="saved-plan",
         request_key="destination-key",
         destination=object(),
     )
@@ -144,9 +144,9 @@ def test_dbt_after_build_refuses_non_succeeded_runtime_status(monkeypatch):
         def get_run(self, run_id):
             return SimpleNamespace(run_id=run_id, durable_state="failed")
 
-    monkeypatch.setattr(recipe, "ControlClient", Client)
+    monkeypatch.setattr(adapter, "ControlClient", Client)
     with pytest.raises(RuntimeError):
-        recipe.run_after_dbt_build(
+        adapter.run_after_dbt_build(
             build_id="build-17",
             plan_request_provider=lambda build_id: request,
             endpoint=ControlEndpoint(Path("owner.sock")),
@@ -155,12 +155,12 @@ def test_dbt_after_build_refuses_non_succeeded_runtime_status(monkeypatch):
 
 
 def test_dbt_after_build_reconnects_to_active_run_until_terminal(monkeypatch):
-    import examples.orchestrators.dbt_core_after_build as recipe
+    import examples.orchestrators.dbt_core_after_build as adapter
 
     request = _request("build-17")
     invocation = SimpleNamespace(
         invocation_id="build-17",
-        recipe_json="saved-recipe",
+        saved_plan_json="saved-plan",
         request_key="destination-key",
         destination=object(),
     )
@@ -190,9 +190,9 @@ def test_dbt_after_build_reconnects_to_active_run_until_terminal(monkeypatch):
             return next(statuses)
 
     sleeps = []
-    monkeypatch.setattr(recipe, "ControlClient", Client)
-    monkeypatch.setattr(recipe, "time", SimpleNamespace(sleep=sleeps.append), raising=False)
-    receipt = recipe.run_after_dbt_build(
+    monkeypatch.setattr(adapter, "ControlClient", Client)
+    monkeypatch.setattr(adapter, "time", SimpleNamespace(sleep=sleeps.append), raising=False)
+    receipt = adapter.run_after_dbt_build(
         build_id="build-17",
         plan_request_provider=lambda build_id: request,
         endpoint=ControlEndpoint(Path("owner.sock")),
@@ -206,12 +206,12 @@ def test_dbt_after_build_reconnects_to_active_run_until_terminal(monkeypatch):
 
 
 def test_dbt_after_build_treats_cancelled_runtime_status_as_terminal(monkeypatch):
-    import examples.orchestrators.dbt_core_after_build as recipe
+    import examples.orchestrators.dbt_core_after_build as adapter
 
     request = _request("build-17")
     invocation = SimpleNamespace(
         invocation_id="build-17",
-        recipe_json="saved-recipe",
+        saved_plan_json="saved-plan",
         request_key="destination-key",
         destination=object(),
     )
@@ -229,10 +229,10 @@ def test_dbt_after_build_treats_cancelled_runtime_status_as_terminal(monkeypatch
         def get_run(self, run_id):
             return SimpleNamespace(run_id=run_id, durable_state="cancelled")
 
-    monkeypatch.setattr(recipe, "ControlClient", Client)
+    monkeypatch.setattr(adapter, "ControlClient", Client)
 
     with pytest.raises(RuntimeError):
-        recipe.run_after_dbt_build(
+        adapter.run_after_dbt_build(
             build_id="build-17",
             plan_request_provider=lambda build_id: request,
             endpoint=ControlEndpoint(Path("owner.sock")),

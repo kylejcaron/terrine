@@ -12,7 +12,7 @@ from airflow.sdk import BaseOperator, TaskGroup
 from terrine.orchestration.airflow import build_materialization_group
 from terrine.runtime.control import ControlEndpoint
 from terrine.runtime.planning import PlanRequest
-from terrine.runtime.recipe import DestinationRef, ModelReference
+from terrine.runtime.saved_plan import DestinationRef, ModelReference
 from terrine.spec.anchors import FixedDate
 from terrine.spec.design import Design
 
@@ -61,7 +61,7 @@ def test_airflow_reconnect_waits_for_existing_run_before_releasing_pool_slot(mon
             return SimpleNamespace(
                 invocation_id=request.invocation_id,
                 serialized_plan="{}",
-                recipe_json="saved-recipe",
+                saved_plan_json="saved-plan",
                 request_key="same-key",
                 destination=request.destination,
                 snapshot_id="snapshot",
@@ -69,7 +69,7 @@ def test_airflow_reconnect_waits_for_existing_run_before_releasing_pool_slot(mon
             )
 
         def run(self, serialized, *, request_key, destination):
-            assert serialized == "saved-recipe"
+            assert serialized == "saved-plan"
             return SimpleNamespace(run_id="active-run", published_generation=1, state="running")
 
         def get_run(self, run_id):
@@ -130,7 +130,7 @@ def test_airflow_reconnect_waits_through_pending_cancellation_then_fails_termina
         def plan(self, request):
             return SimpleNamespace(
                 invocation_id=request.invocation_id,
-                recipe_json="saved-recipe",
+                saved_plan_json="saved-plan",
                 request_key="same-key",
                 destination=request.destination,
                 snapshot_id="snapshot",
@@ -171,7 +171,7 @@ def test_airflow_response_loss_returns_final_authoritative_generation(monkeypatc
         def plan(self, request):
             return SimpleNamespace(
                 invocation_id=request.invocation_id,
-                recipe_json="saved-recipe",
+                saved_plan_json="saved-plan",
                 request_key="same-key",
                 destination=request.destination,
                 snapshot_id="snapshot",

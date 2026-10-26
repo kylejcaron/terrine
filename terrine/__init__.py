@@ -17,7 +17,7 @@ if TYPE_CHECKING:
         BinnedMetricState,
         CohortGrouping,
         CohortSpec,
-        DatasetRecipe,
+        DatasetDefinition,
         Design,
         EventAnchor,
         EventSequence,
@@ -50,7 +50,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Dataset",
-    "DatasetRecipe",
+    "DatasetDefinition",
     "AnchorRange",
     "Budget",
     "EventSequence",

@@ -44,7 +44,7 @@ class NamedDesignRequest(DesignRequest):
 class PlanReceipt(Record):
     receipt_id: str
     design_hash: str
-    recipe_hash: str
+    plan_hash: str
 
 
 class DatasetColumn(Record):
@@ -59,7 +59,7 @@ class AgentDatasetReference(Record):
     dataset: str
     generation: str
     definition_hash: str
-    recipe_reference: str
+    definition_reference: str
     model_hash: str
     manifest_hash: str
     row_count: Annotated[int, Field(ge=0)]
@@ -259,8 +259,8 @@ class EventsOutput(Record):
     cursor_gap: bool
 
 
-class RecipeOutput(DesignOutput):
-    recipe_digest: str
+class DefinitionOutput(DesignOutput):
+    definition_digest: str
 
 
 class RowsOutput(Record):

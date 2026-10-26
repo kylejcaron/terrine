@@ -8,6 +8,7 @@ import weakref
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from importlib.resources import files
 from pathlib import Path
 
 import ibis
@@ -19,16 +20,16 @@ from examples.ml_staging import create_model, training_design
 from terrine import Budget, agg
 from terrine.data import Coverage, MaterializedFrame, UnitSource
 from terrine.dataset.export import ExportManifest
-from terrine.dataset.reference import Dataset, _recipe_for
+from terrine.dataset.reference import Dataset, _definition_for
 from terrine.dataset.splits import GroupSplit, TimeSplit, group_bucket
 from terrine.errors import TerrineError, thaw
 from terrine.model import Model
 from terrine.runtime.api import run_serialized_plan
 from terrine.runtime.arrow import ArrowOutput
 from terrine.runtime.changes import Change, ChangeSet
-from terrine.runtime.recipe import SavedPlanRecipe
+from terrine.runtime.saved_plan import SavedPlan
 from terrine.spec import BinnedMetricState, Design, EventAnchor, FixedDate, Schedule, StatePanel, gt
-from terrine.spec.dataset import DatasetRecipe
+from terrine.spec.dataset import DatasetDefinition
 from tests import _worlds
 from tests._timing import HANG_GUARD_SECONDS
 from tests.dataset.test_staging import _durable_frame
@@ -137,7 +138,7 @@ try:
     assert actual.table["following_amount"].null_count == 2
     reason = actual.columns["following_amount"].reason_column
     assert actual.table[reason].to_pylist() == ["incomplete_coverage"] * 2
-    assert manifest.recipe.digest == refreshed.manifest.recipe.digest
+    assert manifest.definition.digest == refreshed.manifest.definition.digest
     exported = refreshed.export_parquet(destination=str(root / "parquet"), budget=budget)
     tables = []
     for shard in exported.shards:
@@ -710,7 +711,7 @@ def test_empty_training_export_preserves_complete_arrow_metadata(
     con.disconnect()
 
 
-def test_refresh_reconstructs_recipe_without_mutating_pinned_reader(events_world, tmp_path):
+def test_refresh_reconstructs_definition_without_mutating_pinned_reader(events_world, tmp_path):
     initial, con = _durable_frame(events_world, tmp_path)
     model = initial._model
     frame = (
@@ -742,7 +743,7 @@ def test_refresh_reconstructs_recipe_without_mutating_pinned_reader(events_world
     new = pa.Table.from_batches(list(refreshed.to_arrow_batches()))
     assert sorted(old["sessions"].to_pylist()) == [1, 1]
     assert sorted(new["sessions"].to_pylist()) == [0, 1]
-    clean = refreshed.manifest.recipe.build(model).materialize(budget)
+    clean = refreshed.manifest.definition.build(model).materialize(budget)
     order = [("unit", "ascending"), ("anchor_id", "ascending")]
     assert (
         new.select(clean.table.column_names)
@@ -750,7 +751,7 @@ def test_refresh_reconstructs_recipe_without_mutating_pinned_reader(events_world
         .sort_by(order)
         .equals(clean.table.replace_schema_metadata(None).sort_by(order))
     )
-    assert original.manifest.recipe.digest == refreshed.manifest.recipe.digest
+    assert original.manifest.definition.digest == refreshed.manifest.definition.digest
     con.disconnect()
 
 
@@ -771,7 +772,7 @@ def test_scoring_refresh_preserves_as_of_and_never_reads_unused_labels(events_wo
     con.drop_table("labels")
     dataset = scoring.stage("scoring", budget=Budget(strict_scan=False))
     refreshed = dataset.refresh(model, budget=Budget(strict_scan=False))
-    assert refreshed.manifest.recipe.view["as_of"] == dataset.manifest.recipe.view["as_of"]
+    assert refreshed.manifest.definition.view["as_of"] == dataset.manifest.definition.view["as_of"]
     assert all("churn" not in batch.schema.names for batch in refreshed.to_arrow_batches())
     assert set(refreshed.manifest.source_coverage) == {"events"}
     con.disconnect()
@@ -837,7 +838,9 @@ def test_group_split_view_matches_typed_reference_and_reconstruction(events_worl
         group_bucket(key, policy) for key in result.table["unit"].to_pylist()
     ]
     staged = training.stage("groups", budget=Budget(strict_scan=False))
-    rebuilt = staged.manifest.recipe.build(initial._model).materialize(Budget(strict_scan=False))
+    rebuilt = staged.manifest.definition.build(initial._model).materialize(
+        Budget(strict_scan=False)
+    )
     assert rebuilt.table.sort_by("unit").equals(result.table.sort_by("unit"))
     con.disconnect()
 
@@ -966,11 +969,11 @@ def test_scoring_today_is_resolved_once_at_catalog_day_boundary(
     assert isinstance(design.anchor, EventAnchor)
     assert "churn" in design.outcomes
     staged = scoring.stage("scoring", budget=Budget(strict_scan=False))
-    assert staged.manifest.recipe.view["kind"] == "scoring"
-    assert staged.manifest.recipe.view["features"] == ("past_sessions",)
-    assert staged.manifest.recipe.view["as_of"] == view.resolved_as_of.isoformat()
-    assert staged.manifest.recipe.view["eligibility"]["active"]
-    assert staged.manifest.recipe.view["parent_design_hash"] == design.spec_hash
+    assert staged.manifest.definition.view["kind"] == "scoring"
+    assert staged.manifest.definition.view["features"] == ("past_sessions",)
+    assert staged.manifest.definition.view["as_of"] == view.resolved_as_of.isoformat()
+    assert staged.manifest.definition.view["eligibility"]["active"]
+    assert staged.manifest.definition.view["parent_design_hash"] == design.spec_hash
     con.disconnect()
 
 
@@ -980,12 +983,12 @@ def test_owner_prepares_scoring_view_before_preflight_without_label_inputs(
     import json
 
     import terrine.compile.dispatch as dispatch
-    from terrine.dataset.reference import _recipe_for
+    from terrine.dataset.reference import _definition_for
     from terrine.runtime.owner import RuntimeOwner
     from terrine.runtime.planning import OwnerPlanner, PlanRequest
-    from terrine.runtime.recipe import DestinationRef, ModelReference, SavedPlanRecipe
+    from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
     from terrine.runtime.snapshot import SnapshotAuthority
-    from terrine.spec.dataset import DatasetRecipe
+    from terrine.spec.dataset import DatasetDefinition
 
     catalog, source = native_inputs
     database = tmp_path / "scoring-owner.duckdb"
@@ -1005,7 +1008,7 @@ def test_owner_prepares_scoring_view_before_preflight_without_label_inputs(
             features={"past_sessions": agg("sessions", window=("-1d", "0s"))},
             outcomes={"churn": agg("churned", window=("0s", "1d"))},
         )
-        recipe = _recipe_for(parent.snapshot(model, as_of="2025-01-05", eligibility={}))
+        definition = _definition_for(parent.snapshot(model, as_of="2025-01-05", eligibility={}))
         owner = RuntimeOwner.from_connection(con)
         reference = ModelReference.from_model(model, owner_key=owner.reference)
         con.drop_table("labels")
@@ -1017,37 +1020,37 @@ def test_owner_prepares_scoring_view_before_preflight_without_label_inputs(
                 return model
 
         resolved = []
-        build, compile_design = DatasetRecipe.build, dispatch.compile_design
+        build, compile_design = DatasetDefinition.build, dispatch.compile_design
 
         def resolve_view(self, model):
             resolved.append(self.digest)
             return build(self, model)
 
         def compile_resolved(design, model):
-            assert resolved, "resolve the recipe view before preflight compilation"
+            assert resolved, "resolve the definition view before preflight compilation"
             return compile_design(design, model)
 
-        monkeypatch.setattr(DatasetRecipe, "build", resolve_view)
+        monkeypatch.setattr(DatasetDefinition, "build", resolve_view)
         monkeypatch.setattr(dispatch, "compile_design", compile_resolved)
         authority = SnapshotAuthority(owner)
         invocation = OwnerPlanner(resolver=Resolver(), snapshot_authority=authority).plan(
             PlanRequest(
                 "scoring",
                 reference,
-                recipe.base_design,
+                definition.base_design,
                 DestinationRef(str(database), "owner", "scoring"),
                 budget=Budget(strict_scan=False),
-                dataset_recipe=recipe,
+                dataset_definition=definition,
             ),
             con=con.con,
             namespace="owner",
         )
         retained = authority.find_retained(invocation.snapshot_id, namespace="owner")
         assert "labels" not in json.dumps(retained.roots)
-        saved = SavedPlanRecipe.from_json(invocation.recipe_json)
-        assert saved.restore_dataset_recipe() == recipe
-        assert recipe.view["parent_design_hash"] == parent.spec_hash
-        assert recipe.view["as_of"] == "2025-01-05T00:00:00+00:00"
+        saved = SavedPlan.from_json(invocation.saved_plan_json)
+        assert saved.restore_dataset_definition() == definition
+        assert definition.view["parent_design_hash"] == parent.spec_hash
+        assert definition.view["as_of"] == "2025-01-05T00:00:00+00:00"
     finally:
         con.disconnect()
 
@@ -1076,14 +1079,14 @@ def training(model, *, split=True, keep=False):
     )
 
 
-def test_percentile_threshold_fits_training_rows_only_and_freezes_recipe(model):
+def test_percentile_threshold_fits_training_rows_only_and_freezes_definition(model):
     from terrine.spec.transforms import Winsorization
 
     frame = training(model)
     fitted = frame.fit_winsorization("value", lower="0.25", upper="0.75")
     assert fitted.lower == Decimal(5) and fitted.upper == Decimal(15)
     assert fitted.fit.row_count == fitted.fit.non_null_count == 3
-    assert fitted.fit.recipe_hash == _recipe_for(frame).digest
+    assert fitted.fit.definition_hash == _definition_for(frame).digest
     raw = frame.materialize()
     assert fitted.fit.view_hash == raw.provenance.dataset_view.view_hash
     reference = raw.table.to_pandas()
@@ -1109,15 +1112,15 @@ def test_percentile_threshold_fits_training_rows_only_and_freezes_recipe(model):
         Decimal(15),
         Decimal(15),
     ]
-    recipe = _recipe_for(transformed)
-    assert recipe.digest != _recipe_for(frame).digest
-    restored = DatasetRecipe.from_json(recipe.canonical_json())
+    definition = _definition_for(transformed)
+    assert definition.digest != _definition_for(frame).digest
+    restored = DatasetDefinition.from_json(definition.canonical_json())
     actual = restored.build(model).materialize()
     assert actual.table.equals(result.table)
     assert actual.columns == result.columns
     metadata = actual.columns["value"].transformation
     assert metadata["stage"] == "post_aggregation"
-    assert metadata["fit"]["recipe_hash"] == fitted.fit.recipe_hash
+    assert metadata["fit"]["definition_hash"] == fitted.fit.definition_hash
     assert actual.columns["label"] == result.columns["label"]
 
 
@@ -1189,12 +1192,12 @@ def test_independently_fitted_features_compose_and_reopen(model):
     first = frame.fit_winsorization("value", lower="0.25", upper="0.75")
     second = frame.fit_winsorization("other", lower="0.25", upper="0.75")
     transformed = frame.winsorize(first).winsorize(second)
-    recipe = DatasetRecipe.from_json(_recipe_for(transformed).canonical_json())
-    result = recipe.build(model).materialize()
-    assert recipe.transforms == (first, second)
+    definition = DatasetDefinition.from_json(_definition_for(transformed).canonical_json())
+    result = definition.build(model).materialize()
+    assert definition.transforms == (first, second)
     assert result.table["value"].to_pylist() == [Decimal(value) for value in (5, 10, 15, 15, 15)]
     assert result.table["other"].equals(result.table["value"])
-    assert first.fit.recipe_hash == second.fit.recipe_hash == _recipe_for(frame).digest
+    assert first.fit.definition_hash == second.fit.definition_hash == _definition_for(frame).digest
 
 
 @pytest.mark.parametrize("kind", ("quantile", "approximate_distinct"))
@@ -1377,26 +1380,26 @@ def test_saved_stage_replays_exact_generation_and_refuses_changed_view(events_wo
         "WHERE dataset=? AND generation=?",
         ["training", dataset.manifest.generation.generation_id],
     ).fetchone()
-    recipe = SavedPlanRecipe.from_json(saved)
-    restored_recipe = recipe.restore_dataset_recipe()
-    assert restored_recipe is not None
-    assert restored_recipe == dataset.manifest.recipe
-    assert recipe.dataset_recipe_json is not None
+    definition = SavedPlan.from_json(saved)
+    restored_definition = definition.restore_dataset_definition()
+    assert restored_definition is not None
+    assert restored_definition == dataset.manifest.definition
+    assert definition.dataset_definition_json is not None
     con.raw_sql("DELETE FROM events")
     replay = run_serialized_plan(
         saved, con=con.con, namespace="terrine_runtime", request_key=request_key
     )
     assert replay.published_generation == dataset.manifest.generation.generation_id
-    altered = json.loads(recipe.dataset_recipe_json)
+    altered = json.loads(definition.dataset_definition_json)
     altered["view"]["incomplete_labels"] = "drop"
-    changed = SavedPlanRecipe.create(
-        plan_json=recipe.plan_json,
-        design=restored_recipe.base_design,
-        model=recipe.model,
-        destination=recipe.destination,
-        namespace=recipe.namespace,
-        expected_base_manifest=recipe.expected_base_manifest,
-        dataset_recipe=type(dataset.manifest.recipe).from_json(json.dumps(altered)),
+    changed = SavedPlan.create(
+        plan_json=definition.plan_json,
+        design=restored_definition.base_design,
+        model=definition.model,
+        destination=definition.destination,
+        namespace=definition.namespace,
+        expected_base_manifest=definition.expected_base_manifest,
+        dataset_definition=type(dataset.manifest.definition).from_json(json.dumps(altered)),
     )
     with pytest.raises(TerrineError) as error:
         run_serialized_plan(
@@ -1406,7 +1409,9 @@ def test_saved_stage_replays_exact_generation_and_refuses_changed_view(events_wo
     con.disconnect()
 
 
-def test_staged_batches_preserve_frame_metadata_and_verify_recipe_ownership(events_world, tmp_path):
+def test_staged_batches_preserve_frame_metadata_and_verify_definition_ownership(
+    events_world, tmp_path
+):
     frame, con = _durable_frame(events_world, tmp_path)
     training = frame.training_set(label="churn", incomplete_labels="keep")
     expected = training.materialize(Budget(strict_scan=False))
@@ -1417,17 +1422,17 @@ def test_staged_batches_preserve_frame_metadata_and_verify_recipe_ownership(even
     assert actual.columns == expected.columns
     assert actual.provenance.dataset_view == expected.provenance.dataset_view
     assert all(batch.num_rows <= 1 for batch in batches)
-    wrong = replace(dataset.manifest, recipe=frame_recipe(frame))
+    wrong = replace(dataset.manifest, definition=frame_definition(frame))
     with pytest.raises(TerrineError) as error:
         Dataset.from_manifest(wrong, con=con)
     assert error.value.code == "terrine.dataset.invalid_generation"
     con.disconnect()
 
 
-def frame_recipe(frame):
-    from terrine.spec.dataset import DatasetRecipe
+def frame_definition(frame):
+    from terrine.spec.dataset import DatasetDefinition
 
-    return DatasetRecipe(schema_version=1, base_design=frame._design)
+    return DatasetDefinition(schema_version=1, base_design=frame._design)
 
 
 def test_stage_renews_lease_during_snapshot_tasks(events_world, tmp_path, monkeypatch):
@@ -1525,21 +1530,22 @@ def test_roster_only_stage_uses_executor_default_durable_outputs(
     con.disconnect()
 
 
-def test_reopen_accepts_resolved_owner_scoped_recipe_reference(events_world, tmp_path):
+def test_reopen_accepts_resolved_owner_scoped_definition_reference(events_world, tmp_path):
     from dataclasses import replace
 
     from terrine.dataset.manifest import DatasetManifest
-    from terrine.spec.dataset import DatasetRecipeStore
+    from terrine.spec.dataset import DatasetDefinitionStore
 
     frame, con = _durable_frame(events_world, tmp_path)
     dataset = frame.stage("training", budget=Budget(strict_scan=False))
-    recipes = DatasetRecipeStore(tmp_path / "recipes", owner="customer")
-    reference = recipes.put(dataset.manifest.recipe)
+    definitions = DatasetDefinitionStore(tmp_path / "definitions", owner="customer")
+    reference = definitions.put(dataset.manifest.definition)
     manifest = DatasetManifest.from_json(
-        replace(dataset.manifest, recipe_reference=reference).to_json(), recipe_store=recipes
+        replace(dataset.manifest, definition_reference=reference).to_json(),
+        definition_store=definitions,
     )
     reopened = Dataset.from_manifest(manifest, con=con)
-    assert reopened.manifest.recipe_reference == reference
+    assert reopened.manifest.definition_reference == reference
     assert sum(batch.num_rows for batch in reopened.to_arrow_batches()) == 2
     con.disconnect()
 
@@ -1817,3 +1823,62 @@ def test_dataset_batches_and_parquet_preserve_typed_metadata(common_frame, tmp_p
     assert restored.provenance.design_hash == expected_metadata.provenance.design_hash
     assert restored.provenance.model_hash == expected_metadata.provenance.model_hash
     assert thaw(dataset.manifest.frame_metadata) == restored.to_metadata()
+
+
+def test_pre_rename_owner_database_refuses_old_generation_and_stages_new(events_world, tmp_path):
+    from terrine.runtime.backends.duckdb import DuckDBBackend
+
+    frame, con = _durable_frame(events_world, tmp_path)
+    fixtures = files("tests.fixtures")
+    serialized = fixtures.joinpath("pre_rename_manifest.json").read_text()
+    saved = fixtures.joinpath("pre_rename_saved_plan.json").read_text()
+    definition = DatasetDefinition.from_json(
+        fixtures.joinpath("pre_rename_definition.json").read_bytes()
+    )
+    namespace = "terrine_runtime"
+    try:
+        raw = con.con
+        backend = DuckDBBackend(raw, namespace=namespace)
+        raw.execute(
+            "CREATE TABLE terrine_runtime.runtime_dataset_recipes "
+            "(dataset VARCHAR,generation VARCHAR,recipe_json VARCHAR,request_key VARCHAR,"
+            "manifest_json VARCHAR,PRIMARY KEY(dataset,generation))"
+        )
+        raw.execute(
+            "CREATE TABLE terrine_runtime.runtime_dataset_requests "
+            "(request_key VARCHAR PRIMARY KEY,recipe_json VARCHAR NOT NULL)"
+        )
+        raw.execute(
+            "INSERT INTO terrine_runtime.runtime_dataset_recipes VALUES (?,?,?,?,?)",
+            ["legacy", "pre-rename-generation", saved, "legacy-request", serialized],
+        )
+        raw.execute(
+            "INSERT INTO terrine_runtime.runtime_dataset_requests VALUES (?,?)",
+            ["legacy-request", saved],
+        )
+        raw.execute(
+            "INSERT INTO terrine_runtime.runtime_manifests VALUES (?,?,?,?)",
+            ["legacy", "pre-rename-generation", 1, "pre-rename-snapshot"],
+        )
+        assert backend.current_generation("legacy") == "pre-rename-generation"
+        with pytest.raises(TerrineError) as error:
+            Dataset.open_generation("legacy", "pre-rename-generation", con=con, namespace=namespace)
+        assert error.value.code == "terrine.dataset.invalid_manifest"
+        new = definition.build(frame._model).stage("legacy", budget=Budget(strict_scan=False))
+        assert new.manifest.generation.generation_id != "pre-rename-generation"
+        assert new.manifest.definition.digest == definition.digest
+        reopened = Dataset.open_generation(
+            "legacy", new.manifest.generation.generation_id, con=con, namespace=namespace
+        )
+        assert sum(batch.num_rows for batch in reopened.to_arrow_batches()) == len(
+            events_world.tables["users"]
+        )
+        assert (
+            raw.execute(
+                "SELECT manifest_json FROM terrine_runtime.runtime_dataset_recipes "
+                "WHERE dataset='legacy' AND generation='pre-rename-generation'"
+            ).fetchone()[0]
+            == serialized
+        )
+    finally:
+        con.disconnect()

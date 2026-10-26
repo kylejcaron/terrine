@@ -154,7 +154,7 @@ Arrow exports carry the same metadata. `frame.expr` is an explicitly unsafe Ibis
 escape hatch: executing it directly bypasses validation, budgets and provenance.
 
 See [library hand-offs](docs/guides/library-handoffs.md) for preflight-backed
-DoubleML, DoWhy and same-connection duckreg recipes, plus lifelines and diff-diff
+DoubleML, DoWhy and same-connection duckreg workflows, plus lifelines and diff-diff
 dataset conversions. Downstream libraries are optional; Terrine makes no causal
 estimates or identification claims.
 
@@ -172,7 +172,7 @@ complete cohort totals. Its integrity checks can still scan upstream data.
 ## Restricted dataset tools
 
 `terrine.agent` exposes owner-configured dataset discovery, typed Design and
-training/scoring recipe edits, metadata-only cost preview, immutable execution
+training/scoring definition edits, metadata-only cost preview, immutable execution
 receipts, pinned staging/refresh, separately authorized Parquet exports and
 bounded redacted previews. `AgentPolicy` independently controls preparation,
 writes, exports, row preview, run reads and cancellation; inspection never grants

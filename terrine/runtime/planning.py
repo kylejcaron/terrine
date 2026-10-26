@@ -16,15 +16,15 @@ from terrine.runtime.changes import Change, ChangeSet
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.materialize import ensure_runtime_expressions_supported
 from terrine.runtime.planner import RefreshPlan, plan_refresh
-from terrine.runtime.recipe import (
+from terrine.runtime.saved_plan import (
     DestinationRef,
     ModelReference,
     ModelResolver,
-    SavedPlanRecipe,
+    SavedPlan,
 )
 from terrine.runtime.snapshot import SnapshotAuthority, _design_root_names
 from terrine.runtime.state import RuntimeStore
-from terrine.spec.dataset import INVALID_RECIPE, DatasetRecipe
+from terrine.spec.dataset import INVALID_DEFINITION, DatasetDefinition
 from terrine.spec.design import Design
 from terrine.spec.io import from_json, to_json
 from terrine.spec.validate import ensure_runtime_shape_supported
@@ -54,7 +54,7 @@ class PlanRequest:
     budget: Budget | None = None
     requested_scope: str | None = None
     schema_version: int = 1
-    dataset_recipe: DatasetRecipe | None = None
+    dataset_definition: DatasetDefinition | None = None
     expected_base_manifest: str | None = None
     bind_base_manifest: bool = False
 
@@ -77,11 +77,11 @@ class PlanRequest:
             raise TypeError("budget must be Budget or None")
         if self.requested_scope is not None and not self.requested_scope.strip():
             raise ValueError("requested_scope must be non-empty when supplied")
-        if self.dataset_recipe is not None and (
-            not isinstance(self.dataset_recipe, DatasetRecipe)
-            or self.dataset_recipe.base_design.spec_hash != self.design.spec_hash
+        if self.dataset_definition is not None and (
+            not isinstance(self.dataset_definition, DatasetDefinition)
+            or self.dataset_definition.base_design.spec_hash != self.design.spec_hash
         ):
-            raise ValueError("dataset_recipe must match the base Design")
+            raise ValueError("dataset_definition must match the base Design")
         if not isinstance(self.bind_base_manifest, bool) or (
             self.expected_base_manifest is not None
             and not isinstance(self.expected_base_manifest, str)
@@ -111,9 +111,9 @@ class PlanRequest:
             "changes": changes,
             "budget": asdict(self.budget) if self.budget is not None else None,
             "requested_scope": self.requested_scope,
-            "dataset_recipe": (
-                self.dataset_recipe.canonical_json().decode()
-                if self.dataset_recipe is not None
+            "dataset_definition": (
+                self.dataset_definition.canonical_json().decode()
+                if self.dataset_definition is not None
                 else None
             ),
             "expected_base_manifest": self.expected_base_manifest,
@@ -123,8 +123,24 @@ class PlanRequest:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> PlanRequest:
         try:
-            if value["schema_version"] != 1:
-                raise ValueError("unsupported request version")
+            optional = {"dataset_definition", "expected_base_manifest", "bind_base_manifest"}
+            required = {
+                "schema_version",
+                "invocation_id",
+                "model",
+                "design",
+                "destination",
+                "changes",
+                "budget",
+                "requested_scope",
+            }
+            if (
+                not isinstance(value, dict)
+                or set(value) - optional != required
+                or type(value["schema_version"]) is not int
+                or value["schema_version"] != 1
+            ):
+                raise ValueError("unsupported request fields or version")
             changes_data = value["changes"]
             changes = None
             if changes_data is not None:
@@ -151,8 +167,8 @@ class PlanRequest:
                 budget,
                 value["requested_scope"],
                 value["schema_version"],
-                DatasetRecipe.from_json(value["dataset_recipe"])
-                if value.get("dataset_recipe") is not None
+                DatasetDefinition.from_json(value["dataset_definition"])
+                if value.get("dataset_definition") is not None
                 else None,
                 value.get("expected_base_manifest"),
                 value.get("bind_base_manifest", False),
@@ -169,7 +185,7 @@ class PlanInvocation:
     destination: DestinationRef
     snapshot_id: str
     expected_base_manifest: str | None
-    recipe_json: str = ""
+    saved_plan_json: str = ""
     schema_version: int = 1
 
     def __post_init__(self) -> None:
@@ -188,7 +204,7 @@ class PlanInvocation:
             "destination": self.destination.to_dict(),
             "snapshot_id": self.snapshot_id,
             "expected_base_manifest": self.expected_base_manifest,
-            "recipe_json": self.recipe_json,
+            "saved_plan_json": self.saved_plan_json,
         }
 
     @classmethod
@@ -201,7 +217,7 @@ class PlanInvocation:
                 DestinationRef(**value["destination"]),
                 value["snapshot_id"],
                 value["expected_base_manifest"],
-                value.get("recipe_json", ""),
+                value.get("saved_plan_json", ""),
                 value["schema_version"],
             )
         except (KeyError, TypeError, ValueError) as error:
@@ -267,13 +283,15 @@ class OwnerPlanner:
         _scan_policy(request.budget)
         enforce_shape_budget(request.design.shape, budget)
         design = request.design
-        if request.dataset_recipe is not None:
+        if request.dataset_definition is not None:
             try:
-                frame = request.dataset_recipe.build(model)
+                frame = request.dataset_definition.build(model)
             except TerrineError:
                 raise
             except (KeyError, TypeError, ValueError, OverflowError) as error:
-                raise INVALID_RECIPE.error(reason="dataset view cannot be constructed") from error
+                raise INVALID_DEFINITION.error(
+                    reason="dataset view cannot be constructed"
+                ) from error
             design, compiled = frame._design, frame._active_compiled()
         else:
             compiled = compile_design(design, model)
@@ -284,9 +302,9 @@ class OwnerPlanner:
             sources=source_names,
             definition_hash=(
                 request.design.spec_hash
-                if request.dataset_recipe is None
+                if request.dataset_definition is None
                 else hashlib.sha256(
-                    (request.dataset_recipe.digest + model.model_hash).encode()
+                    (request.dataset_definition.digest + model.model_hash).encode()
                 ).hexdigest()
             ),
             partitions=(request.requested_scope or "all",),
@@ -309,8 +327,8 @@ class OwnerPlanner:
             )
             snapshot_compiled = (
                 compile_design(design, execution_model)
-                if request.dataset_recipe is None
-                else request.dataset_recipe.build(execution_model)._active_compiled()
+                if request.dataset_definition is None
+                else request.dataset_definition.build(execution_model)._active_compiled()
             )
             validate_compiled_output(snapshot_compiled, execution_model.con.to_pyarrow)
         finally:
@@ -324,14 +342,14 @@ class OwnerPlanner:
             changes=request.changes,
             budget=request.budget,
         )
-        recipe = SavedPlanRecipe.create(
+        saved_plan = SavedPlan.create(
             plan_json=plan.serialize(),
             design=request.design,
             model=request.model,
             destination=request.destination,
             namespace=namespace,
             expected_base_manifest=expected_manifest,
-            dataset_recipe=request.dataset_recipe,
+            dataset_definition=request.dataset_definition,
         )
         request_key = hashlib.sha256(
             _canonical([namespace, request.invocation_id, request.destination.to_dict()]).encode()
@@ -343,11 +361,11 @@ class OwnerPlanner:
             request.destination,
             snapshot.snapshot_id,
             expected_manifest,
-            recipe.to_json(),
+            saved_plan.to_json(),
         )
         con.execute("BEGIN TRANSACTION")
         try:
-            recipe.pin_snapshot(store, reference=request.invocation_id, _in_transaction=True)
+            saved_plan.pin_snapshot(store, reference=request.invocation_id, _in_transaction=True)
             con.execute(
                 f"INSERT INTO {store._schema}.runtime_plan_invocations VALUES (?, ?, ?, ?)",
                 [

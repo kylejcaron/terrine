@@ -12,7 +12,7 @@ from terrine.model import Model
 from terrine.runtime.materialize import ensure_runtime_expressions_supported
 from terrine.runtime.planner import RefreshPlan
 from terrine.runtime.state import RuntimeStore
-from terrine.spec.dataset import DatasetRecipe
+from terrine.spec.dataset import DatasetDefinition
 from terrine.spec.design import Design
 from terrine.spec.io import canonical_json, from_json, to_json
 
@@ -20,12 +20,12 @@ __all__ = [
     "DestinationRef",
     "ModelReference",
     "ModelResolver",
-    "SavedPlanRecipe",
+    "SavedPlan",
     "resolve_plan",
 ]
 
 _INVALID = RefusalSpec(
-    "terrine.runtime.plan_recipe_mismatch",
+    "terrine.runtime.saved_plan_mismatch",
     "Saved plan reconstruction failed verification ({reason}).",
 )
 
@@ -111,7 +111,7 @@ class ModelResolver(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class SavedPlanRecipe:
+class SavedPlan:
     schema_version: int
     plan_json: str
     design_json: str
@@ -120,8 +120,8 @@ class SavedPlanRecipe:
     destination: DestinationRef
     namespace: str
     expected_base_manifest: str | None
-    recipe_hash: str
-    dataset_recipe_json: str | None = None
+    plan_hash: str
+    dataset_definition_json: str | None = None
 
     @classmethod
     def create(
@@ -133,8 +133,8 @@ class SavedPlanRecipe:
         destination: DestinationRef,
         namespace: str,
         expected_base_manifest: str | None,
-        dataset_recipe: DatasetRecipe | None = None,
-    ) -> SavedPlanRecipe:
+        dataset_definition: DatasetDefinition | None = None,
+    ) -> SavedPlan:
         ensure_runtime_expressions_supported(design)
         if not isinstance(model, ModelReference) or not isinstance(destination, DestinationRef):
             raise TypeError("model and destination must be verified references")
@@ -147,13 +147,13 @@ class SavedPlanRecipe:
         canonical_plan = json.dumps(parsed_plan, sort_keys=True, separators=(",", ":"))
         design_json = to_json(design)
         design_hash = hashlib.sha256(canonical_json(design)).hexdigest()
-        if dataset_recipe is not None and (
-            not isinstance(dataset_recipe, DatasetRecipe)
-            or canonical_json(dataset_recipe.base_design) != canonical_json(design)
+        if dataset_definition is not None and (
+            not isinstance(dataset_definition, DatasetDefinition)
+            or canonical_json(dataset_definition.base_design) != canonical_json(design)
         ):
-            raise TypeError("dataset_recipe must describe the saved Design")
-        dataset_recipe_json = (
-            dataset_recipe.canonical_json().decode() if dataset_recipe is not None else None
+            raise TypeError("dataset_definition must describe the saved Design")
+        dataset_definition_json = (
+            dataset_definition.canonical_json().decode() if dataset_definition is not None else None
         )
         provisional = cls(
             1,
@@ -165,9 +165,9 @@ class SavedPlanRecipe:
             namespace,
             expected_base_manifest,
             "",
-            dataset_recipe_json,
+            dataset_definition_json,
         )
-        recipe_hash = hashlib.sha256(_canonical(provisional._data(include_hash=False))).hexdigest()
+        plan_hash = hashlib.sha256(_canonical(provisional._data(include_hash=False))).hexdigest()
         return cls(
             provisional.schema_version,
             provisional.plan_json,
@@ -177,8 +177,8 @@ class SavedPlanRecipe:
             provisional.destination,
             provisional.namespace,
             provisional.expected_base_manifest,
-            recipe_hash,
-            dataset_recipe_json,
+            plan_hash,
+            dataset_definition_json,
         )
 
     def _data(self, *, include_hash: bool) -> dict[str, Any]:
@@ -192,20 +192,20 @@ class SavedPlanRecipe:
             "namespace": self.namespace,
             "expected_base_manifest": self.expected_base_manifest,
         }
-        if self.dataset_recipe_json is not None:
-            data["dataset_recipe_json"] = self.dataset_recipe_json
+        if self.dataset_definition_json is not None:
+            data["dataset_definition_json"] = self.dataset_definition_json
         if include_hash:
-            data["recipe_hash"] = self.recipe_hash
+            data["plan_hash"] = self.plan_hash
         return data
 
     def to_json(self) -> str:
         return json.dumps(self._data(include_hash=True), sort_keys=True, separators=(",", ":"))
 
-    def restore_dataset_recipe(self) -> DatasetRecipe | None:
-        """Return the validated complete dataset construction recipe, if present."""
-        if self.dataset_recipe_json is None:
+    def restore_dataset_definition(self) -> DatasetDefinition | None:
+        """Return the validated complete dataset construction definition, if present."""
+        if self.dataset_definition_json is None:
             return None
-        return DatasetRecipe.from_json(self.dataset_recipe_json)
+        return DatasetDefinition.from_json(self.dataset_definition_json)
 
     def pin_snapshot(
         self,
@@ -214,8 +214,8 @@ class SavedPlanRecipe:
         reference: str | None = None,
         _in_transaction: bool = False,
     ) -> str:
-        """Retain this verified recipe's exact input snapshot."""
-        verified = SavedPlanRecipe.from_json(self.to_json())
+        """Retain this verified saved plan's exact input snapshot."""
+        verified = SavedPlan.from_json(self.to_json())
         plan = RefreshPlan.deserialize(verified.plan_json)
         if (
             verified.namespace != store.namespace
@@ -226,31 +226,31 @@ class SavedPlanRecipe:
         store.pin_snapshot(
             plan.snapshot_id,
             kind="saved_plan",
-            reference=reference or verified.recipe_hash,
+            reference=reference or verified.plan_hash,
             _in_transaction=_in_transaction,
         )
         return plan.snapshot_id
 
     def release_snapshot(self, store: RuntimeStore, *, reference: str | None = None) -> str:
-        """Release this recipe's input snapshot reference."""
-        verified = SavedPlanRecipe.from_json(self.to_json())
+        """Release this saved plan's input snapshot reference."""
+        verified = SavedPlan.from_json(self.to_json())
         plan = RefreshPlan.deserialize(verified.plan_json)
         if verified.namespace != store.namespace or plan.namespace != verified.namespace:
             raise _INVALID.error(reason="plan identity or store namespace differs")
         store.unpin_snapshot(
             plan.snapshot_id,
             kind="saved_plan",
-            reference=reference or verified.recipe_hash,
+            reference=reference or verified.plan_hash,
         )
         return plan.snapshot_id
 
     @classmethod
-    def from_json(cls, value: str | bytes) -> SavedPlanRecipe:
+    def from_json(cls, value: str | bytes) -> SavedPlan:
         try:
             data = json.loads(value)
             model = ModelReference(**data["model"])
             destination = DestinationRef(**data["destination"])
-            recipe = cls(
+            saved_plan = cls(
                 data["schema_version"],
                 data["plan_json"],
                 data["design_json"],
@@ -259,39 +259,39 @@ class SavedPlanRecipe:
                 destination,
                 data["namespace"],
                 data["expected_base_manifest"],
-                data["recipe_hash"],
-                data.get("dataset_recipe_json"),
+                data["plan_hash"],
+                data.get("dataset_definition_json"),
             )
         except (ValueError, TypeError, KeyError) as exc:
-            raise _INVALID.error(reason="recipe is malformed") from exc
-        if recipe.schema_version != 1:
+            raise _INVALID.error(reason="saved plan is malformed") from exc
+        if saved_plan.schema_version != 1:
             raise _INVALID.error(reason="unsupported schema version")
-        expected = hashlib.sha256(_canonical(recipe._data(include_hash=False))).hexdigest()
-        if not isinstance(recipe.recipe_hash, str) or not hmac.compare_digest(
-            recipe.recipe_hash, expected
+        expected = hashlib.sha256(_canonical(saved_plan._data(include_hash=False))).hexdigest()
+        if not isinstance(saved_plan.plan_hash, str) or not hmac.compare_digest(
+            saved_plan.plan_hash, expected
         ):
-            raise _INVALID.error(reason="recipe checksum mismatch")
+            raise _INVALID.error(reason="saved plan checksum mismatch")
         try:
-            RefreshPlan.deserialize(recipe.plan_json)
-            design = from_json(recipe.design_json)
+            RefreshPlan.deserialize(saved_plan.plan_json)
+            design = from_json(saved_plan.design_json)
         except TerrineError:
             raise
         except (ValueError, TypeError) as exc:
             raise _INVALID.error(reason="plan or Design payload is invalid") from exc
-        if hashlib.sha256(canonical_json(design)).hexdigest() != recipe.design_hash:
+        if hashlib.sha256(canonical_json(design)).hexdigest() != saved_plan.design_hash:
             raise _INVALID.error(reason="Design hash mismatch")
-        if recipe.dataset_recipe_json is not None:
+        if saved_plan.dataset_definition_json is not None:
             try:
-                dataset_recipe = DatasetRecipe.from_json(recipe.dataset_recipe_json)
+                dataset_definition = DatasetDefinition.from_json(saved_plan.dataset_definition_json)
             except (ValueError, TypeError) as exc:
-                raise _INVALID.error(reason="dataset recipe is invalid") from exc
-            if canonical_json(dataset_recipe.base_design) != canonical_json(design):
-                raise _INVALID.error(reason="dataset recipe Design differs")
-        return recipe
+                raise _INVALID.error(reason="dataset definition is invalid") from exc
+            if canonical_json(dataset_definition.base_design) != canonical_json(design):
+                raise _INVALID.error(reason="dataset definition Design differs")
+        return saved_plan
 
 
-def _bind_recipe_plan(recipe: SavedPlanRecipe, *, namespace: str) -> RefreshPlan:
-    restored = SavedPlanRecipe.from_json(recipe.to_json())
+def _bind_saved_plan(saved_plan: SavedPlan, *, namespace: str) -> RefreshPlan:
+    restored = SavedPlan.from_json(saved_plan.to_json())
     if namespace != restored.namespace:
         raise _INVALID.error(reason="owner namespace mismatch")
     plan = RefreshPlan.deserialize(restored.plan_json)
@@ -303,14 +303,14 @@ def _bind_recipe_plan(recipe: SavedPlanRecipe, *, namespace: str) -> RefreshPlan
     ):
         raise _INVALID.error(reason="plan identity differs from owner-bound references")
     return plan.bind_base_manifest(
-        restored.expected_base_manifest, reconstruction_hash=restored.recipe_hash
+        restored.expected_base_manifest, reconstruction_hash=restored.plan_hash
     )
 
 
 def resolve_plan(
-    recipe: SavedPlanRecipe, *, resolver: ModelResolver, namespace: str
-) -> tuple[RefreshPlan, Model, Design | DatasetRecipe, DestinationRef]:
-    restored = SavedPlanRecipe.from_json(recipe.to_json())
+    saved_plan: SavedPlan, *, resolver: ModelResolver, namespace: str
+) -> tuple[RefreshPlan, Model, Design | DatasetDefinition, DestinationRef]:
+    restored = SavedPlan.from_json(saved_plan.to_json())
     if namespace != restored.namespace:
         raise _INVALID.error(reason="owner namespace mismatch")
     model = resolver.resolve(restored.model)
@@ -319,6 +319,6 @@ def resolve_plan(
         or ModelReference.from_model(model, owner_key=restored.model.owner_key) != restored.model
     ):
         raise _INVALID.error(reason="owner Model declaration does not match reference")
-    plan = _bind_recipe_plan(restored, namespace=namespace)
+    plan = _bind_saved_plan(restored, namespace=namespace)
     design = from_json(restored.design_json)
-    return plan, model, restored.restore_dataset_recipe() or design, restored.destination
+    return plan, model, restored.restore_dataset_definition() or design, restored.destination

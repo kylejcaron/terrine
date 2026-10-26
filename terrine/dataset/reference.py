@@ -24,15 +24,15 @@ from terrine.runtime.changes import ChangeSet
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.planner import RefreshPlan, plan_refresh
-from terrine.runtime.recipe import (
+from terrine.runtime.saved_plan import (
     DestinationRef,
     ModelReference,
-    SavedPlanRecipe,
-    _bind_recipe_plan,
+    SavedPlan,
+    _bind_saved_plan,
 )
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
-from terrine.spec.dataset import DatasetRecipe
+from terrine.spec.dataset import DatasetDefinition
 
 __all__ = ["Dataset", "stage_frame", "dataset_from_run"]
 
@@ -72,7 +72,7 @@ def _column_role(name: str, roles: Any) -> str:
     return "support"
 
 
-def _recipe_for(frame: Any, *, include_transforms: bool = True) -> DatasetRecipe:
+def _definition_for(frame: Any, *, include_transforms: bool = True) -> DatasetDefinition:
     view = None
     if frame._training_view is not None:
         training = frame._training_view
@@ -95,7 +95,7 @@ def _recipe_for(frame: Any, *, include_transforms: bool = True) -> DatasetRecipe
             "eligibility": design_record["eligibility"],
             "parent_design_hash": scoring.parent_design_hash,
         }
-    return DatasetRecipe(
+    return DatasetDefinition(
         schema_version=1,
         base_design=frame._design,
         view=view,
@@ -203,7 +203,7 @@ class Dataset:
         if (
             record is None
             or record[2] != "succeeded"
-            or record[0].encode() != replace(self._manifest, recipe_reference=None).to_json()
+            or record[0].encode() != replace(self._manifest, definition_reference=None).to_json()
         ):
             raise _GENERATION_INVALID.error()
         self._receipt = PublicationReceipt(
@@ -285,14 +285,14 @@ class Dataset:
     def plan_refresh(
         self, model: Any, *, changes: ChangeSet | None = None, budget: Budget | None = None
     ) -> RefreshPlan:
-        """Plan from the saved recipe without reading or staging source rows."""
+        """Plan from the saved definition without reading or staging source rows."""
         if _owner_for(model.con).reference != self.manifest.source_snapshots["owner"]:
             raise _GENERATION_INVALID.error()
         if changes is not None and not isinstance(changes, ChangeSet):
             raise TypeError("changes must be ChangeSet or None")
         if model.model_hash != self.manifest.model_hash:
             changes = ChangeSet((), "conservative_rebuild")
-        frame = self.manifest.recipe.build(model)
+        frame = self.manifest.definition.build(model)
         return _plan_frame(
             frame,
             namespace=self._namespace,
@@ -305,7 +305,7 @@ class Dataset:
     def refresh(
         self, model: Any, *, changes: ChangeSet | None = None, budget: Budget | None = None
     ) -> Dataset:
-        """Publish a recipe reconstruction while leaving this generation pinned."""
+        """Publish a definition reconstruction while leaving this generation pinned."""
         plan = self.plan_refresh(model, changes=changes, budget=budget)
         if (
             DuckDBBackend(model.con.con, namespace=self._namespace).current_generation(
@@ -317,7 +317,7 @@ class Dataset:
         if not plan.tasks:
             return Dataset.from_manifest(self.manifest, con=model.con, namespace=self._namespace)
         return stage_frame(
-            self.manifest.recipe.build(model),
+            self.manifest.definition.build(model),
             self.manifest.generation.dataset_id,
             budget=budget,
             _base=self,
@@ -332,8 +332,10 @@ class Dataset:
 def _plan_frame(frame, *, namespace, table, snapshot_id, budget, changes=None):
     from terrine.spec.validate import validate_design
 
-    recipe = _recipe_for(frame)
-    definition = hashlib.sha256((recipe.digest + frame._model.model_hash).encode()).hexdigest()
+    definition = _definition_for(frame)
+    definition_hash = hashlib.sha256(
+        (definition.digest + frame._model.model_hash).encode()
+    ).hexdigest()
     return plan_refresh(
         namespace=namespace,
         dataset=table,
@@ -345,7 +347,7 @@ def _plan_frame(frame, *, namespace, table, snapshot_id, budget, changes=None):
             frame._model,
             frame._design,
             sources=validate_design(frame._design, frame._model).required_sources,
-            definition_hash=definition,
+            definition_hash=definition_hash,
         ),
     )
 
@@ -402,7 +404,7 @@ def stage_frame(
     raw = model.con.con
     store = RuntimeStore(raw, namespace=namespace)
     store.initialize()
-    recipe = _recipe_for(frame)
+    definition = _definition_for(frame)
     plan = _plan_frame(
         frame,
         namespace=namespace,
@@ -411,14 +413,14 @@ def stage_frame(
         budget=budget,
         changes=_changes,
     )
-    saved = SavedPlanRecipe.create(
+    saved = SavedPlan.create(
         plan_json=plan.serialize(),
         design=frame._design,
         model=ModelReference.from_model(model, owner_key=owner.reference),
         destination=DestinationRef(str(owner.state_path), namespace, table),
         namespace=namespace,
         expected_base_manifest=expected_base,
-        dataset_recipe=recipe,
+        dataset_definition=definition,
     )
     saved.pin_snapshot(store)
     raw.execute(
@@ -448,7 +450,7 @@ def stage_frame(
 
 
 def dataset_from_run(
-    saved: SavedPlanRecipe,
+    saved: SavedPlan,
     receipt: RunReceipt,
     *,
     model: Any,
@@ -468,7 +470,7 @@ def dataset_from_run(
     if snapshot_authority.owner.reference != _owner_for(model.con).reference:
         raise _GENERATION_INVALID.error()
     table, raw = saved.destination.dataset, model.con.con
-    plan = _bind_recipe_plan(saved, namespace=namespace)
+    plan = _bind_saved_plan(saved, namespace=namespace)
     record = raw.execute(
         f"SELECT dataset,state,published_generation,request_key,fingerprint,destination_json "
         f'FROM "{namespace}".runtime_runs WHERE run_id=?',
@@ -476,7 +478,13 @@ def dataset_from_run(
     ).fetchone()
     if record is None or (
         record[:5]
-        != (table, "succeeded", receipt.published_generation, request_key, plan.recipe.fingerprint)
+        != (
+            table,
+            "succeeded",
+            receipt.published_generation,
+            request_key,
+            plan.definition.fingerprint,
+        )
         or json.loads(record[5]) != saved.destination.to_dict()
         or ModelReference.from_model(model, owner_key=saved.model.owner_key) != saved.model
     ):
@@ -494,13 +502,13 @@ def dataset_from_run(
         ).fetchone()
         if prior is not None:
             return Dataset(DatasetManifest.from_json(prior[0]), con=model.con, namespace=namespace)
-    recipe = saved.restore_dataset_recipe()
-    if recipe is None:
+    definition = saved.restore_dataset_definition()
+    if definition is None:
         raise _GENERATION_INVALID.error()
     snapshot = snapshot_authority.find_retained(plan.snapshot_id, namespace=namespace)
     owner = snapshot_authority.owner
     backend = DuckDBBackend(raw, namespace=namespace)
-    required_sources = validate_design(recipe.base_design, model).required_sources
+    required_sources = validate_design(definition.base_design, model).required_sources
     partitions = raw.execute(
         f'SELECT p.partition,p.digest,p.table_name FROM "{namespace}".runtime_partitions p '
         f'JOIN "{namespace}".runtime_run_results r ON r.partition=p.partition '
@@ -525,7 +533,7 @@ def dataset_from_run(
         if name in model.readiness.sources
     }
     manifest = DatasetManifest(
-        recipe,
+        definition,
         ManifestGeneration(
             table,
             receipt.published_generation,
@@ -542,7 +550,7 @@ def dataset_from_run(
             )
             for field in schema
         ),
-        recipe.base_design.spec_hash,
+        definition.base_design.spec_hash,
         model.model_hash,
         coverage,
         {
@@ -552,7 +560,7 @@ def dataset_from_run(
             "revisions": {name: None for name in required_sources},
         },
         coverage,
-        None if recipe.view is None else recipe.view.get("split"),
+        None if definition.view is None else definition.view.get("split"),
         frame_metadata=metadata.to_metadata(),
     )
     raw.execute(

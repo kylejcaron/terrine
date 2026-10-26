@@ -16,7 +16,7 @@ Dataset. The [first dataset](first-dataset.md) executes that whole path.
 | Bounded trajectories and cohorts | `Trajectory`, `CohortSpec`, `CohortGrouping`, `TimeToEvent`, `LifeTable` | [Trajectories and risk sets](trajectories-survival.md) |
 | State pairs | `StatePanel`, `StateObservations`, `BinnedMetricState` | [State panels](state-panels.md) |
 | Ordered event datasets | `EventSequence`, `SessionSpec`, `FunnelSpec` | [Sequences](temporal-engine.md#bounded-event-sequences-and-event-time-origins) |
-| Save a description or handle a refusal | `DatasetRecipe`, `from_yaml`, `to_yaml`, `TerrineError` | [ML staging](ml-staging.md), [refusal reference](../reference/refusals.md) |
+| Save a description or handle a refusal | `DatasetDefinition`, `from_yaml`, `to_yaml`, `TerrineError` | [ML staging](ml-staging.md), [refusal reference](../reference/refusals.md) |
 
 Use the expression functions rather than constructing their underlying node
 records. Advanced code inspecting a returned node can import its type from
@@ -33,9 +33,9 @@ purpose and the workflow that warrants its exports.
 
 | Facade | Supported use |
 | --- | --- |
-| `terrine.spec` | Pure dataset descriptions: the top-level design constructors plus sequential/calendar/event panels, initiation/adoption declarations, matched-time sampling, trial weights, winsorization, recipe storage and JSON/YAML serialization. See [sequential panels](sequential-panels.md) and [ML staging](ml-staging.md). Expression implementation records stay in their owning module. |
+| `terrine.spec` | Pure dataset descriptions: the top-level design constructors plus sequential/calendar/event panels, initiation/adoption declarations, matched-time sampling, trial weights, winsorization, definition storage and JSON/YAML serialization. See [sequential panels](sequential-panels.md) and [ML staging](ml-staging.md). Expression implementation records stay in their owning module. |
 | `terrine.execution` | `publish_native_inputs` and its `PublishedInputs` result for [retained input publication](../../README.md#owned-inputs-for-repeated-builds). Verified bindings/relation authority are derived, not facade inputs. |
-| `terrine.runtime` | Owner-side planning, saved recipes, execution/scan authorization protocols, snapshot retention, exact-generation reads and run status/events/cancellation. See [runtime](materialization-runtime.md). Persistent state rows and layer translation stay in their owning modules. |
+| `terrine.runtime` | Owner-side planning, saved plans, execution/scan authorization protocols, snapshot retention, exact-generation reads and run status/events/cancellation. See [runtime](materialization-runtime.md). Persistent state rows and layer translation stay in their owning modules. |
 | `terrine.export` | Shared preflight and Arrow/lifelines/diff-diff hand-offs, with their typed conversion results. See [library hand-offs](library-handoffs.md). |
 | `terrine.agent` | `AgentPolicy` and `DatasetTools` for the separately authorized [dataset tools](dataset-agent-tools.md). |
 | `terrine.simulate` | Seeded raw-source worlds and bounded scale batches, with independent expected-row oracles. See [synthetic worlds](synthetic-worlds.md). |
