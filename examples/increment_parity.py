@@ -13,9 +13,7 @@ import ibis
 import pyarrow as pa
 from increment.frame import MetricSpec, from_unit_panel
 
-from terrine.data import Coverage, UnitSource
-from terrine.model import Model
-from terrine.semantic.models import Catalog
+from terrine import Coverage, Model, UnitSource
 from terrine.spec import Design, FixedDate, agg
 
 T0 = datetime(2025, 1, 3, tzinfo=UTC)
@@ -40,7 +38,7 @@ ORDERS = (
 )
 
 
-def _catalog() -> Catalog:
+def _catalog() -> dict:
     sources = {
         "events": {
             "relation": {"kind": "table", "name": "events"},
@@ -67,8 +65,7 @@ def _catalog() -> Catalog:
         "post_orders": {"fact": "items", "aggregation": "count"},
     }
     metrics = {name: {"kind": "mean", "entity": "user", "measure": name} for name in measures}
-    return Catalog.model_validate(
-        {
+    return {
             "schema_version": 1,
             "day_boundary": "UTC",
             "dialect": "duckdb",
@@ -82,7 +79,6 @@ def _catalog() -> Catalog:
             "measures": measures,
             "metrics": metrics,
         }
-    )
 
 
 def _increment_source():

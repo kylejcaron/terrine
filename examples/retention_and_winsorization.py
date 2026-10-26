@@ -11,7 +11,7 @@ import ibis
 from examples.ml_staging import catalog
 from examples.retention_metrics import main as retention_main
 from terrine import Budget, Coverage, Design, Model, Schedule, UnitSource, agg
-from terrine.dataset.splits import TimeSplit
+from terrine.dataset import TimeSplit
 from terrine.spec import DatasetDefinition, Winsorization
 
 

@@ -92,6 +92,14 @@ def _mapping(
 _UniqueSafeLoader.add_constructor(BaseResolver.DEFAULT_MAPPING_TAG, _mapping)
 
 
+def validate_catalog(value: Any) -> Catalog:
+    """Validate an in-memory Catalog definition with loader refusal semantics."""
+    try:
+        return Catalog.model_validate(value)
+    except ValidationError as exc:
+        raise _invalid_definition(exc) from None
+
+
 def load_catalog(path: str | Path) -> Catalog:
     """Load one strictly validated Catalog without executing YAML constructors."""
     try:
@@ -99,11 +107,7 @@ def load_catalog(path: str | Path) -> Catalog:
             value = yaml.load(stream, Loader=_UniqueSafeLoader)
     except yaml.YAMLError as exc:
         raise _INVALID_YAML.error(reason="unsafe tag or malformed YAML") from exc
-    try:
-        return Catalog.model_validate(value)
-    except ValidationError as exc:
-        raise _invalid_definition(exc) from None
-
+    return validate_catalog(value)
 
 def dump_catalog(catalog: Catalog) -> str:
     """Serialize a native Catalog using ordinary safe YAML values."""

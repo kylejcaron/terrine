@@ -4,12 +4,17 @@ from datetime import UTC, datetime
 
 import ibis
 
-from terrine.data import Budget, Coverage, UnitSource
+from terrine import Budget, Coverage, UnitSource, Model
 from terrine.export import to_surrogate_arrow
-from terrine.model import Model
-from terrine.semantic.models import Catalog
-from terrine.spec import CohortSpec, Design, EventAnchor, LifeTable, TimeToEvent
-from terrine.spec.trajectory import CohortGrouping, Trajectory
+from terrine.spec import (
+    CohortGrouping,
+    CohortSpec,
+    Design,
+    EventAnchor,
+    LifeTable,
+    TimeToEvent,
+    Trajectory,
+)
 
 
 def _model():
@@ -27,8 +32,7 @@ def _model():
     """)
     con.raw_sql("CREATE TABLE churn_events AS SELECT user_id, ts FROM events WHERE kind = 'churn'")
     con.raw_sql("CREATE TABLE users AS SELECT * FROM (VALUES ('u1'), ('u2'), ('u3')) AS u(id)")
-    catalog = Catalog.model_validate(
-        {
+    catalog = {
             "schema_version": 1,
             "day_boundary": "UTC",
             "dialect": "duckdb",
@@ -73,7 +77,6 @@ def _model():
                 }
             },
         }
-    )
     model = Model.from_catalog(
         catalog,
         con=con,

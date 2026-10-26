@@ -11,20 +11,23 @@ import ibis
 from terrine.compile.columns import compile_columns
 from terrine.data import Budget, Coverage, UnitSource
 from terrine.model import Model
-from terrine.runtime import open_published_frame, run_serialized_plan
-from terrine.runtime.graph import dependency_graph
-from terrine.runtime.owner import RuntimeOwner
-from terrine.runtime.planner import plan_refresh
-from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
-from terrine.runtime.snapshot import SnapshotAuthority
+from terrine.runtime import (
+    DestinationRef,
+    ModelReference,
+    RuntimeOwner,
+    SavedPlan,
+    SnapshotAuthority,
+    dependency_graph,
+    open_published_frame,
+    plan_refresh,
+    run_serialized_plan,
+)
 from terrine.runtime.state import RuntimeStore
-from terrine.semantic.models import Catalog
 from terrine.spec import Design, FixedDate, agg, asof
 
 
-def _catalog() -> Catalog:
-    return Catalog.model_validate(
-        {
+def _catalog() -> dict:
+    return {
             "schema_version": 1,
             "day_boundary": "UTC",
             "dialect": "duckdb",
@@ -60,7 +63,6 @@ def _catalog() -> Catalog:
             "measures": {"total": {"fact": "amount", "aggregation": "sum"}},
             "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
         }
-    )
 
 
 class ModelResolver:

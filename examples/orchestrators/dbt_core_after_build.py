@@ -7,9 +7,8 @@ import time
 from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 
+from terrine.runtime import PlanRequest, RunReceipt
 from terrine.runtime.control import ControlClient, ControlEndpoint
-from terrine.runtime.execute import RunReceipt
-from terrine.runtime.planning import PlanRequest
 
 
 def reviewed_dbt_relation_names(

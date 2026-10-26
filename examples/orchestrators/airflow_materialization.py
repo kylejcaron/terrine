@@ -11,8 +11,8 @@ from typing import Any
 from airflow import DAG
 
 from terrine.orchestration.airflow import build_materialization_group
+from terrine.runtime import PlanRequest
 from terrine.runtime.control import ControlEndpoint
-from terrine.runtime.planning import PlanRequest
 
 
 def plan_request(context: dict[str, Any]) -> PlanRequest:

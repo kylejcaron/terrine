@@ -8,9 +8,9 @@ from dataclasses import replace
 from pathlib import Path
 
 from terrine.orchestration.dagster import build_materialization_asset
+from terrine.runtime import PlanRequest
 from terrine.runtime.control import ControlEndpoint
-from terrine.runtime.planning import PlanRequest
-from terrine.spec.anchors import FixedDate
+from terrine.spec import FixedDate
 
 
 def plan_request(context: dict[str, str]) -> PlanRequest:

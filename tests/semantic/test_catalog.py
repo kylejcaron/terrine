@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from terrine.data import Coverage
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.io import dump_catalog, load_catalog
@@ -37,6 +38,30 @@ CATALOG = {
     "measures": {"count": {"fact": "session", "aggregation": "count"}},
     "metrics": {"sessions": {"kind": "mean", "entity": "user", "measure": "count"}},
 }
+
+
+def test_from_catalog_mapping_binds_same_model_as_catalog():
+    import ibis
+
+    con = ibis.duckdb.connect()
+    con.create_table(
+        "events",
+        schema=ibis.schema({"ts": "timestamp", "user_id": "int64", "workspace_id": "int64"}),
+    )
+    con.create_table(
+        "accounts", schema=ibis.schema({"workspace_id": "int64", "changed_at": "timestamp"})
+    )
+    catalog = Catalog.model_validate(CATALOG)
+    readiness = {"events": Coverage("2025-01-01", "2025-02-01")}
+    from_mapping = Model.from_catalog(CATALOG, con=con, readiness=readiness)
+    from_catalog = Model.from_catalog(catalog, con=con, readiness=readiness)
+    assert from_mapping.catalog == from_catalog.catalog
+
+    with pytest.raises(TerrineError) as error:
+        Model.from_catalog(
+            {**CATALOG, "schema_version": 2}, con=con, readiness=readiness
+        )
+    assert error.value.code == "terrine.catalog.invalid_definition"
 
 
 def test_safe_yaml_roundtrips_native_mapping(tmp_path: Path):

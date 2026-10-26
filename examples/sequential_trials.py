@@ -5,9 +5,8 @@ from datetime import UTC, datetime
 import ibis
 import pyarrow as pa
 
-from terrine.data import Budget, Coverage, MaterializedFrame, UnitSource
-from terrine.model import Model
-from terrine.semantic.models import Catalog
+from terrine import Budget, Coverage, Model, UnitSource
+from terrine.data import MaterializedFrame
 from terrine.spec import (
     Design,
     EventAnchor,
@@ -38,8 +37,7 @@ def main() -> None:
         ),
     )
     con.create_table("users", pa.table({"user_id": ["a", "b"]}))
-    catalog = Catalog.model_validate(
-        {
+    catalog = {
             "schema_version": 1,
             "day_boundary": "UTC",
             "dialect": "duckdb",
@@ -59,7 +57,6 @@ def main() -> None:
             "measures": {},
             "metrics": {},
         }
-    )
     model = Model.from_catalog(
         catalog,
         con=con,
