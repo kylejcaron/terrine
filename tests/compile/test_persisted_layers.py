@@ -194,29 +194,46 @@ def test_runtime_layer_composition_matches_direct_state_audit(column_model):
     )
 
 
-def test_runtime_composition_refuses_approximate_quantile_sidecar_before_source_work(
-    column_model,
+@pytest.mark.parametrize("role", ["unwrapped", "feature", "outcome", "eligibility"])
+def test_runtime_composition_keeps_approximate_value_and_predicate_refusals_distinct(
+    column_model, role
 ):
     from decimal import Decimal
 
     from terrine.runtime.materialize import compose_runtime_frame
-    from terrine.spec import SketchRequest, approx_quantile
+    from terrine.spec import SketchRequest, approx_quantile, gt
 
+    value = approx_quantile(
+        "total",
+        "0.5",
+        window=("-1d", "0d"),
+        sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
+    )
+    predicate = {"q": gt(value, 0)}
     design = Design(
         "user",
         FixedDate("2025-01-03"),
-        features={
-            "q": approx_quantile(
-                "total",
-                "0.5",
-                window=("-1d", "0d"),
-                sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
-            )
-        },
+        features={"ordinary": value, **(predicate if role == "feature" else {})},
+        outcomes=predicate if role == "outcome" else None,
+        eligibility=predicate if role == "eligibility" else None,
     )
-    with pytest.raises(TerrineError) as error:
+    with pytest.raises(TerrineError) as runtime_error:
         compose_runtime_frame(design, column_model, persisted={})
-    assert error.value.code == "terrine.runtime.sketch_sidecar_unavailable"
+    if role == "unwrapped":
+        assert runtime_error.value.code == "terrine.runtime.sketch_sidecar_unavailable"
+    else:
+        predicate_only = Design(
+            "user",
+            design.anchor,
+            features=predicate if role == "feature" else None,
+            outcomes=predicate if role == "outcome" else None,
+            eligibility=predicate if role == "eligibility" else None,
+        )
+        with pytest.raises(TerrineError) as validation_error:
+            predicate_only.validate(column_model)
+        assert runtime_error.value.code == validation_error.value.code
+        assert runtime_error.value.code == "terrine.metric.approx_eligibility_unavailable"
+        assert runtime_error.value.context == validation_error.value.context
 
 
 @pytest.mark.parametrize(

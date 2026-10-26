@@ -166,6 +166,7 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
         EventTime,
         MetricAgg,
         MetricQuantile,
+        _output_leaves,
     )
     from terrine.spec.io import canonical_json
 
@@ -215,41 +216,40 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
                 "expression": selected_records[name],
                 "evaluation_reference": evaluation_reference,
             }
-        resolved: dict[str, object] = {}
-        if isinstance(
-            expression, (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct)
-        ):
-            metric = model.metrics.get(expression.metric)
-            if metric is not None:
-                resolved["metric"] = _metric_definition(metric, model)
-        elif isinstance(expression, AttributeAsOf):
-            source, prop, dimension = resolve_attribute(model, expression.attribute)
-            resolved["attribute"] = {
-                "source": source.name,
-                "relation": _definition_record(source.relation),
-                "entity_column": source.entities.get(design.unit),
-                "day_boundary": source.day_boundary,
-                "timestamp_column": source.timestamp_column,
-                "binding": _definition_record(prop),
-                "dimension": None
-                if dimension is None
-                else {
-                    "name": dimension.name,
-                    "relation": _definition_record(dimension.relation),
-                    "source_entity": dimension.source_entity,
-                    "entity_column": dimension.entity_column,
-                    "validity": _definition_record(dimension.validity),
-                },
-            }
-        selector = (
-            expression
-            if isinstance(expression, EventTime)
-            else getattr(expression, "relative_to", None)
-        )
-        if selector is not None:
-            resolved["selector"] = _selector_definition(selector, model)
+        resolved_leaves = []
+        for leaf in _output_leaves(expression) if expression is not None else ():
+            resolved: dict[str, object] = {}
+            if isinstance(
+                leaf, (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct)
+            ):
+                metric = model.metrics.get(leaf.metric)
+                if metric is not None:
+                    resolved["metric"] = _metric_definition(metric, model)
+            elif isinstance(leaf, AttributeAsOf):
+                source, prop, dimension = resolve_attribute(model, leaf.attribute)
+                resolved["attribute"] = {
+                    "source": source.name,
+                    "relation": _definition_record(source.relation),
+                    "entity_column": source.entities.get(design.unit),
+                    "day_boundary": source.day_boundary,
+                    "timestamp_column": source.timestamp_column,
+                    "binding": _definition_record(prop),
+                    "dimension": None
+                    if dimension is None
+                    else {
+                        "name": dimension.name,
+                        "relation": _definition_record(dimension.relation),
+                        "source_entity": dimension.source_entity,
+                        "entity_column": dimension.entity_column,
+                        "validity": _definition_record(dimension.validity),
+                    },
+                }
+            selector = leaf if isinstance(leaf, EventTime) else getattr(leaf, "relative_to", None)
+            if selector is not None:
+                resolved["selector"] = _selector_definition(selector, model)
+            resolved_leaves.append(resolved)
         if name not in semantic:
-            semantic[name] = resolved
+            semantic[name] = resolved_leaves[0] if len(resolved_leaves) == 1 else resolved_leaves
     payload = {
         "unit": record["unit"],
         "unit_binding": _definition_record(model.units.get(design.unit)),

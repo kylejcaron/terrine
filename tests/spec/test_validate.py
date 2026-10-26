@@ -94,6 +94,29 @@ def model(
     )()
 
 
+@pytest.mark.parametrize(
+    ("role", "window"),
+    [("features", ("0d", "7d")), ("outcomes", ("-7d", "0d"))],
+)
+def test_predicate_outputs_validate_each_leaf_for_its_role(role, window):
+    from terrine.spec import all_of, eq
+
+    values = {
+        "label": all_of(
+            gt(agg("sessions", window=window), 0), eq(agg("sessions", window=window), 1)
+        )
+    }
+    design = Design(
+        "user",
+        FixedDate("2025-01-02"),
+        features=values if role == "features" else None,
+        outcomes=values if role == "outcomes" else None,
+    )
+    with pytest.raises(TerrineError) as error:
+        design.validate(model())
+    assert error.value.code == "terrine.design.gap_violation"
+
+
 def test_binned_state_metric_uses_ordinary_metric_admission():
     from terrine.errors import TerrineError
     from terrine.spec.anchors import Schedule

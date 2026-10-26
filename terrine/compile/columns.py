@@ -53,10 +53,14 @@ from terrine.spec.expressions import (
     Eq,
     EventTime,
     Expr,
+    Gt,
+    IsNull,
     MetricAgg,
     MetricQuantile,
+    Predicate,
     RetentionMetric,
     SketchRequest,
+    _output_leaves,
 )
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE
 from terrine.spec.validate import _fixed_anchors
@@ -515,17 +519,13 @@ def compile_columns(
                 if identity is not None:
                     unknown_precedes |= (
                         unknown_selected._unknown_time == unknown_selected.__selector_time
-                    ) & (
-                        unknown_selected._unknown_event_id >= unknown_selected.__selector_event_id
-                    )
+                    ) & (unknown_selected._unknown_event_id >= unknown_selected.__selector_event_id)
             else:
                 unknown_precedes = unknown_selected._unknown_time < unknown_selected.__selector_time
                 if identity is not None:
                     unknown_precedes |= (
                         unknown_selected._unknown_time == unknown_selected.__selector_time
-                    ) & (
-                        unknown_selected._unknown_event_id <= unknown_selected.__selector_event_id
-                    )
+                    ) & (unknown_selected._unknown_event_id <= unknown_selected.__selector_event_id)
             unknown_count_name = f"__terrine_selector_unknown_count_{index}"
             known_count_name = f"__terrine_selector_known_count_{index}"
             preceding_count_name = f"__terrine_selector_preceding_count_{index}"
@@ -1050,73 +1050,130 @@ def compile_columns(
         strategies[output] = strategy
         return compiled
 
-    def predicate_expressions(node):
-        if isinstance(node, And):
-            for term in node.terms:
-                predicate_expressions(term)
+    def expression_timing(node: Expr, *, output: str | None = None) -> ExpressionTiming:
+        relative = getattr(node, "relative_to", None)
+        if isinstance(node, EventTime):
+            support, dependency_supports = selector_timing(node)
+            selector_ref = repr(node)
+            offsets = None
+            point_column = output or values[node].name
+            kind = "event_time"
+        elif relative is not None and not isinstance(node, RetentionMetric):
+            origin, dependency_supports = selector_timing(relative)
+            selector_ref = repr(relative)
+            offsets = (
+                (node.before, node.before)
+                if isinstance(node, AttributeAsOf)
+                else (node.window.start, node.window.end)
+            )
+            support = (origin[0] + offsets[0], origin[1] + offsets[1])
+            point_column = timing_column_refs[node][0]
+            kind = "event_time"
         else:
-            expression(node.left if isinstance(node, Eq) else node.expr)
-
-    expression_timings = {}
-    for role, named in (("feature", design.features), ("outcome", design.outcomes)):
-        for name, node in named.items():
-            value = expression(node)
-            public[name] = value.name
-            if any(value.name in sidecar.outputs for sidecar in sketches):
-                sketch_aliases.setdefault(value.name, []).append(name)
-            columns[name] = replace(value.meta, role=role)
-            relative = getattr(node, "relative_to", None)
-            if isinstance(node, EventTime):
-                support, dependency_supports = selector_timing(node)
-                selector_ref = repr(node)
-                offsets = None
-                point_column = name
-                kind = "event_time"
-            elif relative is not None and not isinstance(node, RetentionMetric):
-                origin, dependency_supports = selector_timing(relative)
-                selector_ref = repr(relative)
-                offsets = (
+            support = (
+                (0, range_plans[node].block_seconds)
+                if isinstance(node, RetentionMetric)
+                else (
                     (node.before, node.before)
                     if isinstance(node, AttributeAsOf)
                     else (node.window.start, node.window.end)
                 )
-                support = (origin[0] + offsets[0], origin[1] + offsets[1])
-                point_column = timing_column_refs[node][0]
-                kind = "event_time"
-            else:
-                support = (
-                    (0, range_plans[node].block_seconds)
-                    if isinstance(node, RetentionMetric)
-                    else (
-                        (node.before, node.before)
-                        if isinstance(node, AttributeAsOf)
-                        else (node.window.start, node.window.end)
-                    )
-                )
-                dependency_supports = {}
-                selector_ref = None
-                offsets = None
-                point_column = timing_column_refs[node][0]
-                kind = "fixed_t0"
-            _, start_ref, end_ref = timing_column_refs[node]
-            expression_timings[name] = ExpressionTiming(
-                kind=kind,
-                selector_ref=selector_ref,
-                relative_offsets=offsets,
-                support_seconds=support,
-                selector_dependencies=tuple(dependency_supports),
-                selector_support_seconds=dependency_supports,
-                point_time_column=point_column,
-                start_bound_column=start_ref,
-                end_bound_column=end_ref,
             )
-            strategies[name] = strategies[value.name]
-            if role == "feature" and value.cutoff is not None:
-                feature_cutoffs[name] = value.cutoff
+            dependency_supports = {}
+            selector_ref = None
+            offsets = None
+            point_column = timing_column_refs[node][0]
+            kind = "fixed_t0"
+        _, start_ref, end_ref = timing_column_refs[node]
+        return ExpressionTiming(
+            kind=kind,
+            selector_ref=selector_ref,
+            relative_offsets=offsets,
+            support_seconds=support,
+            selector_dependencies=tuple(dependency_supports),
+            selector_support_seconds=dependency_supports,
+            point_time_column=point_column,
+            start_bound_column=start_ref,
+            end_bound_column=end_ref,
+        )
+
+    def predicate_timing(node: Predicate, name: str) -> ExpressionTiming:
+        nonlocal table
+        timings = [expression_timing(leaf) for leaf in _output_leaves(node)]
+        support = (
+            min(timing.support_seconds[0] for timing in timings),
+            max(timing.support_seconds[1] for timing in timings),
+        )
+        dependencies = {
+            reference: bounds
+            for timing in timings
+            for reference, bounds in timing.selector_support_seconds.items()
+        }
+        # Unresolved origins retain declared support even when another term is false.
+        starts = [
+            table[timing.start_bound_column].fill_null(
+                table.t0 + ibis.interval(seconds=timing.support_seconds[0])
+            )
+            if timing.start_bound_column is not None
+            else table.t0 + ibis.interval(seconds=timing.support_seconds[0])
+            for timing in timings
+        ]
+        ends = [
+            table[timing.end_bound_column].fill_null(
+                table.t0 + ibis.interval(seconds=timing.support_seconds[1])
+            )
+            if timing.end_bound_column is not None
+            else table.t0 + ibis.interval(seconds=timing.support_seconds[1])
+            for timing in timings
+        ]
+        start_name, end_name = (
+            f"__terrine_{name}_start_bound",
+            f"__terrine_{name}_end_bound",
+        )
+        table = table.mutate(**{start_name: least(*starts), end_name: greatest(*ends)})
+        return ExpressionTiming(
+            kind="event_time"
+            if any(timing.kind == "event_time" for timing in timings)
+            else "fixed_t0",
+            selector_ref=None,
+            relative_offsets=None,
+            support_seconds=support,
+            selector_dependencies=tuple(dependencies),
+            selector_support_seconds=dependencies,
+            point_time_column=None,
+            start_bound_column=start_name,
+            end_bound_column=end_name,
+        )
+
+    expression_timings = {}
+    for role, named in (("feature", design.features), ("outcome", design.outcomes)):
+        for name, node in named.items():
+            if isinstance(node, (Gt, Eq, IsNull, And)):
+                for leaf in _output_leaves(node):
+                    expression(leaf)
+                result = compile_predicate(table, node, values, output=name, role=role)
+                table = result.table
+                public[name] = name
+                columns[name] = result.meta
+                expression_timings[name] = predicate_timing(node, name)
+                strategies[name] = "three_valued"
+                cutoff = result.cutoff
+            else:
+                value = expression(node)
+                public[name] = value.name
+                if any(value.name in sidecar.outputs for sidecar in sketches):
+                    sketch_aliases.setdefault(value.name, []).append(name)
+                columns[name] = replace(value.meta, role=role)
+                expression_timings[name] = expression_timing(node, output=name)
+                strategies[name] = strategies[value.name]
+                cutoff = value.cutoff
+            if role == "feature":
+                feature_cutoffs[name] = cutoff
     for node in design.eligibility.values():
-        predicate_expressions(node)
+        for leaf in _output_leaves(node):
+            expression(leaf)
     for name, node in design.eligibility.items():
-        result = compile_predicate(table, node, values, output=name)
+        result = compile_predicate(table, node, values, output=name, role="eligibility")
         table = result.table
         public[name] = name
         columns[name] = result.meta
@@ -1191,9 +1248,12 @@ def compile_columns(
             for sidecar_output in sidecar.outputs
         ),
         range_plans={
-            name: range_plans[node]
+            name if len(plans) == 1 else f"__terrine_{name}_leaf_{index}": plan
             for named in (design.features, design.outcomes)
             for name, node in named.items()
-            if node in range_plans
+            if (
+                plans := [range_plans[leaf] for leaf in _output_leaves(node) if leaf in range_plans]
+            )
+            for index, plan in enumerate(plans)
         },
     )

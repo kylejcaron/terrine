@@ -146,6 +146,34 @@ def test_counts_and_sums_match_duckdb(postgres_scratch, tmp_path):  # noqa: F811
     assert [by_unit[unit]["heavy_orders_week"] for unit in "abcd"] == [0, 1, 1, 0]
 
 
+def test_boolean_outputs_preserve_three_valued_results(postgres_scratch, tmp_path):  # noqa: F811
+    duckdb = ibis.duckdb.connect()
+    try:
+        _load(duckdb, timestamp_type="TIMESTAMPTZ", amount_type="DECIMAL(12, 2)")
+        _load(postgres_scratch.con, timestamp_type="timestamptz", amount_type="numeric(12, 2)")
+        day = tr.agg("orders", window=("0s", "1d"))
+        incomplete = tr.gt(tr.agg("orders", window=("0s", "60d")), 0)
+        design = _design(
+            outcomes={
+                "converted": tr.gt(day, 0),
+                "churned": tr.eq(day, 0),
+                "unknown": incomplete,
+                "conjunction": tr.all_of(tr.gt(day, 0), incomplete),
+            },
+            no_prior_order=tr.is_null(tr.event_time("order", window=("-1d", "0s"))),
+        )
+        expected = _rows(_model(duckdb, tmp_path, "duckdb"), design)
+        actual = _rows(_model(postgres_scratch.con, tmp_path, "postgres"), design)
+        assert actual == expected
+        by_unit = {row["unit"]: row for row in actual}
+        assert [by_unit[unit]["converted"] for unit in "abcd"] == [True, True, False, False]
+        assert [by_unit[unit]["churned"] for unit in "abcd"] == [False, False, True, True]
+        assert [by_unit[unit]["unknown"] for unit in "abcd"] == [None] * 4
+        assert [by_unit[unit]["conjunction"] for unit in "abcd"] == [None, None, False, False]
+    finally:
+        duckdb.disconnect()
+
+
 def test_exact_overflow_is_a_coded_refusal_and_the_boundary_succeeds(postgres_scratch, tmp_path):  # noqa: F811
     con = postgres_scratch.con
     _load(con, timestamp_type="timestamptz", amount_type="numeric(38, 0)")

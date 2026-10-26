@@ -82,8 +82,8 @@ class Treatment:
 class Design:
     unit: str
     anchor: FixedDate | EventAnchor | Schedule
-    features: Mapping[str, Expr]
-    outcomes: Mapping[str, Expr]
+    features: Mapping[str, Expr | Predicate]
+    outcomes: Mapping[str, Expr | Predicate]
     eligibility: Mapping[str, Predicate]
     treatment: Treatment | None
     gap: int
@@ -107,8 +107,8 @@ class Design:
         unit: str,
         anchor: FixedDate | EventAnchor | Schedule,
         *,
-        features: Mapping[str, Expr] | None = None,
-        outcomes: Mapping[str, Expr] | None = None,
+        features: Mapping[str, Expr | Predicate] | None = None,
+        outcomes: Mapping[str, Expr | Predicate] | None = None,
         eligibility: Mapping[str, Predicate] | None = None,
         treatment: Treatment | None = None,
         gap: str | int = "0d",
@@ -184,6 +184,10 @@ class Design:
                     RetentionMetric,
                     AttributeAsOf,
                     EventTime,
+                    Gt,
+                    Eq,
+                    IsNull,
+                    And,
                 ),
                 "features",
             ),
@@ -201,6 +205,10 @@ class Design:
                     RetentionMetric,
                     AttributeAsOf,
                     EventTime,
+                    Gt,
+                    Eq,
+                    IsNull,
+                    And,
                 ),
                 "outcomes",
             ),

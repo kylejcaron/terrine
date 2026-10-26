@@ -65,6 +65,16 @@
   three-valued eligibility and descriptive treatment/cluster/weight roles.
 - Preserve source-specific completeness, numeric nulls and exact unavailable
   reasons; distinguish fully observed zero activity from missing follow-up.
+- Accept `gt`, `eq`, `is_null` and `all_of` rules as boolean features and
+  outcomes, preserving incomplete-window nulls and reasons, three-valued
+  conjunctions and full temporal support for follow-up and training splits.
+- Refuse approximate-quantile operands in boolean outputs before reading data;
+  reuse `terrine.metric.approx_eligibility_unavailable` across predicate roles
+  and ordinary/persisted-runtime admission.
+  Use exact quantiles or output the approximate value without a predicate.
+- Include every nested event-selector dependency in sequential outcome
+  follow-up, even when a plain or boolean outcome measures before its selector.
+  Preserve sustained-control initiation checks through the full search horizon.
 - Preserve evaluated null reasons on event-relative results after a selector
   resolves, independently of completeness.
 - Select the last matching event in event-time selector windows with deterministic
