@@ -527,52 +527,30 @@ def test_last_occurrence_empty_complete_lookback_is_null_complete(column_model):
     assert rows[1][meta.reason_column] is None
 
 
-def test_last_occurrence_ties_mirror_first(column_model):
-    con = column_model.con
-    con.raw_sql("""
-        CREATE TABLE tied_events AS
-        SELECT user_id, ts, amount, tier,
-            CASE WHEN user_id = 'a' THEN 'b' ELSE 'a' END AS event_id
-        FROM events WHERE ts = TIMESTAMPTZ '2025-01-02 11:59:59+00'
-        UNION ALL
-        SELECT user_id, ts, amount, tier,
-            CASE WHEN user_id = 'a' THEN 'a' ELSE 'b' END AS event_id
-        FROM events WHERE ts = TIMESTAMPTZ '2025-01-02 11:59:59+00'
-    """)
-    definition = column_model.catalog.model_dump(mode="python")
-    definition["sources"]["events"]["relation"] = {"kind": "table", "name": "tied_events"}
-    model = Model.from_catalog(
-        Catalog.model_validate(definition),
-        con=con,
-        readiness=column_model.readiness,
-        units=column_model.units,
-        event_ids={"events": "event_id"},
-    )
-    compiled = _compile(
-        model,
-        features={
-            "first_at": event_time("amount", window=("-1s", "0s"), occurrence="first"),
-            "last_at": event_time("amount", window=("-1s", "0s"), occurrence="last"),
-        },
-    )
-    rows = con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
-    assert rows[0]["first_at"] == rows[0]["last_at"] == datetime(
-        2025, 1, 2, 11, 59, 59, tzinfo=UTC
-    )
-    # The timestamps tie; distinct event IDs determine opposite endpoint rows.
-    assert rows[0]["first_at"] == rows[0]["last_at"]
-def _dimension_label_model(column_model, events, *, starts, ends):
+def _dimension_label_model(
+    column_model,
+    events,
+    *,
+    starts,
+    ends,
+    workspace_by_event_id=None,
+    known_workspace="a",
+):
     con = column_model.con
     con.raw_sql("DROP TABLE events")
     con.raw_sql("""
         CREATE TABLE events (
-            user_id VARCHAR, ts TIMESTAMPTZ, amount BIGINT, tier VARCHAR, event_id VARCHAR
+            user_id VARCHAR, ts TIMESTAMPTZ, amount BIGINT, tier VARCHAR,
+            event_id VARCHAR, workspace_id VARCHAR
         )
     """)
     for timestamp, event_id in events:
+        workspace = (
+            workspace_by_event_id[event_id] if workspace_by_event_id is not None else "a"
+        )
         con.raw_sql(
             "INSERT INTO events VALUES "
-            f"('a', TIMESTAMPTZ '{timestamp}', 1, NULL, '{event_id}')"
+            f"('a', TIMESTAMPTZ '{timestamp}', 1, NULL, '{event_id}', '{workspace}')"
         )
     con.raw_sql("""
         CREATE TABLE tier_history (
@@ -581,15 +559,17 @@ def _dimension_label_model(column_model, events, *, starts, ends):
     """)
     con.raw_sql(
         "INSERT INTO tier_history VALUES "
-        f"('a', 'gold', TIMESTAMPTZ '{starts}', TIMESTAMPTZ '{ends}')"
+        f"('{known_workspace}', 'gold', TIMESTAMPTZ '{starts}', TIMESTAMPTZ '{ends}')"
     )
     definition = column_model.catalog.model_dump(mode="python")
     definition["sources"]["events"]["dimensions"] = ("history",)
     definition["sources"]["events"]["relation"] = {"kind": "table", "name": "events"}
+    if workspace_by_event_id is not None:
+        definition["sources"]["events"]["entities"]["workspace"] = "workspace_id"
     definition["properties"]["tier"]["dimension"] = "history"
     definition["dimensions"]["history"] = {
         "relation": {"kind": "table", "name": "tier_history"},
-        "source_entity": "user",
+        "source_entity": "workspace" if workspace_by_event_id is not None else "user",
         "entity_column": "id",
         "properties": ("tier",),
         "validity": {"valid_from": "starts", "valid_to": "ends"},
@@ -638,4 +618,78 @@ def test_last_occurrence_unknown_label_before_latest_match_is_complete(column_mo
     assert row[meta.complete_column] is True
     assert row[meta.reason_column] is None
 
+
+def test_last_occurrence_incomplete_lookback_is_null_incomplete(column_model):
+    selector = event_time("amount", window=("-6d", "0s"), occurrence="last")
+    compiled = _compile(column_model, features={"selected_at": selector})
+    row = column_model.con.to_pyarrow(compiled.table).to_pylist()[0]
+    meta = compiled.columns["selected_at"]
+    assert row["selected_at"] is None
+    assert row[meta.complete_column] is False
+    assert row[meta.reason_column] == "incomplete_coverage"
+
+
+def test_last_occurrence_tied_unknown_label_after_match_is_incomplete(column_model):
+    model = _dimension_label_model(
+        column_model,
+        [("2025-01-01 12:00:00+00", "a"), ("2025-01-01 12:00:00+00", "b")],
+        starts="2024-12-31 00:00:00+00",
+        ends="2025-01-03 00:00:00+00",
+        workspace_by_event_id={"a": "known", "b": "unknown"},
+        known_workspace="known",
+    )
+    selector = event_time(
+        "amount", window=("-6d", "0s"), label_property="tier", equals="gold", occurrence="last"
+    )
+    compiled = _compile(model, features={"selected_at": selector})
+    row = model.con.to_pyarrow(compiled.table).to_pylist()[0]
+    meta = compiled.columns["selected_at"]
+    assert row["selected_at"] is None
+    assert row[meta.complete_column] is False
+    assert row[meta.reason_column] == "incomplete_label_history"
+
+
+def test_last_occurrence_tied_unknown_label_before_match_is_complete(column_model):
+    model = _dimension_label_model(
+        column_model,
+        [("2025-01-01 12:00:00+00", "a"), ("2025-01-01 12:00:00+00", "b")],
+        starts="2024-12-31 00:00:00+00",
+        ends="2025-01-03 00:00:00+00",
+        workspace_by_event_id={"a": "unknown", "b": "known"},
+        known_workspace="known",
+    )
+    selector = event_time(
+        "amount", window=("-6d", "0s"), label_property="tier", equals="gold", occurrence="last"
+    )
+    compiled = _compile(model, features={"selected_at": selector})
+    row = model.con.to_pyarrow(compiled.table).to_pylist()[0]
+    meta = compiled.columns["selected_at"]
+    assert row["selected_at"] == datetime(2025, 1, 1, 12, tzinfo=UTC)
+    assert row[meta.complete_column] is True
+    assert row[meta.reason_column] is None
+
+
+
+def test_last_occurrence_tied_known_events_use_latest_event_id(column_model):
+    model = _dimension_label_model(
+        column_model,
+        [
+            ("2025-01-01 12:00:00+00", "a"),
+            ("2025-01-01 12:00:00+00", "b"),
+            ("2025-01-01 12:00:00+00", "c"),
+        ],
+        starts="2024-12-31 00:00:00+00",
+        ends="2025-01-03 00:00:00+00",
+        workspace_by_event_id={"a": "known", "b": "unknown", "c": "known"},
+        known_workspace="known",
+    )
+    selector = event_time(
+        "amount", window=("-6d", "0s"), label_property="tier", equals="gold", occurrence="last"
+    )
+    compiled = _compile(model, features={"selected_at": selector})
+    row = model.con.to_pyarrow(compiled.table).to_pylist()[0]
+    meta = compiled.columns["selected_at"]
+    assert row["selected_at"] == datetime(2025, 1, 1, 12, tzinfo=UTC)
+    assert row[meta.complete_column] is True
+    assert row[meta.reason_column] is None
 
