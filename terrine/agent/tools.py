@@ -687,7 +687,11 @@ class DatasetTools:
         for (payload,) in con.execute(
             f'SELECT invocation_json FROM "{self.namespace}".runtime_plan_invocations'
         ).fetchall():
-            invocation = PlanInvocation.from_dict(json.loads(payload))
+            document = json.loads(payload)
+            identity = json.dumps(document, sort_keys=True, separators=(",", ":"))
+            if hashlib.sha256(identity.encode()).hexdigest() != receipt.receipt_id:
+                continue
+            invocation = PlanInvocation.from_dict(document)
             if self._receipt(invocation) != receipt:
                 continue
             saved = SavedPlan.from_json(invocation.saved_plan_json)

@@ -38,6 +38,10 @@
   the `recipe_json` columns in `runtime_dataset_requests` and
   `runtime_dataset_recipes` are unchanged. Existing owner databases still open
   and accept new generations even when their old manifests cannot be reopened.
+- Resolve agent receipts by persisted invocation identity before decoding their
+  saved plans. Unrelated historical invocations do not block new execution or
+  staging; directly resolving an old receipt still refuses with
+  `terrine.runtime.saved_plan_mismatch`.
 
 ### Dataset construction
 
