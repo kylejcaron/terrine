@@ -1,6 +1,10 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+
+import pyarrow as pa
+import pytest
 
 from terrine.data import MaterializedFrame
+from terrine.errors import TerrineError
 from terrine.spec import Design, EventAnchor, FixedDate, event_time
 from terrine.spec.design import Treatment
 from terrine.spec.trajectory import TimeToEvent
@@ -27,6 +31,7 @@ def test_prevalent_events_are_excluded_and_cutoff_equality_is_censored():
             ("u2", None, False, False),
         ]
         assert all(row["duration"] is not None for row in rows)
+        assert pa.types.is_duration(restored.table.schema.field("duration").type)
         assert restored.roles.treatment == "treatment"
         assert "treatment" in restored.columns
         treatment_meta = restored.columns["treatment"]
@@ -131,8 +136,8 @@ def test_administrative_cutoff_changes_followup_without_changing_readiness():
         late_rows = {r["unit"]: r for r in _collect(late, model).to_pylist()}
         assert early_rows["u2"]["event"] is False
         assert late_rows["u2"]["event"] is True
-        assert early_rows["u2"]["duration"] == datetime(2025, 1, 4, tzinfo=UTC)
-        assert late_rows["u2"]["duration"] == datetime(2025, 1, 4, tzinfo=UTC)
+        assert early_rows["u2"]["duration"] == timedelta(days=2)
+        assert late_rows["u2"]["duration"] == timedelta(days=2)
     finally:
         con.disconnect()
 
@@ -327,7 +332,8 @@ def test_nanosecond_events_survive_time_to_event_compilation_in_any_session_time
         result = _collect(
             Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn")), model
         )
-        assert result.schema.field("duration").type.tz == "UTC"
+        assert result.schema.field("duration").type.unit == "us"
+        assert result.schema.field("entry_time").type.tz == "UTC"
     finally:
         con.disconnect()
 
@@ -418,5 +424,30 @@ def test_life_table_matches_independent_pandas_risk_set_oracle():
             actual[expected.columns], expected, check_dtype=False, check_exact=True
         )
         assert rows[-1]["censored_by_reason"] == [("administrative_cutoff", 1)]
+    finally:
+        con.disconnect()
+
+
+def test_nanosecond_duration_outside_int64_range_uses_timestamp_range_refusal():
+    con, model = _model(
+        nanosecond_outcomes=True,
+        outcome_start="1600-01-01",
+        outcome_end="2301-01-01",
+        unit="u1",
+    )
+    try:
+        con.raw_sql("DELETE FROM outcomes")
+        con.raw_sql(
+            "INSERT INTO outcomes VALUES ('u1', TIMESTAMP_NS '2200-01-01 00:00:00')"
+        )
+        design = Design(
+            "user",
+            FixedDate("1700-01-01"),
+            shape=TimeToEvent("churn"),
+            administrative_cutoff=datetime(2201, 1, 1, tzinfo=UTC),
+        )
+        with pytest.raises(TerrineError) as error:
+            design.build(model).materialize()
+        assert error.value.code == "terrine.execution.arrow_timestamp_range"
     finally:
         con.disconnect()

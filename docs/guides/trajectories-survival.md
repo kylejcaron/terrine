@@ -11,11 +11,17 @@ exact output type, materialization refuses with
 earlier period is unavailable, its null and reason remain visible in cumulative
 outputs instead of being reported as arithmetic overflow.
 
-`TimeToEvent` builds one per-unit record containing event time, duration, entry
-time, censor time, and completeness/reason metadata. These are observed dataset
-rows: Terrine does not fit a curve or infer a survival probability. Use the
-records with a downstream package such as lifelines when a model or curve is
-required.
+`TimeToEvent` builds one per-unit record containing elapsed `duration`, the
+terminal `event_time` or `censor_time`, entry time, and completeness/reason
+metadata. `duration` is an Arrow duration measured from `t0`; delayed entry does
+not change its origin. These are observed dataset rows: Terrine does not fit a
+curve or infer a survival probability. Use the records with a downstream
+package such as lifelines when a model or curve is required.
+
+Nanosecond axes retain nanoseconds in the Arrow duration. DuckDB's lazy
+published-generation relation cannot express nanosecond intervals and refuses
+that read with `terrine.runtime.lazy_duration_unsupported`; use
+`open_published_frame` or `read_partition` to keep the exact Arrow values.
 
 When a design declares a treatment, each retained survival row includes the
 `treatment` value and its support metadata. The `treatment` role refers to that

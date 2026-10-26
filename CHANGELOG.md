@@ -28,6 +28,9 @@
 - Refuse exact cumulative LTV totals that exceed the declared decimal output
   type; preserve unavailable cumulative values and their reasons.
 - Retain declared treatment values and support metadata in time-to-event output.
+- **Breaking:** `TimeToEvent.duration` is now an elapsed Arrow duration from
+  `t0`, not a terminal timestamp. `event_time` and `censor_time` remain the
+  absolute timestamps; lifelines and LifeTable consume elapsed durations.
 - Build deterministic bounded event sequences, sessions, funnels, transitions
   and event-relative selectors with explicit tie, missing-predecessor and
   temporal-leakage rules.

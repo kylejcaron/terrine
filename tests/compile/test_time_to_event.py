@@ -272,11 +272,12 @@ def test_life_table_delayed_entries_and_incomplete_records_preserve_reason():
     from terrine.compile.shapes.life_table import aggregate_life_table
 
     timestamp = pa.timestamp("us", tz="UTC")
+    duration = pa.duration("us")
     origin = datetime(2025, 1, 1, tzinfo=UTC)
     records = pa.table(
         {
             "t0": pa.array([origin], type=timestamp),
-            "duration": pa.array([origin + timedelta(hours=18)], type=timestamp),
+            "duration": pa.array([timedelta(hours=18)], type=duration),
             "entry_time": pa.array([origin + timedelta(hours=12)], type=timestamp),
             "event": pa.array([True]),
             "complete": pa.array([False]),
@@ -299,11 +300,12 @@ def test_life_table_row_budget_applies_to_expanded_output():
     from terrine.compile.shapes.life_table import aggregate_life_table
 
     timestamp = pa.timestamp("us", tz="UTC")
+    duration = pa.duration("us")
     origin = datetime(2025, 1, 1, tzinfo=UTC)
     records = pa.table(
         {
             "t0": pa.array([origin], type=timestamp),
-            "duration": pa.array([origin + timedelta(days=2)], type=timestamp),
+            "duration": pa.array([timedelta(days=2)], type=duration),
             "entry_time": pa.array([origin], type=timestamp),
             "event": pa.array([True]),
             "censor_reason": pa.array([None], type=pa.string()),
@@ -320,17 +322,18 @@ def test_life_table_keeps_boundary_censor_at_risk_and_group_support():
     from terrine.compile.shapes.life_table import aggregate_life_table
 
     timestamp = pa.timestamp("us", tz="UTC")
+    duration = pa.duration("us")
     origin = datetime(2025, 1, 1, tzinfo=UTC)
     records = pa.table(
         {
             "t0": pa.array([origin, origin, origin], type=timestamp),
             "duration": pa.array(
                 [
-                    origin + timedelta(days=1),
-                    origin + timedelta(days=1),
-                    origin - timedelta(days=1),
+                    timedelta(days=1),
+                    timedelta(days=1),
+                    -timedelta(days=1),
                 ],
-                type=timestamp,
+                type=duration,
             ),
             "entry_time": pa.array([origin, origin, origin], type=timestamp),
             "event": pa.array([False, False, False]),
@@ -372,3 +375,98 @@ def test_life_table_keeps_boundary_censor_at_risk_and_group_support():
         records, interval_seconds=86_400, group_by=["region"]
     )
     assert without_support_metadata.num_rows == 2
+
+def test_duration_is_elapsed_from_t0_for_event_and_censored_rows():
+    import pyarrow as pa
+
+    con, model = _model(outcome_end="2025-01-23")
+    try:
+        con.raw_sql("DELETE FROM outcomes")
+        con.raw_sql(
+            "INSERT INTO outcomes VALUES ('u1', TIMESTAMPTZ '2025-01-11 00:00:00+00')"
+        )
+        design = Design(
+            "user",
+            EventAnchor("signup", which="first"),
+            shape=TimeToEvent("churn"),
+            administrative_cutoff=datetime(2025, 1, 23, tzinfo=UTC),
+        )
+        result = _collect(design, model)
+        rows = {row["unit"]: row for row in result.to_pylist()}
+        assert rows["u1"]["duration"] == timedelta(days=10)
+        assert rows["u2"]["duration"] == timedelta(days=21)
+        assert result.schema.field("duration").type == pa.duration("us")
+    finally:
+        con.disconnect()
+
+
+def test_duration_with_delayed_entry_is_measured_from_t0():
+    import pyarrow as pa
+
+    con, model = _model(outcome_end="2025-01-22")
+    try:
+        con.raw_sql("DELETE FROM outcomes")
+        con.raw_sql(
+            "INSERT INTO outcomes VALUES ('u1', TIMESTAMPTZ '2025-01-11 00:00:00+00')"
+        )
+        con.raw_sql(
+            "UPDATE entries SET ts = TIMESTAMPTZ '2025-01-03 00:00:00+00' WHERE user_id = 'u1'"
+        )
+        design = Design(
+            "user",
+            EventAnchor("signup", which="first"),
+            shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
+        )
+        frame = design.build(model).materialize()
+        result = frame.table
+        row = next(row for row in result.to_pylist() if row["unit"] == "u1")
+        assert row["duration"] == timedelta(days=10)
+        assert row["entry_time"] == datetime(2025, 1, 3, tzinfo=UTC)
+        from terrine.export import to_lifelines_km
+
+        exported = to_lifelines_km(frame)
+        index = result["unit"].to_pylist().index("u1")
+        assert exported.entry is not None
+        assert exported.entry[index] == 2 * 86_400
+        assert pa.types.is_duration(result.schema.field("duration").type)
+    finally:
+        con.disconnect()
+
+
+def test_nanosecond_duration_keeps_submicrosecond_elapsed():
+    import pyarrow as pa
+
+    con, model = _model(nanosecond_outcomes=True)
+    try:
+        con.raw_sql("DELETE FROM outcomes")
+        con.raw_sql(
+            "INSERT INTO outcomes VALUES "
+            "('u1', TIMESTAMP_NS '2025-01-02 00:00:00.000000001')"
+        )
+        design = Design(
+            "user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn")
+        )
+        frame = design.build(model).materialize()
+        result = frame.table
+        row_index = result["unit"].to_pylist().index("u1")
+        row = result.to_pylist()[row_index]
+        assert result.schema.field("duration").type == pa.duration("ns")
+        assert row["duration"].value == 86_400_000_000_001
+        from terrine.export import to_lifelines_km
+
+        exported = to_lifelines_km(frame)
+        legacy_duration = (
+            result["event_time"]
+            .cast(pa.timestamp("ns", tz="UTC"))
+            .cast(pa.int64())[row_index]
+            .as_py()
+            - result["t0"]
+            .cast(pa.timestamp("ns", tz="UTC"))
+            .cast(pa.int64())[row_index]
+            .as_py()
+        ) / 1e9
+        assert exported.durations[row_index] == legacy_duration
+    finally:
+        con.disconnect()
+
+
