@@ -59,6 +59,20 @@ def _count(context, relation) -> int:
     return int(context.execute(context.resolve(relation).count()).as_py())
 
 
+
+def test_server_identity_ignores_shadowed_version_function(postgres_scratch):  # noqa: F811
+    con = postgres_scratch.con
+    schema = postgres_scratch.schema
+    con.raw_sql(
+        f'CREATE FUNCTION "{schema}".version() RETURNS text LANGUAGE plpgsql '
+        "AS $function$ BEGIN RAISE EXCEPTION 'shadowed version() was called'; END $function$"
+    ).close()
+    con.raw_sql(f'SET search_path TO "{schema}", pg_catalog').close()
+
+    provider = backend_provider(con)
+
+    assert provider.dialect(con) == "postgres"
+
 def test_private_read_holds_one_snapshot_and_never_touches_the_callers_transaction(
     postgres_scratch,  # noqa: F811
     tmp_path,

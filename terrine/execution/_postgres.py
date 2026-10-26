@@ -26,10 +26,59 @@ _NONFINITE = RefusalSpec(
 
 DIALECT = "postgres"
 _MIN_IBIS = (12, 0)
+_VERIFIED_SERVER_MAJOR = 16
 # Relation kinds that are physical row sources or views over them.
 _TABLE_KINDS = {"r": "table", "p": "table", "m": "table"}
 _SYSTEM_SCHEMAS = ("pg_catalog", "information_schema")
 
+_DIALECT_ADMISSION = RefusalSpec(
+    "terrine.backend.capability_unavailable",
+    "The detected database server is not verified for PostgreSQL execution. {route}",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ServerIdentity:
+    """Result of classifying a server's version string."""
+
+    server: str
+    status: str
+
+
+def classify_server_version(version_string: str) -> ServerIdentity:
+    """Admit only PostgreSQL 16, the version measured by the compatibility suite."""
+    lowered = version_string.casefold()
+    if "redshift" in lowered:
+        return ServerIdentity("Redshift", "unsupported")
+    if "greenplum" in lowered:
+        return ServerIdentity("Greenplum", "unsupported")
+    if "cockroachdb" in lowered:
+        return ServerIdentity("CockroachDB", "unsupported")
+    match = re.match(r"^PostgreSQL\s+(\d+)(?:\.\d+)?\b", version_string)
+    if match is not None:
+        major = int(match.group(1))
+        if major == _VERIFIED_SERVER_MAJOR:
+            return ServerIdentity("PostgreSQL", "admitted")
+        return ServerIdentity("PostgreSQL", "unverified")
+    server = version_string.split(maxsplit=1)[0] if version_string.strip() else "unknown"
+    return ServerIdentity(server, "unverified")
+
+
+def verify_server_identity(con: Any) -> None:
+    """Check server identity with the built-in, read-only version function."""
+    row = _rows(raw_connection(con), "SELECT pg_catalog.version()")
+    version_string = str(row[0][0]) if row and row[0] else ""
+    identity = classify_server_version(version_string)
+    if identity.status != "admitted":
+        raise _DIALECT_ADMISSION.error(
+            backend=identity.server,
+            operation="dialect_admission",
+            status=identity.status,
+            route=(
+                "Use verified DuckDB, PostgreSQL 16, BigQuery or Snowflake execution; "
+                "other PostgreSQL-compatible servers are unverified."
+            ),
+        )
 
 def _snapshot_error(reason: str):
     from terrine.execution.inputs import _SNAPSHOT_UNAVAILABLE

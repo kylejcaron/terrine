@@ -28,6 +28,17 @@ evidence of a reviewed relation-to-Catalog bridge.
 
 ## PostgreSQL
 
+Admission uses only the built-in `SELECT pg_catalog.version()` before source
+metadata access and admits the PostgreSQL 16 major version measured by the
+compatibility suite. PostgreSQL versions not yet measured are unverified;
+PostgreSQL-wire-compatible servers such as Redshift, Greenplum and CockroachDB
+are unsupported and refuse with `terrine.backend.capability_unavailable`. The
+qualified built-in cannot be shadowed through `search_path`; no writes or
+session settings are issued. This check is made at provider admission because
+relation discovery and binding may access source schema before materialization
+opens its private connection. Materialization reads remain on that private
+owned connection described below.
+
 Each materialization opens a private connection with the caller's connection
 parameters and search path, sets `TimeZone` to UTC and reads in one
 `REPEATABLE READ READ ONLY` transaction, so every query sees one consistent
@@ -238,10 +249,12 @@ Capabilities distinguish verified (`True`), unsupported (`False`), and unverifie
   runtime cancellation and closing owned sessions do not establish native query
   cancellation support.
 
-`terrine.execution.backend.backend_capabilities(con)` inspects evidence without
-admitting the connection or reading source schema. Unregistered backend
-connections return unverified operation values; attempting execution still
-refuses.
+`terrine.execution.backend.backend_capabilities(con)` inspects static evidence
+without querying source metadata or changing connection state. PostgreSQL is
+reported as unverified by this inspection because server identity requires a
+query; `backend_provider()` performs the qualified version check before
+admitting source access. Unregistered backend connections likewise return
+unverified operation values.
 
 ## Python and dependency support
 
