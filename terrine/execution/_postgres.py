@@ -65,8 +65,8 @@ def classify_server_version(version_string: str) -> ServerIdentity:
 
 
 def verify_server_identity(con: Any) -> None:
-    """Check server identity using only a read-only version query."""
-    row = _rows(raw_connection(con), "SELECT version()")
+    """Check server identity with the built-in, read-only version function."""
+    row = _rows(raw_connection(con), "SELECT pg_catalog.version()")
     version_string = str(row[0][0]) if row and row[0] else ""
     identity = classify_server_version(version_string)
     if identity.status != "admitted":

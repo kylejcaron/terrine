@@ -211,7 +211,12 @@ def test_postgres_admission_refuses_lookalike_before_source_schema_access():
     from terrine.execution.backend import backend_provider
 
     class DriverConnection:
+        def __init__(self):
+            self.queries = []
+
         def cursor(self):
+            connection = self
+
             class Cursor:
                 def __enter__(self):
                     return self
@@ -220,7 +225,8 @@ def test_postgres_admission_refuses_lookalike_before_source_schema_access():
                     return False
 
                 def execute(self, sql, params=None):
-                    assert sql == "SELECT version()"
+                    connection.queries.append(sql)
+                    assert sql == "SELECT pg_catalog.version()"
 
                 def fetchall(self):
                     return [
@@ -249,7 +255,6 @@ def test_postgres_admission_refuses_lookalike_before_source_schema_access():
     for operation in (
         lambda con: backend_provider(con),
         lambda con: Model.from_catalog(_catalog(), con=con, readiness={}),
-        lambda con: backend_module.backend_capabilities(con),
     ):
         with pytest.raises(TerrineError) as error:
             operation(PostgresBackend())
@@ -261,3 +266,7 @@ def test_postgres_admission_refuses_lookalike_before_source_schema_access():
         for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
             assert restored.code == error.value.code
             assert restored.context == error.value.context
+
+    inspection_con = PostgresBackend()
+    assert backend_module.backend_capabilities(inspection_con).dialect_admission is None
+    assert inspection_con.con.queries == []

@@ -303,13 +303,12 @@ _PROVIDERS: tuple[BackendProvider, ...] = (
 
 
 def backend_capabilities(con: Any) -> BackendCapabilities:
-    """Inspect evidence without reading source metadata."""
+    """Inspect statically known evidence without querying the connection."""
+    if _POSTGRES_PROVIDER.matches(con):
+        # Server identity requires a query; inspection must not touch caller state.
+        return UNVERIFIED_CAPABILITIES
     for provider in _PROVIDERS:
         if provider.matches(con):
-            if provider is _POSTGRES_PROVIDER:
-                from terrine.execution._postgres import verify_server_identity
-
-                verify_server_identity(con)
             return provider.capabilities
     return UNVERIFIED_CAPABILITIES
 
