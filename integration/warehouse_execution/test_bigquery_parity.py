@@ -92,6 +92,29 @@ def test_window_metrics_match_duckdb(bigquery_scratch, tmp_path):  # noqa: F811
     windows._assert_close(actual, expected)
 
 
+def test_boolean_outputs_match_duckdb(bigquery_scratch, tmp_path):  # noqa: F811
+    _load_windows(bigquery_scratch)
+    duckdb = _duckdb_windows()
+    try:
+        day = tr.agg("orders", window=("0s", "1d"))
+        unknown = tr.gt(tr.agg("orders", window=("0s", "60d")), 0)
+        design = windows._design(
+            outcomes={
+                "converted": tr.gt(day, 0),
+                "churned": tr.eq(day, 0),
+                "unknown": unknown,
+                "conjunction": tr.all_of(tr.gt(day, 0), unknown),
+            },
+            no_prior_order=tr.is_null(tr.event_time("order", window=("-1d", "0s"))),
+        )
+        expected = windows._rows(windows._model(duckdb, tmp_path, "duckdb"), design)
+        actual = windows._rows(windows._model(bigquery_scratch.con, tmp_path, "bigquery"), design)
+        assert actual == expected
+        assert [row["conjunction"] for row in actual] == [None, None, False, False]
+    finally:
+        duckdb.disconnect()
+
+
 @pytest.mark.parametrize("name", sorted(shapes._DESIGNS))
 def test_design_matches_duckdb(bigquery_scratch, tmp_path, name):  # noqa: F811
     _load_shapes(bigquery_scratch)

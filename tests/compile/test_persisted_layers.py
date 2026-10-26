@@ -194,25 +194,25 @@ def test_runtime_layer_composition_matches_direct_state_audit(column_model):
     )
 
 
+@pytest.mark.parametrize("predicate_output", [False, True])
 def test_runtime_composition_refuses_approximate_quantile_sidecar_before_source_work(
-    column_model,
+    column_model, predicate_output
 ):
     from decimal import Decimal
 
     from terrine.runtime.materialize import compose_runtime_frame
-    from terrine.spec import SketchRequest, approx_quantile
+    from terrine.spec import SketchRequest, approx_quantile, gt
 
+    value = approx_quantile(
+        "total",
+        "0.5",
+        window=("-1d", "0d"),
+        sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
+    )
     design = Design(
         "user",
         FixedDate("2025-01-03"),
-        features={
-            "q": approx_quantile(
-                "total",
-                "0.5",
-                window=("-1d", "0d"),
-                sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
-            )
-        },
+        features={"q": gt(value, 0) if predicate_output else value},
     )
     with pytest.raises(TerrineError) as error:
         compose_runtime_frame(design, column_model, persisted={})

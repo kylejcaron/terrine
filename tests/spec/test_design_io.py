@@ -56,6 +56,25 @@ def test_anchor_variants_and_design_maps_round_trip_as_safe_yaml_and_json():
         assert from_yaml(to_yaml(design)).spec_hash == design.spec_hash
 
 
+def test_predicate_outcome_round_trips_json():
+    design = Design(
+        "user",
+        FixedDate("2025-01-01"),
+        features={"missing": is_null(asof("tier", before=0))},
+        outcomes={
+            "converted_7d": gt(agg("orders", window=("0s", "7d")), 0),
+            "churned_30d": eq(agg("orders", window=("0s", "30d")), 0),
+            "both": all_of(
+                gt(agg("orders", window=("0s", "7d")), 0),
+                eq(agg("orders", window=("7d", "30d")), 0),
+            ),
+        },
+    )
+    for restored in (from_json(to_json(design)), from_yaml(to_yaml(design))):
+        assert restored == design
+        assert restored.spec_hash == design.spec_hash
+
+
 def test_schedule_uses_positive_elapsed_cadence_and_exclusive_end():
     schedule = Schedule(every="1w", start="2025-01-06", end="2025-02-03")
     assert schedule.every == 7 * 86400

@@ -1,9 +1,10 @@
-"""Exact typed comparisons and three-valued eligibility."""
+"""Exact typed comparisons and three-valued boolean columns."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Literal
 
 import ibis
 
@@ -46,6 +47,7 @@ def compile_predicate(
     values: Mapping[Expr, CompiledValue],
     *,
     output: str,
+    role: Literal["feature", "outcome", "eligibility"],
 ) -> CompiledPredicate:
     """Gt is certain outside its threshold; Eq is true only for an equal singleton."""
     builder = _Builder(table, output)
@@ -104,5 +106,5 @@ def compile_predicate(
     value, reason, lower, upper, cutoff = compile_node(predicate)
     complete = builder.put("predicate_complete", builder.col(value).notnull())
     result = builder.table.mutate(**{output: builder.col(value)})
-    meta = ColumnMeta(None, "eligibility", lower, upper, complete, reason)
+    meta = ColumnMeta(None, role, lower, upper, complete, reason)
     return CompiledPredicate(result, meta, cutoff)
