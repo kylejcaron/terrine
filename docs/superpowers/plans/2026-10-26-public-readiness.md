@@ -23,9 +23,9 @@
 | 7a | Engine registry and conformance suite for 10-15+ engines | Owner: "assume we'll support 10-15 in the near future and might expand further beyond that"; "yes please!" | Yes |
 | 7b | Opt-in generic default for unregistered Ibis backends | Owner: "isnt it as easy as seeing which ibis backend is provided and giving a warning?"; "does your proposed solution have a default operation, ie just default unverified ibis?"; "yes please!" | Yes |
 | 7c | Adding new engines (Trino, ClickHouse, SQL Server, Oracle, Spark, ...) | Owner: "we wont add additional engines as part of this work" | **Out of scope** - no tasks; kata `6dmp` stays in the backlog outside this plan |
-| 8 | Refuse PostgreSQL-wire look-alikes (Redshift etc. admitted as PostgreSQL); moved before publication | Owner standing rule (global AGENTS.md): "Do not defer related defects found while working". Placement in phase 1 is provisional (plan review, high finding) | Yes (placement provisional; see Open decisions) |
-| 9 | `from_catalog` accepts a mapping; examples import public modules only (kata `tcv2`) | Agent-proposed | **No** - no tasks; listed in the needs-human issue |
-| 10 | Readable, consistent completeness columns across shapes (kata `12j7`) | Agent-proposed | **No** - no tasks; listed in the needs-human issue |
+| 8 | Refuse PostgreSQL-wire look-alikes (Redshift etc. admitted as PostgreSQL), before publication | Owner standing rule (global AGENTS.md): "Do not defer related defects found while working"; placement: "recommendations sounds good to me" (reply to "keep it in phase 1") | Yes |
+| 9 | `from_catalog` accepts a mapping; examples import public modules only; reviewed public route for training splits (kata `tcv2`) | Owner: "recommendations sounds good to me" (reply to "include it") | Yes |
+| 10 | Readable, consistent completeness columns across shapes, option (a): `<name>__complete` / `<name>__reason` next to each value (kata `12j7`) | Owner: "recommendations sounds good to me" (reply to "include it, and use (a)") | Yes |
 
 Making the repository public, choosing version/license and any push or publish are owner actions (kata `v9yy`), not tasks.
 
@@ -55,10 +55,10 @@ Making the repository public, choosing version/license and any push or publish a
 ```mermaid
 flowchart LR
   subgraph P1[Phase 1: public API and usability]
-    T1[T1 z2nq rename] --> T6[T6 jb52 from_tables + recipes]
+    T1[T1 z2nq rename] --> T14[T14 tcv2 public surface] --> T6[T6 jb52 from_tables + recipes]
     T2[T2 vdnx spec + plan] --> T6
-    T3[T3 40d3 duration]
-    T4[T4 hvhz last occurrence] --> T5[T5 k79m boolean outputs]
+    T3[T3 40d3 duration] --> T15[T15 12j7 completeness columns]
+    T4[T4 hvhz last occurrence] --> T5[T5 k79m boolean outputs] --> T15
     T8[T8 1ky5 look-alikes]
   end
   subgraph P2[Phase 2]
@@ -69,8 +69,7 @@ flowchart LR
     T10[T10 w6pn conformance] --> T11
     T13[T13 9btd anchor offset]
   end
-  T3 --> WB
-  T5 --> WB
+  T15 --> WB
   T6 --> WB
   T8 --> WB
   PUB --> P3
@@ -79,15 +78,16 @@ flowchart LR
 | Wave | Parallel lanes | Why this split |
 | --- | --- | --- |
 | 1 | T1, T2, T3, T4 | Disjoint footprints. T1 and T3 both touch `terrine/frame.py` in different functions (recipe/view references vs `_normalize_output`); merge whichever finishes second with a rebase. T2 is documentation only |
-| 2 | T5 (after T4), T6 (after T1 + T2), T8 | T4 and T5 share `spec/expressions.py`, `spec/validate.py`, `compile/columns.py`, so they run in one lane. T6 touches `model.py`, `__init__.py` and a new `recipes` module; T1 must land first so "recipe" is free. T8 touches only `execution/_postgres.py` and its tests |
+| 2 | T5 (after T4), T14 (after T1), T8 | T4 and T5 share `spec/expressions.py`, `spec/validate.py`, `compile/columns.py`, so they run in one lane. T14 edits the examples T1 renames and `model.py`. T8 touches only `execution/_postgres.py` and its tests |
+| 3 | T6 (after T2 + T14), T15 (after T3 + T5) | T6 touches `model.py`, `__init__.py` and a new `recipes` module; T15 touches compile, temporal, `frame.py`, `data.py`, exports and agent schemas. Only guide pages overlap; rebase the second |
 | Gate | Owner pushes `main` and dispatches `warehouse-backends` (`backend_mode=all`) | Snowflake parity has no local route; GitHub actions are owner-reserved |
-| 3 | T7 | Shows the final API: blocked by T3, T4, T5, T6 |
+| 4 | T7 | Shows the final API: blocked by T3, T4, T5, T6, T14, T15 |
 | Gate | Owner decides publication (`v9yy`) | Owner-reserved |
-| 4 | T9, T10, T13 | T9 is a pure refactor of `terrine/backends/` and `terrine/execution/`; T10 adds tests only; T13 touches `compile/anchors.py` near the engine list T9 removes (`anchors.py:154`): rebase whichever lands second |
-| 5 | T11 (after T9 + T10) | Needs the registry and the suite |
+| 5 | T9, T10, T13 | T9 is a pure refactor of `terrine/backends/` and `terrine/execution/`; T10 adds tests only; T13 touches `compile/anchors.py` near the engine list T9 removes (`anchors.py:154`): rebase whichever lands second |
+| 6 | T11 (after T9 + T10) | Needs the registry and the suite |
 | - | No new engines | Owner decision; T12 removed |
 
-Concurrency cap: at most four worktrees at once; waves 1 and 2 stay within it.
+Concurrency cap: at most four worktrees at once; every wave stays within it.
 
 ## Per-task execution protocol
 
@@ -176,15 +176,41 @@ Every task follows the same loop (kata-driven-development "Per-Task Discipline")
 **Files (expected; T2's plan is authoritative):** `terrine/model.py`, new `terrine/recipes.py`, `terrine/__init__.py`, `docs/guides/*` (constructor first, "under the hood" Design second), examples, `AGENTS.md` (two-layer API wording), CHANGELOG.
 
 - [ ] Execute T2's plan; Review Focus 4 and 5 tests live there.
-- [ ] **Verify:** every new example runs in CI; `from_tables` produces rows identical to the equivalent hand-written Catalog for count, sum and mean metrics (integration composition).
+- [ ] **Verify:** every new example runs in CI; `from_tables` produces rows identical to the equivalent hand-written Catalog for count, sum and mean metrics (integration composition). `from_tables` passes a plain mapping to `from_catalog` (T14).
+
+### Task 14: Public-surface fixes (kata `tcv2`)
+
+**Path:** bounded. **Branch:** `fix/public-surface`. **After:** T1 (examples renamed there).
+
+**Files:** `terrine/model.py:94-150` (`from_catalog` accepts a mapping and validates it as a `Catalog`), `terrine/dataset/__init__.py` (reviewed public route for `GroupSplit`/`TimeSplit`, used by `Frame.training_set(split=...)`), `docs/guides/public-api.md`, all `examples/**/*.py` imports, `tests/semantic/test_catalog.py`, CHANGELOG.
+
+**Interfaces:**
+- Produces: `Model.from_catalog(path_or_catalog: str | Path | Catalog | Mapping[str, Any], *, con, readiness, units=None, event_ids=None, input_binding=None)`; split policies importable from a public facade.
+
+- [ ] **Red:** `test_from_catalog_mapping_binds_same_model_as_catalog` in `tests/semantic/test_catalog.py`: the same definition passed as a dict and as `Catalog.model_validate(dict)` yields equal `model.catalog`; an invalid mapping refuses with `terrine.catalog.invalid_definition`.
+- [ ] **Green:** accept the mapping; replace example imports of internals (`terrine.compile.columns`, `terrine.execution.backend`, `terrine.runtime.<submodule>` where `terrine.runtime` exports the name, `terrine.semantic.models.Catalog` where a dict suffices) with public routes; export the split policies from a facade.
+- [ ] **Verify:** `make check TESTS="tests/semantic/test_catalog.py tests/test_documentation.py"`; every script under `examples/` runs.
+
+### Task 15: Readable, consistent completeness columns (kata `12j7`)
+
+**Path:** bounded with a short design first (in the issue, before code) covering where observation bounds and `anchor_provenance` go (metadata or opt-in). **Branch:** `feat/completeness-columns`. **After:** T3, T5.
+
+**Files:** `terrine/data.py` (`ColumnMeta` support-column names), `terrine/compile/{columns,_asof,_predicates,retention}.py`, `terrine/compile/shapes/{cohorts,event_sequence,ltv,_observations,state_panel,time_to_event}.py`, `terrine/temporal/{aggregate,daily,nonadditive,sequence}.py`, `terrine/frame.py`, `terrine/dataset/training.py`, `terrine/export/{preflight,surrogate}.py`, `terrine/agent/{schemas,tools}.py`, `terrine/spec/sequence.py`, affected tests, guides, CHANGELOG.
+
+**Interfaces:**
+- Produces: for every output value column `<name>` in every shape, `<name>__complete` (bool) and `<name>__reason` (string) placed immediately after it; `ColumnMeta` points at those names; design-level refusal for user column names ending in `__complete` or `__reason`.
+
+- [ ] **Red:** `test_time_series_columns_are_values_with_named_support` (two values -> `unit, anchor_id, t0, rev_14d, rev_14d__complete, rev_14d__reason, rev_next_7d, ...`, no `__terrine_value_*`); `test_ltv_and_survival_use_the_same_suffixes`; `test_reserved_support_suffix_refuses`; `test_null_reason_round_trips_arrow_and_manifest_under_new_names`.
+- [ ] **Green:** rename support columns at the point each shape publishes them; observation bounds move per the design; exports and training views read names from `ColumnMeta`.
+- [ ] **Verify:** `make check TESTS="tests"`; `uv run pytest -q integration`; `make test-postgres`; library hand-off integration tests unchanged in behavior.
 
 ### Task 7: README rewrite (kata `x41p`)
 
-**Path:** bounded documentation. **Branch:** `docs/readme`. **After:** T3, T4, T5, T6.
+**Path:** bounded documentation. **Branch:** `docs/readme`. **After:** T3, T4, T5, T6, T14, T15 and the warehouse-backends gate.
 
 **Files:** `README.md`, `CONTRIBUTING.md` (receives contributor/test-tier prose), guides receiving moved sections (`materialization-runtime.md`, `dataset-agent-tools.md`, `orchestrators.md`, owned-inputs section), `examples/first_dataset.py` (extractor heading).
 
-- [ ] Rewrite to the outline in `x41p`: two-sentence purpose with an output table; 15-line example with `from_tables` + `tr.recipes`; "Datasets you can build"; five rules; warehouse table; links; contributing pointer. Add the "common feature patterns" snippets section (rolling windows, conditional event, active-before eligibility, attributes at t0, recency via `occurrence="last"`, `converted_7d`/`churned_30d` labels). Unless `12j7` is confirmed and merged first, the example output selects user-facing columns explicitly (internal `__terrine_value_*` bookkeeping stays out of the shown table) and one sentence says where per-value completeness lives.
+- [ ] Rewrite to the outline in `x41p`: two-sentence purpose with an output table; 15-line example with `from_tables` + `tr.recipes`; "Datasets you can build"; five rules; warehouse table; links; contributing pointer. Add the "common feature patterns" snippets section (rolling windows, conditional event, active-before eligibility, attributes at t0, recency via `occurrence="last"`, `converted_7d`/`churned_30d` labels). The example output shows values with their `__complete`/`__reason` columns (T15).
 - [ ] **Verify:** `uv run python examples/first_dataset.py`; every section removed from the README exists in a linked guide (checked by hand against the old README headings).
 
 ### Owner gate: publication
@@ -193,7 +219,7 @@ Owner chooses version and license and authorizes making the repository public (k
 
 ### Task 8: Refuse PostgreSQL-wire look-alikes (kata `1ky5`)
 
-**Path:** bounded. **Branch:** `fix/postgres-identity`. **Phase:** 1, wave 2 (provisional; see Open decisions).
+**Path:** bounded. **Branch:** `fix/postgres-identity`. **Phase:** 1, wave 2.
 
 - [ ] **Red:** `test_server_identity_classification` on real `version()` strings: PostgreSQL 16 admitted; Redshift, Greenplum, CockroachDB refused with `terrine.backend.capability_unavailable`.
 - [ ] **Green:** check identity at admission in `terrine/execution/_postgres.py`, before schema access.
@@ -225,6 +251,5 @@ Adding engines is out of scope for this plan (owner: "we wont add additional eng
 
 ## Open decisions
 
-- T8 placement: moved before publication (phase 1, wave 2) because the plan review rated shipping the look-alike gap publicly as high severity and the owner's standing rule says not to defer related defects. The owner ordered warehouse work third; T8 is a defect fix rather than warehouse feature work. Revert to phase 3 if the owner prefers.
-- Unconfirmed rows 9 and 10 (kata `tcv2`, `12j7`) await the owner; the needs-human issue lists them. If confirmed, `12j7` belongs after T3 and T5 (it renames columns those tasks touch) and before T7.
+- Resolved 2026-10-26 ("recommendations sounds good to me"): T8 stays before publication; `tcv2` and `12j7` are in phase 1 as T14 and T15 (option (a)); the warehouse-backends run gates the README. No new engines ("we wont add additional engines as part of this work").
 - Plan review finding "allow a README milestone on the current API before T6" was rejected: the owner ordered API changes before the README ("1) focus on public api / usability changes 2) update the readme").
