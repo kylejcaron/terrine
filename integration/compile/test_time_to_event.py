@@ -1,8 +1,10 @@
 from datetime import UTC, datetime, timedelta
 
 import pyarrow as pa
+import pytest
 
 from terrine.data import MaterializedFrame
+from terrine.errors import TerrineError
 from terrine.spec import Design, EventAnchor, FixedDate, event_time
 from terrine.spec.design import Treatment
 from terrine.spec.trajectory import TimeToEvent
@@ -422,5 +424,30 @@ def test_life_table_matches_independent_pandas_risk_set_oracle():
             actual[expected.columns], expected, check_dtype=False, check_exact=True
         )
         assert rows[-1]["censored_by_reason"] == [("administrative_cutoff", 1)]
+    finally:
+        con.disconnect()
+
+
+def test_nanosecond_duration_outside_int64_range_uses_timestamp_range_refusal():
+    con, model = _model(
+        nanosecond_outcomes=True,
+        outcome_start="1600-01-01",
+        outcome_end="2301-01-01",
+        unit="u1",
+    )
+    try:
+        con.raw_sql("DELETE FROM outcomes")
+        con.raw_sql(
+            "INSERT INTO outcomes VALUES ('u1', TIMESTAMP_NS '2200-01-01 00:00:00')"
+        )
+        design = Design(
+            "user",
+            FixedDate("1700-01-01"),
+            shape=TimeToEvent("churn"),
+            administrative_cutoff=datetime(2201, 1, 1, tzinfo=UTC),
+        )
+        with pytest.raises(TerrineError) as error:
+            design.build(model).materialize()
+        assert error.value.code == "terrine.execution.arrow_timestamp_range"
     finally:
         con.disconnect()

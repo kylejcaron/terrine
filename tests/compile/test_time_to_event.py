@@ -470,26 +470,3 @@ def test_nanosecond_duration_keeps_submicrosecond_elapsed():
         con.disconnect()
 
 
-def test_nanosecond_duration_outside_int64_range_uses_timestamp_range_refusal():
-    con, model = _model(
-        nanosecond_outcomes=True,
-        outcome_start="1600-01-01",
-        outcome_end="2301-01-01",
-        unit="u1",
-    )
-    try:
-        con.raw_sql("DELETE FROM outcomes")
-        con.raw_sql(
-            "INSERT INTO outcomes VALUES ('u1', TIMESTAMP_NS '2200-01-01 00:00:00')"
-        )
-        design = Design(
-            "user",
-            FixedDate("1700-01-01"),
-            shape=TimeToEvent("churn"),
-            administrative_cutoff=datetime(2201, 1, 1, tzinfo=UTC),
-        )
-        with pytest.raises(TerrineError) as error:
-            design.build(model).materialize()
-        assert error.value.code == "terrine.execution.arrow_timestamp_range"
-    finally:
-        con.disconnect()
