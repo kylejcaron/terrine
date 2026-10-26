@@ -16,12 +16,12 @@
 | --- | --- | --- | --- |
 | 1 | Phase order: API/usability, then README, then warehouse work; repo goes public after phase 2 | Owner: "1) focus on public api / usability changes 2) update the readme 3) the the underlying warehouse stuff ... that way I can make the repo public after 2)" | Yes |
 | 2 | README rewrite | Owner: "the readme is a nightmare for me" | Yes |
-| 3 | Table-first binding (`Model.from_tables`) and dataset constructors in `terrine.recipes`, low-level API kept | Owner: "should we have an even simpler high level API that is just common operations over our low level API"; "I like both of these ideas!"; "I personally thought itd help users understand better instead of having to learn our unique syntax right away" | Yes |
-| 4 | Rename saved-recipe family (`DatasetRecipe` -> `DatasetDefinition`, `SavedPlanRecipe` -> `SavedPlan`) to free "recipe" | Owner: "i like this" (reply to the rename proposal); "I dont think we need pantry" | Yes |
-| 5 | `TimeToEvent.duration` as elapsed time; `EventAnchor` offset for landmarking | Owner: "great! make kata issues for both" | Yes |
-| 6 | `event_time(occurrence="last")`; predicates as feature/outcome values; both in phase 1 | Owner: "should we come up to solutions for these now?"; "ok can you make a plan for this?" (reply to "If you agree, I'll move k79m and hvhz to priority 1") | Yes |
-| 7a | Engine registry and conformance suite for 10-15+ engines | Owner: "assume we'll support 10-15 in the near future and might expand further beyond that"; "yes please!" | Yes |
-| 7b | Opt-in generic default for unregistered Ibis backends | Owner: "isnt it as easy as seeing which ibis backend is provided and giving a warning?"; "does your proposed solution have a default operation, ie just default unverified ibis?"; "yes please!" | Yes |
+| 3 | Table-first binding (`Model.from_tables`) and dataset constructors in `terrine.recipes`, low-level API kept | Owner question: "should we have an even simpler high level API that is just common operations over our low level API"; reply to the proposed `Model.from_tables` + one-constructor-per-dataset-type design: "I like both of these ideas!"; "I personally thought itd help users understand better instead of having to learn our unique syntax right away" | Yes |
+| 4 | Rename saved-recipe family (`DatasetRecipe` -> `DatasetDefinition`, `SavedPlanRecipe` -> `SavedPlan`) to free "recipe" | Reply "i like this" to the proposal "use `tr.recipes` for the dataset constructors and rename the saved-recipe family to `DatasetDefinition` / `SavedPlan`"; "I dont think we need pantry" | Yes |
+| 5 | `TimeToEvent.duration` as elapsed time; `EventAnchor` offset for landmarking | Owner question about these two items: "do these make sense to add to the package?"; reply to "yes to both": "great! make kata issues for both" | Yes |
+| 6 | `event_time(occurrence="last")`; predicates as feature/outcome values; both in phase 1 | Owner question about recency and yes/no labels: "should we come up to solutions for these now?"; reply "ok can you make a plan for this?" to "If you agree, I'll move k79m and hvhz to priority 1" | Yes |
+| 7a | Engine registry and conformance suite for 10-15+ engines | Owner: "assume we'll support 10-15 in the near future and might expand further beyond that. show me pseudocode of your proposed solution"; reply "yes please!" to "I can turn this into kata issues in that order: a parent issue with four children" (registry refactor, conformance suite, generic default, engines) | Yes |
+| 7b | Opt-in generic default for unregistered Ibis backends | Owner: "isnt it as easy as seeing which ibis backend is provided and giving a warning?"; "does your proposed solution have a default operation, ie just default unverified ibis?"; same "yes please!" | Yes |
 | 7c | Adding new engines (Trino, ClickHouse, SQL Server, Oracle, Spark, ...) | Owner: "we wont add additional engines as part of this work" | **Out of scope** - no tasks; kata `6dmp` stays in the backlog outside this plan |
 | 8 | Refuse PostgreSQL-wire look-alikes (Redshift etc. admitted as PostgreSQL), before publication | Owner standing rule (global AGENTS.md): "Do not defer related defects found while working"; placement: "recommendations sounds good to me" (reply to "keep it in phase 1") | Yes |
 | 9 | `from_catalog` accepts a mapping; examples import public modules only; reviewed public route for training splits (kata `tcv2`) | Owner: "recommendations sounds good to me" (reply to "include it") | Yes |
@@ -42,10 +42,10 @@ Making the repository public, choosing version/license and any push or publish a
 
 ## Review Focus
 
-1. A definition or saved plan written before T1 (old field names such as `dataset_recipe_json`, `recipe_hash`) loaded after T1 refuses with `terrine.dataset.invalid_definition` / `terrine.runtime.saved_plan_mismatch`; it never partially decodes. Detection relies on the existing strict unknown-field rejection, not on legacy-name constants. Owner: T1.
+1. A definition, manifest or saved plan written before T1 (old field names such as `dataset_recipe_json`, `recipe_hash`, manifest `recipe`) loaded after T1 refuses with a coded error: `terrine.dataset.invalid_definition` for definitions, `terrine.dataset.invalid_manifest` (new) for manifests, `terrine.runtime.saved_plan_mismatch` for saved plans; it never partially decodes. Detection relies on strict field-set checks, not on legacy-name constants. Owner: T1.
 2. `occurrence="last"` over a complete lookback with no matching event yields null with `complete=True`, distinct from an incomplete lookback (null, reason). Owner: T4.
 3. A boolean outcome whose condition is already met inside a window that is not yet complete yields null with a reason, never `True`. Owner: T5.
-4. `Model.from_tables` keeps roster units with zero events (rows of zeros) and refuses a missing completeness declaration instead of inferring it from the latest event. Owner: T6.
+4. `Model.from_tables` keeps roster units with zero events, with empty-window values by aggregation: count and sum are `0` (complete); event means are null with reason `no_observations`; any incomplete window is null with its incompleteness reason. It refuses a missing completeness declaration instead of inferring it from the latest event. Owner: T6.
 5. `from_tables` generated metric names colliding with each other or with an explicit catalog name refuse with a coded error; recipes constructors never default a row-defining argument (unit, start event, period, horizon). Owner: T6.
 
 ---
@@ -66,7 +66,7 @@ flowchart LR
   end
   subgraph P3[Phase 3: engines]
     T9[T9 j60e registry refactor] --> T11[T11 14ff generic opt-in]
-    T10[T10 w6pn conformance] --> T11
+    T9 --> T10[T10 w6pn conformance] --> T11
     T13[T13 9btd anchor offset]
   end
   T15 --> WB
@@ -83,7 +83,7 @@ flowchart LR
 | Gate | Owner pushes `main` and dispatches `warehouse-backends` (`backend_mode=all`) | Snowflake parity has no local route; GitHub actions are owner-reserved |
 | 4 | T7 | Shows the final API: blocked by T3, T4, T5, T6, T14, T15 |
 | Gate | Owner decides publication (`v9yy`) | Owner-reserved |
-| 5 | T9, T10, T13 | T9 is a pure refactor of `terrine/backends/` and `terrine/execution/`; T10 adds tests only; T13 touches `compile/anchors.py` near the engine list T9 removes (`anchors.py:154`): rebase whichever lands second |
+| 5 | T9, T10 (cases), T13 | T9 is a pure refactor of `terrine/backends/` and `terrine/execution/`. T10 writes its cases against today's DuckDB/PostgreSQL fixtures in parallel, but closes only after T9 merges and its fixture is parametrized from `ENGINES`. T13 touches `compile/anchors.py` near the engine list T9 removes (`anchors.py:154`): rebase whichever lands second |
 | 6 | T11 (after T9 + T10) | Needs the registry and the suite |
 | - | No new engines | Owner decision; T12 removed |
 
@@ -110,10 +110,10 @@ Every task follows the same loop (kata-driven-development "Per-Task Discipline")
 **Files:** `terrine/spec/dataset.py`, `terrine/spec/__init__.py`, `terrine/spec/transforms.py`, `terrine/runtime/recipe.py` (rename module to `terrine/runtime/saved_plan.py`), `terrine/runtime/{api,planning,__init__}.py`, `terrine/dataset/{manifest,reference,transforms}.py`, `terrine/agent/{recipes,schemas,tools}.py` (`recipes.py` -> `definitions.py`), `terrine/frame.py`, `terrine/__init__.py`, refusal registry and `docs/reference/refusals.md`, guides (`ml-staging`, `materialization-runtime`, `orchestrators`, `dataset-agent-tools`, `public-api`), examples, tests, CHANGELOG.
 
 **Interfaces:**
-- Produces: `DatasetDefinition`, `DatasetDefinitionStore`, `DatasetDefinitionReference` (`terrine.spec.dataset`); `SavedPlan` (`terrine.runtime.saved_plan`); codes `terrine.dataset.invalid_definition`, `terrine.runtime.saved_plan_mismatch`; wire fields `dataset_definition_json`, `plan_hash`; agent tools `get_dataset_definition_schema`, `propose_definition`, `validate_definition`.
+- Produces: `DatasetDefinition`, `DatasetDefinitionStore`, `DatasetDefinitionReference` (`terrine.spec.dataset`); `SavedPlan` (`terrine.runtime.saved_plan`); codes `terrine.dataset.invalid_definition`, `terrine.dataset.invalid_manifest` (new), `terrine.runtime.saved_plan_mismatch`; wire fields `dataset_definition_json`, `plan_hash`; agent tools `get_dataset_definition_schema`, `propose_definition`, `validate_definition`.
 
-- [ ] **Red:** `test_definition_json_with_legacy_recipe_fields_refuses` in `tests/dataset/test_recipe.py` (renamed to `tests/dataset/test_definition.py`): a definition or manifest written with the old field names raises `TerrineError` with code `terrine.dataset.invalid_definition` (Review Focus 1).
-- [ ] **Green:** rename; `grep -rniE 'recipe' terrine` matches nothing (the `terrine.recipes` module does not exist yet; no legacy-name constants are needed because unknown fields already refuse). Previously saved artifacts are not migrated (pre-release); they refuse.
+- [ ] **Red:** in `tests/dataset/test_recipe.py` (renamed to `tests/dataset/test_definition.py`): `test_definition_json_with_legacy_fields_refuses` (code `terrine.dataset.invalid_definition`); `test_manifest_json_with_legacy_fields_refuses` (an actual pre-rename manifest payload; code `terrine.dataset.invalid_manifest`; today `DatasetManifest.from_json` raises a plain `ValueError`, `manifest.py:174`); in the saved-plan tests, `test_saved_plan_json_with_legacy_fields_refuses` (code `terrine.runtime.saved_plan_mismatch`). Review Focus 1.
+- [ ] **Green:** rename; `DatasetManifest.from_json` raises the new coded `terrine.dataset.invalid_manifest` for any malformed or unknown-field payload (registered, pickle/deepcopy-safe, documented); `grep -rniE 'recipe' terrine` matches nothing (the `terrine.recipes` module does not exist yet; field-set checks make legacy-name constants unnecessary). Previously saved artifacts are not migrated (pre-release); they refuse.
 - [ ] **Verify:** `make check TESTS="tests"`; `uv run pytest -q integration`; `uv run python examples/dataset_agent_tools.py`; `uv run python examples/materialization_runtime.py`; `uv run python examples/retention_and_winsorization.py`.
 
 ### Task 2: Spec and implementation plan for `from_tables` and `terrine.recipes` (kata `vdnx`)
@@ -136,9 +136,9 @@ Every task follows the same loop (kata-driven-development "Per-Task Discipline")
 **Files:** `terrine/compile/shapes/time_to_event.py:479,501,512`, `terrine/frame.py:888-901`, `terrine/compile/shapes/life_table.py:53-61`, `terrine/export/lifelines.py:89-96,181-207`, tests in `tests/compile/test_time_to_event.py`, `tests/export/test_lifelines.py`, `integration/compile/test_time_to_event.py`, `integration/handoffs/test_lifelines.py`, `docs/guides/trajectories-survival.md`, CHANGELOG.
 
 **Interfaces:**
-- Produces: `duration` column of Arrow type `duration("us")` equal to terminal time minus `t0`; LifeTable and lifelines consume it directly.
+- Produces: `duration` column equal to terminal time minus `t0`, as an Arrow duration whose unit matches the event-time axis: `duration("ns")` on the DuckDB nanosecond axis (`time_to_event.py:43-46`), `duration("us")` otherwise. LifeTable and lifelines consume it directly.
 
-- [ ] **Red:** `test_duration_is_elapsed_from_t0_for_event_and_censored_rows`: event at `t0 + 10d` gives `timedelta(days=10)`; censored at cutoff `t0 + 21d` gives `timedelta(days=21)`. `test_duration_with_delayed_entry_is_measured_from_t0`: entry at `t0 + 2d`, event at `t0 + 10d` gives `duration = 10d`, `entry_time` stays the entry timestamp, and the lifelines export's entry is `2d`.
+- [ ] **Red:** `test_duration_is_elapsed_from_t0_for_event_and_censored_rows`: event at `t0 + 10d` gives `timedelta(days=10)`; censored at cutoff `t0 + 21d` gives `timedelta(days=21)`. `test_duration_with_delayed_entry_is_measured_from_t0`: entry at `t0 + 2d`, event at `t0 + 10d` gives `duration = 10d`, `entry_time` stays the entry timestamp, and the lifelines export's entry is `2d`. `test_nanosecond_duration_keeps_submicrosecond_elapsed`: on `timestamp[ns]` sources an event at `t0 + 1d + 1ns` gives `duration("ns")` value `86_400_000_000_001`, and the lifelines duration equals the pre-change export for the same rows.
 - [ ] **Green:** emit `terminal - t0`; LifeTable and lifelines read elapsed values; KM/Cox inputs and LifeTable bins unchanged numerically.
 - [ ] **Verify:** `make check TESTS="tests/compile/test_time_to_event.py tests/export/test_lifelines.py"`; `uv run pytest -q integration/compile/test_time_to_event.py integration/handoffs/test_lifelines.py`; `make test-postgres` against the scratch server.
 
@@ -151,8 +151,8 @@ Every task follows the same loop (kata-driven-development "Per-Task Discipline")
 **Interfaces:**
 - Produces: `EventTime.occurrence` accepts `"last"`; ordering is the reverse of `(timestamp, event id)`.
 
-- [ ] **Red:** `test_last_occurrence_selects_latest_event_before_t0` (two events at `t0-5d`, `t0-1d` -> `t0-1d`); `test_last_occurrence_empty_complete_lookback_is_null_complete` (Review Focus 2); `test_last_occurrence_ties_mirror_first` (equal timestamps, event ids `a`,`b`: first -> `a`, last -> `b`).
-- [ ] **Green:** accept `"last"`; reverse the ranking order; update the agent design schema enum.
+- [ ] **Red:** `test_last_occurrence_selects_latest_event_before_t0` (two events at `t0-5d`, `t0-1d` -> `t0-1d`); `test_last_occurrence_empty_complete_lookback_is_null_complete` (Review Focus 2); `test_last_occurrence_ties_mirror_first` (equal timestamps, event ids `a`,`b`: first -> `a`, last -> `b`); `test_last_occurrence_unknown_label_after_latest_match_is_incomplete` (label-filtered selector: known match at `t0-3d`, unknown-label event at `t0-1d` -> null, reason `incomplete_label_history`); `test_last_occurrence_unknown_label_before_latest_match_is_complete` (unknown at `t0-5d`, known at `t0-1d` -> `t0-1d`, complete), plus the same two cases at a tied timestamp ordered by event id.
+- [ ] **Green:** accept `"last"`; use one occurrence ordering for both ranking (`compile/columns.py:470-482`) and unknown-label precedence (`columns.py:512-516`, today `<` / `<=`), reversed for `"last"`; update the agent design schema enum.
 - [ ] **Verify:** `make check TESTS="tests/spec tests/compile/test_columns.py"`; related integration module; `make test-postgres`.
 
 ### Task 5: Predicates as feature and outcome values (kata `k79m`)
@@ -165,7 +165,7 @@ Every task follows the same loop (kata-driven-development "Per-Task Discipline")
 - Consumes: T4's `occurrence` handling (none directly; shared files only).
 - Produces: `Design(features=..., outcomes=...)` accept `Gt | Eq | IsNull | And`; boolean output columns with `ColumnMeta` role `feature`/`outcome`.
 
-- [ ] **Red:** `test_converted_within_7d_true_false_and_unknown` (event day 3 -> True; none in complete window -> False; event day 1 in incomplete window -> null with reason, Review Focus 3); `test_churned_30d_eq_zero`; `test_predicate_outcome_round_trips_json`.
+- [ ] **Red:** `test_converted_within_7d_true_false_and_unknown` (event day 3 -> True; none in complete window -> False; event day 1 in incomplete window -> null with reason, Review Focus 3); `test_conjunction_with_complete_false_term_is_false_and_complete` (`all_of(complete False, incomplete term)` -> `False`, `complete=True`: three-valued AND, as eligibility already computes at `_predicates.py:56-64`); `test_conjunction_with_true_and_incomplete_terms_is_null`; `test_churned_30d_eq_zero`; `test_predicate_outcome_round_trips_json`.
 - [ ] **Green:** widen accepted types; compile predicate values per role; validation reuses per-leaf role checks.
 - [ ] **Verify:** `make check TESTS="tests/spec tests/compile"`; `uv run pytest -q integration/compile`; `make test-postgres`; check `frame.training_set(label=...)` accepts a boolean label.
 
@@ -198,9 +198,9 @@ Every task follows the same loop (kata-driven-development "Per-Task Discipline")
 **Files:** `terrine/data.py` (`ColumnMeta` support-column names), `terrine/compile/{columns,_asof,_predicates,retention}.py`, `terrine/compile/shapes/{cohorts,event_sequence,ltv,_observations,state_panel,time_to_event}.py`, `terrine/temporal/{aggregate,daily,nonadditive,sequence}.py`, `terrine/frame.py`, `terrine/dataset/training.py`, `terrine/export/{preflight,surrogate}.py`, `terrine/agent/{schemas,tools}.py`, `terrine/spec/sequence.py`, affected tests, guides, CHANGELOG.
 
 **Interfaces:**
-- Produces: for every output value column `<name>` in every shape, `<name>__complete` (bool) and `<name>__reason` (string) placed immediately after it; `ColumnMeta` points at those names; design-level refusal for user column names ending in `__complete` or `__reason`.
+- Produces: for every output value column `<name>` in every per-unit shape, `<name>__complete` (bool) and `<name>__reason` (string) placed immediately after it. Aggregate shapes that report several exact reasons per row keep `list<string>` under the same suffix (LifeTable today: `reason: list<string>`, `life_table.py:169`); the export preflight already accepts both forms (`export/preflight.py:129-132`). `ColumnMeta` points at those names; design-level refusal for user column names ending in `__complete` or `__reason`.
 
-- [ ] **Red:** `test_time_series_columns_are_values_with_named_support` (two values -> `unit, anchor_id, t0, rev_14d, rev_14d__complete, rev_14d__reason, rev_next_7d, ...`, no `__terrine_value_*`); `test_ltv_and_survival_use_the_same_suffixes`; `test_reserved_support_suffix_refuses`; `test_null_reason_round_trips_arrow_and_manifest_under_new_names`.
+- [ ] **Red:** `test_time_series_columns_are_values_with_named_support` (two values -> `unit, anchor_id, t0, rev_14d, rev_14d__complete, rev_14d__reason, rev_next_7d, ...`, no `__terrine_value_*`); `test_ltv_and_survival_use_the_same_suffixes`; `test_life_table_keeps_list_valued_reasons_under_the_suffix` (two incomplete records with different reasons in one bin -> both reasons listed; preflight exclusion counts unchanged); `test_reserved_support_suffix_refuses`; `test_null_reason_round_trips_arrow_and_manifest_under_new_names`.
 - [ ] **Green:** rename support columns at the point each shape publishes them; observation bounds move per the design; exports and training views read names from `ColumnMeta`.
 - [ ] **Verify:** `make check TESTS="tests"`; `uv run pytest -q integration`; `make test-postgres`; library hand-off integration tests unchanged in behavior.
 
@@ -235,7 +235,7 @@ Owner chooses version and license and authorizes making the repository public (k
 
 **Path:** bounded, tests only. **Branch:** `test/engine-conformance`.
 
-- [ ] One known-answer case per regression in the issue; each shown red on a deliberate one-line break of its helper; DuckDB and PostgreSQL on every push.
+- [ ] One known-answer case per regression in the issue; each shown red on a deliberate one-line break of its helper; DuckDB and PostgreSQL on every push. Cases start against today's fixtures; the task closes after T9 with the fixture parametrized from `ENGINES`.
 
 ### Task 11: Generic dialect and `allow_unverified` opt-in (kata `14ff`)
 
@@ -247,7 +247,7 @@ Adding engines is out of scope for this plan (owner: "we wont add additional eng
 
 ### Task 13: `EventAnchor` offset for landmark datasets (kata `9btd`)
 
-**Path:** architectural-light; settle the issue's open decisions in a short design before code. Serialization stays compatible: `offset` is emitted only when nonzero, so existing saved Designs and their `spec_hash` values are unchanged; CHANGELOG entry. **Branch:** `feat/anchor-offset`. Runs in wave 4.
+**Path:** architectural-light; settle the issue's open decisions in a short design before code. Serialization stays compatible: `offset` is emitted only when nonzero, so existing saved Designs and their `spec_hash` values are unchanged; CHANGELOG entry. **Branch:** `feat/anchor-offset`. Runs in wave 5.
 
 ## Open decisions
 
