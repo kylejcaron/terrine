@@ -39,8 +39,13 @@ def collect_stats() -> int:
 
 
 def read_report(path: Path) -> tuple[set[str], set[str]]:
+    """Read started test identities and named failures from pytest's xunit1 output."""
     seen, failed = set(), set()
     for case in ET.parse(path).iter("testcase"):
+        skipped = case.find("skipped")
+        # Only collection skips lack pytest's runtime skip or xfail type.
+        if skipped is not None and skipped.get("type") is None:
+            continue
         if not case.get("file") or not case.get("name"):
             raise ValueError("A test report has no attributable test identity")
         identity = f"{case.get('file')}::{case.get('name')}"

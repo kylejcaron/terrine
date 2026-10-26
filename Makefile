@@ -6,15 +6,15 @@ MUTATION_CORES ?= 2
 MUTATION_SAMPLE ?= 1
 MUTATION_SEED ?= 20261025
 
+# Ordinary suite; scale checks are deselected by default.
+test:
+	uv run pytest $(TESTS)
+
 # Local, on-demand campaigns; keep mutants/ until kill attribution is finished.
 mutate:
 	agent-slots -j $(MUTATION_CORES) -- uv run python scripts/mutate.py \
 		--module "$(MODULE)" --cores $(MUTATION_CORES) \
 		--sample $(MUTATION_SAMPLE) --seed $(MUTATION_SEED) $(TESTS)
-
-# Ordinary suite; scale checks are deselected by default.
-test:
-	uv run pytest $(TESTS)
 
 # Scheduled scale tier: resource-bound scale, oracle and live-warehouse checks.
 test-scale:
