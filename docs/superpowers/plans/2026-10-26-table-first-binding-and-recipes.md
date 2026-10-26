@@ -43,7 +43,7 @@
 **Interfaces:**
 - Consumes: `UnitSource`, `Coverage`, `Catalog`, `Model.from_catalog`, `readiness`, and `event_ids`.
 - Produces: exported immutable `Events(table: str, time: str, keys: Mapping[str, str], values: tuple[str, ...] = (), complete: tuple[date | str, date | str] | None = None)`; `Model.from_tables(con, *, units: Mapping[str, UnitSource], events: Mapping[str, Events], attributes: Mapping[str, UnitSource] | None = None, dialect: str | None = None, day_boundary: str = "UTC", readiness: Mapping[str, Coverage] | None = None, event_ids: Mapping[str, str] | None = None) -> Model`; refusal codes `terrine.model.missing_event_completeness` and `terrine.model.generated_metric_collision`.
-- Prerequisite: the separate mapping-input change to `Model.from_catalog` must be available before Task 2; if it is not merged into this task branch, the implementer must use its exact merged API rather than add a local shim.
+- Prerequisite: the separate mapping-input change to `Model.from_catalog` must be available before Task 1, because `from_tables` calls it with the generated Catalog and a plain units mapping; if it is not merged into this task branch, the implementer must use its exact merged API rather than add a local shim.
 
 - [ ] **Step 1: Write failing descriptor and admission tests**
 
