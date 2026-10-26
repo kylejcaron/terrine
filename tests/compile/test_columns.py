@@ -594,7 +594,7 @@ def test_last_occurrence_unknown_label_after_latest_match_is_incomplete(column_m
         "amount", window=("-6d", "0s"), label_property="tier", equals="gold", occurrence="last"
     )
     compiled = _compile(model, features={"selected_at": selector})
-    row = model.con.to_pyarrow(compiled.table).to_pylist()[0]
+    row = model.con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()[0]
     meta = compiled.columns["selected_at"]
     assert row["selected_at"] is None
     assert row[meta.complete_column] is False
@@ -612,7 +612,7 @@ def test_last_occurrence_unknown_label_before_latest_match_is_complete(column_mo
         "amount", window=("-6d", "0s"), label_property="tier", equals="gold", occurrence="last"
     )
     compiled = _compile(model, features={"selected_at": selector})
-    row = model.con.to_pyarrow(compiled.table).to_pylist()[0]
+    row = model.con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()[0]
     meta = compiled.columns["selected_at"]
     assert row["selected_at"] == datetime(2025, 1, 1, 12, tzinfo=UTC)
     assert row[meta.complete_column] is True
@@ -622,7 +622,7 @@ def test_last_occurrence_unknown_label_before_latest_match_is_complete(column_mo
 def test_last_occurrence_incomplete_lookback_is_null_incomplete(column_model):
     selector = event_time("amount", window=("-6d", "0s"), occurrence="last")
     compiled = _compile(column_model, features={"selected_at": selector})
-    row = column_model.con.to_pyarrow(compiled.table).to_pylist()[0]
+    row = column_model.con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()[0]
     meta = compiled.columns["selected_at"]
     assert row["selected_at"] is None
     assert row[meta.complete_column] is False
@@ -642,7 +642,7 @@ def test_last_occurrence_tied_unknown_label_after_match_is_incomplete(column_mod
         "amount", window=("-6d", "0s"), label_property="tier", equals="gold", occurrence="last"
     )
     compiled = _compile(model, features={"selected_at": selector})
-    row = model.con.to_pyarrow(compiled.table).to_pylist()[0]
+    row = model.con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()[0]
     meta = compiled.columns["selected_at"]
     assert row["selected_at"] is None
     assert row[meta.complete_column] is False
@@ -662,7 +662,7 @@ def test_last_occurrence_tied_unknown_label_before_match_is_complete(column_mode
         "amount", window=("-6d", "0s"), label_property="tier", equals="gold", occurrence="last"
     )
     compiled = _compile(model, features={"selected_at": selector})
-    row = model.con.to_pyarrow(compiled.table).to_pylist()[0]
+    row = model.con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()[0]
     meta = compiled.columns["selected_at"]
     assert row["selected_at"] == datetime(2025, 1, 1, 12, tzinfo=UTC)
     assert row[meta.complete_column] is True
@@ -687,7 +687,7 @@ def test_last_occurrence_tied_known_events_use_latest_event_id(column_model):
         "amount", window=("-6d", "0s"), label_property="tier", equals="gold", occurrence="last"
     )
     compiled = _compile(model, features={"selected_at": selector})
-    row = model.con.to_pyarrow(compiled.table).to_pylist()[0]
+    row = model.con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()[0]
     meta = compiled.columns["selected_at"]
     assert row["selected_at"] == datetime(2025, 1, 1, 12, tzinfo=UTC)
     assert row[meta.complete_column] is True
