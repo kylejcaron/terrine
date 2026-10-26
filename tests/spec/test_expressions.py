@@ -13,6 +13,7 @@ from terrine.spec.expressions import (
     all_of,
     asof,
     eq,
+    event_time,
     gt,
     is_null,
 )
@@ -46,3 +47,8 @@ def test_predicates_reject_non_json_values_and_empty_and():
         gt(agg("sessions", window=("-1d", "0d")), object())  # ty: ignore[invalid-argument-type]
     with pytest.raises(ValueError):
         all_of()
+
+
+def test_last_occurrence_rejects_n():
+    with pytest.raises(ValueError):
+        event_time("purchase", window=("-7d", "0d"), occurrence="last", n=1)

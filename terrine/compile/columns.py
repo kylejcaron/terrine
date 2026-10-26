@@ -468,9 +468,10 @@ def compile_columns(
             }
         )
         joined = candidates.join(events, predicates=predicates)
-        order = [joined["_timestamp"]]
+        descending = selector.occurrence == "last"
+        order = [joined["_timestamp"].desc() if descending else joined["_timestamp"]]
         if identity is not None:
-            order.append(joined[identity])
+            order.append(joined[identity].desc() if descending else joined[identity])
         ranked = joined.mutate(
             __terrine_selector_rank=ibis.row_number().over(
                 group_by=[joined.unit, joined.anchor_id], order_by=order
@@ -509,11 +510,22 @@ def compile_columns(
                     unknown_events._unknown_anchor == selected.__selector_anchor,
                 ],
             )
-            unknown_precedes = unknown_selected._unknown_time < unknown_selected.__selector_time
-            if identity is not None:
-                unknown_precedes |= (
-                    unknown_selected._unknown_time == unknown_selected.__selector_time
-                ) & (unknown_selected._unknown_event_id <= unknown_selected.__selector_event_id)
+            if descending:
+                unknown_precedes = unknown_selected._unknown_time > unknown_selected.__selector_time
+                if identity is not None:
+                    unknown_precedes |= (
+                        unknown_selected._unknown_time == unknown_selected.__selector_time
+                    ) & (
+                        unknown_selected._unknown_event_id >= unknown_selected.__selector_event_id
+                    )
+            else:
+                unknown_precedes = unknown_selected._unknown_time < unknown_selected.__selector_time
+                if identity is not None:
+                    unknown_precedes |= (
+                        unknown_selected._unknown_time == unknown_selected.__selector_time
+                    ) & (
+                        unknown_selected._unknown_event_id <= unknown_selected.__selector_event_id
+                    )
             unknown_count_name = f"__terrine_selector_unknown_count_{index}"
             known_count_name = f"__terrine_selector_known_count_{index}"
             preceding_count_name = f"__terrine_selector_preceding_count_{index}"

@@ -68,11 +68,13 @@ def test_sequence_request_round_trips_through_json_yaml_and_spec_hash():
         assert restored.spec_hash == design.spec_hash
 
 
-def test_event_time_chain_round_trips_canonically():
-    selected = EventTime("purchase", Window("0s", "7d"))
-    design = Design("user", EventAnchor("signup"), features={"first_purchase": selected})
-    assert from_json(to_json(design)) == design
-
+def test_event_time_last_round_trips_through_json_yaml_and_spec_hash():
+    selected = EventTime("purchase", Window("0s", "7d"), occurrence="last")
+    design = Design("user", EventAnchor("signup"), features={"last_purchase": selected})
+    for serialized, decode in ((to_json(design), from_json), (to_yaml(design), from_yaml)):
+        restored = decode(serialized)
+        assert restored == design
+        assert restored.spec_hash == design.spec_hash
 
 def test_occurrence_selector_needs_no_label_filter():
     assert EventTime("purchase", Window("0s", "1d")).label_property is None

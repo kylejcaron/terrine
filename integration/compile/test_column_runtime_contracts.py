@@ -2,6 +2,7 @@ from decimal import Decimal
 
 import pytest
 
+from terrine.data import Coverage
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.models import Catalog
@@ -223,3 +224,33 @@ def test_relative_attribute_asof_uses_selected_event_time(column_model):
     assert timing.kind == "event_time"
     assert timing.relative_offsets == (0, 0)
     assert timing.support_seconds == (0, 1)
+
+
+    con = column_model.con
+    con.raw_sql("""
+        DELETE FROM events WHERE user_id = 'a'
+    """)
+    con.raw_sql("""
+        INSERT INTO events VALUES
+            ('a', TIMESTAMPTZ '2024-12-28 12:00:00+00', 1, 'old'),
+            ('a', TIMESTAMPTZ '2025-01-01 12:00:00+00', 2, 'new')
+    """)
+    model = Model.from_catalog(
+        column_model.catalog,
+        con=con,
+        readiness={"events": Coverage("2024-12-20", "2025-01-03")},
+        units=column_model.units,
+    )
+    selector = event_time("amount", window=("-5d", "0s"), occurrence="last")
+    compiled = _compile(
+        model,
+        features={
+            "last_order_at": selector,
+            "amount_before_last_order": agg(
+                "total", window=("-5d", "0s"), relative_to=selector
+            ),
+        },
+    )
+    rows = con.to_pyarrow(compiled.table.order_by("unit")).to_pylist()
+    assert rows[0]["last_order_at"].isoformat() == "2025-01-01T12:00:00+00:00"
+    assert rows[0]["amount_before_last_order"] == Decimal(1)

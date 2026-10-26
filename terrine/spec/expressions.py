@@ -210,9 +210,9 @@ class EventTime:
         if self.label_property is not None:
             object.__setattr__(self, "label_property", _name(self.label_property, "label_property"))
             object.__setattr__(self, "equals", _scalar(self.equals))
-        if self.occurrence not in {"first", "nth"}:
-            raise ValueError("occurrence must be 'first' or 'nth'")
-        if self.occurrence == "first" and self.n is not None:
+        if self.occurrence not in {"first", "last", "nth"}:
+            raise ValueError("occurrence must be 'first', 'last', or 'nth'")
+        if self.occurrence in {"first", "last"} and self.n is not None:
             raise ValueError("n is only valid for nth occurrence")
         if self.occurrence == "nth" and (
             isinstance(self.n, bool) or not isinstance(self.n, int) or self.n < 1
