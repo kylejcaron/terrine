@@ -64,7 +64,8 @@ def _native_model(con):
 
 def _collect(model, design):
     frame = design.build(model)
-    return frame, model.con.to_pyarrow(frame.expr.order_by("unit")).to_pylist()
+    sort_columns = ("unit", "age") if "age" in frame.expr.columns else ("unit",)
+    return frame, model.con.to_pyarrow(frame.expr.order_by(*sort_columns)).to_pylist()
 
 
 def test_from_tables_aggregates_match_native_catalog_and_preserve_availability():
@@ -118,6 +119,8 @@ def test_from_tables_aggregates_match_native_catalog_and_preserve_availability()
             },
         )
         incomplete_frame, incomplete_rows_raw = _collect(generated, incomplete)
+        _, native_incomplete_rows = _collect(native, incomplete)
+        assert incomplete_rows_raw == native_incomplete_rows
         incomplete_rows = {row["unit"]: row for row in incomplete_rows_raw}
         for name in ("orders_count", "orders_amount_sum", "orders_amount_mean"):
             assert incomplete_rows["u1"][name] is None
