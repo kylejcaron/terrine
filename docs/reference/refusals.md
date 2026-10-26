@@ -293,7 +293,10 @@ Correct source, roster and coverage bindings; rebind the Model.
 
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
+| `terrine.model.generated_metric_collision` | <code>Generated name {name!r} conflicts for event sources {sources}; rename the source or value declaration, or use Model.from_catalog for explicit names.</code> | `name`, `sources` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.model.invalid_binding` | <code>Model binding input is invalid: {reason}.</code> | `reason` | [terrine/model.py](../../terrine/model.py) |
+| `terrine.model.missing_event_completeness` | <code>Event source {source!r} requires complete=(start, end); declare authoritative inclusive local calendar days, not observed event maxima.</code> | `source` | [terrine/model.py](../../terrine/model.py) |
+| `terrine.model.multiple_event_units` | <code>Event source {source!r} declares multiple units {units}; use Model.from_catalog for multi-unit source semantics.</code> | `source`, `units` | [terrine/model.py](../../terrine/model.py) |
 
 ## readiness
 

@@ -8,7 +8,7 @@ from terrine.windows import Window
 
 if TYPE_CHECKING:
     from terrine.compile.cost import preview
-    from terrine.data import Budget, Coverage, UnitSource
+    from terrine.data import Budget, Coverage, Events, UnitSource
     from terrine.dataset.reference import Dataset
     from terrine.frame import Frame
     from terrine.model import Model
@@ -58,6 +58,7 @@ __all__ = [
     "FunnelSpec",
     "SessionSpec",
     "Coverage",
+    "Events",
     "Design",
     "EventAnchor",
     "FixedDate",
@@ -99,6 +100,7 @@ _LAZY_MODULES = {
     "Frame": "terrine.frame",
     "preview": "terrine.compile.cost",
     "Coverage": "terrine.data",
+    "Events": "terrine.data",
     "Model": "terrine.model",
     "UnitSource": "terrine.data",
 }

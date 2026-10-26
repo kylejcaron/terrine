@@ -9,7 +9,7 @@ Dataset. The [first dataset](first-dataset.md) executes that whole path.
 
 | Workflow | `terrine` names | Example or guide |
 | --- | --- | --- |
-| Bind and build | `Model`, `Design`, `Frame`, `Dataset`, `Coverage`, `UnitSource`, `Budget`, `preview` | First dataset; [catalogs](temporal-engine.md) |
+| Bind and build | `Model`, `Design`, `Frame`, `Dataset`, `Events`, `Coverage`, `UnitSource`, `Budget`, `preview` | First dataset; [event tables and catalogs](temporal-engine.md) |
 | Exact anchors and windows | `FixedDate`, `EventAnchor`, `AnchorRange`, `Schedule`, `Window` | [Anchors](candidate-anchors.md) |
 | Named feature/outcome expressions | `agg`, `asof`, `event_time`, `EventTime`, `retention`, `quantile`, `approx_distinct`, `approx_quantile`, `SketchRequest` | [Temporal semantics](temporal-engine.md) |
 | Eligibility and descriptive treatment | `eq`, `gt`, `is_null`, `all_of`, `Treatment` | [Design specifications](design-specs.md) |
@@ -17,6 +17,11 @@ Dataset. The [first dataset](first-dataset.md) executes that whole path.
 | State pairs | `StatePanel`, `StateObservations`, `BinnedMetricState` | [State panels](state-panels.md) |
 | Ordered event datasets | `EventSequence`, `SessionSpec`, `FunnelSpec` | [Sequences](temporal-engine.md#bounded-event-sequences-and-event-time-origins) |
 | Save a description or handle a refusal | `DatasetDefinition`, `from_yaml`, `to_yaml`, `TerrineError` | [ML staging](ml-staging.md), [refusal reference](../reference/refusals.md) |
+
+`Events` belongs at the top level because `Model.from_tables` is the everyday
+binding path for event tables: it combines explicit event completeness with an
+authoritative `UnitSource` roster. Its typed descriptor is defined in
+`terrine.data`; use `Model.from_catalog` for more detailed source semantics.
 
 Use the expression functions rather than constructing their underlying node
 records. Advanced code inspecting a returned node can import its type from

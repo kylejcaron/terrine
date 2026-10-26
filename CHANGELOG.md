@@ -4,6 +4,10 @@
 
 ### Public API
 
+- Bind table-backed events with immutable `Events` descriptors and
+  `Model.from_tables`, retaining explicit unit rosters and completeness.
+  Generate event/value facts and count, sum and event-mean metrics; refuse
+  ambiguous names and direct multi-unit sources to `Model.from_catalog`.
 - `Model.from_catalog` accepts plain Catalog mappings and validates them with
   the same coded refusal contract as YAML-loaded definitions. `GroupSplit` and
   `TimeSplit` are public through `terrine.dataset` for training-set workflows.

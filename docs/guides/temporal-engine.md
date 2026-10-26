@@ -17,6 +17,63 @@ error. For example, `day_boundary: UTC+14:01` points to `day_boundary`: use
 again. Direct `Catalog.model_validate(...)` construction continues to use
 Pydantic's `ValidationError`.
 
+## Binding event tables
+
+Use `Model.from_tables` for table-backed events with one declared unit per
+source. `UnitSource` is the authoritative roster, including units without
+matching events; Terrine never derives that roster from event rows.
+
+```python
+from terrine import Events, Model, UnitSource
+
+# con already contains customers(id) and orders(customer_id, occurred_at, amount).
+model = Model.from_tables(
+    con,
+    units={"customer": UnitSource("customers", "id")},
+    events={
+        "orders": Events(
+            "orders",
+            "occurred_at",
+            {"customer": "customer_id"},
+            values=("amount",),
+            complete=("2025-01-01", "2025-01-31"),
+        )
+    },
+)
+```
+
+The event source and event fact are both named `orders`. The value fact is
+`orders_amount`; generated metrics are `orders_count`, `orders_amount_sum`,
+and `orders_amount_mean`. Consume these with ordinary `agg` expressions.
+The mean metric uses the native `avg_event` aggregation, not a calendar-day
+average. Binding builds a native Catalog and resolves only schema metadata.
+Use `dialect=` to declare a dialect explicitly; by default it is the admitted
+connection's dialect. `day_boundary` defaults to `UTC`.
+
+Every `Events.complete` declares an inclusive pair of complete local calendar
+days, interpreted in `day_boundary`. Missing completeness refuses with
+`terrine.model.missing_event_completeness` and context `source`; supply an
+authoritative pair, never an observed maximum event timestamp. Optional
+`readiness` adds other coverage declarations; an event's own `complete` pair
+remains authoritative. `event_ids` declares stable identity columns as with
+`Model.from_catalog`.
+
+Each descriptor's `keys` must name exactly one declared unit. Multiple keys
+refuse with `terrine.model.multiple_event_units` and context `source` and
+`units`; use `Model.from_catalog` to describe multi-unit semantics. A generated
+source, fact or metric name may not collide with another generated name or a
+distinct explicit readiness key. The sole permitted overlap is an event
+source with its own event fact and readiness key. Conflicts refuse with
+`terrine.model.generated_metric_collision`: context `name` identifies the
+conflict and `sources` identifies its event sources. A readiness conflict also
+includes `readiness_key`. Rename the source/value declaration or use
+`Model.from_catalog` for explicit naming.
+
+Choose `Model.from_catalog` for attributes, filters, ratios, dimension
+histories, SQL relations, multi-unit sources, or explicit Catalog names.
+
+## Native Catalog declarations
+
 ```yaml
 schema_version: 1
 day_boundary: UTC
