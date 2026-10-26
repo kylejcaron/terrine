@@ -9,12 +9,15 @@ from ml_staging import create_model, training_design
 
 from terrine import Budget
 from terrine.agent import AgentPolicy, DatasetTools
-from terrine.dataset.splits import GroupSplit
+from terrine.dataset import GroupSplit
+from terrine.runtime import (
+    DestinationRef,
+    ModelReference,
+    RuntimeOwner,
+    SnapshotAuthority,
+)
+from terrine.spec import DatasetDefinition
 from terrine.runtime.changes import Change, ChangeSet
-from terrine.runtime.owner import RuntimeOwner
-from terrine.runtime.saved_plan import DestinationRef, ModelReference
-from terrine.runtime.snapshot import SnapshotAuthority
-from terrine.spec.dataset import DatasetDefinition
 
 
 def main() -> None:

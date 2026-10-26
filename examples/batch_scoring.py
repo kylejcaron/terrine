@@ -8,9 +8,8 @@ import tempfile
 from pathlib import Path
 
 from examples.ml_staging import create_model, training_design
-from terrine import Budget, agg, gt
+from terrine import Budget, Dataset, agg, gt
 from terrine.dataset.manifest import DatasetManifest
-from terrine.dataset.reference import Dataset
 from terrine.runtime.changes import Change, ChangeSet
 
 

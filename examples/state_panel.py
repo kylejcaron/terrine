@@ -7,7 +7,6 @@ import pyarrow as pa
 
 import terrine as tr
 from terrine.data import MaterializedFrame
-from terrine.semantic.models import Catalog
 from terrine.spec import BinnedMetricState, Design, Schedule, StatePanel, agg
 
 
@@ -50,8 +49,7 @@ def main() -> None:
         con.create_table("users", users)
         con.create_table("events", events)
         con.create_table("assessments", statuses)
-        catalog = Catalog.model_validate(
-            {
+        catalog = {
                 "schema_version": 1,
                 "day_boundary": "UTC",
                 "dialect": "duckdb",
@@ -92,7 +90,6 @@ def main() -> None:
                     }
                 },
             }
-        )
         model = tr.Model.from_catalog(
             catalog,
             con=con,

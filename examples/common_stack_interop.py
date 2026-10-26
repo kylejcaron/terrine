@@ -15,7 +15,6 @@ import pyarrow.parquet as pq
 from terrine import Budget, Coverage, Design, FixedDate, Model, UnitSource, agg
 from terrine.data import MaterializedFrame
 from terrine.execution.backend import backend_capabilities
-from terrine.semantic.models import Catalog
 
 
 def _assert_batches_match(batches, expected: pa.Table) -> None:
@@ -42,8 +41,7 @@ def main() -> None:
                     TIMESTAMPTZ '2025-01-01 12:00:00+00' AS ts,
                     CAST(9007199254740993.01 AS DECIMAL(20, 2)) AS amount
             """)
-            catalog = Catalog.model_validate(
-                {
+            catalog = {
                     "schema_version": 1,
                     "day_boundary": "UTC",
                     "dialect": "duckdb",
@@ -63,7 +61,6 @@ def main() -> None:
                     "measures": {"total": {"fact": "amount", "aggregation": "sum"}},
                     "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
                 }
-            )
             model = Model.from_catalog(
                 catalog,
                 con=con,

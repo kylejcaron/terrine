@@ -6,7 +6,6 @@ import ibis
 import pyarrow as pa
 
 import terrine as tr
-from terrine.semantic.models import Catalog
 from terrine.spec import Design, EventAnchor, EventSequence, FunnelSpec, SessionSpec
 from terrine.windows import Window
 
@@ -63,8 +62,7 @@ def main() -> None:
                 }
             ),
         )
-        catalog = Catalog.model_validate(
-            {
+        catalog = {
                 "schema_version": 1,
                 "day_boundary": "UTC",
                 "dialect": "duckdb",
@@ -94,7 +92,6 @@ def main() -> None:
                 "measures": {},
                 "metrics": {},
             }
-        )
         model = tr.Model.from_catalog(
             catalog,
             con=con,
