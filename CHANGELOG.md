@@ -9,10 +9,16 @@
   bounded event sequences. Each returns a plain low-level `Design`, retains
   supported row/role options and refuses unsupported keywords. Life-table
   features must exactly match its explicit grouping names.
+  Start with these constructors for common row meanings; the unchanged public
+  Design, anchor, expression and shape API remains their full-flexibility layer.
+  Constructor-first guides include equivalent low-level Designs.
 - Bind table-backed events with immutable `Events` descriptors and
   `Model.from_tables`, retaining explicit unit rosters and completeness.
   Generate event/value facts and count, sum and event-mean metrics; refuse
   ambiguous names and direct multi-unit sources to `Model.from_catalog`.
+  Run `examples/table_first_dataset.py` for zero-activity roster retention,
+  generated metrics, bounded materialization and event-origin LTV; all dataset
+  constructors have executable examples in CI.
 - `Model.from_catalog` accepts plain Catalog mappings and validates them with
   the same coded refusal contract as YAML-loaded definitions. `GroupSplit` and
   `TimeSplit` are public through `terrine.dataset` for training-set workflows.

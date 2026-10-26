@@ -5,6 +5,38 @@ meaning and completeness once on a Model, describe rows and columns with a
 Design, build a lazy Frame, then collect a bounded result or stage a pinned
 Dataset. The [first dataset](first-dataset.md) executes that whole path.
 
+## Two supported construction layers
+
+Start common dataset types with constructors in `terrine.recipes`. Each returns
+an ordinary `Design`: it describes rows without querying or materializing data.
+Call `design.build(model).materialize(budget)` through the same workflow as any
+other Design. These constructors are not aliases or a second representation.
+
+The low-level **Design API** is the full-flexibility layer they compile to:
+`Design`, anchors, expressions, `shape=`, and the public transforms in
+`terrine.spec`, including `Sequential` and `EventPanel`. It remains supported
+and unchanged, not an alias for recipes. Each dataset guide shows the equivalent
+low-level construction under **Under the hood**.
+
+| `terrine.recipes` constructor | Row meaning | Guide |
+| --- | --- | --- |
+| `time_series` | One unit at each scheduled calendar anchor | [Table-first binding](temporal-engine.md#scheduled-time-series) |
+| `trial_panel` | One eligible unit at each scheduled trial time zero | [Sequential trials](sequential-panels.md#scheduled-trial-panels) |
+| `event_panel` | One selected event and declared relative period | [Event panels](sequential-panels.md#event-panels) |
+| `ltv` | One unit/cohort origin and age, with cumulative metric value | [LTV](trajectories-survival.md#cumulative-ltv) |
+| `survival` | One unit/start event with observed event or censor time | [Survival](trajectories-survival.md#survival-records) |
+| `life_table` | One declared feature group and elapsed-time bin | [Life tables](trajectories-survival.md#grouped-life-tables) |
+| `state_panel` | One unit-period transition from prior to response state | [State panels](state-panels.md) |
+| `event_sequence` | One selected event anchor with bounded ordered events | [Event sequences](temporal-engine.md#bounded-event-sequences-and-event-time-origins) |
+
+All constructors require `unit`. The guides list row-defining arguments and
+supported options; unsupported keywords raise Python's `TypeError` rather than
+being silently ignored. Shared defaults are `features=None`, `eligibility=None`,
+`anchor_range=None`, and `gap="0d"`. Where accepted, `outcomes`, `treatment`,
+and `administrative_cutoff` default to `None`. Event occurrence defaults to
+`"first"`; `occurrence="nth"` requires a positive one-based `n`, while `n` is
+omitted for `"first"` or `"each"`.
+
 ## Top-level constructors
 
 | Workflow | `terrine` names | Example or guide |
@@ -18,10 +50,12 @@ Dataset. The [first dataset](first-dataset.md) executes that whole path.
 | Ordered event datasets | `EventSequence`, `SessionSpec`, `FunnelSpec` | [Sequences](temporal-engine.md#bounded-event-sequences-and-event-time-origins) |
 | Save a description or handle a refusal | `DatasetDefinition`, `from_yaml`, `to_yaml`, `TerrineError` | [ML staging](ml-staging.md), [refusal reference](../reference/refusals.md) |
 
-`Events` belongs at the top level because `Model.from_tables` is the everyday
-binding path for event tables: it combines explicit event completeness with an
-authoritative `UnitSource` roster. Its typed descriptor is defined in
-`terrine.data`; use `Model.from_catalog` for more detailed source semantics.
+`Events` belongs at the top level because `Model.from_tables` is the starting
+binding path for simple event tables: it combines explicit event completeness
+with an authoritative `UnitSource` roster. Each descriptor names exactly one
+unit. Its immutable typed descriptor is defined in `terrine.data`. Use
+`Model.from_catalog` for static/as-of attributes, filters, ratios, SCD2 dimension
+histories, SQL relations, multi-unit sources, or explicit Catalog names.
 
 Use the expression functions rather than constructing their underlying node
 records. Advanced code inspecting a returned node can import its type from
@@ -38,7 +72,8 @@ purpose and the workflow that warrants its exports.
 
 | Facade | Supported use |
 | --- | --- |
-| `terrine.spec` | Pure dataset descriptions: the top-level design constructors plus sequential/calendar/event panels, initiation/adoption declarations, matched-time sampling, trial weights, winsorization, definition storage and JSON/YAML serialization. See [sequential panels](sequential-panels.md) and [ML staging](ml-staging.md). Expression implementation records stay in their owning module. |
+| `terrine.recipes` | The eight constructor-first dataset workflows above; returns plain Designs that compile through the existing low-level API. |
+| `terrine.spec` | The full-flexibility Design layer: public `Sequential` and `EventPanel` transforms, calendar panels, initiation/adoption declarations, matched-time sampling, trial weights, winsorization, definition storage and JSON/YAML serialization. See [sequential panels](sequential-panels.md) and [ML staging](ml-staging.md). Expression implementation records stay in their owning module. |
 | `terrine.execution` | `publish_native_inputs` and its `PublishedInputs` result for [retained input publication](../../README.md#owned-inputs-for-repeated-builds). Verified bindings/relation authority are derived, not facade inputs. |
 | `terrine.runtime` | Owner-side planning, saved plans, execution/scan authorization protocols, snapshot retention, exact-generation reads and run status/events/cancellation. See [runtime](materialization-runtime.md). Persistent state rows and layer translation stay in their owning modules. |
 | `terrine.dataset` | `GroupSplit` and `TimeSplit` policies supplied to `Frame.training_set(split=...)`; split strategy is an everyday training workflow choice. |

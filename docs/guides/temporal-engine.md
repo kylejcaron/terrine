@@ -69,8 +69,57 @@ conflict and `sources` identifies its event sources. A readiness conflict also
 includes `readiness_key`. Rename the source/value declaration or use
 `Model.from_catalog` for explicit naming.
 
-Choose `Model.from_catalog` for attributes, filters, ratios, dimension
-histories, SQL relations, multi-unit sources, or explicit Catalog names.
+Choose `Model.from_catalog` for static/as-of attributes, filters, ratios, SCD2
+dimension histories, SQL relations, multi-unit sources, or explicit Catalog
+names. These are richer source declarations, not options inferred from tables.
+
+### Scheduled time series
+
+Start with `recipes.time_series`: one row per roster unit and scheduled calendar
+anchor. Required arguments are `unit`, `every`, `start`, and exclusive `end`;
+dates may be calendar dates or ISO date strings, never timestamps. The schedule
+defines the anchors, without a separate period count. Supported options are
+`features`, `outcomes`, `eligibility`, `treatment`, `anchor_range`, and `gap`
+(default `"0d"`); optional roles and filters default to `None`.
+
+```python
+from terrine import Budget, agg, recipes
+
+outcomes = {
+    "count": agg("orders_count", window=("0d", "7d")),
+    "amount": agg("orders_amount_sum", window=("0d", "7d")),
+    "mean": agg("orders_amount_mean", window=("0d", "7d")),
+}
+design = recipes.time_series(
+    "customer", every="7d", start="2025-01-01", end="2025-01-08",
+    outcomes=outcomes,
+)
+result = design.build(model).materialize(
+    Budget(max_rows=1_000, max_output_bytes=1_000_000)
+)
+```
+
+A customer in `customers` with no orders still has a row. In a complete window
+its count and sum are `0`, and its mean is null with reason `no_observations`.
+An incomplete window is null with its completeness reason, including for a
+zero-activity customer; unknown is not zero.
+
+#### Under the hood
+
+```python
+from terrine import Design, Schedule
+
+equivalent = Design(
+    "customer", Schedule("7d", "2025-01-01", "2025-01-08"), outcomes=outcomes,
+)
+assert design == equivalent
+```
+
+The generated event fact `orders` also works as `start_event="orders"` in
+[`recipes.ltv`](trajectories-survival.md#cumulative-ltv). Run
+`uv run python examples/table_first_dataset.py` for a complete local example
+that creates the roster and orders, checks zero-activity and incomplete-window
+results, and materializes cumulative event-origin values.
 
 ## Native Catalog declarations
 
@@ -547,6 +596,40 @@ run in the integration tier with `uv run pytest integration/temporal`.
 
 ## Bounded event sequences and event-time origins
 
+Start a bounded ordered dataset with `recipes.event_sequence`. Required
+arguments are `unit`, `event`, `horizon`, and positive `max_events`. It selects
+the first event as anchor by default and includes matching events in
+`[anchor, anchor + horizon)`. `occurrence` accepts `"first"`, `"each"`, or
+`"nth"`; only `"nth"` takes a positive one-based `n`. Supported options are
+`session_gap=None`, `features`, `outcomes`, `eligibility`, `anchor_range`, and
+`gap="0d"`. It accepts no treatment or administrative cutoff.
+
+```python
+from terrine import recipes
+
+sequence = recipes.event_sequence(
+    "user", event="activity", horizon="2h", max_events=4, session_gap="1h",
+)
+```
+
+### Under the hood
+
+```python
+from terrine import Design, EventAnchor, EventSequence, SessionSpec, Window
+
+equivalent = Design(
+    "user", EventAnchor("activity"),
+    shape=EventSequence(
+        "activity", Window(0, "2h"), max_events=4, sessions=SessionSpec("1h"),
+    ),
+)
+assert sequence == equivalent
+```
+
+Use the low-level shape when the selected events differ from the anchor fact,
+or when specifying properties, funnels, or the array representation.
+
+
 `EventSequence` returns one header for each candidate anchor. The default
 `positions` representation adds one child row per observed event; `arrays`
 keeps one row per anchor and stores ordered event structs in an Arrow list.
@@ -585,6 +668,31 @@ selector's possible support and refuses feature or eligibility chains that may
 cross the configured gap, without executing source queries or clipping the
 window. Baseline estimators refuse outcomes with event-time origins until they
 support that timing model.
+
+### Conditional events are an expression pattern
+
+There is no conditional-event constructor. Use the low-level `EventAnchor` and
+an `event_time` selector, then make an expression relative to that selected
+timestamp. For example, a signup-anchored row can measure activity after the
+first purchase-labeled event:
+
+```python
+from terrine import Design, EventAnchor, agg, event_time
+
+purchase = event_time(
+    "activity", window=("0s", "2h"), label_property="kind", equals="purchase",
+)
+conditional = Design(
+    "user", EventAnchor("signup"),
+    outcomes={"after_purchase": agg(
+        "orders_count", window=("0s", "1h"), relative_to=purchase,
+    )},
+)
+```
+
+Here the Catalog must declare `activity`, `signup`, `kind`, and `orders_count`.
+The selector refines event selection; it does not introduce another dataset
+shape. A missing or incomplete origin keeps its null and reason.
 
 Materialized provenance records the sequence schema and each expression's
 selector references, conservative support intervals, and resolved time-column
