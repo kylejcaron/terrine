@@ -2,6 +2,14 @@
 
 The materialization runtime persists plan/run state and publishes immutable output generations in the customer's own execution environment. It does not infer whether source rows changed: source revisions, change feeds, checksums, or explicit operator restatements must provide that evidence. A readiness watermark says which period is declared complete; it is not a change detector.
 
+The runtime accepts an immutable `RefreshPlan` and delegates physical source
+reads, execution and publication to an owner-configured `Executor`. Request
+keys are durable and scoped to an explicit `DestinationRef`; a `RunReceipt`
+pins the published generation for later reads. The durable DuckDB owner
+serializes publication and cancellation. Separate processes must use owner IPC
+while that owner holds the database; cancellation is a durable request, not
+proof that backend work stopped.
+
 ## Build and plan from a Model and Design
 
 The runnable [`examples/materialization_runtime.py`](../../examples/materialization_runtime.py) is the end-to-end workflow. It builds a real `Model` and immutable `Design`, captures a retained input snapshot, serializes and saves a `SavedPlan` bound to a destination, runs it through the owner resolver and snapshot authority, then queries the exact returned generation:
@@ -195,6 +203,11 @@ exporter errors and stalls cannot change run results or block the owner.
 
 ## Query the exact published generation
 
+For direct programmatic execution, `terrine.runtime.run_plan` takes the immutable
+plan, owner state `con`, `namespace`, `request_key`, `destination` and `executor`,
+and returns a `RunReceipt`. The saved-plan example above supplies the retained
+input and reconstruction bindings for the Model/Design workflow.
+
 Use the returned `RunReceipt`, not the current dataset manifest, when reading results. The API checks the authoritative run receipt and opens only its pinned generation and recorded result partitions:
 
 ```python
@@ -230,3 +243,53 @@ An authoritative empty revision change set produces a no-change refresh. The bui
 - The runtime does not collect or send customer rows, raw SQL, request keys, credentials, or raw backend errors to a hosted service. Status/events remain local authoritative state; telemetry, when configured by an application, is only a best-effort projection.
 
 These are materialization orchestration and publication guarantees, not a promise that every study design or source backend has a built-in incremental compiler. The executor owns that translation and must retain the same-snapshot equivalence required by its workload.
+
+## Owned inputs for repeated builds
+
+Ordinary native builds use one private transaction without taking over a caller
+transaction. For a stable, runtime-owned copy of the complete input frontier,
+use `publish_native_inputs`. Given an open Model connection and Design:
+
+```python
+from terrine.execution import publish_native_inputs
+
+with publish_native_inputs(model.catalog, con=con, units=model.units) as stored:
+    binding = model.catalog.verify_immutable_inputs(
+        stored.con, units=model.units, relations=stored.relations
+    )
+    pinned = tr.Model.from_catalog(
+        model.catalog,
+        con=stored.con,
+        units=model.units,
+        readiness=model.readiness.sources,
+        event_ids=model.event_ids,
+        input_binding=binding,
+    )
+    result = design.build(pinned).materialize(budget)
+```
+
+Keep the publication open for new builds. An execution already holding a lease
+can finish after owner closure; later builds refuse. The managed artifact is
+read-only and cleaned up after the last lease. A stored SQL root substitutes its
+whole result, not a fresh query against mutable upstream tables.
+
+Ordinary DuckDB builds require a dedicated native connection with no active
+caller transaction or unresolved TEMP inputs. Explicit publication can capture
+admitted owner-local TEMP roots. For ambiguous partial names, declare fully
+qualified source SQL such as `SELECT * FROM "analytics"."main"."events"`.
+Owner-staged named tables are the route for unproven functions or data-dependent
+schema inference. Explicit single-root file-reader capture is available through
+publication; arbitrary side-effecting queries are not admitted.
+
+A Model pins its admitted relation definitions and schemas. Rebind after a
+schema or view-definition change; ordinary row updates are captured at safe
+execution.
+
+Concurrent exports from one Model coordinate shared-origin metadata and setup;
+their private snapshot queries remain independent. Do not use the origin
+connection externally during setup or capture. SQL retains the caller's timezone,
+while exported anchor timestamps preserve their instants in UTC Arrow columns.
+
+These are local execution identities, not portable snapshot/replay certificates.
+Ordinary source generations and snapshot IDs remain unknown; managed copies have
+issued generations, while replay equivalence is still `unverified`.

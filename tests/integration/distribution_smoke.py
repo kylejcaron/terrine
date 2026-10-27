@@ -174,7 +174,7 @@ def smoke(wheel: Path, sdist: Path, *, python: str, resolution: str) -> None:
                     str(requirements),
                 ]
                 if extra:
-                    command += ["--extra", "duckdb"]
+                    command += ["--extra", "duckdb", "--extra", "pandas"]
                 _run(command, cwd=consumer, env=env)
                 _run(
                     [uv, "pip", "install", "--python", str(executable), "-r", str(requirements)],
@@ -195,7 +195,7 @@ def smoke(wheel: Path, sdist: Path, *, python: str, resolution: str) -> None:
                     env=env,
                 )
             else:
-                requirement = f"{rebuilt_wheel}[duckdb]" if extra else str(rebuilt_wheel)
+                requirement = f"{rebuilt_wheel}[duckdb,pandas]" if extra else str(rebuilt_wheel)
                 _run(
                     [uv, "pip", "install", "--python", str(executable), requirement],
                     cwd=consumer,

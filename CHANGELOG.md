@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Documentation
+
+- Start the README with a runnable table-first dataset and its completeness
+  columns, then choose a dataset type. Add executable feature patterns for
+  rolling windows, conditional events, eligibility, as-of attributes, recency
+  and Boolean labels. Keep output budgets, staging, owned inputs and development
+  details in their guides.
+
 ### Public API
 
 - Construct common dataset types with `terrine.recipes`: time series, trial

@@ -84,7 +84,7 @@ purpose and the workflow that warrants its exports.
 | --- | --- |
 | `terrine.recipes` | The eight constructor-first dataset workflows above; returns plain Designs that compile through the existing low-level API. |
 | `terrine.spec` | The full-flexibility Design layer: public `Sequential` and `EventPanel` transforms, calendar panels, initiation/adoption declarations, matched-time sampling, trial weights, winsorization, definition storage and JSON/YAML serialization. See [sequential panels](sequential-panels.md) and [ML staging](ml-staging.md). Expression implementation records stay in their owning module. |
-| `terrine.execution` | `publish_native_inputs` and its `PublishedInputs` result for [retained input publication](../../README.md#owned-inputs-for-repeated-builds). Verified bindings/relation authority are derived, not facade inputs. |
+| `terrine.execution` | `publish_native_inputs` and its `PublishedInputs` result for [retained input publication](materialization-runtime.md#owned-inputs-for-repeated-builds). Verified bindings/relation authority are derived, not facade inputs. |
 | `terrine.runtime` | Owner-side planning, saved plans, execution/scan authorization protocols, snapshot retention, exact-generation reads and run status/events/cancellation. See [runtime](materialization-runtime.md). Persistent state rows and layer translation stay in their owning modules. |
 | `terrine.dataset` | `GroupSplit` and `TimeSplit` policies supplied to `Frame.training_set(split=...)`; split strategy is an everyday training workflow choice. |
 | `terrine.export` | Shared preflight and Arrow/lifelines/diff-diff hand-offs, with their typed conversion results. See [library hand-offs](library-handoffs.md). |
