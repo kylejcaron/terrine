@@ -34,8 +34,10 @@ uv run python examples/first_dataset.py
    current-generation pointer.
 
 Configure sources, roster and completeness once, then reuse the Model for each
-Design. Only sources selected by the Design need readiness declarations, even
-when the Catalog also defines unused label sources.
+Design. `Model.from_tables` requires `complete=` on every declared `Events`
+descriptor, even if a Design will not use it. With `Model.from_catalog`, only
+sources selected by the Design need readiness declarations; unused Catalog
+sources, including unused label sources, do not.
 
 The tutorial uses two roster users, one without events. A complete empty count
 is zero. The event at exactly time zero is excluded from `[-1d,0s)` and included

@@ -76,7 +76,8 @@ Each `tr.recipes` constructor returns an ordinary, editable `Design`; the [low-l
 1. **Choose t0.** Every row has an explicit time zero: fixed, scheduled or event-based.
 2. **Use half-open windows.** `[start, end)` includes the start, excludes the end; offsets are elapsed durations, not calendar dates.
 3. **Features before, outcomes after.** Features and eligibility cannot look beyond the pre-t0 cutoff; outcomes describe follow-up.
-4. **Declare completeness.** `Events.complete` / `Coverage` asserts complete local days; it is never inferred from the latest event. Only selected sources need coverage.
+4. **Declare completeness.** `Model.from_tables` requires `complete=` on every `Events` descriptor; with `Model.from_catalog`, only sources selected by the Design need `Coverage`.
+   Both declare complete local days, never inferred from the latest event.
 5. **Null is not zero.** A complete empty count is zero; unavailable values stay null with `__reason`. Unknown eligibility refuses export rather than silently dropping a row.
 
 ## Supported warehouses
