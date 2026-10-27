@@ -208,6 +208,25 @@ def test_design_matches_duckdb(postgres_scratch, tmp_path, name, naive):  # noqa
     assert actual == expected
 
 
+@pytest.mark.parametrize("naive", [False, True])
+def test_landmark_nth_anchor_matches_original_time_oracle(postgres_scratch, tmp_path, naive):  # noqa: F811
+    duckdb, postgres = _both(postgres_scratch, tmp_path, naive=naive)
+    design = tr.Design(
+        "user",
+        tr.EventAnchor("order", which="nth", n=2, offset="1d"),
+        anchor_range=tr.AnchorRange("2025-01-02", "2025-01-03"),
+        features={"day_one_orders": tr.agg("orders", window=("-1d", "0s"))},
+    )
+    expected = _rows(duckdb, design)
+    actual = _rows(postgres, design)
+    assert actual == expected
+    assert [(row["unit"], row["t0"], row["day_one_orders"]) for row in actual] == [
+        ("a", datetime(2025, 1, 3, tzinfo=UTC), 1),
+        ("b", datetime(2025, 1, 3, 6, tzinfo=UTC), 1),
+    ]
+    assert {row["anchor_provenance"] for row in actual} == {"event:order:nth:offset:86400"}
+
+
 def test_uuid_event_ids_break_first_event_ties(postgres_scratch, tmp_path):  # noqa: F811
     duckdb, postgres = _both(postgres_scratch, tmp_path, event_ids={"orders": "event_id"})
     design = _DESIGNS["time_to_first_order"]

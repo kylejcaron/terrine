@@ -91,6 +91,46 @@ def test_prevalent_events_are_excluded_and_cutoff_equality_is_censored():
         con.disconnect()
 
 
+@pytest.mark.parametrize("shape", ["cross_section", TimeToEvent("churn")])
+def test_landmark_features_and_survival_followup_use_shifted_entry(shape):
+    con, model = _model()
+    try:
+        con.raw_sql(
+            "INSERT INTO entries VALUES "
+            "('u2', TIMESTAMPTZ '2025-01-02 12:00:00+00'), "
+            "('u2', TIMESTAMPTZ '2025-01-03 00:00:00+00'), "
+            "('u2', TIMESTAMPTZ '2025-01-03 01:00:00+00')"
+        )
+        design = Design(
+            "user",
+            EventAnchor("signup", offset="1d"),
+            features={
+                "latest_entry": event_time("enrolled", window=("-1d", "0s"), occurrence="last")
+            },
+            shape=shape,
+        )
+        frame = design.build(model).materialize()
+        restored = MaterializedFrame.from_arrow(frame.to_arrow())
+        rows = {row["unit"]: row for row in restored.table.to_pylist()}
+        assert restored.provenance.design_hash == design.spec_hash
+        assert rows["u2"]["t0"] == datetime(2025, 1, 3, tzinfo=UTC)
+        assert rows["u2"]["latest_entry"] == datetime(2025, 1, 2, 12, tzinfo=UTC)
+        timing = restored.provenance.expression_timings["latest_entry"]
+        assert timing.end_bound_column is not None
+        assert rows["u2"][timing.end_bound_column] == rows["u2"]["t0"]
+        if shape == "cross_section":
+            assert set(rows) == {"u1", "u2", "u3"}
+            assert rows["u1"]["latest_entry"] is None
+            assert rows["u3"]["latest_entry"] == datetime(2025, 1, 3, tzinfo=UTC)
+        else:
+            assert set(rows) == {"u2"}
+            assert rows["u2"]["event"] is True
+            assert rows["u2"]["event_time"] == datetime(2025, 1, 4, tzinfo=UTC)
+            assert rows["u2"]["duration"] == timedelta(days=1)
+    finally:
+        con.disconnect()
+
+
 def test_unobserved_initial_history_is_explained_and_excluded():
     con, model = _model(outcome_start="2025-01-02")
     try:

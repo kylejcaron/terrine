@@ -13,7 +13,7 @@ from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import Catalog
-from terrine.spec import Design, FixedDate, agg
+from terrine.spec import Design, EventAnchor, FixedDate, agg
 from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
 from terrine.temporal.prefix import sparse_prefix
 from tests.compile.test_columns import column_model  # noqa: F401,F811
@@ -388,27 +388,42 @@ def test_physical_source_type_change_invalidates_persisted_layer_identity(column
         )
 
 
+@pytest.mark.parametrize("entry", ["sequence", "offset"])
 def test_direct_dispatch_refuses_unsupported_substitutions_before_sources(
-    column_model, monkeypatch
+    column_model, monkeypatch, entry
 ):
     from terrine.compile.dispatch import compile_design
     from terrine.spec import EventSequence
     from terrine.windows import Window
 
-    design = Design(
-        "user",
-        FixedDate("2025-01-03"),
-        shape=EventSequence("amount", Window("-1d", "0s"), max_events=3),
+    design = (
+        Design("user", EventAnchor("amount", offset="1d"))
+        if entry == "offset"
+        else Design(
+            "user",
+            FixedDate("2025-01-03"),
+            shape=EventSequence("amount", Window("-1d", "0s"), max_events=3),
+        )
     )
 
     def forbidden(*args, **kwargs):
         raise AssertionError("unsupported substitution resolved a source")
 
     monkeypatch.setattr(Model, "_relation", forbidden)
-    with pytest.raises(TerrineError) as error:
-        compile_design(design, column_model, persisted_anchors=ibis.memtable({"x": [1]}))
-    assert error.value.code == "terrine.compile.runtime_shape_unsupported"
-    assert error.value.context["shape"] == "EventSequence"
+    persisted = ibis.memtable({"x": [1]})
+    entrypoints = [
+        lambda: compile_design(design, column_model, persisted_anchors=persisted),
+        lambda: compose_materialized_frame(design, column_model, persisted={}),
+    ]
+    if entry == "offset":
+        entrypoints.append(lambda: compile_anchors(design, column_model, persisted=persisted))
+    for invoke in entrypoints:
+        with pytest.raises(TerrineError) as error:
+            invoke()
+        assert error.value.code == "terrine.compile.runtime_shape_unsupported"
+        assert error.value.context["shape"] == (
+            "EventAnchor.offset" if entry == "offset" else "EventSequence"
+        )
 
 
 def test_reanchored_layer_plan_uses_event_resolution(column_model):

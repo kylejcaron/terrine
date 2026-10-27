@@ -6,6 +6,43 @@ Use `design.build(model)` to compile a lazy Frame; materialization and staging r
 
 `EventAnchor` reads the declared fact's bound source and physical entity mapping. Fact values are not used as event-presence predicates: a row is an event even when its fact column is null. The source's `Model.event_ids` column is retained from raw relation rows for stable tie ordering and identity. Aware timestamp components of fallback or configured event identities are rendered after explicit UTC normalization, independent of the session timezone. `first` and `nth` are selected over full source history before `Design.anchor_range` filtering; `each` retains every event. A range is half-open; calendar-date endpoints resolve through Catalog day-boundary semantics and aware datetime endpoints remain exact UTC instants.
 
+## Landmark event anchors
+
+`EventAnchor("purchase", offset="1d")` sets `t0` to the selected purchase
+instant plus one elapsed day. Offsets default to zero and accept non-negative
+integral seconds or `s`/`m`/`h`/`d`/`w` durations. Negative offsets refuse at
+construction with `terrine.design.invalid`. Selection and `anchor_range` use
+the **original event time**, not the landmark; the shift happens afterward.
+Roster membership and all feature/outcome windows use the resulting `t0`.
+
+For survival from the day after purchase, with baseline features covering that
+first day, use the low-level Design:
+
+```python
+from terrine import Design, EventAnchor, TimeToEvent, agg
+
+landmark = Design(
+    "user",
+    EventAnchor("purchase", which="first", offset="1d"),
+    features={"day_one_sessions": agg("sessions", window=("-1d", "0s"))},
+    shape=TimeToEvent("churn"),
+)
+```
+
+The feature window is `[purchase, purchase + 1d)`; follow-up starts at the
+landmark. Units whose terminal event precedes the landmark are excluded as
+prevalent. See [survival records](trajectories-survival.md#landmark-survival).
+
+Nonzero offsets are retained in `anchor_id`, anchor provenance and serialized
+Designs. Equivalent elapsed forms share a spec hash; zero is omitted from
+serialization so existing saved Designs and hashes remain unchanged.
+Persisted-layer runtime substitution for shifted event anchors refuses with
+`terrine.compile.runtime_shape_unsupported` before source access; use ordinary
+Frame materialization or a full rebuild instead.
+
+## Source integrity
+
+
 An event anchor must name a fact declared by its bound source, not merely
 present elsewhere in the Catalog; missing references use the same refusal
 as `Design.validate`. Unrelated source columns cannot change generated

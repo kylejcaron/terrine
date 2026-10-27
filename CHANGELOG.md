@@ -12,6 +12,14 @@
 
 ### Public API
 
+- `EventAnchor(..., offset="1d")` shifts analysis time zero by a non-negative
+  elapsed duration for landmark datasets, including survival after a baseline
+  feature period. First/nth selection and `anchor_range` retain original-event
+  semantics. Nonzero offsets participate in anchor identity, provenance and
+  Design hashes; zero-offset serialization and hashes remain unchanged.
+  Negative offsets refuse with `terrine.design.invalid`; persisted-layer
+  substitution for shifted anchors refuses before source access with
+  `terrine.compile.runtime_shape_unsupported`. Recipes are unchanged.
 - Construct common dataset types with `terrine.recipes`: time series, trial
   panels, event panels, cumulative LTV, survival, life tables, state panels and
   bounded event sequences. Each returns a plain low-level `Design`, retains

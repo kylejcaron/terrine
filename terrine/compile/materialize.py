@@ -26,7 +26,7 @@ _ANCHOR_LAYER_INVALID = RefusalSpec(
 
 def preflight_materialization_shape(design: Design, budget: Budget | None = None) -> None:
     """Refuse unsupported persisted-layer shapes and strict unknown scan budgets."""
-    ensure_runtime_shape_supported(design.shape)
+    ensure_runtime_shape_supported(design.shape, anchor=design.anchor)
     if budget is not None and budget.max_scan_bytes is not None and budget.strict_scan:
         raise _STRICT_SCAN_UNKNOWN.error()
 

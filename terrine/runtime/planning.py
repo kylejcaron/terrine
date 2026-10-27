@@ -268,7 +268,7 @@ class OwnerPlanner:
         expected_manifest = expected[0] if expected is not None else None
         if request.bind_base_manifest and expected_manifest != request.expected_base_manifest:
             raise _INVALID_REQUEST.error(reason="pinned base generation is no longer current")
-        ensure_runtime_shape_supported(request.design.shape)
+        ensure_runtime_shape_supported(request.design.shape, anchor=request.design.anchor)
         ensure_runtime_expressions_supported(request.design)
         model = self.resolver.resolve(request.model)
         if (

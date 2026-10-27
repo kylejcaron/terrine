@@ -24,7 +24,7 @@ from terrine.model import Model
 from terrine.semantic.models import TableRef
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
-from terrine.spec.validate import _MISSING, _UNIT
+from terrine.spec.validate import _MISSING, _UNIT, ensure_runtime_shape_supported
 
 __all__ = ["AnchorTable", "compile_anchors"]
 
@@ -410,6 +410,12 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
     if precision is not None:
         checks.append(precision)
     base = _utc_column(model, base, "_raw_t0", "t0")
+    if anchor.offset:
+        base = base.mutate(
+            t0=base.t0 + ibis.interval(seconds=anchor.offset),
+            anchor_id=base.anchor_id.concat(f":offset:{anchor.offset}"),
+            anchor_provenance=base.anchor_provenance.concat(f":offset:{anchor.offset}"),
+        )
     if design.unit in model.units:
         candidates, roster_checks = _roster_candidates(
             model, model.units[design.unit], base, filter_range=None
@@ -444,6 +450,8 @@ def compile_anchors(
     """Build or validate a lazy candidate relation without executing data-dependent checks."""
     if not isinstance(design, Design) or not isinstance(model, Model):
         raise TypeError("compile_anchors requires a Design and a bound Model")
+    if persisted is not None:
+        ensure_runtime_shape_supported(design.shape, anchor=design.anchor)
     from terrine.execution.backend import backend_provider
 
     backend_provider(model.con).capabilities.require(
