@@ -71,6 +71,7 @@ from terrine.temporal.aggregate import aggregate_window
 from terrine.temporal.attributes import (
     _enriched_property_columns,
     enrich_events,
+    history_checks,
     validate_history,
 )
 from terrine.temporal.daily import resolve_measure
@@ -165,8 +166,8 @@ class _HistoryValidation:
     dimension: BoundDimension
 
     def reads(self) -> tuple[ibis.Table, ...]:
-        # The checks filter and count this table; they add no primitive of their own.
-        return (self.table,)
+        """The validation queries, each projected to the columns it checks."""
+        return tuple(query for query, _ in history_checks(self.table, self.dimension))
 
     def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None:
         validate_history(self.table, self.dimension, execute=execute)

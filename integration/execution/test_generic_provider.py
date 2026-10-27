@@ -169,6 +169,115 @@ def test_frame_admission_precedes_every_source_read(sqlite, monkeypatch, entry):
     assert "exact_state" not in statements and "utc_wall_clock" not in statements
 
 
+@pytest.fixture(params=["sqlite", "duckdb"])
+def unregistered(request, sqlite):
+    """Two genuine unregistered backends with a dimension table carrying a decimal
+    column no lookup reads: Ibis SQLite, and a DuckDB backend subclass whose module
+    is not the registered one, so admission treats it as unverified while the
+    engine itself can compile timestamp deltas."""
+    if request.param == "sqlite":
+        sqlite.con.execute(
+            "CREATE TABLE tiers (user_id INTEGER, tier TEXT, balance DECIMAL(12, 2))"
+        )
+        sqlite.con.execute("INSERT INTO tiers VALUES (1, 'gold', 12.50)")
+        sqlite.con.commit()
+        yield sqlite
+        return
+    from ibis.backends.duckdb import Backend
+
+    class UnregisteredDuckDB(Backend):
+        pass
+
+    con = cast(Backend, UnregisteredDuckDB().connect())
+    try:
+        con.raw_sql(
+            "CREATE TABLE events AS SELECT TIMESTAMP '2025-01-01' AS ts, 1::BIGINT AS user_id, "
+            "7::BIGINT AS value"
+        )
+        con.raw_sql("CREATE TABLE users AS SELECT 1::BIGINT AS user_id")
+        con.raw_sql(
+            "CREATE TABLE tiers AS SELECT 1::BIGINT AS user_id, 'gold' AS tier, "
+            "12.50::DECIMAL(12, 2) AS balance"
+        )
+        yield con
+    finally:
+        con.disconnect()
+
+
+@pytest.mark.parametrize("entry", ["materialize", "preview"])
+def test_asof_admission_inspects_only_the_columns_it_reads(unregistered, monkeypatch, entry):
+    """A static string as-of lookup over a dimension table carrying an unused
+    decimal column never asks for the decimal witness: admission inspects the
+    lookup and its validation queries projected to their columns, not the whole
+    table. Neither backend completes the lookup (Ibis's SQLite compiler has no
+    timestamp-delta rule, so the UTC witness refuses it by code before any read;
+    the DuckDB-based backend's portable timestamp SQL uses functions outside the
+    fail-closed read-only allowlist), but the only witness ever attempted is the
+    timestamp one, and no source row is read before a refusal."""
+    from terrine import UnverifiedBackendWarning, asof, preview
+    from terrine.execution import _generic
+
+    statements: list[str] = []
+    original = _generic.NoSnapshotSession._call_backend
+
+    def recording(self, operation, action):
+        statements.append(operation)
+        return original(self, operation, action)
+
+    monkeypatch.setattr(_generic.NoSnapshotSession, "_call_backend", recording)
+    executed: list[str] = []
+    if unregistered.name == "sqlite":
+        unregistered.con.set_trace_callback(executed.append)
+    assert unregistered.table("tiers").schema()["balance"].is_decimal()
+    definitions = catalog().model_dump()
+    definitions["dialect"] = unregistered.name
+    definitions["sources"]["events"]["properties"] = ["tier"]
+    definitions["sources"]["events"]["dimensions"] = ["accounts"]
+    definitions["properties"]["tier"] = {
+        "source": "events",
+        "column": "tier",
+        "dtype": "string",
+        "as_of": "static",
+        "dimension": "accounts",
+    }
+    definitions["dimensions"]["accounts"] = {
+        "relation": {"kind": "table", "name": "tiers"},
+        "source_entity": "user",
+        "entity_column": "user_id",
+        "properties": ["tier"],
+    }
+    with pytest.warns(UnverifiedBackendWarning):
+        model = Model.from_catalog(
+            type(catalog()).model_validate(definitions),
+            con=unregistered,
+            allow_unverified=True,
+            readiness={"events": Coverage(date(2025, 1, 1), date(2025, 1, 2))},
+            units={"user": UnitSource("users", "user_id")},
+        )
+    design = Design(
+        "user",
+        FixedDate(datetime(2025, 1, 2, tzinfo=UTC)),
+        features={"tier": asof("tier", before="0s")},
+    )
+    try:
+        if entry == "materialize":
+            outcome = design.build(model).materialize().table["tier"].to_pylist()
+        else:
+            outcome = preview(design, model, bounded_count=1).candidate_rows
+    except TerrineError as error:
+        assert error.context.get("operation") != "exact_state"
+        if unregistered.name == "sqlite":
+            assert error.code == "terrine.backend.capability_unavailable"
+            assert error.context["operation"] == "utc_wall_clock"
+            assert _source_reads(executed) == []
+        else:
+            assert error.code == "terrine.sql.invalid_read_query"
+    else:
+        assert outcome in (["gold"], 1)
+    assert "utc_wall_clock" in statements
+    assert "exact_state" not in statements
+
+
 def test_generic_materialization_round_trips_unverified_stamp(sqlite):
     import pyarrow as pa
 

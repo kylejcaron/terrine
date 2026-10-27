@@ -15,7 +15,7 @@ from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _MISSING, _SCHEMA
 from terrine.semantic.models import BoundDimension
 
-__all__ = ["attribute_asof", "enrich_events", "validate_history"]
+__all__ = ["attribute_asof", "enrich_events", "history_checks", "validate_history"]
 
 _ALIAS_COLLISION = RefusalSpec(
     "terrine.temporal.alias_collision",
@@ -291,33 +291,34 @@ def enrich_events(
     return result
 
 
-def validate_history(
-    history: ibis.Table,
-    dimension: BoundDimension,
-    *,
-    execute: Callable[[ibis.Table], Any],
-) -> None:
-    """Validate history with bounded aggregate queries on the caller's pinned executor."""
+def history_checks(
+    history: ibis.Table, dimension: BoundDimension
+) -> tuple[tuple[ibis.Table, RefusalSpec], ...]:
+    """The bounded count queries that validate ``history``, each with its refusal.
+
+    Every query is an aggregate over the columns it checks, so admission
+    inspects exactly what executes rather than the whole dimension table.
+    """
     validity = dimension.validity
     start = None if validity is None else (validity.changed_at or validity.valid_from)
     end = None if validity is None or validity.changed_at else validity.valid_to
     columns = [dimension.entity_column, *([start] if start else []), *([end] if end else [])]
     _check_columns(history, columns, field=f"dimension {dimension.name}")
     key = history[dimension.entity_column]
+    reserved = {column.casefold() for column in history.columns}
+
+    def count(rows: ibis.Table) -> ibis.Table:
+        return rows.aggregate(__terrine_count=rows.count())
+
     if validity is None:
-        null_rows = history.filter(key.isnull())
-        null_count = execute(null_rows.aggregate(__terrine_count=null_rows.count()))
-        if _scalar(null_count) > 0:
-            raise _INVALID_HISTORY.error()
-        count_alias = _fresh_alias("__terrine_n", {column.casefold() for column in history.columns})
+        count_alias = _fresh_alias("__terrine_n", reserved)
         repeated = history.group_by(dimension.entity_column).aggregate(
             **{count_alias: history.count()}
         )
-        repeated_rows = repeated.filter(repeated[count_alias] > 1)
-        repeated_count = execute(repeated_rows.aggregate(__terrine_count=repeated_rows.count()))
-        if _scalar(repeated_count) > 0:
-            raise _STATIC_MULTIPLICITY.error()
-        return
+        return (
+            (count(history.filter(key.isnull())), _INVALID_HISTORY),
+            (count(repeated.filter(repeated[count_alias] > 1)), _STATIC_MULTIPLICITY),
+        )
 
     assert start is not None
     began = history[start]
@@ -325,52 +326,62 @@ def validate_history(
     if end:
         finished = history[end]
         malformed = malformed | (finished.notnull() & compare_timestamps(finished, began, "le"))
-    malformed_rows = history.filter(malformed)
-    malformed_count = execute(malformed_rows.aggregate(__terrine_count=malformed_rows.count()))
-    if _scalar(malformed_count) > 0:
-        raise _INVALID_HISTORY.error()
-
-    count_alias = _fresh_alias("__terrine_n", {column.casefold() for column in history.columns})
+    count_alias = _fresh_alias("__terrine_n", reserved)
     grouped = history.group_by(dimension.entity_column, start).aggregate(
         **{count_alias: history.count()}
     )
-    duplicate_rows = grouped.filter(grouped[count_alias] > 1)
-    duplicate_count = execute(duplicate_rows.aggregate(__terrine_count=duplicate_rows.count()))
-    if _scalar(duplicate_count) > 0:
-        raise _DUPLICATE_HISTORY.error()
+    checks = [
+        (count(history.filter(malformed)), _INVALID_HISTORY),
+        (count(grouped.filter(grouped[count_alias] > 1)), _DUPLICATE_HISTORY),
+    ]
     if end:
-        reserved = {column.casefold() for column in history.columns}
         prior_end_alias = _fresh_alias("__terrine_prior_max_end", reserved)
         prior_open_alias = _fresh_alias("__terrine_prior_open", reserved)
+        # Only the key and validity columns take part; project them so the
+        # window carries no unrelated column into the query.
+        ranges = history.select(dimension.entity_column, start, end)
         prior_window = ibis.window(
-            group_by=[key], order_by=[timestamp_order_key(began)], rows=(None, -1)
+            group_by=[ranges[dimension.entity_column]],
+            order_by=[timestamp_order_key(ranges[start])],
+            rows=(None, -1),
         )
-        annotated = history.mutate(
+        annotated = ranges.mutate(
             **{
-                prior_end_alias: cast(ir.StructColumn, timestamp_order_key(history[end]))
+                prior_end_alias: cast(ir.StructColumn, timestamp_order_key(ranges[end]))
                 .max()
                 .over(prior_window),
-                prior_open_alias: history[end].isnull().any().over(prior_window),
+                prior_open_alias: ranges[end].isnull().any().over(prior_window),
             }
         )
         overlaps = annotated.filter(
             annotated[prior_open_alias]
             | (annotated[prior_end_alias] > timestamp_order_key(annotated[start]))
         )
-        overlap_count = execute(overlaps.aggregate(__terrine_count=overlaps.count()))
-        if _scalar(overlap_count) > 0:
-            raise _OVERLAPPING_HISTORY.error()
+        checks.append((count(overlaps), _OVERLAPPING_HISTORY))
     elif validity.changed_at is None:
-        entity_count_alias = _fresh_alias(
-            "__terrine_n", {column.casefold() for column in history.columns}
-        )
+        entity_count_alias = _fresh_alias("__terrine_n", reserved)
         multiple_ranges = history.group_by(dimension.entity_column).aggregate(
             **{entity_count_alias: history.count()}
         )
-        multiple_rows = multiple_ranges.filter(multiple_ranges[entity_count_alias] > 1)
-        multiple_count = execute(multiple_rows.aggregate(__terrine_count=multiple_rows.count()))
-        if _scalar(multiple_count) > 0:
-            raise _OVERLAPPING_HISTORY.error()
+        checks.append(
+            (
+                count(multiple_ranges.filter(multiple_ranges[entity_count_alias] > 1)),
+                _OVERLAPPING_HISTORY,
+            )
+        )
+    return tuple(checks)
+
+
+def validate_history(
+    history: ibis.Table,
+    dimension: BoundDimension,
+    *,
+    execute: Callable[[ibis.Table], Any],
+) -> None:
+    """Validate history with bounded aggregate queries on the caller's pinned executor."""
+    for query, refusal in history_checks(history, dimension):
+        if _scalar(execute(query)) > 0:
+            raise refusal.error()
 
 
 def _scalar(result: Any) -> int:
