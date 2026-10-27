@@ -101,6 +101,8 @@ def engine_selection_violations(source: str, *, path: str) -> tuple[int, ...]:
         return ()
     tree = ast.parse(source, filename=path)
     lines: set[int] = set()
+    module_aliases: dict[str, frozenset[str]] = {}
+    module_identities: set[str] = set()
 
     def scan(
         roots: Iterable[ast.AST],
@@ -109,6 +111,7 @@ def engine_selection_violations(source: str, *, path: str) -> tuple[int, ...]:
         parameters: Iterable[str] = (),
         *,
         class_scope: bool = False,
+        module_scope: bool = False,
     ) -> None:
         nodes = tuple(_scope_nodes(roots))
         bound = set(parameters)
@@ -119,10 +122,26 @@ def engine_selection_violations(source: str, *, path: str) -> tuple[int, ...]:
                 bound.add(node.name)
             elif isinstance(node, (ast.Import, ast.ImportFrom)):
                 bound.update(alias.asname or alias.name.split(".")[0] for alias in node.names)
+        external = {
+            name
+            for node in nodes
+            if isinstance(node, (ast.Global, ast.Nonlocal))
+            for name in node.names
+        }
+        bound = set() if class_scope else bound - external
         aliases = {name: values for name, values in inherited_aliases.items() if name not in bound}
         identities = inherited_identities - bound
+        for node in nodes:
+            if isinstance(node, ast.Global):
+                for name in node.names:
+                    aliases.pop(name, None)
+                    identities.discard(name)
+                    if name in module_aliases:
+                        aliases[name] = module_aliases[name]
+                    if name in module_identities:
+                        identities.add(name)
         assignments = [node for node in nodes if isinstance(node, (ast.Assign, ast.AnnAssign))]
-        # Resolve aliases only within this scope; local bindings hide enclosing names.
+        # Function locals hide enclosing names; class attributes and external bindings do not.
         for _ in range(len(assignments) + 1):
             changed = False
             for node in assignments:
@@ -142,6 +161,9 @@ def engine_selection_violations(source: str, *, path: str) -> tuple[int, ...]:
                         changed = True
             if not changed:
                 break
+        if module_scope:
+            module_aliases.update(aliases)
+            module_identities.update(identities)
 
         def selects(value: ast.AST, candidate: ast.AST) -> bool:
             literals = _literals(candidate, aliases)
@@ -220,7 +242,7 @@ def engine_selection_violations(source: str, *, path: str) -> tuple[int, ...]:
                     },
                 )
 
-    scan(tree.body, {}, set())
+    scan(tree.body, {}, set(), module_scope=True)
     return tuple(sorted(lines))
 
 
@@ -252,6 +274,41 @@ def engine_selection_violations(source: str, *, path: str) -> tuple[int, ...]:
             '        return selected.casefold() == "duckdb"\n'
             "    return uses_backend",
             (4,),
+        ),
+        (
+            "def inspect(con):\n"
+            "    selected = con.name\n"
+            "    def uses_backend():\n"
+            "        nonlocal selected\n"
+            "        selected = selected.casefold()\n"
+            '        return selected == "duckdb"\n'
+            "    return uses_backend",
+            (6,),
+        ),
+        (
+            "selected = con.name\n"
+            "def uses_backend():\n"
+            "    global selected\n"
+            "    selected = selected.casefold()\n"
+            '    return selected == "duckdb"',
+            (5,),
+        ),
+        (
+            "selected = con.name\n"
+            "class Dispatch:\n"
+            "    selected = selected.casefold()\n"
+            '    is_duckdb = selected == "duckdb"',
+            (4,),
+        ),
+        (
+            "selected = con.name\n"
+            "def inspect(selected):\n"
+            "    def uses_backend():\n"
+            "        global selected\n"
+            "        selected = selected.casefold()\n"
+            '        return selected == "duckdb"\n'
+            "    return uses_backend",
+            (6,),
         ),
     ],
 )
@@ -292,6 +349,16 @@ def test_guard_rejects_engine_selection(source, lines):
             "    return dialect in NAMES"
         ),
         ('NAMES = {"duckdb"}\ndef is_label(dialect, NAMES):\n    return dialect in NAMES'),
+        (
+            "selected = label\n"
+            "def inspect(con):\n"
+            "    selected = con.name\n"
+            "    def is_label():\n"
+            "        global selected\n"
+            "        selected = selected.casefold()\n"
+            '        return selected == "duckdb"\n'
+            "    return is_label"
+        ),
     ],
 )
 def test_guard_ignores_nonselection_literals(source):
