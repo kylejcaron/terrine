@@ -91,6 +91,21 @@ def test_time_series_is_a_plain_scheduled_design_with_all_supported_roles():
     )
 
 
+def test_time_series_accepts_typed_boolean_features_and_outcomes() -> None:
+    feature = gt(agg("visits", window=("-7d", "-1d")), 0)
+    outcome = gt(agg("revenue", window=("0d", "7d")), 0)
+    design = recipes.time_series(
+        "user",
+        every="7d",
+        start="2025-01-01",
+        end="2025-02-01",
+        features={"active": feature},
+        outcomes={"converted": outcome},
+    )
+    assert design.features["active"] == feature
+    assert design.outcomes["converted"] == outcome
+
+
 @pytest.mark.parametrize(
     "treatment",
     [

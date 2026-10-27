@@ -41,6 +41,12 @@ and `administrative_cutoff` default to `None`. Event occurrence defaults to
 `"first"`; `occurrence="nth"` requires a positive one-based `n`, while `n` is
 omitted for `"first"` or `"each"`.
 
+Where a constructor accepts `features` or `outcomes`, each named value may be an
+expression or a Boolean predicate, just as in `Design`. Eligibility remains a
+mapping of predicates. Shape-specific restrictions still apply: life-table
+features must exactly match `group_by`, and shapes with derived outcomes do not
+accept arbitrary outcome mappings.
+
 ## Top-level constructors
 
 | Workflow | `terrine` names | Example or guide |
