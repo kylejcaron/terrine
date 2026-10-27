@@ -159,7 +159,12 @@ def ltv(
     gap: str | int = "0d",
     administrative_cutoff: datetime | None = None,
 ) -> Design:
-    """Build a cumulative CohortSpec trajectory including the origin event at age zero."""
+    """Build an origin-inclusive cumulative trajectory from a native SUM metric.
+
+    The metric must be untransformed and backed by exactly one SUM measure.
+    With Model.from_tables, use <source>_<value>_sum; generated count and mean
+    metrics are not accepted by this shape.
+    """
     return Design(
         unit,
         EventAnchor(start_event),

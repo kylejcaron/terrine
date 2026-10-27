@@ -116,7 +116,10 @@ assert design == equivalent
 ```
 
 The generated event fact `orders` also works as `start_event="orders"` in
-[`recipes.ltv`](trajectories-survival.md#cumulative-ltv). Run
+[`recipes.ltv`](trajectories-survival.md#cumulative-ltv). Its required `metric`
+must be an untransformed native metric with exactly one SUM measure: use
+`<source>_<value>_sum`, such as `orders_amount_sum`. Generated count and mean
+metrics are not accepted by this shape. Run
 `uv run python examples/table_first_dataset.py` for a complete local example
 that creates the roster and orders, checks zero-activity and incomplete-window
 results, and materializes cumulative event-origin values.

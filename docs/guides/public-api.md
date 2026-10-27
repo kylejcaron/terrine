@@ -23,11 +23,15 @@ low-level construction under **Under the hood**.
 | `time_series` | One unit at each scheduled calendar anchor | [Table-first binding](temporal-engine.md#scheduled-time-series) |
 | `trial_panel` | One eligible unit at each scheduled trial time zero | [Sequential trials](sequential-panels.md#scheduled-trial-panels) |
 | `event_panel` | One selected event and declared relative period | [Event panels](sequential-panels.md#event-panels) |
-| `ltv` | One unit/cohort origin and age, with cumulative metric value | [LTV](trajectories-survival.md#cumulative-ltv) |
+| `ltv` | One unit/cohort origin and age, with cumulative SUM-metric value | [LTV](trajectories-survival.md#cumulative-ltv) |
 | `survival` | One unit/start event with observed event or censor time | [Survival](trajectories-survival.md#survival-records) |
 | `life_table` | One declared feature group and elapsed-time bin | [Life tables](trajectories-survival.md#grouped-life-tables) |
 | `state_panel` | One unit-period transition from prior to response state | [State panels](state-panels.md) |
 | `event_sequence` | One selected event anchor with bounded ordered events | [Event sequences](temporal-engine.md#bounded-event-sequences-and-event-time-origins) |
+
+For `ltv`, the required `metric` must be an untransformed native metric with
+exactly one SUM measure. Use `<source>_<value>_sum` from `Model.from_tables`;
+the generated count and mean metrics are not accepted by this shape.
 
 All constructors require `unit`. The guides list row-defining arguments and
 supported options; unsupported keywords raise Python's `TypeError` rather than

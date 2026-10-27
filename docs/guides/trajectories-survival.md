@@ -10,12 +10,17 @@ constructors with assertions on values and materialized roles.
 ## Cumulative LTV
 
 `recipes.ltv` returns one row per unit/cohort origin and age. Required arguments
-are `unit`, `start_event`, `metric`, `period`, and positive `periods`. The first
-start event is the origin; each age represents a period of elapsed time from it.
-For ages `a = 0, ..., periods - 1` and positive period width `p`, let `m_j` be
-the metric value in `[t0 + j*p, t0 + (j+1)*p)`. The cumulative value is
-`m_0 + ... + m_a`; for an additive sum metric this is the total in
-`[t0, t0 + (a+1)*p)`. **Age 0 includes the origin event**, rather than starting
+are `unit`, `start_event`, `metric`, `period`, and positive `periods`. `metric`
+must be an untransformed native metric backed by exactly one SUM measure.
+With `Model.from_tables`, use the generated `<source>_<value>_sum` metric;
+`<source>_count` and `<source>_<value>_mean` are not accepted by this shape.
+Other aggregations, multi-measure metrics, and transforms refuse with
+`terrine.design.invalid` (reason `trajectory_metric_must_be_additive`).
+The first start event is the origin; each age represents a period of elapsed
+time from it. For ages `a = 0, ..., periods - 1` and positive period width `p`,
+let `m_j` be the metric value in `[t0 + j*p, t0 + (j+1)*p)`. The cumulative
+value is `m_0 + ... + m_a`, the total in `[t0, t0 + (a+1)*p)`.
+**Age 0 includes the origin event**, rather than starting
 after it. A generated event fact such as `orders` from
 [`Model.from_tables`](temporal-engine.md#binding-event-tables) can be the origin.
 
