@@ -1,20 +1,15 @@
 """Dialect-aware read-only SQL admission; the original query is never rewritten."""
 
-import sys
+import contextvars
+import threading
+from collections.abc import Callable
 
 from sqlglot import exp, parse
 from sqlglot.optimizer.scope import traverse_scope
 
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, TerrineError
 
 __all__ = ["admit_read_query"]
-
-# SQLGlot parses by recursive descent, roughly twenty Python frames per nesting
-# level of an expression. Compiled study statements nest deeply (the portable
-# policy's timestamp reconstruction alone needs about 850 frames), so the parse
-# is given a fixed budget above the default interpreter limit rather than
-# whatever the caller's own stack happens to leave.
-_PARSE_RECURSION_LIMIT = 10_000
 
 DIALECT_MISMATCH = RefusalSpec(
     "terrine.semantic.dialect_mismatch",
@@ -94,18 +89,64 @@ _READ_FUNCTIONS = frozenset(
 )
 
 
+_TOO_DEEP = "too_deep_to_verify"
+_WORKER = threading.local()
+
+
+def _verified[T](action: Callable[[], T]) -> T:
+    """Run one SQL verification step on a fresh thread.
+
+    SQLGlot parses, renders and traverses by recursion, about twenty interpreter
+    frames per nesting level of an expression and about twelve per subquery, and
+    a compiled study statement nests deeply (under the portable policy a float
+    quantization inside a six-feature window needs about 720 frames to parse;
+    native PostgreSQL about 430). The recursion limit is shared by every thread,
+    but the depth it bounds is counted per thread, so a fresh thread gives the
+    step the whole budget whatever the caller's own depth; the limit itself is
+    never changed. A statement too deep even for that is refused as unverifiable,
+    which is distinct from being shown unsafe. Steps nested inside a running
+    step stay on its thread.
+    """
+    if getattr(_WORKER, "active", False):
+        try:
+            return action()
+        except RecursionError as exc:
+            raise _INVALID.error(reason=_TOO_DEEP) from exc
+    context = contextvars.copy_context()
+    outcome: dict[str, object] = {}
+
+    def run() -> None:
+        _WORKER.active = True
+        try:
+            outcome["value"] = context.run(action)
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the caller's thread
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=run, name="terrine-sql-verification", daemon=True)
+    worker.start()
+    worker.join()
+    if "error" in outcome:
+        error = outcome["error"]
+        assert isinstance(error, BaseException)
+        if isinstance(error, RecursionError):
+            raise _INVALID.error(reason=_TOO_DEEP) from error
+        raise error
+    return outcome["value"]  # ty: ignore[invalid-return-type]
+
+
+def _render(statement: exp.Expression, dialect: str, *, comments: bool = True) -> str:
+    """Render ``statement`` for ``dialect`` as a verification step."""
+    return _verified(lambda: statement.sql(dialect=dialect, comments=comments))
+
+
 def _statements(sql: str, dialect: str, reason: str) -> list[exp.Expression | None]:
-    """Parse ``sql`` with a recursion budget independent of the caller's depth."""
-    limit = sys.getrecursionlimit()
-    if limit < _PARSE_RECURSION_LIMIT:
-        sys.setrecursionlimit(_PARSE_RECURSION_LIMIT)
+    """Parse ``sql`` as a verification step, naming ``reason`` for a failed parse."""
     try:
-        return parse(sql, read=dialect)
+        return _verified(lambda: parse(sql, read=dialect))
+    except TerrineError:
+        raise
     except Exception as exc:
         raise _INVALID.error(reason=reason) from exc
-    finally:
-        if limit < _PARSE_RECURSION_LIMIT:
-            sys.setrecursionlimit(limit)
 
 
 def _parse_read_query_ast(sql: str, dialect: str) -> exp.Query:
@@ -142,18 +183,23 @@ def admit_read_query(sql: str, declared_dialect: str, execution_dialect: str) ->
     return sql
 
 
+def _scopes(statement: exp.Expression) -> None:
+    """Materialize SQLGlot's lexical scope graph as a verification step."""
+    try:
+        _verified(lambda: tuple(traverse_scope(statement)))
+    except TerrineError:
+        raise
+    except Exception as exc:
+        raise _INVALID.error(reason="scope analysis failed") from exc
+
+
 def _admit_read_query_ast(sql: str, declared_dialect: str, execution_dialect: str) -> exp.Query:
     """Return the policy-checked AST and use SQLGlot's lexical scope graph."""
     admit_read_query(sql, declared_dialect, execution_dialect)
-    try:
-        statement = parse(sql, read=declared_dialect)[0]
-        if not isinstance(statement, exp.Query):
-            raise _INVALID.error(reason="expected a SELECT or other read query")
-        # Materialize the scopes here so all callers use SQLGlot's lexical CTE
-        # resolution instead of treating every Table node as a physical read.
-        tuple(traverse_scope(statement))
-    except Exception as exc:
-        raise _INVALID.error(reason="scope analysis failed") from exc
+    statement = _parse_read_query_ast(sql, declared_dialect)
+    # Materialize the scopes here so all callers use SQLGlot's lexical CTE
+    # resolution instead of treating every Table node as a physical read.
+    _scopes(statement)
     return statement
 
 
@@ -167,7 +213,7 @@ def _admit_stored_view_query_ast(definition: str, dialect: str) -> exp.Query:
         statement = statement.expression
     if not isinstance(statement, exp.Query):
         raise _INVALID.error(reason="stored view definition does not contain a query")
-    return _admit_read_query_ast(statement.sql(dialect=dialect), dialect, dialect)
+    return _admit_read_query_ast(_render(statement, dialect), dialect, dialect)
 
 
 def _admit_capture_result_query_ast(sql: str, dialect: str) -> exp.Query:
@@ -183,7 +229,7 @@ def _admit_capture_result_query_ast(sql: str, dialect: str) -> exp.Query:
             or (isinstance(node.parent, exp.Table) and (node.parent.db or node.parent.catalog))
         ):
             raise _INVALID.error(reason="capture function has no admitted read-only contract")
-    tuple(traverse_scope(statement))
+    _scopes(statement)
     return statement
 
 
@@ -196,4 +242,4 @@ def _admit_capture_stored_view_query_ast(definition: str, dialect: str) -> exp.Q
         statement = statement.expression
     if not isinstance(statement, exp.Query):
         raise _INVALID.error(reason="stored capture view does not contain a query")
-    return _admit_capture_result_query_ast(statement.sql(dialect=dialect), dialect)
+    return _admit_capture_result_query_ast(_render(statement, dialect), dialect)

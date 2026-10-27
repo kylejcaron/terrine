@@ -27,7 +27,7 @@ from terrine.backends.numeric import (
     float_scale,
     guard_accumulation,
 )
-from terrine.backends.timestamps import utc_instant, utc_wall_clock
+from terrine.backends.timestamps import local_day
 from terrine.semantic.bind import _MISSING, _SCHEMA
 from terrine.semantic.models import BoundMeasure, BoundSource
 from terrine.semantic.rules import (
@@ -464,33 +464,7 @@ def sparse_daily(
     timestamp = events._timestamp
     if not timestamp.type().is_timestamp():
         raise _SCHEMA.error(field="normalized event", column="_timestamp")
-    utc = cast(
-        ir.TimestampValue,
-        utc_wall_clock(timestamp) if timestamp.type().timezone else timestamp,
-    )
-    dtype = utc.type()
-    if isinstance(dtype, dt.Timestamp) and dtype.scale is not None and dtype.scale > 6:
-        # Only this bucket projection needs microseconds: every fixed-offset
-        # midnight is aligned. Keep original event instants unchanged.
-        micros = cast(ir.TimestampValue, utc.cast("timestamp"))
-        utc = cast(
-            ir.TimestampValue,
-            (utc < micros).ifelse(micros - ibis.interval(microseconds=1), micros),
-        )
-    day = utc.date()
-    midnight = cast(ir.TimestampValue, day.cast("timestamp"))
-    if minutes < 0:
-        day = (utc < midnight + ibis.interval(minutes=-minutes)).ifelse(
-            day - ibis.interval(days=1), day
-        )
-    elif minutes > 0:
-        day = (utc >= midnight + ibis.interval(minutes=1440 - minutes)).ifelse(
-            day + ibis.interval(days=1), day
-        )
-    day = day.cast("date")
-    bucket = utc_instant(
-        cast(ir.TimestampValue, day.cast("timestamp")) - ibis.interval(minutes=minutes)
-    )
+    day, bucket = local_day(cast(ir.TimestampValue, timestamp), minutes)
     return _sparse_group(
         events, measure, {"local_day": day, "_timestamp": bucket}, unit_column, source=source
     )

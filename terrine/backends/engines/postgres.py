@@ -14,7 +14,7 @@ from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE, _SNAPSHOT_UNA
 from terrine.backends.dialect import Dialect, current_dialect, unavailable
 from terrine.backends.numeric import _checked_narrow_exact
 from terrine.backends.registry import supported_engine_route
-from terrine.backends.timestamps import _UNSUPPORTED, _epoch
+from terrine.backends.timestamps import _UNSUPPORTED, _epoch, native_local_day
 from terrine.errors import RefusalSpec
 
 _EXACT = dt.Unknown(raw_type=sge.DataType.build("NUMERIC", dialect="postgres"))
@@ -222,6 +222,11 @@ class PostgresDialect(Dialect):
 
     def utc_instant(self, value: ir.Value) -> ir.TimestampValue:
         return cast(ir.TimestampValue, _utc_aware("UTC", value))
+
+    def local_day(
+        self, timestamp: ir.TimestampValue, offset_minutes: int
+    ) -> tuple[ir.DateValue, ir.TimestampValue]:
+        return native_local_day(self, timestamp, offset_minutes)
 
     def timestamp_text(self, value: ir.TimestampValue) -> ir.StringValue:
         return value.cast(dt.string)

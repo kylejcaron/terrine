@@ -12,8 +12,8 @@ Backends fall into three tiers:
   registered identity admission, a native expression policy with the measured
   numerical contracts in its section below, and one consistent view per
   materialization. Nothing in the unverified tier changes these guarantees:
-  their SQL, refusals and session lifetimes are unaffected by the portable
-  policy.
+  their native conversions, refusals and session lifetimes are unaffected by
+  the portable policy.
 - **Opted-in unverified backends**: any other genuine Ibis backend, admitted
   for read-only operations only after `allow_unverified=True`, executed under
   the portable expression policy with coded, operation-specific refusals. See
@@ -127,7 +127,10 @@ backend has no such rule, so every compiled statement is instead re-parsed
 with the same read-only rules and built-in allowlist as admitted SQL, failing
 closed: a statement that lowers to a dialect function without an admitted
 read-only contract refuses with `terrine.sql.invalid_read_query` rather than
-executing.
+executing. Every such verification step, on every engine, runs on a fresh
+thread so that its recursion depth is independent of the caller's stack; a
+statement too deeply nested to verify refuses with the same code and
+`reason="too_deep_to_verify"`, which is distinct from being shown unsafe.
 
 ### Operation admission before source data
 
@@ -206,9 +209,12 @@ precision and refuses rather than narrows.
   Nothing is answered by a backend overflow error, a narrowed value or a
   silent NULL.
 - Timestamps use native order, typed UTC epoch deltas and signed sub-second
-  parts; the union/window as-of fallback (never a range join), NULL-ignoring
-  coalesced extrema and portable integer sequences (seconds multiplied first,
-  then cast to an interval) are the defaults.
+  parts; fixed-offset local days and their start instants come from one epoch
+  delta and one floor quotient rather than chained conversions, keeping day
+  buckets and endpoint alignment shallow; the union/window as-of fallback
+  (never a range join), NULL-ignoring coalesced extrema and portable integer
+  sequences (seconds multiplied first, then cast to an interval) are the
+  defaults.
 
 Registered engines keep their native state and every previously refused
 operation through explicit overrides: `exact_ratio` and `exact_is_nonfinite`

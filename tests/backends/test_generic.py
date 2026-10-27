@@ -300,6 +300,79 @@ def test_portable_nanosecond_utc_conversion_refuses_before_any_query(operation):
     assert caught.value.context["backend"] == "generic"
 
 
+_DAY_NS = 86_400 * 10**9
+_MINUTE_NS = 60 * 10**9
+
+
+def _local_day_oracle(instant_ns: int, offset_minutes: int):
+    """Independent oracle in integer nanoseconds: the local calendar day under a fixed
+    offset and the UTC instant at which it starts."""
+    from datetime import UTC, date, datetime, timedelta
+
+    local = instant_ns + offset_minutes * _MINUTE_NS
+    day_number = local // _DAY_NS
+    start_ns = day_number * _DAY_NS - offset_minutes * _MINUTE_NS
+    assert start_ns % 10**9 == 0
+    return (
+        date(1970, 1, 1) + timedelta(days=day_number),
+        datetime(1970, 1, 1, tzinfo=UTC) + timedelta(seconds=start_ns // 10**9),
+    )
+
+
+@pytest.mark.parametrize("policy", ["generic", "duckdb"])
+@pytest.mark.parametrize("unit", ["us", "ns"])
+def test_local_day_boundaries_match_the_fixed_offset_oracle(policy, unit):
+    """Day buckets and their start instants, portable and native, at instants one
+    tick before, at and after local midnight under west, UTC and east offsets, before
+    and after the epoch; aware microseconds and naive nanoseconds (which denote UTC,
+    and which DuckDB holds only without a zone)."""
+    from datetime import UTC
+
+    from terrine.backends.timestamps import local_day
+
+    tick = 1000 if unit == "us" else 1
+    # UTC midnights: a 2025 day, the day before the epoch, and the epoch itself.
+    midnights_ns = [1_743_292_800 * 10**9, -_DAY_NS, 0]
+    offsets = [-300, 0, 330, -720, 840]
+    cases: list[tuple[int, int]] = []
+    for offset in offsets:
+        for midnight in midnights_ns:
+            local_midnight = midnight - offset * _MINUTE_NS
+            cases.extend(
+                (offset, at)
+                for at in (local_midnight - tick, local_midnight, local_midnight + tick)
+            )
+    scale = 1 if unit == "ns" else 1000
+    stored = pa.timestamp("ns") if unit == "ns" else pa.timestamp("us", tz="UTC")
+    con = ibis.duckdb.connect()
+    try:
+        table = con.create_table(
+            "instants",
+            pa.table(
+                {
+                    "case": list(range(len(cases))),
+                    "offset": pa.array([offset for offset, _ in cases], pa.int64()),
+                    "at": pa.array([at // scale for _, at in cases], pa.int64()).cast(stored),
+                }
+            ),
+        )
+        results = {}
+        with dialect_scope(policy):
+            for offset in offsets:
+                subset = table.filter(table.offset == offset)
+                day, start = local_day(subset.at, offset)
+                assert day.type() == dt.date
+                start_type = start.type()
+                assert isinstance(start_type, dt.Timestamp) and start_type.timezone == "UTC"
+                for row in con.to_pyarrow(subset.select("case", day=day, start=start)).to_pylist():
+                    results[row["case"]] = (row["day"], row["start"])
+    finally:
+        con.disconnect()
+    for index, (offset, at) in enumerate(cases):
+        day, start = results[index]
+        assert (day, start.astimezone(UTC)) == _local_day_oracle(at, offset), (offset, at)
+
+
 def test_cohort_summary_uses_the_passed_policy_scope(monkeypatch):
     from terrine.backends import dialect as policies
     from terrine.compile.shapes import cohorts

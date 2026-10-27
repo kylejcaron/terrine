@@ -25,6 +25,7 @@ from terrine.semantic.sql import (
     _admit_capture_stored_view_query_ast,
     _admit_read_query_ast,
     _admit_stored_view_query_ast,
+    _render,
     admit_read_query,
 )
 
@@ -267,7 +268,7 @@ def _sql_tables(
             if _capture
             else _admit_stored_view_query_ast(obj.definition or "", "duckdb")
         )
-        query_sql = query.sql(dialect="duckdb")
+        query_sql = _render(query, "duckdb")
         if not _capture:
             check_native_functions(raw, query_sql, "duckdb")
         dependencies = _sql_tables(
@@ -358,7 +359,7 @@ def _closure(
     active.add(obj.identity)
     definition = obj.definition or ""
     query = _admit_stored_view_query_ast(definition, "duckdb")
-    query_sql = query.sql(dialect="duckdb")
+    query_sql = _render(query, "duckdb")
     check_native_functions(raw, query_sql, "duckdb")
     dependencies = _sql_tables(
         query_sql, _dummy_catalog(), raw, allow_temporary=allow_temporary, _objects=objects

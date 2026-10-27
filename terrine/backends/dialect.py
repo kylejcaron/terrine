@@ -403,18 +403,18 @@ class Dialect:
             cast(ir.TimestampScalar, ibis.literal(high).cast(dtype)),
         )
 
-    def _epoch_offset(
+    def _epoch_coefficient(
         self, value: ir.TimestampValue
-    ) -> tuple[ir.IntegerValue, ir.IntegerValue, int, dt.Timestamp]:
-        """``(seconds, remainder, divisor, dtype)`` since the typed UTC epoch.
+    ) -> tuple[ir.IntegerValue, int, dt.Timestamp]:
+        """``(coefficient, divisor, dtype)``: the instant's offset from the typed UTC
+        epoch in its own unit (microseconds, or nanoseconds at scale 9), and the
+        unit's count per second.
 
         The delta against an epoch literal of the value's own type is an instant
         difference, independent of the session zone; a naive value denotes UTC.
-        The remainder keeps the dividend's sign, so pre-epoch instants split as
-        ``(0, -1)`` rather than ``(-1, 999999)``. A nanosecond delta is lowered
-        as a bare ``a - b``, so it is held in an explicit cast node (``Value.cast``
-        drops a same-type cast) and stays one operand of the quotient and the
-        remainder.
+        A nanosecond delta is lowered as a bare ``a - b``, so it is held in an
+        explicit cast node (``Value.cast`` drops a same-type cast) and stays one
+        operand of any arithmetic around it.
         """
         from terrine.backends.timestamps import _UNSUPPORTED, _epoch
 
@@ -425,10 +425,62 @@ class Dialect:
         delta = value.delta(_epoch(dtype), unit=unit)
         # Ibis types the node constructor's operand loosely; the expression is an int64.
         atomic = ops.Cast(delta, to=dt.int64)  # ty: ignore[invalid-argument-type]
-        coefficient = cast(ir.IntegerValue, atomic.to_expr())
+        return cast(ir.IntegerValue, atomic.to_expr()), divisor, dtype
+
+    def _epoch_offset(
+        self, value: ir.TimestampValue
+    ) -> tuple[ir.IntegerValue, ir.IntegerValue, int, dt.Timestamp]:
+        """``(seconds, remainder, divisor, dtype)`` since the typed UTC epoch.
+
+        The remainder keeps the dividend's sign, so pre-epoch instants split as
+        ``(0, -1)`` rather than ``(-1, 999999)``.
+        """
+        coefficient, divisor, dtype = self._epoch_coefficient(value)
         seconds = self.truncating_quotient(coefficient, divisor)
         remainder = cast(ir.IntegerValue, coefficient % divisor)
         return seconds, remainder, divisor, dtype
+
+    def local_day(
+        self, timestamp: ir.TimestampValue, offset_minutes: int
+    ) -> tuple[ir.DateValue, ir.TimestampValue]:
+        """The fixed-offset local calendar day of an instant and the UTC instant
+        starting it, from one epoch delta.
+
+        With ``c`` the instant's epoch offset in its unit, ``o`` the offset in the
+        same unit and ``D`` one day, the local day number is ``n = floor((c + o) / D)``.
+        The remainder ``((s % D) + D) % D`` of ``s = c + o`` lies in ``[0, D)``
+        whether the backend's ``%`` follows the dividend's sign or the divisor's,
+        so ``s`` less it is the floor multiple and its quotient is exact. Local
+        midnight is ``n·86400`` seconds after the naive epoch, whose date is the
+        local day, and the day starts ``o`` earlier as a UTC instant; both are whole
+        seconds lowered as one interval each, so neither depends on the session
+        zone. One delta and one quotient keep the expression shallow where chained
+        conversions would nest.
+        """
+        from terrine.backends.timestamps import _epoch
+
+        coefficient, divisor, _dtype = self._epoch_coefficient(timestamp)
+        day_units = 86_400 * divisor
+        offset_seconds = offset_minutes * 60
+        shifted = (
+            cast(ir.IntegerValue, coefficient + offset_seconds * divisor)
+            if offset_seconds
+            else coefficient
+        )
+        remainder = cast(ir.IntegerValue, (shifted % day_units + day_units) % day_units)
+        day_number = self.truncating_quotient(cast(ir.IntegerValue, shifted - remainder), day_units)
+        local_seconds = cast(ir.IntegerValue, day_number * 86_400)
+        start_seconds = (
+            cast(ir.IntegerValue, local_seconds - offset_seconds)
+            if offset_seconds
+            else local_seconds
+        )
+        wall = _epoch(dt.Timestamp()) + local_seconds.as_interval("s")
+        # A whole-second instant needs no sub-second scale; keep the unscaled aware
+        # type the registered engines' casts produce, so unions of day states and
+        # window endpoints keep one schema.
+        start = _epoch(dt.Timestamp(timezone="UTC")) + start_seconds.as_interval("s")
+        return wall.date(), start
 
     def _rebuild(
         self,

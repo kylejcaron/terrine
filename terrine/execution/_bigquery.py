@@ -14,9 +14,10 @@ import pyarrow as pa
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE, _SNAPSHOT_UNAVAILABLE
 from terrine.backends.registry import ENGINES
+from terrine.errors import TerrineError
 from terrine.execution._metadata import invalidate_metadata
 from terrine.semantic.models import Catalog, RelationSpec, SqlQuery, TableRef
-from terrine.semantic.sql import _admit_read_query_ast, admit_read_query
+from terrine.semantic.sql import _admit_read_query_ast, _verified, admit_read_query
 
 DIALECT = "bigquery"
 # Physical row sources; external tables are not snapshot-consistent.
@@ -90,19 +91,26 @@ def _relation(con: Any, project: str, dataset: str, name: str) -> _Relation:
     )
 
 
+def _parsed(sql: str) -> Any:
+    from sqlglot import parse_one
+
+    try:
+        return _verified(lambda: parse_one(sql, read=DIALECT))
+    except TerrineError:
+        raise
+    except Exception as exc:
+        raise _snapshot_error("view definition could not be parsed") from exc
+
+
 def check_routines(sql: str) -> None:
     """Refuse a query that calls a dataset-qualified routine.
 
     Persistent UDFs and remote functions are always qualified, so this covers
     every user routine; unqualified names always resolve to BigQuery built-ins.
     """
-    from sqlglot import exp, parse_one
+    from sqlglot import exp
 
-    try:
-        statement = parse_one(sql, read=DIALECT)
-    except Exception as exc:
-        raise _snapshot_error("view definition could not be parsed") from exc
-    for node in statement.walk():
+    for node in _parsed(sql).walk():
         qualified_call = isinstance(node, exp.Dot) and isinstance(node.expression, exp.Func)
         # A fully backticked name such as `project.dataset.fn` parses as one identifier.
         quoted_path = isinstance(node, exp.Anonymous) and "." in node.name
@@ -125,12 +133,12 @@ def _tables_in(sql: str, con: Any) -> list[tuple[str, str, str]]:
 
 
 def _view_tables(sql: str, con: Any) -> list[tuple[str, str, str]]:
-    from sqlglot import exp, parse_one
+    from sqlglot import exp
     from sqlglot.optimizer.scope import traverse_scope
 
     check_routines(sql)
     found = []
-    for scope in traverse_scope(parse_one(sql, read=DIALECT)):
+    for scope in _verified(lambda: tuple(traverse_scope(_parsed(sql)))):
         for source in scope.sources.values():
             if isinstance(source, exp.Table):
                 parts = [part for part in (source.catalog, source.db, source.name) if part]

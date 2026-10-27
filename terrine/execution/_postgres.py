@@ -18,7 +18,13 @@ from terrine.backends.registry import ENGINES
 from terrine.errors import RefusalSpec
 from terrine.execution._metadata import invalidate_metadata
 from terrine.semantic.models import Catalog, RelationSpec, SqlQuery, TableRef
-from terrine.semantic.sql import _admit_read_query_ast, _parse_read_query_ast, admit_read_query
+from terrine.semantic.sql import (
+    _admit_read_query_ast,
+    _parse_read_query_ast,
+    _render,
+    _verified,
+    admit_read_query,
+)
 
 _NONFINITE = RefusalSpec(
     "terrine.backend.nonfinite_decimal",
@@ -214,17 +220,20 @@ def _called_names(sql: str) -> set[str]:
     """
     from sqlglot import exp
 
-    statement = _parse_read_query_ast(sql, DIALECT)
-    rendered = statement.sql(dialect=DIALECT, comments=False)
-    names = _token_calls(sql, statement) | _token_calls(
-        rendered, _parse_read_query_ast(rendered, DIALECT)
-    )
-    for node in statement.walk():
-        if isinstance(node, exp.Anonymous):
-            names.add(node.name.casefold())
-        elif isinstance(node, exp.Func):
-            names.add(node.sql_name().casefold())
-    return names
+    def collect() -> set[str]:
+        statement = _parse_read_query_ast(sql, DIALECT)
+        rendered = _render(statement, DIALECT, comments=False)
+        names = _token_calls(sql, statement) | _token_calls(
+            rendered, _parse_read_query_ast(rendered, DIALECT)
+        )
+        for node in statement.walk():
+            if isinstance(node, exp.Anonymous):
+                names.add(node.name.casefold())
+            elif isinstance(node, exp.Func):
+                names.add(node.sql_name().casefold())
+        return names
+
+    return _verified(collect)
 
 
 def _token_calls(text: str, statement: Any) -> set[str]:
@@ -278,7 +287,7 @@ def check_functions(raw: Any, sql: str) -> None:
 
 def _normalized(sql: str) -> str:
     """One statement rendered from its parse, without terminators or comments."""
-    return _parse_read_query_ast(sql, DIALECT).sql(dialect=DIALECT, comments=False)
+    return _render(_parse_read_query_ast(sql, DIALECT), DIALECT, comments=False)
 
 
 def query_schema(raw: Any, sql: str, type_mapper: Any) -> Any:

@@ -32,7 +32,7 @@ from terrine.backends.numeric import (
     normalized_quotient,
     rounded_normalized,
 )
-from terrine.backends.timestamps import utc_instant, utc_wall_clock
+from terrine.backends.timestamps import local_day
 from terrine.data import ColumnMeta
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _SCHEMA
@@ -211,12 +211,9 @@ def narrow_exact(coefficient, scale: int, target: str | dt.DataType):
 
 
 def _aligned(timestamp, minutes: int):
-    utc = utc_wall_clock(timestamp)
-    local = utc + ibis.interval(minutes=minutes)
-    midnight = cast(ir.TimestampValue, local.date().cast("timestamp")) - ibis.interval(
-        minutes=minutes
-    )
-    return timestamp == utc_instant(midnight)
+    """Whether an instant is the start of its fixed-offset local day."""
+    _day, start = local_day(timestamp, minutes)
+    return timestamp == start
 
 
 def _exact_decimal(builder: _Builder, quantity: _Quantity) -> ir.Value:

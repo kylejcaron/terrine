@@ -17,7 +17,7 @@ from terrine.backends.numeric import (
     _scaled_text,
 )
 from terrine.backends.registry import supported_engine_route
-from terrine.backends.timestamps import _UNSUPPORTED, _epoch
+from terrine.backends.timestamps import _UNSUPPORTED, _epoch, native_local_day
 
 _EXACT = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
 _HUGE = dt.Unknown(raw_type=sge.DataType.build("HUGEINT", dialect="duckdb"))
@@ -175,6 +175,11 @@ class DuckDBDialect(Dialect):
 
     def utc_instant(self, value: ir.Value) -> ir.TimestampValue:
         return cast(ir.TimestampValue, _utc_aware("UTC", value))
+
+    def local_day(
+        self, timestamp: ir.TimestampValue, offset_minutes: int
+    ) -> tuple[ir.DateValue, ir.TimestampValue]:
+        return native_local_day(self, timestamp, offset_minutes)
 
     def timestamp_text(self, value: ir.TimestampValue) -> ir.StringValue:
         return value.cast(dt.string)

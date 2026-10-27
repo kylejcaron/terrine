@@ -26,11 +26,15 @@
   pending writes or a dedicated read connection. The execution snapshot has
   no identity and `replay_equivalence="unverified"`. Admitted SQL and every
   compiled statement are parsed for read-only safety in the real dialect and
-  fail closed with `terrine.sql.invalid_read_query`; that parse now runs with
-  its own recursion budget, so a deeply nested compiled statement (the
-  portable timestamp reconstruction alone needs about 850 interpreter frames
-  to parse) is admitted regardless of how deep the caller's own stack is,
-  instead of surfacing as a parse failure. Unsupported primitives
+  fail closed with `terrine.sql.invalid_read_query`. Every SQL verification
+  step on every engine (parsing, rendering, scope analysis, the PostgreSQL
+  function check, the BigQuery and Snowflake routine checks and Snowflake's
+  Time Travel pinning) runs on a fresh thread, whose recursion depth is
+  counted separately, so a deeply nested compiled statement is verified
+  whatever the caller's own stack depth without changing the interpreter's
+  recursion limit; a statement too deep to verify even then refuses with
+  `terrine.sql.invalid_read_query` and `reason="too_deep_to_verify"`, never
+  as unsafe SQL or a raw `RecursionError`. Unsupported primitives
   refuse with `capability_unavailable` naming the backend and operation,
   chained from the backend's exception; owned Arrow readers are released on
   exhaustion, error, early close or context closure, and a failure during
@@ -74,15 +78,20 @@
   `3.1u` before later rounding); integer quotients truncate toward zero
   through a certified decimal residual correction and are NULL beyond int64
   or for a zero divisor. Timestamps use native order, typed UTC epoch deltas
-  and signed parts; the union/window as-of fallback, coalesced extrema and
-  portable integer sequences are the defaults. Measured on DuckDB and
+  and signed parts; fixed-offset local days and their start instants derive
+  from one epoch delta and one floor quotient (`Dialect.local_day`), which
+  keeps day buckets and endpoint alignment shallow where chained conversions
+  would nest (registered engines keep their cast-based form); the
+  union/window as-of fallback, coalesced extrema and portable integer
+  sequences are the defaults. Measured on DuckDB and
   PostgreSQL 16 with the policy forced: shortest round-trip float text within
   half an ulp, exact `0.1 + 0.2` and scale-2 cancellation, both signed
   `int64` quotient endpoints, and nested quotients within `8u`. Registered
   engines keep their native state and every previously refused operation
   (`exact_ratio` and `exact_is_nonfinite` on DuckDB and Snowflake; normalized
   significand division on PostgreSQL and BigQuery) through explicit
-  overrides; their SQL, refusals and session lifetimes are unchanged.
+  overrides; their native conversions, refusals and session lifetimes are
+  unchanged.
 - Record the engine stamp on every result: required `Provenance.engine_name`
   (actual backend), `dialect` (admitted expression policy) and `engine_status`
   (its registered status), written by direct materialization, the staged

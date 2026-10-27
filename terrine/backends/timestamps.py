@@ -16,13 +16,14 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
-from terrine.backends.dialect import current_dialect, dialect_for_name
+from terrine.backends.dialect import Dialect, current_dialect, dialect_for_name
 from terrine.backends.numeric import truncating_quotient
 from terrine.errors import RefusalSpec
 
 __all__ = [
     "compare_timestamps",
     "has_submicrosecond",
+    "local_day",
     "lossless_scale",
     "lossless_timestamp",
     "timestamp_extremes",
@@ -90,6 +91,51 @@ def utc_wall_clock(value: ir.Value) -> ir.TimestampValue:
 def utc_instant(value: ir.Value) -> ir.TimestampValue:
     """The UTC instant a naive UTC wall-clock value denotes."""
     return current_dialect(value).utc_instant(value)
+
+
+def local_day(
+    timestamp: ir.TimestampValue, offset_minutes: int
+) -> tuple[ir.DateValue, ir.TimestampValue]:
+    """The fixed-offset local calendar day of an instant and the UTC instant that
+    starts it. A naive timestamp denotes UTC."""
+    return current_dialect(timestamp).local_day(timestamp, offset_minutes)
+
+
+def native_local_day(
+    dialect: Dialect, timestamp: ir.TimestampValue, offset_minutes: int
+) -> tuple[ir.DateValue, ir.TimestampValue]:
+    """``local_day`` through a registered engine's native UTC conversions.
+
+    Takes the instant's UTC wall clock, truncates a nanosecond clock to the
+    microsecond before it (every fixed-offset midnight is microsecond-aligned,
+    so the day is unchanged), reads the date, moves it across the offset
+    boundary where the clock falls in the previous or next local day, and
+    converts the local midnight back to an instant.
+    """
+    aware = cast(dt.Timestamp, timestamp.type()).timezone is not None
+    utc = dialect.utc_wall_clock(timestamp) if aware else timestamp
+    dtype = utc.type()
+    if isinstance(dtype, dt.Timestamp) and dtype.scale is not None and dtype.scale > 6:
+        micros = cast(ir.TimestampValue, utc.cast("timestamp"))
+        utc = cast(
+            ir.TimestampValue,
+            (utc < micros).ifelse(micros - ibis.interval(microseconds=1), micros),
+        )
+    day = utc.date()
+    midnight = cast(ir.TimestampValue, day.cast("timestamp"))
+    if offset_minutes < 0:
+        day = (utc < midnight + ibis.interval(minutes=-offset_minutes)).ifelse(
+            day - ibis.interval(days=1), day
+        )
+    elif offset_minutes > 0:
+        day = (utc >= midnight + ibis.interval(minutes=1440 - offset_minutes)).ifelse(
+            day + ibis.interval(days=1), day
+        )
+    day = cast(ir.DateValue, day.cast("date"))
+    start = dialect.utc_instant(
+        cast(ir.TimestampValue, day.cast("timestamp")) - ibis.interval(minutes=offset_minutes)
+    )
+    return day, start
 
 
 def timestamp_text(value: ir.TimestampValue) -> ir.StringValue:
