@@ -56,7 +56,10 @@ def refusal_declarations(package: Path) -> tuple[RefusalDeclaration, ...]:
 
 _RECOVERY = {
     "agent": ("dataset-agent-tools.md", "Use owner-approved resources, grants and fresh receipts."),
-    "backend": ("backend-compatibility.md", "Use verified local DuckDB operation capabilities."),
+    "backend": (
+        "backend-compatibility.md",
+        "Use registered verified engines implementing the requested operation.",
+    ),
     "budget": (
         "cost-and-residency.md",
         "Reduce output or obtain a separately reviewed owner budget.",
