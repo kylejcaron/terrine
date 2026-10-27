@@ -16,6 +16,8 @@ Terrine rules these out. Features can only look backwards from the snapshot. Eve
 
 ## Example: a churn training table
 
+Requires Python 3.13 or 3.14.
+
 ```sh
 pip install --pre "terrine[duckdb,pandas]"
 ```
@@ -81,7 +83,7 @@ carol 2025-03-01           0        0.0            <NA>     incomplete_coverage
 
 Reading the output:
 
-- **Carol has no orders** but still has rows, with `0` features and a `False` label.
+- **Carol has no orders** but still has both rows, with zero features. Her February label is `False`; her March label is unknown.
 - **Alice's February 10 order** makes her February 1 label `True`, and it counts in her March 1 features. The same order is the future for one row and the past for the next.
 - **The March labels are unknown.** Their 30-day window runs past March 20, where the orders data ends. Training on them as `False` would teach the model that everyone churns.
 
@@ -93,8 +95,8 @@ Terrine names metrics after your table and columns: `orders_count`, `orders_amou
 | --- | --- |
 | **Unit:** who each row is about, read from a table so nobody silently drops out | `customers.customer_id` |
 | **t0:** the snapshot time of each row | every 28 days from 2025-02-01 |
-| **Windows:** relative to t0, start included, end excluded. Features must end by t0; outcomes start at t0 | `("-30d", "0s")` is the 30 days before t0; `("0s", "30d")` is the 30 days after |
-| **Completeness:** the date range each event table fully covers. Outside it, values are unknown, not zero | `complete=("2025-01-01", "2025-03-20")` |
+| **Windows:** relative to t0, start included, end excluded. Features must end at or before t0; outcomes must start at or after t0 | `("-30d", "0s")` is the 30 days before t0; `("0s", "30d")` is the 30 days after |
+| **Completeness:** the calendar days, inclusive, that you declare fully loaded for each event table (not just the first and last event you happen to have). Windows outside them are unknown, not zero | `complete=("2025-01-01", "2025-03-20")` |
 
 ## Other datasets
 
@@ -108,7 +110,7 @@ Terrine names metrics after your table and columns: `orders_count`, `orders_amou
 | Behavior before and after an event (event study) | `event_panel` | [Event panels](https://github.com/kylejcaron/terrine/blob/main/docs/guides/sequential-panels.md#event-panels) |
 | Repeated eligibility for observational "trials" | `trial_panel` | [Trial panels](https://github.com/kylejcaron/terrine/blob/main/docs/guides/sequential-panels.md#scheduled-trial-panels) |
 | State changes such as plan upgrades and downgrades | `state_panel` | [State panels](https://github.com/kylejcaron/terrine/blob/main/docs/guides/state-panels.md) |
-| The last N events before a point in time | `event_sequence` | [Event sequences](https://github.com/kylejcaron/terrine/blob/main/docs/guides/temporal-engine.md#bounded-event-sequences-and-event-time-origins) |
+| Ordered events in a window after an event, up to a set count | `event_sequence` | [Event sequences](https://github.com/kylejcaron/terrine/blob/main/docs/guides/temporal-engine.md#bounded-event-sequences-and-event-time-origins) |
 
 More feature recipes are in [common feature patterns](https://github.com/kylejcaron/terrine/blob/main/docs/guides/common-feature-patterns.md): recency, "active in the last N days" filters, attributes as of t0, conversions after a purchase, and true/false labels.
 
@@ -119,7 +121,7 @@ Queries run where your data lives; nothing is uploaded. Results come back as pan
 | Backend | Status |
 | --- | --- |
 | DuckDB | Reference backend; can also save versioned datasets |
-| PostgreSQL 16, BigQuery, Snowflake | Verified: results match DuckDB |
+| PostgreSQL 16, BigQuery, Snowflake | Verified against DuckDB; floating-point results match within documented tolerances |
 | Other Ibis backends | Read-only, unverified; opt in with `allow_unverified=True` |
 
 See [backend compatibility](https://github.com/kylejcaron/terrine/blob/main/docs/guides/backend-compatibility.md) for extras and details.
