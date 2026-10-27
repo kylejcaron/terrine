@@ -100,6 +100,11 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   with `uv run python -m tests.integration.postgres_scratch stop`. CI runs them
   on every push against a PostgreSQL 16 service container. Each probe owns a
   uniquely named schema; never share a warehouse namespace between tests.
+- `uv run pytest integration/conformance` runs the DuckDB engine known answers
+  on every push; `uv run --extra postgres pytest integration/conformance -m postgres`
+  selects the same cases against a configured PostgreSQL scratch server. They
+  are also included in `make test-postgres`. Engine selection is centralized
+  in the module's `engine` fixture.
 - `make test-bigquery` runs the live BigQuery probes (`@pytest.mark.bigquery`,
   deselected by default); they fail, never skip, without
   `TERRINE_TEST_BIGQUERY_PROJECT`, `TERRINE_TEST_BIGQUERY_DATASET` and

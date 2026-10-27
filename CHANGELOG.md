@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Tests
+
+- Centralize known-answer engine conformance cases for whole-day schedules,
+  NULL-ignoring extrema, cancellation-safe float and exact decimal windows,
+  UTC timestamp conversion, tied event ordering, censor times and strict as-of
+  cutoffs. Run the same cases on DuckDB and live PostgreSQL.
+
 ### Documentation
 
 - Start the README with a runnable table-first dataset and its completeness

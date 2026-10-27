@@ -248,23 +248,6 @@ def _float_rows(con, rows: list[tuple[str, str]]) -> None:
         cursor.close()
 
 
-def test_large_float_history_cancels_exactly_outside_the_window(postgres_scratch, tmp_path):  # noqa: F811
-    con = postgres_scratch.con
-    _load(con, timestamp_type="timestamptz", amount_type="numeric(12, 2)")
-    # Float prefix sums would lose the small window entirely beneath this history.
-    _float_rows(
-        con,
-        [("2024-12-20 00:00:00", "1e17"), ("2024-12-21 00:00:00", "-3e16")]
-        + [("2025-01-01 12:00:00", "0.1"), ("2025-01-01 13:00:00", "0.2")],
-    )
-    design = _design(weight_before=tr.agg("weight", window=("-1d", "0s")))
-    value = {
-        row["unit"]: row["weight_before"]
-        for row in _rows(_model(con, tmp_path, "postgres"), design)
-    }
-    assert math.isclose(value["d"], 0.3, rel_tol=1e-15)
-
-
 @pytest.mark.parametrize(
     ("rows", "metric", "failure"),
     [

@@ -72,22 +72,6 @@ def sequence_model():
         con.disconnect()
 
 
-def test_sequence_compiler_uses_configured_event_id_and_preserves_tied_order(sequence_model):
-    from terrine.compile.dispatch import compile_design
-
-    design = Design(
-        "user",
-        EventAnchor("signup"),
-        shape=EventSequence("signup", Window("0s", "2h"), max_events=5, properties=("kind",)),
-    )
-    compiled = compile_design(design, sequence_model)
-    compiled.validate(execute=sequence_model.con.to_pyarrow)
-    rows = sequence_model.con.to_pyarrow(compiled.table).to_pylist()
-
-    children = [row for row in rows if row["is_event"]]
-    assert [row["event_id"] for row in children] == ["a", "z", "end"]
-
-
 @pytest.mark.parametrize("representation", ["positions", "arrays"])
 def test_legacy_support_like_property_names_remain_values(sequence_model, representation):
     names = ("kind", "kind_complete")
