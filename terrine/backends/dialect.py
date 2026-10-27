@@ -135,6 +135,9 @@ class Dialect:
     )
     has_scaled_float_state: ClassVar[bool] = False
     has_native_asof: ClassVar[bool] = False
+    # Fixed-precision state carries an accumulated binary64 magnitude bound so
+    # that an accumulation leaving the domain refuses; native exact types do not.
+    bounds_accumulations: ClassVar[bool] = True
 
     def exact_type(self) -> dt.DataType:
         """Float state: fixed scale 9, so ``|value| <= (10**38 - 1) / 10**9``."""
@@ -263,13 +266,34 @@ class Dialect:
         return digits.re_replace("^0+", "")
 
     def exact_sum(self, value: ir.Value) -> ir.Value:
-        """Sum in the backend, keeping the operand's fixed type.
+        """Sum in the backend, keeping the operand's fixed type; NULL when it cannot fit.
 
         Ibis widens a scale-0 decimal sum to scale 2; the cast back keeps
-        counts and coefficients in their domain. A sum beyond the backend's
-        decimal range is its own error, never a silently narrowed value.
+        counts and coefficients in their domain. The binary64 sum of the
+        operands' magnitudes bounds every partial sum, so a group whose
+        magnitudes reach the type's limit (less a ``2**-30`` margin covering the
+        bound's own rounding) yields NULL instead of an overflowing cast; the
+        accumulated magnitude state carried alongside turns that NULL into the
+        existing overflow refusals.
         """
-        return cast(ir.NumericColumn, value).sum().cast(value.type())
+        total = cast(ir.NumericColumn, value).sum()
+        dtype = value.type()
+        if not isinstance(dtype, dt.Decimal) or dtype.precision is None:
+            return total.cast(dtype)
+        bound = cast(ir.FloatingValue, self.magnitude(value).sum())
+        fits = bound < ibis.literal(self.magnitude_limit(dtype), type=dt.float64)
+        return fits.ifelse(total, _typed_null(dtype)).cast(dtype)
+
+    def magnitude(self, value: ir.Value) -> ir.FloatingColumn:
+        """A NULL-free binary64 magnitude whose sum bounds any sum of ``value``."""
+        floating = cast(ir.FloatingColumn, value.cast(dt.float64))
+        return cast(ir.FloatingColumn, floating.abs().fill_null(ibis.literal(0.0)))
+
+    @staticmethod
+    def magnitude_limit(dtype: dt.Decimal) -> float:
+        """The accumulated magnitude at which a fixed-precision sum may not fit."""
+        assert dtype.precision is not None and dtype.scale is not None
+        return (10**dtype.precision - 1) / 10**dtype.scale * (1 - 2.0**-30)
 
     def exact_subtract(self, left: ir.Value, right: ir.Value) -> ir.Value:
         """Subtract exactly; a difference leaving the fixed domain is NULL.

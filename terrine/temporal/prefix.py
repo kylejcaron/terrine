@@ -98,6 +98,8 @@ def sparse_prefix(
     fields["sum_value"] = (
         exact_sum(state.sum_value).over(window).fill_null(exact_literal(0, state.sum_value))
     )
+    if "sum_bound" in state.columns:
+        fields["sum_bound"] = state.sum_bound.sum().over(window).fill_null(ibis.literal(0.0))
     if exact_floats:
         for name in _EXACT_FLOAT_COUNTS:
             fields[name] = exact_sum(state[name]).over(window).fill_null(exact_literal(0))

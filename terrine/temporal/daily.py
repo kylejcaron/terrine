@@ -15,6 +15,7 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+from terrine.backends.dialect import current_dialect
 from terrine.backends.numeric import (
     coefficient_bounds,
     decimal_coefficient,
@@ -415,6 +416,11 @@ def _sparse_group(
             exact = decimal_coefficient(source_value, scale or 0)
         coefficient = leaf.__terrine_selected.ifelse(exact, ibis.null().cast(exact.type()))
         aggregates["sum_value"] = exact_sum(coefficient)
+        policy = current_dialect(coefficient)
+        if policy.bounds_accumulations:
+            # Bounds every partial sum, so an accumulation leaving the fixed
+            # domain is refused instead of silently narrowed or skipped.
+            aggregates["sum_bound"] = policy.magnitude(coefficient).sum()
     grouped = leaf.group_by("_unit", *keys).aggregate(**aggregates)
     constants = {
         "value_type": ibis.literal(measure.value_type),

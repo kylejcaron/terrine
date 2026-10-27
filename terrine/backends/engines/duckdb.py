@@ -81,6 +81,7 @@ def _timestamp_isfinite(value) -> bool:
 
 class DuckDBDialect(Dialect):
     __slots__ = ()
+    bounds_accumulations = False
     has_scaled_float_state = True
     has_native_asof = True
     operations = frozenset(

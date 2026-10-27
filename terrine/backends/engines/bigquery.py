@@ -45,6 +45,7 @@ def _quotient(value, divisor):
 
 class BigQueryDialect(Dialect):
     __slots__ = ()
+    bounds_accumulations = False
     operations = frozenset(
         {
             "exact_state",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, cast
 
@@ -15,6 +16,7 @@ import ibis.expr.types as ir
 import pyarrow as pa
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE
+from terrine.backends.dialect import Dialect
 from terrine.backends.registry import GENERIC, backend_name, supported_engine_route
 from terrine.errors import TerrineError
 from terrine.execution._metadata import invalidate_metadata
@@ -64,6 +66,38 @@ def _decimal_witnesses() -> tuple[Any, dict[str, Decimal | int]]:
         "wide_edge": Decimal("9" * 38),
     }
     return ibis.literal(0).as_table().select(**expressions), answers
+
+
+# Instants whose session offsets differ from the epoch's in zones with daylight
+# saving or historical local mean time; a session-dependent delta lowering
+# reconstructs the wrong wall clock for at least one of them.
+_UTC_INSTANTS = (
+    datetime(2025, 7, 1, 12, 0, 0, 123456, tzinfo=UTC),
+    datetime(2025, 1, 15, 12, 0, 0, 654321, tzinfo=UTC),
+    datetime(1969, 12, 31, 23, 59, 59, 999999, tzinfo=UTC),
+    datetime(1850, 6, 1, 12, 0, 0, 5, tzinfo=UTC),
+)
+
+
+def _utc_witnesses() -> tuple[Any, dict[str, datetime]]:
+    """Known UTC wall clocks for aware instants through the portable policy."""
+    policy = Dialect("generic")
+    aware = dt.Timestamp(timezone="UTC", scale=6)
+    expressions = {
+        f"wall_{index}": policy.utc_wall_clock(ibis.literal(instant, type=aware))
+        for index, instant in enumerate(_UTC_INSTANTS)
+    }
+    answers = {
+        f"wall_{index}": instant.replace(tzinfo=None) for index, instant in enumerate(_UTC_INSTANTS)
+    }
+    return ibis.literal(0).as_table().select(**expressions), answers
+
+
+def _needs_aware_delta(query: Any) -> bool:
+    return any(
+        node.left.dtype.is_timestamp() and node.left.dtype.timezone is not None
+        for node in query.op().find(ops.TimestampDelta)
+    )
 
 
 def _has_decimal(dtype: dt.DataType) -> bool:
@@ -154,6 +188,7 @@ class NoSnapshotSession:
         self.con = con
         self.backend = backend_name(con)
         self._decimal_admitted = False
+        self._utc_admitted = False
         self._readers: set[_Reader] = set()
 
     def _unavailable(self, operation: str) -> TerrineError:
@@ -186,6 +221,15 @@ class NoSnapshotSession:
             if result.to_pylist() != [answers]:
                 raise self._unavailable("exact_state")
             self._decimal_admitted = True
+        if _needs_aware_delta(query) and not self._utc_admitted:
+            # A delta lowered through session wall clocks misplaces instants whose
+            # offset differs from the epoch's; refuse rather than answer wrongly.
+            witness, expected = _utc_witnesses()
+            self._call_backend("utc_wall_clock", lambda: self.con.compile(witness))
+            walls = self._call_backend("utc_wall_clock", lambda: self.con.to_pyarrow(witness))
+            if walls.to_pylist() != [expected]:
+                raise self._unavailable("utc_wall_clock")
+            self._utc_admitted = True
         return self._call_backend(
             "exact_state" if needs_decimal else "query", lambda: self.con.compile(query)
         )

@@ -85,6 +85,7 @@ def _sf_aware_text(timestamp, format):
 
 class SnowflakeDialect(Dialect):
     __slots__ = ()
+    bounds_accumulations = False
     has_native_asof = True
     has_scaled_float_state = True
     operations = frozenset(

@@ -118,6 +118,7 @@ def _timestamp_isfinite(value) -> bool:
 
 class PostgresDialect(Dialect):
     __slots__ = ()
+    bounds_accumulations = False
     has_native_asof = True
     operations = frozenset(
         {

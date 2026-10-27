@@ -466,10 +466,8 @@ def test_window_quotients_cancellation_and_order_invariance(connection):
         _event("a", inside[1], qty=4, amount="0.02", weight=2e-9),
     ]
     events = [
-        _event("a", history, qty=1, amount="600000000000000000000000000000000000.00", weight=1e20),
-        _event(
-            "a", history, qty=1, amount="-600000000000000000000000000000000000.00", weight=-1e20
-        ),
+        _event("a", history, qty=1, amount="6" + "0" * 34 + ".00", weight=1e20),
+        _event("a", history, qty=1, amount="-6" + "0" * 34 + ".00", weight=-1e20),
         *window,
         _event("b", history, qty=1, weight=-1e20),
         _event("b", history, qty=1, weight=1e20),
@@ -570,6 +568,89 @@ def test_domain_failures_are_coded_refusals(connection, events, metric, code, fa
     assert error.value.code == code
     if failure is not None:
         assert error.value.context["failure"] == failure
+
+
+@pytest.mark.parametrize(
+    ("events", "metric", "code", "failure"),
+    [
+        # Two valid facts in one day group need 1.2e29: the group accumulation overflows.
+        (
+            [
+                _event("a", datetime(2025, 1, 1, 12, tzinfo=UTC), weight=6e28),
+                _event("a", datetime(2025, 1, 1, 13, tzinfo=UTC), weight=6e28),
+            ],
+            "weight",
+            "terrine.temporal.float64_precision",
+            "bound_overflow",
+        ),
+        # Successive prefixes overflow although each day group fits.
+        (
+            [
+                _event("a", datetime(2024, 12, 31, 12, tzinfo=UTC), weight=6e28),
+                _event("a", datetime(2025, 1, 1, 12, tzinfo=UTC), weight=6e28),
+            ],
+            "weight",
+            "terrine.temporal.float64_precision",
+            "bound_overflow",
+        ),
+        (
+            [
+                _event("a", datetime(2025, 1, 1, 12, tzinfo=UTC), amount="6" + "0" * 35 + ".00"),
+                _event("a", datetime(2025, 1, 1, 13, tzinfo=UTC), amount="6" + "0" * 35 + ".00"),
+            ],
+            "spend",
+            "terrine.temporal.exact_overflow",
+            None,
+        ),
+        (
+            [
+                _event("a", datetime(2024, 12, 31, 12, tzinfo=UTC), amount="6" + "0" * 35 + ".00"),
+                _event("a", datetime(2025, 1, 1, 12, tzinfo=UTC), amount="6" + "0" * 35 + ".00"),
+            ],
+            "spend",
+            "terrine.temporal.exact_overflow",
+            None,
+        ),
+    ],
+)
+def test_accumulated_state_overflow_is_a_coded_refusal(connection, events, metric, code, failure):
+    model = _model(connection, events)
+    with pytest.raises(TerrineError) as error:
+        _values(model, value=tr.agg(metric, window=("-2d", "0s")))
+    assert error.value.code == code
+    if failure is not None:
+        assert error.value.context["failure"] == failure
+
+
+def test_aware_deltas_across_daylight_saving_are_correct_or_refused(connection):
+    """A New York session: DuckDB answers exactly; PostgreSQL's Ibis delta lowering is
+    session-dependent, so generic admission refuses the operation before source access."""
+    from terrine.execution._generic import NoSnapshotSession
+
+    statement = "SET TimeZone = 'America/New_York'"
+    if connection.name == "duckdb":
+        connection.raw_sql(statement)
+    else:
+        connection.raw_sql(statement).close()
+    summer = datetime(2025, 7, 1, 12, 0, 0, 123456, tzinfo=UTC)
+    table = connection.create_table(
+        "dst", pa.table({"aware": pa.array([summer], pa.timestamp("us", tz="UTC"))})
+    )
+    query = table.select(wall=utc_wall_clock(table.aware))
+    session = NoSnapshotSession(connection)
+    try:
+        session.admit(query)
+    except TerrineError as refusal:
+        assert connection.name == "postgres"
+        assert refusal.code == "terrine.backend.capability_unavailable"
+        assert refusal.context["operation"] == "utc_wall_clock"
+        assert refusal.context["backend"] == "postgres"
+    else:
+        assert connection.name == "duckdb"
+        (row,) = _rows(connection, query)
+        assert row["wall"] == summer.replace(tzinfo=None)
+    finally:
+        session.close()
 
 
 def test_zero_and_null_are_distinct_from_nonfinite_flags(connection):
