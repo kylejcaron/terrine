@@ -83,8 +83,8 @@ class _Reader:
         self, session: NoSnapshotSession, source: Any, iterator: Any, schema: pa.Schema
     ) -> None:
         self._session = session
-        self._source = source
-        self._iterator = iterator
+        self._source: Any = source
+        self._iterator: Any = iterator
         self.schema = schema
         self._closed = False
 
@@ -110,10 +110,31 @@ class _Reader:
         return pa.Table.from_batches(self, schema=self.schema)
 
     def close(self) -> None:
-        if not self._closed:
-            self._closed = True
-            self._session._readers.discard(self)
-            self._session._call_backend("query", self._source.close)
+        if self._closed:
+            return
+        self._closed = True
+        self._session._readers.discard(self)
+        failure: BaseException | None = None
+        try:
+            try:
+                self._session._call_backend("query", self._source.close)
+            except BaseException as exc:
+                failure = exc
+            try:
+                if self._iterator is not self._source:
+                    close_iterator = getattr(self._iterator, "close", None)
+                    if close_iterator is not None:
+                        self._session._call_backend("query", close_iterator)
+            except BaseException as exc:
+                if failure is None:
+                    failure = exc
+                else:
+                    failure.add_note(f"Reader cleanup also failed: {exc}")
+        finally:
+            self._source = None
+            self._iterator = None
+        if failure is not None:
+            raise failure
 
     def __enter__(self):
         return self
@@ -123,7 +144,11 @@ class _Reader:
 
 
 class NoSnapshotSession:
-    """Borrow a caller connection; each statement has its own source view."""
+    """Borrow a caller connection; each statement has its own source view.
+
+    Ibis schema inspection may end an open caller transaction. Use a connection
+    with no pending writes or a dedicated read connection.
+    """
 
     def __init__(self, con: Any) -> None:
         self.con = con

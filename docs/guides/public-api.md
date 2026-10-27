@@ -73,6 +73,9 @@ All three Model binding constructors accept keyword-only
 `UnverifiedBackendWarning`, available from `terrine` for warning filters.
 The choice applies only to the returned Model. Registered engine identity
 failures, raw drivers and name-only connections cannot opt in.
+Ibis schema inspection on an unverified backend may end an open transaction on
+the caller's connection. Pass a connection with no pending writes or a dedicated
+read connection; transaction preservation is not guaranteed.
 
 ```python
 from terrine import Model, UnverifiedBackendWarning

@@ -149,15 +149,40 @@ def test_decimal_unavailability_refuses_only_decimal_query(sqlite):
         assert context.execute(numbers).to_pylist() == [{"value": 1}]
 
 
-def test_generic_batches_and_early_close_leave_caller_usable(sqlite):
+@pytest.mark.parametrize("finish", ["reader", "context"])
+def test_generic_early_close_releases_sqlite_read_lock(tmp_path, finish):
+    import sqlite3
+
+    from ibis.backends.sql import SQLBackend
+    from ibis.backends.sqlite import Backend
+
+    from terrine import UnverifiedBackendWarning
+    from terrine.backends.registry import resolve_engine
     from terrine.execution.inputs import open_execution
 
-    model = bind(sqlite)
-    with open_execution(model.catalog, sqlite, engine=model._engine) as context:
-        reader = context.to_arrow_batches(sqlite.table("numbers"), chunk_size=1)
-        assert next(reader).to_pylist() == [{"value": 1}]
-        reader.close()
-    assert sqlite.to_pyarrow(sqlite.table("numbers")).to_pylist() == [{"value": 1}]
+    class StreamingSQLite(Backend):
+        to_pyarrow_batches = SQLBackend.to_pyarrow_batches
+
+    path = tmp_path / "reader.sqlite"
+    con = StreamingSQLite().connect(path)
+    try:
+        con.create_table("numbers", {"value": [1, 2, 3]})
+        with pytest.warns(UnverifiedBackendWarning):
+            engine = resolve_engine(con, allow_unverified=True)
+        with open_execution(catalog(), con, engine=engine) as context:
+            numbers = context.resolve(TableRef(kind="table", name="numbers"))
+            reader = context.to_arrow_batches(numbers, chunk_size=1)
+            assert next(reader).to_pylist() == [{"value": 1}]
+            if finish == "reader":
+                reader.close()
+            else:
+                context.close()
+            with sqlite3.connect(path, timeout=0) as writer:
+                writer.execute("UPDATE numbers SET value = value + 1")
+                writer.commit()
+        assert con.to_pyarrow(con.table("numbers"))["value"].to_pylist() == [2, 3, 4]
+    finally:
+        con.disconnect()
 
 
 @pytest.mark.parametrize("operation", ["stage", "retained", "publish", "reopen"])

@@ -26,9 +26,13 @@ replay snapshot.
 
 An opted-in unverified provider instead borrows the caller's connection.
 Every statement reads independently: schema checks, validation and output
-queries do not share a coherent view. It never begins a transaction, changes
-session settings, clones or disconnects that connection. Owned Arrow readers
-are released on exhaustion, error, early close or context closure.
+queries do not share a coherent view. Terrine does not directly begin or end
+transactions, change session settings, clone or disconnect that connection.
+However, Ibis schema inspection on an unverified backend may end an open
+transaction on the caller's connection. Use a connection with no pending writes
+or a dedicated read connection; transaction preservation is not guaranteed.
+Owned Arrow readers are released on exhaustion, error, early close or context
+closure.
 
 The actual backend name (for example `sqlite`), expression policy (`generic`)
 and SQL dialect (`sqlite`) are distinct. Keep the real SQL dialect in

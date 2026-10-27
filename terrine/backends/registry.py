@@ -255,7 +255,12 @@ def supported_engine_route(operation: str) -> str:
 
 
 def resolve_engine(con: Any, *, allow_unverified: bool = False) -> Engine:
-    """Admit an exact Ibis backend identity before schema or source access."""
+    """Admit an exact Ibis backend identity before schema or source access.
+
+    With ``allow_unverified=True``, Ibis schema inspection may end an open
+    caller transaction. Use a connection with no pending writes or a dedicated
+    read connection.
+    """
     for engine in ENGINES.values():
         if engine.status == "verified" and type(con).__module__ == engine.ibis_module:
             engine.identify(con)

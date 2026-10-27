@@ -27,9 +27,11 @@ __all__ = ["BackendProvider", "backend_provider", "backend_capabilities"]
 class BackendProvider(Protocol):
     """Admission authority, not an inference from Ibis compilation support.
 
-    Execution retains the caller connection as ``owner_con`` unchanged. Verified
-    providers own their consistent-view sessions; an unverified provider borrows
-    the caller connection for independent statements without a transaction view.
+    Execution retains the caller connection as ``owner_con``. Verified providers
+    own their consistent-view sessions; an unverified provider borrows the caller
+    connection for independent statements without a transaction view. Ibis schema
+    inspection on unverified backends may end an open caller transaction; use a
+    connection with no pending writes or a dedicated read connection.
     """
 
     capabilities: BackendCapabilities

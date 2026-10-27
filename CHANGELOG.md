@@ -12,6 +12,10 @@
   statements, releases owned readers and checks decimal arithmetic only when
   needed. It provides no shared snapshot, retained inputs or publication;
   strict scan-budget policy is unchanged.
+  Early reader closure also releases cursor-owning iterators immediately.
+  Ibis schema inspection on unverified backends may end an open caller
+  transaction; use a connection with no pending writes or a dedicated read
+  connection.
 - Centralize verified engine admission, capability records and expression
   selection without changing engine execution behavior, supported builds,
   session lifetimes or connection ownership.

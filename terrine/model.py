@@ -133,7 +133,12 @@ class Model:
         event_ids: Mapping[str, str] | None = None,
         allow_unverified: bool = False,
     ) -> Model:
-        """Bind event tables with explicit rosters, completeness and generated metrics."""
+        """Bind event tables with explicit rosters, completeness and generated metrics.
+
+        With ``allow_unverified=True``, Ibis schema inspection may end an open
+        transaction on ``con``. Use a connection with no pending writes or a
+        dedicated read connection.
+        """
         if not isinstance(allow_unverified, bool):
             raise _INVALID.error(reason="allow_unverified must be a bool")
         if not isinstance(units, Mapping):
@@ -229,7 +234,12 @@ class Model:
         input_binding: VerifiedInputBinding | None = None,
         allow_unverified: bool = False,
     ) -> Model:
-        """Bind definitions; explicitly opt in to unverified, statement-scoped reads."""
+        """Bind definitions; explicitly opt in to unverified, statement-scoped reads.
+
+        With ``allow_unverified=True``, Ibis schema inspection may end an open
+        transaction on ``con``. Use a connection with no pending writes or a
+        dedicated read connection.
+        """
         if not isinstance(allow_unverified, bool):
             raise _INVALID.error(reason="allow_unverified must be a bool")
         catalog = (
@@ -431,7 +441,12 @@ class Model:
         input_binding: VerifiedInputBinding | None = None,
         allow_unverified: bool = False,
     ) -> Model:
-        """Adapt optional published semantics through the native Catalog workflow."""
+        """Adapt optional published semantics through the native Catalog workflow.
+
+        With ``allow_unverified=True``, Ibis schema inspection may end an open
+        transaction on ``con``. Use a connection with no pending writes or a
+        dedicated read connection.
+        """
         if not isinstance(allow_unverified, bool):
             raise _INVALID.error(reason="allow_unverified must be a bool")
         from terrine.adapters.increment import _load_semantics, to_catalog

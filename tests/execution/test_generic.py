@@ -239,3 +239,42 @@ def test_reader_cleanup_does_not_replace_cancellation():
         raise cancelled
     assert caught.value is cancelled
     assert con.reader.closed
+
+
+@pytest.mark.parametrize("close_fails", [False, True])
+def test_source_close_also_releases_its_distinct_iterator(close_fails):
+    failure = RuntimeError("source close failed")
+
+    class StreamingReader(Reader):
+        def __init__(self):
+            super().__init__()
+            self.released = False
+            self.iterator = self.stream()
+
+        def stream(self):
+            try:
+                yield pa.record_batch([[1]], schema=self.schema)
+                yield pa.record_batch([[2]], schema=self.schema)
+            finally:
+                self.released = True
+
+        def __iter__(self):
+            return self.iterator
+
+        def close(self):
+            super().close()
+            if close_fails:
+                raise failure
+
+    con = FailingBackend()
+    con.reader = StreamingReader()
+    with context_for(con) as context:
+        reader = context.to_arrow_batches(ibis.literal(1))
+        assert next(reader).to_pylist() == [{"value": 1}]
+        if close_fails:
+            with pytest.raises(TerrineError) as caught:
+                reader.close()
+            assert caught.value.__cause__ is failure
+        else:
+            reader.close()
+        assert con.reader.released
