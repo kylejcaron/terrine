@@ -251,6 +251,11 @@ def test_postgres_identity_refuses_incompatible_ibis_before_query(postgres_backe
         "operation": "dialect_admission",
         "status": "unsupported",
     }
+    with pytest.raises(TypeError):
+        error.value.context["status"] = "admitted"  # ty: ignore[invalid-assignment]
+    for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
+        assert restored.code == error.value.code
+        assert restored.context == error.value.context
     assert con.con.queries == []
 
 
