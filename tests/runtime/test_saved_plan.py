@@ -417,3 +417,29 @@ def test_saved_plan_json_with_renamed_fields_refuses():
     with pytest.raises(TerrineError) as error:
         SavedPlan.from_json(serialized)
     assert error.value.code == "terrine.runtime.saved_plan_mismatch"
+
+
+@pytest.mark.parametrize("field", ["dataset_recipe_json", "recipe_hash", "unexpected"])
+def test_saved_plan_refuses_unknown_fields_in_current_envelope(field):
+    design = Design("user", FixedDate("2025-01-15"))
+    plan = plan_refresh(
+        namespace="runtime",
+        dataset="study",
+        definition_hash=design.spec_hash,
+        snapshot_id="snapshot-1",
+        graph=dependency_graph(sources=("events",), definition_hash=design.spec_hash),
+    )
+    saved = SavedPlan.create(
+        plan_json=plan.serialize(),
+        design=design,
+        model=ModelReference("owner", "catalog", "model", "units", "readiness", "event_ids"),
+        destination=DestinationRef("output.duckdb", "analytics", "study"),
+        namespace="runtime",
+        expected_base_manifest=None,
+    )
+    assert SavedPlan.from_json(saved.to_json()) == saved
+    payload = json.loads(saved.to_json())
+    payload[field] = "obsolete"
+    with pytest.raises(TerrineError) as error:
+        SavedPlan.from_json(json.dumps(payload))
+    assert error.value.code == "terrine.runtime.saved_plan_mismatch"

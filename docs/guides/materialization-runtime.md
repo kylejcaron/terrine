@@ -24,8 +24,9 @@ construction. The canonical runtime `PlanDefinition` is available as
 Owner preparation accepts `PlanRequest.dataset_definition` and persists the
 complete saved plan as `PlanInvocation.saved_plan_json`.
 
-Superseded saved-plan envelopes refuse with `terrine.runtime.saved_plan_mismatch`;
-prepare a fresh invocation rather than editing serialized names. Superseded
+Saved-plan envelopes with missing, unknown or superseded fields refuse with
+`terrine.runtime.saved_plan_mismatch`, even when the recognized fields carry a
+valid checksum. Prepare a fresh invocation rather than editing serialized names. Superseded
 owner request fields refuse with `terrine.runtime.plan_request_invalid` instead
 of silently dropping the training/scoring view. Manifest envelopes have their
 own `terrine.dataset.invalid_manifest` refusal; [definition persistence](ml-staging.md#reopening-a-pinned-dataset)

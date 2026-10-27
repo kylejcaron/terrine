@@ -248,6 +248,19 @@ class SavedPlan:
     def from_json(cls, value: str | bytes) -> SavedPlan:
         try:
             data = json.loads(value)
+            required = {
+                "schema_version",
+                "plan_json",
+                "design_json",
+                "design_hash",
+                "model",
+                "destination",
+                "namespace",
+                "expected_base_manifest",
+                "plan_hash",
+            }
+            if not isinstance(data, dict) or set(data) - {"dataset_definition_json"} != required:
+                raise _INVALID.error(reason="saved plan fields differ")
             model = ModelReference(**data["model"])
             destination = DestinationRef(**data["destination"])
             saved_plan = cls(
