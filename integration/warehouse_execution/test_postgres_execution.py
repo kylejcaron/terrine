@@ -84,3 +84,6 @@ def test_first_dataset_counts_match_the_duckdb_tutorial(postgres_scratch, tmp_pa
         {"unit": "b", "sessions_before": 0, "sessions_after": 0},
     ]
     assert result.provenance.execution_snapshot.backend == "postgres"
+    assert result.provenance.engine_name == "postgres"
+    assert result.provenance.dialect == "postgres"
+    assert result.provenance.engine_status == "verified"

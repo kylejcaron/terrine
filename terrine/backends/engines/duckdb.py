@@ -9,14 +9,15 @@ import ibis.expr.types as ir
 import sqlglot.expressions as sge
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE
-from terrine.backends.dialect import Dialect
+from terrine.backends.dialect import Dialect, unavailable
 from terrine.backends.numeric import (
     _scaled_exact_to_float,
     _scaled_float_parts,
     _scaled_float_result,
+    _scaled_text,
 )
 from terrine.backends.registry import supported_engine_route
-from terrine.backends.timestamps import _UNSUPPORTED, _epoch
+from terrine.backends.timestamps import _UNSUPPORTED, _epoch, native_day_start, native_local_day
 
 _EXACT = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
 _HUGE = dt.Unknown(raw_type=sge.DataType.build("HUGEINT", dialect="duckdb"))
@@ -80,6 +81,7 @@ def _timestamp_isfinite(value) -> bool:
 
 class DuckDBDialect(Dialect):
     __slots__ = ()
+    bounds_accumulations = False
     has_scaled_float_state = True
     has_native_asof = True
     operations = frozenset(
@@ -102,6 +104,9 @@ class DuckDBDialect(Dialect):
     def exact_type(self) -> dt.DataType:
         return _EXACT
 
+    def coefficient_type(self) -> dt.DataType:
+        return _EXACT
+
     def coefficient_bounds(self, value: ir.Value) -> tuple[int, int]:
         dtype = value.type()
         # DuckDB reports its physical HUGEINT as decimal(38, 0).
@@ -114,6 +119,13 @@ class DuckDBDialect(Dialect):
     ) -> tuple[ir.Value, ir.BooleanValue, ir.BooleanValue]:
         text, finite, held = _scaled_float_parts(value, scale, self)
         return _scaled_float_result(text.cast(_EXACT), finite, held)
+
+    def exact_ratio(self, numerator: ir.Value, denominator: ir.Value) -> ir.Value:
+        # Quotients divide normalized significands; the portable default is not native.
+        raise unavailable("exact_ratio", self.name)
+
+    def exact_is_nonfinite(self, value: ir.Value) -> ir.BooleanValue:
+        raise unavailable("exact_is_nonfinite", self.name)
 
     def exact_to_float(
         self, value: ir.Value, scale: int | ir.IntegerValue = 0
@@ -132,7 +144,7 @@ class DuckDBDialect(Dialect):
     def trim_leading_zeros(self, digits: ir.StringValue) -> ir.StringValue:
         return cast(ir.StringValue, _ltrim(digits, "0"))
 
-    def exact_sum(self, value: ir.Value) -> ir.Value:
+    def exact_sum(self, value: ir.Value, *, admitted: bool = False) -> ir.Value:
         return _exact_sum(value)
 
     def exact_subtract(self, left: ir.Value, right: ir.Value) -> ir.Value:
@@ -150,11 +162,33 @@ class DuckDBDialect(Dialect):
     def timestamp_is_finite(self, value: ir.TimestampValue) -> ir.BooleanValue:
         return cast(ir.BooleanValue, _timestamp_isfinite(value))
 
+    def timestamp_extremes(
+        self, dtype: dt.Timestamp
+    ) -> tuple[ir.TimestampScalar, ir.TimestampScalar]:
+        return (
+            cast(ir.TimestampScalar, ibis.literal("-infinity").cast(dtype)),
+            cast(ir.TimestampScalar, ibis.literal("infinity").cast(dtype)),
+        )
+
     def utc_wall_clock(self, value: ir.Value) -> ir.TimestampValue:
+        # A naive value already is its UTC wall clock; timezone('UTC', naive) would
+        # attach the zone instead and leave later date extraction to the session.
+        if cast(dt.Timestamp, value.type()).timezone is None:
+            return cast(ir.TimestampValue, value)
         return cast(ir.TimestampValue, _utc_naive("UTC", value))
 
     def utc_instant(self, value: ir.Value) -> ir.TimestampValue:
+        if cast(dt.Timestamp, value.type()).timezone == "UTC":
+            return cast(ir.TimestampValue, value)
         return cast(ir.TimestampValue, _utc_aware("UTC", value))
+
+    def local_day(
+        self, timestamp: ir.TimestampValue, offset_minutes: int
+    ) -> tuple[ir.DateValue, ir.TimestampValue]:
+        return native_local_day(self, timestamp, offset_minutes)
+
+    def day_start(self, timestamp: ir.TimestampValue, offset_minutes: int) -> ir.TimestampValue:
+        return native_day_start(self, timestamp, offset_minutes)
 
     def timestamp_text(self, value: ir.TimestampValue) -> ir.StringValue:
         return value.cast(dt.string)
@@ -213,6 +247,11 @@ class DuckDBDialect(Dialect):
 
     def bounded_nanoseconds(self, scale: int | None) -> bool:
         return scale == 9
+
+    def narrow_exact(
+        self, coefficient: ir.Value, scale: int, target: str | dt.DataType
+    ) -> ir.Value:
+        return _scaled_text(coefficient, scale).try_cast(target)
 
     def asof_join(
         self,

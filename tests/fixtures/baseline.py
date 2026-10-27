@@ -51,6 +51,9 @@ def materialized_baseline(world: World, *, weighted: bool = False) -> Materializ
             replay_equivalence="unverified",
         ),
         shape="cross_section",
+        engine_name="arrow",
+        dialect="generic",
+        engine_status="unverified",
         expression_timings={
             "net_revenue": ExpressionTiming(
                 kind="fixed_t0",

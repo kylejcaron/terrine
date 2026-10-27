@@ -27,9 +27,11 @@ test-scale:
 # Live PostgreSQL probes; requires TERRINE_TEST_POSTGRES_* settings and fails
 # without them. `uv run python -m tests.integration.postgres_scratch start` starts
 # a throwaway local server and prints the settings. The extras provide the driver
-# and the DuckDB reference backend.
+# and the DuckDB reference backend. The second run compiles the same conformance
+# known answers through the portable base expression policy on the server.
 test-postgres:
 	uv run --extra duckdb --extra postgres pytest integration -m postgres
+	uv run --extra duckdb --extra postgres pytest integration/conformance --generic-dialect -m postgres
 
 # Live BigQuery probes; requires TERRINE_TEST_BIGQUERY_PROJECT/_DATASET and
 # credentials (GOOGLE_APPLICATION_CREDENTIALS, application-default, or

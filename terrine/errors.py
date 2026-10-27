@@ -6,9 +6,13 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-__all__ = ["TerrineError", "RefusalSpec"]
+__all__ = ["TerrineError", "RefusalSpec", "UnverifiedBackendWarning"]
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
+
+
+class UnverifiedBackendWarning(UserWarning):
+    """An explicitly admitted backend has no verified read or consistency guarantees."""
 
 
 class FrozenMap(Mapping[str, Any]):

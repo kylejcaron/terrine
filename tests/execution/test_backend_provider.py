@@ -334,3 +334,41 @@ def test_postgres_admission_refuses_lookalike_before_source_schema_access(postgr
     inspection_con = connection()
     assert backend_module.backend_capabilities(inspection_con).dialect_admission is None
     assert inspection_con.con.queries == []
+
+
+@pytest.mark.parametrize("allow", [False, True])
+@pytest.mark.parametrize("kind", ["raw", "fake", "lookalike"])
+def test_opt_in_never_bypasses_connection_identity(postgres_backend, allow, kind):
+    from terrine.backends.registry import resolve_engine
+
+    class Fake:
+        name = "duckdb"
+
+        def table(self, *args, **kwargs):
+            raise AssertionError("source accessed")
+
+    con = (
+        duckdb.connect()
+        if kind == "raw"
+        else (
+            postgres_backend("PostgreSQL 8.0.2 Redshift 1.0.77467")
+            if kind == "lookalike"
+            else Fake()
+        )
+    )
+    try:
+        with pytest.raises(TerrineError) as caught:
+            resolve_engine(con, allow_unverified=allow)
+        assert caught.value.code == "terrine.backend.capability_unavailable"
+        assert {k: v for k, v in caught.value.context.items() if k != "route"} == (
+            {"backend": "Redshift", "operation": "dialect_admission", "status": "unsupported"}
+            if kind == "lookalike"
+            else {
+                "backend": "duckdbpyconnection" if kind == "raw" else "duckdb",
+                "operation": "query",
+                "status": "unverified",
+            }
+        )
+    finally:
+        if isinstance(con, duckdb.DuckDBPyConnection):
+            con.close()

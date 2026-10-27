@@ -4,12 +4,14 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import ibis
+import ibis.expr.datatypes as dt
 import pyarrow as pa
 import pytest
 from sqlglot import exp
 from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 
 import terrine as tr
+from integration.conftest import force_generic_dialect
 from integration.warehouse_execution.bigquery_fixtures import (
     bigquery_scratch as bigquery_scratch,  # noqa: F401
 )
@@ -19,9 +21,11 @@ from integration.warehouse_execution.postgres_fixtures import (
 from integration.warehouse_execution.snowflake_fixtures import (
     snowflake_scratch as snowflake_scratch,  # noqa: F401
 )
+from terrine.backends.dialect import current_dialect, dialect_scope
 from terrine.backends.extrema import greatest, least
+from terrine.backends.numeric import exact_float
 from terrine.backends.registry import ENGINES
-from terrine.backends.timestamps import utc_instant, utc_wall_clock
+from terrine.backends.timestamps import day_start, utc_instant, utc_wall_clock
 from terrine.semantic.models import BoundDimension, BoundValidity, PropertyBinding, TableRef
 from terrine.temporal.attributes import attribute_asof, validate_history
 
@@ -59,9 +63,15 @@ def duckdb_connection():
 
 
 @pytest.fixture(params=_ENGINES)
-def engine(request):
-    """Keep engine selection separate from each engine-independent known answer."""
+def engine(request, monkeypatch):
+    """Keep engine selection separate from each engine-independent known answer.
+
+    ``--generic-dialect`` forces the portable base expression policy for every
+    engine while the real connection, provider and SQL dialect stay native.
+    """
     scratch = request.getfixturevalue(_ENGINE_FIXTURES[request.param])
+    if request.config.getoption("--generic-dialect"):
+        force_generic_dialect(monkeypatch)
     return scratch if request.param == "duckdb" else scratch.con
 
 
@@ -115,6 +125,30 @@ def _events(times, ids):
 
 def test_every_registered_engine_has_a_conformance_connection():
     assert set(_ENGINE_FIXTURES) == set(ENGINES)
+
+
+def test_forced_generic_selection_reaches_nested_literals(engine, request):
+    """Under ``--generic-dialect`` even nested literal-only scopes quantize to scale 9."""
+    forced = request.config.getoption("--generic-dialect")
+    outer = current_dialect().name
+    with dialect_scope(engine.name), dialect_scope(engine.name.upper()):
+        exact, nonfinite, unrepresentable = exact_float(ibis.literal(0.1234567899), 10)
+        state_type = exact.type()
+        (row,) = engine.to_pyarrow(
+            ibis.literal(0)
+            .as_table()
+            .select(
+                state=exact.cast("string"), nonfinite=nonfinite, unrepresentable=unrepresentable
+            )
+        ).to_pylist()
+    assert current_dialect().name == outer
+    assert (row["nonfinite"], row["unrepresentable"]) == (False, False)
+    if forced:
+        assert state_type == dt.Decimal(38, 9)
+        assert Decimal(row["state"]) == Decimal("0.123456789")
+    else:
+        # Native state keeps every shortest-text digit of the binary64 value.
+        assert "1234567899" in row["state"]
 
 
 def test_schedule_whole_days_advance_by_every(engine):
@@ -192,6 +226,45 @@ def test_utc_conversions_ignore_session_time_zone(engine):
         table.select(wall=utc_wall_clock(table.aware), instant=utc_instant(table.naive))
     ).to_pylist()
     assert row == {"wall": instant.replace(tzinfo=None), "instant": instant}
+
+
+def test_naive_day_start_ignores_session_time_zone(engine):
+    """Catch a naive UTC wall clock re-read in the session zone: the start of its
+    day, and a day-aligned feature over naive source events, must not shift."""
+    statement = _TIME_ZONE_SETUP[engine.name]
+    if statement is not None:
+        with engine._safe_raw_sql(statement):
+            pass
+    midnight = datetime(2025, 1, 1)
+    instants = [midnight - timedelta(minutes=30), midnight, midnight + timedelta(hours=12)]
+    table = engine.create_table(
+        "naive_instants", pa.table({"naive": pa.array(instants, pa.timestamp("us"))})
+    )
+    rows = engine.to_pyarrow(
+        table.select(
+            "naive", wall=utc_wall_clock(table.naive), start=day_start(table.naive, 0)
+        ).order_by("naive")
+    ).to_pylist()
+    assert [(row["wall"], row["start"]) for row in rows] == [
+        (instant, datetime(instant.year, instant.month, instant.day, tzinfo=UTC))
+        for instant in instants
+    ]
+    events = pa.table(
+        {
+            "user_id": ["u"] * 3,
+            "ts": pa.array(instants, pa.timestamp("us")),
+            "event_id": ["a", "b", "c"],
+        }
+    )
+    model = _model(engine, events)
+    design = tr.Design(
+        "user",
+        tr.FixedDate("2025-01-01"),
+        features={"before": tr.agg("events_count", window=("-1d", "0s"))},
+        outcomes={"after": tr.agg("events_count", window=("0s", "1d"))},
+    )
+    (row,) = _rows(model, design)
+    assert (row["before"], row["after"]) == (1, 2)
 
 
 def test_sequence_uses_configured_event_id_for_timestamp_ties(engine):

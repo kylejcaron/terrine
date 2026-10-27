@@ -11,7 +11,7 @@ import ibis.expr.datatypes as dt
 import pytest
 
 from terrine.backends import registry
-from terrine.backends.dialect import dialect_for_name, dialect_scope, unavailable
+from terrine.backends.dialect import Dialect, dialect_for_name, dialect_scope, unavailable
 from terrine.backends.numeric import exact_type
 from terrine.backends.registry import ENGINES, engine_supports, get_engine, resolve_engine
 from terrine.errors import TerrineError
@@ -81,25 +81,30 @@ def test_unavailable_route_names_only_verified_operation_providers(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("method", "operands", "operation"),
+    ("engine", "method", "operands", "operation"),
     [
-        ("exact_type", (), "exact_state"),
-        ("exact_float", (ibis.literal(1.5),), "exact_float"),
-        ("exact_ratio", (ibis.literal(1), ibis.literal(2)), "exact_ratio"),
-        ("exact_is_nonfinite", (ibis.literal(1),), "exact_is_nonfinite"),
-        ("wide_type", (), "normalized"),
-        ("exact_sum", (ibis.table({"value": "int64"}).value,), "exact_state"),
-        ("exact_subtract", (ibis.literal(2), ibis.literal(1)), "exact_state"),
-        ("truncating_quotient", (ibis.literal(3), 2), "integer_quotient"),
+        ("duckdb", "exact_ratio", (ibis.literal(1), ibis.literal(2)), "exact_ratio"),
+        ("duckdb", "exact_is_nonfinite", (ibis.literal(1),), "exact_is_nonfinite"),
+        ("snowflake", "exact_ratio", (ibis.literal(1), ibis.literal(2)), "exact_ratio"),
+        ("snowflake", "exact_is_nonfinite", (ibis.literal(1),), "exact_is_nonfinite"),
+        ("postgres", "wide_type", (), "normalized"),
+        ("postgres", "wide_quotient", (ibis.literal(6), ibis.literal(3)), "normalized"),
+        ("postgres", "trim_leading_zeros", (ibis.literal("007"),), "normalized"),
+        ("bigquery", "wide_type", (), "normalized"),
+        ("bigquery", "wide_quotient", (ibis.literal(6), ibis.literal(3)), "normalized"),
+        ("bigquery", "trim_leading_zeros", (ibis.literal("007"),), "normalized"),
     ],
 )
-def test_unknown_dialect_refuses_native_numeric_operations(method, operands, operation):
+def test_registered_engines_keep_native_operation_refusals(engine, method, operands, operation):
+    """A portable base default never makes a registered engine advertise more."""
+    dialect = dialect_for_name(engine)
+    assert operation not in dialect.operations
     with pytest.raises(TerrineError) as caught:
-        getattr(dialect_for_name("unregistered"), method)(*operands)
+        getattr(dialect, method)(*operands)
     error = caught.value
     assert error.code == "terrine.backend.capability_unavailable"
     assert {key: value for key, value in error.context.items() if key != "route"} == {
-        "backend": "unregistered",
+        "backend": engine,
         "operation": operation,
         "status": "unsupported",
     }
@@ -108,6 +113,20 @@ def test_unknown_dialect_refuses_native_numeric_operations(method, operands, ope
     for restored in (copy.deepcopy(error), pickle.loads(pickle.dumps(error))):
         assert restored.code == error.code
         assert restored.context == error.context
+
+
+def test_registered_operation_declarations_cover_every_portable_default():
+    """Each registered engine either declares an operation or refuses it explicitly."""
+    refused = {
+        "duckdb": {"exact_ratio", "exact_is_nonfinite"},
+        "postgres": {"normalized"},
+        "bigquery": {"normalized"},
+        "snowflake": {"exact_ratio", "exact_is_nonfinite"},
+    }
+    for name, engine in ENGINES.items():
+        declared = engine.dialect.operations
+        assert declared | refused[name] == Dialect.operations
+        assert not declared & refused[name]
 
 
 def test_static_inspection_and_admission_preserve_native_handle_boundary():
@@ -153,39 +172,25 @@ def test_postgres_identity_preserves_invalid_driver_refusal():
 
 
 @pytest.mark.parametrize(
-    "operation", ["utc_wall_clock", "utc_instant", "timestamp_is_finite", "timestamp_text"]
-)
-def test_timestamp_default_refusals_keep_operation_context(operation):
-    value = ibis.literal("2025-01-01 00:00:00", type=dt.Timestamp(scale=6))
-    with pytest.raises(TerrineError) as caught:
-        getattr(dialect_for_name("unregistered"), operation)(value)
-    error = caught.value
-    assert error.code == "terrine.backend.capability_unavailable"
-    assert {key: item for key, item in error.context.items() if key != "route"} == {
-        "backend": "unregistered",
-        "operation": operation,
-        "status": "unsupported",
-    }
-    with pytest.raises(TypeError):
-        error.context["status"] = "verified"  # ty: ignore[invalid-assignment]
-    for restored in (copy.deepcopy(error), pickle.loads(pickle.dumps(error))):
-        assert restored.code == error.code
-        assert restored.context == error.context
-
-
-@pytest.mark.parametrize(
     ("backend", "build", "scope", "accepted"),
     [
-        ("duckdb", "0.0.0", "unregistered", False),
-        ("postgres", "1.5.6", "unregistered", False),
-        ("bigquery", "1.5.6", "unregistered", False),
-        ("snowflake", "1.5.6", "unregistered", False),
-        ("unregistered", "1.5.6", "unregistered", False),
-        ("unbound", "1.5.6", "unregistered", False),
-        ("duckdb", "1.5.6", "postgres", True),
+        # A registered policy admits only its own backend, DuckDB only on its build.
+        ("duckdb", "0.0.0", "duckdb", False),
+        ("postgres", "1.5.6", "duckdb", False),
+        ("bigquery", "1.5.6", "postgres", False),
+        ("snowflake", "1.5.6", "bigquery", False),
+        ("duckdb", "1.5.6", "snowflake", False),
+        ("unbound", "1.5.6", "postgres", False),
+        ("duckdb", "1.5.6", "duckdb", True),
         ("postgres", "1.5.6", "postgres", True),
         ("bigquery", "1.5.6", "bigquery", True),
         ("snowflake", "1.5.6", "snowflake", True),
+        # The portable policy needs no native type or build; execution admission
+        # refuses a backend without usable decimals.
+        ("duckdb", "0.0.0", "generic", True),
+        ("postgres", "1.5.6", "generic", True),
+        ("unregistered", "1.5.6", "generic", True),
+        ("unbound", "1.5.6", "generic", True),
     ],
 )
 def test_exact_prefix_preserves_build_and_scope_admission_without_queries(

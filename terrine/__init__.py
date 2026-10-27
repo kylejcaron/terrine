@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from terrine.compile.cost import preview
     from terrine.data import Budget, Coverage, Events, UnitSource
     from terrine.dataset.reference import Dataset
+    from terrine.errors import UnverifiedBackendWarning
     from terrine.frame import Frame
     from terrine.model import Model
     from terrine.spec import (
@@ -72,6 +73,7 @@ __all__ = [
     "UnitSource",
     "Window",
     "TerrineError",
+    "UnverifiedBackendWarning",
     "agg",
     "all_of",
     "approx_quantile",
@@ -105,6 +107,7 @@ _LAZY_MODULES = {
     "Events": "terrine.data",
     "Model": "terrine.model",
     "UnitSource": "terrine.data",
+    "UnverifiedBackendWarning": "terrine.errors",
 }
 
 

@@ -12,7 +12,7 @@ import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 import pyarrow as pa
 
-from terrine.backends.registry import engine_supports
+from terrine.backends.registry import engine_supports, expression_dialect
 from terrine.backends.sequences import integer_sequence
 from terrine.backends.timestamps import (
     has_submicrosecond,
@@ -60,6 +60,10 @@ class AnchorTable:
 
     table: ibis.Table
     _checks: tuple[_AnchorCheck, ...]
+
+    def reads(self) -> tuple[ibis.Table, ...]:
+        """Every relation ``validate`` executes, for admission before any read."""
+        return tuple(check.query for check in self._checks)
 
     def validate(self, *, execute: Callable[[ibis.Table], pa.Table]) -> None:
         """Execute aggregate checks through the caller's pinned Arrow executor."""
@@ -151,7 +155,7 @@ def _range_filter_raw(
         return table
     dtype = table.schema()[column]
     naive = dtype.timezone is None
-    if naive and not engine_supports(model.catalog.dialect, "naive_anchor_utc"):
+    if naive and not engine_supports(expression_dialect(model._engine), "naive_anchor_utc"):
         raise _UTC_CONVERSION_UNSUPPORTED.error(backend=model.catalog.dialect)
     start, end = _bound(model, anchor_range.start), _bound(model, anchor_range.end)
     for bound, lower in ((start, True), (end, False)):
@@ -292,7 +296,7 @@ def _roster_anchors(
         if elapsed_seconds <= 0:
             raise _INVALID.error(reason="schedule interval has no elapsed time")
         stop = (elapsed_seconds + schedule.every - 1) // schedule.every
-        sequence = integer_sequence(stop, "ordinal", dialect=model.catalog.dialect)
+        sequence = integer_sequence(stop, "ordinal", dialect=expression_dialect(model._engine))
         ordinal = sequence.ordinal
         # An integer-seconds interval: Ibis lowers `interval * column` on BigQuery
         # through EXTRACT(SECOND ...), which normalizes 86400 s to zero.
@@ -450,10 +454,11 @@ def compile_anchors(
         ensure_runtime_shape_supported(design.shape, anchor=design.anchor)
     from terrine.execution.backend import backend_provider
 
-    backend_provider(model.con).capabilities.require(
+    backend_provider(model.con, engine=model._engine).capabilities.require(
         "exact_timestamps",
         backend=model.catalog.dialect,
         route="Use verified native timestamp semantics before compiling dataset anchors.",
+        allow_unverified=model._engine.status == "unverified",
     )
     if persisted is not None:
         if isinstance(design.anchor, (FixedDate, Schedule)):

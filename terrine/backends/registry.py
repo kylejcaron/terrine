@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -10,6 +12,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE, BackendCapabilities
+from terrine.errors import UnverifiedBackendWarning
 
 if TYPE_CHECKING:
     from terrine.backends.dialect import Dialect
@@ -172,14 +175,62 @@ ENGINES: Mapping[str, Engine] = MappingProxyType(
 )
 
 
+GENERIC = Engine(
+    name="generic",
+    display_name="Unverified Ibis",
+    ibis_module="",
+    session_strategy=SessionStrategy.NO_SNAPSHOT,
+    status="unverified",
+    capabilities=BackendCapabilities(
+        snapshot=False,
+        transaction_view=False,
+        retained_snapshot=False,
+        table_publication=False,
+        atomic_manifest_publish=False,
+        runtime_reader=False,
+        native_parquet_unload=False,
+        change_evidence=frozenset(),
+    ),
+    features=frozenset({"naive_anchor_utc", "first_occurrence", "event_resolution"}),
+    provider_module="terrine.execution._generic",
+    identity_requires_query=False,
+    _dialect_path="terrine.backends.dialect:Dialect",
+    _identity_path="terrine.backends.registry:_identify_generic",
+)
+
+
+def backend_name(con: Any) -> str:
+    """Return the actual connection name, independently of expression policy."""
+    return str(getattr(con, "name", type(con).__name__)).casefold()
+
+
+def expression_dialect(engine: Engine) -> str:
+    """Return the expression policy selected by an admitted engine."""
+    return engine.name
+
+
+def _identify_generic(con: Any) -> None:
+    from ibis.backends import BaseBackend
+
+    if not isinstance(con, BaseBackend) or any(
+        type(con).__module__ == engine.ibis_module for engine in ENGINES.values()
+    ):
+        raise _CAPABILITY_UNAVAILABLE.error(
+            backend=backend_name(con),
+            operation="query",
+            status="unverified",
+            route=supported_engine_route("query"),
+        )
+
+
 def get_engine(name: str) -> Engine | None:
     """Look up metadata without importing an engine implementation."""
-    return ENGINES.get(name.casefold())
+    return GENERIC if name.casefold() == GENERIC.name else ENGINES.get(name.casefold())
 
 
 def engine_supports(name: str, feature: str) -> bool:
     engine = get_engine(name)
-    return engine is not None and engine.status == "verified" and feature in engine.features
+    return engine is not None and feature in engine.features
 
 
 def supported_engine_route(operation: str) -> str:
@@ -203,15 +254,31 @@ def supported_engine_route(operation: str) -> str:
     return "Use a verified Ibis backend providing this operation: " + ", ".join(destinations) + "."
 
 
-def resolve_engine(con: Any) -> Engine:
-    """Admit an exact Ibis backend identity before schema or source access."""
+def resolve_engine(con: Any, *, allow_unverified: bool = False) -> Engine:
+    """Admit an exact Ibis backend identity before schema or source access.
+
+    With ``allow_unverified=True``, Ibis schema inspection may end an open
+    caller transaction. Use a connection with no pending writes or a dedicated
+    read connection.
+    """
     for engine in ENGINES.values():
         if engine.status == "verified" and type(con).__module__ == engine.ibis_module:
             engine.identify(con)
             return engine
+    _identify_generic(con)
+    if allow_unverified:
+        warnings.warn(
+            f"Backend {backend_name(con)!r} is unverified. Reads are per statement, "
+            "without a consistent multi-statement view, retained inputs or publication.",
+            UnverifiedBackendWarning,
+            stacklevel=2,
+            skip_file_prefixes=(os.path.dirname(os.path.dirname(__file__)),),
+        )
+        return GENERIC
     raise _CAPABILITY_UNAVAILABLE.error(
-        backend=str(getattr(con, "name", type(con).__name__)).casefold(),
+        backend=backend_name(con),
         operation="query",
         status="unverified",
-        route=supported_engine_route("query"),
+        route="Pass allow_unverified=True for unverified read-only use. "
+        + supported_engine_route("query"),
     )

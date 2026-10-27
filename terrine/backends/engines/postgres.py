@@ -11,10 +11,10 @@ import ibis.expr.types as ir
 import sqlglot.expressions as sge
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE, _SNAPSHOT_UNAVAILABLE
-from terrine.backends.dialect import Dialect, current_dialect
+from terrine.backends.dialect import Dialect, current_dialect, unavailable
 from terrine.backends.numeric import _checked_narrow_exact
 from terrine.backends.registry import supported_engine_route
-from terrine.backends.timestamps import _UNSUPPORTED, _epoch
+from terrine.backends.timestamps import _UNSUPPORTED, _epoch, native_day_start, native_local_day
 from terrine.errors import RefusalSpec
 
 _EXACT = dt.Unknown(raw_type=sge.DataType.build("NUMERIC", dialect="postgres"))
@@ -118,6 +118,7 @@ def _timestamp_isfinite(value) -> bool:
 
 class PostgresDialect(Dialect):
     __slots__ = ()
+    bounds_accumulations = False
     has_native_asof = True
     operations = frozenset(
         {
@@ -138,6 +139,9 @@ class PostgresDialect(Dialect):
     )
 
     def exact_type(self) -> dt.DataType:
+        return _EXACT
+
+    def coefficient_type(self) -> dt.DataType:
         return _EXACT
 
     def exact_float(
@@ -180,11 +184,21 @@ class PostgresDialect(Dialect):
             out_of_range.fill_null(false),
         )
 
-    def exact_sum(self, value: ir.Value) -> ir.Value:
+    def exact_sum(self, value: ir.Value, *, admitted: bool = False) -> ir.Value:
         return _exact_sum(value)
 
     def exact_subtract(self, left: ir.Value, right: ir.Value) -> ir.Value:
         return _exact_subtract(left, right)
+
+    def wide_type(self) -> dt.DataType:
+        # Quotients divide in NUMERIC; the normalized significand path is not native.
+        raise unavailable("normalized", self.name)
+
+    def wide_quotient(self, value: ir.Value, divisor: ir.Value) -> ir.Value:
+        raise unavailable("normalized", self.name)
+
+    def trim_leading_zeros(self, digits: ir.StringValue) -> ir.StringValue:
+        raise unavailable("normalized", self.name)
 
     def truncating_quotient(
         self, value: ir.IntegerValue, divisor: int | ir.IntegerValue
@@ -195,11 +209,33 @@ class PostgresDialect(Dialect):
     def timestamp_is_finite(self, value: ir.TimestampValue) -> ir.BooleanValue:
         return cast(ir.BooleanValue, _timestamp_isfinite(value))
 
+    def timestamp_extremes(
+        self, dtype: dt.Timestamp
+    ) -> tuple[ir.TimestampScalar, ir.TimestampScalar]:
+        return (
+            cast(ir.TimestampScalar, ibis.literal("-infinity").cast(dtype)),
+            cast(ir.TimestampScalar, ibis.literal("infinity").cast(dtype)),
+        )
+
     def utc_wall_clock(self, value: ir.Value) -> ir.TimestampValue:
+        # A naive value already is its UTC wall clock; AT TIME ZONE 'UTC' on it
+        # would attach the zone instead and leave later date extraction to the session.
+        if cast(dt.Timestamp, value.type()).timezone is None:
+            return cast(ir.TimestampValue, value)
         return cast(ir.TimestampValue, _utc_naive("UTC", value))
 
     def utc_instant(self, value: ir.Value) -> ir.TimestampValue:
+        if cast(dt.Timestamp, value.type()).timezone == "UTC":
+            return cast(ir.TimestampValue, value)
         return cast(ir.TimestampValue, _utc_aware("UTC", value))
+
+    def local_day(
+        self, timestamp: ir.TimestampValue, offset_minutes: int
+    ) -> tuple[ir.DateValue, ir.TimestampValue]:
+        return native_local_day(self, timestamp, offset_minutes)
+
+    def day_start(self, timestamp: ir.TimestampValue, offset_minutes: int) -> ir.TimestampValue:
+        return native_day_start(self, timestamp, offset_minutes)
 
     def timestamp_text(self, value: ir.TimestampValue) -> ir.StringValue:
         return value.cast(dt.string)
@@ -242,7 +278,7 @@ class PostgresDialect(Dialect):
     def narrow_exact(
         self, coefficient: ir.Value, scale: int, target: str | dt.DataType
     ) -> ir.Value:
-        return _checked_narrow_exact(coefficient, scale, target, self)
+        return _checked_narrow_exact(coefficient, scale, target)
 
     def asof_join(
         self,

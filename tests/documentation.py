@@ -58,7 +58,8 @@ _RECOVERY = {
     "agent": ("dataset-agent-tools.md", "Use owner-approved resources, grants and fresh receipts."),
     "backend": (
         "backend-compatibility.md",
-        "Use registered verified engines implementing the requested operation.",
+        "Use a registered verified engine, or explicitly opt in to "
+        "unverified read-only operations.",
     ),
     "budget": (
         "cost-and-residency.md",

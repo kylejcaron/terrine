@@ -9,7 +9,7 @@ import ibis.expr.types as ir
 import sqlglot.expressions as sge
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE
-from terrine.backends.dialect import Dialect, current_dialect
+from terrine.backends.dialect import Dialect, current_dialect, unavailable
 from terrine.backends.numeric import (
     _checked_narrow_exact,
     _scaled_exact_to_float,
@@ -17,7 +17,7 @@ from terrine.backends.numeric import (
     _scaled_float_result,
 )
 from terrine.backends.registry import ENGINES, supported_engine_route
-from terrine.backends.timestamps import _UNSUPPORTED, _epoch
+from terrine.backends.timestamps import _UNSUPPORTED, _epoch, native_day_start, native_local_day
 
 # Sums and differences beyond 38 digits remain exact-overflow query errors.
 _EXACT = dt.Decimal(38, 0)
@@ -85,6 +85,7 @@ def _sf_aware_text(timestamp, format):
 
 class SnowflakeDialect(Dialect):
     __slots__ = ()
+    bounds_accumulations = False
     has_native_asof = True
     has_scaled_float_state = True
     operations = frozenset(
@@ -129,6 +130,13 @@ class SnowflakeDialect(Dialect):
     ) -> tuple[ir.FloatingValue, ir.BooleanValue, ir.BooleanValue]:
         return _scaled_exact_to_float(value, scale, self)
 
+    def exact_ratio(self, numerator: ir.Value, denominator: ir.Value) -> ir.Value:
+        # Quotients divide normalized significands; the portable default is not native.
+        raise unavailable("exact_ratio", self.name)
+
+    def exact_is_nonfinite(self, value: ir.Value) -> ir.BooleanValue:
+        raise unavailable("exact_is_nonfinite", self.name)
+
     def wide_type(self) -> dt.DataType:
         return _EXACT
 
@@ -142,7 +150,7 @@ class SnowflakeDialect(Dialect):
     def trim_leading_zeros(self, digits: ir.StringValue) -> ir.StringValue:
         return cast(ir.StringValue, _ltrim(digits, "0"))
 
-    def exact_sum(self, value: ir.Value) -> ir.Value:
+    def exact_sum(self, value: ir.Value, *, admitted: bool = False) -> ir.Value:
         # Keep NUMBER(38, 0); Ibis otherwise widens the scale and types later
         # fills and comparisons as NUMBER(38, 2).
         return cast(ir.NumericColumn, value).sum().cast(_EXACT)
@@ -171,11 +179,24 @@ class SnowflakeDialect(Dialect):
         )
 
     def utc_wall_clock(self, value: ir.Value) -> ir.TimestampValue:
-        # A plain cast keeps the value's stored offset; re-express it in UTC first.
+        # A naive value already is its UTC wall clock. An aware value's plain cast
+        # keeps its stored offset, so it is re-expressed in UTC first.
+        if cast(dt.Timestamp, value.type()).timezone is None:
+            return cast(ir.TimestampValue, value)
         return cast(ir.TimestampValue, _sf_wall_clock(_sf_in_zone("UTC", value)))
 
     def utc_instant(self, value: ir.Value) -> ir.TimestampValue:
+        if cast(dt.Timestamp, value.type()).timezone == "UTC":
+            return cast(ir.TimestampValue, value)
         return cast(ir.TimestampValue, _sf_instant(value))
+
+    def local_day(
+        self, timestamp: ir.TimestampValue, offset_minutes: int
+    ) -> tuple[ir.DateValue, ir.TimestampValue]:
+        return native_local_day(self, timestamp, offset_minutes)
+
+    def day_start(self, timestamp: ir.TimestampValue, offset_minutes: int) -> ir.TimestampValue:
+        return native_day_start(self, timestamp, offset_minutes)
 
     def timestamp_text(self, value: ir.TimestampValue) -> ir.StringValue:
         if cast(dt.Timestamp, value.type()).timezone is None:
@@ -204,7 +225,7 @@ class SnowflakeDialect(Dialect):
     def narrow_exact(
         self, coefficient: ir.Value, scale: int, target: str | dt.DataType
     ) -> ir.Value:
-        return _checked_narrow_exact(coefficient, scale, target, self)
+        return _checked_narrow_exact(coefficient, scale, target)
 
     def asof_join(
         self,

@@ -31,10 +31,10 @@ import pyarrow as pa
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE, _SNAPSHOT_UNAVAILABLE
 from terrine.backends.registry import ENGINES
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.execution._metadata import invalidate_metadata
 from terrine.semantic.models import Catalog, RelationSpec, SqlQuery, TableRef
-from terrine.semantic.sql import _admit_read_query_ast
+from terrine.semantic.sql import _admit_read_query_ast, _render, _scopes, _verified
 
 DIALECT = "snowflake"
 # Physical row sources with Time Travel, and views over them. Temporary tables
@@ -249,15 +249,20 @@ def _relation(con: Any, database: str, schema: str, name: str) -> _Relation:
     )
 
 
-def check_routines(sql: str) -> None:
-    """Refuse a query that calls a database- or schema-qualified routine."""
+def _parsed(sql: str, failure: str) -> Any:
     from sqlglot import parse_one
 
     try:
-        statement = parse_one(sql, read=DIALECT)
+        return _verified(lambda: parse_one(sql, read=DIALECT))
+    except TerrineError:
+        raise
     except Exception as exc:
-        raise _snapshot_error("query could not be parsed") from exc
-    _check_qualified_routines(statement)
+        raise _snapshot_error(failure) from exc
+
+
+def check_routines(sql: str) -> None:
+    """Refuse a query that calls a database- or schema-qualified routine."""
+    _check_qualified_routines(_parsed(sql, "query could not be parsed"))
 
 
 def _check_qualified_routines(statement: Any) -> None:
@@ -271,12 +276,9 @@ def _check_qualified_routines(statement: Any) -> None:
 
 
 def _view_query(definition: str) -> Any:
-    from sqlglot import exp, parse_one
+    from sqlglot import exp
 
-    try:
-        statement = parse_one(definition, read=DIALECT)
-    except Exception as exc:
-        raise _snapshot_error("view definition could not be parsed") from exc
+    statement = _parsed(definition, "view definition could not be parsed")
     if isinstance(statement, exp.Create):
         statement = statement.expression
     if not isinstance(statement, exp.Query):
@@ -341,10 +343,9 @@ def _physical_tables(statement: Any) -> list[Any]:
     """Physical relation references in every scope of a normalized statement:
     common table expressions, derived tables and table functions are not."""
     from sqlglot import exp
-    from sqlglot.optimizer.scope import traverse_scope
 
     found = []
-    for scope in traverse_scope(statement):
+    for scope in _scopes(statement):
         for source in scope.sources.values():
             if isinstance(source, exp.Table) and isinstance(source.this, exp.Identifier):
                 found.append(source)
@@ -473,7 +474,7 @@ def resolve(
     statement = _admit_read_query_ast(relation.sql, catalog_dialect, DIALECT)
     _refuse_relative_time_travel(statement)
     qualify(con, statement)
-    sql = statement.sql(dialect=DIALECT)
+    sql = _render(statement, DIALECT)
     return con.sql(sql, schema=_query_schema(con, sql))
 
 
@@ -525,12 +526,15 @@ def pin(sql: str, stamp: str) -> str:
     """
     from sqlglot import parse_one
 
-    statement = _normalized(parse_one(sql, read=DIALECT))
-    for table in _physical_tables(statement):
-        # An explicit AT/BEFORE already names one fixed instant; keep it.
-        if table.args.get("when") is None:
-            table.set("when", _historical(stamp))
-    return statement.sql(dialect=DIALECT)
+    def rewrite() -> str:
+        statement = _normalized(parse_one(sql, read=DIALECT))
+        for table in _physical_tables(statement):
+            # An explicit AT/BEFORE already names one fixed instant; keep it.
+            if table.args.get("when") is None:
+                table.set("when", _historical(stamp))
+        return statement.sql(dialect=DIALECT)
+
+    return _verified(rewrite)
 
 
 def _historical(stamp: str) -> Any:

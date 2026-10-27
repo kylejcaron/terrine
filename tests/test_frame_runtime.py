@@ -102,8 +102,15 @@ def test_sequence_provenance_round_trips_on_bounded_materialization(native_input
     assert metadata.fact == "session"
     assert metadata.representation == "positions"
     assert metadata.event_fields == ()
+    stamp = (
+        materialized.provenance.engine_name,
+        materialized.provenance.dialect,
+        materialized.provenance.engine_status,
+    )
+    assert stamp == ("duckdb", "duckdb", "verified")
     restored = type(materialized).from_arrow(materialized.to_arrow())
     assert restored.provenance.sequence_meta == metadata
+    assert restored.provenance == materialized.provenance
 
 
 def test_unresolved_eligibility_refuses_export_with_only_aggregate_counts():
@@ -215,6 +222,9 @@ def test_dataframe_conversion_selects_compact_or_lossless_columns(
             ExecutionSnapshot(None, "duckdb", {}, None, "unverified"),
             "cross_section",
             None,
+            engine_name="duckdb",
+            dialect="duckdb",
+            engine_status="verified",
         ),
     )
     frame = _design().build(_model(native_inputs))

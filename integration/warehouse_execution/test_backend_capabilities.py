@@ -94,6 +94,12 @@ def test_duckdb_typed_dataset_arrow_parquet_and_generation_parity(tmp_path):
         )
         assert metadata.provenance.execution_snapshot.input_binding_id is None
         assert set(dataset.manifest.source_snapshots["revisions"].values()) == {None}
+        for provenance in (metadata.provenance, streamed_metadata.provenance):
+            assert provenance.engine_name == "duckdb"
+            assert provenance.dialect == "duckdb"
+            assert provenance.engine_status == "verified"
+        assert dataset.manifest.frame_metadata["provenance"]["engine_status"] == "verified"
+        assert dataset.manifest.frame_metadata["provenance"]["dialect"] == "duckdb"
 
         destination = tmp_path / "export"
         exported = dataset.export_parquet(destination=str(destination), budget=budget)

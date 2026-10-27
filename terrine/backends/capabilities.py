@@ -40,9 +40,18 @@ class BackendCapabilities:
     # Reading owner-published generations and manifests (Dataset, open_generation).
     runtime_reader: bool | None = None
 
-    def require(self, operation: str, *, backend: str, route: str) -> None:
-        """Refuse only the requested operation when its evidence is absent."""
+    def require(
+        self, operation: str, *, backend: str, route: str, allow_unverified: bool = False
+    ) -> None:
+        """Admit unverified read primitives only with explicit permission."""
         value = getattr(self, operation)
+        if (
+            value is None
+            and allow_unverified
+            and operation
+            in {"dialect_admission", "exact_timestamps", "exact_decimals", "arrow_batches"}
+        ):
+            return
         if value is not True:
             raise _CAPABILITY_UNAVAILABLE.error(
                 backend=backend,

@@ -17,6 +17,7 @@ import pyarrow as pa
 
 from terrine.backends.dialect import dialect_scope
 from terrine.backends.extrema import greatest, least
+from terrine.backends.registry import expression_dialect
 from terrine.compile._asof import compile_asof
 from terrine.compile._predicates import CompiledValue, compile_predicate
 from terrine.compile.anchors import (
@@ -70,6 +71,7 @@ from terrine.temporal.aggregate import aggregate_window
 from terrine.temporal.attributes import (
     _enriched_property_columns,
     enrich_events,
+    history_checks,
     validate_history,
 )
 from terrine.temporal.daily import resolve_measure
@@ -92,6 +94,10 @@ _RESERVED = {"unit", "anchor_id", "t0", "treatment", "_observed_from", "_observe
 
 
 class _DeferredCheck(Protocol):
+    def reads(self) -> tuple[ibis.Table, ...]:
+        """The relations ``validate`` executes, admitted before any read runs."""
+        ...
+
     def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None: ...
 
 
@@ -158,6 +164,10 @@ def _validate_names(design: Design) -> None:
 class _HistoryValidation:
     table: ibis.Table
     dimension: BoundDimension
+
+    def reads(self) -> tuple[ibis.Table, ...]:
+        """The validation queries, each projected to the columns it checks."""
+        return tuple(query for query, _ in history_checks(self.table, self.dimension))
 
     def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None:
         validate_history(self.table, self.dimension, execute=execute)
@@ -296,6 +306,18 @@ class CompiledStudy:
         object.__setattr__(self, "_checks", tuple(self._checks))
         object.__setattr__(self, "sketches", tuple(self.sketches))
 
+    def reads(self) -> tuple[ibis.Table, ...]:
+        """Every relation materialization may execute: the output, its audit, each
+        deferred integrity check and each sketch sidecar, so admission can
+        inspect them before the first source row is read."""
+        return (
+            self.table,
+            self.audit_table,
+            *self._anchors.reads(),
+            *(relation for check in self._checks for relation in check.reads()),
+            *(sidecar.rows for sidecar in self.sketches),
+        )
+
     def validate(self, *, execute: Callable[[ibis.Table], pa.Table]) -> None:
         """Run every deferred integrity check before audit or output leaves its view."""
         self._anchors.validate(execute=execute)
@@ -340,12 +362,14 @@ def resolve_sketch_sidecars(table: pa.Table, compiled: CompiledStudy, con) -> pa
     return table
 
 
-def exact_scope(model: Model) -> AbstractContextManager[None]:
-    """Build exact window state for the Model's backend while compiling.
+def expression_policy(model: Model) -> str:
+    """The admitted expression policy name a Model's study expressions compile for."""
+    return expression_dialect(model._engine)
 
-    The Catalog dialect was matched to the execution backend when the Model was bound.
-    """
-    return dialect_scope(model.catalog.dialect)
+
+def exact_scope(model: Model) -> AbstractContextManager[None]:
+    """Build window expressions using the Model's admitted expression policy."""
+    return dialect_scope(expression_policy(model))
 
 
 def compile_columns(

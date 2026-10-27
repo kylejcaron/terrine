@@ -121,11 +121,17 @@ def _compile_design(
     )
 
 
-def compile_cohort_summary(study: CompiledStudy, *, grouping, value_column: str) -> CompiledStudy:
-    """Apply a cohort summary to a compiled trajectory relation."""
+def compile_cohort_summary(
+    study: CompiledStudy, *, grouping, value_column: str, dialect: str | None = None
+) -> CompiledStudy:
+    """Apply a cohort summary to a compiled trajectory relation.
+
+    ``dialect`` is the admitted expression policy of the Model that compiled
+    ``study``; without it the relation's own backend selects the policy.
+    """
     from terrine.compile.shapes.cohorts import compile_cohorts
 
-    return compile_cohorts(study, grouping=grouping, value_column=value_column)
+    return compile_cohorts(study, grouping=grouping, value_column=value_column, dialect=dialect)
 
 
 def aggregate_life_table(

@@ -42,6 +42,9 @@ __all__ = ["compile_event_sequence"]
 class _SequencePreflight:
     result: SequenceResult
 
+    def reads(self) -> tuple[ibis.Table, ...]:
+        return (self.result._max_check,)
+
     def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None:
         self.result.validate(execute=execute)
 

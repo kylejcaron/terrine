@@ -10,6 +10,8 @@ significant digits), and leaves it through text, which both convert to
 binary64 with correct rounding; quotients divide 19-digit normalized
 significands as wide integers and round once at output. PostgreSQL and
 BigQuery hold the shortest text unscaled in their exact types and divide there.
+The portable base policy quantizes a float's text once to ``DECIMAL(38, 9)``,
+keeps counts and coefficients in ``DECIMAL(38, 0)``, and divides in binary64.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ import ibis.expr.types as ir
 
 from terrine.backends.dialect import Dialect, current_dialect, dialect_for_name
 from terrine.backends.extrema import greatest
-from terrine.backends.registry import ENGINES
+from terrine.backends.registry import ENGINES, GENERIC
 from terrine.errors import RefusalSpec
 
 __all__ = [
@@ -40,6 +42,7 @@ __all__ = [
     "exact_type",
     "float_is_finite",
     "float_scale",
+    "guard_accumulation",
     "has_scaled_float_state",
     "is_exact_type",
     "normalized",
@@ -61,8 +64,9 @@ def exact_type(*like: ir.Value) -> dt.DataType:
 
 
 def is_exact_type(dtype: dt.DataType) -> bool:
-    """Whether ``dtype`` is an internal exact-state type on any backend."""
-    return any(dtype == dialect_for_name(name).exact_type() for name in ENGINES)
+    """Whether ``dtype`` is an internal exact-state type on any policy."""
+    policies = [dialect_for_name(name) for name in (*ENGINES, GENERIC.name)]
+    return any(dtype in {policy.exact_type(), policy.coefficient_type()} for policy in policies)
 
 
 def has_scaled_float_state(*like: ir.Value) -> bool:
@@ -71,8 +75,16 @@ def has_scaled_float_state(*like: ir.Value) -> bool:
 
 
 def exact_literal(value: int, *like: ir.Value) -> ir.Scalar:
-    """An exact native integer, without an inferred fixed-width literal type."""
-    return cast(ir.Scalar, ibis.literal(str(value)).cast(exact_type(*like)))
+    """An exact integer typed like the first exact ``like`` operand, else as a count.
+
+    Counts, thresholds and day divisors live in the coefficient domain. A
+    fill or comparison against float state passes that state operand so the
+    literal keeps its fixed-scale type instead of promoting the operand.
+    """
+    dialect = current_dialect(*like)
+    exact = {dialect.exact_type(), dialect.coefficient_type()}
+    dtype = next((item.type() for item in like if item.type() in exact), None)
+    return cast(ir.Scalar, ibis.literal(str(value)).cast(dtype or dialect.coefficient_type()))
 
 
 def decimal_coefficient(value: ir.Value, scale: int) -> ir.Value:
@@ -111,10 +123,12 @@ def _scaled_text(coefficient, scale: int):
     )
 
 
-def _checked_narrow_exact(
-    coefficient: ir.Value, scale: int, target: str | dt.DataType, dialect: Dialect
-) -> ir.Value:
-    """Check exact coefficient bounds where TRY_CAST would be an ordinary CAST."""
+def _checked_narrow_exact(coefficient: ir.Value, scale: int, target: str | dt.DataType) -> ir.Value:
+    """Check exact coefficient bounds where TRY_CAST would be an ordinary CAST.
+
+    The bounds take the coefficient's own type, so a scale-0 coefficient is
+    never promoted into a narrower fixed-scale state for the comparison.
+    """
     text = _scaled_text(coefficient, scale)
     target_type = dt.dtype(target)
     if isinstance(target_type, dt.SignedInteger):
@@ -125,10 +139,11 @@ def _checked_narrow_exact(
     else:
         # An unbounded NUMERIC target cannot overflow.
         return text.cast(target_type)
-    lower = ibis.literal(str(low)).cast(dialect.exact_type())
-    upper = ibis.literal(str(high)).cast(dialect.exact_type())
+    lower = ibis.literal(str(low)).cast(coefficient.type())
+    upper = ibis.literal(str(high)).cast(coefficient.type())
     fits = (coefficient >= lower) & (coefficient <= upper)
-    return fits.ifelse(text.cast(target_type), ibis.null().cast(target_type))
+    # The cast only ever sees text that fits, whichever branches a backend evaluates.
+    return fits.ifelse(text, ibis.null(dt.string)).cast(target_type)
 
 
 def _decimal_parts(
@@ -237,7 +252,8 @@ def exact_float(
     so both flags are false there. BigQuery BIGNUMERIC has neither and holds
     magnitudes below about 5.7e38 to 38 fractional digits; non-finite and
     out-of-range values become NULL and are flagged so the caller can refuse
-    them.
+    them. The portable policy truncates the text toward zero at nine places
+    into ``DECIMAL(38, 9)``, flagging ``|value| >= 10**29`` as unrepresentable.
     """
     return current_dialect(value).exact_float(value, scale)
 
@@ -247,7 +263,8 @@ def exact_ratio(numerator: ir.Value, denominator: ir.Value) -> ir.Value:
 
     Not for DuckDB or Snowflake, which divide normalized significands
     (``normalized_quotient``). PostgreSQL divides to at least 16 significant
-    digits; BigQuery to 38 fractional digits.
+    digits; BigQuery to 38 fractional digits; the portable policy divides
+    correctly rounded binary64 operands once.
     """
     return current_dialect(numerator, denominator).exact_ratio(numerator, denominator)
 
@@ -255,7 +272,8 @@ def exact_ratio(numerator: ir.Value, denominator: ir.Value) -> ir.Value:
 def exact_is_nonfinite(value: ir.Value) -> ir.BooleanValue:
     """Whether an exact value is NaN or infinite; NULL stays NULL.
 
-    Only PostgreSQL NUMERIC has non-finite values; BIGNUMERIC has none.
+    Only PostgreSQL NUMERIC has non-finite values; BIGNUMERIC has none. The
+    portable policy's decimal state has none either; its binary64 quotients may.
     """
     return current_dialect(value).exact_is_nonfinite(value)
 
@@ -270,8 +288,9 @@ def exact_to_float(
     their string-to-double conversions round correctly (ties to even); a
     magnitude beyond binary64's range is an infinity on DuckDB and NULL from
     Snowflake's ``TRY_TO_DOUBLE``, flagged either way. PostgreSQL and BigQuery
-    hold unscaled exact state, so ``scale`` is 0 there. Magnitudes at or
-    below 2**-1075 become 0.0, as round-to-nearest gives.
+    hold unscaled exact state, so ``scale`` is 0 there, as does the portable
+    policy, which converts its fixed-scale text. Magnitudes at or below
+    2**-1075 become 0.0, as round-to-nearest gives.
     """
     return current_dialect(value).exact_to_float(value, scale)
 
@@ -390,8 +409,56 @@ def rounded_normalized(
     return cast(ir.FloatingValue, overflow.ifelse(ibis.null().cast(dt.float64), result)), overflow
 
 
-def exact_sum(value: ir.Value) -> ir.Value:
-    return current_dialect(value).exact_sum(value)
+def exact_sum(value: ir.Value, *, admitted: bool = False) -> ir.Value:
+    """Sum exactly; ``admitted`` operands were withheld by ``guard_accumulation`` already."""
+    return current_dialect(value).exact_sum(value, admitted=admitted)
+
+
+def guard_accumulation(
+    table: ibis.Table,
+    coefficient: ir.Value,
+    *,
+    partition: Sequence[str],
+    order: str | None = None,
+) -> tuple[ibis.Table, ir.Value, ir.BooleanValue | None]:
+    """Withhold coefficients whose partition's accumulated magnitudes may not fit.
+
+    A policy that bounds accumulations projects ``coefficient`` onto ``table``
+    and, over each partition (running along ``order`` when given), the
+    admission of its backend magnitude bound and contributing count by
+    ``Dialect.admits_accumulation``. Returns the projected table, the
+    coefficient withheld (NULL) where not admitted, and the admission flag,
+    both columns of that table: the withheld coefficient keeps every sum the
+    backend evaluates inside the type's domain, and the flag lets a running
+    consumer refuse rather than publish a partial sum. Other policies return
+    the inputs unchanged and no flag.
+    """
+    policy = current_dialect(coefficient)
+    if not policy.bounds_accumulations:
+        return table, coefficient, None
+    dtype = coefficient.type()
+    if not isinstance(dtype, dt.Decimal):
+        raise TypeError(f"{dtype} is not a fixed-precision coefficient type")
+    used = {name.casefold() for name in table.columns}
+    names = []
+    for stem in ("coefficient", "admitted"):
+        name = f"__terrine_{stem}"
+        while name.casefold() in used:
+            name = f"_{name}"
+        used.add(name.casefold())
+        names.append(name)
+    value_name, flag_name = names
+    staged = table.mutate(**{value_name: coefficient})
+    frame = ibis.window(
+        group_by=[staged[name] for name in partition],
+        order_by=[staged[order]] if order is not None else (),
+        rows=(None, 0) if order is not None else None,
+    )
+    bound = policy.magnitude(staged[value_name]).sum().over(frame)
+    count = staged[value_name].count().over(frame)
+    flagged = staged.mutate(**{flag_name: policy.admits_accumulation(bound, count, dtype)})
+    admitted = cast(ir.BooleanValue, flagged[flag_name])
+    return flagged, admitted.ifelse(flagged[value_name], ibis.null().cast(dtype)), admitted
 
 
 def exact_subtract(left: ir.Value, right: ir.Value) -> ir.Value:

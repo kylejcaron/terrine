@@ -104,7 +104,9 @@ def first_occurrence(
         backend_name = backend.name
     except Exception as exc:
         raise _UNSUPPORTED_BACKEND.error(backend="unbound") from exc
-    if not engine_supports(backend_name, "first_occurrence") or candidate_backend is not backend:
+    # The admitted expression policy, not the raw connection name, carries the feature.
+    policy = current_dialect(events[timestamp]).name
+    if not engine_supports(policy, "first_occurrence") or candidate_backend is not backend:
         raise _UNSUPPORTED_BACKEND.error(backend=backend_name)
 
     used = {name.casefold() for name in candidates.columns}

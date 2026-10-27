@@ -258,7 +258,7 @@ class SnapshotAuthority:
             raise TypeError("design must be Design")
         from terrine.execution.backend import backend_provider
 
-        backend_provider(model.con).capabilities.require(
+        backend_provider(model.con, engine=model._engine).capabilities.require(
             "retained_snapshot",
             backend=model.catalog.dialect,
             route="Materialize a Frame without saving it, or use verified retained local inputs.",

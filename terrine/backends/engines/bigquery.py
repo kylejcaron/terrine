@@ -8,9 +8,10 @@ import ibis.expr.types as ir
 import sqlglot.expressions as sge
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE
-from terrine.backends.dialect import Dialect, current_dialect
+from terrine.backends.dialect import Dialect, current_dialect, unavailable
+from terrine.backends.numeric import _scaled_text
 from terrine.backends.registry import ENGINES, supported_engine_route
-from terrine.backends.timestamps import _UNSUPPORTED, _epoch
+from terrine.backends.timestamps import _UNSUPPORTED, _epoch, native_day_start, native_local_day
 
 # BIGNUMERIC holds integers to about 5.7e38 and 38 fractional digits. Overflow
 # is an error (sums) or NULL (SAFE_ arithmetic), both surfaced as exact_overflow.
@@ -44,6 +45,7 @@ def _quotient(value, divisor):
 
 class BigQueryDialect(Dialect):
     __slots__ = ()
+    bounds_accumulations = False
     operations = frozenset(
         {
             "exact_state",
@@ -63,6 +65,9 @@ class BigQueryDialect(Dialect):
     )
 
     def exact_type(self) -> dt.DataType:
+        return _EXACT
+
+    def coefficient_type(self) -> dt.DataType:
         return _EXACT
 
     def decimal_coefficient(self, value: ir.Value, scale: int) -> ir.Value:
@@ -97,11 +102,21 @@ class BigQueryDialect(Dialect):
         never = cast(ir.BooleanValue, ibis.literal(False))
         return cast(ir.FloatingValue, value.cast(dt.float64)), never, never
 
-    def exact_sum(self, value: ir.Value) -> ir.Value:
+    def exact_sum(self, value: ir.Value, *, admitted: bool = False) -> ir.Value:
         return _exact_sum(value)
 
     def exact_subtract(self, left: ir.Value, right: ir.Value) -> ir.Value:
         return _exact_subtract(left, right)
+
+    def wide_type(self) -> dt.DataType:
+        # Quotients divide in BIGNUMERIC; the normalized significand path is not native.
+        raise unavailable("normalized", self.name)
+
+    def wide_quotient(self, value: ir.Value, divisor: ir.Value) -> ir.Value:
+        raise unavailable("normalized", self.name)
+
+    def trim_leading_zeros(self, digits: ir.StringValue) -> ir.StringValue:
+        raise unavailable("normalized", self.name)
 
     def truncating_quotient(
         self, value: ir.IntegerValue, divisor: int | ir.IntegerValue
@@ -127,6 +142,14 @@ class BigQueryDialect(Dialect):
     def utc_instant(self, value: ir.Value) -> ir.TimestampValue:
         return cast(ir.TimestampValue, value.cast(dt.Timestamp(timezone="UTC")))
 
+    def local_day(
+        self, timestamp: ir.TimestampValue, offset_minutes: int
+    ) -> tuple[ir.DateValue, ir.TimestampValue]:
+        return native_local_day(self, timestamp, offset_minutes)
+
+    def day_start(self, timestamp: ir.TimestampValue, offset_minutes: int) -> ir.TimestampValue:
+        return native_day_start(self, timestamp, offset_minutes)
+
     def timestamp_text(self, value: ir.TimestampValue) -> ir.StringValue:
         return value.cast(dt.string)
 
@@ -148,6 +171,11 @@ class BigQueryDialect(Dialect):
         if not isinstance(dtype, dt.Timestamp) or dtype.scale not in (None, 6):
             raise _UNSUPPORTED.error(dtype=str(dtype))
         return value
+
+    def narrow_exact(
+        self, coefficient: ir.Value, scale: int, target: str | dt.DataType
+    ) -> ir.Value:
+        return _scaled_text(coefficient, scale).try_cast(target)
 
     def supports_exact_prefix(self, backend_name: str) -> bool:
         return backend_name == self.name and current_dialect().name == backend_name

@@ -37,6 +37,7 @@ def _cohorts(
     mature=None,
     bucket="7d",
     origin=datetime(2025, 1, 1, tzinfo=UTC),
+    dialect=None,
 ):
     count = len(values)
     table = con.create_table(
@@ -81,6 +82,7 @@ def _cohorts(
         study,
         grouping=CohortGrouping(bucket=bucket, bucket_origin=origin, statistic=statistic),
         value_column="period_value",
+        dialect=dialect,
     )
     result.validate(execute=con.to_pyarrow)
     return result, con.to_pyarrow(result.table).to_pylist()
@@ -186,6 +188,21 @@ def test_high_scale_decimal_cohort_total_refuses_unrepresentable_result(con):
             [Decimal(90_000_000)] * 2,
             dtype=pa.decimal128(38, 30),
             statistic="total",
+        )
+    assert error.value.code == "terrine.temporal.exact_overflow"
+
+
+@pytest.mark.parametrize("statistic", ["total", "mean"])
+def test_portable_decimal_cohort_reduction_beyond_the_accumulator_refuses(con, statistic):
+    """Three scale-2 coefficients of 6e37 exceed a 128-bit sum: the portable policy
+    withholds them before summing and refuses, instead of a backend error."""
+    with pytest.raises(TerrineError) as error:
+        _cohorts(
+            con,
+            [Decimal("6" + "0" * 35)] * 3,
+            dtype=pa.decimal128(38, 2),
+            statistic=statistic,
+            dialect="generic",
         )
     assert error.value.code == "terrine.temporal.exact_overflow"
 

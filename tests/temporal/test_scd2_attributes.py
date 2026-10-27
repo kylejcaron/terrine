@@ -250,6 +250,25 @@ def test_temporal_duplicate_group_count_alias_avoids_history_column(connection):
     assert error.value.code == "terrine.temporal.duplicate_history"
 
 
+def test_validity_declared_on_one_column_for_both_ends(connection):
+    """A validity whose ``valid_from`` and ``valid_to`` name the same column is
+    permitted by the catalog; every non-empty row is malformed (an end at or
+    before its start) and refuses by code, while an empty history validates."""
+    dimension = _dimension(validity=BoundValidity("ts", "ts", None))
+    history = ibis.memtable(
+        {
+            "account_id": ["a"],
+            "ts": [datetime(2025, 1, 1, tzinfo=UTC)],
+            "tier_value": ["gold"],
+        }
+    )
+    with pytest.raises(TerrineError) as error:
+        validate_history(history, dimension, execute=connection.to_pyarrow)
+    assert error.value.code == "terrine.temporal.malformed_history"
+    empty = history.filter(history.account_id.isnull())
+    validate_history(empty, dimension, execute=connection.to_pyarrow)
+
+
 def test_enrichment_aliases_are_deterministic_and_avoid_casefold_collisions():
     dimension = _dimension()
     first = _enriched_property_columns((dimension,), ("ID",))

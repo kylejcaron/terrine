@@ -7,8 +7,12 @@ from contextlib import AbstractContextManager
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, Protocol
 
-from terrine.backends.capabilities import UNVERIFIED_CAPABILITIES, BackendCapabilities
-from terrine.backends.registry import ENGINES, resolve_engine
+from terrine.backends.capabilities import (
+    _CAPABILITY_UNAVAILABLE,
+    UNVERIFIED_CAPABILITIES,
+    BackendCapabilities,
+)
+from terrine.backends.registry import ENGINES, GENERIC, Engine, backend_name, resolve_engine
 from terrine.errors import TerrineError
 from terrine.semantic.models import Catalog, RelationSpec
 
@@ -23,9 +27,11 @@ __all__ = ["BackendProvider", "backend_provider", "backend_capabilities"]
 class BackendProvider(Protocol):
     """Admission authority, not an inference from Ibis compilation support.
 
-    Execution retains the caller connection as ``owner_con`` unchanged, opens
-    a private transaction on an owned session, and closes only that session.
-    A transaction view is not a durable/replayable source snapshot.
+    Execution retains the caller connection as ``owner_con``. Verified providers
+    own their consistent-view sessions; an unverified provider borrows the caller
+    connection for independent statements without a transaction view. Ibis schema
+    inspection on unverified backends may end an open caller transaction; use a
+    connection with no pending writes or a dedicated read connection.
     """
 
     capabilities: BackendCapabilities
@@ -62,16 +68,33 @@ def backend_capabilities(con: Any) -> BackendCapabilities:
         except TerrineError:
             return UNVERIFIED_CAPABILITIES
         return import_module(engine.provider_module).PROVIDER.capabilities
+    from ibis.backends import BaseBackend
+
+    if isinstance(con, BaseBackend):
+        return GENERIC.capabilities
     return UNVERIFIED_CAPABILITIES
 
 
-def backend_provider(con: Any) -> BackendProvider:
-    """Resolve verified native execution before schema or source access."""
-    engine = resolve_engine(con)
+def backend_provider(con: Any, *, engine: Engine | None = None) -> BackendProvider:
+    """Resolve execution from explicit admission, validating the connection identity."""
+    if engine is None:
+        engine = resolve_engine(con)
+    else:
+        if engine is not GENERIC and (
+            ENGINES.get(engine.name) is not engine or type(con).__module__ != engine.ibis_module
+        ):
+            raise _CAPABILITY_UNAVAILABLE.error(
+                backend=backend_name(con),
+                operation="query",
+                status="unverified",
+                route="Bind a Model to this connection before executing.",
+            )
+        engine.identify(con)
     provider = import_module(engine.provider_module).PROVIDER
     provider.capabilities.require(
         "dialect_admission",
-        backend=engine.name,
+        backend=backend_name(con),
         route="Use a native backend with verified read-only dialect admission.",
+        allow_unverified=engine.status == "unverified",
     )
     return provider
