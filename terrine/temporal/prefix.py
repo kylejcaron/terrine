@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from importlib.metadata import version
 from typing import Literal
 
 import ibis
 import ibis.expr.datatypes as dt
 from ibis.common.exceptions import IbisError
 
-from terrine.backends.dialect import dialect_of
+from terrine.backends.dialect import dialect_for_name
 from terrine.backends.numeric import exact_literal, exact_subtract, exact_sum
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _SCHEMA
@@ -37,10 +36,7 @@ def _require_backend(table: ibis.Table) -> None:
         backend = table._find_backend(use_default=False).name
     except IbisError:
         backend = "unbound"
-    supported = (backend == "duckdb" and version("duckdb") == "1.5.6") or (
-        backend in {"postgres", "bigquery", "snowflake"} and dialect_of() == backend
-    )
-    if not supported:
+    if not dialect_for_name(backend).supports_exact_prefix(backend):
         raise _EXACT_UNSUPPORTED.error(backend=backend)
 
 

@@ -8,6 +8,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from typing import TYPE_CHECKING
 
+from terrine.backends.registry import engine_supports
 from terrine.errors import RefusalSpec
 from terrine.semantic.rules import (
     UNALIGNED_CALENDAR_AVERAGE,
@@ -455,12 +456,12 @@ def _expression(
     if isinstance(expr, (MetricQuantile, ApproxMetricQuantile)):
         for source_name in metric.source_names:
             dialect = model.sources[source_name].dialect
-            if dialect.casefold() != "duckdb":
+            if not engine_supports(dialect, "quantile"):
                 raise _QUANTILE_BACKEND.error(dialect=dialect)
     if isinstance(expr, ApproxMetricDistinct):
         for source_name in metric.source_names:
             dialect = model.sources[source_name].dialect
-            if dialect.casefold() != "duckdb":
+            if not engine_supports(dialect, "approx_distinct"):
                 raise RefusalSpec(
                     "terrine.metric.approx_backend_unavailable",
                     "Approximate distinct is unavailable for backend {dialect!r}.",

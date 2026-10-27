@@ -17,6 +17,7 @@ from typing import Any, Literal, Protocol
 import ibis
 import pyarrow as pa
 
+from terrine.backends.capabilities import _SNAPSHOT_UNAVAILABLE
 from terrine.data import Budget, ExecutionSnapshot
 from terrine.errors import RefusalSpec
 from terrine.execution import _native
@@ -40,11 +41,6 @@ __all__ = [
 _INVALID = RefusalSpec(
     "terrine.execution.invalid_input_binding",
     "Execution inputs are not an exact verified binding: {reason}.",
-)
-
-_SNAPSHOT_UNAVAILABLE = RefusalSpec(
-    "terrine.execution.snapshot_unavailable",
-    "A coherent native execution snapshot is unavailable: {reason}.",
 )
 
 

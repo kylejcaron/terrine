@@ -40,14 +40,14 @@ Use owner-approved resources, grants and fresh receipts.
 
 ## backend
 
-Use verified local DuckDB operation capabilities.
+Use registered verified engines implementing the requested operation.
 
 [Recovery guide](../guides/backend-compatibility.md)
 
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
 | `terrine.backend.capability_unavailable` | <code>Backend {backend!r} cannot provide {operation!r}: {status}. {route}</code> | `backend`, `operation`, `route`, `status` | [terrine/backends/capabilities.py](../../terrine/backends/capabilities.py) |
-| `terrine.backend.capability_unavailable` | <code>The detected database server is not verified for PostgreSQL execution. {route}</code> | `route` | [terrine/execution/_postgres.py](../../terrine/execution/_postgres.py) |
+| `terrine.backend.capability_unavailable` | <code>The detected database server is not verified for PostgreSQL execution. {route}</code> | `route` | [terrine/backends/engines/postgres.py](../../terrine/backends/engines/postgres.py) |
 | `terrine.backend.nonfinite_decimal` | <code>Exact decimal column {column!r} contains {value}, which has no exact decimal value. Filter or replace non-finite numeric values in the relation SQL.</code> | `column`, `value` | [terrine/execution/_postgres.py](../../terrine/execution/_postgres.py) |
 
 ## budget
@@ -190,7 +190,7 @@ Use owned native sessions or retained inputs.
 | --- | --- | --- | --- |
 | `terrine.execution.arrow_timestamp_range` | <code>A nanosecond timestamp output lies outside Arrow&#x27;s range (1677-09-21 to 2262-04-11): {detail}. Declare the column with microsecond precision, such as TIMESTAMP_TZ(6), or cast it in a SQL relation.</code> | `detail` | [terrine/execution/_snowflake.py](../../terrine/execution/_snowflake.py) |
 | `terrine.execution.invalid_input_binding` | <code>Execution inputs are not an exact verified binding: {reason}.</code> | `reason` | [terrine/execution/inputs.py](../../terrine/execution/inputs.py) |
-| `terrine.execution.snapshot_unavailable` | <code>A coherent native execution snapshot is unavailable: {reason}.</code> | `reason` | [terrine/execution/inputs.py](../../terrine/execution/inputs.py) |
+| `terrine.execution.snapshot_unavailable` | <code>A coherent native execution snapshot is unavailable: {reason}.</code> | `reason` | [terrine/backends/capabilities.py](../../terrine/backends/capabilities.py) |
 
 ## export
 

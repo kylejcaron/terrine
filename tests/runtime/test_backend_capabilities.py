@@ -7,7 +7,7 @@ import pytest
 
 from terrine.data import Budget, Coverage, UnitSource
 from terrine.errors import TerrineError
-from terrine.execution.backend import backend_provider
+from terrine.execution.backend import backend_capabilities, backend_provider
 from terrine.model import Model
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.snapshot import SnapshotAuthority
@@ -40,6 +40,7 @@ def test_query_gates_refuse_only_the_requested_operation(native_inputs, monkeypa
     monkeypatch.setattr(
         provider, "capabilities", replace(provider.capabilities, **{capability: None})
     )
+    assert getattr(backend_capabilities(con), capability) is None
     with pytest.raises(TerrineError) as error:
         frame.materialize()
     assert error.value.code == "terrine.backend.capability_unavailable"

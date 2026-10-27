@@ -4,11 +4,19 @@ from decimal import Decimal, localcontext
 import pytest
 
 from terrine import quantile as public_quantile
+from terrine.errors import TerrineError
 from terrine.spec.anchors import FixedDate
 from terrine.spec.design import Design
-from terrine.spec.expressions import ApproxMetricQuantile, MetricQuantile, SketchRequest, quantile
+from terrine.spec.expressions import (
+    ApproxMetricQuantile,
+    MetricQuantile,
+    SketchRequest,
+    approx_distinct,
+    quantile,
+)
 from terrine.spec.io import from_json, from_yaml, to_json, to_yaml
 from terrine.windows import Window
+from tests.spec.test_validate import model
 
 
 def _design(probability: Decimal | str) -> Design:
@@ -92,3 +100,25 @@ def test_approximate_distinct_design_round_trips():
     expression = from_json(to_json(design)).outcomes["distinct"]
     assert isinstance(expression, ApproxMetricDistinct)
     assert expression == design.outcomes["distinct"]
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "bigquery", "snowflake", "unregistered"])
+@pytest.mark.parametrize(
+    ("expression", "code"),
+    [
+        (
+            quantile("sessions", "0.5", window=("0d", "7d")),
+            "terrine.metric.exact_quantile_backend_unsupported",
+        ),
+        (
+            approx_distinct("sessions", window=("0d", "7d")),
+            "terrine.metric.approx_backend_unavailable",
+        ),
+    ],
+)
+def test_nonadditive_backend_refusals_precede_queries(dialect, expression, code):
+    design = Design(unit="user", anchor=FixedDate("2025-01-02"), outcomes={"value": expression})
+    with pytest.raises(TerrineError) as caught:
+        design.validate(model(dialect=dialect))
+    assert caught.value.code == code
+    assert dict(caught.value.context) == {"dialect": dialect}

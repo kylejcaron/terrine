@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Backend compatibility
+
+- Centralize verified engine admission, capability records and expression
+  selection without changing engine execution behavior, supported builds,
+  session lifetimes or connection ownership.
+  Unsupported-operation refusal routes now name registered verified engines
+  implementing the operation, correcting stale DuckDB/PostgreSQL-only advice;
+  exact-ratio routes name PostgreSQL and BigQuery. Refusal codes and non-route
+  context are unchanged.
+  Admission gates and static inspection both honor the selected provider's
+  effective capability evidence; unavailable dialect admission still refuses
+  before materialization.
+- Encapsulate native numeric types, exact arithmetic and float conversion in
+  each engine's expression policy. Shared normalization retains the existing
+  coefficient bounds, NULL/nonfinite flags, overflow behavior and rounding
+  tolerances.
+- Encapsulate timestamp precision, UTC conversion, infinity ordering and exact
+  output narrowing in each engine's expression policy. Explicit timestamp
+  selection also governs nested operations without changing the enclosing
+  expression scope; temporal windows and cohort bucket remainders are unchanged.
+- Centralize as-of joins, NULL-ignoring extrema, integer sequences and feature
+  admission in the registered engine policies. Strict/inclusive cutoffs, duplicate
+  requests, aliases and existing feature/build boundaries are unchanged.
+
 ### Tests
 
 - Centralize known-answer engine conformance cases for whole-day schedules,

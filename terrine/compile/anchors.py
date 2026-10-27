@@ -12,6 +12,7 @@ import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 import pyarrow as pa
 
+from terrine.backends.registry import engine_supports
 from terrine.backends.sequences import integer_sequence
 from terrine.backends.timestamps import (
     has_submicrosecond,
@@ -150,12 +151,7 @@ def _range_filter_raw(
         return table
     dtype = table.schema()[column]
     naive = dtype.timezone is None
-    if naive and model.catalog.dialect.casefold() not in {
-        "duckdb",
-        "postgres",
-        "bigquery",
-        "snowflake",
-    }:
+    if naive and not engine_supports(model.catalog.dialect, "naive_anchor_utc"):
         raise _UTC_CONVERSION_UNSUPPORTED.error(backend=model.catalog.dialect)
     start, end = _bound(model, anchor_range.start), _bound(model, anchor_range.end)
     for bound, lower in ((start, True), (end, False)):

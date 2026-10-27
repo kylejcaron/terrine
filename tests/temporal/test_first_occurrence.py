@@ -228,3 +228,24 @@ def test_lookup_avoids_candidate_column_collisions_and_null_bounds_are_no_event(
         assert all(row["__terrine_event_id"] == "candidate metadata" for row in result)
     finally:
         con.disconnect()
+
+
+@pytest.mark.parametrize("binding", ["unbound", "different_connection"])
+def test_first_occurrence_refuses_relations_without_one_supported_connection(binding):
+    con = ibis.duckdb.connect()
+    other = ibis.duckdb.connect()
+    try:
+        events, candidates = _relations(con)
+        if binding == "unbound":
+            events = ibis.table(events.schema())
+            expected_backend = "unbound"
+        else:
+            _, candidates = _relations(other)
+            expected_backend = "duckdb"
+        with pytest.raises(TerrineError) as caught:
+            _lookup(events, candidates)
+        assert caught.value.code == "terrine.temporal.first_occurrence_unsupported_backend"
+        assert dict(caught.value.context) == {"backend": expected_backend}
+    finally:
+        other.disconnect()
+        con.disconnect()

@@ -100,11 +100,13 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   with `uv run python -m tests.integration.postgres_scratch stop`. CI runs them
   on every push against a PostgreSQL 16 service container. Each probe owns a
   uniquely named schema; never share a warehouse namespace between tests.
-- `uv run pytest integration/conformance` runs the DuckDB engine known answers
-  on every push; `uv run --extra postgres pytest integration/conformance -m postgres`
-  selects the same cases against a configured PostgreSQL scratch server. They
-  are also included in `make test-postgres`. Engine selection is centralized
-  in the module's `engine` fixture.
+- `uv run pytest integration/conformance` runs known answers on DuckDB by default,
+  with parameters derived from the verified engine registry. Select the same cases
+  on a configured scratch warehouse with
+  `uv run --extra <engine> pytest integration/conformance -m <engine>` for
+  `postgres`, `bigquery` or `snowflake`; they are also included in the matching
+  `make test-<engine>` target. The module's connection-fixture table must cover
+  every registered engine.
 - `make test-bigquery` runs the live BigQuery probes (`@pytest.mark.bigquery`,
   deselected by default); they fail, never skip, without
   `TERRINE_TEST_BIGQUERY_PROJECT`, `TERRINE_TEST_BIGQUERY_DATASET` and
@@ -247,16 +249,29 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   raw SQL strings or `@ibis.udf.*.builtin` bindings to native functions there;
   ruff (`TID251`) rejects `ibis.udf` and `ibis.to_sql` outside the allowed
   packages.
-- When Ibis lacks or mistranslates an operation on a supported backend, add a
-  dispatched helper in `terrine/backends/` (`dialect`, `numeric`, `timestamps`,
-  `joins`, `extrema`) with a live parity test, not a workaround at each call
-  site. Supporting a new warehouse means implementing those helpers for it.
-  Known Ibis gaps: no ASOF JOIN on BigQuery, NULL-propagating LEAST/GREATEST
-  there, and `interval * column` lowered through `EXTRACT(SECOND ...)` (multiply
-  integer seconds, then `.as_interval("s")`).
+- When Ibis lacks or mistranslates an operation on a supported backend, implement
+  the override in that engine's `terrine/backends/engines/<name>.py` dialect,
+  with a live parity test, not a workaround at each call site. Shared helpers
+  (`numeric`, `timestamps`, `joins`, `extrema`, `sequences`) delegate engine
+  differences to the selected dialect. Native function bindings belong in
+  concrete engine modules. Known Ibis gaps: no ASOF JOIN on BigQuery,
+  NULL-propagating LEAST/GREATEST there, and `interval * column` lowered through
+  `EXTRACT(SECOND ...)` (multiply integer seconds, then `.as_interval("s")`).
 - Raw SQL is acceptable only for: terrine's own DuckDB runtime state tables
   (`terrine/runtime/`), backend-provider catalog introspection and transaction
-  control (`terrine/execution/`), and admitted user SQL relations.
+  control (`terrine/execution/`), admitted user SQL relations, and the existing
+  qualified read-only PostgreSQL identity callback in `terrine/backends/engines/`.
+- `terrine/backends/registry.py` owns verified engine names, capability values,
+  feature boundaries and lazy dialect, identity and execution-provider paths.
+  Add an engine through that registry and one concrete dialect override module,
+  with admission evidence; do not introduce supported-engine lists in consumers.
+  Capability inspection is metadata-only and never runs querying identity admission.
+  `tests/test_engine_dispatch.py` rejects engine-name selection outside those
+  modules; it is a heuristic review aid, not proof of centralized dispatch.
+- The PostgreSQL engine's identity callback owns the existing qualified,
+  read-only `SELECT pg_catalog.version()` admission exception. It checks the
+  Ibis floor before reading identity and refuses before source metadata access;
+  expression policies otherwise issue no connection probes.
 - Warehouse results match the DuckDB reference within a stated tolerance
   (floats: tight, relative to the window's absolute sum, since cancellation
   defeats a purely relative bound; exact for counts and decimal sums).
