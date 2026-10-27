@@ -28,6 +28,7 @@ def guarded(name, *args, **kwargs):
     return original(name, *args, **kwargs)
 builtins.__import__ = guarded
 import terrine
+assert issubclass(terrine.UnverifiedBackendWarning, UserWarning)
 import importlib
 import sys
 for name in ('terrine', 'terrine.spec', 'terrine.data', 'terrine.execution',

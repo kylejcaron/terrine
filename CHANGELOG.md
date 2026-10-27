@@ -4,6 +4,14 @@
 
 ### Backend compatibility
 
+- Add explicit `allow_unverified=True` to all Model binding constructors for
+  read-only use of genuine unregistered Ibis backends, with the filterable
+  `UnverifiedBackendWarning`. Registered identity failures and raw/name-only
+  connections remain refused. Consent stays local to the Model.
+  Unverified execution borrows the caller connection for independent
+  statements, releases owned readers and checks decimal arithmetic only when
+  needed. It provides no shared snapshot, retained inputs or publication;
+  strict scan-budget policy is unchanged.
 - Centralize verified engine admission, capability records and expression
   selection without changing engine execution behavior, supported builds,
   session lifetimes or connection ownership.

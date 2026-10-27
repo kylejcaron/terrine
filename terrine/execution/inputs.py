@@ -18,6 +18,7 @@ import ibis
 import pyarrow as pa
 
 from terrine.backends.capabilities import _SNAPSHOT_UNAVAILABLE
+from terrine.backends.registry import Engine
 from terrine.data import Budget, ExecutionSnapshot
 from terrine.errors import RefusalSpec
 from terrine.execution import _native
@@ -493,6 +494,20 @@ def _validate_leased_binding(
         _revalidate_backing(issuer, runtime_con)
 
 
+class ArrowReader(Protocol):
+    """Owned Arrow statement results with explicit release and lazy consumption."""
+
+    @property
+    def schema(self) -> pa.Schema: ...
+    def __iter__(self) -> ArrowReader: ...
+    def __next__(self) -> pa.RecordBatch: ...
+    def read_next_batch(self) -> pa.RecordBatch: ...
+    def read_all(self) -> pa.Table: ...
+    def close(self) -> None: ...
+    def __enter__(self) -> ArrowReader: ...
+    def __exit__(self, *args: Any) -> Any: ...
+
+
 class ExecutionSession(Protocol):
     """Backend-owned query admission, execution and transaction lifetime."""
 
@@ -500,9 +515,7 @@ class ExecutionSession(Protocol):
 
     def check_query(self, sql: str) -> None: ...
     def execute(self, con: Any, query: Any, sql: str) -> pa.Table: ...
-    def batches(
-        self, con: Any, query: Any, sql: str, *, chunk_size: int
-    ) -> pa.RecordBatchReader: ...
+    def batches(self, con: Any, query: Any, sql: str, *, chunk_size: int) -> ArrowReader: ...
     def close(self) -> None: ...
 
 
@@ -563,8 +576,11 @@ class ExecutionContext:
     _session: ExecutionSession | None = None
     owner_con: Any = None
     _revalidate: Callable[[], None] | None = None
+    _preflight: Callable[[Any], str] | None = None
 
     def resolve(self, relation: RelationSpec) -> Any:
+        if self._session is None:
+            raise _SNAPSHOT_UNAVAILABLE.error(reason="execution context is closed")
         return self._resolver(relation)
 
     @metadata_operation()
@@ -574,12 +590,15 @@ class ExecutionContext:
         session = self._session
         if session is None:
             raise _SNAPSHOT_UNAVAILABLE.error(reason="execution context is closed")
-        try:
-            sql = self.con.compile(query)
-        except Exception as exc:
-            raise _SNAPSHOT_UNAVAILABLE.error(
-                reason="compiled query could not be inspected"
-            ) from exc
+        if self._preflight is not None:
+            sql = self._preflight(query)
+        else:
+            try:
+                sql = self.con.compile(query)
+            except Exception as exc:
+                raise _SNAPSHOT_UNAVAILABLE.error(
+                    reason="compiled query could not be inspected"
+                ) from exc
         session.check_query(sql)
         return session, sql
 
@@ -587,7 +606,7 @@ class ExecutionContext:
         session, sql = self._check_query(query)
         return session.execute(self.con, query, sql)
 
-    def to_arrow_batches(self, query: Any, *, chunk_size: int = 65_536) -> pa.RecordBatchReader:
+    def to_arrow_batches(self, query: Any, *, chunk_size: int = 65_536) -> ArrowReader:
         """Stream the same SQL whose native function ownership was admitted."""
         session, sql = self._check_query(query)
         return session.batches(self.con, query, sql, chunk_size=chunk_size)
@@ -795,11 +814,15 @@ def _open_snowflake_execution(
 
 
 def required_relations(
-    catalog: Catalog, con: Any, *, units: Mapping[str, Any] | None = None
+    catalog: Catalog,
+    con: Any,
+    *,
+    units: Mapping[str, Any] | None = None,
+    engine: Engine | None = None,
 ) -> tuple[PhysicalRelationId, ...]:
     from terrine.execution.backend import backend_provider
 
-    return backend_provider(con).required_relations(catalog, con, units=units)
+    return backend_provider(con, engine=engine).required_relations(catalog, con, units=units)
 
 
 def bind_resolver(
@@ -808,10 +831,11 @@ def bind_resolver(
     *,
     units: Mapping[str, Any] | None = None,
     input_binding: VerifiedInputBinding | None = None,
+    engine: Engine | None = None,
 ) -> Callable[[RelationSpec], Any]:
     from terrine.execution.backend import backend_provider
 
-    return backend_provider(con).bind_resolver(
+    return backend_provider(con, engine=engine).bind_resolver(
         catalog, con, units=units, input_binding=input_binding
     )
 
@@ -822,10 +846,11 @@ def open_execution(
     *,
     units: Mapping[str, Any] | None = None,
     input_binding: VerifiedInputBinding | None = None,
+    engine: Engine | None = None,
 ) -> contextlib.AbstractContextManager[ExecutionContext]:
     from terrine.execution.backend import backend_provider
 
-    return backend_provider(con).open_execution(
+    return backend_provider(con, engine=engine).open_execution(
         catalog, con, units=units, input_binding=input_binding
     )
 
@@ -839,6 +864,15 @@ def publish_native_inputs(
 ) -> PublishedInputs:
     """Capture native roots, optionally refusing unknown/over-budget scans before reading."""
     from terrine.execution._publish import publish
+    from terrine.execution.backend import backend_capabilities
+
+    capabilities = backend_capabilities(con)
+    if capabilities.retained_snapshot is False:
+        capabilities.require(
+            "retained_snapshot",
+            backend=str(getattr(con, "name", type(con).__name__)).casefold(),
+            route="Materialize directly, or capture inputs with the local DuckDB runtime.",
+        )
 
     return publish(catalog, con=con, units=units, budget=budget)
 

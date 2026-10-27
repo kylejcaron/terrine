@@ -40,7 +40,7 @@ Use owner-approved resources, grants and fresh receipts.
 
 ## backend
 
-Use registered verified engines implementing the requested operation.
+Use a registered verified engine, or explicitly opt in to unverified read-only operations.
 
 [Recovery guide](../guides/backend-compatibility.md)
 

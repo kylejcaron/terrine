@@ -612,7 +612,7 @@ class Frame:
         """Verify, audit and consume one bounded Arrow output stream atomically.
 
         No partial output is returned on limits, invalid history or stream errors.
-        Concurrent writes after the execution view is established are excluded.
+        Verified execution views exclude concurrent writes; unverified reads are per statement.
         """
         enforce_shape_budget(self._design.shape, budget)
         for warning in _scan_policy(budget):
@@ -621,14 +621,19 @@ class Frame:
         from terrine.execution.backend import backend_provider
         from terrine.execution.inputs import open_execution
 
-        backend_provider(self._model.con).capabilities.require(
+        backend_provider(self._model.con, engine=self._model._engine).capabilities.require(
             "arrow_batches",
             backend=self._model.catalog.dialect,
             route="Materialize with a backend that supports bounded Arrow batches.",
+            allow_unverified=self._model._engine.status == "unverified",
         )
         model = self._model
         with open_execution(
-            model.catalog, model.con, units=model.units, input_binding=model.input_binding
+            model.catalog,
+            model.con,
+            units=model.units,
+            input_binding=model.input_binding,
+            engine=model._engine,
         ) as context:
             from terrine.spec.validate import validate_design
 

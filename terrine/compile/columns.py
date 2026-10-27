@@ -17,6 +17,7 @@ import pyarrow as pa
 
 from terrine.backends.dialect import dialect_scope
 from terrine.backends.extrema import greatest, least
+from terrine.backends.registry import expression_dialect
 from terrine.compile._asof import compile_asof
 from terrine.compile._predicates import CompiledValue, compile_predicate
 from terrine.compile.anchors import (
@@ -341,11 +342,8 @@ def resolve_sketch_sidecars(table: pa.Table, compiled: CompiledStudy, con) -> pa
 
 
 def exact_scope(model: Model) -> AbstractContextManager[None]:
-    """Build exact window state for the Model's backend while compiling.
-
-    The Catalog dialect was matched to the execution backend when the Model was bound.
-    """
-    return dialect_scope(model.catalog.dialect)
+    """Build window expressions using the Model's admitted expression policy."""
+    return dialect_scope(expression_dialect(model._engine))
 
 
 def compile_columns(

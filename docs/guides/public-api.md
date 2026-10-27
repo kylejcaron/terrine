@@ -67,6 +67,28 @@ unit. Its immutable typed descriptor is defined in `terrine.data`. Use
 `Model.from_catalog` for static/as-of attributes, filters, ratios, SCD2 dimension
 histories, SQL relations, multi-unit sources, or explicit Catalog names.
 
+All three Model binding constructors accept keyword-only
+`allow_unverified: bool = False`. A genuine unregistered Ibis backend needs
+`allow_unverified=True`; truthy strings are not consent. This emits
+`UnverifiedBackendWarning`, available from `terrine` for warning filters.
+The choice applies only to the returned Model. Registered engine identity
+failures, raw drivers and name-only connections cannot opt in.
+
+```python
+from terrine import Model, UnverifiedBackendWarning
+
+# catalog.dialect must remain the connection's real SQL dialect.
+model = Model.from_catalog(
+    catalog, con=con, readiness=readiness, allow_unverified=True,
+)
+```
+
+This permits read-only attempts, not verified semantics: each statement has an
+independent source view, and an unavailable primitive gives a coded refusal.
+It never enables retained inputs, staging, publication or published Dataset
+reopening. See [backend compatibility](backend-compatibility.md) for ownership,
+consistency and exact-type admission.
+
 Use the expression functions rather than constructing their underlying node
 records. Advanced code inspecting a returned node can import its type from
 `terrine.spec.expressions`; those records are not additional facade constructors.

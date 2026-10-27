@@ -4,19 +4,46 @@ Terrine distinguishes verified execution from SQL compilation. Native local Ibis
 DuckDB is the reference execution provider. An Ibis PostgreSQL backend
 (`terrine[postgres]`, Ibis 12 or newer), an Ibis BigQuery backend
 (`terrine[bigquery]`) and an Ibis Snowflake backend (`terrine[snowflake]`)
-materialize Frames directly from their tables. An unrecognized
-connection—including a raw driver connection
-or one that only declares `name = "duckdb"`—refuses before source schema access
-with `terrine.backend.capability_unavailable`. Raw DuckDB connections remain
-valid for native runtime protocols; they are not Ibis relation/execution providers.
+materialize Frames directly from their tables.
+
+Other genuine Ibis backends refuse by default, before source schema access.
+Explicitly pass `allow_unverified=True` to `Model.from_catalog`,
+`Model.from_tables` or `Model.from_increment` to admit read-only operations.
+Admission emits the filterable `terrine.UnverifiedBackendWarning`; permission
+belongs to that Model, not the connection. A second Model still needs consent.
+Raw driver connections and name-only objects remain refused, as do rejected
+registered identities such as a PostgreSQL-wire-compatible server. Raw DuckDB
+connections remain valid for native runtime protocols, not Ibis execution.
 
 Execution and publication share an immutable capability record without making
-Model or the compiler depend on runtime. The provider preserves the caller-owned
-connection, admits read-only SQL in its execution dialect, and verifies physical
-relation identity. Each materialization reads through one consistent view (a
-private transaction, or on Snowflake a Time Travel instant on the caller's
-connection) and releases it after success, error or cancellation. The caller's
-connection remains open. A transaction view is **not** a durable replay snapshot.
+Model or the compiler depend on runtime. Verified providers preserve the
+caller-owned connection, admit read-only SQL in its real execution dialect,
+and verify physical relation identity. Each verified materialization reads
+through one consistent view (a private transaction, or on Snowflake a Time
+Travel instant) and releases it after success, error or cancellation.
+The caller's connection remains open. A transaction view is **not** a durable
+replay snapshot.
+
+An opted-in unverified provider instead borrows the caller's connection.
+Every statement reads independently: schema checks, validation and output
+queries do not share a coherent view. It never begins a transaction, changes
+session settings, clones or disconnects that connection. Owned Arrow readers
+are released on exhaustion, error, early close or context closure.
+
+The actual backend name (for example `sqlite`), expression policy (`generic`)
+and SQL dialect (`sqlite`) are distinct. Keep the real SQL dialect in
+`Catalog.dialect`, never `generic`. Only required read primitives may be
+attempted without verified evidence; unavailable primitives raise
+`terrine.backend.capability_unavailable` with their operation. Decimal queries
+first execute scalar exact-arithmetic witnesses within each execution context;
+a count-only read does not need decimal admission. Generic timestamp and
+arithmetic expression coverage remains operation-specific, not a promise that
+every Ibis backend can materialize every Frame.
+
+Unverified reads never enable retained input capture, staging, publication,
+published Dataset reopening, native Parquet unload or transaction snapshots.
+Strict scan budgets still refuse unknown source costs. Suppressing the warning
+does not grant these capabilities or establish consistency.
 
 Runtime DuckDB publication retains its fenced, transactional manifest switch;
 Ibis SQL compilation or DDL support alone does not establish publication safety.

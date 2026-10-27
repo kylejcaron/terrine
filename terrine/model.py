@@ -11,6 +11,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from terrine.backends.registry import Engine, resolve_engine
 from terrine.data import BoundCoverage, Coverage, Events, UnitSource
 from terrine.errors import RefusalSpec
 from terrine.execution._metadata import metadata_operation
@@ -79,6 +80,7 @@ class Model:
     model_hash: str
     day_boundary: Callable[[date], datetime]
     input_binding: VerifiedInputBinding | None
+    _engine: Engine
     _resolver: Callable[[RelationSpec], Any]
 
     def __init__(
@@ -93,6 +95,7 @@ class Model:
         metrics: Mapping[str, BoundMetric],
         resolver: Callable[[RelationSpec], Any],
         input_binding: VerifiedInputBinding | None,
+        engine: Engine,
     ) -> None:
         object.__setattr__(self, "catalog", catalog)
         object.__setattr__(self, "con", con)
@@ -103,6 +106,7 @@ class Model:
         object.__setattr__(self, "metrics", MappingProxyType(dict(metrics)))
         object.__setattr__(self, "input_binding", input_binding)
         object.__setattr__(self, "_resolver", resolver)
+        object.__setattr__(self, "_engine", engine)
         declarations = {
             "catalog": catalog.model_dump(mode="json"),
             "units": {name: asdict(unit) for name, unit in self.units.items()},
@@ -127,8 +131,11 @@ class Model:
         day_boundary: str = "UTC",
         readiness: Mapping[str, Coverage] | None = None,
         event_ids: Mapping[str, str] | None = None,
+        allow_unverified: bool = False,
     ) -> Model:
         """Bind event tables with explicit rosters, completeness and generated metrics."""
+        if not isinstance(allow_unverified, bool):
+            raise _INVALID.error(reason="allow_unverified must be a bool")
         if not isinstance(units, Mapping):
             raise _INVALID.error(reason="units must map names to UnitSource")
         if not isinstance(events, Mapping) or any(
@@ -184,10 +191,11 @@ class Model:
                 "dimensions": [],
             }
             coverage[source] = Coverage(*event.complete)
+        engine = resolve_engine(con, allow_unverified=allow_unverified)
         if dialect is None:
             from terrine.execution.backend import backend_provider
 
-            dialect = backend_provider(con).dialect(con)
+            dialect = backend_provider(con, engine=engine).dialect(con)
         catalog = {
             "schema_version": 1,
             "dialect": dialect,
@@ -199,8 +207,13 @@ class Model:
             "measures": measures,
             "metrics": metrics,
         }
-        return cls.from_catalog(
-            catalog, con=con, units=dict(units), readiness=coverage, event_ids=event_ids
+        return cls._from_catalog(
+            validate_catalog(catalog),
+            con=con,
+            units=dict(units),
+            readiness=coverage,
+            event_ids=event_ids,
+            engine=engine,
         )
 
     @classmethod
@@ -214,8 +227,11 @@ class Model:
         units: Mapping[str, UnitSource] | None = None,
         event_ids: Mapping[str, str] | None = None,
         input_binding: VerifiedInputBinding | None = None,
+        allow_unverified: bool = False,
     ) -> Model:
-        """Bind native definitions to declared schema metadata only."""
+        """Bind definitions; explicitly opt in to unverified, statement-scoped reads."""
+        if not isinstance(allow_unverified, bool):
+            raise _INVALID.error(reason="allow_unverified must be a bool")
         catalog = (
             path_or_catalog
             if isinstance(path_or_catalog, Catalog)
@@ -223,6 +239,30 @@ class Model:
             if isinstance(path_or_catalog, Mapping)
             else load_catalog(path_or_catalog)
         )
+        engine = resolve_engine(con, allow_unverified=allow_unverified)
+        return cls._from_catalog(
+            catalog,
+            con=con,
+            readiness=readiness,
+            units=units,
+            event_ids=event_ids,
+            input_binding=input_binding,
+            engine=engine,
+        )
+
+    @classmethod
+    @metadata_operation()
+    def _from_catalog(
+        cls,
+        catalog: Catalog,
+        *,
+        con: Any,
+        readiness: Readiness | Mapping[str, Coverage | BoundCoverage],
+        engine: Engine,
+        units: Mapping[str, UnitSource] | None = None,
+        event_ids: Mapping[str, str] | None = None,
+        input_binding: VerifiedInputBinding | None = None,
+    ) -> Model:
         day = _boundary_function(catalog.day_boundary)
         if isinstance(readiness, Readiness):
             bound_readiness = readiness
@@ -254,7 +294,9 @@ class Model:
             raise _INVALID.error(reason="event_ids must map source names to column names")
         from terrine.execution.inputs import bind_resolver
 
-        resolver = bind_resolver(catalog, con, units=unit_map, input_binding=input_binding)
+        resolver = bind_resolver(
+            catalog, con, units=unit_map, input_binding=input_binding, engine=engine
+        )
         return cls._bind(
             catalog,
             con=con,
@@ -263,6 +305,7 @@ class Model:
             event_ids=event_map,
             resolver=resolver,
             input_binding=input_binding,
+            engine=engine,
         )
 
     @classmethod
@@ -276,6 +319,7 @@ class Model:
         event_ids: Mapping[str, str],
         resolver: Callable[[RelationSpec], Any],
         input_binding: VerifiedInputBinding | None,
+        engine: Engine,
         source_names: set[str] | None = None,
     ) -> Model:
         selected_sources = (
@@ -284,7 +328,7 @@ class Model:
             else {name: catalog.sources[name] for name in sorted(source_names)}
         )
         sources = {
-            name: normalize_source(con, catalog, name, resolver=resolver)
+            name: normalize_source(con, catalog, name, resolver=resolver, engine=engine)
             for name in selected_sources
         }
         metrics = {name: bind_metric(catalog, name) for name in catalog.metrics}
@@ -324,6 +368,7 @@ class Model:
             metrics=metrics,
             resolver=resolver,
             input_binding=input_binding,
+            engine=engine,
         )
 
     def _relation(self, relation: RelationSpec) -> Any:
@@ -371,6 +416,7 @@ class Model:
             resolver=context.resolve,
             input_binding=self.input_binding,
             source_names=selected_sources,
+            engine=self._engine,
         )
 
     @classmethod
@@ -383,15 +429,25 @@ class Model:
         units: Mapping[str, UnitSource] | None = None,
         event_ids: Mapping[str, str] | None = None,
         input_binding: VerifiedInputBinding | None = None,
+        allow_unverified: bool = False,
     ) -> Model:
         """Adapt optional published semantics through the native Catalog workflow."""
-        from terrine.adapters.increment import to_catalog
+        if not isinstance(allow_unverified, bool):
+            raise _INVALID.error(reason="allow_unverified must be a bool")
+        from terrine.adapters.increment import _load_semantics, to_catalog
+        from terrine.execution.backend import backend_provider
 
-        return cls.from_catalog(
-            to_catalog(path_or_definitions, dialect=str(getattr(con, "name", ""))),
+        _load_semantics()
+        engine = resolve_engine(con, allow_unverified=allow_unverified)
+
+        return cls._from_catalog(
+            to_catalog(
+                path_or_definitions, dialect=backend_provider(con, engine=engine).dialect(con)
+            ),
             con=con,
             readiness=readiness,
             units=units,
             event_ids=event_ids,
             input_binding=input_binding,
+            engine=engine,
         )

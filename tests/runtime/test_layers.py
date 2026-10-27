@@ -154,6 +154,7 @@ def test_snapshot_resolver_rebinding_keeps_filtered_catalog_sources(column_model
         resolver=column_model._resolver,
         input_binding=column_model.input_binding,
         source_names=set(column_model.sources),
+        engine=column_model._engine,
     )
     design = _design()
     key = plan_layers(design, filtered).keys[0]
@@ -322,6 +323,7 @@ def test_layer_identity_ignores_source_nullability_lost_in_snapshot(column_model
         ),
         input_binding=column_model.input_binding,
         source_names={"events"},
+        engine=column_model._engine,
     )
 
     assert plan_layers(_design(), from_not_null).keys == plan_layers(_design(), column_model).keys

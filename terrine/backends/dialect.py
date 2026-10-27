@@ -270,9 +270,9 @@ def dialect_scope(dialect: str) -> Generator[None]:
 def current_dialect(*values: ir.Value) -> Dialect:
     """The enclosing scope's dialect, else the backend of the first bound operand.
 
-    A compile scope is set from the Catalog dialect, which binding matched to
-    the execution backend, so operands need no graph traversal there. Ibis
-    cannot infer a backend from unbound literals; outside any scope those
+    A compile scope is set from the Model's admitted expression policy, so
+    operands need no graph traversal there. Ibis cannot infer a backend from
+    unbound literals; outside any scope those
     default to DuckDB.
     """
     scoped = _DIALECT.get()

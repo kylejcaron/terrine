@@ -74,7 +74,11 @@ def preview(
         from terrine.execution.inputs import open_execution
 
         with open_execution(
-            model.catalog, model.con, units=model.units, input_binding=model.input_binding
+            model.catalog,
+            model.con,
+            units=model.units,
+            input_binding=model.input_binding,
+            engine=model._engine,
         ) as context:
             from terrine.spec.validate import validate_design
 

@@ -27,6 +27,7 @@ assert calendar_average_alignment(
 ) == 'aligned'
 for name in ('DUCKDB', 'POSTGRES', 'BIGQUERY', 'SNOWFLAKE'):
     assert supports_event_resolution(name)
+assert supports_event_resolution('generic')
 assert not supports_event_resolution('unregistered')
 """
     subprocess.run([sys.executable, "-c", code], check=True)

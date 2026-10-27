@@ -98,6 +98,7 @@ def test_boolean_feature_hash_includes_each_operand_definition(native_inputs):
             },
             resolver=bound._resolver,
             input_binding=bound.input_binding,
+            engine=bound._engine,
         )
         assert _feature_definition_hash(design, ("active",), altered) != original
 
@@ -127,6 +128,7 @@ def test_state_panel_feature_hash_includes_state_definition(native_inputs):
         metrics=altered_metrics,
         resolver=model._resolver,
         input_binding=model.input_binding,
+        engine=model._engine,
     )
 
     assert _feature_definition_hash(design, ("from_state",), model) != _feature_definition_hash(
@@ -278,6 +280,7 @@ def test_asof_feature_hash_tracks_resolved_dimension_definition(native_inputs, f
             metrics=model.metrics,
             resolver=model._resolver,
             input_binding=model.input_binding,
+            engine=model._engine,
         )
 
     changes = {
