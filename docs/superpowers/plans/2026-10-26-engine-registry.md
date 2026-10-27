@@ -52,6 +52,7 @@ Paths below are relative to the assigned worktree. Existing line numbers refer t
 | `terrine/{temporal/aggregate,compile/shapes/time_to_event,compile/shapes/cohorts}.py` | Delegate narrowing, axis policy and explicit literal/column dialect selection. |
 | `terrine/spec/validate.py`, `terrine/export/preflight.py`, `tach.toml` | Replace the additional existing DuckDB-only checks with registry feature predicates; admit only the existing feature subset. Add only the required `terrine.backends` dependency edges. |
 | `tests/backends/test_engine_registry.py` (new), existing test modules below | Cheap admission/scope/feature contracts and existing expression oracles. |
+| `integration/backends/test_engine_registry.py` (new) | Subprocess-based registry import isolation; process orchestration stays out of the new unit tests. |
 | `tests/test_engine_dispatch.py` (new) | Explicit architecture guard for engine selection; this is the requested exception to the ordinary ban on source-structure tests. |
 | `AGENTS.md`, `docs/guides/backend-compatibility.md`, `docs/reference/refusals.md`, `CHANGELOG.md` | Registry extension policy and the sole user-visible route correction. |
 
@@ -74,12 +75,13 @@ This document specifies future checks; it does not claim that they have run. For
 
 All five tasks share this acceptance contract: full unit tier, full ordinary integration tier, `make test-postgres`, and the completed architecture guard green; refusal codes and every context field other than `route` unchanged, with immutable/pickle/deepcopy behavior retained. Intermediate commits are not final task acceptance. Run focused red/green checks at each coherent task boundary, then run the expensive common acceptance commands **once, serially on the complete branch**; the same final-revision evidence satisfies every task. Do not launch concurrent or redundant full suites on the loaded host.
 
-Common acceptance commands, from the assigned worktree:
+Common acceptance commands, from the assigned worktree. Export the settings printed by `uv run python -m tests.integration.postgres_scratch start`, then run `make test-postgres`; the scratch helper chooses a free port dynamically:
 
 ```bash
 uv run pytest tests -n 0
 uv run pytest integration -n 0
-TERRINE_TEST_POSTGRES_HOST=127.0.0.1 TERRINE_TEST_POSTGRES_PORT=60964 TERRINE_TEST_POSTGRES_USER=postgres TERRINE_TEST_POSTGRES_PASSWORD='' TERRINE_TEST_POSTGRES_DB=terrine_test PYTEST_ADDOPTS='-n 0' make test-postgres
+eval "$(uv run python -m tests.integration.postgres_scratch start)"
+PYTEST_ADDOPTS='-n 0' make test-postgres
 uv run pytest tests/test_engine_dispatch.py -n 0 -q
 ```
 
@@ -88,7 +90,7 @@ Expected: each exits 0; no selected PostgreSQL check skips; no engine-name compa
 ## Task 1: Introduce the registry and cut over provider/identity admission
 
 **Files:**
-- Create: `terrine/backends/registry.py`, `terrine/backends/engines/{__init__,duckdb,postgres,bigquery,snowflake}.py`, `tests/backends/test_engine_registry.py`.
+- Create: `terrine/backends/registry.py`, `terrine/backends/engines/{__init__,duckdb,postgres,bigquery,snowflake}.py`, `tests/backends/test_engine_registry.py`, `integration/backends/test_engine_registry.py`.
 - Modify: `terrine/backends/{dialect,capabilities,numeric}.py` (`exact_type` at numeric:73–88).
 - Modify: `terrine/execution/{backend,_native,_postgres,_bigquery,_snowflake,inputs,_publish}.py` (provider classes/selection and `_postgres.py:27–99`).
 - Modify: `terrine/runtime/backends/duckdb.py:15,38` (the remaining concrete-capability consumer); remove old constant exports in `capabilities.py`, with no re-exports.
@@ -99,7 +101,7 @@ Expected: each exits 0; no selected PostgreSQL check skips; no engine-name compa
 - Consumes: existing `BackendCapabilities`, `RefusalSpec`, `BackendProvider`, context scope and native session functions.
 - Produces: all shared registry/selection contracts above, usable concrete `Dialect.exact_type(self) -> dt.DataType`, and each engine's `identify(con: Any) -> None` callback. The PostgreSQL callback owns the **only** classifier and qualified version read.
 
-- [ ] **Step 1: Add admission/scope tests and migrate the classifier tests to admission behavior.** In `test_engine_registry.py`, add `test_scope_selection_restores_after_nested_error` asserting an outer `postgres` scope survives an inner mixed-case `SNOWFLAKE` scope and exception, and the previous unscoped default is restored. Assert effective `exact_type` changes rather than merely checking a private context variable. Add `test_registry_import_is_metadata_only` using the existing subprocess import-blocking pattern to call `get_engine`/feature lookup while Ibis, all optional drivers, compiler and temporal imports are blocked. Extend existing unknown-backend and raw-driver tests to use `resolve_engine` and assert the full pre-existing code/context except route.
+- [ ] **Step 1: Add admission/scope tests and migrate the classifier tests to admission behavior.** In `tests/backends/test_engine_registry.py`, add `test_scope_selection_restores_after_nested_error` asserting an outer `postgres` scope survives an inner mixed-case `SNOWFLAKE` scope and exception, and the previous unscoped default is restored. Assert effective `exact_type` changes rather than merely checking a private context variable. Keep new in-process lookup, scope and admission checks in that unit module. Add `test_registry_import_is_metadata_only` in `integration/backends/test_engine_registry.py`, using the existing subprocess import-blocking pattern to call `get_engine`/feature lookup while Ibis, all optional drivers, compiler and temporal imports are blocked. Extend existing unknown-backend and raw-driver tests to use `resolve_engine` and assert the full pre-existing code/context except route.
 
 ```python
 def test_scope_selection_restores_after_nested_error():
@@ -114,10 +116,10 @@ def test_scope_selection_restores_after_nested_error():
 ```
 
 - [ ] **Step 2: Replace direct pure-classifier tests with `test_postgres_engine_identity_preserves_classification`.** Reuse the existing driver cursor fixture and version cases in `test_backend_provider.py:160–272`; call `ENGINES["postgres"].identify(con)`. Assert PostgreSQL 16 succeeds; 15/17 refuse as PostgreSQL/unverified; Redshift/Greenplum/CockroachDB refuse with their existing server/status. Add empty rows, empty text and unknown text (`"unknown"` or first token/unverified, as today), and an incompatible Ibis build that refuses before the version query. For rejected identities assert code, exact non-route context, immutability, deepcopy and pickle. Keep `test_postgres_admission_refuses_lookalike_before_source_schema_access` at the Model boundary and the no-query inspection assertion.
-- [ ] **Step 3: Record red/invariance evidence.** Run `uv run pytest tests/backends/test_engine_registry.py tests/execution/test_backend_provider.py tests/test_optional_dependencies.py tests/semantic/test_rules_import.py -n 0 -q`. New registry imports fail before implementation; migrated refusal cases need actual assertion-sensitive red evidence, not only a missing symbol. Record the old provider/lifetime invariance tests separately before moving them.
+- [ ] **Step 3: Record red/invariance evidence.** Run `uv run pytest tests/backends/test_engine_registry.py integration/backends/test_engine_registry.py tests/execution/test_backend_provider.py tests/test_optional_dependencies.py tests/semantic/test_rules_import.py -n 0 -q`. New registry imports fail before implementation; migrated refusal cases need actual assertion-sensitive red evidence, not only a missing symbol. Record the old provider/lifetime invariance tests separately before moving them.
 - [ ] **Step 4: Implement the immutable registry, lazy dialect selection and admission cutover.** Give each concrete subclass its existing exact-state type and make `numeric.exact_type` delegate. Move capability **values**, not just another tuple of their names, into the four records. Move each concrete provider to its existing engine execution module and remove `_PROVIDERS`/the engine selection chain. Preserve private connection creation, borrowed owner handles, release on errors/cancellation and retained-snapshot gates. Move the existing PostgreSQL classifier, version constants, Ibis-floor helper and identity read into its registered callback; delete `ServerIdentity`, `classify_server_version`, `verify_server_identity` and the now-unused `ibis_supported` from `_postgres.py`, not aliases. Keep the Ibis-floor refusal before the identity SQL. Reuse one PostgreSQL raw-handle validator: move it with identity admission and update its internal and external consumers, including `integration/warehouse_execution/test_postgres_admission.py`'s import. Lift `_SNAPSHOT_UNAVAILABLE` to `backends/capabilities.py` and change all six existing execution consumers to import it directly, so callbacks never import execution/runtime. Preserve its factory template/context verbatim.
 - [ ] **Step 5: Pin routes and static-inspection behavior.** Add `test_unavailable_route_names_only_verified_operation_providers`: an unsupported `exact_state` request names all four registered verified providers; `exact_ratio` names only PostgreSQL/BigQuery. Change the in-memory registry entry status/support in the test and assert the offered destinations change, without asserting prose wording. For unavailable operations preserve `{backend, operation, status}` and the existing code; assert reconstructed errors preserve the complete new context. Initially define each dialect's operation declarations for its current implementation; do not expose a route to an implementation that still refuses. Document registry ownership and the moved read-only identity exception in AGENTS/guide, and add the CHANGELOG correction for stale DuckDB/PostgreSQL-only routes.
-- [ ] **Step 6: Run focused green checks and commit.** Run the Step 3 command again; expected PASS, including no-query inspection and import isolation. Run `make check TESTS="tests/backends/test_engine_registry.py tests/execution/test_backend_provider.py tests/test_optional_dependencies.py tests/semantic/test_rules_import.py"`. Expected exit 0. Stage the changed files and commit `refactor: centralize engine admission and capabilities`. Acceptance also requires the common four final-branch commands above and unchanged PostgreSQL identity/lifetime behavior; this task is not accepted without them.
+- [ ] **Step 6: Run focused green checks and commit.** Run the Step 3 command again; expected PASS, including no-query inspection and subprocess import isolation in its integration module. Run `make check TESTS="tests/backends/test_engine_registry.py integration/backends/test_engine_registry.py tests/execution/test_backend_provider.py tests/test_optional_dependencies.py tests/semantic/test_rules_import.py"`. Expected exit 0. Stage the changed files and commit `refactor: centralize engine admission and capabilities`. Acceptance also requires the common four final-branch commands above and unchanged PostgreSQL identity/lifetime behavior; this task is not accepted without them.
 
 ## Task 2: Move numeric differences into concrete dialects
 
@@ -162,7 +164,7 @@ Extend this test's parameterization with the remaining named operations and thei
 - Produces: `Dialect.timestamp_is_finite(self, value: ir.TimestampValue) -> ir.BooleanValue`; `timestamp_extremes(self, dtype: dt.Timestamp) -> tuple[ir.TimestampScalar, ir.TimestampScalar]`; `utc_wall_clock(self, value: ir.Value) -> ir.TimestampValue`; `utc_instant(self, value: ir.Value) -> ir.TimestampValue`; `timestamp_text(self, value: ir.TimestampValue) -> ir.StringValue`; `timestamp_parts(self, value: ir.TimestampValue) -> tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue]`; `timestamp_order_key(self, value: ir.TimestampValue) -> ir.Value`; `reverse_time_key(self, value: ir.TimestampValue) -> ir.Value`; `bounded_nanoseconds(self, scale: int | None) -> bool`; `narrow_exact(self, coefficient: ir.Value, scale: int, target: str | dt.DataType) -> ir.Value`. Existing free helper signatures remain unchanged.
 
 - [ ] **Step 1: Run timestamp/shape invariance tests.** Run `uv run pytest tests/backends/test_timestamps.py tests/temporal/test_first_occurrence.py tests/compile/test_time_to_event.py tests/compile/test_cohorts.py integration/compile/test_time_to_event.py -n 0 -q`. Record the existing session-timezone, mixed precision, strict boundary, pre-epoch bucket, overflow and nanosecond-axis results before moving code.
-- [ ] **Step 2: Add explicit dialect/literal and refusal edge tests.** Add `test_explicit_timestamp_backend_overrides_literal_default` to `test_timestamps.py`, building a timestamp literal and asserting explicit backend selection preserves that backend's admitted/rejected timestamp scales even inside another engine's scope; assert codes/context, not SQL. Add `test_timestamp_default_refusals_keep_operation_context` to `test_engine_registry.py` for unknown-name UTC conversion/finiteness/text. Run `uv run pytest tests/backends/test_timestamps.py tests/backends/test_engine_registry.py -k 'explicit_timestamp or timestamp_default' -n 0 -q`; record red evidence using the owning selection/operation if the existing behavior already passes.
+- [ ] **Step 2: Add explicit dialect/literal and refusal edge tests.** Keep `test_explicit_timestamp_backend_overrides_literal_default` in `tests/backends/test_timestamps.py` for the PostgreSQL scale rejection below. Add `test_explicit_timestamp_backend_preserves_nested_parts_and_scope` in the same module: evaluate an unbound microsecond positive infinity with `backend="duckdb"` inside `dialect_scope("snowflake")`, assert `(rank, seconds, nanos) == (1, 0, 0)`, and assert the ambient Snowflake scope and prior outer scope are both restored. This admitted-scale case must reach nested timestamp helpers; the early PostgreSQL scale rejection alone is insufficient. Require the new case to fail when a nested helper is changed in memory to reselect the ambient Snowflake dialect instead of using the explicit DuckDB dialect; record that failure and the restored passing run. Add `test_timestamp_default_refusals_keep_operation_context` to `tests/backends/test_engine_registry.py` for unknown-name UTC conversion/finiteness/text. Run `uv run pytest tests/backends/test_timestamps.py tests/backends/test_engine_registry.py -k 'explicit_timestamp or timestamp_default' -n 0 -q`; record red evidence using the owning selection/operation if existing behavior already passes.
 
 ```python
 def test_explicit_timestamp_backend_overrides_literal_default():
@@ -172,6 +174,21 @@ def test_explicit_timestamp_backend_overrides_literal_default():
         timestamp_parts(value, backend="postgres")
     assert caught.value.code == "terrine.temporal.timestamp_order_unsupported"
     assert dict(caught.value.context) == {"dtype": str(dtype)}
+
+
+def test_explicit_timestamp_backend_preserves_nested_parts_and_scope(connection):
+    baseline = current_dialect().name
+    value = ibis.literal("infinity").cast(dt.Timestamp(scale=6))
+    with dialect_scope("snowflake"):
+        rank, seconds, nanos = timestamp_parts(value, backend="duckdb")
+        assert current_dialect().name == "snowflake"
+        query = ibis.struct(
+            {"rank": rank, "seconds": seconds, "nanos": nanos}
+        ).name("parts").as_table()
+        actual = connection.to_pyarrow(query)["parts"][0].as_py()
+        assert (actual["rank"], actual["seconds"], actual["nanos"]) == (1, 0, 0)
+        assert current_dialect().name == "snowflake"
+    assert current_dialect().name == baseline
 ```
 
 - [ ] **Step 3: Move native timestamp code and dispatch.** Move `_NATIVE`/`_FINITE` decisions, UDFs, PostgreSQL epoch extraction, each engine's parts/order/extremes policy and Snowflake text/UTC conversion into concrete dialect modules. Keep engine-independent precision promotion and timestamp comparison in `timestamps.py`. Native infinity handling, timestamp-rank null handling, precision refusals and timezone operations remain byte-for-byte algorithmically equivalent. `timestamp_parts(..., backend=...)` must invoke the explicit dialect without losing it in nested helper calls; bind that dialect once throughout its body.
