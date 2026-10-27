@@ -266,6 +266,8 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   Add an engine through that registry and one concrete dialect override module,
   with admission evidence; do not introduce supported-engine lists in consumers.
   Capability inspection is metadata-only and never runs querying identity admission.
+  `tests/test_engine_dispatch.py` rejects engine-name selection outside those
+  modules; it is a heuristic review aid, not proof of centralized dispatch.
 - The PostgreSQL engine's identity callback owns the existing qualified,
   read-only `SELECT pg_catalog.version()` admission exception. It checks the
   Ibis floor before reading identity and refuses before source metadata access;
