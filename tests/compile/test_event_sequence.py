@@ -6,7 +6,7 @@ import pytest
 
 from terrine.compile.anchors import AnchorTable
 from terrine.compile.shapes.event_sequence import _identity_checks
-from terrine.data import Coverage
+from terrine.data import Budget, Coverage
 from terrine.model import Model
 from terrine.semantic.models import Catalog
 from terrine.spec import Design, EventAnchor, EventSequence
@@ -86,6 +86,53 @@ def test_sequence_compiler_uses_configured_event_id_and_preserves_tied_order(seq
 
     children = [row for row in rows if row["is_event"]]
     assert [row["event_id"] for row in children] == ["a", "z", "end"]
+
+
+@pytest.mark.parametrize("representation", ["positions", "arrays"])
+def test_legacy_support_like_property_names_remain_values(sequence_model, representation):
+    names = ("kind", "kind_complete")
+    definition = sequence_model.catalog.model_dump(mode="python")
+    definition["sources"]["events"]["properties"] = names
+    for name in names:
+        definition["properties"][name] = {
+            "source": "events",
+            "column": "kind",
+            "dtype": "string",
+            "as_of": "event_time",
+        }
+    model = Model.from_catalog(
+        Catalog.model_validate(definition),
+        con=sequence_model.con,
+        readiness=sequence_model.readiness,
+        event_ids=sequence_model.event_ids,
+    )
+    frame = Design(
+        "user",
+        EventAnchor("signup"),
+        shape=EventSequence(
+            "signup",
+            Window("0s", "2h"),
+            max_events=5,
+            properties=names,
+            representation=representation,
+        ),
+    ).build(model)
+    materialized = frame.materialize(Budget(max_rows=100, max_output_bytes=1_000_000))
+    rows = materialized.table.to_pylist()
+    if representation == "positions":
+        children = [row for row in rows if row["is_event"]]
+        for name in names:
+            assert name in materialized.roles.features
+            assert materialized.table[name].type == pa.string()
+            assert materialized.table[f"{name}__complete"].type == pa.bool_()
+            assert [row[name] for row in children] == ["view", "click", "purchase"]
+            assert [row[f"{name}__complete"] for row in children] == [True] * 3
+            assert [row[f"{name}__reason"] for row in children] == [None] * 3
+    else:
+        children = rows[0]["event_values"]
+        for name in names:
+            assert [row[name] for row in children] == ["view", "click", "purchase"]
+            assert [row[f"{name}_reason"] for row in children] == [None] * 3
 
 
 def test_event_sequence_composes_dimension_label_selector(sequence_model):
@@ -489,14 +536,14 @@ def test_sequence_sessions_are_compiled_per_anchor(sequence_model):
     events = [row for row in rows if row["is_event"]]
     assert events
     assert {row["session_index"] for row in events} == {0}
-    assert sum(row["transition_reason"] == "missing_predecessor" for row in events) == len(
+    assert sum(row["transition__reason"] == "missing_predecessor" for row in events) == len(
         {row["anchor_id"] for row in events}
     )
     headers = [row for row in rows if not row["is_event"]]
     for header in headers:
         anchor_events = [row for row in events if row["anchor_id"] == header["anchor_id"]]
-        assert header["sessions_complete"] is True
-        assert header["sessions_reason"] is None
+        assert header["sessions__complete"] is True
+        assert header["sessions__reason"] is None
         assert header["sessions"] == [
             {
                 "session_index": 0,
@@ -731,12 +778,12 @@ def test_sequence_compiler_projects_dimension_backed_property(sequence_model, ha
     rows = model.con.to_pyarrow(compiled.table).to_pylist()
     if not has_history_match:
         header = next(row for row in rows if not row["is_event"])
-        assert header["funnel_attempts_complete"] is False
-        assert header["funnel_attempts_reason"] == "missing_history"
+        assert header["funnel_attempts__complete"] is False
+        assert header["funnel_attempts__reason"] == "missing_history"
     assert [row["region"] for row in rows if row["is_event"]] == (
         ["west", "west", "west"] if has_history_match else [None, None, None]
     )
-    assert [row["region_reason"] for row in rows if row["is_event"]] == (
+    assert [row["region__reason"] for row in rows if row["is_event"]] == (
         [None, None, None] if has_history_match else ["missing_history"] * 3
     )
 

@@ -11,11 +11,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from terrine.data import BoundCoverage, Coverage, UnitSource
+from terrine.data import BoundCoverage, Coverage, Events, UnitSource
 from terrine.errors import RefusalSpec
 from terrine.execution._metadata import metadata_operation
 from terrine.semantic.bind import _SCHEMA, bind_metric, normalize_source
-from terrine.semantic.io import load_catalog
+from terrine.semantic.io import load_catalog, validate_catalog
 from terrine.semantic.models import BoundMetric, BoundSource, Catalog, RelationSpec, TableRef
 from terrine.semantic.time import boundary_timezone
 from terrine.temporal.readiness import Readiness
@@ -25,6 +25,33 @@ if TYPE_CHECKING:
 __all__ = ["Model"]
 
 _INVALID = RefusalSpec("terrine.model.invalid_binding", "Model binding input is invalid: {reason}.")
+_MISSING_EVENT_COMPLETENESS = RefusalSpec(
+    "terrine.model.missing_event_completeness",
+    "Event source {source!r} requires complete=(start, end); declare authoritative "
+    "inclusive local calendar days, not observed event maxima.",
+)
+_MULTIPLE_EVENT_UNITS = RefusalSpec(
+    "terrine.model.multiple_event_units",
+    "Event source {source!r} declares multiple units {units}; use Model.from_catalog "
+    "for multi-unit source semantics.",
+)
+_GENERATED_METRIC_COLLISION = RefusalSpec(
+    "terrine.model.generated_metric_collision",
+    "Generated name {name!r} conflicts for event sources {sources}; rename the source "
+    "or value declaration, or use Model.from_catalog for explicit names.",
+)
+
+
+def _claim_generated_name(
+    generated: dict[str, str], name: str, source: str, readiness: Mapping[str, Coverage]
+) -> None:
+    if name in generated:
+        raise _GENERATED_METRIC_COLLISION.error(
+            name=name, sources=tuple(dict.fromkeys((generated[name], source)))
+        )
+    if name in readiness and name != source:
+        raise _GENERATED_METRIC_COLLISION.error(name=name, sources=(source,), readiness_key=name)
+    generated[name] = source
 
 
 def _boundary_function(boundary: str):
@@ -90,10 +117,97 @@ class Model:
         object.__setattr__(self, "day_boundary", _boundary_function(catalog.day_boundary))
 
     @classmethod
+    def from_tables(
+        cls,
+        con: Any,
+        *,
+        units: Mapping[str, UnitSource],
+        events: Mapping[str, Events],
+        dialect: str | None = None,
+        day_boundary: str = "UTC",
+        readiness: Mapping[str, Coverage] | None = None,
+        event_ids: Mapping[str, str] | None = None,
+    ) -> Model:
+        """Bind event tables with explicit rosters, completeness and generated metrics."""
+        if not isinstance(units, Mapping):
+            raise _INVALID.error(reason="units must map names to UnitSource")
+        if not isinstance(events, Mapping) or any(
+            not isinstance(name, str) or not name or not isinstance(event, Events)
+            for name, event in events.items()
+        ):
+            raise _INVALID.error(reason="events must map nonempty source names to Events")
+        if readiness is not None and not isinstance(readiness, Mapping):
+            raise _INVALID.error(reason="readiness must map source names to Coverage")
+        coverage = dict(readiness or {})
+        sources: dict[str, Any] = {}
+        facts: dict[str, Any] = {}
+        measures: dict[str, Any] = {}
+        metrics: dict[str, Any] = {}
+        generated: dict[str, str] = {}
+        for source, event in events.items():
+            if len(event.keys) > 1:
+                raise _MULTIPLE_EVENT_UNITS.error(source=source, units=tuple(event.keys))
+            if not event.keys:
+                raise _INVALID.error(
+                    reason=f"event source {source!r} requires exactly one unit key"
+                )
+            unit = next(iter(event.keys))
+            if unit not in units:
+                raise _INVALID.error(
+                    reason=f"event source {source!r} unit {unit!r} requires a declared UnitSource"
+                )
+            if event.complete is None:
+                raise _MISSING_EVENT_COMPLETENESS.error(source=source)
+            source_facts = [(source, None)] + [
+                (f"{source}_{value}", value) for value in event.values
+            ]
+            for fact, column in source_facts:
+                # The source and its event fact deliberately share one name.
+                _claim_generated_name(generated, fact, source, coverage)
+                facts[fact] = {"source": source, "column": column}
+            source_measures = [(f"{source}_count", source, "count")]
+            for value in event.values:
+                fact = f"{source}_{value}"
+                source_measures.extend(
+                    [(f"{fact}_sum", fact, "sum"), (f"{fact}_mean", fact, "avg_event")]
+                )
+            for name, fact, aggregation in source_measures:
+                _claim_generated_name(generated, name, source, coverage)
+                measures[name] = {"fact": fact, "aggregation": aggregation}
+                metrics[name] = {"kind": "mean", "entity": unit, "measure": name}
+            sources[source] = {
+                "relation": {"kind": "table", "name": event.table},
+                "timestamp": event.time,
+                "entities": dict(event.keys),
+                "facts": [fact for fact, _ in source_facts],
+                "properties": [],
+                "dimensions": [],
+            }
+            coverage[source] = Coverage(*event.complete)
+        if dialect is None:
+            from terrine.execution.backend import backend_provider
+
+            dialect = backend_provider(con).dialect(con)
+        catalog = {
+            "schema_version": 1,
+            "dialect": dialect,
+            "day_boundary": day_boundary,
+            "sources": sources,
+            "facts": facts,
+            "properties": {},
+            "dimensions": {},
+            "measures": measures,
+            "metrics": metrics,
+        }
+        return cls.from_catalog(
+            catalog, con=con, units=dict(units), readiness=coverage, event_ids=event_ids
+        )
+
+    @classmethod
     @metadata_operation()
     def from_catalog(
         cls,
-        path_or_catalog: str | Path | Catalog,
+        path_or_catalog: str | Path | Catalog | Mapping[str, Any],
         *,
         con: Any,
         readiness: Readiness | Mapping[str, Coverage | BoundCoverage],
@@ -105,6 +219,8 @@ class Model:
         catalog = (
             path_or_catalog
             if isinstance(path_or_catalog, Catalog)
+            else validate_catalog(path_or_catalog)
+            if isinstance(path_or_catalog, Mapping)
             else load_catalog(path_or_catalog)
         )
         day = _boundary_function(catalog.day_boundary)

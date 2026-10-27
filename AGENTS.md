@@ -194,6 +194,12 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   it. New exports need a concrete user workflow; avoid aliases and duplicate
   entry points.
 - Keep the everyday workflow centered on Model, Design, Frame and Dataset.
+  `Model.from_tables` binds simple, one-unit event tables with an explicit roster
+  and completeness; use `Model.from_catalog` for richer source semantics.
+  Constructors in `terrine.recipes` are the documented starting point for common
+  dataset types. They return the same ordinary Design, not a wrapper or duplicate
+  representation. The low-level Design API is their full-flexibility compilation
+  target, remains public and fully supported, and is not an alias for recipes.
   Supporting constructors should earn top-level exposure through that workflow.
   Advanced estimation, orchestration and telemetry stay in focused modules;
   specialized shapes must not expose their implementation machinery through

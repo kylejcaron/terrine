@@ -6,7 +6,6 @@ import ibis
 import pyarrow as pa
 
 from terrine import Coverage, Model, UnitSource
-from terrine.semantic.models import Catalog
 from terrine.spec import Design, FixedDate, agg, quantile
 
 
@@ -28,8 +27,7 @@ def main() -> None:
         ),
     )
     con.create_table("users", pa.table({"id": ["u-1", "u-2", "u-3"]}))
-    catalog = Catalog.model_validate(
-        {
+    catalog = {
             "schema_version": 1,
             "day_boundary": "UTC",
             "dialect": "duckdb",
@@ -63,7 +61,6 @@ def main() -> None:
                 },
             },
         }
-    )
     model = Model.from_catalog(
         catalog,
         con=con,

@@ -141,7 +141,7 @@ def test_reexecution_recovers_pending_cancellation():
     con.execute(
         "INSERT INTO owner.runtime_runs VALUES (?, ?, ?, 'cancel_requested', "
         "NULL, NULL, NULL, NULL)",
-        ["recover-cancel", plan.dataset, plan.recipe.fingerprint],
+        ["recover-cancel", plan.dataset, plan.definition.fingerprint],
     )
     ran = []
     receipt = execute_plan(

@@ -33,7 +33,7 @@ owner's database.
 Each owner process must install the fresh-planning service; constructing a
 `ControlServer` without `plan_planner` cannot accept orchestration `PlanRequest`s.
 The application's model resolver returns the referenced `Model`. The owner
-persists a `SavedPlanRecipe` in the invocation and runs that exact recipe through
+persists a `SavedPlan` in the invocation and runs that exact saved plan through
 the built-in `DesignExecutor` by default, reopening retained inputs for compiler
 layers and fenced publication. No application executor is required.
 
@@ -68,7 +68,7 @@ server.start()
 `owner_connection` and `model_resolver` are configured by the application that
 owns the model/catalog and backend. Keep the connection open only in the owner
 process. Restart the owner with the same namespace and snapshot root so its
-persisted invocation and retained recipes remain readable. Applications with
+persisted invocation and retained saved plans remain readable. Applications with
 custom execution requirements may supply an executor implementing
 `run_snapshot_task` and fenced publication instead of the built-in executor.
 A `PlanRequest` contains a stable invocation ID, owner-resolvable
@@ -130,7 +130,7 @@ the local DuckDB file with the runtime owner, use this lifecycle:
    `invocation_id` to the caller-supplied stable `build_id`, then call
    `run_after_dbt_build` with the owner endpoint and namespace.
 
-For example, a dbt caller can use the recipe after `dbt build` and owner restart:
+For example, a dbt caller can use the example after `dbt build` and owner restart:
 
 ```python
 receipt = run_after_dbt_build(
@@ -146,7 +146,7 @@ invocation ID equals that build ID. The caller creates the ID before the build
 and preserves it across response-loss retries or a fresh client process. A
 failed run can be retried with the same ID after the owner is available; the
 runtime advances its fence and reuses completed outputs. A new dbt build uses a
-new ID. The helper submits the owner plan, runs the exact persisted recipe with
+new ID. The helper submits the owner plan, runs the exact persisted saved plan with
 its destination-scoped key, and checks authoritative status. It does not create
 generated dbt models, write state from a post-hook, or manage owner processes.
 

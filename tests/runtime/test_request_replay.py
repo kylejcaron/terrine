@@ -8,7 +8,7 @@ from terrine.runtime.execute import execute_plan
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.leases import LeaseStore
 from terrine.runtime.planner import plan_refresh
-from terrine.runtime.recipe import DestinationRef
+from terrine.runtime.saved_plan import DestinationRef
 
 
 def _plan(definition_hash="def"):

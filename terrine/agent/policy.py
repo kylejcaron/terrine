@@ -7,7 +7,7 @@ from typing import Literal
 from terrine.data import Budget
 from terrine.errors import RefusalSpec
 from terrine.runtime.api import Executor
-from terrine.runtime.recipe import DestinationRef, ModelReference, ModelResolver
+from terrine.runtime.saved_plan import DestinationRef, ModelReference, ModelResolver
 from terrine.runtime.snapshot import SnapshotAuthority
 
 __all__ = ["AgentPolicy"]

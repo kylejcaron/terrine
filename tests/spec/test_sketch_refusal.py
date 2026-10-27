@@ -54,3 +54,41 @@ def test_missing_optional_extra_refuses_approx_quantile_before_source_query(monk
         validate_design(design, model())
     assert error.value.code == "terrine.metric.sketch_unavailable"
     assert "install terrine[sketches]" in str(error.value)
+
+
+@pytest.mark.parametrize("role", ["features", "outcomes", "eligibility"])
+def test_approximate_quantile_predicates_refuse_before_optional_import_or_query(role, monkeypatch):
+    import copy
+    import pickle
+    import sys
+
+    from terrine.spec import agg, all_of, gt
+
+    monkeypatch.setitem(sys.modules, "datasketches", None)
+    value = ApproxMetricQuantile(
+        "sessions",
+        Decimal("0.5"),
+        Window("0s", "7d") if role == "outcomes" else Window("-7d", "0s"),
+        SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
+    )
+    values = {
+        "threshold": all_of(
+            gt(agg("sessions", window=("0s", "1d") if role == "outcomes" else ("-1d", "0s")), 0),
+            all_of(gt(value, 2)),
+        )
+    }
+    design = Design(
+        "user",
+        EventAnchor("session"),
+        features=values if role == "features" else None,
+        outcomes=values if role == "outcomes" else None,
+        eligibility=values if role == "eligibility" else None,
+    )
+    bound = model()
+    with pytest.raises(TerrineError) as error:
+        validate_design(design, bound)
+    assert error.value.code == "terrine.metric.approx_eligibility_unavailable"
+    assert bound.con.calls == []
+    for restored in (pickle.loads(pickle.dumps(error.value)), copy.deepcopy(error.value)):
+        assert restored.code == error.value.code
+        assert restored.context == error.value.context

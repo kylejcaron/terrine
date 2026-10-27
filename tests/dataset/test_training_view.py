@@ -61,6 +61,47 @@ def test_training_set_incomplete_label_policy_is_explicit(native_inputs):
         frame.training_set(label="churn", incomplete_labels="impute")
 
 
+def test_boolean_feature_hash_includes_each_operand_definition(native_inputs):
+    from dataclasses import replace
+
+    from terrine.frame import _feature_definition_hash
+    from terrine.spec import FixedDate, all_of, eq, gt
+
+    bound = _frame(native_inputs)._model
+    design = Design(
+        "user",
+        FixedDate("2025-01-03"),
+        features={
+            "active": all_of(
+                gt(agg("sessions", window=("-1d", "0s")), 0),
+                eq(agg("churned", window=("-1d", "0s")), 0),
+            )
+        },
+    )
+    original = _feature_definition_hash(design, ("active",), bound)
+    for metric_name in ("sessions", "churned"):
+        altered = Model(
+            catalog=bound.catalog,
+            con=bound.con,
+            readiness=bound.readiness,
+            units=bound.units,
+            event_ids=bound.event_ids,
+            sources=bound.sources,
+            metrics={
+                **bound.metrics,
+                metric_name: replace(
+                    bound.metrics[metric_name],
+                    kind="mean"
+                    if bound.metrics[metric_name].kind == "conversion"
+                    else "conversion",
+                ),
+            },
+            resolver=bound._resolver,
+            input_binding=bound.input_binding,
+        )
+        assert _feature_definition_hash(design, ("active",), altered) != original
+
+
 def test_state_panel_feature_hash_includes_state_definition(native_inputs):
     from dataclasses import replace
 

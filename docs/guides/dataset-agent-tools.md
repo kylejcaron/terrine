@@ -14,7 +14,7 @@ bound source scan work, and an unknown scan cost is not a zero cost.
 
 | Operations | Required grant |
 | --- | --- |
-| `inspect_catalog`, `list_capabilities`, `get_design_schema`, `get_dataset_recipe_schema` | `inspect` |
+| `inspect_catalog`, `list_capabilities`, `get_design_schema`, `get_dataset_definition_schema` | `inspect` |
 | `design_example`, proposals, validation, named save/load, metadata-only `preview_dataset` | `validate` |
 | `prepare_dataset`, `prepare_refresh` | `prepare` |
 | `execute_plan`, `stage`, `refresh` | `write` |
@@ -29,7 +29,7 @@ default to disabled. Resource lookups also require the exact owner source,
 catalog, destination and model bindings.
 
 Run `uv run python examples/dataset_agent_tools.py` for a local owner-created
-training recipe, metadata preview, explicit preparation/write grants, response
+training definition, metadata preview, explicit preparation/write grants, response
 replay, redacted row preview, corrected refresh and separately authorized
 Parquet export. Only safe counts and workflow flags are printed.
 
@@ -57,13 +57,17 @@ SQL, Python expressions, callbacks and extra payload fields are not accepted.
 prevent an agent from following a symlink or choosing a different filesystem
 root. Saved definitions are validated again on load.
 
-`get_dataset_recipe_schema`, `propose_recipe` and `validate_recipe` use the
-existing `DatasetRecipe` codec. Training views record selected features, labels,
+`get_dataset_definition_schema`, `propose_definition` and `validate_definition` use the
+existing `DatasetDefinition` codec. Training views record selected features, labels,
 label-completeness policy and a typed time/group split. Scoring views record
 feature selection, an explicit timezone-aware resolved `as_of`, eligibility and
 the parent Design hash. Proposals are metadata-only and never compile a frame;
 validation also checks the existing lazy dataset view contracts without reading
-source rows. Named storage accepts either canonical Design or recipe content.
+source rows. Named storage accepts either canonical Design or definition content.
+Proposal and validation outputs expose the canonical construction identity as
+`definition_digest`; prepared receipts carry `plan_hash`. Pinned dataset references
+use `definition_reference` for the construction digest, distinct from the base
+Design's `definition_hash`.
 
 All responses use schema version 1 and `ok`, `refused` or `pending` status.
 Refusals include stable codes, immutable JSON context and an actionable route.
@@ -93,24 +97,24 @@ advertised. External object-store destinations are likewise not included.
 
 ## Owner-prepared execution
 
-`preview_dataset(recipe)` calls the shared cost preview without capturing inputs
+`preview_dataset(definition)` calls the shared cost preview without capturing inputs
 or reading source rows. Unknown scan/output costs remain unknown. A strict scan
 budget with no verified backend scan bound refuses, including during preparation.
 `bounded_count` additionally requires `preview=True` and the owner's count cap.
 Counts can scan upstream data; they are not a source-work budget.
 
-`prepare_dataset(recipe, destination=..., invocation_id=...)` requires the
+`prepare_dataset(definition, destination=..., invocation_id=...)` requires the
 separate `prepare` grant, an exact destination, an owner Model resolver and a
 retained snapshot authority for the connected database. Owner and request budgets
 are intersected: each finite bound is the minimum, and strict scan is logical OR.
-The invocation binds the entire training/scoring recipe, changes, snapshot,
+The invocation binds the entire training/scoring definition, changes, snapshot,
 destination, budget and expected base publication. Reusing an invocation ID
 with changed bindings refuses.
 
 The owner resolves the recorded dataset view before discovering required sources,
 compiling preflight output or capturing retained inputs. A feature-only scoring
-recipe does not require readiness for, or read, an unused label source; the saved
-recipe still binds its entire base Design and resolved scoring view.
+definition does not require readiness for, or read, an unused label source; the saved
+definition still binds its entire base Design and resolved scoring view.
 Preparation rechecks metadata-only authorization before the owner's persisted
 invocation lookup. A matching invocation replays its receipt without compiling
 or reopening live source/roster relations; only a new invocation resolves and
@@ -130,7 +134,7 @@ runs stay terminal.
 `stage(receipt, request_key=...)` records the exact successful runtime generation
 as a pinned dataset. It does not restage or replan. Replays recover the same
 generation, including after a lost response. `prepare_refresh(reference,
-invocation_id=..., changes=...)` uses the saved recipe and binds the current
+invocation_id=..., changes=...)` uses the saved definition and binds the current
 generation; missing change evidence means a conservative rebuild. `refresh`
 requires that exact base/receipt pair. Publishing a refresh does not mutate old
 references, and replaying an already-successful refresh still returns its pinned
@@ -141,7 +145,7 @@ source removal. New invocations check the pinned base before capturing inputs.
 
 References contain dataset/generation identities, hashes, row count and typed
 column roles/types with completeness/reason-column links. They omit internal
-recipes, coverage literals, snapshots, SQL, database paths and arbitrary Frame
+definitions, coverage literals, snapshots, SQL, database paths and arbitrary Frame
 metadata. Lookups compare the complete reference to persisted owner metadata and
 authorize the operation before opening the pinned dataset.
 

@@ -1,40 +1,100 @@
 # Sequential trials and event panels
 
-Sequential trials use a `Schedule` as repeated trial time zero. `Sequential` lowers a base `Design` to the canonical sequential shape and requires a treatment-history declaration; it does not infer exposure from an event anchor. `CalendarPanel` accepts that canonical sequential design unchanged.
+Start with `terrine.recipes` for scheduled trial panels or event-relative panels.
+Both return plain Designs, built through `design.build(model)` and
+`frame.materialize(budget)`. Run `uv run python examples/sequential_trials.py`
+for both constructors with calendar-date and relative-period assertions.
+
+## Scheduled trial panels
+
+`recipes.trial_panel` requires `unit`, `every`, `start`, exclusive `end`, and a
+`treatment` history declaration (`Initiation` or `PersistentAdoption`). Its rows
+are eligible units at scheduled trial time zero; schedule dates, not a redundant
+period count, define the trials. Dates are calendar dates or ISO date strings,
+never timestamps. For example, the following schedule has Jan 1, Jan 15, and
+Jan 29 anchors, not Feb 1.
+
+Supported options are `trial_weight=None`, `anticipation="0d"`,
+`reference_period="-1d"`, `features`, `outcomes`, `eligibility`, `anchor_range`,
+and `gap="0d"`. Other optional inputs default to `None`. A trial panel does not
+accept `periods`, `period`, or an administrative cutoff.
 
 ```python
 from datetime import UTC, datetime
+from terrine import recipes
+from terrine.spec import Initiation, from_json, to_json
 
-from terrine.spec import Design, Initiation, Schedule, Sequential, to_json, from_json
-
-base = Design("user", Schedule("30d", "2025-01-01", "2025-07-01"))
 treatment_history = Initiation(
     "assignments", "started", history_start=datetime(2024, 1, 1, tzinfo=UTC)
 )
-trials = Sequential(base, treatment=treatment_history)
+trials = recipes.trial_panel(
+    "user", every="14d", start="2025-01-01", end="2025-02-01",
+    treatment=treatment_history,
+)
 assert from_json(to_json(trials)) == trials
 ```
 
-`Initiation` describes treatment onset, its declared source/property, the earliest complete history needed for classification, and the information policy (`recorded_at` or `retrospective_effective_time`). `PersistentAdoption` is a separate declaration and requires explicit absorbing semantics; it is not inferred from initiation. A source maximum timestamp does not establish history completeness.
-
-An `EventPanel` expands each selected parent event to exactly the declared integer-relative periods. Its row evaluation origin is `parent_t0 + period * period_seconds`; its typed `anchor_id` contains both the parent event identity and relative period. Expression windows retain their declared widths and are evaluated relative to each row origin, so an outcome window does not have to equal one event period. Negative event periods are valid without making expression-relative window starts negative.
+### Under the hood
 
 ```python
-from terrine.spec import Design, EventAnchor, EventPanel, agg
+from terrine.spec import Design, Schedule, Sequential
 
-event_rows = EventPanel(
-    Design(
-        "user",
-        EventAnchor("checkout", "first"),
-        outcomes={"next_week": agg("orders", window=("1d", "8d"))},
-    ),
-    periods=(-2, -1, 0, 1),
-    period_seconds=86_400,
-    reference_period=-1,
+base = Design("user", Schedule("14d", "2025-01-01", "2025-02-01"))
+equivalent_trials = Sequential(base, treatment=treatment_history)
+assert trials == equivalent_trials
+```
+
+`Sequential` is a public transform that lowers a base Design to the canonical
+sequential shape. It does not infer exposure from an event anchor.
+`CalendarPanel` accepts that canonical sequential design unchanged.
+`Initiation` describes treatment onset, its declared source/property, the
+earliest complete history needed for classification, and the information policy
+(`recorded_at` or `retrospective_effective_time`). `PersistentAdoption` is a
+separate declaration and requires explicit absorbing semantics; it is not
+inferred from initiation. A source maximum timestamp does not establish history
+completeness.
+
+## Event panels
+
+`recipes.event_panel` requires `unit`, `event`, an explicit tuple of relative
+`periods`, and elapsed `period` width. A row is one selected parent event at one
+declared relative period. `occurrence` defaults to `"first"` and accepts
+`"each"` or `"nth"`; only `"nth"` takes a positive one-based `n`. Supported
+options are `reference_period=-1`, `features`, `outcomes`, `eligibility`,
+`anchor_range`, and `gap="0d"`. It accepts no treatment or administrative cutoff.
+
+```python
+from terrine import agg, recipes
+
+outcomes = {"next_week": agg("orders", window=("1d", "8d"))}
+event_rows = recipes.event_panel(
+    "user", event="checkout", periods=(-2, -1, 0, 1), period="1d",
+    outcomes=outcomes,
 )
 ```
 
-Build and materialize either design through the ordinary `Design.build(model)` and `Frame.materialize(budget)` workflow. The shape definition survives design serialization, Frame recompilation, and Arrow metadata round trips. Event time zero is descriptive identity only; it does not assert treatment or exposure.
+### Under the hood
+
+```python
+from terrine.spec import Design, EventAnchor, EventPanel
+
+equivalent_events = EventPanel(
+    Design("user", EventAnchor("checkout"), outcomes=outcomes),
+    periods=(-2, -1, 0, 1), period_seconds=86_400, reference_period=-1,
+)
+assert event_rows == equivalent_events
+```
+
+`EventPanel` remains a public transform. The row evaluation origin is
+`parent_t0 + period * period_seconds`; its typed `anchor_id` contains both the
+parent event identity and relative period. Expression windows retain their
+declared widths and are evaluated relative to each row origin, so an outcome
+window does not have to equal one event period. Negative event periods are valid
+without making expression-relative window starts negative.
+
+Both shapes survive design serialization, Frame recompilation, and Arrow
+metadata round trips. Event time zero is descriptive identity only; it does not
+assert treatment or exposure.
 
 ## Treatment history and matched t0
 

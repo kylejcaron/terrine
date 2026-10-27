@@ -142,17 +142,14 @@ def plan_layers(design: Design, model) -> LayerPlan:
     from terrine.semantic.rules import calendar_average_alignment
     from terrine.spec.anchors import FixedDate, Schedule
     from terrine.spec.expressions import (
-        And,
         ApproxMetricDistinct,
         ApproxMetricQuantile,
         AttributeAsOf,
-        Eq,
         EventTime,
-        Gt,
-        IsNull,
         MetricAgg,
         MetricQuantile,
         RetentionMetric,
+        _output_leaves,
         agg,
     )
     from terrine.spec.state_panel import BinnedMetricState, StatePanel
@@ -164,14 +161,7 @@ def plan_layers(design: Design, model) -> LayerPlan:
     )
 
     def expression(node, points=anchor_points) -> None:
-        if isinstance(node, And):
-            for term in node.terms:
-                expression(term, points)
-        elif isinstance(node, (Eq, Gt)):
-            expression(node.left if isinstance(node, Eq) else node.expr, points)
-        elif isinstance(node, IsNull):
-            expression(node.expr, points)
-        elif isinstance(
+        if isinstance(
             node,
             (
                 AttributeAsOf,
@@ -211,7 +201,8 @@ def plan_layers(design: Design, model) -> LayerPlan:
         *design.outcomes.values(),
         *design.eligibility.values(),
     ):
-        expression(node)
+        for leaf in _output_leaves(node):
+            expression(leaf)
     if isinstance(design.shape, StatePanel):
         assert anchor_points is not None
         baseline_points = anchor_points[:1]

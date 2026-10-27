@@ -6,7 +6,7 @@ import pytest
 from terrine.agent import AgentPolicy, DatasetTools
 from terrine.data import Coverage, UnitSource
 from terrine.model import Model
-from terrine.runtime.recipe import ModelReference
+from terrine.runtime.saved_plan import ModelReference
 
 
 @pytest.fixture
@@ -36,7 +36,7 @@ def tools(tmp_path):
 @pytest.fixture
 def owner_tools(tmp_path):
     from terrine.runtime.owner import RuntimeOwner
-    from terrine.runtime.recipe import DestinationRef
+    from terrine.runtime.saved_plan import DestinationRef
     from terrine.runtime.snapshot import SnapshotAuthority
 
     database = tmp_path / "owner.duckdb"

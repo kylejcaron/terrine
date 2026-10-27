@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from base64 import b64decode, b64encode
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, date, datetime, timedelta
@@ -28,6 +28,7 @@ __all__ = [
     "CoverageSummary",
     "DatasetViewMeta",
     "EligibilitySummary",
+    "Events",
     "ExecutionSnapshot",
     "ExpressionTiming",
     "FeatureCutoff",
@@ -65,7 +66,18 @@ _COVERAGE_UTC_OVERFLOW = RefusalSpec(
     "terrine.metadata.unrepresentable_coverage",
     "Coverage exceeds UTC datetime's range; use interior instants",
 )
-_ARROW_METADATA_KEY = b"terrine.materialized_frame.v1"
+_MISSING_COLUMNS = RefusalSpec(
+    "terrine.metadata.missing_columns",
+    "Arrow table is missing required columns {columns!r}; "
+    "use lossless Arrow with all observation columns.",
+)
+_UNSUPPORTED_METADATA_VERSION = RefusalSpec(
+    "terrine.metadata.unsupported_version",
+    "Arrow metadata version {version!r} is unsupported; re-materialize the Design "
+    "with the current Terrine version.",
+)
+_ARROW_METADATA_KEY = b"terrine.materialized_frame.v2"
+_LEGACY_ARROW_METADATA_KEY = b"terrine.materialized_frame.v1"
 
 
 def _nonempty(value: str, field: str) -> None:
@@ -175,6 +187,38 @@ class UnitSource:
             value = getattr(self, name)
             if value is not None:
                 _nonempty(value, name)
+
+
+@dataclass(frozen=True, slots=True)
+class Events:
+    """Table-backed event declarations with explicit inclusive completeness days."""
+
+    table: str
+    time: str
+    keys: Mapping[str, str]
+    values: tuple[str, ...] = ()
+    complete: tuple[date | str, date | str] | None = None
+
+    def __post_init__(self) -> None:
+        _nonempty(self.table, "table")
+        _nonempty(self.time, "time")
+        keys = _mapping(self.keys, "keys")
+        for unit, column in keys.items():
+            _nonempty(unit, "unit name")
+            _nonempty(column, "key column")
+        if isinstance(self.values, str):
+            raise TypeError("values must be a sequence of column names")
+        values = tuple(self.values)
+        for value in values:
+            _nonempty(value, "value column")
+        object.__setattr__(self, "keys", keys)
+        object.__setattr__(self, "values", values)
+        if self.complete is not None:
+            if len(self.complete) != 2:
+                raise ValueError("complete must be a pair of inclusive calendar days")
+            complete = (self.complete[0], self.complete[1])
+            Coverage(*complete)
+            object.__setattr__(self, "complete", complete)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1115,6 +1159,60 @@ def _metadata_payload(
     }
 
 
+def _bookkeeping_columns(
+    names: Sequence[str],
+    roles: Roles,
+    columns: Mapping[str, ColumnMeta],
+    timings: Mapping[str, ExpressionTiming],
+) -> tuple[str, ...]:
+    bookkeeping = {"_observed_from", "_observed_until", "anchor_provenance"}
+    for meta in columns.values():
+        bookkeeping.update(
+            name
+            for name in (meta.observed_from_column, meta.observed_until_column)
+            if name is not None
+        )
+    for timing in timings.values():
+        bookkeeping.update(
+            name
+            for name in (
+                timing.point_time_column,
+                timing.start_bound_column,
+                timing.end_bound_column,
+            )
+            if name is not None
+        )
+    bookkeeping.difference_update((roles.unit, roles.anchor, roles.t0, *columns))
+    return tuple(name for name in names if name in bookkeeping)
+
+
+def _ordered_columns(
+    names: Sequence[str],
+    roles: Roles,
+    columns: Mapping[str, ColumnMeta],
+    timings: Mapping[str, ExpressionTiming],
+) -> tuple[str, ...]:
+    bookkeeping = _bookkeeping_columns(names, roles, columns, timings)
+    support = {
+        name
+        for meta in columns.values()
+        for name in (meta.complete_column, meta.reason_column)
+        if name is not None and name not in columns
+    }
+    ordered = []
+    for name in (roles.unit, roles.anchor, roles.t0, *names):
+        if name not in names or name in ordered or name in bookkeeping or name in support:
+            continue
+        ordered.append(name)
+        if name in columns:
+            meta = columns[name]
+            for field in (meta.complete_column, meta.reason_column):
+                if field is not None and field in names and field not in ordered:
+                    ordered.append(field)
+    ordered.extend(name for name in names if name not in ordered and name not in bookkeeping)
+    return (*ordered, *bookkeeping)
+
+
 @dataclass(frozen=True, slots=True)
 class MaterializedFrame:
     table: pa.Table
@@ -1132,34 +1230,61 @@ class MaterializedFrame:
         ):
             raise TypeError("columns must map names to ColumnMeta")
         object.__setattr__(self, "columns", _typed_mapping(self.columns, "columns", ColumnMeta))
+        object.__setattr__(
+            self,
+            "table",
+            self.table.select(
+                _ordered_columns(
+                    self.table.column_names,
+                    self.roles,
+                    self.columns,
+                    self.provenance.expression_timings,
+                )
+            ),
+        )
 
     def to_metadata(self) -> dict[str, Any]:
         """Return a detached JSON-compatible metadata value."""
         return thaw(freeze(_metadata_payload(self.roles, self.columns, self.provenance)))
 
     def to_arrow(self) -> pa.Table:
-        """Return the Arrow table with canonical JSON metadata attached to its schema."""
+        """Return lossless Arrow with value/support triples before observation columns."""
         payload = self.to_metadata()
+        payload["version"] = 2
+        payload["bookkeeping_columns"] = list(self._bookkeeping_columns())
+        table = self.table
         encoded = json.dumps(
             payload, sort_keys=True, separators=(",", ":"), allow_nan=False
         ).encode("utf-8")
-        metadata = dict(self.table.schema.metadata or {})
+        metadata = dict(table.schema.metadata or {})
         metadata[_ARROW_METADATA_KEY] = encoded
-        return self.table.replace_schema_metadata(metadata)
+        return table.replace_schema_metadata(metadata)
+
+    def _bookkeeping_columns(self) -> tuple[str, ...]:
+        return _bookkeeping_columns(
+            self.table.column_names, self.roles, self.columns, self.provenance.expression_timings
+        )
 
     @classmethod
     def from_arrow(cls, table: pa.Table) -> MaterializedFrame:
         if not isinstance(table, pa.Table):
             raise TypeError("table must be a pyarrow.Table")
         raw = (table.schema.metadata or {}).get(_ARROW_METADATA_KEY)
+        if raw is None and _LEGACY_ARROW_METADATA_KEY in (table.schema.metadata or {}):
+            raise _UNSUPPORTED_METADATA_VERSION.error(version=1)
         if raw is None:
             raise ValueError("Arrow schema has no Terrine metadata")
         payload = json.loads(raw.decode("utf-8"))
-        if payload.get("version") != 1:
-            raise ValueError("unsupported Terrine metadata version")
+        if payload.get("version") != 2:
+            raise _UNSUPPORTED_METADATA_VERSION.error(version=payload.get("version"))
         roles = _decode(payload["roles"], Roles)
         columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
         provenance = _decode(payload["provenance"], Provenance)
+        missing = tuple(
+            name for name in payload["bookkeeping_columns"] if name not in table.column_names
+        )
+        if missing:
+            raise _MISSING_COLUMNS.error(columns=missing)
         clean = dict(table.schema.metadata or {})
         del clean[_ARROW_METADATA_KEY]
         return cls(table.replace_schema_metadata(clean or None), roles, columns, provenance)

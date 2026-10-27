@@ -121,6 +121,75 @@ def test_sequential_later_initiation_uses_reanchored_outcome_support(native_inpu
     assert error.value.code == "terrine.compile.later_control_initiation"
 
 
+@pytest.mark.parametrize("wrapped", [False, True], ids=["plain", "predicate"])
+@pytest.mark.parametrize("nested", [False, True], ids=["direct", "nested"])
+def test_sequential_followup_includes_outcome_selector_dependencies(native_inputs, wrapped, nested):
+    import ibis
+
+    from terrine.compile.shapes.sequential import _followup_at
+    from terrine.errors import TerrineError
+    from terrine.spec import event_time, gt
+
+    model = _event_model(native_inputs)
+    model.con.raw_sql(
+        "UPDATE events SET ts = TIMESTAMPTZ '2025-01-09 18:00:00+00' WHERE user_id = 'b'"
+    )
+    selector = event_time("session", window=("2d", "7d"))
+    window = ("-2d", "-1d")
+    if nested:
+        selector = event_time("session", window=("-1d", "-12h"), relative_to=selector)
+        window = ("-1d", "-12h")
+    value = agg("sessions", window=window, relative_to=selector)
+    design = Sequential(
+        Design(
+            "user",
+            Schedule("1d", "2025-01-03", "2025-01-04"),
+            outcomes={"label": gt(value, 0) if wrapped else value},
+        ),
+        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+    )
+    assert model.con.execute(
+        _followup_at(design, model, ibis.literal(datetime(2025, 1, 3, tzinfo=UTC)))
+    ).to_pydatetime() == datetime(2025, 1, 10, tzinfo=UTC)
+
+    with pytest.raises(TerrineError) as error:
+        _validated(design, model)
+
+    assert error.value.code == "terrine.compile.later_control_initiation"
+
+
+def test_sequential_followup_covers_predicate_outcome_horizon(native_inputs):
+    import ibis
+
+    from terrine.compile.shapes.sequential import _followup_at
+    from terrine.spec import all_of, eq, gt
+
+    model = _event_model(native_inputs)
+    aggregate = agg("sessions", window=("0s", "30d"))
+    values = (
+        aggregate,
+        all_of(eq(agg("sessions", window=("2d", "3d")), 0), gt(aggregate, 0)),
+    )
+    ends = []
+    for value in values:
+        design = Sequential(
+            Design(
+                "user",
+                Schedule("1d", "2025-01-03", "2025-01-04"),
+                outcomes={"label": value},
+            ),
+            treatment=Initiation(
+                "events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)
+            ),
+        )
+        ends.append(
+            model.con.execute(
+                _followup_at(design, model, ibis.literal(datetime(2025, 1, 3, tzinfo=UTC)))
+            ).to_pydatetime()
+        )
+    assert ends == [datetime(2025, 2, 2, tzinfo=UTC)] * 2
+
+
 def test_later_control_initiation_refuses_sustained_no_initiation_strategy(native_inputs):
 
     from terrine.errors import TerrineError

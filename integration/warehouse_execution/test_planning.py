@@ -15,7 +15,7 @@ from terrine.runtime.graph import dependency_graph
 from terrine.runtime.owner import RuntimeOwner
 from terrine.runtime.planner import plan_refresh
 from terrine.runtime.planning import OwnerPlanner, PlanInvocation, PlanRequest
-from terrine.runtime.recipe import DestinationRef, ModelReference
+from terrine.runtime.saved_plan import DestinationRef, ModelReference
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.anchors import FixedDate
@@ -85,7 +85,7 @@ def test_plan_request_uses_owner_ipc_from_process_without_database_access(tmp_pa
 
 def test_roster_only_owner_plan_runs_without_fact_source_work(tmp_path):
     from terrine.runtime.api import open_published_frame, run_serialized_plan
-    from tests.runtime.test_recipe import _model
+    from tests.runtime.test_saved_plan import _model
 
     database = tmp_path / "roster.duckdb"
     connection = ibis.duckdb.connect(database=str(database))
@@ -116,7 +116,7 @@ def test_roster_only_owner_plan_runs_without_fact_source_work(tmp_path):
         connection.raw_sql("DROP TABLE events")
         connection.raw_sql("UPDATE users SET id=99")
         receipt = run_serialized_plan(
-            invocation.recipe_json,
+            invocation.saved_plan_json,
             con=connection.con,
             namespace="owner",
             request_key=invocation.request_key,

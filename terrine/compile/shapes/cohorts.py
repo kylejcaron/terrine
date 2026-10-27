@@ -51,7 +51,8 @@ def _compile_cohorts(
         raise TypeError("grouping must be CohortGrouping")
     if value_column not in study.table.columns:
         raise _INVALID.error(reason="unknown_value_column")
-    complete_column = f"{value_column}_complete"
+    complete_column = study.columns[value_column].complete_column
+    reason_column = study.columns[value_column].reason_column
     if complete_column not in study.table.columns:
         raise _INVALID.error(reason="missing_value_completeness")
     table = study.table
@@ -80,8 +81,8 @@ def _compile_cohorts(
         _value=table[value_column].min(),
         _complete=table[complete_column].min().fill_null(ibis.literal(False)),
         _mature=table.period_value_mature.min(),
-        _reason=table[f"{value_column}_reason"].min()
-        if f"{value_column}_reason" in table.columns
+        _reason=table[reason_column].min()
+        if reason_column is not None
         else ibis.null().cast("string"),
     )
     numeric_type = per_unit._value.type()
@@ -195,6 +196,8 @@ def _compile_cohorts(
         ),
         at_risk=mature.ifelse(joined.at_risk, ibis.null().cast("int64")),
         observable=mature.ifelse(joined.observable, ibis.null().cast("int64")),
+        denominators_complete=mature,
+        denominators_reason=mature.ifelse(ibis.null().cast("string"), "administrative_cutoff"),
         complete=complete,
         reason=complete.ifelse(
             ibis.null().cast("string"),
@@ -206,7 +209,15 @@ def _compile_cohorts(
         ),
     )
     roles = Roles("bucket_index", "bucket_index", "bucket_start", None, (), ("value",))
-    columns = {"value": ColumnMeta(None, "outcome", None, None, "complete", "reason")}
+    columns = {
+        "value": ColumnMeta(None, "outcome", None, None, "complete", "reason"),
+        **{
+            name: ColumnMeta(
+                None, "denominator", None, None, "denominators_complete", "denominators_reason"
+            )
+            for name in ("at_risk", "observable")
+        },
+    }
     checks = list(study._checks)
     if numeric_type.is_decimal() and grouping.statistic == "total":
         failure_column = "failed_cohort_exact_total"

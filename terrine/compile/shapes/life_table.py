@@ -39,6 +39,16 @@ def _nanoseconds(table: pa.Table, name: str) -> list[int | None]:
     return [None if value is None else value * multiplier for value in values]
 
 
+def _duration_nanoseconds(table: pa.Table, name: str) -> list[int | None]:
+    column = table[name]
+    dtype = column.type
+    if not pa.types.is_duration(dtype):
+        raise TypeError(f"{name} must be a duration")
+    multiplier = _NS_PER_UNIT[dtype.unit]
+    values = column.cast(pa.int64()).to_pylist()
+    return [None if value is None else value * multiplier for value in values]
+
+
 def aggregate_life_table(
     records: pa.Table,
     *,
@@ -58,17 +68,17 @@ def aggregate_life_table(
         raise ValueError("life-table grouping column is missing")
 
     t0 = _nanoseconds(records, "t0")
-    duration = _nanoseconds(records, "duration")
+    duration = _duration_nanoseconds(records, "duration")
     entry = _nanoseconds(records, "entry_time")
     events = records["event"].to_pylist()
     complete = (
-        records["complete"].to_pylist()
-        if "complete" in records.column_names
+        records["duration__complete"].to_pylist()
+        if "duration__complete" in records.column_names
         else [True] * records.num_rows
     )
     record_reasons = (
-        records["reason"].to_pylist()
-        if "reason" in records.column_names
+        records["duration__reason"].to_pylist()
+        if "duration__reason" in records.column_names
         else [None] * records.num_rows
     )
     censor_reasons = records["censor_reason"].to_pylist()
@@ -91,11 +101,10 @@ def aggregate_life_table(
         key = tuple(column[index] for column in groups)
         if complete[index] is not True:
             incomplete_by_group[key].add(record_reasons[index] or "reason_unavailable")
-        terminal = duration[index]
+        terminal_elapsed = duration[index]
         entered = entry[index]
-        if origin is None or terminal is None or entered is None:
+        if origin is None or terminal_elapsed is None or entered is None:
             continue
-        terminal_elapsed = terminal - origin
         entry_elapsed = entered - origin
         if terminal_elapsed < 0 or entry_elapsed < 0:
             continue
@@ -196,4 +205,40 @@ def aggregate_life_table(
                 censor_rate=censored_count / at_risk if at_risk else None,
             )
             rows.append(row)
-    return pa.Table.from_pylist(rows, schema=schema)
+    table = pa.Table.from_pylist(rows, schema=schema)
+    values = (
+        "at_risk",
+        "events",
+        "censored",
+        "censored_by_reason",
+        "delayed_entries",
+        "event_rate",
+        "censor_rate",
+    )
+    projection = []
+    names = []
+    for name in (
+        "unit",
+        "anchor_id",
+        "t0",
+        *(
+            item
+            for value in group_by
+            for item in (value, f"{value}__complete", f"{value}__reason")
+            if item in table.column_names
+        ),
+        *(
+            item
+            for item in table.column_names
+            if item not in group_supports and item not in group_by
+        ),
+        *group_supports,
+    ):
+        if name in names or name in ("complete", "reason"):
+            continue
+        names.append(name)
+        projection.append(table[name])
+        if name in values:
+            names.extend((f"{name}__complete", f"{name}__reason"))
+            projection.extend((table["complete"], table["reason"]))
+    return pa.Table.from_arrays(projection, names=names)

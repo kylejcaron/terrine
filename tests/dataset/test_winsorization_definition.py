@@ -60,7 +60,7 @@ def test_fitted_limits_are_exact_under_small_decimal_context():
             column="value",
             lower="0.25",
             upper="0.75",
-            recipe_hash="a" * 64,
+            definition_hash="a" * 64,
             feature_definition_hash="b" * 64,
         )
     assert fitted.lower == Decimal("1000000000000000000000000000000.015")

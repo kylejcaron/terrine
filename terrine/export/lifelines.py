@@ -81,6 +81,13 @@ def _nanoseconds(table: pa.Table, name: str) -> list[int]:
     multiplier = _NS_PER_UNIT[column.type.unit]
     return [value * multiplier for value in column.cast(pa.int64()).to_pylist()]
 
+def _duration_nanoseconds(table: pa.Table, name: str) -> list[int]:
+    column = table[name]
+    if not pa.types.is_duration(column.type) or column.null_count:
+        raise _INVALID.error(reason="duration_required", column=name)
+    multiplier = _NS_PER_UNIT[column.type.unit]
+    return [value * multiplier for value in column.cast(pa.int64()).to_pylist()]
+
 
 def _record_arrays(data: MaterializedFrame, checked: ExportPreflight) -> LifelinesKM:
     if data.provenance.shape != "time_to_event":
@@ -88,10 +95,9 @@ def _record_arrays(data: MaterializedFrame, checked: ExportPreflight) -> Lifelin
     table, roles = checked.table, data.roles
     _required(table, [roles.t0, "duration", "entry_time", "event"])
     origin = _nanoseconds(table, roles.t0)
-    terminal = _nanoseconds(table, "duration")
+    duration = _duration_nanoseconds(table, "duration")
     entered = _nanoseconds(table, "entry_time")
-    # Subtract integer timestamps before rounding elapsed seconds, not epoch floats.
-    durations = np.array([(end - start) / 1e9 for start, end in zip(origin, terminal, strict=True)])
+    durations = np.array([value / 1e9 for value in duration])
     entry = np.array([(end - start) / 1e9 for start, end in zip(origin, entered, strict=True)])
     if not len(durations) or np.any(entry < 0) or np.any(durations < entry):
         raise _INVALID.error(reason="entry_duration_order")

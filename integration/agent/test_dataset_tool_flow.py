@@ -11,7 +11,7 @@ import yaml
 from terrine.agent import AgentPolicy, DatasetTools
 from terrine.data import Coverage, UnitSource
 from terrine.model import Model
-from terrine.runtime.recipe import ModelReference
+from terrine.runtime.saved_plan import ModelReference
 
 _ROOT = Path(__file__).parents[2]
 _CASES = yaml.safe_load((_ROOT / "evals/agent_dataset_tools.yaml").read_text())["cases"]

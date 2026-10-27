@@ -303,7 +303,10 @@ _PROVIDERS: tuple[BackendProvider, ...] = (
 
 
 def backend_capabilities(con: Any) -> BackendCapabilities:
-    """Inspect evidence without admitting a connection or reading source metadata."""
+    """Inspect statically known evidence without querying the connection."""
+    if _POSTGRES_PROVIDER.matches(con):
+        # Server identity requires a query; inspection must not touch caller state.
+        return UNVERIFIED_CAPABILITIES
     for provider in _PROVIDERS:
         if provider.matches(con):
             return provider.capabilities
@@ -320,7 +323,7 @@ def backend_provider(con: Any) -> BackendProvider:
         )
         return _DUCKDB_PROVIDER
     if _POSTGRES_PROVIDER.matches(con):
-        from terrine.execution._postgres import ibis_supported
+        from terrine.execution._postgres import ibis_supported, verify_server_identity
 
         if not ibis_supported():
             raise _CAPABILITY_UNAVAILABLE.error(
@@ -329,6 +332,7 @@ def backend_provider(con: Any) -> BackendProvider:
                 status="unsupported",
                 route="Install terrine[postgres], which requires ibis-framework 12 or newer.",
             )
+        verify_server_identity(con)
         return _POSTGRES_PROVIDER
     if _BIGQUERY_PROVIDER.matches(con):
         return _BIGQUERY_PROVIDER

@@ -95,6 +95,48 @@ def _collect(con, compiled):
     return con.to_pyarrow(compiled.table)
 
 
+def test_ltv_and_survival_use_the_same_suffixes():
+    from terrine.compile.shapes.time_to_event import compile_time_to_event
+    from terrine.spec.trajectory import TimeToEvent
+    from tests.compile.test_time_to_event import _model
+
+    con, model = _trajectory_model(unit="u1")
+    survival_con, survival_model = _model(unit="u2")
+    try:
+        ltv = compile_ltv(
+            Design(
+                "user",
+                EventAnchor("purchase", which="first"),
+                shape=CohortSpec(
+                    origin="purchase",
+                    trajectory=Trajectory("net_revenue", "7d", periods=2, cumulative=True),
+                ),
+            ),
+            model,
+        )
+        survival = compile_time_to_event(
+            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn")),
+            survival_model,
+        )
+        for compiled, names in (
+            (ltv, ("period_value", "cumulative_value")),
+            (survival, ("duration", "event", "event_time")),
+        ):
+            for name in names:
+                meta = compiled.columns[name]
+                assert meta.complete_column == f"{name}__complete"
+                assert meta.reason_column == f"{name}__reason"
+                index = compiled.table.columns.index(name)
+                assert list(compiled.table.columns[index : index + 3]) == [
+                    name,
+                    f"{name}__complete",
+                    f"{name}__reason",
+                ]
+    finally:
+        con.disconnect()
+        survival_con.disconnect()
+
+
 def test_cumulative_partitions_repeated_anchors_and_propagates_missing_period():
     con, model = _trajectory_model()
     try:
@@ -127,7 +169,7 @@ def test_cumulative_partitions_repeated_anchors_and_propagates_missing_period():
         assert u2[1]["cumulative_value"] is None
         assert u2[2]["period_value"] == 0
         assert u2[2]["cumulative_value"] is None
-        assert u2[2]["cumulative_value_reason"] == u2[1]["period_value_reason"]
+        assert u2[2]["cumulative_value__reason"] == u2[1]["period_value__reason"]
     finally:
         con.disconnect()
 

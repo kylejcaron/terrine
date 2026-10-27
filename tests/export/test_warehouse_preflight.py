@@ -28,7 +28,7 @@ def test_warehouse_preflight_matches_arrow_exclusions(frame, drop, reasons):
     )
     con = ibis.duckdb.connect()
     try:
-        relation = con.create_table("dataset", table)
+        relation = con.create_table("dataset", frame.table)
         if not drop:
             with pytest.raises(TerrineError) as error:
                 with preflight.preflight_warehouse(

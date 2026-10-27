@@ -13,10 +13,7 @@ def survival(frame):
     origin = 1_735_689_600_000_000_000
     table = frame.table.append_column(
         "duration",
-        pa.array(
-            [origin + 1, origin + 86_400_000_000_000 + 2_000_000_001],
-            type=pa.timestamp("ns", tz="UTC"),
-        ),
+        pa.array([1, 2_000_000_001], type=pa.duration("ns")),
     )
     table = table.set_column(
         2, "t0", pa.array([origin, origin + 86_400_000_000_000], type=pa.timestamp("ns", tz="UTC"))
@@ -142,8 +139,10 @@ def _risk_table(frame, *, delayed=0, groups=(0, 0)):
             "events": [1, 0],
             "censored": [0, 2],
             "delayed_entries": [delayed, 0],
-            "complete": [True, True],
-            "reason": pa.array([None, None], type=pa.string()),
+            "events__complete": [True, True],
+            "events__reason": pa.array([None, None], type=pa.string()),
+            "censored__complete": [True, True],
+            "censored__reason": pa.array([None, None], type=pa.string()),
         }
     )
     return replace(
@@ -151,7 +150,7 @@ def _risk_table(frame, *, delayed=0, groups=(0, 0)):
         table=table,
         roles=Roles("unit", "time_bin", "time_bin", None, ("time_bin",), ("events", "censored")),
         columns={
-            name: ColumnMeta(None, "outcome", None, None, "complete", "reason")
+            name: ColumnMeta(None, "outcome", None, None, f"{name}__complete", f"{name}__reason")
             for name in ("events", "censored")
         },
         provenance=replace(frame.provenance, shape="life_table"),
@@ -182,8 +181,14 @@ def test_risk_table_refuses_unrecoverable_entry_or_pooled_groups(frame, delayed,
 
 def test_incomplete_risk_bins_cannot_be_dropped_into_a_curve(frame):
     risk = _risk_table(frame)
-    table = risk.table.set_column(5, "complete", pa.array([False, True])).set_column(
-        6, "reason", pa.array(["incomplete_initial_history", None])
+    table = risk.table.set_column(
+        risk.table.schema.get_field_index("events__complete"),
+        "events__complete",
+        pa.array([False, True]),
+    ).set_column(
+        risk.table.schema.get_field_index("events__reason"),
+        "events__reason",
+        pa.array(["incomplete_initial_history", None]),
     )
     with pytest.raises(TerrineError) as error:
         exports.to_lifelines_km(replace(risk, table=table), drop_incomplete=True)
@@ -199,17 +204,17 @@ def test_risk_aggregation_retains_incomplete_reasons_for_preflight(frame):
     records = pa.table(
         {
             "t0": [origin, origin],
+            "duration": pa.array([timedelta(days=1)] * 2, type=pa.duration("us")),
             "entry_time": [origin, origin],
-            "duration": [origin + timedelta(days=1)] * 2,
             "event": [False, False],
-            "complete": [False, False],
-            "reason": ["incomplete_initial_history", "missing_delayed_entry"],
+            "duration__complete": [False, False],
+            "duration__reason": ["incomplete_initial_history", "missing_delayed_entry"],
             "censor_reason": ["incomplete_initial_history", "missing_delayed_entry"],
         }
     )
     table = aggregate_life_table(records, interval_seconds=86400, group_by=[])
-    assert table["complete"].to_pylist() == [False, False]
-    assert table["reason"].to_pylist() == [
+    assert table["events__complete"].to_pylist() == [False, False]
+    assert table["events__reason"].to_pylist() == [
         ["incomplete_initial_history", "missing_delayed_entry"],
         ["incomplete_initial_history", "missing_delayed_entry"],
     ]

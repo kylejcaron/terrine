@@ -16,10 +16,7 @@ def test_lifelines_fits_record_km_cox_and_compressed_risk_counts(handoff_frame, 
     t0 = handoff_frame.table["t0"].to_pylist()
     durations = [3, 7, 2, 9, 6, 4, 10, 8, 5, 11, 12, 13]
     table = handoff_frame.table.append_column(
-        "duration",
-        pa.array(
-            [origin + timedelta(days=days) for origin, days in zip(t0, durations, strict=True)]
-        ),
+        "duration", pa.array([timedelta(days=days) for days in durations], type=pa.duration("us"))
     )
     table = table.append_column(
         "entry_time", pa.array([origin + timedelta(days=i % 2) for i, origin in enumerate(t0)])
@@ -30,6 +27,9 @@ def test_lifelines_fits_record_km_cox_and_compressed_risk_counts(handoff_frame, 
         pa.array([None if i % 3 != 1 else "administrative_cutoff" for i in range(12)]),
     )
     table = table.append_column("w", pa.array([1 + i % 2 for i in range(12)]))
+    for name in ("duration", "event"):
+        table = table.append_column(f"{name}__complete", table["complete"])
+        table = table.append_column(f"{name}__reason", table["reason"])
     data = replace(
         handoff_frame,
         table=table,
@@ -39,7 +39,9 @@ def test_lifelines_fits_record_km_cox_and_compressed_risk_counts(handoff_frame, 
         columns={
             **handoff_frame.columns,
             **{
-                name: ColumnMeta(None, "outcome", None, None, "complete", "reason")
+                name: ColumnMeta(
+                    None, "outcome", None, None, f"{name}__complete", f"{name}__reason"
+                )
                 for name in ("duration", "event")
             },
         },
@@ -73,7 +75,7 @@ def test_lifelines_fits_record_km_cox_and_compressed_risk_counts(handoff_frame, 
         table=risk_table,
         roles=Roles("unit", "anchor_id", "t0", None, ("time_bin",), ("events", "censored")),
         columns={
-            name: ColumnMeta(None, "outcome", None, None, "complete", "reason")
+            name: ColumnMeta(None, "outcome", None, None, f"{name}__complete", f"{name}__reason")
             for name in ("events", "censored")
         },
         provenance=replace(data.provenance, shape="life_table"),

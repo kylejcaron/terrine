@@ -47,6 +47,7 @@ Use verified local DuckDB operation capabilities.
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
 | `terrine.backend.capability_unavailable` | <code>Backend {backend!r} cannot provide {operation!r}: {status}. {route}</code> | `backend`, `operation`, `route`, `status` | [terrine/backends/capabilities.py](../../terrine/backends/capabilities.py) |
+| `terrine.backend.capability_unavailable` | <code>The detected database server is not verified for PostgreSQL execution. {route}</code> | `route` | [terrine/execution/_postgres.py](../../terrine/execution/_postgres.py) |
 | `terrine.backend.nonfinite_decimal` | <code>Exact decimal column {column!r} contains {value}, which has no exact decimal value. Filter or replace non-finite numeric values in the relation SQL.</code> | `column`, `value` | [terrine/execution/_postgres.py](../../terrine/execution/_postgres.py) |
 
 ## budget
@@ -123,7 +124,7 @@ Install the conversion extra; retain Arrow metadata.
 
 ## dataset
 
-Use pinned manifests, valid recipes and owned destinations.
+Use pinned manifests, valid definitions and owned destinations.
 
 [Recovery guide](../guides/ml-staging.md)
 
@@ -131,11 +132,12 @@ Use pinned manifests, valid recipes and owned destinations.
 | --- | --- | --- | --- |
 | `terrine.dataset.export_conflict` | <code>Export destination conflicts with an existing export or partial export.</code> | None | [terrine/dataset/export.py](../../terrine/dataset/export.py) |
 | `terrine.dataset.invalid_batch_size` | <code>Arrow batch size must be a positive integer.</code> | None | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
+| `terrine.dataset.invalid_definition` | <code>Invalid dataset definition: {reason}</code> | `reason` | [terrine/spec/dataset.py](../../terrine/spec/dataset.py) |
 | `terrine.dataset.invalid_destination` | <code>Dataset destination is invalid: {reason}.</code> | `reason` | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
 | `terrine.dataset.invalid_export` | <code>Invalid Parquet export: {reason}.</code> | `reason` | [terrine/dataset/export.py](../../terrine/dataset/export.py) |
 | `terrine.dataset.invalid_generation` | <code>Dataset manifest does not identify a verified committed runtime generation.</code> | None | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
 | `terrine.dataset.invalid_label_support` | <code>Selected label lacks completeness and reason metadata: {label}</code> | `label` | [terrine/frame.py](../../terrine/frame.py) |
-| `terrine.dataset.invalid_recipe` | <code>Invalid dataset recipe: {reason}</code> | `reason` | [terrine/spec/dataset.py](../../terrine/spec/dataset.py) |
+| `terrine.dataset.invalid_manifest` | <code>Invalid dataset manifest: {reason}. Stage its dataset definition to create a new manifest.</code> | `reason` | [terrine/dataset/manifest.py](../../terrine/dataset/manifest.py) |
 | `terrine.dataset.invalid_selection` | <code>Unknown training feature selection: {names}</code> | `names` | [terrine/frame.py](../../terrine/frame.py) |
 | `terrine.dataset.invalid_selection` | <code>Unknown training label selection: {names}</code> | `names` | [terrine/frame.py](../../terrine/frame.py) |
 | `terrine.dataset.invalid_view` | <code>Invalid dataset view: {reason}.</code> | `reason` | [terrine/spec/dataset.py](../../terrine/spec/dataset.py) |
@@ -157,6 +159,7 @@ Repair temporal/history contracts; do not zero-fill unknowns.
 | `terrine.design.incomplete_treatment_history` | <code>Treatment history for source {source!r} does not cover {boundary!r}.</code> | `boundary`, `source` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 | `terrine.design.incomplete_unit_treatment_history` | <code>Roster observation bounds do not cover a scheduled treatment history.</code> | None | [terrine/compile/shapes/sequential.py](../../terrine/compile/shapes/sequential.py) |
 | `terrine.design.incomplete_unit_treatment_history` | <code>Roster observation bounds do not cover the required calendar treatment history.</code> | None | [terrine/compile/shapes/calendar_comparison.py](../../terrine/compile/shapes/calendar_comparison.py) |
+| `terrine.design.invalid` | <code>Design validation failed: {reason}.</code> | `reason` | [terrine/recipes.py](../../terrine/recipes.py) |
 | `terrine.design.invalid` | <code>Design validation failed: {reason}.</code> | `reason` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 | `terrine.design.invalid_calendar_comparison` | <code>Calendar comparison specification is invalid: {reason}.</code> | `reason` | [terrine/spec/panels.py](../../terrine/spec/panels.py) |
 | `terrine.design.invalid_matched_t0_sample` | <code>Matched-t0 sample policy is invalid: {reason}.</code> | `reason` | [terrine/spec/panels.py](../../terrine/spec/panels.py) |
@@ -252,9 +255,11 @@ Use consistent coverage, roles and representable metadata.
 | --- | --- | --- | --- |
 | `terrine.metadata.invalid_eligibility_summary` | <code>Eligibility audit did not return one aggregate count record</code> | None | [terrine/execution/gates.py](../../terrine/execution/gates.py) |
 | `terrine.metadata.invalid_eligibility_summary` | <code>Eligibility counts must be nonnegative and reconcile</code> | None | [terrine/data.py](../../terrine/data.py) |
+| `terrine.metadata.missing_columns` | <code>Arrow table is missing required columns {columns!r}; use lossless Arrow with all observation columns.</code> | `columns` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.unrepresentable_coverage` | <code>Coverage boundary exceeds datetime&#x27;s range; use interior calendar dates</code> | None | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.unrepresentable_coverage` | <code>Coverage exceeds UTC datetime&#x27;s range; use interior instants</code> | None | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.unrepresentable_coverage` | <code>Coverage requires a following calendar day; use through before date.max</code> | None | [terrine/data.py](../../terrine/data.py) |
+| `terrine.metadata.unsupported_version` | <code>Arrow metadata version {version!r} is unsupported; re-materialize the Design with the current Terrine version.</code> | `version` | [terrine/data.py](../../terrine/data.py) |
 
 ## metric
 
@@ -266,7 +271,7 @@ Use a supported aggregation, measure, precision and shape.
 | --- | --- | --- | --- |
 | `terrine.metric.approx_backend_unavailable` | <code>Approximate distinct is unavailable for backend {dialect!r}.</code> | `dialect` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 | `terrine.metric.approx_distinct_requires_single_measure` | <code>Approximate distinct requires metric {metric!r} to have exactly one measure.</code> | `metric` | [terrine/compile/columns.py](../../terrine/compile/columns.py) |
-| `terrine.metric.approx_eligibility_unavailable` | <code>Approximate quantiles cannot determine eligibility; use exact quantile or a non-approximate predicate.</code> | None | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
+| `terrine.metric.approx_eligibility_unavailable` | <code>Approximate quantiles cannot determine predicate values; use exact quantile or output the approximate value without a predicate.</code> | None | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 | `terrine.metric.approx_shape_unavailable` | <code>Approximate quantile supports cross_section only; use exact quantile or cross_section.</code> | None | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 | `terrine.metric.exact_precision_unavailable` | <code>Exact {operation} requires output precision unavailable for source type {value_type!r}; use an exactly representable type/probability or a wider supported numeric backend.</code> | `operation`, `value_type` | [terrine/temporal/nonadditive.py](../../terrine/temporal/nonadditive.py) |
 | `terrine.metric.exact_quantile_backend_unsupported` | <code>Exact type-7 quantiles are unavailable for backend {dialect!r}; use a verified supported backend.</code> | `dialect` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
@@ -291,7 +296,10 @@ Correct source, roster and coverage bindings; rebind the Model.
 
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
+| `terrine.model.generated_metric_collision` | <code>Generated name {name!r} conflicts for event sources {sources}; rename the source or value declaration, or use Model.from_catalog for explicit names.</code> | `name`, `sources` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.model.invalid_binding` | <code>Model binding input is invalid: {reason}.</code> | `reason` | [terrine/model.py](../../terrine/model.py) |
+| `terrine.model.missing_event_completeness` | <code>Event source {source!r} requires complete=(start, end); declare authoritative inclusive local calendar days, not observed event maxima.</code> | `source` | [terrine/model.py](../../terrine/model.py) |
+| `terrine.model.multiple_event_units` | <code>Event source {source!r} declares multiple units {units}; use Model.from_catalog for multi-unit source semantics.</code> | `source`, `units` | [terrine/model.py](../../terrine/model.py) |
 
 ## readiness
 
@@ -321,12 +329,12 @@ Inspect authoritative run state. Replay unchanged requests; replan changed input
 | `terrine.runtime.lazy_duration_unsupported` | <code>DuckDB lazy reads cannot represent duration unit {unit!r} in column {column!r}; use {route}.</code> | `column`, `route`, `unit` | [terrine/runtime/backends/duckdb.py](../../terrine/runtime/backends/duckdb.py) |
 | `terrine.runtime.owner_interrupted` | <code>The runtime owner stopped before completing or publishing this run.</code> | None | [terrine/runtime/status.py](../../terrine/runtime/status.py) |
 | `terrine.runtime.plan_invocation_conflict` | <code>Invocation ID is already bound to a different planning request.</code> | None | [terrine/runtime/planning.py](../../terrine/runtime/planning.py) |
-| `terrine.runtime.plan_recipe_mismatch` | <code>Saved plan reconstruction failed verification (retained snapshot Model declaration differs).</code> | None | [terrine/runtime/api.py](../../terrine/runtime/api.py) |
-| `terrine.runtime.plan_recipe_mismatch` | <code>Saved plan reconstruction failed verification ({reason}).</code> | `reason` | [terrine/runtime/recipe.py](../../terrine/runtime/recipe.py) |
 | `terrine.runtime.plan_request_invalid` | <code>Owner plan request is invalid ({reason}).</code> | `reason` | [terrine/runtime/planning.py](../../terrine/runtime/planning.py) |
 | `terrine.runtime.request_key_conflict` | <code>Request key is already bound to a different plan or destination.</code> | None | [terrine/runtime/execute.py](../../terrine/runtime/execute.py) |
 | `terrine.runtime.request_key_conflict` | <code>Request key is already bound to a different plan.</code> | None | [terrine/runtime/api.py](../../terrine/runtime/api.py) |
 | `terrine.runtime.run_unavailable` | <code>Run status is unavailable for the requested run.</code> | None | [terrine/runtime/status.py](../../terrine/runtime/status.py) |
+| `terrine.runtime.saved_plan_mismatch` | <code>Saved plan reconstruction failed verification (retained snapshot Model declaration differs).</code> | None | [terrine/runtime/api.py](../../terrine/runtime/api.py) |
+| `terrine.runtime.saved_plan_mismatch` | <code>Saved plan reconstruction failed verification ({reason}).</code> | `reason` | [terrine/runtime/saved_plan.py](../../terrine/runtime/saved_plan.py) |
 | `terrine.runtime.sketch_sidecar_unavailable` | <code>Approximate quantile sidecars are unavailable in runtime planning and composition; use ordinary Frame materialization.</code> | None | [terrine/runtime/materialize.py](../../terrine/runtime/materialize.py) |
 | `terrine.runtime.snapshot_invalid` | <code>Runtime snapshot receipt is invalid: {reason}.</code> | `reason` | [terrine/runtime/snapshot.py](../../terrine/runtime/snapshot.py) |
 
@@ -380,7 +388,7 @@ Use typed constructors, supported fields and unique output names.
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
 | `terrine.spec.output_name_conflict` | <code>Study output name {name!r} conflicts with {other!r}.</code> | `name`, `other` | [terrine/compile/columns.py](../../terrine/compile/columns.py) |
-| `terrine.spec.reserved_output_name` | <code>Study output name {name!r} is reserved.</code> | `name` | [terrine/compile/columns.py](../../terrine/compile/columns.py) |
+| `terrine.spec.reserved_output_name` | <code>Study output name {name!r} is reserved.</code> | `name` | [terrine/spec/design.py](../../terrine/spec/design.py) |
 
 ## sql
 

@@ -330,13 +330,13 @@ def test_trajectory_preserves_event_feature_timing_through_arrow_round_trip():
         assert prior.point_time_column == "cohort_time"
         assert prior.point_time_column in arrow.column_names
         if prior.start_bound_column is not None:
-            assert prior.start_bound_column in arrow.column_names
+            assert prior.start_bound_column in restored.table.column_names
         if prior.end_bound_column is not None:
-            assert prior.end_bound_column in arrow.column_names
+            assert prior.end_bound_column in restored.table.column_names
         timing = restored.provenance.expression_timings["purchase_time"]
         assert timing.point_time_column in arrow.column_names
-        assert timing.start_bound_column in arrow.column_names
-        assert timing.end_bound_column in arrow.column_names
+        assert timing.start_bound_column in restored.table.column_names
+        assert timing.end_bound_column in restored.table.column_names
     finally:
         con.disconnect()
 

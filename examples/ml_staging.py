@@ -12,17 +12,14 @@ from typing import Any
 import ibis
 import pyarrow.parquet as pq
 
-from terrine import Budget, Coverage, Design, FixedDate, Model, UnitSource, agg, asof
+from terrine import Budget, Coverage, Dataset, Design, FixedDate, Model, UnitSource, agg, asof
+from terrine.dataset import GroupSplit
 from terrine.dataset.manifest import DatasetManifest
-from terrine.dataset.reference import Dataset
-from terrine.dataset.splits import GroupSplit
 from terrine.runtime.changes import Change, ChangeSet
-from terrine.semantic.models import Catalog
 
 
-def catalog() -> Catalog:
-    return Catalog.model_validate(
-        {
+def catalog() -> dict[str, Any]:
+    return {
             "schema_version": 1,
             "day_boundary": "UTC",
             "dialect": "duckdb",
@@ -58,9 +55,7 @@ def catalog() -> Catalog:
                 name: {"kind": "mean", "entity": "user", "measure": name}
                 for name in ("event_total", "label_total")
             },
-        }
-    )
-
+    }
 
 def bind_model(con: Any) -> Model:
     return Model.from_catalog(

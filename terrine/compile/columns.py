@@ -38,12 +38,14 @@ from terrine.data import (
     FeatureCutoff,
     Roles,
     SequenceMeta,
+    _ordered_columns,
 )
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import BoundDimension
 from terrine.semantic.rules import calendar_average_alignment
 from terrine.spec.anchors import FixedDate, Schedule
+from terrine.spec.design import _RESERVED_OUTPUT_NAME as _RESERVED_NAME
 from terrine.spec.design import Design
 from terrine.spec.expressions import (
     And,
@@ -53,10 +55,14 @@ from terrine.spec.expressions import (
     Eq,
     EventTime,
     Expr,
+    Gt,
+    IsNull,
     MetricAgg,
     MetricQuantile,
+    Predicate,
     RetentionMetric,
     SketchRequest,
+    _output_leaves,
 )
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE
 from terrine.spec.validate import _fixed_anchors
@@ -81,10 +87,6 @@ __all__ = ["CompiledStudy", "compile_columns", "resolve_sketch_sidecars"]
 _NAME_CONFLICT = RefusalSpec(
     "terrine.spec.output_name_conflict",
     "Study output name {name!r} conflicts with {other!r}.",
-)
-_RESERVED_NAME = RefusalSpec(
-    "terrine.spec.reserved_output_name",
-    "Study output name {name!r} is reserved.",
 )
 _RESERVED = {"unit", "anchor_id", "t0", "treatment", "_observed_from", "_observed_until"}
 
@@ -185,7 +187,103 @@ class CompiledStudy:
     sketches: tuple[SketchSidecar, ...] = ()
     range_plans: Mapping[str, RangePlan] = field(default_factory=dict)
 
+    def _publish(self) -> None:
+        columns = dict(self.columns)
+        supports = {
+            support
+            for meta in columns.values()
+            for support in (meta.complete_column, meta.reason_column)
+            if support is not None
+        }
+        # Completeness fields describe values; they are not themselves features.
+        values = {name: meta for name, meta in columns.items() if name not in supports}
+        renamed: dict[str, str] = {}
+        for name, meta in values.items():
+            for old, new in (
+                (meta.complete_column, f"{name}__complete"),
+                (meta.reason_column, f"{name}__reason"),
+            ):
+                if old is not None:
+                    renamed.setdefault(old, new)
+
+        def project(table: ibis.Table) -> ibis.Table:
+            fields = {}
+            for name in (self.roles.unit, self.roles.anchor, self.roles.t0, *table.columns):
+                if name in fields or name in supports or name not in table.columns:
+                    continue
+                fields[name] = table[name]
+                if name in values:
+                    meta = values[name]
+                    fields[f"{name}__complete"] = (
+                        table[meta.complete_column]
+                        if meta.complete_column is not None
+                        else ibis.literal(True)
+                    )
+                    fields[f"{name}__reason"] = (
+                        table[meta.reason_column]
+                        if meta.reason_column is not None
+                        else ibis.null().cast("string")
+                    )
+            return table.select(**fields)
+
+        object.__setattr__(self, "table", project(self.table))
+        object.__setattr__(self, "audit_table", project(self.audit_table))
+        object.__setattr__(
+            self,
+            "columns",
+            {
+                name: replace(
+                    meta, complete_column=f"{name}__complete", reason_column=f"{name}__reason"
+                )
+                for name, meta in values.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "roles",
+            replace(
+                self.roles,
+                features=tuple(name for name in self.roles.features if name not in supports),
+                outcomes=tuple(name for name in self.roles.outcomes if name not in supports),
+            ),
+        )
+        if self.sequence_meta is not None:
+            meta = self.sequence_meta
+            updates = {
+                attribute: renamed.get(getattr(meta, attribute), getattr(meta, attribute))
+                for attribute in (
+                    "complete_column",
+                    "reason_column",
+                    "sessions_complete_column",
+                    "sessions_reason_column",
+                    "funnel_attempts_complete_column",
+                    "funnel_attempts_reason_column",
+                )
+            }
+            updates["complete_column"] = "event_count__complete"
+            updates["reason_column"] = "event_count__reason"
+            updates["property_reason_columns"] = {
+                name: renamed.get(column, column)
+                for name, column in meta.property_reason_columns.items()
+            }
+            updates["session_fields"] = tuple(
+                renamed.get(name, name) for name in meta.session_fields
+            )
+            object.__setattr__(self, "sequence_meta", replace(meta, **updates))
+        for attribute in ("table", "audit_table"):
+            table = getattr(self, attribute)
+            object.__setattr__(
+                self,
+                attribute,
+                table.select(
+                    _ordered_columns(
+                        table.columns, self.roles, self.columns, self.expression_timings
+                    )
+                ),
+            )
+
     def __post_init__(self) -> None:
+        self._publish()
         for name in (
             "columns",
             "feature_cutoffs",
@@ -468,9 +566,10 @@ def compile_columns(
             }
         )
         joined = candidates.join(events, predicates=predicates)
-        order = [joined["_timestamp"]]
+        descending = selector.occurrence == "last"
+        order = [joined["_timestamp"].desc() if descending else joined["_timestamp"]]
         if identity is not None:
-            order.append(joined[identity])
+            order.append(joined[identity].desc() if descending else joined[identity])
         ranked = joined.mutate(
             __terrine_selector_rank=ibis.row_number().over(
                 group_by=[joined.unit, joined.anchor_id], order_by=order
@@ -509,11 +608,18 @@ def compile_columns(
                     unknown_events._unknown_anchor == selected.__selector_anchor,
                 ],
             )
-            unknown_precedes = unknown_selected._unknown_time < unknown_selected.__selector_time
-            if identity is not None:
-                unknown_precedes |= (
-                    unknown_selected._unknown_time == unknown_selected.__selector_time
-                ) & (unknown_selected._unknown_event_id <= unknown_selected.__selector_event_id)
+            if descending:
+                unknown_precedes = unknown_selected._unknown_time > unknown_selected.__selector_time
+                if identity is not None:
+                    unknown_precedes |= (
+                        unknown_selected._unknown_time == unknown_selected.__selector_time
+                    ) & (unknown_selected._unknown_event_id >= unknown_selected.__selector_event_id)
+            else:
+                unknown_precedes = unknown_selected._unknown_time < unknown_selected.__selector_time
+                if identity is not None:
+                    unknown_precedes |= (
+                        unknown_selected._unknown_time == unknown_selected.__selector_time
+                    ) & (unknown_selected._unknown_event_id <= unknown_selected.__selector_event_id)
             unknown_count_name = f"__terrine_selector_unknown_count_{index}"
             known_count_name = f"__terrine_selector_known_count_{index}"
             preceding_count_name = f"__terrine_selector_preceding_count_{index}"
@@ -1038,73 +1144,130 @@ def compile_columns(
         strategies[output] = strategy
         return compiled
 
-    def predicate_expressions(node):
-        if isinstance(node, And):
-            for term in node.terms:
-                predicate_expressions(term)
+    def expression_timing(node: Expr, *, output: str | None = None) -> ExpressionTiming:
+        relative = getattr(node, "relative_to", None)
+        if isinstance(node, EventTime):
+            support, dependency_supports = selector_timing(node)
+            selector_ref = repr(node)
+            offsets = None
+            point_column = output or values[node].name
+            kind = "event_time"
+        elif relative is not None and not isinstance(node, RetentionMetric):
+            origin, dependency_supports = selector_timing(relative)
+            selector_ref = repr(relative)
+            offsets = (
+                (node.before, node.before)
+                if isinstance(node, AttributeAsOf)
+                else (node.window.start, node.window.end)
+            )
+            support = (origin[0] + offsets[0], origin[1] + offsets[1])
+            point_column = timing_column_refs[node][0]
+            kind = "event_time"
         else:
-            expression(node.left if isinstance(node, Eq) else node.expr)
-
-    expression_timings = {}
-    for role, named in (("feature", design.features), ("outcome", design.outcomes)):
-        for name, node in named.items():
-            value = expression(node)
-            public[name] = value.name
-            if any(value.name in sidecar.outputs for sidecar in sketches):
-                sketch_aliases.setdefault(value.name, []).append(name)
-            columns[name] = replace(value.meta, role=role)
-            relative = getattr(node, "relative_to", None)
-            if isinstance(node, EventTime):
-                support, dependency_supports = selector_timing(node)
-                selector_ref = repr(node)
-                offsets = None
-                point_column = name
-                kind = "event_time"
-            elif relative is not None and not isinstance(node, RetentionMetric):
-                origin, dependency_supports = selector_timing(relative)
-                selector_ref = repr(relative)
-                offsets = (
+            support = (
+                (0, range_plans[node].block_seconds)
+                if isinstance(node, RetentionMetric)
+                else (
                     (node.before, node.before)
                     if isinstance(node, AttributeAsOf)
                     else (node.window.start, node.window.end)
                 )
-                support = (origin[0] + offsets[0], origin[1] + offsets[1])
-                point_column = timing_column_refs[node][0]
-                kind = "event_time"
-            else:
-                support = (
-                    (0, range_plans[node].block_seconds)
-                    if isinstance(node, RetentionMetric)
-                    else (
-                        (node.before, node.before)
-                        if isinstance(node, AttributeAsOf)
-                        else (node.window.start, node.window.end)
-                    )
-                )
-                dependency_supports = {}
-                selector_ref = None
-                offsets = None
-                point_column = timing_column_refs[node][0]
-                kind = "fixed_t0"
-            _, start_ref, end_ref = timing_column_refs[node]
-            expression_timings[name] = ExpressionTiming(
-                kind=kind,
-                selector_ref=selector_ref,
-                relative_offsets=offsets,
-                support_seconds=support,
-                selector_dependencies=tuple(dependency_supports),
-                selector_support_seconds=dependency_supports,
-                point_time_column=point_column,
-                start_bound_column=start_ref,
-                end_bound_column=end_ref,
             )
-            strategies[name] = strategies[value.name]
-            if role == "feature" and value.cutoff is not None:
-                feature_cutoffs[name] = value.cutoff
+            dependency_supports = {}
+            selector_ref = None
+            offsets = None
+            point_column = timing_column_refs[node][0]
+            kind = "fixed_t0"
+        _, start_ref, end_ref = timing_column_refs[node]
+        return ExpressionTiming(
+            kind=kind,
+            selector_ref=selector_ref,
+            relative_offsets=offsets,
+            support_seconds=support,
+            selector_dependencies=tuple(dependency_supports),
+            selector_support_seconds=dependency_supports,
+            point_time_column=point_column,
+            start_bound_column=start_ref,
+            end_bound_column=end_ref,
+        )
+
+    def predicate_timing(node: Predicate, name: str) -> ExpressionTiming:
+        nonlocal table
+        timings = [expression_timing(leaf) for leaf in _output_leaves(node)]
+        support = (
+            min(timing.support_seconds[0] for timing in timings),
+            max(timing.support_seconds[1] for timing in timings),
+        )
+        dependencies = {
+            reference: bounds
+            for timing in timings
+            for reference, bounds in timing.selector_support_seconds.items()
+        }
+        # Unresolved origins retain declared support even when another term is false.
+        starts = [
+            table[timing.start_bound_column].fill_null(
+                table.t0 + ibis.interval(seconds=timing.support_seconds[0])
+            )
+            if timing.start_bound_column is not None
+            else table.t0 + ibis.interval(seconds=timing.support_seconds[0])
+            for timing in timings
+        ]
+        ends = [
+            table[timing.end_bound_column].fill_null(
+                table.t0 + ibis.interval(seconds=timing.support_seconds[1])
+            )
+            if timing.end_bound_column is not None
+            else table.t0 + ibis.interval(seconds=timing.support_seconds[1])
+            for timing in timings
+        ]
+        start_name, end_name = (
+            f"__terrine_{name}_start_bound",
+            f"__terrine_{name}_end_bound",
+        )
+        table = table.mutate(**{start_name: least(*starts), end_name: greatest(*ends)})
+        return ExpressionTiming(
+            kind="event_time"
+            if any(timing.kind == "event_time" for timing in timings)
+            else "fixed_t0",
+            selector_ref=None,
+            relative_offsets=None,
+            support_seconds=support,
+            selector_dependencies=tuple(dependencies),
+            selector_support_seconds=dependencies,
+            point_time_column=None,
+            start_bound_column=start_name,
+            end_bound_column=end_name,
+        )
+
+    expression_timings = {}
+    for role, named in (("feature", design.features), ("outcome", design.outcomes)):
+        for name, node in named.items():
+            if isinstance(node, (Gt, Eq, IsNull, And)):
+                for leaf in _output_leaves(node):
+                    expression(leaf)
+                result = compile_predicate(table, node, values, output=name, role=role)
+                table = result.table
+                public[name] = name
+                columns[name] = result.meta
+                expression_timings[name] = predicate_timing(node, name)
+                strategies[name] = "three_valued"
+                cutoff = result.cutoff
+            else:
+                value = expression(node)
+                public[name] = value.name
+                if any(value.name in sidecar.outputs for sidecar in sketches):
+                    sketch_aliases.setdefault(value.name, []).append(name)
+                columns[name] = replace(value.meta, role=role)
+                expression_timings[name] = expression_timing(node, output=name)
+                strategies[name] = strategies[value.name]
+                cutoff = value.cutoff
+            if role == "feature":
+                feature_cutoffs[name] = cutoff
     for node in design.eligibility.values():
-        predicate_expressions(node)
+        for leaf in _output_leaves(node):
+            expression(leaf)
     for name, node in design.eligibility.items():
-        result = compile_predicate(table, node, values, output=name)
+        result = compile_predicate(table, node, values, output=name, role="eligibility")
         table = result.table
         public[name] = name
         columns[name] = result.meta
@@ -1179,9 +1342,12 @@ def compile_columns(
             for sidecar_output in sidecar.outputs
         ),
         range_plans={
-            name: range_plans[node]
+            name if len(plans) == 1 else f"__terrine_{name}_leaf_{index}": plan
             for named in (design.features, design.outcomes)
             for name, node in named.items()
-            if node in range_plans
+            if (
+                plans := [range_plans[leaf] for leaf in _output_leaves(node) if leaf in range_plans]
+            )
+            for index, plan in enumerate(plans)
         },
     )

@@ -50,6 +50,7 @@ def design_schema() -> dict[str, Any]:
     expression = union("MetricAgg", "AttributeAsOf", "EventTime")
     predicate = union("Gt", "Eq", "IsNull", "And")
     named = mapping(expression)
+    outputs = mapping({"anyOf": [expression, predicate]})
     nodes = {
         "Window": {"start": number, "end": number},
         "FixedDate": {"date": ref("Temporal")},
@@ -75,7 +76,7 @@ def design_schema() -> dict[str, Any]:
             "window": ref("Window"),
             "label_property": nullable(text),
             "equals": scalar,
-            "occurrence": text,
+            "occurrence": {"enum": ["first", "last", "nth"]},
             "n": nullable(integer),
             "relative_to": nullable(ref("EventTime")),
         },
@@ -186,8 +187,8 @@ def design_schema() -> dict[str, Any]:
         {
             "unit": text,
             "anchor": union("FixedDate", "EventAnchor", "Schedule"),
-            "features": named,
-            "outcomes": named,
+            "features": outputs,
+            "outcomes": outputs,
             "eligibility": mapping(predicate),
             "treatment": nullable(ref("Treatment")),
             "gap": number,

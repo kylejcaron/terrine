@@ -47,9 +47,9 @@ def _cohorts(
                 "age": ages or [0] * count,
                 "cohort_time": times or [datetime(2025, 1, 1, tzinfo=UTC)] * count,
                 "period_value": pa.array(values, type=dtype),
-                "period_value_complete": complete or [True] * count,
+                "period_value__complete": complete or [True] * count,
                 "period_value_mature": mature or [True] * count,
-                "period_value_reason": pa.array(
+                "period_value__reason": pa.array(
                     [None if value is not None else "incomplete_observation" for value in values],
                     type=pa.string(),
                 ),
@@ -67,8 +67,8 @@ def _cohorts(
                 "outcome",
                 None,
                 None,
-                "period_value_complete",
-                "period_value_reason",
+                "period_value__complete",
+                "period_value__reason",
             )
         },
         feature_cutoffs={},
@@ -147,6 +147,9 @@ def test_zero_partial_and_unavailable_cohort_denominators(con):
         (None, 1, 0),
     ]
     assert (by_age[2]["at_risk"], by_age[2]["observable"]) == (None, None)
+    for name in ("at_risk", "observable"):
+        assert [by_age[age][f"{name}__complete"] for age in (0, 1, 2)] == [True, True, False]
+        assert by_age[2][f"{name}__reason"] == "administrative_cutoff"
 
 
 def test_exact_integer_values_are_summed_before_cohort_mean_conversion(con):
@@ -197,7 +200,7 @@ def test_float_cohort_mean_of_huge_values_avoids_overflow(con):
 def test_large_zero_float_cohort_mean_remains_available(con):
     _, rows = _cohorts(con, [0.0] * 2050, dtype=pa.float64())
     assert rows[0]["value"] == 0.0
-    assert rows[0]["complete"] is True
+    assert rows[0]["value__complete"] is True
 
 
 def test_float_cohort_total_overflow_refuses(con):

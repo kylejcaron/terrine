@@ -14,14 +14,14 @@ from terrine.runtime.cost import _AUTHORITY, ScanAuthorization, ScanEvidence, Sc
 from terrine.runtime.events import read_run_events
 from terrine.runtime.execute import RunReceipt, execute_plan
 from terrine.runtime.planner import RefreshPlan, plan_refresh
-from terrine.runtime.recipe import (
-    _INVALID as _RECIPE_MISMATCH,
+from terrine.runtime.saved_plan import (
+    _INVALID as _SAVED_PLAN_MISMATCH,
 )
-from terrine.runtime.recipe import (
+from terrine.runtime.saved_plan import (
     DestinationRef,
     ModelResolver,
-    SavedPlanRecipe,
-    _bind_recipe_plan,
+    SavedPlan,
+    _bind_saved_plan,
     resolve_plan,
 )
 from terrine.runtime.snapshot import SnapshotAuthority
@@ -93,7 +93,7 @@ def run_plan(
                 f"SELECT fingerprint FROM {store._schema}.runtime_runs WHERE run_id=?",
                 [existing.run_id],
             ).fetchone()
-            if fingerprint is None or fingerprint[0] != plan.recipe.fingerprint:
+            if fingerprint is None or fingerprint[0] != plan.definition.fingerprint:
                 from terrine.errors import RefusalSpec
 
                 raise RefusalSpec(
@@ -148,16 +148,16 @@ def run_serialized_plan(
     max_active_runs: int | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> RunReceipt:
-    """Verify and execute a plan, reopening owner-retained inputs for saved recipes."""
+    """Verify and execute a plan, reopening owner-retained inputs for saved plans."""
     document = json.loads(serialized)
     if isinstance(document, dict) and "plan_json" in document:
-        recipe = SavedPlanRecipe.from_json(serialized)
-        embedded_plan = _bind_recipe_plan(recipe, namespace=namespace)
-        recipe_destination = recipe.destination
-        if destination is not None and destination != recipe_destination:
-            raise _RECIPE_MISMATCH.error(reason="supplied destination differs from saved recipe")
+        saved_plan = SavedPlan.from_json(serialized)
+        embedded_plan = _bind_saved_plan(saved_plan, namespace=namespace)
+        saved_plan_destination = saved_plan.destination
+        if destination is not None and destination != saved_plan_destination:
+            raise _SAVED_PLAN_MISMATCH.error(reason="supplied destination differs from saved plan")
         if request_key is not None:
-            destination = recipe_destination
+            destination = saved_plan_destination
             existing = find_run_by_request_key(
                 request_key, destination=destination, con=con, namespace=namespace
             )
@@ -168,7 +168,7 @@ def run_serialized_plan(
                     f"SELECT fingerprint FROM {store._schema}.runtime_runs WHERE run_id=?",
                     [existing.run_id],
                 ).fetchone()
-                if fingerprint is None or fingerprint[0] != embedded_plan.recipe.fingerprint:
+                if fingerprint is None or fingerprint[0] != embedded_plan.definition.fingerprint:
                     raise RefusalSpec(
                         "terrine.runtime.request_key_conflict",
                         "Request key is already bound to a different plan.",
@@ -189,19 +189,21 @@ def run_serialized_plan(
         elif destination is not None:
             raise ValueError("destination is only used with a request_key")
         if resolver is None or snapshot_authority is None:
-            raise ValueError("saved recipes require an owner resolver and snapshot authority")
-        plan, model, construction, _recipe_destination = resolve_plan(
-            recipe, resolver=resolver, namespace=namespace
+            raise ValueError("saved plans require an owner resolver and snapshot authority")
+        plan, model, construction, _saved_plan_destination = resolve_plan(
+            saved_plan, resolver=resolver, namespace=namespace
         )
-        from terrine.spec.dataset import DatasetRecipe
+        from terrine.spec.dataset import DatasetDefinition
 
         design = (
-            construction.base_design if isinstance(construction, DatasetRecipe) else construction
+            construction.base_design
+            if isinstance(construction, DatasetDefinition)
+            else construction
         )
         receipt = snapshot_authority.find_retained(plan.snapshot_id, namespace=namespace)
         if receipt.model_hash != model.model_hash:
             raise RefusalSpec(
-                "terrine.runtime.plan_recipe_mismatch",
+                "terrine.runtime.saved_plan_mismatch",
                 "Saved plan reconstruction failed verification "
                 "(retained snapshot Model declaration differs).",
             ).error()
@@ -217,11 +219,11 @@ def run_serialized_plan(
                 plan,
                 con,
                 namespace=namespace,
-                dataset_recipe=recipe.restore_dataset_recipe(),
+                dataset_definition=saved_plan.restore_dataset_definition(),
                 output_root=snapshot_authority.owner.snapshot_root / namespace / "outputs",
             )
         if not callable(getattr(executor, "run_snapshot_task", None)):
-            raise ValueError("saved recipes require an executor with run_snapshot_task")
+            raise ValueError("saved plans require an executor with run_snapshot_task")
         executor = _SnapshotBoundExecutor(executor, snapshot_authority, receipt, con, namespace)
     else:
         plan = RefreshPlan.deserialize(serialized)
@@ -456,7 +458,7 @@ class DesignExecutor:
         con: Any,
         *,
         namespace: str,
-        dataset_recipe: Any = None,
+        dataset_definition: Any = None,
         output_root: Any = None,
     ) -> None:
         from threading import RLock
@@ -471,7 +473,9 @@ class DesignExecutor:
         self._layers: dict[str, dict[Any, Any]] = {}
         self._lock = RLock()
         self._frame = (
-            dataset_recipe.build(model) if dataset_recipe is not None else design.build(model)
+            dataset_definition.build(model)
+            if dataset_definition is not None
+            else design.build(model)
         )
         if output_root is None:
             from terrine.runtime.owner import RuntimeOwner
@@ -678,7 +682,7 @@ class DesignExecutor:
                     for batch in reader:
                         normalized = self._frame._normalize_output(pa.Table.from_batches([batch]))
                         normalized = self._frame._winsorize_output(normalized)
-                        yield from normalized.cast(metadata).to_batches()
+                        yield from normalized.select(metadata.names).cast(metadata).to_batches()
                 finally:
                     reader.close()
 

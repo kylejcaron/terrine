@@ -17,7 +17,7 @@ from terrine.runtime.control import ControlClient, ControlEndpoint, ControlServe
 from terrine.runtime.events import record_run_event
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
-from terrine.runtime.recipe import DestinationRef
+from terrine.runtime.saved_plan import DestinationRef
 from terrine.runtime.state import RuntimeStore
 
 

@@ -23,10 +23,30 @@ Ibis SQL compilation or DDL support alone does not establish publication safety.
 
 The local workflow accesses no paid warehouse, credentials or remote resources;
 BigQuery and Snowflake are reached only when a Model binds an Ibis connection to
-them. Named dbt relation binding is owner-gated; an existing dbt recipe is not
+them. Named dbt relation binding is owner-gated; an existing dbt workflow is not
 evidence of a reviewed relation-to-Catalog bridge.
 
+Runnable table-to-dataset examples:
+[`PostgreSQL`](../../examples/postgres/dataset.py),
+[`BigQuery`](../../examples/bigquery/dataset.py), and
+[`Snowflake`](../../examples/snowflake/dataset.py).
+Install the corresponding `postgres`, `bigquery`, or `snowflake` extra and bind
+the Model directly to its Ibis connection; no preliminary copy to DuckDB is
+needed for Frame materialization. Dataset staging and publication remain
+DuckDB-only.
+
 ## PostgreSQL
+
+Admission uses only the built-in `SELECT pg_catalog.version()` before source
+metadata access and admits the PostgreSQL 16 major version measured by the
+compatibility suite. PostgreSQL versions not yet measured are unverified;
+PostgreSQL-wire-compatible servers such as Redshift, Greenplum and CockroachDB
+are unsupported and refuse with `terrine.backend.capability_unavailable`. The
+qualified built-in cannot be shadowed through `search_path`; no writes or
+session settings are issued. This check is made at provider admission because
+relation discovery and binding may access source schema before materialization
+opens its private connection. Materialization reads remain on that private
+owned connection described below.
 
 Each materialization opens a private connection with the caller's connection
 parameters and search path, sets `TimeZone` to UTC and reads in one
@@ -238,10 +258,12 @@ Capabilities distinguish verified (`True`), unsupported (`False`), and unverifie
   runtime cancellation and closing owned sessions do not establish native query
   cancellation support.
 
-`terrine.execution.backend.backend_capabilities(con)` inspects evidence without
-admitting the connection or reading source schema. Unregistered backend
-connections return unverified operation values; attempting execution still
-refuses.
+`terrine.execution.backend.backend_capabilities(con)` inspects static evidence
+without querying source metadata or changing connection state. PostgreSQL is
+reported as unverified by this inspection because server identity requires a
+query; `backend_provider()` performs the qualified version check before
+admitting source access. Unregistered backend connections likewise return
+unverified operation values.
 
 ## Python and dependency support
 
@@ -255,8 +277,11 @@ the version needed for native `BIGNUM` types.
 The [distribution acceptance command][distribution] builds a wheel from the
 sdist, compares package contents, installs it into a fresh environment outside
 the checkout, checks that optional distributions are absent, and imports every
-public facade with optional imports blocked. It then installs the DuckDB extra
-and executes the exact README tutorial, including retained staging and reopening.
+public facade with optional imports blocked. It then installs the DuckDB and
+pandas extras and executes the exact README tutorial to collect a compact
+dataframe with completeness and reason columns. Retained staging and reopening
+are exercised by the [first-dataset guide](first-dataset.md#keep-a-pinned-dataset)
+in the [source integration acceptance](../../integration/warehouse_execution/test_ml_staging_examples.py).
 The installed package location is checked, so a source checkout cannot mask
 missing wheel files. The sdist retains guides, examples, typed package data, the
 Apache-2.0 `LICENSE` and `NOTICE`, and the direct-dependency notice inventory;
@@ -310,7 +335,7 @@ orchestration or modeling libraries support that interpreter.
 | `pandas`, `polars` | Common-stack round trips in the operation matrix below |
 | `airflow` | Airflow 3.3.2 / standard provider 1.20.1; [adapter tests](../../tests/adapters/test_airflow.py) |
 | `dagster` | Dagster 1.13.26; [adapter tests](../../tests/adapters/test_dagster.py) |
-| `dbt` | Core 1.10.13 / dbt-duckdb 1.9.6; [adapter tests](../../tests/adapters/test_dbt_core_recipe.py) |
+| `dbt` | Core 1.10.13 / dbt-duckdb 1.9.6; [adapter tests](../../tests/adapters/test_dbt_core_after_build.py) |
 | `increment` | 0.1.0a2; [independent optional compatibility contract][increment] |
 | `sketches` | DataSketches 5.2 or later below 6; [sketch support/refusals][sketches] |
 | `doubleml`, `duckreg`, `lifelines`, `diff-diff` | Pinned downstream versions in `pyproject.toml`; [real library hand-offs][libraries] |

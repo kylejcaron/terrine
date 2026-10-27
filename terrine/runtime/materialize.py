@@ -14,7 +14,8 @@ from terrine.errors import RefusalSpec
 from terrine.execution.gates import enforce_shape_budget, validate_compiled_output
 from terrine.model import Model
 from terrine.spec.design import Design
-from terrine.spec.expressions import ApproxMetricQuantile
+from terrine.spec.expressions import ApproxMetricQuantile, _output_leaves
+from terrine.spec.validate import _check_predicate_operands
 
 _RUNTIME_SKETCH_UNAVAILABLE = RefusalSpec(
     "terrine.runtime.sketch_sidecar_unavailable",
@@ -25,10 +26,14 @@ _RUNTIME_SKETCH_UNAVAILABLE = RefusalSpec(
 
 def ensure_runtime_expressions_supported(design: Design) -> None:
     """Refuse unsupported runtime expressions before resolving source inputs."""
+    for named in (design.features, design.outcomes, design.eligibility):
+        for value in named.values():
+            _check_predicate_operands(value)
     if any(
         isinstance(expression, ApproxMetricQuantile)
         for expressions in (design.features, design.outcomes)
-        for expression in expressions.values()
+        for value in expressions.values()
+        for expression in _output_leaves(value)
     ):
         raise _RUNTIME_SKETCH_UNAVAILABLE.error()
 

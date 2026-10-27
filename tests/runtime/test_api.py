@@ -10,7 +10,7 @@ from terrine.errors import TerrineError
 from terrine.runtime.execute import RunReceipt
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.planner import plan_refresh
-from terrine.runtime.recipe import DestinationRef
+from terrine.runtime.saved_plan import DestinationRef
 
 
 class _Executor:
@@ -61,11 +61,11 @@ def test_run_serialized_plan_executes_through_python_facade():
     assert executor.calls == len(_plan().tasks)
 
 
-def test_custom_saved_recipe_executor_is_not_limited_by_builtin_shape_preflight(tmp_path):
+def test_custom_saved_plan_executor_is_not_limited_by_builtin_shape_preflight(tmp_path):
     from terrine.data import Budget, Coverage
     from terrine.model import Model
     from terrine.runtime.owner import RuntimeOwner
-    from terrine.runtime.recipe import ModelReference, SavedPlanRecipe
+    from terrine.runtime.saved_plan import ModelReference, SavedPlan
     from terrine.runtime.snapshot import SnapshotAuthority
     from terrine.runtime.state import RuntimeStore
     from terrine.semantic.models import Catalog
@@ -122,7 +122,7 @@ def test_custom_saved_recipe_executor_is_not_limited_by_builtin_shape_preflight(
             model, design, sources=("events",), definition_hash=design.spec_hash
         ),
     )
-    recipe = SavedPlanRecipe.create(
+    saved_plan = SavedPlan.create(
         plan_json=plan.serialize(),
         design=design,
         model=ModelReference.from_model(model, owner_key="model"),
@@ -130,7 +130,7 @@ def test_custom_saved_recipe_executor_is_not_limited_by_builtin_shape_preflight(
         namespace="runtime",
         expected_base_manifest=None,
     )
-    recipe.pin_snapshot(store)
+    saved_plan.pin_snapshot(store)
 
     class Resolver:
         def resolve(self, reference):
@@ -144,7 +144,7 @@ def test_custom_saved_recipe_executor_is_not_limited_by_builtin_shape_preflight(
             return "custom-generation"
 
     result = runtime.run_serialized_plan(
-        recipe.to_json(),
+        saved_plan.to_json(),
         con=con.con,
         namespace="runtime",
         executor=CustomExecutor(),
@@ -461,13 +461,13 @@ def test_design_executor_refuses_multiple_output_partitions():
     assert error.value.code == "terrine.runtime.design_partition_unsupported"
 
 
-def test_custom_saved_recipe_executor_keeps_state_panel_budget_refusal():
+def test_custom_saved_plan_executor_keeps_state_panel_budget_refusal():
     from types import SimpleNamespace
 
-    from terrine.runtime.recipe import ModelReference, SavedPlanRecipe
+    from terrine.runtime.saved_plan import ModelReference, SavedPlan
     from terrine.spec import Design, Schedule
     from terrine.spec.state_panel import StateObservations, StatePanel
-    from tests.runtime.test_recipe import _model
+    from tests.runtime.test_saved_plan import _model
 
     con = ibis.duckdb.connect()
     con.raw_sql("CREATE TABLE events (ts TIMESTAMP, user_id INTEGER, value INTEGER)")
@@ -486,7 +486,7 @@ def test_custom_saved_recipe_executor_keeps_state_panel_budget_refusal():
             model, design, sources=("events",), definition_hash=design.spec_hash
         ),
     )
-    recipe = SavedPlanRecipe.create(
+    saved_plan = SavedPlan.create(
         plan_json=plan.serialize(),
         design=design,
         model=ModelReference.from_model(model, owner_key="model"),
@@ -509,7 +509,7 @@ def test_custom_saved_recipe_executor_keeps_state_panel_budget_refusal():
 
     with pytest.raises(TerrineError) as error:
         runtime.run_serialized_plan(
-            recipe.to_json(),
+            saved_plan.to_json(),
             con=con.con,
             namespace="runtime",
             executor=CustomExecutor(),

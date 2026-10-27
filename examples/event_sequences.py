@@ -6,7 +6,7 @@ import ibis
 import pyarrow as pa
 
 import terrine as tr
-from terrine.semantic.models import Catalog
+from terrine import recipes
 from terrine.spec import Design, EventAnchor, EventSequence, FunnelSpec, SessionSpec
 from terrine.windows import Window
 
@@ -63,8 +63,7 @@ def main() -> None:
                 }
             ),
         )
-        catalog = Catalog.model_validate(
-            {
+        catalog = {
                 "schema_version": 1,
                 "day_boundary": "UTC",
                 "dialect": "duckdb",
@@ -94,7 +93,6 @@ def main() -> None:
                 "measures": {},
                 "metrics": {},
             }
-        )
         model = tr.Model.from_catalog(
             catalog,
             con=con,
@@ -102,6 +100,28 @@ def main() -> None:
             event_ids={"events": "event_id"},
             readiness={"events": tr.Coverage("2025-03-01", "2025-03-02")},
         )
+        budget = tr.Budget(max_rows=100, max_output_bytes=1_000_000)
+        sequence = recipes.event_sequence(
+            "user", event="activity", horizon="2h", max_events=4, session_gap="30m",
+        ).build(model).materialize(budget)
+        recipe_rows = sequence.table.to_pylist()
+        headers = {row["unit"]: row for row in recipe_rows if not row["is_event"]}
+        assert {unit: row["event_count"] for unit, row in headers.items()} == {
+            "u1": 3, "u2": 1, "u3": 0,
+        }
+        assert headers["u3"]["event_count__complete"]
+        u1_events = sorted(
+            (row for row in recipe_rows if row["is_event"] and row["unit"] == "u1"),
+            key=lambda row: (row["event_time"], row["event_id"]),
+        )
+        assert [row["event_id"] for row in u1_events] == ["a-view", "z-view", "purchase"]
+        assert [row["session_index"] for row in u1_events] == [0, 0, 1]
+        print("Event-sequence recipe counts:", {
+            unit: row["event_count"] for unit, row in headers.items()
+        })
+
+        # Use the low-level shape for different anchor/event facts, properties,
+        # funnels, or an array representation.
         design = Design(
             "user",
             EventAnchor("signup", "first"),
@@ -114,7 +134,6 @@ def main() -> None:
                 funnel=FunnelSpec("kind", ("view", "purchase"), within="2h"),
             ),
         )
-        budget = tr.Budget(max_rows=100, max_output_bytes=1_000_000)
         positions = design.build(model).materialize(budget)
         children = [row for row in positions.table.to_pylist() if row["is_event"]]
         assert [row["event_id"] for row in children if row["unit"] == "u1"] == [
@@ -127,9 +146,9 @@ def main() -> None:
             for row in positions.table.to_pylist()
             if row["unit"] == "u3" and not row["is_event"]
         )
-        assert empty_header["event_count"] == 0 and empty_header["sequence_complete"]
+        assert empty_header["event_count"] == 0 and empty_header["event_count__complete"]
         null_child = next(row for row in children if row["unit"] == "u2")
-        assert null_child["kind"] is None and null_child["kind_reason"] == "known_null"
+        assert null_child["kind"] is None and null_child["kind__reason"] == "known_null"
         reopened = type(positions).from_arrow(positions.to_arrow())
         assert reopened.provenance.sequence_meta == positions.provenance.sequence_meta
 
@@ -148,8 +167,8 @@ def main() -> None:
         )
         assert (
             limited_header["event_count"] is None
-            and not limited_header["sequence_complete"]
-            and limited_header["sequence_reason"] == "unit_observation"
+            and not limited_header["event_count__complete"]
+            and limited_header["event_count__reason"] == "unit_observation"
         )
 
         arrays_design = Design(

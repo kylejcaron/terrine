@@ -65,7 +65,7 @@ _RECOVERY = {
     "cohort": ("trajectories-survival.md", "Check grouping and observable cohort denominators."),
     "compile": ("design-validation.md", "Correct the named Design or timestamp constraint."),
     "convert": ("common-stack-interop.md", "Install the conversion extra; retain Arrow metadata."),
-    "dataset": ("ml-staging.md", "Use pinned manifests, valid recipes and owned destinations."),
+    "dataset": ("ml-staging.md", "Use pinned manifests, valid definitions and owned destinations."),
     "design": (
         "design-validation.md",
         "Repair temporal/history contracts; do not zero-fill unknowns.",

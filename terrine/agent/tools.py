@@ -17,9 +17,9 @@ from typing import Any
 
 from pydantic_core import to_jsonable_python
 
+from terrine.agent.definitions import definition_schema, parse_definition
 from terrine.agent.design_schema import design_schema
 from terrine.agent.policy import _LIMIT, _SCOPE, AgentPolicy, Permission, effective_budget
-from terrine.agent.recipes import parse_recipe, recipe_schema
 from terrine.agent.schemas import (
     AgentDatasetReference,
     AgentExportManifest,
@@ -27,6 +27,7 @@ from terrine.agent.schemas import (
     CapabilityOutput,
     CatalogOutput,
     DatasetColumn,
+    DefinitionOutput,
     DesignOutput,
     DesignRequest,
     EventOutput,
@@ -34,7 +35,6 @@ from terrine.agent.schemas import (
     MetricMetadata,
     PlanReceipt,
     PropertyMetadata,
-    RecipeOutput,
     Response,
     RowsOutput,
     RunOutput,
@@ -51,15 +51,15 @@ from terrine.model import Model
 from terrine.runtime.api import Executor, cancel_run, get_run, read_run_events, run_serialized_plan
 from terrine.runtime.changes import ChangeSet
 from terrine.runtime.planning import OwnerPlanner, PlanInvocation, PlanRequest
-from terrine.runtime.recipe import (
+from terrine.runtime.saved_plan import (
     DestinationRef,
     ModelReference,
-    SavedPlanRecipe,
-    _bind_recipe_plan,
+    SavedPlan,
+    _bind_saved_plan,
 )
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.anchors import EventAnchor, FixedDate
-from terrine.spec.dataset import INVALID_RECIPE, DatasetRecipe
+from terrine.spec.dataset import INVALID_DEFINITION, DatasetDefinition
 from terrine.spec.design import Design
 from terrine.spec.io import from_json, from_yaml, to_json
 from terrine.spec.validate import ensure_runtime_shape_supported, validate_design
@@ -236,12 +236,12 @@ class DatasetTools:
                     "inspect_catalog",
                     "list_capabilities",
                     "get_design_schema",
-                    "get_dataset_recipe_schema",
+                    "get_dataset_definition_schema",
                     "design_example",
                     "propose_design",
                     "validate_design",
-                    "propose_recipe",
-                    "validate_recipe",
+                    "propose_definition",
+                    "validate_definition",
                     "save_design",
                     "load_design",
                     "preview_dataset",
@@ -310,7 +310,7 @@ class DatasetTools:
         except OSError as error:
             raise _STORAGE.error() from error
 
-    def save_design(self, name: str, serialized: str) -> Response[DesignOutput | RecipeOutput]:
+    def save_design(self, name: str, serialized: str) -> Response[DesignOutput | DefinitionOutput]:
         def save():
             output = self._definition_output(serialized)
             root, filename = self._storage(name)
@@ -345,7 +345,7 @@ class DatasetTools:
 
         return self._call("validate", save)
 
-    def load_design(self, name: str) -> Response[DesignOutput | RecipeOutput]:
+    def load_design(self, name: str) -> Response[DesignOutput | DefinitionOutput]:
         def load():
             root, filename = self._storage(name)
             try:
@@ -399,14 +399,20 @@ class DatasetTools:
         ).fetchall()
         for record in invocations:
             invocation = PlanInvocation.from_dict(json.loads(record[0]))
-            if invocation.destination != destination or not invocation.recipe_json:
+            if invocation.destination != destination or not invocation.saved_plan_json:
                 continue
-            recipe = SavedPlanRecipe.from_json(invocation.recipe_json)
-            if recipe.model != self.policy.model_reference or recipe.namespace != self.namespace:
+            definition = SavedPlan.from_json(invocation.saved_plan_json)
+            if (
+                definition.model != self.policy.model_reference
+                or definition.namespace != self.namespace
+            ):
                 continue
-            if _bind_recipe_plan(recipe, namespace=self.namespace).recipe.fingerprint != row[1]:
+            if (
+                _bind_saved_plan(definition, namespace=self.namespace).definition.fingerprint
+                != row[1]
+            ):
                 continue
-            report = validate_design(from_json(recipe.design_json), self.model)
+            report = validate_design(from_json(definition.design_json), self.model)
             self.policy.authorize(permission, sources=report.required_sources)
             return
         raise _RUN.error(route="Use a run from an owner-prepared invocation for this Model.")
@@ -471,35 +477,40 @@ class DatasetTools:
 
         return self._call("cancel", cancel)
 
-    def get_dataset_recipe_schema(self) -> Response[SchemaOutput]:
-        return self._call("inspect", lambda: SchemaOutput(document=recipe_schema()))
+    def get_dataset_definition_schema(self) -> Response[SchemaOutput]:
+        return self._call("inspect", lambda: SchemaOutput(document=definition_schema()))
 
-    def _recipe_output(self, serialized: str, base: str | None = None) -> RecipeOutput:
-        recipe = parse_recipe(serialized, self.model)
-        valid = self._validated(recipe.base_design)
-        canonical = recipe.canonical_json().decode()
+    def _dataset_definition_output(
+        self, serialized: str, base: str | None = None
+    ) -> DefinitionOutput:
+        definition = parse_definition(serialized, self.model)
+        valid = self._validated(definition.base_design)
+        canonical = definition.canonical_json().decode()
         paths = (
             ()
             if base is None
             else _diff(
-                json.loads(parse_recipe(base, self.model).canonical_json()), json.loads(canonical)
+                json.loads(parse_definition(base, self.model).canonical_json()),
+                json.loads(canonical),
             )
         )
-        return RecipeOutput(
+        return DefinitionOutput(
             **valid.model_dump(),
             serialized=canonical,
             changed_paths=paths,
-            recipe_digest=recipe.digest,
+            definition_digest=definition.digest,
         )
 
-    def propose_recipe(self, serialized: str, *, base: str | None = None) -> Response[RecipeOutput]:
-        return self._call("validate", lambda: self._recipe_output(serialized, base))
+    def propose_definition(
+        self, serialized: str, *, base: str | None = None
+    ) -> Response[DefinitionOutput]:
+        return self._call("validate", lambda: self._dataset_definition_output(serialized, base))
 
-    def validate_recipe(self, serialized: str) -> Response[RecipeOutput]:
+    def validate_definition(self, serialized: str) -> Response[DefinitionOutput]:
         def validate():
-            output = self._recipe_output(serialized)
+            output = self._dataset_definition_output(serialized)
             try:
-                parse_recipe(serialized, self.model).build(self.model)
+                parse_definition(serialized, self.model).build(self.model)
             except (KeyError, TypeError, ValueError) as error:
                 if isinstance(error, TerrineError):
                     raise
@@ -510,33 +521,39 @@ class DatasetTools:
 
         return self._call("validate", validate)
 
-    def _definition_output(self, serialized: str) -> DesignOutput | RecipeOutput:
+    def _definition_output(self, serialized: str) -> DesignOutput | DefinitionOutput:
         try:
             payload = json.loads(serialized)
         except (TypeError, ValueError):
             return self._design_output(serialized)
         if isinstance(payload, dict) and "base_design" in payload:
-            return self._recipe_output(serialized)
+            return self._dataset_definition_output(serialized)
         return self._design_output(serialized)
 
-    def _dataset_recipe(self, recipe: DatasetRecipe | str) -> DatasetRecipe:
-        if not isinstance(recipe, (DatasetRecipe, str)):
-            raise _INVALID.error(route="Use the discovered DatasetRecipe schema.")
-        return parse_recipe(
-            recipe.canonical_json().decode() if isinstance(recipe, DatasetRecipe) else recipe,
+    def _dataset_definition(self, definition: DatasetDefinition | str) -> DatasetDefinition:
+        if not isinstance(definition, (DatasetDefinition, str)):
+            raise _INVALID.error(route="Use the discovered DatasetDefinition schema.")
+        return parse_definition(
+            definition.canonical_json().decode()
+            if isinstance(definition, DatasetDefinition)
+            else definition,
             self.model,
         )
 
-    def _resolved_recipe_design(self, recipe: DatasetRecipe) -> Design:
+    def _resolved_definition_design(self, definition: DatasetDefinition) -> Design:
         try:
-            return recipe.build(self.model)._design
+            return definition.build(self.model)._design
         except TerrineError:
             raise
         except (KeyError, TypeError, ValueError, OverflowError) as error:
-            raise INVALID_RECIPE.error(reason="dataset view cannot be constructed") from error
+            raise INVALID_DEFINITION.error(reason="dataset view cannot be constructed") from error
 
     def preview_dataset(
-        self, recipe: DatasetRecipe | str, *, budget: Budget | None = None, bounded_count: int = 0
+        self,
+        definition: DatasetDefinition | str,
+        *,
+        budget: Budget | None = None,
+        bounded_count: int = 0,
     ) -> Response[Preview]:
         def preview():
             from terrine.compile import cost
@@ -547,8 +564,8 @@ class DatasetTools:
                 or not 0 <= bounded_count <= self.policy.max_bounded_count
             ):
                 raise _INVALID.error(route="Use a bounded count within the owner cap.")
-            parsed = self._dataset_recipe(recipe)
-            design = self._resolved_recipe_design(parsed)
+            parsed = self._dataset_definition(definition)
+            design = self._resolved_definition_design(parsed)
             valid = self._validated(design)
             if bounded_count:
                 self.policy.authorize("preview", sources=valid.required_sources)
@@ -591,17 +608,17 @@ class DatasetTools:
 
     @staticmethod
     def _receipt(invocation: PlanInvocation) -> PlanReceipt:
-        saved = SavedPlanRecipe.from_json(invocation.recipe_json)
+        saved = SavedPlan.from_json(invocation.saved_plan_json)
         identity = json.dumps(invocation.to_dict(), sort_keys=True, separators=(",", ":"))
         return PlanReceipt(
             receipt_id=hashlib.sha256(identity.encode()).hexdigest(),
             design_hash=saved.design_hash,
-            recipe_hash=saved.recipe_hash,
+            plan_hash=saved.plan_hash,
         )
 
     def _prepare(
         self,
-        recipe: DatasetRecipe,
+        definition: DatasetDefinition,
         *,
         destination: DestinationRef,
         invocation_id: str,
@@ -610,7 +627,7 @@ class DatasetTools:
         expected_base_manifest: str | None = None,
         bind_base_manifest: bool = False,
     ) -> PlanReceipt:
-        valid = self._validated(recipe.base_design)
+        valid = self._validated(definition.base_design)
         self.policy.authorize("prepare", sources=valid.required_sources, destination=destination)
         planner = self._owner_planner(destination)
         reference = self.policy.model_reference
@@ -620,11 +637,11 @@ class DatasetTools:
             request = PlanRequest(
                 invocation_id,
                 reference,
-                recipe.base_design,
+                definition.base_design,
                 destination,
                 changes=changes,
                 budget=effective_budget(self.policy.budget, budget),
-                dataset_recipe=recipe,
+                dataset_definition=definition,
                 expected_base_manifest=expected_base_manifest,
                 bind_base_manifest=bind_base_manifest,
             )
@@ -638,7 +655,7 @@ class DatasetTools:
 
     def prepare_dataset(
         self,
-        recipe: DatasetRecipe | str,
+        definition: DatasetDefinition | str,
         *,
         destination: DestinationRef,
         invocation_id: str,
@@ -647,7 +664,7 @@ class DatasetTools:
         return self._call(
             "prepare",
             lambda: self._prepare(
-                self._dataset_recipe(recipe),
+                self._dataset_definition(definition),
                 destination=destination,
                 invocation_id=invocation_id,
                 budget=budget,
@@ -656,7 +673,7 @@ class DatasetTools:
 
     def _resolve_receipt(
         self, receipt: PlanReceipt, permission: Permission
-    ) -> tuple[PlanInvocation, SavedPlanRecipe]:
+    ) -> tuple[PlanInvocation, SavedPlan]:
         if not isinstance(receipt, PlanReceipt):
             raise _RECEIPT.error()
         con = self.model.con.con
@@ -670,10 +687,14 @@ class DatasetTools:
         for (payload,) in con.execute(
             f'SELECT invocation_json FROM "{self.namespace}".runtime_plan_invocations'
         ).fetchall():
-            invocation = PlanInvocation.from_dict(json.loads(payload))
+            document = json.loads(payload)
+            identity = json.dumps(document, sort_keys=True, separators=(",", ":"))
+            if hashlib.sha256(identity.encode()).hexdigest() != receipt.receipt_id:
+                continue
+            invocation = PlanInvocation.from_dict(document)
             if self._receipt(invocation) != receipt:
                 continue
-            saved = SavedPlanRecipe.from_json(invocation.recipe_json)
+            saved = SavedPlan.from_json(invocation.saved_plan_json)
             if saved.namespace != self.namespace or saved.model != self.policy.model_reference:
                 raise _SCOPE.error()
             valid = validate_design(from_json(saved.design_json), self.model)
@@ -681,7 +702,7 @@ class DatasetTools:
                 permission, sources=valid.required_sources, destination=saved.destination
             )
             self._owner_planner(saved.destination)
-            planned_budget = _bind_recipe_plan(saved, namespace=self.namespace).budget
+            planned_budget = _bind_saved_plan(saved, namespace=self.namespace).budget
             if effective_budget(self.policy.budget, planned_budget) != planned_budget:
                 raise _SCOPE.error(route="Prepare a new invocation under the current owner budget.")
             return invocation, saved
@@ -693,7 +714,7 @@ class DatasetTools:
         invocation, saved = self._resolve_receipt(receipt, "write")
         deadline = monotonic() + self.policy.max_run_seconds
         return run_serialized_plan(
-            invocation.recipe_json,
+            invocation.saved_plan_json,
             con=self.model.con.con,
             namespace=self.namespace,
             request_key=request_key,
@@ -729,7 +750,7 @@ class DatasetTools:
             definition_hash=manifest.design_hash,
             model_hash=manifest.model_hash,
             manifest_hash=hashlib.sha256(manifest.to_json()).hexdigest(),
-            recipe_reference=manifest.recipe.digest,
+            definition_reference=manifest.definition.digest,
             row_count=manifest.generation.row_count,
             columns=tuple(
                 DatasetColumn(
@@ -745,7 +766,7 @@ class DatasetTools:
 
     def _resolve_dataset(
         self, reference: AgentDatasetReference, permission: Permission
-    ) -> tuple[Dataset, SavedPlanRecipe]:
+    ) -> tuple[Dataset, SavedPlan]:
         if not isinstance(reference, AgentDatasetReference):
             raise _RECEIPT.error(route="Use the unchanged reference returned by stage or refresh.")
         con = self.model.con.con
@@ -763,7 +784,7 @@ class DatasetTools:
         ).fetchone()
         if record is None:
             raise _RECEIPT.error()
-        saved = SavedPlanRecipe.from_json(record[0])
+        saved = SavedPlan.from_json(record[0])
         if saved.namespace != self.namespace or saved.model != self.policy.model_reference:
             raise _SCOPE.error()
         valid = validate_design(from_json(saved.design_json), self.model)
@@ -771,7 +792,7 @@ class DatasetTools:
             permission, sources=valid.required_sources, destination=saved.destination
         )
         manifest = DatasetManifest.from_json(record[1])
-        if manifest.recipe.digest != reference.recipe_reference:
+        if manifest.definition.digest != reference.definition_reference:
             raise _RECEIPT.error()
         dataset = Dataset.open_generation(
             reference.dataset, reference.generation, con=self.model.con, namespace=self.namespace
@@ -811,7 +832,7 @@ class DatasetTools:
         def prepare():
             dataset, saved = self._resolve_dataset(reference, "prepare")
             return self._prepare(
-                dataset.manifest.recipe,
+                dataset.manifest.definition,
                 destination=saved.destination,
                 invocation_id=invocation_id,
                 budget=budget,

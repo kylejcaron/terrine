@@ -7,9 +7,8 @@ import time
 from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 
+from terrine.runtime import PlanRequest, RunReceipt
 from terrine.runtime.control import ControlClient, ControlEndpoint
-from terrine.runtime.execute import RunReceipt
-from terrine.runtime.planning import PlanRequest
 
 
 def reviewed_dbt_relation_names(
@@ -64,7 +63,7 @@ def run_after_dbt_build(
     if invocation.invocation_id != build_id:
         raise RuntimeError("owner returned a mismatched plan invocation")
     receipt = client.run(
-        invocation.recipe_json,
+        invocation.saved_plan_json,
         request_key=invocation.request_key,
         destination=invocation.destination,
     )

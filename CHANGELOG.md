@@ -2,6 +2,94 @@
 
 ## Unreleased
 
+### Documentation
+
+- Start the README with a runnable table-first dataset and its completeness
+  columns, then choose a dataset type. Add executable feature patterns for
+  rolling windows, conditional events, eligibility, as-of attributes, recency
+  and Boolean labels. Keep output budgets, staging, owned inputs and development
+  details in their guides.
+
+### Public API
+
+- Construct common dataset types with `terrine.recipes`: time series, trial
+  panels, event panels, cumulative LTV, survival, life tables, state panels and
+  bounded event sequences. Each returns a plain low-level `Design`, retains
+  supported row/role options and refuses unsupported keywords. Life-table
+  features must exactly match its explicit grouping names.
+  Start with these constructors for common row meanings; the unchanged public
+  Design, anchor, expression and shape API remains their full-flexibility layer.
+  Constructor-first guides include equivalent low-level Designs.
+  LTV requires an untransformed native metric with exactly one SUM measure;
+  generated count and mean metrics are not accepted by that shape.
+- Recipe examples use the same adjacent per-value completeness columns as their
+  materialized datasets, including LTV values and empty event-sequence counts.
+- Bind table-backed events with immutable `Events` descriptors and
+  `Model.from_tables`, retaining explicit unit rosters and completeness.
+  Generate event/value facts and count, sum and event-mean metrics; refuse
+  ambiguous names and direct multi-unit sources to `Model.from_catalog`.
+  Run `examples/table_first_dataset.py` for zero-activity roster retention,
+  generated metrics, bounded materialization and event-origin LTV; all dataset
+  constructors have executable examples in CI.
+- `Model.from_catalog` accepts plain Catalog mappings and validates them with
+  the same coded refusal contract as YAML-loaded definitions. `GroupSplit` and
+  `TimeSplit` are public through `terrine.dataset` for training-set workflows.
+
+### Breaking changes
+
+- Publish per-value completeness as adjacent `<name>__complete` and
+  `<name>__reason` columns across every dataset shape, including boolean outputs
+  and eligibility. Life-table reason columns retain lists of exact reasons.
+  Event properties such as `kind_complete` remain values, not status evidence.
+  User output names ending in either suffix now refuse during Design validation
+  with `terrine.spec.reserved_output_name`.
+- Default Frame dataframe conversions are compact, lossy views that omit
+  observation bounds, resolved times and anchor provenance. Pass
+  `include_observation_metadata=True` to keep them. Arrow conversions, staged
+  datasets, manifests and saved fixtures retain every column, with identity
+  first, adjacent value/support triples next, and bookkeeping last. Missing
+  required observation columns refuse Arrow reconstruction with
+  `terrine.metadata.missing_columns`. Anchor provenance and frame observation-bound
+  names are reserved at Design validation.
+- Rename the saved recipe family without compatibility aliases:
+  `DatasetRecipe` → `DatasetDefinition`,
+  `DatasetRecipeStore` → `DatasetDefinitionStore`,
+  `DatasetRecipeReference` → `DatasetDefinitionReference`, and
+  `SavedPlanRecipe` → `SavedPlan`. The canonical runtime `PlanRecipe` becomes
+  `PlanDefinition`, available through `RefreshPlan.definition`.
+- Move `terrine.runtime.recipe` to `terrine.runtime.saved_plan` and
+  `terrine.agent.recipes` to `terrine.agent.definitions`.
+- Rename refusal codes `terrine.dataset.invalid_recipe` →
+  `terrine.dataset.invalid_definition` and `terrine.runtime.plan_recipe_mismatch`
+  → `terrine.runtime.saved_plan_mismatch`. Malformed, unknown-field and old-format
+  manifest JSON now refuses with `terrine.dataset.invalid_manifest`.
+- Rename saved-plan wire fields `dataset_recipe_json` → `dataset_definition_json`
+  and `recipe_hash` → `plan_hash`. Manifest fields become `definition`,
+  `definition_reference` and `definition_hash` instead of `recipe`,
+  `recipe_reference` and `recipe_hash`. Owner requests use `dataset_definition`
+  instead of `dataset_recipe`; invocations use `saved_plan_json` instead of
+  `recipe_json`. Fitted winsorization identities use `definition_hash` instead of
+  `recipe_hash`. Agent receipts and dataset references use the matching
+  `plan_hash`, `definition_reference` and `definition_digest` names.
+- Rename agent tools `get_dataset_recipe_schema` →
+  `get_dataset_definition_schema`, `propose_recipe` → `propose_definition`, and
+  `validate_recipe` → `validate_definition`.
+- Keep canonical bare definitions without transforms readable with identical
+  bytes and digest. Old manifest and saved-plan envelopes refuse with the codes
+  above; old owner planning requests refuse with
+  `terrine.runtime.plan_request_invalid` rather than dropping their saved view.
+  Definitions and fitted transforms carrying the old fitted `recipe_hash` refuse
+  with `terrine.dataset.invalid_definition`; refit from the declared training
+  population and save a new definition. No artifact migration is performed.
+- Preserve persisted owner SQL identifiers: table `runtime_dataset_recipes` and
+  the `recipe_json` columns in `runtime_dataset_requests` and
+  `runtime_dataset_recipes` are unchanged. Existing owner databases still open
+  and accept new generations even when their old manifests cannot be reopened.
+- Resolve agent receipts by persisted invocation identity before decoding their
+  saved plans. Unrelated historical invocations do not block new execution or
+  staging; directly resolving an old receipt still refuses with
+  `terrine.runtime.saved_plan_mismatch`.
+
 ### Dataset construction
 
 - Build typed, point-in-time analytical and ML datasets with a standalone native
@@ -18,34 +106,52 @@
   three-valued eligibility and descriptive treatment/cluster/weight roles.
 - Preserve source-specific completeness, numeric nulls and exact unavailable
   reasons; distinguish fully observed zero activity from missing follow-up.
+- Accept `gt`, `eq`, `is_null` and `all_of` rules as boolean features and
+  outcomes, preserving incomplete-window nulls and reasons, three-valued
+  conjunctions and full temporal support for follow-up and training splits.
+- Refuse approximate-quantile operands in boolean outputs before reading data;
+  reuse `terrine.metric.approx_eligibility_unavailable` across predicate roles
+  and ordinary/persisted-runtime admission.
+  Use exact quantiles or output the approximate value without a predicate.
+- Include every nested event-selector dependency in sequential outcome
+  follow-up, even when a plain or boolean outcome measures before its selector.
+  Preserve sustained-control initiation checks through the full search horizon.
 - Preserve evaluated null reasons on event-relative results after a selector
   resolves, independently of completeness.
+- Select the last matching event in event-time selector windows with deterministic
+  timestamp and event-ID ordering; keep complete empty lookbacks as null.
 - Build sequential/calendar/event panels, bounded state pairs, LTV trajectories,
   cohort summaries, per-unit time-to-event records and risk-set counts/plain
   rates. Retain row identity, temporal support and typed shape provenance.
 - Refuse exact cumulative LTV totals that exceed the declared decimal output
   type; preserve unavailable cumulative values and their reasons.
 - Retain declared treatment values and support metadata in time-to-event output.
+- **Breaking:** `TimeToEvent.duration` is now an elapsed Arrow duration from
+  `t0`, not a terminal timestamp. `event_time` and `censor_time` remain the
+  absolute timestamps; lifelines and LifeTable consume elapsed durations.
 - Build deterministic bounded event sequences, sessions, funnels, transitions
   and event-relative selectors with explicit tie, missing-predecessor and
   temporal-leakage rules.
-- Support exact retention occurrence bands and deterministic last-event values,
-  exact min/max/distinct/type-7 quantiles, explicit native approximate distinct,
-  and optional cross-sectional DataSketches quantile sidecars.
+- Support exact retention occurrence bands, exact min/max/distinct/type-7
+  quantiles, explicit native approximate distinct, and optional cross-sectional
+  DataSketches quantile sidecars.
+- Admit PostgreSQL execution only when `pg_catalog.version()` identifies the
+  measured PostgreSQL 16 server; PostgreSQL-wire-compatible forks and unverified
+  PostgreSQL versions refuse before source schema access.
 
 ### Reproducibility and ML
 
 - Stage immutable DuckDB generations with bounded Arrow transfers and pinned
   reads. Preserve logical types, column roles, coverage, completeness, precision
-  metadata and construction recipes through manifests and Arrow serialization.
-- Reopen and refresh saved training/scoring recipes in a fresh process. Explicit
+  metadata and construction definitions through manifests and Arrow serialization.
+- Reopen and refresh saved training/scoring definitions in a fresh process. Explicit
   source corrections publish a new generation without mutating existing readers.
 - Select training features/labels with exact incomplete-label exclusions and
   leakage-aware group/time splits, purging, embargo and unassigned-row reasons.
 - Resolve scoring instants once, select an explicit eligible roster and omit
   unused labels, treatment and label-source reads.
 - Apply fixed or train-only fitted post-aggregation winsorization, retain exact
-  frozen limits and require matching feature/recipe/snapshot identities on reuse.
+  frozen limits and require matching feature/definition/snapshot identities on reuse.
 - Export resumable checksum-verified local Parquet shards with semantic metadata,
   exact decimal/timestamp/null values and typed empty outputs.
 - Enforce output-byte budgets against cumulative Arrow batches before Parquet

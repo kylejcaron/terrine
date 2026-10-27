@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -40,12 +42,21 @@ def test_readme_builds_and_reopens_first_dataset(tmp_path, monkeypatch):
     source = Path(__file__).resolve().parents[2] / "README.md"
     section = source.read_text().split("## Build a study dataset\n", 1)[1]
     code = section.split("```python\n", 1)[1].split("\n```", 1)[0]
+    tutorial = ast.parse(code)
+    # Run the optional guide steps before the tutorial closes its connection.
+    connection_scope = next(node for node in ast.walk(tutorial) if isinstance(node, ast.Try))
+    guide = source.parent / "docs/guides/first-dataset.md"
+    for snippet in re.findall(r"```python\n(.*?)\n```", guide.read_text(), re.S):
+        connection_scope.body.extend(ast.parse(snippet).body)
     namespace = {}
-    exec(compile(code, str(source), "exec"), namespace)
-    assert namespace["rows"] == [
-        {"unit": "a", "sessions_before": 1, "sessions_after": 2},
-        {"unit": "b", "sessions_before": 0, "sessions_after": 0},
+    exec(compile(ast.fix_missing_locations(tutorial), str(source), "exec"), namespace)
+    data = namespace["data"].sort_values("unit")
+    columns = ["unit", "before", "before__complete", "after", "after__complete"]
+    assert data[columns].to_dict("records") == [
+        {"unit": "a", "before": 1, "before__complete": True, "after": 2, "after__complete": True},
+        {"unit": "b", "before": 0, "before__complete": True, "after": 0, "after__complete": True},
     ]
-    assert namespace["result"].roles.features == ("sessions_before",)
-    assert namespace["result"].roles.outcomes == ("sessions_after",)
+    assert data[["before__reason", "after__reason"]].isna().all().all()
+    assert namespace["result"].roles.features == ("before",)
+    assert namespace["result"].roles.outcomes == ("after",)
     assert namespace["reopened"].manifest == namespace["dataset"].manifest

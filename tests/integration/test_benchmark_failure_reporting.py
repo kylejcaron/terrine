@@ -57,7 +57,7 @@ def test_live_cli_preserves_available_costs_after_cleanup_on_failure(
         cost_provider = Provider()
 
         def authorize_workload(self, plan, *, max_cost, currency):
-            return ScanAuthorization(plan.recipe.fingerprint)
+            return ScanAuthorization(plan.definition.fingerprint)
 
         @contextmanager
         def isolated_workspace(self):

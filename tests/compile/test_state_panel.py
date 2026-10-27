@@ -289,10 +289,10 @@ def test_binned_state_periods_ignore_covariate_gap(panel_model):
 @pytest.mark.parametrize(
     "name",
     [
-        "from_state_complete",
-        "from_state_reason",
-        "to_state_complete",
-        "to_state_reason",
+        "from_state__complete",
+        "from_state__reason",
+        "to_state__complete",
+        "to_state__reason",
         "from_state_observed_from",
         "from_state_observed_until",
         "to_state_observed_from",
@@ -300,17 +300,16 @@ def test_binned_state_periods_ignore_covariate_gap(panel_model):
     ],
 )
 def test_state_panel_rejects_generated_status_name_collisions(panel_model, name):
-    design = Design(
-        "user",
-        Schedule("1d", "2025-01-03", "2025-01-04"),
-        features={name: agg("sessions", window=("-1d", "0d"))},
-        shape=StatePanel(
-            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=1,
-        ),
-    )
     with pytest.raises(TerrineError) as error:
-        design.build(panel_model)
+        Design(
+            "user",
+            Schedule("1d", "2025-01-03", "2025-01-04"),
+            features={name: agg("sessions", window=("-1d", "0d"))},
+            shape=StatePanel(
+                BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
+                max_periods=1,
+            ),
+        ).build(panel_model)
     assert error.value.code == "terrine.spec.reserved_output_name"
 
 
@@ -667,11 +666,11 @@ def test_missing_observations_are_not_bridged_across_adjacent_rows(observed_mode
     assert len(a_rows) == 2
     assert a_rows[0]["from_state"] == "active"
     assert a_rows[0]["to_state"] is None
-    assert a_rows[0]["to_state_complete"] is False
-    assert a_rows[0]["to_state_reason"] == "missing_state_observation"
+    assert a_rows[0]["to_state__complete"] is False
+    assert a_rows[0]["to_state__reason"] == "missing_state_observation"
     assert a_rows[1]["from_state"] is None
-    assert a_rows[1]["from_state_complete"] is False
-    assert a_rows[1]["from_state_reason"] == "missing_state_observation"
+    assert a_rows[1]["from_state__complete"] is False
+    assert a_rows[1]["from_state__reason"] == "missing_state_observation"
     assert a_rows[1]["to_state"] == "active"
 
 
@@ -692,11 +691,11 @@ def test_known_null_observation_is_complete_but_not_a_state_label(observed_model
     first = next(row for row in rows if row["unit"] == "a" and row["period_index"] == 0)
     second = next(row for row in rows if row["unit"] == "a" and row["period_index"] == 1)
     assert first["to_state"] is None
-    assert first["to_state_complete"] is True
-    assert first["to_state_reason"] == "state_value_null"
+    assert first["to_state__complete"] is True
+    assert first["to_state__reason"] == "state_value_null"
     assert second["from_state"] is None
-    assert second["from_state_complete"] is True
-    assert second["from_state_reason"] == "state_value_null"
+    assert second["from_state__complete"] is True
+    assert second["from_state__reason"] == "state_value_null"
 
 
 def test_terminal_boundary_emits_incoming_transition_and_suppresses_suffix(observed_model_factory):
@@ -801,7 +800,7 @@ def test_delayed_entry_and_observation_bounds_do_not_shift_or_override_history(
     a_rows = [row for row in rows if row["unit"] == "a"]
     assert len(a_rows) == 2
     assert all(not row["terminal"] for row in a_rows)
-    assert a_rows[0]["to_state_reason"] == "incomplete_observation"
+    assert a_rows[0]["to_state__reason"] == "incomplete_observation"
 
 
 def test_unit_observed_until_is_exclusive_for_point_states(observed_model_factory):
@@ -824,7 +823,7 @@ def test_unit_observed_until_is_exclusive_for_point_states(observed_model_factor
     first = next(row for row in rows if row["unit"] == "b" and row["period_index"] == 0)
     assert first["from_state"] == "active"
     assert first["to_state"] is None
-    assert first["to_state_reason"] == "incomplete_observation"
+    assert first["to_state__reason"] == "incomplete_observation"
 
 
 def test_exclusive_source_coverage_end_is_unavailable_not_absorbing(observed_model_factory):
@@ -841,8 +840,8 @@ def test_exclusive_source_coverage_end_is_unavailable_not_absorbing(observed_mod
     a_rows = [row for row in materialized.table.to_pylist() if row["unit"] == "a"]
     assert len(a_rows) == 2
     assert not any(row["terminal"] for row in a_rows)
-    assert a_rows[0]["to_state_reason"] == "incomplete_coverage"
-    assert a_rows[1]["from_state_reason"] == "incomplete_coverage"
+    assert a_rows[0]["to_state__reason"] == "incomplete_coverage"
+    assert a_rows[1]["from_state__reason"] == "incomplete_coverage"
     metadata = materialized.provenance.state_panel
     assert metadata is not None
     assert metadata.levels == ("active", "closed")

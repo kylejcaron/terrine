@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
@@ -210,9 +211,9 @@ class EventTime:
         if self.label_property is not None:
             object.__setattr__(self, "label_property", _name(self.label_property, "label_property"))
             object.__setattr__(self, "equals", _scalar(self.equals))
-        if self.occurrence not in {"first", "nth"}:
-            raise ValueError("occurrence must be 'first' or 'nth'")
-        if self.occurrence == "first" and self.n is not None:
+        if self.occurrence not in {"first", "last", "nth"}:
+            raise ValueError("occurrence must be 'first', 'last', or 'nth'")
+        if self.occurrence in {"first", "last"} and self.n is not None:
             raise ValueError("n is only valid for nth occurrence")
         if self.occurrence == "nth" and (
             isinstance(self.n, bool) or not isinstance(self.n, int) or self.n < 1
@@ -274,6 +275,19 @@ type Expr = (
     | EventTime
 )
 type Predicate = Gt | Eq | IsNull | And
+
+
+def _output_leaves(value: Expr | Predicate) -> Iterator[Expr]:
+    """Yield measured expressions in an output or eligibility rule."""
+    if isinstance(value, And):
+        for term in value.terms:
+            yield from _output_leaves(term)
+    elif isinstance(value, Eq):
+        yield value.left
+    elif isinstance(value, (Gt, IsNull)):
+        yield value.expr
+    else:
+        yield value
 
 
 def _expression_support_seconds(expression: Expr) -> tuple[int, int]:

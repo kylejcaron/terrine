@@ -5,14 +5,13 @@ from __future__ import annotations
 from terrine.spec.anchors import EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.expressions import (
-    And,
     ApproxMetricDistinct,
     ApproxMetricQuantile,
-    Eq,
     Expr,
     MetricAgg,
     MetricQuantile,
     RetentionMetric,
+    _output_leaves,
 )
 from terrine.spec.panels import EventPanelSpec
 from terrine.spec.validate import _retention_window
@@ -26,17 +25,12 @@ _ROUTE = (
 
 def plan_ranges(design: Design, model) -> dict[Expr, RangePlan]:
     """Derive candidate bounds without querying relation sizes or event density."""
-    expressions = set(design.features.values()) | set(design.outcomes.values())
-
-    def collect(predicate):
-        if isinstance(predicate, And):
-            for term in predicate.terms:
-                collect(term)
-        else:
-            expressions.add(predicate.left if isinstance(predicate, Eq) else predicate.expr)
-
-    for predicate in design.eligibility.values():
-        collect(predicate)
+    expressions = {
+        expression
+        for named in (design.features, design.outcomes, design.eligibility)
+        for value in named.values()
+        for expression in _output_leaves(value)
+    }
     plans = {}
     for expression in expressions:
         nonadditive = isinstance(

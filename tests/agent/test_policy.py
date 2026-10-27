@@ -8,7 +8,7 @@ from hypothesis import strategies as st
 from terrine.agent.policy import AgentPolicy, effective_budget
 from terrine.data import Budget
 from terrine.errors import TerrineError
-from terrine.runtime.recipe import DestinationRef
+from terrine.runtime.saved_plan import DestinationRef
 
 
 def test_policy_permissions_are_operation_specific_and_owner_configured(tmp_path):

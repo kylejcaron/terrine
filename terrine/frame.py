@@ -12,6 +12,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import pyarrow as pa
+import pyarrow.compute as pc
 
 import terrine.compile.provenance as _provenance
 from terrine.compile.cost import _OUTPUT_BYTES_EXCEEDED, _ROWS_EXCEEDED, _scan_policy
@@ -165,6 +166,7 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
         EventTime,
         MetricAgg,
         MetricQuantile,
+        _output_leaves,
     )
     from terrine.spec.io import canonical_json
 
@@ -214,41 +216,40 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
                 "expression": selected_records[name],
                 "evaluation_reference": evaluation_reference,
             }
-        resolved: dict[str, object] = {}
-        if isinstance(
-            expression, (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct)
-        ):
-            metric = model.metrics.get(expression.metric)
-            if metric is not None:
-                resolved["metric"] = _metric_definition(metric, model)
-        elif isinstance(expression, AttributeAsOf):
-            source, prop, dimension = resolve_attribute(model, expression.attribute)
-            resolved["attribute"] = {
-                "source": source.name,
-                "relation": _definition_record(source.relation),
-                "entity_column": source.entities.get(design.unit),
-                "day_boundary": source.day_boundary,
-                "timestamp_column": source.timestamp_column,
-                "binding": _definition_record(prop),
-                "dimension": None
-                if dimension is None
-                else {
-                    "name": dimension.name,
-                    "relation": _definition_record(dimension.relation),
-                    "source_entity": dimension.source_entity,
-                    "entity_column": dimension.entity_column,
-                    "validity": _definition_record(dimension.validity),
-                },
-            }
-        selector = (
-            expression
-            if isinstance(expression, EventTime)
-            else getattr(expression, "relative_to", None)
-        )
-        if selector is not None:
-            resolved["selector"] = _selector_definition(selector, model)
+        resolved_leaves = []
+        for leaf in _output_leaves(expression) if expression is not None else ():
+            resolved: dict[str, object] = {}
+            if isinstance(
+                leaf, (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct)
+            ):
+                metric = model.metrics.get(leaf.metric)
+                if metric is not None:
+                    resolved["metric"] = _metric_definition(metric, model)
+            elif isinstance(leaf, AttributeAsOf):
+                source, prop, dimension = resolve_attribute(model, leaf.attribute)
+                resolved["attribute"] = {
+                    "source": source.name,
+                    "relation": _definition_record(source.relation),
+                    "entity_column": source.entities.get(design.unit),
+                    "day_boundary": source.day_boundary,
+                    "timestamp_column": source.timestamp_column,
+                    "binding": _definition_record(prop),
+                    "dimension": None
+                    if dimension is None
+                    else {
+                        "name": dimension.name,
+                        "relation": _definition_record(dimension.relation),
+                        "source_entity": dimension.source_entity,
+                        "entity_column": dimension.entity_column,
+                        "validity": _definition_record(dimension.validity),
+                    },
+                }
+            selector = leaf if isinstance(leaf, EventTime) else getattr(leaf, "relative_to", None)
+            if selector is not None:
+                resolved["selector"] = _selector_definition(selector, model)
+            resolved_leaves.append(resolved)
         if name not in semantic:
-            semantic[name] = resolved
+            semantic[name] = resolved_leaves[0] if len(resolved_leaves) == 1 else resolved_leaves
     payload = {
         "unit": record["unit"],
         "unit_binding": _definition_record(model.units.get(design.unit)),
@@ -542,13 +543,13 @@ class Frame:
         transforms.require_numeric_type(
             self._active_compiled().table.schema()[column].to_pyarrow(), column
         )
-        recipe = import_module("terrine.dataset.reference")._recipe_for(self)
+        definition = import_module("terrine.dataset.reference")._definition_for(self)
         return transforms.fit_winsorization(
             self.materialize(budget),
             column=column,
             lower=probabilities[0],
             upper=probabilities[1],
-            recipe_hash=recipe.digest,
+            definition_hash=definition.digest,
             feature_definition_hash=_feature_definition_hash(self._design, (column,), self._model),
         )
 
@@ -569,12 +570,12 @@ class Frame:
         if bound.fit is not None:
             fit = bound.fit
             if self._training_view is not None:
-                recipe_hash = (
+                definition_hash = (
                     import_module("terrine.dataset.reference")
-                    ._recipe_for(self, include_transforms=False)
+                    ._definition_for(self, include_transforms=False)
                     .digest
                 )
-                compatible = recipe_hash == fit.recipe_hash
+                compatible = definition_hash == fit.definition_hash
             else:
                 compatible = (
                     self._scoring_view is not None
@@ -685,6 +686,8 @@ class Frame:
             from terrine.compile.columns import resolve_sketch_sidecars
 
             table = resolve_sketch_sidecars(table, compiled, context.con)
+            if isinstance(self._design.shape, LifeTable):
+                table = self._normalize_output(table)
             roles = compiled.roles
             columns = compiled.columns
             if isinstance(self._design.shape, LifeTable):
@@ -693,6 +696,24 @@ class Frame:
                 life_table = self._design.shape
                 group_supports: dict[str, str] = {}
                 for name in life_table.group_by:
+                    timing = compiled.expression_timings.get(name)
+                    if timing is not None:
+                        # A group has an interval of contributing times, not a row origin.
+                        for field, offset, policy in (
+                            ("start_bound_column", timing.support_seconds[0], "min"),
+                            ("end_bound_column", timing.support_seconds[1], "max"),
+                        ):
+                            column = getattr(timing, field)
+                            if column is None:
+                                column = f"__terrine_{name}_{field.removesuffix('_column')}"
+                                table = table.append_column(
+                                    column,
+                                    # pyarrow.compute lacks a stub for this checked Arrow kernel.
+                                    pc.add_checked(  # ty: ignore[unresolved-attribute]
+                                        table["t0"], pa.scalar(offset, pa.duration("s"))
+                                    ),
+                                )
+                            group_supports[column] = policy
                     meta = compiled.columns[name]
                     for column, policy in (
                         (meta.observed_from_column, "min"),
@@ -736,8 +757,10 @@ class Frame:
                 columns["time_bin"] = ColumnMeta(None, "feature", None, None, None, None)
                 columns.update(
                     {
-                        name: ColumnMeta(None, "outcome", None, None, "complete", "reason")
-                        for name in roles.outcomes
+                        name: ColumnMeta(
+                            None, "outcome", None, None, f"{name}__complete", f"{name}__reason"
+                        )
+                        for name in (*roles.outcomes, "censored_by_reason")
                     }
                 )
             table = self._normalize_output(table)
@@ -788,7 +811,14 @@ class Frame:
                     if name in self._design.shape.group_by
                 }
                 expression_timings = {
-                    name: timing
+                    name: replace(
+                        timing,
+                        point_time_column=None,
+                        start_bound_column=(
+                            timing.start_bound_column or f"__terrine_{name}_start_bound"
+                        ),
+                        end_bound_column=timing.end_bound_column or f"__terrine_{name}_end_bound",
+                    )
                     for name, timing in compiled.expression_timings.items()
                     if name in self._design.shape.group_by
                 }
@@ -885,8 +915,11 @@ class Frame:
         )
 
     def _normalize_output(self, table: pa.Table) -> pa.Table:
-        if isinstance(self._design.shape, TimeToEvent):
-            for name in ("event_time", "censor_time", "duration", "entry_time"):
+        shape = self._design.shape
+        if isinstance(shape, LifeTable):
+            shape = shape.time_to_event
+        if isinstance(shape, TimeToEvent):
+            for name in ("event_time", "censor_time", "entry_time"):
                 if name in table.column_names:
                     dtype = table.schema.field(name).type
                     if pa.types.is_timestamp(dtype) and dtype.tz is None:
@@ -895,24 +928,63 @@ class Frame:
                             name,
                             table[name].cast(pa.timestamp(dtype.unit, tz="UTC")),
                         )
+            if "duration" in table.column_names:
+                # Subtract Arrow ticks so ns axes remain exact across backends.
+                terminal = table["duration"]
+                if pa.types.is_timestamp(terminal.type):
+                    t0 = table["t0"]
+                    unit = terminal.type.unit
+                    timestamp_type = pa.timestamp(unit, tz="UTC")
+                    terminal_ticks = terminal.cast(timestamp_type).cast(pa.int64())
+                    origin_ticks = t0.cast(timestamp_type).cast(pa.int64())
+                    try:
+                        # pyarrow.compute lacks a stub for this checked Arrow kernel.
+                        elapsed = pc.subtract_checked(  # ty: ignore[unresolved-attribute]
+                            terminal_ticks, origin_ticks
+                        )
+                    except pa.ArrowInvalid as exc:
+                        if unit == "ns":
+                            from terrine.execution._snowflake import _TIMESTAMP_RANGE
+
+                            raise _TIMESTAMP_RANGE.error(
+                                detail="elapsed duration exceeds Arrow's int64 nanosecond range"
+                            ) from exc
+                        raise
+                    table = table.set_column(
+                        table.schema.get_field_index("duration"),
+                        "duration",
+                        elapsed.cast(pa.duration(unit)),
+                    )
         if isinstance(self._design.shape, StatePanel):
             index = table.schema.get_field_index("gap")
             table = table.set_column(index, "gap", table.column(index).cast(pa.duration("us")))
         return table
 
     def to_pyarrow(self, *, budget: Budget | None = None) -> pa.Table:
-        """Execute once and attach portable study metadata to the Arrow schema."""
+        """Execute once and return lossless Arrow with portable study metadata."""
         return self.materialize(budget).to_arrow()
 
-    def to_pandas(self, *, budget: Budget | None = None):
-        """Convert using nullable Arrow-backed dtypes; import pandas only on demand."""
+    def to_pandas(
+        self, *, budget: Budget | None = None, include_observation_metadata: bool = False
+    ):
+        """Return a compact, lossy dataframe unless observation columns are requested."""
         pandas = _optional_dependency("pandas")
-        return self.to_pyarrow(budget=budget).to_pandas(types_mapper=pandas.ArrowDtype)
+        materialized = self.materialize(budget)
+        table = materialized.table
+        if not include_observation_metadata:
+            table = table.drop(materialized._bookkeeping_columns())
+        return table.to_pandas(types_mapper=pandas.ArrowDtype)
 
-    def to_polars(self, *, budget: Budget | None = None):
-        """Convert using the optional native Polars Arrow conversion."""
+    def to_polars(
+        self, *, budget: Budget | None = None, include_observation_metadata: bool = False
+    ):
+        """Return a compact, lossy dataframe unless observation columns are requested."""
         polars = _optional_dependency("polars")
-        return polars.from_arrow(self.to_pyarrow(budget=budget))
+        materialized = self.materialize(budget)
+        table = materialized.table
+        if not include_observation_metadata:
+            table = table.drop(materialized._bookkeeping_columns())
+        return polars.from_arrow(table)
 
     def cohorts(self, *, grouping: CohortGrouping, value_column: str) -> CohortTable:
         if not isinstance(self._design.shape, CohortSpec):

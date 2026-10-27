@@ -1,4 +1,4 @@
-"""Exact retention and training-only winsor limits reused by a scoring recipe."""
+"""Exact retention and training-only winsor limits reused by a scoring definition."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ import ibis
 from examples.ml_staging import catalog
 from examples.retention_metrics import main as retention_main
 from terrine import Budget, Coverage, Design, Model, Schedule, UnitSource, agg
-from terrine.dataset.splits import TimeSplit
-from terrine.spec import DatasetRecipe, Winsorization
+from terrine.dataset import TimeSplit
+from terrine.spec import DatasetDefinition, Winsorization
 
 
 def main() -> None:
@@ -57,14 +57,16 @@ def main() -> None:
             transform_path.write_bytes(fitted.to_json())
             frozen = Winsorization.from_json(transform_path.read_bytes())
             dataset = training.winsorize(frozen).stage("training", budget=budget)
-            assert dataset.manifest.recipe.transforms == (frozen,)
+            assert dataset.manifest.definition.transforms == (frozen,)
             con.raw_sql("INSERT INTO events VALUES ('2025-01-09 12:00:00',1,5000,'known')")
             scoring = design.snapshot(
                 model, as_of="2025-01-10", features=("past_amount",), eligibility={}
             ).winsorize(frozen)
             scored_dataset = scoring.stage("scoring", budget=budget)
-            recipe = DatasetRecipe.from_json(scored_dataset.manifest.recipe.canonical_json())
-            result = recipe.build(model).materialize(budget)
+            definition = DatasetDefinition.from_json(
+                scored_dataset.manifest.definition.canonical_json()
+            )
+            result = definition.build(model).materialize(budget)
             assert result.table["past_amount"].to_pylist() == [Decimal(15)]
             print(
                 {

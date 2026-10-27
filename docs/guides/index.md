@@ -4,6 +4,8 @@
 
 - [Your first dataset](first-dataset.md): Model → Design → Frame → Dataset.
 - [Public API](public-api.md): ordinary constructors and focused advanced modules.
+- [Common feature patterns](common-feature-patterns.md): rolling windows, conditional
+  events, eligibility, as-of attributes, recency and Boolean labels.
 - [Dataset capabilities](capabilities.md): metric × shape × backend evidence.
 - [Compatibility](backend-compatibility.md): operation-level support and versions.
 - [Refusal codes](../reference/refusals.md): generated declarations and recovery routes.
@@ -32,11 +34,12 @@
 - [Cost and data residency](cost-and-residency.md): scans, output limits,
   local/client artifacts, privacy and measured recovery/benchmark evidence.
 - [Materialization runtime](materialization-runtime.md): owner configuration,
-  saved plans, CLI/IPC, exact generations, replay, cancellation and corrections.
+  saved plans, CLI/IPC, exact generations, replay, cancellation, corrections and
+  [owned inputs for repeated builds](materialization-runtime.md#owned-inputs-for-repeated-builds).
 - [ML staging](ml-staging.md): training/scoring, leakage-aware splits,
-  frozen preprocessing, persisted recipes and Parquet export.
+  frozen preprocessing, persisted definitions and Parquet export.
 - [Common-stack interoperability](common-stack-interop.md): Arrow/pandas/Polars.
-- [Library hand-offs](library-handoffs.md): shared preflight and downstream recipes.
+- [Library hand-offs](library-handoffs.md): shared preflight and downstream workflows.
 - [Orchestrators](orchestrators.md): optional Airflow, Dagster and dbt Core triggers.
 - [Dataset agent tools](dataset-agent-tools.md): permissions, budgets and redaction.
 

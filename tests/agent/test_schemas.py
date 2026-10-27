@@ -76,6 +76,29 @@ def test_discovery_schema_accepts_canonical_temporal_nodes():
         validator.validate(json.loads(to_json(design)))
 
 
+def test_discovery_schema_accepts_boolean_features_and_outcomes():
+    from jsonschema import Draft202012Validator
+
+    from terrine.agent.design_schema import design_schema
+    from terrine.spec import Design, FixedDate, agg, all_of, eq, event_time, gt, is_null
+    from terrine.spec.io import to_json
+
+    design = Design(
+        "user",
+        FixedDate("2025-01-01"),
+        features={"missing": is_null(event_time("order", window=("-7d", "0s")))},
+        outcomes={
+            "converted": gt(agg("orders", window=("0s", "7d")), 0),
+            "churned": eq(agg("orders", window=("0s", "30d")), 0),
+            "both": all_of(
+                gt(agg("orders", window=("0s", "7d")), 0),
+                eq(agg("orders", window=("7d", "30d")), 0),
+            ),
+        },
+    )
+    Draft202012Validator(design_schema()).validate(json.loads(to_json(design)))
+
+
 @pytest.mark.parametrize("variant", ["binned", "calendar", "funnel", "event_time"])
 def test_discovery_schema_matches_existing_tagged_codec(variant):
     from datetime import UTC, datetime
@@ -123,7 +146,9 @@ def test_discovery_schema_matches_existing_tagged_codec(variant):
         )
     else:
         design = Design(
-            "user", FixedDate("2025-01-01"), features={"when": EventTime("value", Window(-10, 0))}
+            "user",
+            FixedDate("2025-01-01"),
+            features={"when": EventTime("value", Window(-10, 0), occurrence="last")},
         )
     payload = json.loads(to_json(design))
     validator = Draft202012Validator(design_schema())

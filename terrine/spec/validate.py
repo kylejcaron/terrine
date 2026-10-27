@@ -37,7 +37,7 @@ from terrine.spec.expressions import (
     MetricQuantile,
     Predicate,
     RetentionMetric,
-    _expression_support_seconds,
+    _output_leaves,
 )
 from terrine.spec.sequence import EventSequence
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
@@ -58,6 +58,11 @@ _QUANTILE_BACKEND = RefusalSpec(
 _NONADDITIVE_KIND_UNSUPPORTED = RefusalSpec(
     "terrine.metric.nonadditive_kind_unsupported",
     "Nonadditive aggregation {aggregation!r} is unsupported for metric kind {kind!r}.",
+)
+_APPROX_PREDICATE = RefusalSpec(
+    "terrine.metric.approx_eligibility_unavailable",
+    "Approximate quantiles cannot determine predicate values; use exact quantile or "
+    "output the approximate value without a predicate.",
 )
 
 _RUNTIME_SHAPE_UNSUPPORTED = RefusalSpec(
@@ -191,7 +196,9 @@ def _retention_window(expr: RetentionMetric, model: Model) -> Window:
 
 def _outcome_bounds(design: Design, model: Model) -> tuple[tuple[int, ...], tuple[datetime, ...]]:
     offsets, cutoffs = [], []
-    for expression in design.outcomes.values():
+    for expression in (
+        leaf for value in design.outcomes.values() for leaf in _output_leaves(value)
+    ):
         if isinstance(expression, RetentionMetric):
             if expression.finite_horizon_seconds is None:
                 fact = model.catalog.facts.get(expression.fact)
@@ -201,8 +208,10 @@ def _outcome_bounds(design: Design, model: Model) -> tuple[tuple[int, ...], tupl
                 cutoffs.append(model.readiness.for_fact(source).end_exclusive)
             else:
                 offsets.append(expression.finite_horizon_seconds)
-        elif isinstance(expression, (MetricAgg, MetricQuantile, ApproxMetricDistinct)):
-            offsets.append(_expression_support_seconds(expression)[1])
+        else:
+            support, dependencies = _expression_timing(expression)
+            offsets.append(support[1])
+            offsets.extend(end for _, end in dependencies)
     return tuple(offsets), tuple(cutoffs)
 
 
@@ -352,9 +361,27 @@ def _check_expression_timing(
         raise _GAP.error(role=role, gap=design.gap)
 
 
+def _check_predicate_operands(value: Expr | Predicate) -> None:
+    """Refuse approximate quantile operands before evaluating a boolean rule."""
+    if isinstance(value, (Gt, Eq, IsNull, And)):
+        for leaf in _output_leaves(value):
+            if isinstance(leaf, ApproxMetricQuantile):
+                raise _APPROX_PREDICATE.error()
+
+
 def _expression(
-    expr: Expr, role: str, design: Design, model: Model, required: set[str], obligations: list[str]
+    expr: Expr | Predicate,
+    role: str,
+    design: Design,
+    model: Model,
+    required: set[str],
+    obligations: list[str],
 ) -> None:
+    if isinstance(expr, (Gt, Eq, IsNull, And)):
+        _check_predicate_operands(expr)
+        for leaf in _output_leaves(expr):
+            _expression(leaf, role, design, model, required, obligations)
+        return
     relative_to = getattr(expr, "relative_to", None)
     if relative_to is not None:
         # Selector support is validated as a dependency, not as the outcome's
@@ -413,12 +440,6 @@ def _expression(
             raise _SKETCH_UNAVAILABLE.error(
                 algorithm=expr.sketch.algorithm, version=expr.sketch.version
             )
-        if role == "eligibility":
-            raise RefusalSpec(
-                "terrine.metric.approx_eligibility_unavailable",
-                "Approximate quantiles cannot determine eligibility; use exact quantile or "
-                "a non-approximate predicate.",
-            ).error()
     if isinstance(expr, MetricAgg):
         _check_expression_timing(expr, role, design)
     metric = _metric(model, expr.metric)
@@ -500,22 +521,6 @@ def _expression(
                     )
                     if alignment == "unaligned":
                         raise UNALIGNED_CALENDAR_AVERAGE.error()
-
-
-def _predicate(
-    predicate: Predicate, design: Design, model: Model, required: set[str], obligations: list[str]
-) -> None:
-    if isinstance(predicate, And):
-        for item in predicate.terms:
-            _predicate(item, design, model, required, obligations)
-    elif isinstance(predicate, Gt):
-        _expression(predicate.expr, "eligibility", design, model, required, obligations)
-    elif isinstance(predicate, Eq):
-        _expression(predicate.left, "eligibility", design, model, required, obligations)
-    elif isinstance(predicate, IsNull):
-        _expression(predicate.expr, "eligibility", design, model, required, obligations)
-    else:
-        raise _INVALID.error(reason="unsupported predicate")
 
 
 def _range_bound(value: date | datetime | None, model: Model) -> datetime | None:
@@ -733,7 +738,7 @@ def validate_design(design: Design, model: Model) -> ValidationReport:
         for expr in design.shape.baseline_features.values():
             _expression(expr, "feature", design, model, required, obligations)
     for predicate in design.eligibility.values():
-        _predicate(predicate, design, model, required, obligations)
+        _expression(predicate, "eligibility", design, model, required, obligations)
     if design.treatment is not None:
         treatment = design.treatment
         _expression(

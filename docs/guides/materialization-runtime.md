@@ -2,19 +2,43 @@
 
 The materialization runtime persists plan/run state and publishes immutable output generations in the customer's own execution environment. It does not infer whether source rows changed: source revisions, change feeds, checksums, or explicit operator restatements must provide that evidence. A readiness watermark says which period is declared complete; it is not a change detector.
 
+The runtime accepts an immutable `RefreshPlan` and delegates physical source
+reads, execution and publication to an owner-configured `Executor`. Request
+keys are durable and scoped to an explicit `DestinationRef`; a `RunReceipt`
+pins the published generation for later reads. The durable DuckDB owner
+serializes publication and cancellation. Separate processes must use owner IPC
+while that owner holds the database; cancellation is a durable request, not
+proof that backend work stopped.
+
 ## Build and plan from a Model and Design
 
-The runnable [`examples/materialization_runtime.py`](../../examples/materialization_runtime.py) is the end-to-end workflow. It builds a real `Model` and immutable `Design`, captures a retained input snapshot, serializes and saves a `SavedPlanRecipe` bound to a destination, runs it through the owner resolver and snapshot authority, then queries the exact returned generation:
+The runnable [`examples/materialization_runtime.py`](../../examples/materialization_runtime.py) is the end-to-end workflow. It builds a real `Model` and immutable `Design`, captures a retained input snapshot, serializes and saves a `SavedPlan` bound to a destination, runs it through the owner resolver and snapshot authority, then queries the exact returned generation:
 
 ```console
 uv run python examples/materialization_runtime.py
 ```
 
-The example publishes per-user one-day event totals and an effective-dated tier from a local DuckDB source, then verifies each exact-receipt result against a fresh ordinary `compile_columns` rebuild of the same Model/Design and source state. It then inserts an event and corrects the effective-dated tier, captures a new retained snapshot, saves a new recipe against the first generation, and queries that second receipt. The totals change from `3, 4` to `8, 4`, and the tier changes from `gold` to `silver`; the first receipt remains bound to its original generation. Saved Design recipes use the production `DesignExecutor`; no application-specific aggregation executor is involved in this example.
+The example publishes per-user one-day event totals and an effective-dated tier from a local DuckDB source, then verifies each exact-receipt result against a fresh `design.build(model).materialize(budget)` of the same Model/Design and source state. It then inserts an event and corrects the effective-dated tier, captures a new retained snapshot, saves a new plan against the first generation, and queries that second receipt. The totals change from `3, 4` to `8, 4`, and the tier changes from `gold` to `silver`; the first receipt remains bound to its original generation. Saved plans use the production `DesignExecutor`; no application-specific aggregation executor is involved in this example.
 
 In the example Catalog, the `tier` property references the `history` dimension, whose `starts` and `ends` columns define validity intervals in `user_tier`. The Design requests `"tier": asof("tier", before="0s")`, so the attribute is taken strictly before the anchor from the effective-dated event history. Updating those dimension rows requires a new retained snapshot just as inserting an event does. The example reopens the first receipt after publishing the correction and checks that its original rows are unchanged.
 
-For lower-level planning, `dependency_graph(model, design, partitions=...)` and `plan_refresh(...)` are metadata-only. A manually supplied `snapshot_id` is only an identity label; it does not freeze source rows. Persist and execute a saved recipe tied to `SnapshotAuthority.capture` when source inputs must be retained and reopened across partitions, retries, or process restarts. Saved recipes contain no live connection, relation handle, or credentials.
+For lower-level planning, `dependency_graph(model, design, partitions=...)` and `plan_refresh(...)` are metadata-only. A manually supplied `snapshot_id` is only an identity label; it does not freeze source rows. Persist and execute a saved plan tied to `SnapshotAuthority.capture` when source inputs must be retained and reopened across partitions, retries, or process restarts. Saved plans contain no live connection, relation handle, or credentials.
+
+`SavedPlan` lives in `terrine.runtime.saved_plan` and is also exported from
+`terrine.runtime`. Its serialized reconstruction binds `dataset_definition_json`
+and `plan_hash`; `restore_dataset_definition()` returns the saved dataset
+construction. The canonical runtime `PlanDefinition` is available as
+`RefreshPlan.definition`, including the fingerprint used for scan authorization.
+Owner preparation accepts `PlanRequest.dataset_definition` and persists the
+complete saved plan as `PlanInvocation.saved_plan_json`.
+
+Saved-plan envelopes with missing, unknown or superseded fields refuse with
+`terrine.runtime.saved_plan_mismatch`, even when the recognized fields carry a
+valid checksum. Prepare a fresh invocation rather than editing serialized names. Superseded
+owner request fields refuse with `terrine.runtime.plan_request_invalid` instead
+of silently dropping the training/scoring view. Manifest envelopes have their
+own `terrine.dataset.invalid_manifest` refusal; [definition persistence](ml-staging.md#reopening-a-pinned-dataset)
+describes which bare definitions remain readable.
 
 A destination reference identifies `(database, schema, dataset)` for request-key isolation. It is not a provisioning command: arrange the customer-owned database and schema through the application before starting the owner. The owner uses its configured connection and namespace; do not put a connection string or secret in a plan or request key.
 
@@ -45,7 +69,7 @@ invalidation contract, and re-anchored additive metrics require event-resolution
 prefixes rather than assuming calendar alignment.
 
 Approximate quantile sidecars remain available only through ordinary Frame
-materialization. Dataset staging, owner planning and saved recipes refuse them
+materialization. Dataset staging, owner planning and saved plans refuse them
 with `terrine.runtime.sketch_sidecar_unavailable` before source validation or
 snapshot capture; use exact quantiles for retained runtime outputs.
 
@@ -79,9 +103,9 @@ unknown costs remain explicit warnings, not an implicit scan limit.
 
 Before any task source callback, the executor must implement
 `ScanAuthorizingExecutor.authorize_scan(plan)` and return
-`ScanAuthorization(plan.recipe.fingerprint)` only after verifying the saved
+`ScanAuthorization(plan.definition.fingerprint)` only after verifying the saved
 evidence against its actual retained inputs and read/cap implementation.
-A fingerprint verifies the recipe, not the truth of a backend claim. Missing
+A fingerprint verifies the plan definition, not the truth of a backend claim. Missing
 authorization refuses with `terrine.budget.scan_authority_unavailable`.
 Ordinary Model/Design callers do not supply numeric proofs; capable owner
 adapters derive and enforce them. Declared attempt limits are persisted before
@@ -97,10 +121,10 @@ or limiting output does not turn their size into a scan bound.
 
 Runtime plan schema **2** fingerprints cost evidence, forecast fields, attempt
 limits, budget, publication preconditions, and the reconstruction identity when
-bound to a saved Model/Design recipe. Schema 1 is explicitly rejected; replan
-older recipes rather than silently upgrading absent evidence. Use
+bound to a saved Model/Design plan. Schema 1 is explicitly rejected; replan
+older plans rather than silently upgrading absent evidence. Use
 `plan.bind_base_manifest(generation)` when binding publication preconditions
-without a saved Model/Design recipe.
+without a saved Model/Design plan.
 
 `get_run(...).cost` separately reports observed completed-task artifact rows
 and bytes, intermediate artifact bytes, and durable attempt counts. When
@@ -145,7 +169,7 @@ terrine cancel RUN_ID
 
 `plan` verifies the serialized plan version/fingerprint at the owner and emits its canonical serialization. `run` sends the plan to the owner; it never opens the owner's DuckDB file. A request key is optional for a one-off run. If present, it must be paired with all destination fields. The owner binds that key to the canonical plan fingerprint and destination: replaying the same pair returns the existing run, while changing its plan is refused. The same key may name a different destination without aliasing the prior run. Use a new key after an intentional source correction or definition change.
 
-For saved recipes, the durable request fingerprint includes the complete reconstruction recipe: the owner Model reference and its Catalog, roster, readiness and event-ID bindings, Design, destination, retained snapshot, and expected base manifest. Changing any binding is a different request even after the original run has finished; terminal replay verifies that identity without requiring the resolver or snapshot artifact to remain available.
+For saved plans, the durable request fingerprint includes the complete reconstruction definition: the owner Model reference and its Catalog, roster, readiness and event-ID bindings, Design, destination, retained snapshot, and expected base manifest. Changing any binding is a different request even after the original run has finished; terminal replay verifies that identity without requiring the resolver or snapshot artifact to remain available.
 
 Status, event pages, and cancellation are projections of durable owner state. Event cursors are exclusive and pages bounded. Endpoint availability is tied to the owner process: after a crash, wait until a recovery owner can reacquire the DuckDB database and reconcile before querying again. A cancellation request is durable but does not prove that an active backend query or its billing stopped. A stale heartbeat means liveness is unknown, not that a run is safely terminal.
 
@@ -179,6 +203,11 @@ exporter errors and stalls cannot change run results or block the owner.
 
 ## Query the exact published generation
 
+For direct programmatic execution, `terrine.runtime.run_plan` takes the immutable
+plan, owner state `con`, `namespace`, `request_key`, `destination` and `executor`,
+and returns a `RunReceipt`. The saved-plan example above supplies the retained
+input and reconstruction bindings for the Model/Design workflow.
+
 Use the returned `RunReceipt`, not the current dataset manifest, when reading results. The API checks the authoritative run receipt and opens only its pinned generation and recorded result partitions:
 
 ```python
@@ -190,7 +219,7 @@ result = published.execute()
 
 The receipt remains bound to its generation after a later run advances the current manifest. Do not guess internal table names or query the manifest as a substitute for the receipt.
 
-Use `open_published_frame(receipt, con=owner_connection, namespace=namespace)` for a materialized Frame with its compiled column metadata and original Arrow schema, including `StatePanel` duration columns. A Design has one combined published frame per partition even when its expressions depend on several sources. Named Design mappings use canonical name order, so saved recipes and ordinary materialization retain the same column metadata.
+Use `open_published_frame(receipt, con=owner_connection, namespace=namespace)` for a materialized Frame with its compiled column metadata and original Arrow schema, including `StatePanel` duration columns. A Design has one combined published frame per partition even when its expressions depend on several sources. Named Design mappings use canonical name order, so saved plans and ordinary materialization retain the same column metadata.
 
 The lazy `open_published_generation` relation restores duration columns as Ibis intervals with their recorded units, so expressions such as `published.t0 + published.gap` retain timestamp-arithmetic semantics. DuckDB/Ibis cannot express nanosecond intervals: only that lazy-read variant is refused with `terrine.runtime.lazy_duration_unsupported`. Use `open_published_frame` (or the backend's `read_partition`) to retain exact nanosecond durations in Arrow instead.
 
@@ -200,7 +229,7 @@ When an operator declares a correction, capture or identify the corrected source
 
 Effective-dated attribute corrections and roster exits or re-entries are source changes too: they can change output rows without changing fact-table totals. Nested `event_time(..., relative_to=...)` selectors can depend on corrections outside an aggregate's window around `t0`; refresh their dependent outputs rather than limiting change evidence to that aggregate window. The runtime correction matrix compares complete published rows and column metadata with ordinary Frame materialization, including these cases and a two-period `StatePanel`.
 
-That comparison also covers stable `EventAnchor(..., "each")` identities after removal, input schema widening, incomplete-to-complete readiness, panel baseline attributes, and corrected absorbing terminal histories. Every corrected saved request is replayed without re-executing its tasks. Published provenance names the exact retained input generations, and retained prefix outputs are checked when one aggregate window changes while another remains unaffected. A fresh process can reconstruct and execute a previously saved Model/Design recipe even after live facts change. If any retained input artifact changes after partial task completion, execution refuses the artifact and publishes no generation; live fact, dimension, and roster mutations do not change a valid retained artifact.
+That comparison also covers stable `EventAnchor(..., "each")` identities after removal, input schema widening, incomplete-to-complete readiness, panel baseline attributes, and corrected absorbing terminal histories. Every corrected saved request is replayed without re-executing its tasks. Published provenance names the exact retained input generations, and retained prefix outputs are checked when one aggregate window changes while another remains unaffected. A fresh process can reconstruct and execute a previously saved Model/Design plan even after live facts change. If any retained input artifact changes after partial task completion, execution refuses the artifact and publishes no generation; live fact, dimension, and roster mutations do not change a valid retained artifact.
 
 An authoritative empty revision change set produces a no-change refresh. The built-in executor records that run against its expected current publication without creating an empty generation: exact result selection, column metadata, and the publication's original retained input binding remain unchanged.
 
@@ -214,3 +243,53 @@ An authoritative empty revision change set produces a no-change refresh. The bui
 - The runtime does not collect or send customer rows, raw SQL, request keys, credentials, or raw backend errors to a hosted service. Status/events remain local authoritative state; telemetry, when configured by an application, is only a best-effort projection.
 
 These are materialization orchestration and publication guarantees, not a promise that every study design or source backend has a built-in incremental compiler. The executor owns that translation and must retain the same-snapshot equivalence required by its workload.
+
+## Owned inputs for repeated builds
+
+Ordinary native builds use one private transaction without taking over a caller
+transaction. For a stable, runtime-owned copy of the complete input frontier,
+use `publish_native_inputs`. Given an open Model connection and Design:
+
+```python
+from terrine.execution import publish_native_inputs
+
+with publish_native_inputs(model.catalog, con=con, units=model.units) as stored:
+    binding = model.catalog.verify_immutable_inputs(
+        stored.con, units=model.units, relations=stored.relations
+    )
+    pinned = tr.Model.from_catalog(
+        model.catalog,
+        con=stored.con,
+        units=model.units,
+        readiness=model.readiness.sources,
+        event_ids=model.event_ids,
+        input_binding=binding,
+    )
+    result = design.build(pinned).materialize(budget)
+```
+
+Keep the publication open for new builds. An execution already holding a lease
+can finish after owner closure; later builds refuse. The managed artifact is
+read-only and cleaned up after the last lease. A stored SQL root substitutes its
+whole result, not a fresh query against mutable upstream tables.
+
+Ordinary DuckDB builds require a dedicated native connection with no active
+caller transaction or unresolved TEMP inputs. Explicit publication can capture
+admitted owner-local TEMP roots. For ambiguous partial names, declare fully
+qualified source SQL such as `SELECT * FROM "analytics"."main"."events"`.
+Owner-staged named tables are the route for unproven functions or data-dependent
+schema inference. Explicit single-root file-reader capture is available through
+publication; arbitrary side-effecting queries are not admitted.
+
+A Model pins its admitted relation definitions and schemas. Rebind after a
+schema or view-definition change; ordinary row updates are captured at safe
+execution.
+
+Concurrent exports from one Model coordinate shared-origin metadata and setup;
+their private snapshot queries remain independent. Do not use the origin
+connection externally during setup or capture. SQL retains the caller's timezone,
+while exported anchor timestamps preserve their instants in UTC Arrow columns.
+
+These are local execution identities, not portable snapshot/replay certificates.
+Ordinary source generations and snapshot IDs remain unknown; managed copies have
+issued generations, while replay equivalence is still `unverified`.
