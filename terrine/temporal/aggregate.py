@@ -19,6 +19,7 @@ from terrine.backends.numeric import (
     EXACT_OVERFLOW as _EXACT_OVERFLOW,
 )
 from terrine.backends.numeric import (
+    _scaled_text,
     exact_is_nonfinite,
     exact_literal,
     exact_ratio,
@@ -200,41 +201,13 @@ class _Quantity:
     exponent: str | None = None
 
 
-def _scaled_text(coefficient, scale: int):
-    text = coefficient.cast("string")
-    if scale == 0:
-        return text
-    sign = text.startswith("-").ifelse("-", "")
-    digits = text.replace("-", "")
-    digits = digits.lpad(greatest(digits.length(), scale + 1), "0")
-    return (
-        sign
-        + digits.substr(0, digits.length() - scale)
-        + "."
-        + digits.substr(digits.length() - scale)
-    )
-
-
 def narrow_exact(coefficient, scale: int, target: str | dt.DataType):
     """Convert an exact coefficient to ``target``; NULL when it does not fit.
 
     PostgreSQL and Snowflake lower TRY_CAST to an ordinary CAST that fails on
     overflow, so the range is checked on the exact coefficient before casting.
     """
-    text = _scaled_text(coefficient, scale)
-    if current_dialect().name not in {"postgres", "snowflake"}:
-        return text.try_cast(target)
-    target_type = dt.dtype(target)
-    if isinstance(target_type, dt.SignedInteger):
-        bits = target_type.nbytes * 8
-        low, high = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
-    elif isinstance(target_type, dt.Decimal) and target_type.precision is not None:
-        low, high = -(10**target_type.precision) + 1, 10**target_type.precision - 1
-    else:
-        # An unbounded NUMERIC target cannot overflow.
-        return text.cast(target_type)
-    fits = (coefficient >= exact_literal(low)) & (coefficient <= exact_literal(high))
-    return fits.ifelse(text.cast(target_type), ibis.null().cast(target_type))
+    return current_dialect(coefficient).narrow_exact(coefficient, scale, target)
 
 
 def _aligned(timestamp, minutes: int):

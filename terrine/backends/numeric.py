@@ -22,6 +22,7 @@ import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
 from terrine.backends.dialect import Dialect, current_dialect, dialect_for_name
+from terrine.backends.extrema import greatest
 from terrine.backends.registry import ENGINES
 from terrine.errors import RefusalSpec
 
@@ -93,6 +94,41 @@ def coefficient_bounds(value: ir.Value) -> tuple[int, int]:
     ``NUMBER(p, 0)`` columns beyond int64 resolve as ``decimal(p, 0)``.
     """
     return current_dialect(value).coefficient_bounds(value)
+
+
+def _scaled_text(coefficient, scale: int):
+    text = coefficient.cast("string")
+    if scale == 0:
+        return text
+    sign = text.startswith("-").ifelse("-", "")
+    digits = text.replace("-", "")
+    digits = digits.lpad(greatest(digits.length(), scale + 1), "0")
+    return (
+        sign
+        + digits.substr(0, digits.length() - scale)
+        + "."
+        + digits.substr(digits.length() - scale)
+    )
+
+
+def _checked_narrow_exact(
+    coefficient: ir.Value, scale: int, target: str | dt.DataType, dialect: Dialect
+) -> ir.Value:
+    """Check exact coefficient bounds where TRY_CAST would be an ordinary CAST."""
+    text = _scaled_text(coefficient, scale)
+    target_type = dt.dtype(target)
+    if isinstance(target_type, dt.SignedInteger):
+        bits = target_type.nbytes * 8
+        low, high = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
+    elif isinstance(target_type, dt.Decimal) and target_type.precision is not None:
+        low, high = -(10**target_type.precision) + 1, 10**target_type.precision - 1
+    else:
+        # An unbounded NUMERIC target cannot overflow.
+        return text.cast(target_type)
+    lower = ibis.literal(str(low)).cast(dialect.exact_type())
+    upper = ibis.literal(str(high)).cast(dialect.exact_type())
+    fits = (coefficient >= lower) & (coefficient <= upper)
+    return fits.ifelse(text.cast(target_type), ibis.null().cast(target_type))
 
 
 def _decimal_parts(

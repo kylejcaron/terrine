@@ -12,7 +12,9 @@ import sqlglot.expressions as sge
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE, _SNAPSHOT_UNAVAILABLE
 from terrine.backends.dialect import Dialect
+from terrine.backends.numeric import _checked_narrow_exact
 from terrine.backends.registry import supported_engine_route
+from terrine.backends.timestamps import _UNSUPPORTED, _epoch
 from terrine.errors import RefusalSpec
 
 _EXACT = dt.Unknown(raw_type=sge.DataType.build("NUMERIC", dialect="postgres"))
@@ -56,6 +58,62 @@ def _quotient(value, divisor):
 
 def _exact_text(text: str) -> ir.Value:
     return ibis.literal(text).cast(_EXACT)
+
+
+@ibis.udf.scalar.builtin(
+    name="timezone", signature=((dt.string, dt.Timestamp(timezone="UTC")), dt.timestamp)
+)
+def _utc_naive(zone, timestamp):
+    """Remove a timestamp's zone explicitly in UTC, independent of session timezone."""
+
+
+@ibis.udf.scalar.builtin(
+    name="timezone", signature=((dt.string, dt.timestamp), dt.Timestamp(timezone="UTC"))
+)
+def _utc_aware(zone, timestamp):
+    """Attach UTC explicitly to a naive UTC wall-clock value."""
+
+
+@ibis.udf.scalar.builtin(
+    name="extract",
+    database="pg_catalog",
+    signature=((dt.string, dt.Timestamp(timezone="UTC")), dt.Decimal(38, 6)),
+)
+def _pg_extract(field, value):
+    """PostgreSQL's numeric field extraction; see ``_pg_epoch_seconds`` for epoch."""
+
+
+# PostgreSQL's epoch extraction is exact only while the instant's Unix microseconds
+# fit BIGINT (until about year 294247); later timestamps, valid through 294276,
+# round. Those are shifted back by a whole number of hours, which needs no time
+# zone, extracted exactly, and shifted forward again in NUMERIC.
+_PG_LATE_YEAR = 290_000
+_PG_SHIFT_HOURS = 100_000_000
+
+
+def _pg_epoch_seconds(value: ir.TimestampValue) -> ir.DecimalValue:
+    """Exact NUMERIC seconds since the Unix epoch for a finite PostgreSQL timestamp."""
+    year = cast(ir.NumericColumn, _pg_extract("year", value))
+    late = cast(ir.BooleanValue, year >= _PG_LATE_YEAR)
+    shifted = cast(ir.TimestampValue, value - ibis.interval(hours=_PG_SHIFT_HOURS))
+    return cast(
+        ir.DecimalValue,
+        late.ifelse(
+            cast(ir.DecimalValue, _pg_extract("epoch", shifted)) + _PG_SHIFT_HOURS * 3600,
+            _pg_extract("epoch", value),
+        ),
+    )
+
+
+@ibis.udf.scalar.builtin(name="trunc", signature=((dt.Decimal(38, 6),), dt.Decimal(38, 0)))
+def _pg_trunc(value):
+    """PostgreSQL NUMERIC truncation toward zero."""
+
+
+@ibis.udf.scalar.builtin(name="isfinite")
+def _timestamp_isfinite(value) -> bool:
+    """Native timestamp finiteness predicate."""
+    raise NotImplementedError
 
 
 class PostgresDialect(Dialect):
@@ -128,6 +186,58 @@ class PostgresDialect(Dialect):
     ) -> ir.IntegerValue:
         quotient = _quotient(value, divisor)
         return cast(ir.IntegerValue, cast(ir.IntegerValue, quotient).cast(dt.int64))
+
+    def timestamp_is_finite(self, value: ir.TimestampValue) -> ir.BooleanValue:
+        return cast(ir.BooleanValue, _timestamp_isfinite(value))
+
+    def utc_wall_clock(self, value: ir.Value) -> ir.TimestampValue:
+        return cast(ir.TimestampValue, _utc_naive("UTC", value))
+
+    def utc_instant(self, value: ir.Value) -> ir.TimestampValue:
+        return cast(ir.TimestampValue, _utc_aware("UTC", value))
+
+    def timestamp_text(self, value: ir.TimestampValue) -> ir.StringValue:
+        return value.cast(dt.string)
+
+    def timestamp_parts(
+        self, value: ir.TimestampValue
+    ) -> tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue]:
+        dtype = value.type()
+        if not isinstance(dtype, dt.Timestamp) or dtype.scale not in (None, 6):
+            raise _UNSUPPORTED.error(dtype=str(dtype))
+        finite = self.timestamp_is_finite(value)
+        epoch = _epoch(dtype)
+        epoch_seconds = _pg_epoch_seconds(cast(ir.TimestampValue, finite.ifelse(value, epoch)))
+        # Split before narrowing: whole seconds fit BIGINT for every PostgreSQL
+        # timestamp, while the full microsecond coefficient does not.
+        whole = cast(ir.DecimalValue, _pg_trunc(epoch_seconds))
+        seconds = cast(ir.IntegerValue, whole.cast(dt.int64))
+        nanos = cast(ir.IntegerValue, ((epoch_seconds - whole) * 10**6).cast(dt.int64)) * 1000
+        zero = ibis.literal(0, type=dt.int64)
+        rank = finite.ifelse(zero, (value < epoch).ifelse(ibis.literal(-1), ibis.literal(1)))
+        missing = value.isnull()
+
+        def part(expression: ir.Value) -> ir.IntegerValue:
+            return cast(
+                ir.IntegerValue, missing.ifelse(ibis.null(dt.int64), expression.cast(dt.int64))
+            )
+
+        return (
+            part(rank),
+            part(finite.ifelse(seconds, zero)),
+            part(finite.ifelse(nanos, zero)),
+        )
+
+    def timestamp_order_key(self, value: ir.TimestampValue) -> ir.Value:
+        dtype = value.type()
+        if not isinstance(dtype, dt.Timestamp) or dtype.scale not in (None, 6):
+            raise _UNSUPPORTED.error(dtype=str(dtype))
+        return value
+
+    def narrow_exact(
+        self, coefficient: ir.Value, scale: int, target: str | dt.DataType
+    ) -> ir.Value:
+        return _checked_narrow_exact(coefficient, scale, target, self)
 
 
 def raw_connection(con: Any) -> Any:

@@ -10,15 +10,19 @@ import sqlglot.expressions as sge
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE
 from terrine.backends.dialect import Dialect
 from terrine.backends.numeric import (
+    _checked_narrow_exact,
     _scaled_exact_to_float,
     _scaled_float_parts,
     _scaled_float_result,
 )
 from terrine.backends.registry import ENGINES, supported_engine_route
+from terrine.backends.timestamps import _UNSUPPORTED, _epoch
 
 # Sums and differences beyond 38 digits remain exact-overflow query errors.
 _EXACT = dt.Decimal(38, 0)
 _DECFLOAT = dt.Unknown(raw_type=sge.DataType.build("DECFLOAT", dialect="snowflake"))
+# Explicit formatting retains all digits independently of session output formats.
+_TEXT_FORMAT = "YYYY-MM-DD HH24:MI:SS.FF9"
 
 
 @ibis.udf.scalar.builtin(name="ltrim", signature=((dt.string, dt.string), dt.string))
@@ -41,6 +45,40 @@ def _try_number(text, precision, scale):
 def _try_double(text):
     """Snowflake binary64 from decimal text, correctly rounded (measured on halfway,
     subnormal and 19-digit near-halfway cases); NULL beyond binary64's range."""
+
+
+@ibis.udf.scalar.builtin(
+    name="convert_timezone",
+    signature=((dt.string, dt.Timestamp(timezone="UTC")), dt.Timestamp(timezone="UTC")),
+)
+def _sf_in_zone(zone, timestamp):
+    """A Snowflake TIMESTAMP_TZ re-expressed in a zone; the instant is unchanged."""
+
+
+@ibis.udf.scalar.builtin(
+    name="to_timestamp_ntz", signature=((dt.Timestamp(timezone="UTC"),), dt.timestamp)
+)
+def _sf_wall_clock(timestamp):
+    """A Snowflake TIMESTAMP_TZ's wall clock in its own offset, as TIMESTAMP_NTZ."""
+
+
+@ibis.udf.scalar.builtin(
+    name="to_timestamp_tz", signature=((dt.timestamp,), dt.Timestamp(timezone="UTC"))
+)
+def _sf_instant(timestamp):
+    """A TIMESTAMP_NTZ read in the session zone, which execution requires to be UTC."""
+
+
+@ibis.udf.scalar.builtin(name="to_varchar", signature=((dt.timestamp, dt.string), dt.string))
+def _sf_naive_text(timestamp, format):
+    """A Snowflake TIMESTAMP_NTZ rendered in an explicit format."""
+
+
+@ibis.udf.scalar.builtin(
+    name="to_varchar", signature=((dt.Timestamp(timezone="UTC"), dt.string), dt.string)
+)
+def _sf_aware_text(timestamp, format):
+    """A Snowflake TIMESTAMP_TZ or TIMESTAMP_LTZ rendered in an explicit format."""
 
 
 class SnowflakeDialect(Dialect):
@@ -111,6 +149,55 @@ class SnowflakeDialect(Dialect):
         # Remove the signed remainder before Snowflake's rounded division.
         quotient = (value - value % divisor) / divisor
         return cast(ir.IntegerValue, cast(ir.IntegerValue, quotient).cast(dt.int64))
+
+    def timestamp_is_finite(self, value: ir.TimestampValue) -> ir.BooleanValue:
+        return cast(ir.BooleanValue, ibis.literal(True))
+
+    def timestamp_extremes(
+        self, dtype: dt.Timestamp
+    ) -> tuple[ir.TimestampScalar, ir.TimestampScalar]:
+        digits = dtype.scale if dtype.scale is not None else 9
+        high = "9999-12-31 23:59:59." + "9" * digits
+        return (
+            cast(ir.TimestampScalar, ibis.literal("0001-01-01 00:00:00").cast(dtype)),
+            cast(ir.TimestampScalar, ibis.literal(high).cast(dtype)),
+        )
+
+    def utc_wall_clock(self, value: ir.Value) -> ir.TimestampValue:
+        # A plain cast keeps the value's stored offset; re-express it in UTC first.
+        return cast(ir.TimestampValue, _sf_wall_clock(_sf_in_zone("UTC", value)))
+
+    def utc_instant(self, value: ir.Value) -> ir.TimestampValue:
+        return cast(ir.TimestampValue, _sf_instant(value))
+
+    def timestamp_text(self, value: ir.TimestampValue) -> ir.StringValue:
+        if cast(dt.Timestamp, value.type()).timezone is None:
+            return cast(ir.StringValue, _sf_naive_text(value, _TEXT_FORMAT))
+        return cast(ir.StringValue, _sf_aware_text(value, _TEXT_FORMAT + " TZHTZM"))
+
+    def timestamp_parts(
+        self, value: ir.TimestampValue
+    ) -> tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue]:
+        """Split exact NUMBER(38, 0) epoch nanoseconds into seconds and signed remainder."""
+        dtype = value.type()
+        if not isinstance(dtype, dt.Timestamp):
+            raise _UNSUPPORTED.error(dtype=str(dtype))
+        coefficient = value.delta(_epoch(dtype), unit="nanosecond")
+        seconds = self.truncating_quotient(coefficient, 10**9)
+        nanos = cast(ir.IntegerValue, (coefficient - seconds * 10**9).cast(dt.int64))
+        rank = value.isnull().ifelse(ibis.null(dt.int64), ibis.literal(0, type=dt.int64))
+        return cast(ir.IntegerValue, rank), seconds, nanos
+
+    def timestamp_order_key(self, value: ir.TimestampValue) -> ir.Value:
+        dtype = value.type()
+        if not isinstance(dtype, dt.Timestamp):
+            raise _UNSUPPORTED.error(dtype=str(dtype))
+        return value
+
+    def narrow_exact(
+        self, coefficient: ir.Value, scale: int, target: str | dt.DataType
+    ) -> ir.Value:
+        return _checked_narrow_exact(coefficient, scale, target, self)
 
 
 def identify(con: Any) -> None:

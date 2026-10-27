@@ -148,3 +148,24 @@ def test_postgres_identity_preserves_invalid_driver_refusal():
     for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
         assert restored.code == error.value.code
         assert restored.context == error.value.context
+
+
+@pytest.mark.parametrize(
+    "operation", ["utc_wall_clock", "utc_instant", "timestamp_is_finite", "timestamp_text"]
+)
+def test_timestamp_default_refusals_keep_operation_context(operation):
+    value = ibis.literal("2025-01-01 00:00:00", type=dt.Timestamp(scale=6))
+    with pytest.raises(TerrineError) as caught:
+        getattr(dialect_for_name("unregistered"), operation)(value)
+    error = caught.value
+    assert error.code == "terrine.backend.capability_unavailable"
+    assert {key: item for key, item in error.context.items() if key != "route"} == {
+        "backend": "unregistered",
+        "operation": operation,
+        "status": "unsupported",
+    }
+    with pytest.raises(TypeError):
+        error.context["status"] = "verified"  # ty: ignore[invalid-assignment]
+    for restored in (copy.deepcopy(error), pickle.loads(pickle.dumps(error))):
+        assert restored.code == error.code
+        assert restored.context == error.context

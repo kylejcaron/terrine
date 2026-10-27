@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import cast
-
 import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
@@ -11,10 +9,8 @@ import ibis.expr.types as ir
 from terrine.backends.dialect import current_dialect
 from terrine.backends.joins import asof_join
 from terrine.backends.timestamps import (
-    _struct_key,
     lossless_timestamp,
     timestamp_order_key,
-    timestamp_parts,
 )
 from terrine.data import ColumnMeta
 from terrine.errors import RefusalSpec
@@ -62,27 +58,7 @@ def _lossless(table: ibis.Table, *columns: str) -> ibis.Table:
 
 def _reverse_time_key(value: ir.TimestampValue) -> ir.Value:
     """A key whose ascending order is the instants' descending order."""
-    dialect = current_dialect(value).name
-    if dialect in {"postgres", "bigquery", "snowflake"}:
-        # One exact scalar: finite instants' nanoseconds stay far below 10**38.
-        rank, seconds, nanos = timestamp_parts(value, backend=dialect)
-        wide = dt.Decimal(38, 0)
-        billion = cast(ir.DecimalValue, ibis.literal(10**9, type=wide))
-        rank_weight = cast(ir.DecimalValue, ibis.literal(10**23, type=wide))
-        coordinate = cast(ir.DecimalValue, seconds.cast(wide)) * billion + cast(
-            ir.DecimalValue, nanos.cast(wide)
-        )
-        return cast(ir.DecimalValue, ibis.literal(0, type=wide)) - (
-            cast(ir.DecimalValue, rank.cast(wide)) * rank_weight + coordinate
-        )
-    key = _struct_key(value)
-    return ibis.struct(
-        {
-            "rank": -cast(ir.IntegerValue, key["rank"]),
-            "seconds": -cast(ir.IntegerValue, key["seconds"]),
-            "nanos": -cast(ir.IntegerValue, key["nanos"]),
-        }
-    )
+    return current_dialect(value).reverse_time_key(value)
 
 
 def first_occurrence(

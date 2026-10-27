@@ -15,9 +15,11 @@ from terrine.backends.numeric import (
     _scaled_float_result,
 )
 from terrine.backends.registry import supported_engine_route
+from terrine.backends.timestamps import _UNSUPPORTED, _epoch
 
 _EXACT = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
 _HUGE = dt.Unknown(raw_type=sge.DataType.build("HUGEINT", dialect="duckdb"))
+_KEY = dt.Struct.from_tuples((("rank", dt.int8), ("seconds", dt.int64), ("nanos", dt.int64)))
 
 
 @ibis.udf.scalar.builtin(name="divide", signature=((_HUGE, _HUGE), _HUGE))
@@ -53,6 +55,26 @@ def _quotient(value, divisor):
 @ibis.udf.scalar.builtin(name="isfinite", signature=((dt.float64,), dt.boolean))
 def _isfinite(value):
     """Native finite-state predicate."""
+
+
+@ibis.udf.scalar.builtin(
+    name="timezone", signature=((dt.string, dt.Timestamp(timezone="UTC")), dt.timestamp)
+)
+def _utc_naive(zone, timestamp):
+    """Remove a timestamp's zone explicitly in UTC, independent of session timezone."""
+
+
+@ibis.udf.scalar.builtin(
+    name="timezone", signature=((dt.string, dt.timestamp), dt.Timestamp(timezone="UTC"))
+)
+def _utc_aware(zone, timestamp):
+    """Attach UTC explicitly to a naive UTC wall-clock value."""
+
+
+@ibis.udf.scalar.builtin(name="isfinite")
+def _timestamp_isfinite(value) -> bool:
+    """Native timestamp finiteness predicate."""
+    raise NotImplementedError
 
 
 class DuckDBDialect(Dialect):
@@ -118,6 +140,73 @@ class DuckDBDialect(Dialect):
 
     def float_is_finite(self, value: ir.Value) -> ir.BooleanValue:
         return cast(ir.BooleanValue, _isfinite(value))
+
+    def timestamp_is_finite(self, value: ir.TimestampValue) -> ir.BooleanValue:
+        return cast(ir.BooleanValue, _timestamp_isfinite(value))
+
+    def utc_wall_clock(self, value: ir.Value) -> ir.TimestampValue:
+        return cast(ir.TimestampValue, _utc_naive("UTC", value))
+
+    def utc_instant(self, value: ir.Value) -> ir.TimestampValue:
+        return cast(ir.TimestampValue, _utc_aware("UTC", value))
+
+    def timestamp_text(self, value: ir.TimestampValue) -> ir.StringValue:
+        return value.cast(dt.string)
+
+    def timestamp_parts(
+        self, value: ir.TimestampValue
+    ) -> tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue]:
+        key = self.timestamp_order_key(value)
+        return (
+            cast(ir.IntegerValue, key["rank"]),
+            cast(ir.IntegerValue, key["seconds"]),
+            cast(ir.IntegerValue, key["nanos"]),
+        )
+
+    def timestamp_order_key(self, value: ir.TimestampValue) -> ir.StructValue:
+        """Order signed seconds/remainders, with infinity ranks and a NULL struct."""
+        dtype = value.type()
+        if not isinstance(dtype, dt.Timestamp):
+            raise _UNSUPPORTED.error(dtype=str(dtype))
+        scale = dtype.scale if dtype.scale is not None else 6
+        if scale == 9:
+            unit, divisor, multiplier = "nanosecond", 10**9, 1
+        elif scale == 6:
+            unit, divisor, multiplier = "microsecond", 10**6, 1000
+        else:
+            raise _UNSUPPORTED.error(dtype=str(dtype))
+        finite = self.timestamp_is_finite(value)
+        epoch = _epoch(dtype)
+        instant = cast(ir.TimestampValue, finite.ifelse(value, epoch))
+        coefficient = instant.delta(epoch, unit=unit)
+        seconds = self.truncating_quotient(coefficient, divisor)
+        # Ibis renders a nanosecond delta as a bare subtraction, so `delta % n` would
+        # bind as `a - (b % n)`; the remainder is taken by subtraction instead.
+        nanos = (coefficient - seconds * divisor) * multiplier
+        zero = ibis.literal(0)
+        key = ibis.struct(
+            {
+                "rank": finite.ifelse(
+                    zero, (value < epoch).ifelse(ibis.literal(-1), ibis.literal(1))
+                ).cast("int8"),
+                "seconds": finite.ifelse(seconds, zero).cast("int64"),
+                "nanos": finite.ifelse(nanos, zero).cast("int64"),
+            }
+        )
+        return cast(ir.StructValue, value.isnull().ifelse(ibis.null().cast(_KEY), key))
+
+    def reverse_time_key(self, value: ir.TimestampValue) -> ir.Value:
+        key = self.timestamp_order_key(value)
+        return ibis.struct(
+            {
+                "rank": -cast(ir.IntegerValue, key["rank"]),
+                "seconds": -cast(ir.IntegerValue, key["seconds"]),
+                "nanos": -cast(ir.IntegerValue, key["nanos"]),
+            }
+        )
+
+    def bounded_nanoseconds(self, scale: int | None) -> bool:
+        return scale == 9
 
 
 def identify(con: Any) -> None:

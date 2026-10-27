@@ -1,12 +1,51 @@
+from typing import cast
+
 import ibis
+import ibis.expr.datatypes as dt
+import ibis.expr.types as ir
 import pytest
 
+from terrine.backends.dialect import current_dialect, dialect_scope
 from terrine.backends.timestamps import (
     lossless_scale,
     timestamp_parts,
     timestamp_text,
     utc_wall_clock,
 )
+from terrine.errors import TerrineError
+
+
+@pytest.fixture
+def connection():
+    con = ibis.duckdb.connect()
+    try:
+        yield con
+    finally:
+        con.disconnect()
+
+
+def test_explicit_timestamp_backend_overrides_literal_default():
+    dtype = dt.Timestamp(scale=9)
+    value = cast(ir.TimestampValue, ibis.literal("2025-01-01 00:00:00", type=dtype))
+    with dialect_scope("snowflake"), pytest.raises(TerrineError) as caught:
+        timestamp_parts(value, backend="postgres")
+    assert caught.value.code == "terrine.temporal.timestamp_order_unsupported"
+    assert dict(caught.value.context) == {"dtype": str(dtype)}
+
+
+def test_explicit_timestamp_backend_preserves_nested_parts_and_scope(connection):
+    baseline = current_dialect().name
+    value = cast(ir.TimestampValue, ibis.literal("infinity").cast(dt.Timestamp(scale=6)))
+    with dialect_scope("snowflake"):
+        rank, seconds, nanos = timestamp_parts(value, backend="duckdb")
+        assert current_dialect().name == "snowflake"
+        query = (
+            ibis.struct({"rank": rank, "seconds": seconds, "nanos": nanos}).name("parts").as_table()
+        )
+        actual = connection.to_pyarrow(query)["parts"][0].as_py()
+        assert (actual["rank"], actual["seconds"], actual["nanos"]) == (1, 0, 0)
+        assert current_dialect().name == "snowflake"
+    assert current_dialect().name == baseline
 
 
 def _new_york_session():

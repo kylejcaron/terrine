@@ -10,6 +10,7 @@ import sqlglot.expressions as sge
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE
 from terrine.backends.dialect import Dialect
 from terrine.backends.registry import ENGINES, supported_engine_route
+from terrine.backends.timestamps import _UNSUPPORTED, _epoch
 
 # BIGNUMERIC holds integers to about 5.7e38 and 38 fractional digits. Overflow
 # is an error (sums) or NULL (SAFE_ arithmetic), both surfaced as exact_overflow.
@@ -103,6 +104,46 @@ class BigQueryDialect(Dialect):
     ) -> ir.IntegerValue:
         quotient = _quotient(value, divisor)
         return cast(ir.IntegerValue, cast(ir.IntegerValue, quotient).cast(dt.int64))
+
+    def timestamp_is_finite(self, value: ir.TimestampValue) -> ir.BooleanValue:
+        return cast(ir.BooleanValue, ibis.literal(True))
+
+    def timestamp_extremes(
+        self, dtype: dt.Timestamp
+    ) -> tuple[ir.TimestampScalar, ir.TimestampScalar]:
+        return (
+            cast(ir.TimestampScalar, ibis.literal("0001-01-01 00:00:00").cast(dtype)),
+            cast(ir.TimestampScalar, ibis.literal("9999-12-31 23:59:59.999999").cast(dtype)),
+        )
+
+    def utc_wall_clock(self, value: ir.Value) -> ir.TimestampValue:
+        # TIMESTAMP -> DATETIME converts in UTC; terrine's session sets no time zone.
+        return cast(ir.TimestampValue, value.cast(dt.Timestamp()))
+
+    def utc_instant(self, value: ir.Value) -> ir.TimestampValue:
+        return cast(ir.TimestampValue, value.cast(dt.Timestamp(timezone="UTC")))
+
+    def timestamp_text(self, value: ir.TimestampValue) -> ir.StringValue:
+        return value.cast(dt.string)
+
+    def timestamp_parts(
+        self, value: ir.TimestampValue
+    ) -> tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue]:
+        """Finite microsecond instants in years 1-9999 have BIGINT epoch microseconds."""
+        dtype = value.type()
+        if not isinstance(dtype, dt.Timestamp) or dtype.scale not in (None, 6):
+            raise _UNSUPPORTED.error(dtype=str(dtype))
+        micros = value.delta(_epoch(dtype), unit="microsecond")
+        seconds = self.truncating_quotient(micros, 10**6)
+        nanos = cast(ir.IntegerValue, (micros - seconds * 10**6) * 1000)
+        rank = value.isnull().ifelse(ibis.null(dt.int64), ibis.literal(0, type=dt.int64))
+        return cast(ir.IntegerValue, rank), seconds, nanos
+
+    def timestamp_order_key(self, value: ir.TimestampValue) -> ir.Value:
+        dtype = value.type()
+        if not isinstance(dtype, dt.Timestamp) or dtype.scale not in (None, 6):
+            raise _UNSUPPORTED.error(dtype=str(dtype))
+        return value
 
 
 def identify(con: Any) -> None:

@@ -10,11 +10,11 @@ import ibis.expr.types as ir
 from terrine.backends.dialect import current_dialect, dialect_scope
 from terrine.backends.numeric import (
     EXACT_OVERFLOW,
+    _scaled_text,
     exact_literal,
     exact_sum,
     float_is_finite,
 )
-from terrine.backends.timestamps import timestamp_parts
 from terrine.compile.columns import CompiledStudy
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
@@ -22,7 +22,6 @@ from terrine.spec.trajectory import CohortGrouping
 from terrine.temporal.aggregate import (
     _Check,
     _Failure,
-    _scaled_text,
     narrow_exact,
 )
 from terrine.temporal.prefix import FLOAT64_PRECISION
@@ -40,9 +39,7 @@ def compile_cohorts(
 ) -> CompiledStudy:
     """Group an already compiled LTV relation; this function never recompiles a Frame."""
     # Summaries compile after the Design's compile scope ends; use the table's backend.
-    with dialect_scope(
-        current_dialect(*(study.table[name] for name in study.table.columns[:1])).name
-    ):
+    with dialect_scope(current_dialect(*(study.table[name] for name in study.table.columns)).name):
         return _compile_cohorts(study, grouping=grouping, value_column=value_column)
 
 
@@ -58,10 +55,10 @@ def _compile_cohorts(
     if complete_column not in study.table.columns:
         raise _INVALID.error(reason="missing_value_completeness")
     table = study.table
-    _rank, time_seconds, time_nanos = timestamp_parts(table.cohort_time)
+    dialect = current_dialect(table.cohort_time)
+    _rank, time_seconds, time_nanos = dialect.timestamp_parts(table.cohort_time)
     origin = cast(ir.TimestampValue, ibis.literal(grouping.bucket_origin))
-    backend = current_dialect(table.cohort_time).name
-    _origin_rank, origin_seconds, origin_nanos = timestamp_parts(origin, backend=backend)
+    _origin_rank, origin_seconds, origin_nanos = dialect.timestamp_parts(origin)
     elapsed_seconds = time_seconds - origin_seconds
     elapsed_nanos = time_nanos - origin_nanos
     carry = elapsed_nanos // 1_000_000_000

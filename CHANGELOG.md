@@ -17,6 +17,10 @@
   each engine's expression policy. Shared normalization retains the existing
   coefficient bounds, NULL/nonfinite flags, overflow behavior and rounding
   tolerances.
+- Encapsulate timestamp precision, UTC conversion, infinity ordering and exact
+  output narrowing in each engine's expression policy. Explicit timestamp
+  selection also governs nested operations without changing the enclosing
+  expression scope; temporal windows and cohort bucket remainders are unchanged.
 
 ### Tests
 

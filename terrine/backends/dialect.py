@@ -105,6 +105,67 @@ class Dialect:
         ]
         return cast(ir.FloatingValue, value.cast(dt.float64)).notin(nonfinite)
 
+    def timestamp_is_finite(self, value: ir.TimestampValue) -> ir.BooleanValue:
+        raise unavailable("timestamp_is_finite", self.name)
+
+    def timestamp_extremes(
+        self, dtype: dt.Timestamp
+    ) -> tuple[ir.TimestampScalar, ir.TimestampScalar]:
+        return (
+            cast(ir.TimestampScalar, ibis.literal("-infinity").cast(dtype)),
+            cast(ir.TimestampScalar, ibis.literal("infinity").cast(dtype)),
+        )
+
+    def utc_wall_clock(self, value: ir.Value) -> ir.TimestampValue:
+        raise unavailable("utc_wall_clock", self.name)
+
+    def utc_instant(self, value: ir.Value) -> ir.TimestampValue:
+        raise unavailable("utc_instant", self.name)
+
+    def timestamp_text(self, value: ir.TimestampValue) -> ir.StringValue:
+        raise unavailable("timestamp_text", self.name)
+
+    def timestamp_parts(
+        self, value: ir.TimestampValue
+    ) -> tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue]:
+        from terrine.backends.timestamps import _UNSUPPORTED
+
+        dtype = value.type()
+        if not isinstance(dtype, dt.Timestamp) or dtype.scale not in (None, 6, 9):
+            raise _UNSUPPORTED.error(dtype=str(dtype))
+        raise unavailable("timestamp_is_finite", self.name)
+
+    def timestamp_order_key(self, value: ir.TimestampValue) -> ir.Value:
+        from terrine.backends.timestamps import _UNSUPPORTED
+
+        dtype = value.type()
+        if not isinstance(dtype, dt.Timestamp) or dtype.scale not in (None, 6, 9):
+            raise _UNSUPPORTED.error(dtype=str(dtype))
+        raise unavailable("timestamp_is_finite", self.name)
+
+    def reverse_time_key(self, value: ir.TimestampValue) -> ir.Value:
+        # One exact scalar: finite instants' nanoseconds stay far below 10**38.
+        rank, seconds, nanos = self.timestamp_parts(value)
+        wide = dt.Decimal(38, 0)
+        billion = cast(ir.DecimalValue, ibis.literal(10**9, type=wide))
+        rank_weight = cast(ir.DecimalValue, ibis.literal(10**23, type=wide))
+        coordinate = cast(ir.DecimalValue, seconds.cast(wide)) * billion + cast(
+            ir.DecimalValue, nanos.cast(wide)
+        )
+        return cast(ir.DecimalValue, ibis.literal(0, type=wide)) - (
+            cast(ir.DecimalValue, rank.cast(wide)) * rank_weight + coordinate
+        )
+
+    def bounded_nanoseconds(self, scale: int | None) -> bool:
+        return False
+
+    def narrow_exact(
+        self, coefficient: ir.Value, scale: int, target: str | dt.DataType
+    ) -> ir.Value:
+        from terrine.backends.numeric import _scaled_text
+
+        return _scaled_text(coefficient, scale).try_cast(target)
+
 
 @cache
 def _registered_dialect(name: str) -> Dialect:
