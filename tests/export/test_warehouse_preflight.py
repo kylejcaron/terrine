@@ -103,3 +103,24 @@ def test_warehouse_uses_shared_hazard_codes(frame, change, code):
         assert error.value.code == code
     finally:
         con.disconnect()
+
+
+@pytest.mark.parametrize("backend", ["postgres", "bigquery", "snowflake", "unregistered"])
+def test_warehouse_snapshot_refuses_other_backends_before_execution(frame, monkeypatch, backend):
+    class NoQueries:
+        name = backend
+
+        def raw_sql(self, *args, **kwargs):
+            raise pytest.fail.Exception("warehouse export queried an unsupported backend")
+
+    monkeypatch.setattr(ibis, "get_backend", lambda table: NoQueries())
+    with pytest.raises(TerrineError) as caught:
+        with preflight.preflight_warehouse(
+            ibis.table(frame.table.schema),
+            roles=frame.roles,
+            columns=frame.columns,
+            provenance=frame.provenance,
+        ):
+            raise AssertionError("warehouse export accepted an unsupported backend")
+    assert caught.value.code == "terrine.export.snapshot_required"
+    assert dict(caught.value.context) == {}

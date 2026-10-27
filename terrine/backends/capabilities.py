@@ -6,18 +6,16 @@ from dataclasses import dataclass
 
 from terrine.errors import RefusalSpec
 
-__all__ = [
-    "BIGQUERY_CAPABILITIES",
-    "BackendCapabilities",
-    "DUCKDB_CAPABILITIES",
-    "POSTGRES_CAPABILITIES",
-    "SNOWFLAKE_CAPABILITIES",
-    "UNVERIFIED_CAPABILITIES",
-]
+__all__ = ["BackendCapabilities", "UNVERIFIED_CAPABILITIES"]
 
 _CAPABILITY_UNAVAILABLE = RefusalSpec(
     "terrine.backend.capability_unavailable",
     "Backend {backend!r} cannot provide {operation!r}: {status}. {route}",
+)
+
+_SNAPSHOT_UNAVAILABLE = RefusalSpec(
+    "terrine.execution.snapshot_unavailable",
+    "A coherent native execution snapshot is unavailable: {reason}.",
 )
 
 
@@ -42,9 +40,18 @@ class BackendCapabilities:
     # Reading owner-published generations and manifests (Dataset, open_generation).
     runtime_reader: bool | None = None
 
-    def require(self, operation: str, *, backend: str, route: str) -> None:
-        """Refuse only the requested operation when its evidence is absent."""
+    def require(
+        self, operation: str, *, backend: str, route: str, allow_unverified: bool = False
+    ) -> None:
+        """Admit unverified read primitives only with explicit permission."""
         value = getattr(self, operation)
+        if (
+            value is None
+            and allow_unverified
+            and operation
+            in {"dialect_admission", "exact_timestamps", "exact_decimals", "arrow_batches"}
+        ):
+            return
         if value is not True:
             raise _CAPABILITY_UNAVAILABLE.error(
                 backend=backend,
@@ -54,64 +61,4 @@ class BackendCapabilities:
             )
 
 
-DUCKDB_CAPABILITIES = BackendCapabilities(
-    snapshot=False,
-    change_evidence=frozenset(),
-    atomic_manifest_publish=True,
-    scan_estimate=None,
-    cancellation=None,
-    dialect_admission=True,
-    exact_timestamps=True,
-    exact_decimals=True,
-    transaction_view=True,
-    retained_snapshot=True,
-    table_publication=True,
-    arrow_batches=True,
-    runtime_reader=True,
-)
-# Materialization reads one REPEATABLE READ READ ONLY transaction on a private
-# connection. Timestamps are exact at microseconds; runtime staging, retained
-# snapshots and publication stay on DuckDB.
-POSTGRES_CAPABILITIES = BackendCapabilities(
-    snapshot=False,
-    change_evidence=frozenset(),
-    scan_estimate=None,
-    cancellation=None,
-    dialect_admission=True,
-    exact_timestamps=True,
-    exact_decimals=True,
-    transaction_view=True,
-    arrow_batches=True,
-)
-# Materialization reads one snapshot transaction in a private session on a new
-# client. Timestamps are exact at microseconds; staging, retained snapshots and
-# publication stay on DuckDB.
-BIGQUERY_CAPABILITIES = BackendCapabilities(
-    snapshot=False,
-    change_evidence=frozenset(),
-    scan_estimate=None,
-    cancellation=None,
-    dialect_admission=True,
-    exact_timestamps=True,
-    exact_decimals=True,
-    transaction_view=True,
-    arrow_batches=True,
-)
-# Materialization pins every read to one Time Travel instant on the caller's
-# connection (Snowflake isolates per statement, so a transaction would not) and
-# re-verifies relation identity after each read. Timestamps are exact at
-# nanoseconds in SQL (Arrow outputs refuse instants outside 1677-2262);
-# staging, retained snapshots and publication stay on DuckDB. Each verified
-# operation is exercised by the live admission and parity probes.
-SNOWFLAKE_CAPABILITIES = BackendCapabilities(
-    snapshot=False,
-    change_evidence=frozenset(),
-    scan_estimate=None,
-    cancellation=None,
-    dialect_admission=True,
-    exact_timestamps=True,
-    exact_decimals=True,
-    transaction_view=True,
-    arrow_batches=True,
-)
 UNVERIFIED_CAPABILITIES = BackendCapabilities()

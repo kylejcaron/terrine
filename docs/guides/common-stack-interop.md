@@ -76,12 +76,26 @@ conversions to keep them. A compact view is not a reconstructable MaterializedFr
 `terrine.metadata.missing_columns` rather than guessing or reattaching rows.
 
 Arrow stores roles, design/model identities, temporal cutoffs,
-completeness/null-reason references, numeric policies and required bookkeeping
-column names under `terrine.materialized_frame.v2` (payload version 2). Version-1
-Arrow envelopes refuse with `terrine.metadata.unsupported_version`; re-materialize
-the Design with the current Terrine version rather than editing saved metadata.
-Unrelated schema metadata is retained. Neither pandas nor Polars promises to
-retain Terrine schema metadata.
+completeness/null-reason references, numeric policies, the engine stamp and
+required bookkeeping column names under `terrine.materialized_frame.v2`
+(payload version 2). Version-1 Arrow envelopes refuse with
+`terrine.metadata.unsupported_version`; re-materialize the Design with the
+current Terrine version rather than editing saved metadata. Unrelated schema
+metadata is retained. Neither pandas nor Polars promises to retain Terrine
+schema metadata.
+
+The engine stamp (`Provenance.engine_name`, `dialect`, `engine_status`) names
+the backend that executed, the admitted expression policy and whether that
+policy is verified. `engine_name` always equals
+`execution_snapshot.backend`. Payloads saved before the stamp existed carry
+none of the three fields and decode as their recorded verified execution
+dialect; a payload with some fields, a contradictory stamp (a status or
+`engine_name` the registered policy or the execution snapshot does not
+support), or no stamp and an unregistered execution backend refuses with
+`terrine.metadata.invalid_engine_stamp` (`reason` of `partial`, `inconsistent`
+or `unknown_legacy_engine`, plus the present `fields`) rather than reporting
+verified status it cannot establish.
+
 Do not zero-fill unavailable values or discard their reason columns when preparing
 downstream data. `anchor_provenance`, `_observed_from` and `_observed_until` are
 reserved Design output names.

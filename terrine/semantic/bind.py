@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any
 
+from terrine.backends.registry import Engine, expression_dialect, resolve_engine
 from terrine.errors import RefusalSpec, freeze
 from terrine.semantic.models import (
     BoundDimension,
@@ -50,10 +51,10 @@ def _reference(registry: Mapping[str, Any], name: str, label: str):
         raise _MISSING.error(reference=f"{label}:{name}") from exc
 
 
-def _relation(con: Any, relation, dialect: str):
+def _relation(con: Any, relation, dialect: str, *, engine: Engine | None = None):
     from terrine.execution.backend import backend_provider
 
-    provider = backend_provider(con)
+    provider = backend_provider(con, engine=engine)
     if dialect.casefold() != provider.dialect(con):
         raise DIALECT_MISMATCH.error(declared=dialect, execution=provider.dialect(con))
     return provider.resolve_relation(con, relation)
@@ -75,7 +76,9 @@ def _dtype_ok(dtype: Any, expected: str) -> bool:
     return False
 
 
-def _require_exact_type(provider: Any, dialect: str, dtype: Any, column: str) -> None:
+def _require_exact_type(
+    provider: Any, dialect: str, dtype: Any, column: str, engine: Engine
+) -> None:
     operation = (
         "exact_timestamps"
         if dtype.is_timestamp()
@@ -88,6 +91,7 @@ def _require_exact_type(provider: Any, dialect: str, dtype: Any, column: str) ->
             operation,
             backend=dialect,
             route="Use a backend with verified exact source types, or normalize the source type.",
+            allow_unverified=engine.status == "unverified",
         )
     if dtype.is_decimal() and (
         dtype.precision is None or dtype.scale is None or dtype.precision > 38
@@ -101,12 +105,14 @@ def normalize_source(
     source_name: str,
     *,
     resolver: Callable[[RelationSpec], Any] | None = None,
+    engine: Engine | None = None,
 ) -> BoundSource:
     """Bind one source against declared schema metadata without reading rows."""
     boundary_timezone(catalog.day_boundary)
     from terrine.execution.backend import backend_provider
 
-    provider = backend_provider(con)
+    engine = resolve_engine(con) if engine is None else engine
+    provider = backend_provider(con, engine=engine)
     execution_dialect = provider.dialect(con)
     if catalog.dialect.casefold() != execution_dialect:
         raise DIALECT_MISMATCH.error(declared=catalog.dialect, execution=execution_dialect)
@@ -114,13 +120,15 @@ def normalize_source(
     relation = (
         resolver(source.relation)
         if resolver is not None
-        else _relation(con, source.relation, catalog.dialect)
+        else _relation(con, source.relation, catalog.dialect, engine=engine)
     )
     schema = relation.schema()
     columns = dict(schema.items())
     if source.timestamp not in columns or not columns[source.timestamp].is_timestamp():
         raise _SCHEMA.error(field="timestamp", column=source.timestamp)
-    _require_exact_type(provider, execution_dialect, columns[source.timestamp], source.timestamp)
+    _require_exact_type(
+        provider, execution_dialect, columns[source.timestamp], source.timestamp, engine
+    )
     for name, column in source.entities.items():
         if column not in columns:
             raise _SCHEMA.error(field=f"entity {name}", column=column)
@@ -133,7 +141,9 @@ def normalize_source(
         if fact.column is not None and fact.column not in columns:
             raise _SCHEMA.error(field=f"fact {name}", column=fact.column)
         if fact.column is not None:
-            _require_exact_type(provider, execution_dialect, columns[fact.column], fact.column)
+            _require_exact_type(
+                provider, execution_dialect, columns[fact.column], fact.column, engine
+            )
     properties = {}
     for name in source.properties:
         prop = _reference(catalog.properties, name, "property")
@@ -142,7 +152,9 @@ def normalize_source(
         if prop.dimension is None:
             if prop.column not in columns or not _dtype_ok(columns.get(prop.column), prop.dtype):
                 raise _SCHEMA.error(field=f"property {name}", column=prop.column)
-            _require_exact_type(provider, execution_dialect, columns[prop.column], prop.column)
+            _require_exact_type(
+                provider, execution_dialect, columns[prop.column], prop.column, engine
+            )
         elif (
             prop.dimension not in source.dimensions
             or name not in _reference(catalog.dimensions, prop.dimension, "dimension").properties
@@ -159,7 +171,7 @@ def normalize_source(
         dimension_relation = (
             resolver(dim.relation)
             if resolver is not None
-            else _relation(con, dim.relation, catalog.dialect)
+            else _relation(con, dim.relation, catalog.dialect, engine=engine)
         )
         dimension_columns = dict(dimension_relation.schema().items())
         if dim.entity_column not in dimension_columns:
@@ -175,7 +187,9 @@ def normalize_source(
                 ):
                     raise _SCHEMA.error(field=f"dimension {name} validity", column=col)
                 if col is not None:
-                    _require_exact_type(provider, execution_dialect, dimension_columns[col], col)
+                    _require_exact_type(
+                        provider, execution_dialect, dimension_columns[col], col, engine
+                    )
         dimension_properties = {}
         for property_name in dim.properties:
             prop = _reference(catalog.properties, property_name, "property")
@@ -186,7 +200,7 @@ def normalize_source(
             ):
                 raise _SCHEMA.error(field=f"dimension property {property_name}", column=prop.column)
             _require_exact_type(
-                provider, execution_dialect, dimension_columns[prop.column], prop.column
+                provider, execution_dialect, dimension_columns[prop.column], prop.column, engine
             )
             dimension_properties[property_name] = PropertyBinding(
                 property_name, prop.column, prop.dtype, prop.as_of, name
@@ -209,7 +223,7 @@ def normalize_source(
         MappingProxyType(facts),
         MappingProxyType(properties),
         tuple(dimensions),
-        catalog.dialect,
+        expression_dialect(engine),
         catalog.day_boundary,
     )
 

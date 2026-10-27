@@ -81,6 +81,7 @@ def _nanoseconds(table: pa.Table, name: str) -> list[int]:
     multiplier = _NS_PER_UNIT[column.type.unit]
     return [value * multiplier for value in column.cast(pa.int64()).to_pylist()]
 
+
 def _duration_nanoseconds(table: pa.Table, name: str) -> list[int]:
     column = table[name]
     if not pa.types.is_duration(column.type) or column.null_count:

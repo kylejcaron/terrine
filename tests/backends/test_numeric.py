@@ -7,8 +7,8 @@ import ibis
 import pyarrow as pa
 import pytest
 
+from terrine.backends.dialect import dialect_for_name
 from terrine.backends.numeric import (
-    _DUCKDB_HUGE,
     exact_float,
     exact_sum,
     exact_to_float,
@@ -180,16 +180,16 @@ def _normalized_operands(connection, table, numerator, denominator, *columns):
     )
     # Ibis reflects HUGEINT as decimal(38, 0); retain the native UDF signature.
     return operands.mutate(
-        n_significand=operands.n_significand.cast(_DUCKDB_HUGE),
-        d_significand=operands.d_significand.cast(_DUCKDB_HUGE),
+        n_significand=operands.n_significand.cast(dialect_for_name("duckdb").wide_type()),
+        d_significand=operands.d_significand.cast(dialect_for_name("duckdb").wide_type()),
     )
 
 
 def _quotient(connection, table, *columns):
     significand, exponent = normalized_quotient(
-        table.n_significand.cast(_DUCKDB_HUGE),
+        table.n_significand.cast(dialect_for_name("duckdb").wide_type()),
         table.n_exponent,
-        table.d_significand.cast(_DUCKDB_HUGE),
+        table.d_significand.cast(dialect_for_name("duckdb").wide_type()),
         table.d_exponent,
     )
     quotient = connection.create_table(

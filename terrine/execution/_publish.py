@@ -14,11 +14,11 @@ import duckdb
 import ibis
 from sqlglot import tokenize
 
+from terrine.backends.capabilities import _SNAPSHOT_UNAVAILABLE
 from terrine.data import Budget
 from terrine.errors import RefusalSpec, TerrineError
 from terrine.execution import _native
 from terrine.execution.inputs import (
-    _SNAPSHOT_UNAVAILABLE,
     PhysicalRelationId,
     PublishedInputs,
     RelationHandle,

@@ -16,13 +16,15 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
-from terrine.backends.dialect import dialect_of, unavailable
+from terrine.backends.dialect import Dialect, current_dialect, dialect_for_name
 from terrine.backends.numeric import truncating_quotient
 from terrine.errors import RefusalSpec
 
 __all__ = [
     "compare_timestamps",
+    "day_start",
     "has_submicrosecond",
+    "local_day",
     "lossless_scale",
     "lossless_timestamp",
     "timestamp_extremes",
@@ -39,13 +41,6 @@ _UNSUPPORTED = RefusalSpec(
     "Timestamp ordering cannot preserve {dtype}. Normalize to a losslessly representable "
     "native microsecond or nanosecond timestamp before binding.",
 )
-_KEY = dt.Struct.from_tuples((("rank", dt.int8), ("seconds", dt.int64), ("nanos", dt.int64)))
-_NATIVE = frozenset({"duckdb", "postgres"})
-# Backends without timestamp infinities, bounded by years 1 and 9999.
-_FINITE = frozenset({"bigquery", "snowflake"})
-# Snowflake renders a timestamp's text through the session's output format,
-# whose default keeps three fractional digits; an explicit format keeps all.
-_SF_TEXT_FORMAT = "YYYY-MM-DD HH24:MI:SS.FF9"
 
 
 def lossless_scale(scale: int | None) -> Literal[6, 9] | None:
@@ -66,35 +61,15 @@ def lossless_timestamp(value: ir.TimestampValue) -> ir.TimestampValue:
     return cast(ir.TimestampValue, value.cast(promoted))
 
 
-@ibis.udf.scalar.builtin(name="isfinite")
-def _isfinite(value) -> bool:
-    """Native timestamp finiteness predicate (DuckDB and PostgreSQL)."""
-    raise NotImplementedError
-
-
 def timestamp_is_finite(value: ir.TimestampValue) -> ir.BooleanValue:
-    dialect = dialect_of(value)
-    if dialect in _FINITE:
-        return cast(ir.BooleanValue, ibis.literal(True))
-    if dialect not in _NATIVE:
-        raise unavailable("timestamp_is_finite", dialect)
-    return cast(ir.BooleanValue, _isfinite(value))
+    return current_dialect(value).timestamp_is_finite(value)
 
 
 def timestamp_extremes(dtype: dt.Timestamp) -> tuple[ir.TimestampScalar, ir.TimestampScalar]:
     """The lowest and highest values of ``dtype``: infinities where the backend has
     them (DuckDB, PostgreSQL), else the year 1 and year 9999 limits at the type's
     precision (BigQuery microseconds; Snowflake its declared scale, 9 by default)."""
-    dialect = dialect_of()
-    if dialect in _FINITE:
-        digits = 6 if dialect == "bigquery" else (dtype.scale if dtype.scale is not None else 9)
-        low, high = "0001-01-01 00:00:00", "9999-12-31 23:59:59." + "9" * digits
-    else:
-        low, high = "-infinity", "infinity"
-    return (
-        cast(ir.TimestampScalar, ibis.literal(low).cast(dtype)),
-        cast(ir.TimestampScalar, ibis.literal(high).cast(dtype)),
-    )
+    return current_dialect().timestamp_extremes(dtype)
 
 
 def has_submicrosecond(value: ir.TimestampValue) -> ir.BooleanValue:
@@ -109,78 +84,78 @@ def has_submicrosecond(value: ir.TimestampValue) -> ir.BooleanValue:
     return value.notnull() & finite & (below != 0)
 
 
-@ibis.udf.scalar.builtin(
-    name="timezone", signature=((dt.string, dt.Timestamp(timezone="UTC")), dt.timestamp)
-)
-def _utc_naive(zone, timestamp):
-    """Remove a timestamp's zone explicitly in UTC, independent of session timezone."""
-
-
-@ibis.udf.scalar.builtin(
-    name="timezone", signature=((dt.string, dt.timestamp), dt.Timestamp(timezone="UTC"))
-)
-def _utc_aware(zone, timestamp):
-    """Attach UTC explicitly to a naive UTC wall-clock value."""
-
-
-@ibis.udf.scalar.builtin(
-    name="convert_timezone",
-    signature=((dt.string, dt.Timestamp(timezone="UTC")), dt.Timestamp(timezone="UTC")),
-)
-def _sf_in_zone(zone, timestamp):
-    """A Snowflake TIMESTAMP_TZ re-expressed in a zone; the instant is unchanged."""
-
-
-@ibis.udf.scalar.builtin(
-    name="to_timestamp_ntz", signature=((dt.Timestamp(timezone="UTC"),), dt.timestamp)
-)
-def _sf_wall_clock(timestamp):
-    """A Snowflake TIMESTAMP_TZ's wall clock in its own offset, as TIMESTAMP_NTZ."""
-
-
-@ibis.udf.scalar.builtin(
-    name="to_timestamp_tz", signature=((dt.timestamp,), dt.Timestamp(timezone="UTC"))
-)
-def _sf_instant(timestamp):
-    """A TIMESTAMP_NTZ read in the session zone, which execution requires to be UTC."""
-
-
 def utc_wall_clock(value: ir.Value) -> ir.TimestampValue:
     """An instant's naive UTC wall clock, independent of the session time zone."""
-    dialect = dialect_of(value)
-    if dialect == "bigquery":
-        # TIMESTAMP -> DATETIME converts in UTC; terrine's session sets no time zone.
-        return cast(ir.TimestampValue, value.cast(dt.Timestamp()))
-    if dialect == "snowflake":
-        # A plain cast keeps the value's stored offset; re-express it in UTC first.
-        return cast(ir.TimestampValue, _sf_wall_clock(_sf_in_zone("UTC", value)))
-    if dialect not in _NATIVE:
-        raise unavailable("utc_wall_clock", dialect)
-    return cast(ir.TimestampValue, _utc_naive("UTC", value))
+    return current_dialect(value).utc_wall_clock(value)
 
 
 def utc_instant(value: ir.Value) -> ir.TimestampValue:
     """The UTC instant a naive UTC wall-clock value denotes."""
-    dialect = dialect_of(value)
-    if dialect == "bigquery":
-        return cast(ir.TimestampValue, value.cast(dt.Timestamp(timezone="UTC")))
-    if dialect == "snowflake":
-        return cast(ir.TimestampValue, _sf_instant(value))
-    if dialect not in _NATIVE:
-        raise unavailable("utc_instant", dialect)
-    return cast(ir.TimestampValue, _utc_aware("UTC", value))
+    return current_dialect(value).utc_instant(value)
 
 
-@ibis.udf.scalar.builtin(name="to_varchar", signature=((dt.timestamp, dt.string), dt.string))
-def _sf_naive_text(timestamp, format):
-    """A Snowflake TIMESTAMP_NTZ rendered in an explicit format."""
+def local_day(
+    timestamp: ir.TimestampValue, offset_minutes: int
+) -> tuple[ir.DateValue, ir.TimestampValue]:
+    """The fixed-offset local calendar day of an instant and the UTC instant that
+    starts it. A naive timestamp denotes UTC."""
+    return current_dialect(timestamp).local_day(timestamp, offset_minutes)
 
 
-@ibis.udf.scalar.builtin(
-    name="to_varchar", signature=((dt.Timestamp(timezone="UTC"), dt.string), dt.string)
-)
-def _sf_aware_text(timestamp, format):
-    """A Snowflake TIMESTAMP_TZ or TIMESTAMP_LTZ rendered in an explicit format."""
+def day_start(timestamp: ir.TimestampValue, offset_minutes: int) -> ir.TimestampValue:
+    """The UTC instant starting the fixed-offset local day containing an instant."""
+    return current_dialect(timestamp).day_start(timestamp, offset_minutes)
+
+
+def native_local_day(
+    dialect: Dialect, timestamp: ir.TimestampValue, offset_minutes: int
+) -> tuple[ir.DateValue, ir.TimestampValue]:
+    """``local_day`` through a registered engine's native UTC conversions.
+
+    Takes the instant's UTC wall clock, truncates a nanosecond clock to the
+    microsecond before it (every fixed-offset midnight is microsecond-aligned,
+    so the day is unchanged), reads the date, moves it across the offset
+    boundary where the clock falls in the previous or next local day, and
+    converts the local midnight back to an instant.
+    """
+    aware = cast(dt.Timestamp, timestamp.type()).timezone is not None
+    utc = dialect.utc_wall_clock(timestamp) if aware else timestamp
+    dtype = utc.type()
+    if isinstance(dtype, dt.Timestamp) and dtype.scale is not None and dtype.scale > 6:
+        micros = cast(ir.TimestampValue, utc.cast("timestamp"))
+        utc = cast(
+            ir.TimestampValue,
+            (utc < micros).ifelse(micros - ibis.interval(microseconds=1), micros),
+        )
+    day = utc.date()
+    midnight = cast(ir.TimestampValue, day.cast("timestamp"))
+    if offset_minutes < 0:
+        day = (utc < midnight + ibis.interval(minutes=-offset_minutes)).ifelse(
+            day - ibis.interval(days=1), day
+        )
+    elif offset_minutes > 0:
+        day = (utc >= midnight + ibis.interval(minutes=1440 - offset_minutes)).ifelse(
+            day + ibis.interval(days=1), day
+        )
+    day = cast(ir.DateValue, day.cast("date"))
+    start = dialect.utc_instant(
+        cast(ir.TimestampValue, day.cast("timestamp")) - ibis.interval(minutes=offset_minutes)
+    )
+    return day, start
+
+
+def native_day_start(
+    dialect: Dialect, timestamp: ir.TimestampValue, offset_minutes: int
+) -> ir.TimestampValue:
+    """``day_start`` through a registered engine's native UTC conversions: the
+    local wall clock's date, back to UTC, as the engines have always compiled
+    endpoint alignment."""
+    utc = dialect.utc_wall_clock(timestamp)
+    local = utc + ibis.interval(minutes=offset_minutes)
+    midnight = cast(ir.TimestampValue, local.date().cast("timestamp")) - ibis.interval(
+        minutes=offset_minutes
+    )
+    return dialect.utc_instant(midnight)
 
 
 def timestamp_text(value: ir.TimestampValue) -> ir.StringValue:
@@ -190,50 +165,7 @@ def timestamp_text(value: ir.TimestampValue) -> ir.StringValue:
     cast; Snowflake's cast follows the session's output format, so it renders
     with an explicit full-precision format instead.
     """
-    dialect = dialect_of(value)
-    if dialect == "snowflake":
-        if cast(dt.Timestamp, value.type()).timezone is None:
-            return cast(ir.StringValue, _sf_naive_text(value, _SF_TEXT_FORMAT))
-        return cast(ir.StringValue, _sf_aware_text(value, _SF_TEXT_FORMAT + " TZHTZM"))
-    if dialect != "bigquery" and dialect not in _NATIVE:
-        raise unavailable("timestamp_text", dialect)
-    return value.cast(dt.string)
-
-
-@ibis.udf.scalar.builtin(
-    name="extract",
-    database="pg_catalog",
-    signature=((dt.string, dt.Timestamp(timezone="UTC")), dt.Decimal(38, 6)),
-)
-def _pg_extract(field, value):
-    """PostgreSQL's numeric field extraction; see ``_pg_epoch_seconds`` for epoch."""
-
-
-# PostgreSQL's epoch extraction is exact only while the instant's Unix microseconds
-# fit BIGINT (until about year 294247); later timestamps, valid through 294276,
-# round. Those are shifted back by a whole number of hours, which needs no time
-# zone, extracted exactly, and shifted forward again in NUMERIC.
-_PG_LATE_YEAR = 290_000
-_PG_SHIFT_HOURS = 100_000_000
-
-
-def _pg_epoch_seconds(value: ir.TimestampValue) -> ir.DecimalValue:
-    """Exact NUMERIC seconds since the Unix epoch for a finite PostgreSQL timestamp."""
-    year = cast(ir.NumericColumn, _pg_extract("year", value))
-    late = cast(ir.BooleanValue, year >= _PG_LATE_YEAR)
-    shifted = cast(ir.TimestampValue, value - ibis.interval(hours=_PG_SHIFT_HOURS))
-    return cast(
-        ir.DecimalValue,
-        late.ifelse(
-            cast(ir.DecimalValue, _pg_extract("epoch", shifted)) + _PG_SHIFT_HOURS * 3600,
-            _pg_extract("epoch", value),
-        ),
-    )
-
-
-@ibis.udf.scalar.builtin(name="trunc", signature=((dt.Decimal(38, 6),), dt.Decimal(38, 0)))
-def _pg_trunc(value):
-    """PostgreSQL NUMERIC truncation toward zero."""
+    return current_dialect(value).timestamp_text(value)
 
 
 def _epoch(dtype: dt.Timestamp) -> ir.TimestampScalar:
@@ -251,132 +183,13 @@ def timestamp_parts(
     Every part is NULL when the value is NULL. Naive timestamps denote UTC. Pass
     ``backend`` when ``value`` may be an unbound literal compared with a bound column.
     """
-    dialect = backend or dialect_of(value)
-    if dialect == "bigquery":
-        return _bigquery_parts(value)
-    if dialect == "snowflake":
-        return _snowflake_parts(value)
-    if dialect != "postgres":
-        key = _struct_key(value)
-        return (
-            cast(ir.IntegerValue, key["rank"]),
-            cast(ir.IntegerValue, key["seconds"]),
-            cast(ir.IntegerValue, key["nanos"]),
-        )
-    dtype = value.type()
-    if not isinstance(dtype, dt.Timestamp) or dtype.scale not in (None, 6):
-        raise _UNSUPPORTED.error(dtype=str(dtype))
-    finite = timestamp_is_finite(value)
-    epoch = _epoch(dtype)
-    epoch_seconds = _pg_epoch_seconds(cast(ir.TimestampValue, finite.ifelse(value, epoch)))
-    # Split before narrowing: whole seconds fit BIGINT for every PostgreSQL
-    # timestamp, while the full microsecond coefficient does not.
-    whole = cast(ir.DecimalValue, _pg_trunc(epoch_seconds))
-    seconds = cast(ir.IntegerValue, whole.cast(dt.int64))
-    nanos = cast(ir.IntegerValue, ((epoch_seconds - whole) * 10**6).cast(dt.int64)) * 1000
-    zero = ibis.literal(0, type=dt.int64)
-    rank = finite.ifelse(zero, (value < epoch).ifelse(ibis.literal(-1), ibis.literal(1)))
-    missing = value.isnull()
-
-    def part(expression: ir.Value) -> ir.IntegerValue:
-        return cast(ir.IntegerValue, missing.ifelse(ibis.null(dt.int64), expression.cast(dt.int64)))
-
-    return (
-        part(rank),
-        part(finite.ifelse(seconds, zero)),
-        part(finite.ifelse(nanos, zero)),
-    )
-
-
-def _bigquery_parts(
-    value: ir.TimestampValue,
-) -> tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue]:
-    """BigQuery instants are finite, microsecond-exact and within year 1-9999,
-    so their Unix microseconds fit BIGINT."""
-    dtype = value.type()
-    if not isinstance(dtype, dt.Timestamp) or dtype.scale not in (None, 6):
-        raise _UNSUPPORTED.error(dtype=str(dtype))
-    micros = value.delta(_epoch(dtype), unit="microsecond")
-    seconds = truncating_quotient(micros, 10**6, like=value)
-    nanos = cast(ir.IntegerValue, (micros - seconds * 10**6) * 1000)
-    rank = value.isnull().ifelse(ibis.null(dt.int64), ibis.literal(0, type=dt.int64))
-    return cast(ir.IntegerValue, rank), seconds, nanos
-
-
-def _snowflake_parts(
-    value: ir.TimestampValue,
-) -> tuple[ir.IntegerValue, ir.IntegerValue, ir.IntegerValue]:
-    """Snowflake instants are finite within years 1-9999 and exact at their
-    scale; their nanoseconds since the epoch are an exact NUMBER(38, 0)
-    (``DATEDIFF`` counts whole nanoseconds), split into truncated seconds and a
-    signed remainder below one second."""
-    dtype = value.type()
-    if not isinstance(dtype, dt.Timestamp):
-        raise _UNSUPPORTED.error(dtype=str(dtype))
-    coefficient = value.delta(_epoch(dtype), unit="nanosecond")
-    seconds = truncating_quotient(coefficient, 10**9, like=value)
-    nanos = cast(ir.IntegerValue, (coefficient - seconds * 10**9).cast(dt.int64))
-    rank = value.isnull().ifelse(ibis.null(dt.int64), ibis.literal(0, type=dt.int64))
-    return cast(ir.IntegerValue, rank), seconds, nanos
+    dialect = dialect_for_name(backend) if backend is not None else current_dialect(value)
+    return dialect.timestamp_parts(value)
 
 
 def timestamp_order_key(value: ir.TimestampValue) -> ir.Value:
-    """Return a value whose ordering and equality are exactly the instants'.
-
-    PostgreSQL, BigQuery and Snowflake timestamps are exact at their precision
-    and order natively (PostgreSQL's infinities included), so they are their
-    own key (Ibis's PostgreSQL struct lowering is not valid SQL). DuckDB uses
-    the struct key from ``_struct_key``.
-    """
-    dtype = value.type()
-    if not isinstance(dtype, dt.Timestamp):
-        raise _UNSUPPORTED.error(dtype=str(dtype))
-    dialect = dialect_of(value)
-    if dialect == "snowflake":
-        return value
-    if dialect in {"postgres", "bigquery"}:
-        if dtype.scale not in (None, 6):
-            raise _UNSUPPORTED.error(dtype=str(dtype))
-        return value
-    return _struct_key(value)
-
-
-def _struct_key(value: ir.TimestampValue) -> ir.StructValue:
-    """Order finite instants by signed seconds/remainder, with explicit infinity ranks.
-
-    The remainder is smaller than one second, so only its conversion to nanoseconds
-    multiplies a coefficient. NULL is a NULL struct, not a struct of NULL fields.
-    Naive timestamps denote UTC, as in source normalization. DuckDB only.
-    """
-    dtype = value.type()
-    if not isinstance(dtype, dt.Timestamp):
-        raise _UNSUPPORTED.error(dtype=str(dtype))
-    scale = dtype.scale if dtype.scale is not None else 6
-    if scale == 9:
-        unit, divisor, multiplier = "nanosecond", 10**9, 1
-    elif scale == 6:
-        unit, divisor, multiplier = "microsecond", 10**6, 1000
-    else:
-        raise _UNSUPPORTED.error(dtype=str(dtype))
-    finite = timestamp_is_finite(value)
-    epoch = _epoch(dtype)
-    instant = cast(ir.TimestampValue, finite.ifelse(value, epoch))
-    coefficient = instant.delta(epoch, unit=unit)
-    seconds = truncating_quotient(coefficient, divisor, like=value)
-    # Ibis renders a nanosecond delta as a bare subtraction, so `delta % n` would
-    # bind as `a - (b % n)`; the remainder is taken by subtraction instead.
-    nanos = (coefficient - seconds * divisor) * multiplier
-    zero = ibis.literal(0)
-    key = ibis.struct(
-        {
-            "rank": finite.ifelse(
-                zero, (value < epoch).ifelse(ibis.literal(-1), ibis.literal(1))
-            ).cast("int8"),
-            "seconds": finite.ifelse(seconds, zero).cast("int64"),
-            "nanos": finite.ifelse(nanos, zero).cast("int64"),
-        }
-    )
-    return cast(ir.StructValue, value.isnull().ifelse(ibis.null().cast(_KEY), key))
+    """Return a value whose ordering and equality are exactly the instants'."""
+    return current_dialect(value).timestamp_order_key(value)
 
 
 def compare_timestamps(
@@ -387,7 +200,7 @@ def compare_timestamps(
     right_offset_seconds: int = 0,
 ) -> ir.BooleanValue:
     """Compare instants with an optional exact whole-second shift of the right operand."""
-    backend = dialect_of(left, right)
+    backend = current_dialect(left, right).name
     left_rank, left_seconds, left_nanos = timestamp_parts(left, backend=backend)
     right_rank, right_seconds, right_nanos = timestamp_parts(right, backend=backend)
     if right_offset_seconds:

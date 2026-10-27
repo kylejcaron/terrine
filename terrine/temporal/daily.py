@@ -15,6 +15,7 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+from terrine.backends.dialect import current_dialect
 from terrine.backends.numeric import (
     coefficient_bounds,
     decimal_coefficient,
@@ -22,11 +23,11 @@ from terrine.backends.numeric import (
     exact_literal,
     exact_subtract,
     exact_sum,
-    exact_type,
     float_is_finite,
     float_scale,
+    guard_accumulation,
 )
-from terrine.backends.timestamps import utc_instant, utc_wall_clock
+from terrine.backends.timestamps import local_day
 from terrine.semantic.bind import _MISSING, _SCHEMA
 from terrine.semantic.models import BoundMeasure, BoundSource
 from terrine.semantic.rules import (
@@ -227,10 +228,12 @@ def _exact_comparison(value, coefficient, scale, bounds, item, op, name):
 
     A threshold outside the column's physical range settles the comparison
     without a literal, which the exact type might not hold (Snowflake's
-    NUMBER(38, 0) has no 39th digit for one past a 38-digit column).
+    NUMBER(38, 0) has no 39th digit for one past a 38-digit column). Literals
+    and typed NULLs take the coefficient's own type, so a scale-0 coefficient
+    is never promoted into a narrower fixed-scale state.
     """
     if item is None:
-        return _COMPARISONS[op](coefficient, ibis.null().cast(exact_type()))
+        return _COMPARISONS[op](coefficient, ibis.null().cast(coefficient.type()))
     floor, ceil, integral = _numeric_threshold(item, scale, bounds, name)
     if op in {"equals", "not_equals"} and not integral:
         return _known(value, op == "not_equals")
@@ -240,7 +243,7 @@ def _exact_comparison(value, coefficient, scale, bounds, item, op, name):
         if op in {"equals", "not_equals"}:
             return _known(value, op == "not_equals")
         return _known(value, _ABOVE_RANGE[op] if threshold > upper else not _ABOVE_RANGE[op])
-    return _COMPARISONS[op](coefficient, exact_literal(threshold))
+    return _COMPARISONS[op](coefficient, exact_literal(threshold, coefficient))
 
 
 def _filter_literal(value, item, name):
@@ -412,8 +415,20 @@ def _sparse_group(
         else:
             scale = dtype.scale if isinstance(dtype, dt.Decimal) else 0
             exact = decimal_coefficient(source_value, scale or 0)
-        coefficient = leaf.__terrine_selected.ifelse(exact, ibis.null().cast(exact_type()))
-        aggregates["sum_value"] = exact_sum(coefficient)
+        coefficient = leaf.__terrine_selected.ifelse(exact, ibis.null().cast(exact.type()))
+        # A fixed-precision policy withholds a group's coefficients before the
+        # backend adds them when their magnitudes may leave the domain, and
+        # reports the withheld rows so later prefixes refuse instead of
+        # reading an incomplete state.
+        leaf, coefficient, admitted = guard_accumulation(
+            leaf, coefficient, partition=["_unit", *keys]
+        )
+        aggregates["sum_value"] = exact_sum(coefficient, admitted=admitted is not None)
+        if admitted is not None:
+            aggregates["sum_bound"] = current_dialect(coefficient).magnitude(coefficient).sum()
+            aggregates["sum_withheld"] = exact_sum(
+                (~admitted).ifelse(exact_literal(1), exact_literal(0))
+            )
     grouped = leaf.group_by("_unit", *keys).aggregate(**aggregates)
     constants = {
         "value_type": ibis.literal(measure.value_type),
@@ -449,33 +464,7 @@ def sparse_daily(
     timestamp = events._timestamp
     if not timestamp.type().is_timestamp():
         raise _SCHEMA.error(field="normalized event", column="_timestamp")
-    utc = cast(
-        ir.TimestampValue,
-        utc_wall_clock(timestamp) if timestamp.type().timezone else timestamp,
-    )
-    dtype = utc.type()
-    if isinstance(dtype, dt.Timestamp) and dtype.scale is not None and dtype.scale > 6:
-        # Only this bucket projection needs microseconds: every fixed-offset
-        # midnight is aligned. Keep original event instants unchanged.
-        micros = cast(ir.TimestampValue, utc.cast("timestamp"))
-        utc = cast(
-            ir.TimestampValue,
-            (utc < micros).ifelse(micros - ibis.interval(microseconds=1), micros),
-        )
-    day = utc.date()
-    midnight = cast(ir.TimestampValue, day.cast("timestamp"))
-    if minutes < 0:
-        day = (utc < midnight + ibis.interval(minutes=-minutes)).ifelse(
-            day - ibis.interval(days=1), day
-        )
-    elif minutes > 0:
-        day = (utc >= midnight + ibis.interval(minutes=1440 - minutes)).ifelse(
-            day + ibis.interval(days=1), day
-        )
-    day = day.cast("date")
-    bucket = utc_instant(
-        cast(ir.TimestampValue, day.cast("timestamp")) - ibis.interval(minutes=minutes)
-    )
+    day, bucket = local_day(cast(ir.TimestampValue, timestamp), minutes)
     return _sparse_group(
         events, measure, {"local_day": day, "_timestamp": bucket}, unit_column, source=source
     )

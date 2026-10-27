@@ -40,14 +40,14 @@ Use owner-approved resources, grants and fresh receipts.
 
 ## backend
 
-Use verified local DuckDB operation capabilities.
+Use a registered verified engine, or explicitly opt in to unverified read-only operations.
 
 [Recovery guide](../guides/backend-compatibility.md)
 
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
 | `terrine.backend.capability_unavailable` | <code>Backend {backend!r} cannot provide {operation!r}: {status}. {route}</code> | `backend`, `operation`, `route`, `status` | [terrine/backends/capabilities.py](../../terrine/backends/capabilities.py) |
-| `terrine.backend.capability_unavailable` | <code>The detected database server is not verified for PostgreSQL execution. {route}</code> | `route` | [terrine/execution/_postgres.py](../../terrine/execution/_postgres.py) |
+| `terrine.backend.capability_unavailable` | <code>The detected database server is not verified for PostgreSQL execution. {route}</code> | `route` | [terrine/backends/engines/postgres.py](../../terrine/backends/engines/postgres.py) |
 | `terrine.backend.nonfinite_decimal` | <code>Exact decimal column {column!r} contains {value}, which has no exact decimal value. Filter or replace non-finite numeric values in the relation SQL.</code> | `column`, `value` | [terrine/execution/_postgres.py](../../terrine/execution/_postgres.py) |
 
 ## budget
@@ -160,6 +160,7 @@ Repair temporal/history contracts; do not zero-fill unknowns.
 | `terrine.design.incomplete_unit_treatment_history` | <code>Roster observation bounds do not cover a scheduled treatment history.</code> | None | [terrine/compile/shapes/sequential.py](../../terrine/compile/shapes/sequential.py) |
 | `terrine.design.incomplete_unit_treatment_history` | <code>Roster observation bounds do not cover the required calendar treatment history.</code> | None | [terrine/compile/shapes/calendar_comparison.py](../../terrine/compile/shapes/calendar_comparison.py) |
 | `terrine.design.invalid` | <code>Design validation failed: {reason}.</code> | `reason` | [terrine/recipes.py](../../terrine/recipes.py) |
+| `terrine.design.invalid` | <code>Design validation failed: {reason}.</code> | `reason` | [terrine/spec/anchors.py](../../terrine/spec/anchors.py) |
 | `terrine.design.invalid` | <code>Design validation failed: {reason}.</code> | `reason` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 | `terrine.design.invalid_calendar_comparison` | <code>Calendar comparison specification is invalid: {reason}.</code> | `reason` | [terrine/spec/panels.py](../../terrine/spec/panels.py) |
 | `terrine.design.invalid_matched_t0_sample` | <code>Matched-t0 sample policy is invalid: {reason}.</code> | `reason` | [terrine/spec/panels.py](../../terrine/spec/panels.py) |
@@ -189,7 +190,7 @@ Use owned native sessions or retained inputs.
 | --- | --- | --- | --- |
 | `terrine.execution.arrow_timestamp_range` | <code>A nanosecond timestamp output lies outside Arrow&#x27;s range (1677-09-21 to 2262-04-11): {detail}. Declare the column with microsecond precision, such as TIMESTAMP_TZ(6), or cast it in a SQL relation.</code> | `detail` | [terrine/execution/_snowflake.py](../../terrine/execution/_snowflake.py) |
 | `terrine.execution.invalid_input_binding` | <code>Execution inputs are not an exact verified binding: {reason}.</code> | `reason` | [terrine/execution/inputs.py](../../terrine/execution/inputs.py) |
-| `terrine.execution.snapshot_unavailable` | <code>A coherent native execution snapshot is unavailable: {reason}.</code> | `reason` | [terrine/execution/inputs.py](../../terrine/execution/inputs.py) |
+| `terrine.execution.snapshot_unavailable` | <code>A coherent native execution snapshot is unavailable: {reason}.</code> | `reason` | [terrine/backends/capabilities.py](../../terrine/backends/capabilities.py) |
 
 ## export
 
@@ -255,6 +256,7 @@ Use consistent coverage, roles and representable metadata.
 | --- | --- | --- | --- |
 | `terrine.metadata.invalid_eligibility_summary` | <code>Eligibility audit did not return one aggregate count record</code> | None | [terrine/execution/gates.py](../../terrine/execution/gates.py) |
 | `terrine.metadata.invalid_eligibility_summary` | <code>Eligibility counts must be nonnegative and reconcile</code> | None | [terrine/data.py](../../terrine/data.py) |
+| `terrine.metadata.invalid_engine_stamp` | <code>Engine stamp is {reason} (present fields {fields!r}); re-materialize the Design with the current Terrine version.</code> | `fields`, `reason` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.missing_columns` | <code>Arrow table is missing required columns {columns!r}; use lossless Arrow with all observation columns.</code> | `columns` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.unrepresentable_coverage` | <code>Coverage boundary exceeds datetime&#x27;s range; use interior calendar dates</code> | None | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.unrepresentable_coverage` | <code>Coverage exceeds UTC datetime&#x27;s range; use interior instants</code> | None | [terrine/data.py](../../terrine/data.py) |

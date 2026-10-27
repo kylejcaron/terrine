@@ -29,10 +29,12 @@ import ibis
 import ibis.expr.datatypes as dt
 import pyarrow as pa
 
-from terrine.errors import RefusalSpec
+from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE, _SNAPSHOT_UNAVAILABLE
+from terrine.backends.registry import ENGINES
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.execution._metadata import invalidate_metadata
 from terrine.semantic.models import Catalog, RelationSpec, SqlQuery, TableRef
-from terrine.semantic.sql import _admit_read_query_ast
+from terrine.semantic.sql import _admit_read_query_ast, _render, _scopes, _verified
 
 DIALECT = "snowflake"
 # Physical row sources with Time Travel, and views over them. Temporary tables
@@ -60,8 +62,6 @@ Key = tuple[str, str, str]
 
 
 def _snapshot_error(reason: str):
-    from terrine.execution.inputs import _SNAPSHOT_UNAVAILABLE
-
     return _SNAPSHOT_UNAVAILABLE.error(reason=reason)
 
 
@@ -249,15 +249,20 @@ def _relation(con: Any, database: str, schema: str, name: str) -> _Relation:
     )
 
 
-def check_routines(sql: str) -> None:
-    """Refuse a query that calls a database- or schema-qualified routine."""
+def _parsed(sql: str, failure: str) -> Any:
     from sqlglot import parse_one
 
     try:
-        statement = parse_one(sql, read=DIALECT)
+        return _verified(lambda: parse_one(sql, read=DIALECT))
+    except TerrineError:
+        raise
     except Exception as exc:
-        raise _snapshot_error("query could not be parsed") from exc
-    _check_qualified_routines(statement)
+        raise _snapshot_error(failure) from exc
+
+
+def check_routines(sql: str) -> None:
+    """Refuse a query that calls a database- or schema-qualified routine."""
+    _check_qualified_routines(_parsed(sql, "query could not be parsed"))
 
 
 def _check_qualified_routines(statement: Any) -> None:
@@ -271,12 +276,9 @@ def _check_qualified_routines(statement: Any) -> None:
 
 
 def _view_query(definition: str) -> Any:
-    from sqlglot import exp, parse_one
+    from sqlglot import exp
 
-    try:
-        statement = parse_one(definition, read=DIALECT)
-    except Exception as exc:
-        raise _snapshot_error("view definition could not be parsed") from exc
+    statement = _parsed(definition, "view definition could not be parsed")
     if isinstance(statement, exp.Create):
         statement = statement.expression
     if not isinstance(statement, exp.Query):
@@ -341,10 +343,9 @@ def _physical_tables(statement: Any) -> list[Any]:
     """Physical relation references in every scope of a normalized statement:
     common table expressions, derived tables and table functions are not."""
     from sqlglot import exp
-    from sqlglot.optimizer.scope import traverse_scope
 
     found = []
-    for scope in traverse_scope(statement):
+    for scope in _scopes(statement):
         for source in scope.sources.values():
             if isinstance(source, exp.Table) and isinstance(source.this, exp.Identifier):
                 found.append(source)
@@ -473,7 +474,7 @@ def resolve(
     statement = _admit_read_query_ast(relation.sql, catalog_dialect, DIALECT)
     _refuse_relative_time_travel(statement)
     qualify(con, statement)
-    sql = statement.sql(dialect=DIALECT)
+    sql = _render(statement, DIALECT)
     return con.sql(sql, schema=_query_schema(con, sql))
 
 
@@ -525,12 +526,15 @@ def pin(sql: str, stamp: str) -> str:
     """
     from sqlglot import parse_one
 
-    statement = _normalized(parse_one(sql, read=DIALECT))
-    for table in _physical_tables(statement):
-        # An explicit AT/BEFORE already names one fixed instant; keep it.
-        if table.args.get("when") is None:
-            table.set("when", _historical(stamp))
-    return statement.sql(dialect=DIALECT)
+    def rewrite() -> str:
+        statement = _normalized(parse_one(sql, read=DIALECT))
+        for table in _physical_tables(statement):
+            # An explicit AT/BEFORE already names one fixed instant; keep it.
+            if table.args.get("when") is None:
+                table.set("when", _historical(stamp))
+        return statement.sql(dialect=DIALECT)
+
+    return _verified(rewrite)
 
 
 def _historical(stamp: str) -> Any:
@@ -682,3 +686,69 @@ def _arrow_refusal() -> Generator[None]:
         if "out of bounds timestamp" in message or "overflows int64 range" in message:
             raise _TIMESTAMP_RANGE.error(detail=message.split(":")[-1].strip()[:200]) from exc
         raise
+
+
+class _SnowflakeProvider:
+    capabilities = ENGINES["snowflake"].capabilities
+
+    def matches(self, con: Any) -> bool:
+        return type(con).__module__ == ENGINES["snowflake"].ibis_module
+
+    def dialect(self, con: Any) -> str:
+        return ENGINES["snowflake"].name
+
+    def resolve_relation(self, con: Any, relation: RelationSpec) -> ibis.Table:
+        from terrine.execution import _snowflake
+
+        return _snowflake.resolve(con, relation)
+
+    def required_relations(self, catalog, con, *, units=None):
+        from terrine.execution import _snowflake
+
+        return _snowflake.required_relations(catalog, con, units=units)
+
+    def bind_resolver(self, catalog, con, **kwargs):
+        """Resolve relations; with ``session`` (the execution's Time Travel pin)
+        every relation is admitted to it and re-verified after each read."""
+        from terrine.execution import _snowflake
+        from terrine.execution.inputs import _INVALID
+
+        if kwargs.get("input_binding") is not None:
+            raise _CAPABILITY_UNAVAILABLE.error(
+                backend="snowflake",
+                operation="retained_snapshot",
+                status="unverified",
+                route="Retained input bindings are DuckDB-only; materialize directly.",
+            )
+        session = kwargs.get("session")
+        _snowflake.required_relations(catalog, con, units=kwargs.get("units"))
+        admitted: dict[tuple[str, str], Any] = {}
+        fingerprints: dict[tuple[str, str], str] = {}
+
+        def resolve(relation: RelationSpec) -> Any:
+            key = (relation.kind, relation.name if isinstance(relation, TableRef) else relation.sql)
+            closure = _snowflake.closure_for(relation, con)
+            if session is not None:
+                session.admit(closure.values())
+            fingerprint = _snowflake.fingerprint(closure)
+            if key in admitted:
+                if fingerprints[key] != fingerprint:
+                    raise _INVALID.error(
+                        reason="relation definition or identity changed after Model binding"
+                    )
+                return admitted[key]
+            admitted[key] = _snowflake.resolve(con, relation, catalog.dialect, closure)
+            fingerprints[key] = fingerprint
+            return admitted[key]
+
+        return resolve
+
+    def open_execution(self, catalog, con, *, units=None, input_binding=None):
+        from terrine.execution.inputs import _open_snowflake_execution
+
+        return _open_snowflake_execution(
+            self, catalog, con, units=units, input_binding=input_binding
+        )
+
+
+PROVIDER = _SnowflakeProvider()

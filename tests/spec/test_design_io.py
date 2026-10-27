@@ -1,9 +1,13 @@
+import copy
+import json
+import pickle
 from datetime import UTC, date, datetime
 from typing import cast
 
 import pandas as pd
 import pytest
 
+from terrine.errors import TerrineError
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import agg, all_of, asof, eq, gt, is_null
@@ -54,6 +58,43 @@ def test_anchor_variants_and_design_maps_round_trip_as_safe_yaml_and_json():
         assert from_yaml(to_yaml(design)) == design
         assert from_json(to_json(design)) == design
         assert from_yaml(to_yaml(design)).spec_hash == design.spec_hash
+
+
+def test_event_anchor_offset_preserves_saved_design_identity_and_round_trips():
+    saved = (
+        '{"design":{"administrative_cutoff":null,"anchor":{"fact":"purchase","n":2,'
+        '"type":"EventAnchor","which":"nth"},"anchor_range":null,"eligibility":{},'
+        '"features":{},"gap":0,"outcomes":{},"sample":null,"shape":"cross_section",'
+        '"treatment":null,"unit":"user"},"schema_version":1}'
+    )
+    original = from_json(saved)
+    assert to_json(original) == saved
+    assert original.spec_hash == "63522eaa2202585523400fb76e2e6b1d7a70bec1a92e9b3c467fed028978c25f"
+    assert Design("user", EventAnchor("purchase", "nth", 2, offset="0d")) == original
+
+    shifted = Design("user", EventAnchor("purchase", "nth", 2, offset="1d"))
+    assert isinstance(shifted.anchor, EventAnchor)
+    assert shifted.anchor.offset == 86_400
+    assert shifted.spec_hash != original.spec_hash
+    assert shifted == Design("user", EventAnchor("purchase", "nth", 2, offset=86_400))
+    assert json.loads(to_json(shifted))["design"]["anchor"]["offset"] == 86_400
+    for restored in (from_json(to_json(shifted)), from_yaml(to_yaml(shifted))):
+        assert restored == shifted
+        assert restored.spec_hash == shifted.spec_hash
+
+
+def test_negative_event_anchor_offset_refuses_with_portable_immutable_context():
+    with pytest.raises(TerrineError) as caught:
+        EventAnchor("purchase", offset="-1s")
+    for error in (
+        caught.value,
+        copy.deepcopy(caught.value),
+        pickle.loads(pickle.dumps(caught.value)),
+    ):
+        assert error.code == "terrine.design.invalid"
+        assert "reason" in error.context
+        with pytest.raises(TypeError):
+            error.context["reason"] = "changed"  # ty: ignore[invalid-assignment]
 
 
 def test_predicate_outcome_round_trips_json():

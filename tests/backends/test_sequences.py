@@ -4,7 +4,7 @@ import pytest
 from terrine.backends.sequences import integer_sequence
 
 
-@pytest.mark.parametrize("dialect", ["duckdb", "snowflake"])
+@pytest.mark.parametrize("dialect", ["duckdb", "snowflake", "generic"])
 @pytest.mark.parametrize("stop", [1, 9, 10, 11, 123])
 def test_sequence_holds_every_integer_below_stop_once(dialect, stop):
     con = ibis.duckdb.connect()

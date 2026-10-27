@@ -108,6 +108,8 @@ def _encode(value: Any) -> Any:
         node = {"type": "EventAnchor", "fact": value.fact, "which": value.which}
         if value.n is not None:
             node["n"] = value.n
+        if value.offset:
+            node["offset"] = value.offset
         return node
     if isinstance(value, Schedule):
         return {
@@ -439,8 +441,8 @@ def _node(value: Any) -> Any:
         item = _object(value, {"type", "event_property", "steps", "within_seconds"})
         return FunnelSpec(item["event_property"], tuple(item["steps"]), item["within_seconds"])
     if tag == "EventAnchor":
-        item = _object(value, {"type", "fact", "which", "n"}, {"type", "fact", "which"})
-        return EventAnchor(item["fact"], item["which"], item.get("n"))
+        item = _object(value, {"type", "fact", "which", "n", "offset"}, {"type", "fact", "which"})
+        return EventAnchor(item["fact"], item["which"], item.get("n"), item.get("offset", 0))
     if tag == "Schedule":
         item = _object(value, {"type", "every", "start", "end"})
         start, end = _read_date(item["start"]), _read_date(item["end"])

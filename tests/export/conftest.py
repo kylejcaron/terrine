@@ -49,6 +49,9 @@ def frame():
             ExecutionSnapshot(None, "arrow", {}, None, "unverified"),
             "cross_section",
             "baseline_binary",
+            engine_name="arrow",
+            dialect="generic",
+            engine_status="unverified",
             expression_timings={
                 "y": ExpressionTiming(
                     "fixed_t0", None, None, (0, 28 * 86400), (), {}, "t0", None, None

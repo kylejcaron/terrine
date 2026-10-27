@@ -255,6 +255,64 @@ def test_explicit_validity_can_cover_gap_but_derived_change_interval_cannot(
     assert row[meta.reason_column] == (None if authority == "range" else "missing_history")
 
 
+@pytest.mark.parametrize("validity", ["static", "range"])
+def test_dimension_admission_reads_only_the_columns_the_lookup_uses(column_model, validity):
+    """The relations a dimension lookup submits for admission are the ones that
+    execute, the lookup and its validation queries projected to their columns,
+    so an unused decimal column of the dimension table does not demand a decimal
+    witness; the validation relations are exactly the queries ``validate`` runs."""
+    from terrine.compile.columns import _HistoryValidation
+    from terrine.execution._generic import _needs_decimal
+
+    con = column_model.con
+    con.raw_sql("""
+        CREATE TABLE tier_history AS SELECT 'a' AS id, 'gold' AS tier,
+            TIMESTAMPTZ '2024-12-01' AS starts, TIMESTAMPTZ '2025-02-01' AS ends,
+            12.50::DECIMAL(12, 2) AS balance
+    """)
+    definition = column_model.catalog.model_dump(mode="python")
+    definition["sources"]["events"]["dimensions"] = ("history",)
+    definition["properties"]["tier"]["dimension"] = "history"
+    definition["properties"]["tier"]["as_of"] = "static" if validity == "static" else "event_time"
+    definition["dimensions"]["history"] = {
+        "relation": {"kind": "table", "name": "tier_history"},
+        "source_entity": "user",
+        "entity_column": "id",
+        "properties": ("tier",),
+        **(
+            {}
+            if validity == "static"
+            else {"validity": {"valid_from": "starts", "valid_to": "ends"}}
+        ),
+    }
+    model = Model.from_catalog(
+        Catalog.model_validate(definition),
+        con=con,
+        readiness=column_model.readiness,
+        units=column_model.units,
+    )
+    compiled = _compile(model, features={"state": asof("tier", before=0)})
+    assert all(not _needs_decimal(relation) for relation in compiled.reads())
+    executed = []
+
+    def recording(query):
+        executed.append(ibis.to_sql(query, dialect="duckdb"))
+        return con.to_pyarrow(query)
+
+    from terrine.compile._asof import AsOfResult
+
+    for check in compiled._checks:
+        if isinstance(check, (_HistoryValidation, AsOfResult)):
+            executed.clear()
+            check.validate(recording)
+            # An as-of result also admits its lookup, which validation does not run.
+            validations = check.reads()[1:] if isinstance(check, AsOfResult) else check.reads()
+            assert executed == [ibis.to_sql(relation, dialect="duckdb") for relation in validations]
+            assert len(executed) >= 2
+    row = con.to_pyarrow(compiled.table.filter(compiled.table.unit == "a")).to_pylist()[0]
+    assert row["state"] == "gold"
+
+
 def test_static_inline_conflicts_refuse_instead_of_choosing_one_value(column_model):
     definition = column_model.catalog.model_dump(mode="python")
     definition["properties"]["tier"]["as_of"] = "static"

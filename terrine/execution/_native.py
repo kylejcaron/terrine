@@ -14,14 +14,20 @@ from typing import Any
 import ibis
 from sqlglot import exp
 
+from terrine.backends.capabilities import _SNAPSHOT_UNAVAILABLE
+from terrine.backends.registry import ENGINES
+from terrine.errors import TerrineError
 from terrine.execution._metadata import invalidate_metadata, metadata_fact
-from terrine.semantic.models import Catalog, SqlQuery, TableRef
+from terrine.semantic.models import Catalog, RelationSpec, SqlQuery, TableRef
 from terrine.semantic.sql import (
     _CAPTURE_READERS,
     _admit_capture_result_query_ast,
     _admit_capture_stored_view_query_ast,
     _admit_read_query_ast,
     _admit_stored_view_query_ast,
+    _render,
+    _scopes,
+    admit_read_query,
 )
 
 _CONNECTION_LOCKS: weakref.WeakKeyDictionary[Any, threading.RLock] = weakref.WeakKeyDictionary()
@@ -39,8 +45,6 @@ def connection_lock(raw: Any) -> threading.RLock:
 
 
 def _snapshot_error(reason: str):
-    from terrine.execution.inputs import _SNAPSHOT_UNAVAILABLE
-
     return _SNAPSHOT_UNAVAILABLE.error(reason=reason)
 
 
@@ -223,9 +227,7 @@ def _sql_tables(
     )
     if _capture:
         check_native_functions(raw, sql, None)
-    scopes = tuple(
-        __import__("sqlglot.optimizer.scope", fromlist=["traverse_scope"]).traverse_scope(statement)
-    )
+    scopes = _scopes(statement)
     physical: dict[tuple[str, str, str], NativeObject] = {}
     objects = native_objects(raw) if _objects is None else _objects
     for scope in scopes:
@@ -265,7 +267,7 @@ def _sql_tables(
             if _capture
             else _admit_stored_view_query_ast(obj.definition or "", "duckdb")
         )
-        query_sql = query.sql(dialect="duckdb")
+        query_sql = _render(query, "duckdb")
         if not _capture:
             check_native_functions(raw, query_sql, "duckdb")
         dependencies = _sql_tables(
@@ -356,7 +358,7 @@ def _closure(
     active.add(obj.identity)
     definition = obj.definition or ""
     query = _admit_stored_view_query_ast(definition, "duckdb")
-    query_sql = query.sql(dialect="duckdb")
+    query_sql = _render(query, "duckdb")
     check_native_functions(raw, query_sql, "duckdb")
     dependencies = _sql_tables(
         query_sql, _dummy_catalog(), raw, allow_temporary=allow_temporary, _objects=objects
@@ -572,3 +574,50 @@ def check_native_functions(raw: Any, sql: str, dialect: str | None) -> None:
 
     for name in names_in(sql):
         inspect(name, frozenset())
+
+
+class _DuckDBProvider:
+    capabilities = ENGINES["duckdb"].capabilities
+
+    def matches(self, con: Any) -> bool:
+        if type(con).__module__ != ENGINES["duckdb"].ibis_module:
+            return False
+        try:
+            raw_connection(con)
+        except TerrineError:
+            return False
+        return True
+
+    def dialect(self, con: Any) -> str:
+        return ENGINES["duckdb"].name
+
+    def resolve_relation(self, con: Any, relation: RelationSpec) -> ibis.Table:
+        raw = raw_connection(con)
+        with connection_lock(raw):
+            admission_fingerprint(_dummy_catalog(), relation, raw)
+            if isinstance(relation, TableRef):
+                return con.table(relation.name)
+            return con.sql(admit_read_query(relation.sql, "duckdb", "duckdb"))
+
+    def required_relations(self, catalog, con, *, units=None):
+        from terrine.execution.inputs import _required_native_relations
+
+        return _required_native_relations(catalog, con, units=units)
+
+    def bind_resolver(self, catalog, con, **kwargs):
+        from terrine.execution.inputs import _bind_native_resolver
+
+        return _bind_native_resolver(catalog, con, **kwargs)
+
+    def open_execution(self, catalog, con, *, units=None, input_binding=None):
+        self.capabilities.require(
+            "transaction_view",
+            backend="duckdb",
+            route="Use a backend with verified transaction-scoped input identity.",
+        )
+        from terrine.execution.inputs import _open_native_execution
+
+        return _open_native_execution(catalog, con, units=units, input_binding=input_binding)
+
+
+PROVIDER = _DuckDBProvider()

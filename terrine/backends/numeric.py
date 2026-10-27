@@ -10,21 +10,22 @@ significant digits), and leaves it through text, which both convert to
 binary64 with correct rounding; quotients divide 19-digit normalized
 significands as wide integers and round once at output. PostgreSQL and
 BigQuery hold the shortest text unscaled in their exact types and divide there.
+The portable base policy quantizes a float's text once to ``DECIMAL(38, 9)``,
+keeps counts and coefficients in ``DECIMAL(38, 0)``, and divides in binary64.
 """
 
 from __future__ import annotations
 
-import math
-import sys
 from collections.abc import Sequence
 from typing import cast
 
 import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
-import sqlglot.expressions as sge
 
-from terrine.backends.dialect import dialect_of, unavailable
+from terrine.backends.dialect import Dialect, current_dialect, dialect_for_name
+from terrine.backends.extrema import greatest
+from terrine.backends.registry import ENGINES, GENERIC
 from terrine.errors import RefusalSpec
 
 __all__ = [
@@ -41,6 +42,7 @@ __all__ = [
     "exact_type",
     "float_is_finite",
     "float_scale",
+    "guard_accumulation",
     "has_scaled_float_state",
     "is_exact_type",
     "normalized",
@@ -55,68 +57,34 @@ EXACT_OVERFLOW = RefusalSpec(
     "The requested exact result cannot be represented by the native output type. "
     "Use a supported exact representation or a semantically sufficient window.",
 )
-_DUCKDB_EXACT = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
-_PG_EXACT = dt.Unknown(raw_type=sge.DataType.build("NUMERIC", dialect="postgres"))
-# BigQuery has no arbitrary precision: BIGNUMERIC holds integers to about 5.7e38
-# and 38 fractional digits. Overflow is an error (sums) or NULL (SAFE_ arithmetic),
-# both of which surface as terrine.temporal.exact_overflow.
-_BQ_EXACT = dt.Unknown(raw_type=sge.DataType.build("BIGNUMERIC", dialect="bigquery"))
-# Snowflake NUMBER(38, 0) is an ordinary decimal to Ibis, so sums, differences
-# and comparisons render natively; a sum or difference beyond 38 digits is a
-# query error, which the Snowflake session maps to terrine.temporal.exact_overflow.
-_SF_EXACT = dt.Decimal(38, 0)
-# Backends whose float state is a coefficient at a per-unit scale and whose
-# quotients divide normalized significands.
-_SCALED = frozenset({"duckdb", "snowflake"})
 
 
 def exact_type(*like: ir.Value) -> dt.DataType:
-    dialect = dialect_of(*like)
-    if dialect == "postgres":
-        return _PG_EXACT
-    if dialect == "duckdb":
-        return _DUCKDB_EXACT
-    if dialect == "bigquery":
-        return _BQ_EXACT
-    if dialect == "snowflake":
-        return _SF_EXACT
-    raise unavailable("exact_state", dialect)
+    return current_dialect(*like).exact_type()
 
 
 def is_exact_type(dtype: dt.DataType) -> bool:
-    """Whether ``dtype`` is an internal exact-state type on any backend."""
-    return dtype in (_DUCKDB_EXACT, _PG_EXACT, _BQ_EXACT, _SF_EXACT)
+    """Whether ``dtype`` is an internal exact-state type on any policy."""
+    policies = [dialect_for_name(name) for name in (*ENGINES, GENERIC.name)]
+    return any(dtype in {policy.exact_type(), policy.coefficient_type()} for policy in policies)
 
 
 def has_scaled_float_state(*like: ir.Value) -> bool:
     """Whether float state is a coefficient at a per-unit scale (DuckDB, Snowflake)."""
-    return dialect_of(*like) in _SCALED
+    return current_dialect(*like).has_scaled_float_state
 
 
-def exact_literal(value: int, *like: ir.Value) -> ir.Value:
-    """An exact native integer, without an inferred fixed-width literal type."""
-    return ibis.literal(str(value)).cast(exact_type(*like))
+def exact_literal(value: int, *like: ir.Value) -> ir.Scalar:
+    """An exact integer typed like the first exact ``like`` operand, else as a count.
 
-
-def _exact_text(text: str, *like: ir.Value) -> ir.Value:
-    return ibis.literal(text).cast(exact_type(*like))
-
-
-@ibis.udf.scalar.builtin(
-    name="numeric_div", database="pg_catalog", signature=((_PG_EXACT, _PG_EXACT), _PG_EXACT)
-)
-def _pg_exact_divide(numerator, denominator):
-    """PostgreSQL NUMERIC division to at least 16 significant digits."""
-
-
-@ibis.udf.scalar.builtin(name="safe_divide", signature=((_BQ_EXACT, _BQ_EXACT), _BQ_EXACT))
-def _bq_exact_divide(numerator, denominator):
-    """BigQuery BIGNUMERIC division to 38 fractional digits; NULL for zero."""
-
-
-@ibis.udf.scalar.builtin(name="safe_multiply", signature=((_BQ_EXACT, _BQ_EXACT), _BQ_EXACT))
-def _bq_exact_multiply(left, right):
-    """BigQuery exact BIGNUMERIC product; NULL on overflow."""
+    Counts, thresholds and day divisors live in the coefficient domain. A
+    fill or comparison against float state passes that state operand so the
+    literal keeps its fixed-scale type instead of promoting the operand.
+    """
+    dialect = current_dialect(*like)
+    exact = {dialect.exact_type(), dialect.coefficient_type()}
+    dtype = next((item.type() for item in like if item.type() in exact), None)
+    return cast(ir.Scalar, ibis.literal(str(value)).cast(dtype or dialect.coefficient_type()))
 
 
 def decimal_coefficient(value: ir.Value, scale: int) -> ir.Value:
@@ -126,12 +94,7 @@ def decimal_coefficient(value: ir.Value, scale: int) -> ir.Value:
     so its text without the point is the coefficient; BigQuery prints NUMERIC
     1.50 as ``1.5``, so it multiplies instead.
     """
-    dialect = dialect_of(value)
-    if dialect == "bigquery":
-        exact = value.cast(_BQ_EXACT)
-        return _bq_exact_multiply(exact, exact_literal(10**scale, value)) if scale else exact
-    text = value.cast("string")
-    return (text.replace(".", "") if scale else text).cast(exact_type(value))
+    return current_dialect(value).decimal_coefficient(value, scale)
 
 
 def coefficient_bounds(value: ir.Value) -> tuple[int, int]:
@@ -142,43 +105,45 @@ def coefficient_bounds(value: ir.Value) -> tuple[int, int]:
     that DuckDB reports its wider HUGEINT as ``decimal(38, 0)``. Snowflake's
     ``NUMBER(p, 0)`` columns beyond int64 resolve as ``decimal(p, 0)``.
     """
-    dtype = value.type()
-    if isinstance(dtype, (dt.SignedInteger, dt.UnsignedInteger)):
-        lower, upper = dtype.bounds
-        return lower, upper
-    if not isinstance(dtype, dt.Decimal) or dtype.precision is None:
-        raise TypeError(f"{dtype} is not an exact type with a known precision")
-    if dtype.precision == 38 and dtype.scale == 0 and dialect_of(value) == "duckdb":
-        return -(1 << 127), (1 << 127) - 1
-    maximum = 10**dtype.precision - 1
-    return -maximum, maximum
+    return current_dialect(value).coefficient_bounds(value)
 
 
-@ibis.udf.scalar.builtin(name="ltrim", signature=((dt.string, dt.string), dt.string))
-def _ltrim(value, _characters):
-    """DuckDB and Snowflake ``ltrim`` removing the given characters."""
+def _scaled_text(coefficient, scale: int):
+    text = coefficient.cast("string")
+    if scale == 0:
+        return text
+    sign = text.startswith("-").ifelse("-", "")
+    digits = text.replace("-", "")
+    digits = digits.lpad(greatest(digits.length(), scale + 1), "0")
+    return (
+        sign
+        + digits.substr(0, digits.length() - scale)
+        + "."
+        + digits.substr(digits.length() - scale)
+    )
 
 
-_SF_DECFLOAT = dt.Unknown(raw_type=sge.DataType.build("DECFLOAT", dialect="snowflake"))
+def _checked_narrow_exact(coefficient: ir.Value, scale: int, target: str | dt.DataType) -> ir.Value:
+    """Check exact coefficient bounds where TRY_CAST would be an ordinary CAST.
 
-
-@ibis.udf.scalar.builtin(name="to_decfloat", signature=((dt.float64,), _SF_DECFLOAT))
-def _sf_decfloat(value):
-    """A binary64 as a Snowflake DECFLOAT: its value correctly rounded to 18
-    significant digits (measured), which always round-trips."""
-
-
-@ibis.udf.scalar.builtin(
-    name="try_to_number", signature=((dt.string, dt.int64, dt.int64), _SF_EXACT)
-)
-def _sf_try_number(text, precision, scale):
-    """Snowflake NUMBER(precision, scale) from decimal text; NULL when it does not fit."""
-
-
-@ibis.udf.scalar.builtin(name="try_to_double", signature=((dt.string,), dt.float64))
-def _sf_try_double(text):
-    """Snowflake binary64 from decimal text, correctly rounded (measured on halfway,
-    subnormal and 19-digit near-halfway cases); NULL beyond binary64's range."""
+    The bounds take the coefficient's own type, so a scale-0 coefficient is
+    never promoted into a narrower fixed-scale state for the comparison.
+    """
+    text = _scaled_text(coefficient, scale)
+    target_type = dt.dtype(target)
+    if isinstance(target_type, dt.SignedInteger):
+        bits = target_type.nbytes * 8
+        low, high = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
+    elif isinstance(target_type, dt.Decimal) and target_type.precision is not None:
+        low, high = -(10**target_type.precision) + 1, 10**target_type.precision - 1
+    else:
+        # An unbounded NUMERIC target cannot overflow.
+        return text.cast(target_type)
+    lower = ibis.literal(str(low)).cast(coefficient.type())
+    upper = ibis.literal(str(high)).cast(coefficient.type())
+    fits = (coefficient >= lower) & (coefficient <= upper)
+    # The cast only ever sees text that fits, whichever branches a backend evaluates.
+    return fits.ifelse(text, ibis.null(dt.string)).cast(target_type)
 
 
 def _decimal_parts(
@@ -209,34 +174,10 @@ def _decimal_parts(
     )
 
 
-def _finite_text(value: ir.Value) -> tuple[ir.FloatingValue, ir.StringValue]:
-    """A float widened to binary64 and its decimal text, NULL unless finite.
-
-    DuckDB prints the shortest round-trip text. Snowflake's row-wise VARCHAR,
-    VARIANT and JSON renderings keep at most 15 or 16 significant digits, so
-    the text there is the DECFLOAT value: 18 significant digits, correctly
-    rounded, within ``0.5 · 10**-17`` relative of the binary value.
-    """
-    widened = cast(ir.FloatingValue, value.cast(dt.float64))
-    finite = float_is_finite(widened).ifelse(widened, ibis.null(dt.float64))
-    if dialect_of(value) == "snowflake":
-        text = _sf_decfloat(finite).cast("string").lower()
-    else:
-        text = finite.cast("string")
-    return widened, text
-
-
-def _binary64(text: ir.StringValue, dialect: str) -> ir.FloatingValue:
-    """Decimal text rounded once to binary64, as the backend's conversion does."""
-    if dialect == "snowflake":
-        return cast(ir.FloatingValue, _sf_try_double(text))
-    return cast(ir.FloatingValue, text.cast(dt.float64))
-
-
-def _not_converted(result: ir.FloatingValue) -> ir.BooleanValue:
-    """Whether ``_binary64`` had no finite result: NULL (Snowflake beyond
-    binary64's range) or an infinity (DuckDB)."""
-    return result.isnull() | ~float_is_finite(result)
+def _not_converted(result: ir.FloatingValue, dialect: Dialect) -> ir.BooleanValue:
+    """Whether binary64 conversion had no finite result: NULL beyond its range
+    or an infinity."""
+    return result.isnull() | ~dialect.float_is_finite(result)
 
 
 def _scale_text(scale: int | ir.IntegerValue) -> ir.StringValue:
@@ -245,18 +186,51 @@ def _scale_text(scale: int | ir.IntegerValue) -> ir.StringValue:
     return scale.cast("string")
 
 
+def _scaled_float_parts(
+    value: ir.Value, scale: int | ir.IntegerValue | None, dialect: Dialect
+) -> tuple[ir.StringValue, ir.BooleanValue, ir.BooleanValue]:
+    if scale is None:
+        raise ValueError(f"{dialect.name} exact float state needs the partition's scale")
+    floating = cast(ir.FloatingValue, value.cast(dt.float64))
+    finite = dialect.float_is_finite(floating)
+    sign, digits, fraction_digits, exponent = _decimal_parts(dialect.finite_text(value)[1])
+    padding = cast(ir.IntegerValue, scale - (fraction_digits - exponent))
+    zeros = cast(ir.StringValue, ibis.literal("0")).repeat(padding)
+    return sign + digits + zeros, finite, padding >= ibis.literal(0)
+
+
+def _scaled_float_result(
+    coefficient: ir.Value, finite: ir.BooleanValue, held: ir.BooleanValue
+) -> tuple[ir.Value, ir.BooleanValue, ir.BooleanValue]:
+    exact = (finite & held).ifelse(coefficient, ibis.null().cast(coefficient.type()))
+    nonfinite = (~finite).fill_null(ibis.literal(False))
+    unrepresentable = (finite & ~held).fill_null(ibis.literal(False))
+    return exact, nonfinite, unrepresentable
+
+
+def _scaled_exact_to_float(
+    value: ir.Value, scale: int | ir.IntegerValue, dialect: Dialect
+) -> tuple[ir.FloatingValue, ir.BooleanValue, ir.BooleanValue]:
+    text = value.cast("string") + "e-" + _scale_text(scale)
+    result = dialect.binary64(text)
+    false = ibis.literal(False)
+    out_of_range = (value.notnull() & _not_converted(result, dialect)).fill_null(false)
+    rounded = out_of_range.ifelse(ibis.null().cast(dt.float64), result)
+    return cast(ir.FloatingValue, rounded), cast(ir.BooleanValue, false), out_of_range
+
+
 def float_scale(value: ir.Column, by: Sequence[ir.Column]) -> ir.IntegerValue:
     """The decimal scale at which every float in each ``by`` partition is an integer.
 
     DuckDB and Snowflake: the largest ``fraction_digits − exponent`` over the
-    partition's non-null finite values' text (``_finite_text``), floored at
+    partition's non-null finite values' decimal text, floored at
     0, so one tiny value widens only its own partition's coefficients.
     PostgreSQL and BigQuery hold float text as unscaled exact state, so their
     scale is 0.
     """
     if not has_scaled_float_state(value):
         return cast(ir.IntegerValue, ibis.literal(0, type=dt.int64))
-    _, text = _finite_text(value)
+    _, text = current_dialect(value).finite_text(value)
     _, _, fraction_digits, exponent = _decimal_parts(text)
     need = cast(ir.IntegerColumn, fraction_digits - exponent)
     largest = need.max().over(ibis.window(group_by=list(by)))
@@ -266,7 +240,7 @@ def float_scale(value: ir.Column, by: Sequence[ir.Column]) -> ir.IntegerValue:
 def exact_float(
     value: ir.Value, scale: int | ir.IntegerValue | None = None
 ) -> tuple[ir.Value, ir.BooleanValue, ir.BooleanValue]:
-    """Exact state for a float from its decimal text (``_finite_text``).
+    """Exact state for a float from its finite decimal text.
 
     Returns (exact, nonfinite, unrepresentable). DuckDB and Snowflake hold a
     finite binary64 as the coefficient ``value · 10**scale``: the text's digits
@@ -278,40 +252,10 @@ def exact_float(
     so both flags are false there. BigQuery BIGNUMERIC has neither and holds
     magnitudes below about 5.7e38 to 38 fractional digits; non-finite and
     out-of-range values become NULL and are flagged so the caller can refuse
-    them.
+    them. The portable policy truncates the text toward zero at nine places
+    into ``DECIMAL(38, 9)``, flagging ``|value| >= 10**29`` as unrepresentable.
     """
-    widened = value.cast(dt.float64)
-    text = widened.cast("string")
-    never = cast(ir.BooleanValue, ibis.literal(False))
-    dialect = dialect_of(value)
-    if dialect == "postgres":
-        return text.cast(_PG_EXACT), never, never
-    floating = cast(ir.FloatingValue, widened)
-    if dialect in _SCALED:
-        if scale is None:
-            raise ValueError(f"{dialect} exact float state needs the partition's scale")
-        finite = float_is_finite(floating)
-        sign, digits, fraction_digits, exponent = _decimal_parts(_finite_text(value)[1])
-        padding = cast(ir.IntegerValue, scale - (fraction_digits - exponent))
-        zeros = cast(ir.StringValue, ibis.literal("0")).repeat(padding)
-        coefficient_text = sign + digits + zeros
-        if dialect == "duckdb":
-            coefficient = coefficient_text.cast(_DUCKDB_EXACT)
-            fits = cast(ir.BooleanValue, ibis.literal(True))
-        else:
-            coefficient = _sf_try_number(coefficient_text, 38, 0)
-            fits = coefficient.notnull()
-        held = (padding >= ibis.literal(0)) & fits
-        exact = (finite & held).ifelse(coefficient, ibis.null().cast(exact_type(value)))
-        nonfinite = (~finite).fill_null(ibis.literal(False))
-        unrepresentable = (finite & ~held).fill_null(ibis.literal(False))
-        return exact, nonfinite, unrepresentable
-    if dialect != "bigquery":
-        raise unavailable("exact_float", dialect)
-    nonfinite = (floating.isnan() | floating.isinf()).fill_null(ibis.literal(False))
-    exact = nonfinite.ifelse(ibis.null().cast(_BQ_EXACT), text.try_cast(_BQ_EXACT))
-    unrepresentable = ~nonfinite & widened.notnull() & exact.isnull()
-    return exact, nonfinite, unrepresentable
+    return current_dialect(value).exact_float(value, scale)
 
 
 def exact_ratio(numerator: ir.Value, denominator: ir.Value) -> ir.Value:
@@ -319,38 +263,19 @@ def exact_ratio(numerator: ir.Value, denominator: ir.Value) -> ir.Value:
 
     Not for DuckDB or Snowflake, which divide normalized significands
     (``normalized_quotient``). PostgreSQL divides to at least 16 significant
-    digits; BigQuery to 38 fractional digits.
+    digits; BigQuery to 38 fractional digits; the portable policy divides
+    correctly rounded binary64 operands once.
     """
-    dialect = dialect_of(numerator, denominator)
-    if dialect == "bigquery":
-        return _bq_exact_divide(numerator, denominator)
-    if dialect != "postgres":
-        raise unavailable("exact_ratio", dialect)
-    zero = exact_literal(0, numerator, denominator)
-    divisor = (denominator == zero).ifelse(ibis.null().cast(_PG_EXACT), denominator)
-    return _pg_exact_divide(numerator, divisor)
-
-
-# Binary64's largest finite value, and 2**-1075: magnitudes at or below it round
-# to zero, which PostgreSQL's float8 input rejects instead of returning.
-_FLOAT64_MAX = str(int(sys.float_info.max))
-_FLOAT64_ROUNDS_TO_ZERO = "0." + str(5**1075).rjust(1075, "0")
-_NONFINITE = ("NaN", "Infinity", "-Infinity")
+    return current_dialect(numerator, denominator).exact_ratio(numerator, denominator)
 
 
 def exact_is_nonfinite(value: ir.Value) -> ir.BooleanValue:
     """Whether an exact value is NaN or infinite; NULL stays NULL.
 
-    Only PostgreSQL NUMERIC has non-finite values; BIGNUMERIC has none.
+    Only PostgreSQL NUMERIC has non-finite values; BIGNUMERIC has none. The
+    portable policy's decimal state has none either; its binary64 quotients may.
     """
-    dialect = dialect_of(value)
-    if dialect == "bigquery":
-        return cast(
-            ir.BooleanValue, value.isnull().ifelse(ibis.null(dt.boolean), ibis.literal(False))
-        )
-    if dialect != "postgres":
-        raise unavailable("exact_is_nonfinite", dialect)
-    return value.isin([_exact_text(text, value) for text in _NONFINITE])
+    return current_dialect(value).exact_is_nonfinite(value)
 
 
 def exact_to_float(
@@ -363,92 +288,18 @@ def exact_to_float(
     their string-to-double conversions round correctly (ties to even); a
     magnitude beyond binary64's range is an infinity on DuckDB and NULL from
     Snowflake's ``TRY_TO_DOUBLE``, flagged either way. PostgreSQL and BigQuery
-    hold unscaled exact state, so ``scale`` is 0 there. Magnitudes at or
-    below 2**-1075 become 0.0, as round-to-nearest gives.
+    hold unscaled exact state, so ``scale`` is 0 there, as does the portable
+    policy, which converts its fixed-scale text. Magnitudes at or below
+    2**-1075 become 0.0, as round-to-nearest gives.
     """
-    false = ibis.literal(False)
-    never = cast(ir.BooleanValue, false)
-    dialect = dialect_of(value)
-    if dialect in _SCALED:
-        text = value.cast("string") + "e-" + _scale_text(scale)
-        result = _binary64(text, dialect)
-        out_of_range = (value.notnull() & _not_converted(result)).fill_null(false)
-        rounded = out_of_range.ifelse(ibis.null().cast(dt.float64), result)
-        return cast(ir.FloatingValue, rounded), never, out_of_range
-    if not isinstance(scale, int) or scale:
-        raise ValueError(f"{dialect} exact state is unscaled; scale must be 0")
-    if dialect == "bigquery":
-        # BIGNUMERIC is finite and far inside binary64's range.
-        return cast(ir.FloatingValue, value.cast(dt.float64)), never, never
-    # NUMERIC NaN equals itself and sorts above every number, so test it first.
-    nonfinite = exact_is_nonfinite(value)
-    limit, tiny = _exact_text(_FLOAT64_MAX, value), _exact_text(_FLOAT64_ROUNDS_TO_ZERO, value)
-    negative_limit = _exact_text("-" + _FLOAT64_MAX, value)
-    negative_tiny = _exact_text("-" + _FLOAT64_ROUNDS_TO_ZERO, value)
-    out_of_range = ~nonfinite & ((value > limit) | (value < negative_limit))
-    rounds_to_zero = (value <= tiny) & (value >= negative_tiny)
-    missing = ibis.null().cast(dt.float64)
-    result = ibis.cases(
-        (nonfinite | out_of_range, missing),
-        (rounds_to_zero, ibis.literal(0.0)),
-        else_=value.cast(dt.float64),
-    )
-    return (
-        cast(ir.FloatingValue, result),
-        nonfinite.fill_null(false),
-        out_of_range.fill_null(false),
-    )
+    return current_dialect(value).exact_to_float(value, scale)
 
 
-_DUCKDB_HUGE = dt.Unknown(raw_type=sge.DataType.build("HUGEINT", dialect="duckdb"))
 # A normalized value holds this many leading significant digits in a wide
 # integer (DuckDB's 128-bit HUGEINT, Snowflake's NUMBER(38, 0)); a quotient of
 # two such significands, shifted to as many digits, stays below 10**38 and so
 # within either integer's range.
 _SIGNIFICAND_DIGITS = 19
-
-
-@ibis.udf.scalar.builtin(name="divide", signature=((_DUCKDB_HUGE, _DUCKDB_HUGE), _DUCKDB_HUGE))
-def _duckdb_huge_quotient(value, divisor):
-    """DuckDB 128-bit integer division truncating toward zero."""
-
-
-@ibis.udf.scalar.builtin(name="abs", signature=((_DUCKDB_HUGE,), _DUCKDB_HUGE))
-def _duckdb_huge_abs(value):
-    """DuckDB 128-bit integer magnitude."""
-
-
-def _wide_type(dialect: str) -> dt.DataType:
-    """The wide integer type holding a normalized significand."""
-    if dialect == "duckdb":
-        return _DUCKDB_HUGE
-    if dialect == "snowflake":
-        return _SF_EXACT
-    raise unavailable("normalized", dialect)
-
-
-def _wide(text: str, dialect: str) -> ir.Value:
-    return ibis.literal(text).cast(_wide_type(dialect))
-
-
-def _wide_abs(value: ir.Value, dialect: str) -> ir.Value:
-    if dialect == "duckdb":
-        return _duckdb_huge_abs(value)
-    return cast(ir.NumericValue, value).abs()
-
-
-def _wide_quotient(value: ir.Value, divisor: ir.Value, dialect: str) -> ir.Value:
-    """Wide integer division truncating toward zero.
-
-    Snowflake divides NUMBER to six fractional digits and rounds, so the
-    remainder (whose sign follows the dividend) is removed first; the exact
-    quotient then divides without rounding.
-    """
-    if dialect == "duckdb":
-        return _duckdb_huge_quotient(value, divisor)
-    magnitude = cast(ir.NumericValue, value)
-    exact = magnitude - magnitude % cast(ir.NumericValue, divisor)
-    return (exact / cast(ir.NumericValue, divisor)).cast(_SF_EXACT)
 
 
 def normalized(
@@ -460,16 +311,16 @@ def normalized(
     value's leading 19 significant digits, so ``10**18 ≤ |significand| < 10**19``
     (0 with exponent 0 for zero); the exponent is that of the leading digit. An
     exact coefficient normalizes from its integer text, an already rounded
-    binary64 from its ``_finite_text`` (at most 18 digits, held exactly), so
+    binary64 from its finite decimal text (at most 18 digits, held exactly), so
     it stands for that decimal rather than its binary expansion.
     Digits past the 19th are dropped, perturbing the value by less than
     ``10**-18`` relative. A NULL or non-finite float gives NULL.
     """
-    dialect = dialect_of(value)
-    wide = _wide_type(dialect)
-    text = _finite_text(value)[1] if value.type().is_floating() else value.cast("string")
+    dialect = current_dialect(value)
+    wide = dialect.wide_type()
+    text = dialect.finite_text(value)[1] if value.type().is_floating() else value.cast("string")
     sign, digits, fraction_digits, exponent = _decimal_parts(text)
-    significant = cast(ir.StringValue, _ltrim(digits, "0"))
+    significant = dialect.trim_leading_zeros(digits)
     count = significant.length()
     zero = count == ibis.literal(0)
     leading = significant.substr(0, _SIGNIFICAND_DIGITS).rpad(_SIGNIFICAND_DIGITS, "0")
@@ -493,12 +344,12 @@ def normalized_quotient(
     losing nothing but its truncation (less than ``10**-18`` relative). A zero
     denominator or a NULL operand gives NULL.
     """
-    dialect = dialect_of(n_significand, d_significand)
-    wide = _wide_type(dialect)
-    zero = _wide("0", dialect)
-    numerator = _wide_abs(n_significand, dialect)
+    dialect = current_dialect(n_significand, d_significand)
+    wide = dialect.wide_type()
+    zero = ibis.literal("0").cast(wide)
+    numerator = dialect.wide_abs(n_significand)
     denominator = (d_significand != zero).ifelse(
-        _wide_abs(d_significand, dialect), ibis.null().cast(wide)
+        dialect.wide_abs(d_significand), ibis.null().cast(wide)
     )
     # |n / d| lies in (0.1, 10): shift so the integer quotient has 19 digits.
     shift = cast(
@@ -508,7 +359,7 @@ def normalized_quotient(
         ),
     )
     zeros = cast(ir.StringValue, ibis.literal("0")).repeat(shift)
-    digits = _wide_quotient((numerator.cast("string") + zeros).cast(wide), denominator, dialect)
+    digits = dialect.wide_quotient((numerator.cast("string") + zeros).cast(wide), denominator)
     negative = (n_significand < zero) != (d_significand < zero)
     sign = cast(ir.StringValue, negative.ifelse(ibis.literal("-"), ibis.literal("")))
     significand = (sign + digits.cast("string")).cast(wide)
@@ -550,108 +401,76 @@ def rounded_normalized(
     ``p / q`` never rounds to infinity: that needs ``|t| ≥ MAX(1 + u / 2)``.
     """
     text = significand.cast("string") + "e" + (exponent - (_SIGNIFICAND_DIGITS - 1)).cast("string")
-    result = _binary64(text, dialect_of(significand))
-    overflow = (significand.notnull() & _not_converted(result)).fill_null(ibis.literal(False))
+    dialect = current_dialect(significand)
+    result = dialect.binary64(text)
+    overflow = (significand.notnull() & _not_converted(result, dialect)).fill_null(
+        ibis.literal(False)
+    )
     return cast(ir.FloatingValue, overflow.ifelse(ibis.null().cast(dt.float64), result)), overflow
 
 
-@ibis.udf.agg.builtin(name="sum", signature=((_DUCKDB_EXACT,), _DUCKDB_EXACT))
-def _duckdb_exact_sum(value):
-    """Native exact coefficient/count sum."""
+def exact_sum(value: ir.Value, *, admitted: bool = False) -> ir.Value:
+    """Sum exactly; ``admitted`` operands were withheld by ``guard_accumulation`` already."""
+    return current_dialect(value).exact_sum(value, admitted=admitted)
 
 
-@ibis.udf.scalar.builtin(name="subtract", signature=((_DUCKDB_EXACT, _DUCKDB_EXACT), _DUCKDB_EXACT))
-def _duckdb_exact_subtract(left, right):
-    """Native exact coefficient/count subtraction."""
+def guard_accumulation(
+    table: ibis.Table,
+    coefficient: ir.Value,
+    *,
+    partition: Sequence[str],
+    order: str | None = None,
+) -> tuple[ibis.Table, ir.Value, ir.BooleanValue | None]:
+    """Withhold coefficients whose partition's accumulated magnitudes may not fit.
+
+    A policy that bounds accumulations projects ``coefficient`` onto ``table``
+    and, over each partition (running along ``order`` when given), the
+    admission of its backend magnitude bound and contributing count by
+    ``Dialect.admits_accumulation``. Returns the projected table, the
+    coefficient withheld (NULL) where not admitted, and the admission flag,
+    both columns of that table: the withheld coefficient keeps every sum the
+    backend evaluates inside the type's domain, and the flag lets a running
+    consumer refuse rather than publish a partial sum. Other policies return
+    the inputs unchanged and no flag.
+    """
+    policy = current_dialect(coefficient)
+    if not policy.bounds_accumulations:
+        return table, coefficient, None
+    dtype = coefficient.type()
+    if not isinstance(dtype, dt.Decimal):
+        raise TypeError(f"{dtype} is not a fixed-precision coefficient type")
+    used = {name.casefold() for name in table.columns}
+    names = []
+    for stem in ("coefficient", "admitted"):
+        name = f"__terrine_{stem}"
+        while name.casefold() in used:
+            name = f"_{name}"
+        used.add(name.casefold())
+        names.append(name)
+    value_name, flag_name = names
+    staged = table.mutate(**{value_name: coefficient})
+    frame = ibis.window(
+        group_by=[staged[name] for name in partition],
+        order_by=[staged[order]] if order is not None else (),
+        rows=(None, 0) if order is not None else None,
+    )
+    bound = policy.magnitude(staged[value_name]).sum().over(frame)
+    count = staged[value_name].count().over(frame)
+    flagged = staged.mutate(**{flag_name: policy.admits_accumulation(bound, count, dtype)})
+    admitted = cast(ir.BooleanValue, flagged[flag_name])
+    return flagged, admitted.ifelse(flagged[value_name], ibis.null().cast(dtype)), admitted
 
 
-@ibis.udf.agg.builtin(name="sum", signature=((_PG_EXACT,), _PG_EXACT))
-def _pg_exact_sum(value):
-    """PostgreSQL exact NUMERIC sum."""
-
-
-@ibis.udf.scalar.builtin(
-    name="numeric_sub", database="pg_catalog", signature=((_PG_EXACT, _PG_EXACT), _PG_EXACT)
-)
-def _pg_exact_subtract(left, right):
-    """PostgreSQL exact NUMERIC subtraction."""
-
-
-@ibis.udf.agg.builtin(name="sum", signature=((_BQ_EXACT,), _BQ_EXACT))
-def _bq_exact_sum(value):
-    """BigQuery BIGNUMERIC sum; overflow is a query error."""
-
-
-@ibis.udf.scalar.builtin(name="safe_subtract", signature=((_BQ_EXACT, _BQ_EXACT), _BQ_EXACT))
-def _bq_exact_subtract(left, right):
-    """BigQuery BIGNUMERIC subtraction; NULL on overflow."""
-
-
-def exact_sum(value):
-    dialect = dialect_of(value)
-    if dialect == "postgres":
-        return _pg_exact_sum(value)
-    if dialect == "duckdb":
-        return _duckdb_exact_sum(value)
-    if dialect == "bigquery":
-        return _bq_exact_sum(value)
-    if dialect == "snowflake":
-        # NUMBER(38, 0) sums natively (overflow is a query error); the cast keeps
-        # Ibis's type at NUMBER(38, 0), where Ibis would widen a decimal sum's
-        # scale and type later fills and comparisons as NUMBER(38, 2).
-        return cast(ir.NumericColumn, value).sum().cast(_SF_EXACT)
-    raise unavailable("exact_state", dialect)
-
-
-def exact_subtract(left, right):
-    dialect = dialect_of(left, right)
-    if dialect == "postgres":
-        return _pg_exact_subtract(left, right)
-    if dialect == "duckdb":
-        return _duckdb_exact_subtract(left, right)
-    if dialect == "bigquery":
-        return _bq_exact_subtract(left, right)
-    if dialect == "snowflake":
-        return cast(ir.NumericValue, left) - cast(ir.NumericValue, right)
-    raise unavailable("exact_state", dialect)
-
-
-@ibis.udf.scalar.builtin(name="divide", signature=((dt.int64, dt.int64), dt.int64))
-def _duckdb_quotient(value, divisor):
-    """DuckDB integer division truncating toward zero."""
-
-
-@ibis.udf.scalar.builtin(name="div", signature=((dt.int64, dt.int64), dt.int64))
-def _div(value, divisor):
-    """PostgreSQL and BigQuery integer division truncating toward zero."""
+def exact_subtract(left: ir.Value, right: ir.Value) -> ir.Value:
+    return current_dialect(left, right).exact_subtract(left, right)
 
 
 def truncating_quotient(
     value: ir.IntegerValue, divisor: int | ir.IntegerValue, *, like: ir.Value
 ) -> ir.IntegerValue:
     """Integer division truncating toward zero; Ibis ``//`` floors through doubles."""
-    dialect = dialect_of(like, value)
-    if dialect in {"postgres", "bigquery"}:
-        quotient = _div(value, divisor)
-    elif dialect == "duckdb":
-        quotient = _duckdb_quotient(value, divisor)
-    elif dialect == "snowflake":
-        # Snowflake's integer division rounds to six fractional digits; the
-        # remainder (sign of the dividend) is removed so the division is exact.
-        quotient = (value - value % divisor) / divisor
-    else:
-        raise unavailable("integer_quotient", dialect)
-    return cast(ir.IntegerValue, cast(ir.IntegerValue, quotient).cast(dt.int64))
+    return current_dialect(like, value).truncating_quotient(value, divisor)
 
 
-@ibis.udf.scalar.builtin(name="isfinite", signature=((dt.float64,), dt.boolean))
-def _duckdb_isfinite(value):
-    """Native finite-state predicate."""
-
-
-def float_is_finite(value) -> ir.BooleanValue:
-    if dialect_of(value) == "duckdb":
-        return cast(ir.BooleanValue, _duckdb_isfinite(value))
-    # PostgreSQL has no isfinite(double precision), and NaN equals NaN there.
-    nonfinite = [ibis.literal(item, type=dt.float64) for item in (math.inf, -math.inf, math.nan)]
-    return cast(ir.FloatingValue, value.cast(dt.float64)).notin(nonfinite)
+def float_is_finite(value: ir.Value) -> ir.BooleanValue:
+    return current_dialect(value).float_is_finite(value)

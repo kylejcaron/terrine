@@ -16,7 +16,7 @@ from terrine.backends.timestamps import compare_timestamps
 from terrine.data import ColumnMeta
 from terrine.semantic.models import BoundDimension, BoundValidity
 from terrine.spec.validate import _MISSING
-from terrine.temporal.attributes import attribute_asof, validate_history
+from terrine.temporal.attributes import attribute_asof, history_checks, validate_history
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -28,6 +28,10 @@ class AsOfResult:
     meta: ColumnMeta
     history: ibis.Table
     dimension: BoundDimension
+
+    def reads(self) -> tuple[ibis.Table, ...]:
+        """The lookup and the validation queries, each projected to what it uses."""
+        return (self.table, *(query for query, _ in history_checks(self.history, self.dimension)))
 
     def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None:
         validate_history(self.history, self.dimension, execute=execute)

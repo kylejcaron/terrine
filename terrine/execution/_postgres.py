@@ -4,19 +4,28 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from importlib.metadata import version
 from itertools import pairwise
 from typing import Any
 
+import ibis
 import pyarrow as pa
 
+from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE, _SNAPSHOT_UNAVAILABLE
+from terrine.backends.engines.postgres import raw_connection
+from terrine.backends.registry import ENGINES
 from terrine.errors import RefusalSpec
 from terrine.execution._metadata import invalidate_metadata
 from terrine.semantic.models import Catalog, RelationSpec, SqlQuery, TableRef
-from terrine.semantic.sql import _admit_read_query_ast, _parse_read_query_ast, admit_read_query
+from terrine.semantic.sql import (
+    _admit_read_query_ast,
+    _parse_read_query_ast,
+    _render,
+    _scopes,
+    _verified,
+    admit_read_query,
+)
 
 _NONFINITE = RefusalSpec(
     "terrine.backend.nonfinite_decimal",
@@ -25,78 +34,13 @@ _NONFINITE = RefusalSpec(
 )
 
 DIALECT = "postgres"
-_MIN_IBIS = (12, 0)
-_VERIFIED_SERVER_MAJOR = 16
 # Relation kinds that are physical row sources or views over them.
 _TABLE_KINDS = {"r": "table", "p": "table", "m": "table"}
 _SYSTEM_SCHEMAS = ("pg_catalog", "information_schema")
 
-_DIALECT_ADMISSION = RefusalSpec(
-    "terrine.backend.capability_unavailable",
-    "The detected database server is not verified for PostgreSQL execution. {route}",
-)
-
-
-@dataclass(frozen=True, slots=True)
-class ServerIdentity:
-    """Result of classifying a server's version string."""
-
-    server: str
-    status: str
-
-
-def classify_server_version(version_string: str) -> ServerIdentity:
-    """Admit only PostgreSQL 16, the version measured by the compatibility suite."""
-    lowered = version_string.casefold()
-    if "redshift" in lowered:
-        return ServerIdentity("Redshift", "unsupported")
-    if "greenplum" in lowered:
-        return ServerIdentity("Greenplum", "unsupported")
-    if "cockroachdb" in lowered:
-        return ServerIdentity("CockroachDB", "unsupported")
-    match = re.match(r"^PostgreSQL\s+(\d+)(?:\.\d+)?\b", version_string)
-    if match is not None:
-        major = int(match.group(1))
-        if major == _VERIFIED_SERVER_MAJOR:
-            return ServerIdentity("PostgreSQL", "admitted")
-        return ServerIdentity("PostgreSQL", "unverified")
-    server = version_string.split(maxsplit=1)[0] if version_string.strip() else "unknown"
-    return ServerIdentity(server, "unverified")
-
-
-def verify_server_identity(con: Any) -> None:
-    """Check server identity with the built-in, read-only version function."""
-    row = _rows(raw_connection(con), "SELECT pg_catalog.version()")
-    version_string = str(row[0][0]) if row and row[0] else ""
-    identity = classify_server_version(version_string)
-    if identity.status != "admitted":
-        raise _DIALECT_ADMISSION.error(
-            backend=identity.server,
-            operation="dialect_admission",
-            status=identity.status,
-            route=(
-                "Use verified DuckDB, PostgreSQL 16, BigQuery or Snowflake execution; "
-                "other PostgreSQL-compatible servers are unverified."
-            ),
-        )
 
 def _snapshot_error(reason: str):
-    from terrine.execution.inputs import _SNAPSHOT_UNAVAILABLE
-
     return _SNAPSHOT_UNAVAILABLE.error(reason=reason)
-
-
-def ibis_supported() -> bool:
-    """Ibis 11 lowers PostgreSQL as-of joins with unit filters after the nearest row."""
-    parts = tuple(int(part) for part in re.findall(r"\d+", version("ibis-framework"))[:2])
-    return parts >= _MIN_IBIS
-
-
-def raw_connection(con: Any) -> Any:
-    raw = getattr(con, "con", None)
-    if raw is None or type(raw).__module__.split(".")[0] != "psycopg":
-        raise _snapshot_error("connection is not a psycopg-backed Ibis PostgreSQL backend")
-    return raw
 
 
 def _rows(raw: Any, sql: str, params: Any = None) -> list[tuple[Any, ...]]:
@@ -207,11 +151,10 @@ def _table_name(source: Any) -> str:
 
 def _sql_roots(sql: str, raw: Any) -> list[int]:
     from sqlglot import exp
-    from sqlglot.optimizer.scope import traverse_scope
 
     statement = _admit_read_query_ast(sql, DIALECT, DIALECT)
     oids: list[int] = []
-    for scope in traverse_scope(statement):
+    for scope in _scopes(statement):
         for source in scope.sources.values():
             if isinstance(source, exp.Table):
                 oids.append(_lookup(raw, _table_name(source)))
@@ -277,17 +220,20 @@ def _called_names(sql: str) -> set[str]:
     """
     from sqlglot import exp
 
-    statement = _parse_read_query_ast(sql, DIALECT)
-    rendered = statement.sql(dialect=DIALECT, comments=False)
-    names = _token_calls(sql, statement) | _token_calls(
-        rendered, _parse_read_query_ast(rendered, DIALECT)
-    )
-    for node in statement.walk():
-        if isinstance(node, exp.Anonymous):
-            names.add(node.name.casefold())
-        elif isinstance(node, exp.Func):
-            names.add(node.sql_name().casefold())
-    return names
+    def collect() -> set[str]:
+        statement = _parse_read_query_ast(sql, DIALECT)
+        rendered = _render(statement, DIALECT, comments=False)
+        names = _token_calls(sql, statement) | _token_calls(
+            rendered, _parse_read_query_ast(rendered, DIALECT)
+        )
+        for node in statement.walk():
+            if isinstance(node, exp.Anonymous):
+                names.add(node.name.casefold())
+            elif isinstance(node, exp.Func):
+                names.add(node.sql_name().casefold())
+        return names
+
+    return _verified(collect)
 
 
 def _token_calls(text: str, statement: Any) -> set[str]:
@@ -341,7 +287,7 @@ def check_functions(raw: Any, sql: str) -> None:
 
 def _normalized(sql: str) -> str:
     """One statement rendered from its parse, without terminators or comments."""
-    return _parse_read_query_ast(sql, DIALECT).sql(dialect=DIALECT, comments=False)
+    return _render(_parse_read_query_ast(sql, DIALECT), DIALECT, comments=False)
 
 
 def query_schema(raw: Any, sql: str, type_mapper: Any) -> Any:
@@ -466,3 +412,65 @@ def _uuids_as_text(rows: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
     return [
         tuple(str(value) if isinstance(value, UUID) else value for value in row) for row in rows
     ]
+
+
+class _PostgresProvider:
+    capabilities = ENGINES["postgres"].capabilities
+
+    def matches(self, con: Any) -> bool:
+        return type(con).__module__ == ENGINES["postgres"].ibis_module
+
+    def dialect(self, con: Any) -> str:
+        return ENGINES["postgres"].name
+
+    def resolve_relation(self, con: Any, relation: RelationSpec) -> ibis.Table:
+        from terrine.execution import _postgres
+
+        return _postgres.resolve(con, relation)
+
+    def required_relations(self, catalog, con, *, units=None):
+        from terrine.execution import _postgres
+
+        return _postgres.required_relations(catalog, con, units=units)
+
+    def bind_resolver(self, catalog, con, **kwargs):
+        from terrine.execution import _postgres
+        from terrine.execution.inputs import _INVALID
+
+        units = kwargs.get("units")
+        if kwargs.get("input_binding") is not None:
+            raise _CAPABILITY_UNAVAILABLE.error(
+                backend="postgres",
+                operation="retained_snapshot",
+                status="unverified",
+                route="Retained input bindings are DuckDB-only; materialize directly.",
+            )
+        raw = raw_connection(con)
+        _postgres.required_relations(catalog, con, units=units)
+        admitted: dict[tuple[str, str], Any] = {}
+        fingerprints: dict[tuple[str, str], str] = {}
+
+        def resolve(relation: RelationSpec) -> Any:
+            key = (relation.kind, relation.name if isinstance(relation, TableRef) else relation.sql)
+            fingerprint = _postgres.admission_fingerprint(relation, raw)
+            if key in admitted:
+                if fingerprints[key] != fingerprint:
+                    raise _INVALID.error(
+                        reason="relation definition or identity changed after Model binding"
+                    )
+                return admitted[key]
+            admitted[key] = _postgres.resolve(con, relation, catalog.dialect)
+            fingerprints[key] = fingerprint
+            return admitted[key]
+
+        return resolve
+
+    def open_execution(self, catalog, con, *, units=None, input_binding=None):
+        from terrine.execution.inputs import _open_postgres_execution
+
+        return _open_postgres_execution(
+            self, catalog, con, units=units, input_binding=input_binding
+        )
+
+
+PROVIDER = _PostgresProvider()

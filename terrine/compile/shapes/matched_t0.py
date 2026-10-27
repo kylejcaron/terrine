@@ -21,6 +21,9 @@ _INSUFFICIENT = RefusalSpec(
 class InsufficientControlsCheck:
     table: ibis.Table
 
+    def reads(self) -> tuple[ibis.Table, ...]:
+        return (self.table,)
+
     def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None:
         result = execute(self.table)
         if not isinstance(result, pa.Table):

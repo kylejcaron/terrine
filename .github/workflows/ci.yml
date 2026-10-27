@@ -72,6 +72,10 @@ jobs:
           --splits 6 --group ${{ matrix.group }}
           --splitting-algorithm least_duration
           --durations-path integration/.test_durations
+      # The same known answers compiled through the portable base expression
+      # policy; about twenty seconds beside the native run.
+      - if: matrix.group == 1
+        run: uv run pytest -q integration/conformance --generic-dialect
   docs-and-examples:
     runs-on: ubuntu-latest
     timeout-minutes: 30

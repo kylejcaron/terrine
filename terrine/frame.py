@@ -612,23 +612,29 @@ class Frame:
         """Verify, audit and consume one bounded Arrow output stream atomically.
 
         No partial output is returned on limits, invalid history or stream errors.
-        Concurrent writes after the execution view is established are excluded.
+        Verified execution views exclude concurrent writes; unverified reads are per statement.
         """
         enforce_shape_budget(self._design.shape, budget)
         for warning in _scan_policy(budget):
             warnings.warn(warning, RuntimeWarning, stacklevel=2)
+        from terrine.compile.columns import expression_policy
         from terrine.compile.dispatch import compile_design
         from terrine.execution.backend import backend_provider
         from terrine.execution.inputs import open_execution
 
-        backend_provider(self._model.con).capabilities.require(
+        backend_provider(self._model.con, engine=self._model._engine).capabilities.require(
             "arrow_batches",
             backend=self._model.catalog.dialect,
             route="Materialize with a backend that supports bounded Arrow batches.",
+            allow_unverified=self._model._engine.status == "unverified",
         )
         model = self._model
         with open_execution(
-            model.catalog, model.con, units=model.units, input_binding=model.input_binding
+            model.catalog,
+            model.con,
+            units=model.units,
+            input_binding=model.input_binding,
+            engine=model._engine,
         ) as context:
             from terrine.spec.validate import validate_design
 
@@ -638,6 +644,9 @@ class Frame:
                 unit_name=self._design.unit,
             )
             compiled = compile_design(self._design, execution_model)
+            # Admit every relation the Frame will run, integrity checks included,
+            # so an unsupported primitive refuses before the first source read.
+            context.admit(*compiled.reads())
             excluded_counts = {}
             if self._training_view is not None:
                 compiled.validate(execute=context.execute)
@@ -648,6 +657,7 @@ class Frame:
                 compiled = _apply_training_view(compiled, self._training_view)
             if transform is not None:
                 compiled = transform(compiled)
+                context.admit(*compiled.reads())
             compiled = self._with_winsorization_metadata(compiled)
             summary = validate_compiled_output(compiled, context.execute)
             query = compiled.table
@@ -831,6 +841,9 @@ class Frame:
                 execution_snapshot=context.snapshot,
                 shape=shape or shape_name,
                 treatment_design="baseline_binary" if baseline_binary else None,
+                engine_name=context.snapshot.backend,
+                dialect=expression_policy(model),
+                engine_status=model._engine.status,
                 eligibility_summary=summary,
                 treatment_knowledge="retrospective_effective_time"
                 if treatment is not None
@@ -1027,12 +1040,14 @@ class CohortTable:
             parent_design_hash,
             operation_hash,
         )
+        from terrine.compile.columns import expression_policy
         from terrine.compile.dispatch import compile_cohort_summary
 
+        policy = expression_policy(self.parent_frame._model)
         return self.parent_frame._materialize(
             budget,
             transform=lambda study: compile_cohort_summary(
-                study, grouping=self.grouping, value_column=self.value_column
+                study, grouping=self.grouping, value_column=self.value_column, dialect=policy
             ),
             shape="cohort_table",
             cohort_operation=operation,

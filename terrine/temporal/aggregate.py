@@ -13,12 +13,13 @@ import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 import pyarrow as pa
 
-from terrine.backends.dialect import dialect_of
+from terrine.backends.dialect import current_dialect
 from terrine.backends.extrema import greatest, least
 from terrine.backends.numeric import (
     EXACT_OVERFLOW as _EXACT_OVERFLOW,
 )
 from terrine.backends.numeric import (
+    _scaled_text,
     exact_is_nonfinite,
     exact_literal,
     exact_ratio,
@@ -31,7 +32,7 @@ from terrine.backends.numeric import (
     normalized_quotient,
     rounded_normalized,
 )
-from terrine.backends.timestamps import utc_instant, utc_wall_clock
+from terrine.backends.timestamps import day_start
 from terrine.data import ColumnMeta
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _SCHEMA
@@ -76,6 +77,9 @@ class _Check:
     table: ibis.Table
     failures: tuple[_Failure, ...]
 
+    def reads(self) -> tuple[ibis.Table, ...]:
+        return (self.table,)
+
     def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None:
         result = execute(self.table)
         expected = [failure.column for failure in self.failures]
@@ -109,6 +113,9 @@ class TemporalResult:
     def __post_init__(self) -> None:
         object.__setattr__(self, "columns", MappingProxyType(dict(self.columns)))
         object.__setattr__(self, "_checks", tuple(self._checks))
+
+    def reads(self) -> tuple[ibis.Table, ...]:
+        return tuple(check.table for check in self._checks)
 
     def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None:
         """Run bounded scalar checks using the same pinned executor as final export."""
@@ -200,59 +207,35 @@ class _Quantity:
     exponent: str | None = None
 
 
-def _scaled_text(coefficient, scale: int):
-    text = coefficient.cast("string")
-    if scale == 0:
-        return text
-    sign = text.startswith("-").ifelse("-", "")
-    digits = text.replace("-", "")
-    digits = digits.lpad(greatest(digits.length(), scale + 1), "0")
-    return (
-        sign
-        + digits.substr(0, digits.length() - scale)
-        + "."
-        + digits.substr(digits.length() - scale)
-    )
-
-
 def narrow_exact(coefficient, scale: int, target: str | dt.DataType):
     """Convert an exact coefficient to ``target``; NULL when it does not fit.
 
     PostgreSQL and Snowflake lower TRY_CAST to an ordinary CAST that fails on
     overflow, so the range is checked on the exact coefficient before casting.
     """
-    text = _scaled_text(coefficient, scale)
-    if dialect_of() not in {"postgres", "snowflake"}:
-        return text.try_cast(target)
-    target_type = dt.dtype(target)
-    if isinstance(target_type, dt.SignedInteger):
-        bits = target_type.nbytes * 8
-        low, high = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
-    elif isinstance(target_type, dt.Decimal) and target_type.precision is not None:
-        low, high = -(10**target_type.precision) + 1, 10**target_type.precision - 1
-    else:
-        # An unbounded NUMERIC target cannot overflow.
-        return text.cast(target_type)
-    fits = (coefficient >= exact_literal(low)) & (coefficient <= exact_literal(high))
-    return fits.ifelse(text.cast(target_type), ibis.null().cast(target_type))
+    return current_dialect(coefficient).narrow_exact(coefficient, scale, target)
 
 
 def _aligned(timestamp, minutes: int):
-    utc = utc_wall_clock(timestamp)
-    local = utc + ibis.interval(minutes=minutes)
-    midnight = cast(ir.TimestampValue, local.date().cast("timestamp")) - ibis.interval(
-        minutes=minutes
-    )
-    return timestamp == utc_instant(midnight)
+    """Whether an instant is the start of its fixed-offset local day."""
+    return timestamp == day_start(timestamp, minutes)
 
 
 def _exact_decimal(builder: _Builder, quantity: _Quantity) -> ir.Value:
-    """An exact-state operand on PostgreSQL or BigQuery, whose float state is unscaled."""
+    """An exact-state operand whose float state is unscaled (PostgreSQL, BigQuery, portable).
+
+    An unbounded exact type holds a scaled coefficient as it is; a fixed
+    38-digit state keeps every coefficient digit by carrying the scale in its
+    type instead of the 29 integer digits of the scale-9 float state.
+    """
     value = builder.col(quantity.value)
     assert isinstance(quantity.scale, int)
     if quantity.scale == 0:
         return value
-    return _scaled_text(value, quantity.scale).cast(exact_type(value))
+    target = exact_type(value)
+    if isinstance(target, dt.Decimal) and target.precision is not None:
+        target = dt.Decimal(target.precision, quantity.scale)
+    return _scaled_text(value, quantity.scale).cast(target)
 
 
 def _normalized(builder: _Builder, quantity: _Quantity) -> tuple[ir.Value, ir.IntegerValue]:
@@ -359,19 +342,33 @@ def _component(
     for endpoint in (start, end):
         # A matched all-null prefix has the mathematical sum zero, not a missing state.
         count = builder.col(endpoint["nonnull_count"])
+        state = builder.col(endpoint["sum_value"])
         sums.append(
-            builder.put(
-                "endpoint_sum",
-                (count == zero).ifelse(zero, builder.col(endpoint["sum_value"])),
-            )
+            builder.put("endpoint_sum", (count == zero).ifelse(exact_literal(0, state), state))
         )
     assert measure.value_type is not None  # callers pass resolved measures
     dtype = dt.dtype(measure.value_type)
     difference = exact_subtract(builder.col(sums[1]), builder.col(sums[0]))
+    state_zero = exact_literal(0, difference)
+    if "sum_withheld" in end:
+        # Portable fixed-precision state: a state withheld at or before the
+        # window end means the prefix is incomplete, so a non-empty window
+        # refuses through whichever consumer reads the difference, instead of
+        # trusting it or publishing NULL.
+        state_type = cast(dt.Decimal, difference.type())
+        withheld = builder.put(
+            "state_withheld",
+            ~builder.col(empty) & (builder.col(end["sum_withheld"]) > zero),
+        )
+        difference = builder.col(withheld).ifelse(ibis.null().cast(state_type), difference)
+        if dtype.is_floating():
+            builder.flag(builder.col(withheld), "bound_overflow", context)
+        else:
+            builder.numeric.append((withheld, _EXACT_OVERFLOW, context))
     if dtype.is_floating():
         # Exact float state: an empty window is zero even when non-finite
         # history makes the prefix difference NaN.
-        value = builder.put("sum", builder.col(empty).ifelse(zero, difference))
+        value = builder.put("sum", builder.col(empty).ifelse(state_zero, difference))
         invalid = cast(ir.BooleanValue, ibis.literal(False))
         # Inputs the exact state could not hold, at or before the window end,
         # refuse a non-empty window.
@@ -392,14 +389,14 @@ def _component(
         )
         # A sum that only looks zero because inputs were dropped is not a zero
         # denominator: its refusal must not be masked by a zero_denominator reason.
-        known_zero = builder.put("sum_zero", (builder.col(value) == zero) & ~invalid)
+        known_zero = builder.put("sum_zero", (builder.col(value) == state_zero) & ~invalid)
         # DuckDB and Snowflake hold the unit's coefficients at the state's scale;
         # the exact types of PostgreSQL and BigQuery hold the shortest text unscaled.
         scale = end["exact_scale"] if has_scaled_float_state(builder.table.t0) else 0
         quantity = _Quantity(value, reason, known_zero, scale=scale, binary64=True)
     else:
         value = builder.put("sum", difference)
-        known_zero = builder.put("sum_zero", builder.col(value) == zero)
+        known_zero = builder.put("sum_zero", builder.col(value) == state_zero)
         scale = 0
         if isinstance(dtype, dt.Decimal):
             assert dtype.scale is not None

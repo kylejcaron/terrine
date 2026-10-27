@@ -9,11 +9,15 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
+import ibis
 import pyarrow as pa
 
+from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE, _SNAPSHOT_UNAVAILABLE
+from terrine.backends.registry import ENGINES
+from terrine.errors import TerrineError
 from terrine.execution._metadata import invalidate_metadata
 from terrine.semantic.models import Catalog, RelationSpec, SqlQuery, TableRef
-from terrine.semantic.sql import _admit_read_query_ast, admit_read_query
+from terrine.semantic.sql import _admit_read_query_ast, _scopes, _verified, admit_read_query
 
 DIALECT = "bigquery"
 # Physical row sources; external tables are not snapshot-consistent.
@@ -21,8 +25,6 @@ _TABLE_TYPES = {"TABLE": "table", "SNAPSHOT": "table", "VIEW": "view"}
 
 
 def _snapshot_error(reason: str):
-    from terrine.execution.inputs import _SNAPSHOT_UNAVAILABLE
-
     return _SNAPSHOT_UNAVAILABLE.error(reason=reason)
 
 
@@ -89,19 +91,26 @@ def _relation(con: Any, project: str, dataset: str, name: str) -> _Relation:
     )
 
 
+def _parsed(sql: str) -> Any:
+    from sqlglot import parse_one
+
+    try:
+        return _verified(lambda: parse_one(sql, read=DIALECT))
+    except TerrineError:
+        raise
+    except Exception as exc:
+        raise _snapshot_error("view definition could not be parsed") from exc
+
+
 def check_routines(sql: str) -> None:
     """Refuse a query that calls a dataset-qualified routine.
 
     Persistent UDFs and remote functions are always qualified, so this covers
     every user routine; unqualified names always resolve to BigQuery built-ins.
     """
-    from sqlglot import exp, parse_one
+    from sqlglot import exp
 
-    try:
-        statement = parse_one(sql, read=DIALECT)
-    except Exception as exc:
-        raise _snapshot_error("view definition could not be parsed") from exc
-    for node in statement.walk():
+    for node in _parsed(sql).walk():
         qualified_call = isinstance(node, exp.Dot) and isinstance(node.expression, exp.Func)
         # A fully backticked name such as `project.dataset.fn` parses as one identifier.
         quoted_path = isinstance(node, exp.Anonymous) and "." in node.name
@@ -111,11 +120,10 @@ def check_routines(sql: str) -> None:
 
 def _tables_in(sql: str, con: Any) -> list[tuple[str, str, str]]:
     from sqlglot import exp
-    from sqlglot.optimizer.scope import traverse_scope
 
     statement = _admit_read_query_ast(sql, DIALECT, DIALECT)
     found = []
-    for scope in traverse_scope(statement):
+    for scope in _scopes(statement):
         for source in scope.sources.values():
             if isinstance(source, exp.Table):
                 parts = [part for part in (source.catalog, source.db, source.name) if part]
@@ -124,12 +132,11 @@ def _tables_in(sql: str, con: Any) -> list[tuple[str, str, str]]:
 
 
 def _view_tables(sql: str, con: Any) -> list[tuple[str, str, str]]:
-    from sqlglot import exp, parse_one
-    from sqlglot.optimizer.scope import traverse_scope
+    from sqlglot import exp
 
     check_routines(sql)
     found = []
-    for scope in traverse_scope(parse_one(sql, read=DIALECT)):
+    for scope in _scopes(_parsed(sql)):
         for source in scope.sources.values():
             if isinstance(source, exp.Table):
                 parts = [part for part in (source.catalog, source.db, source.name) if part]
@@ -316,3 +323,63 @@ def _overflow_refusal() -> Generator[None]:
         if "overflow" in str(exc).casefold():
             raise EXACT_OVERFLOW.error() from exc
         raise
+
+
+class _BigQueryProvider:
+    capabilities = ENGINES["bigquery"].capabilities
+
+    def matches(self, con: Any) -> bool:
+        return type(con).__module__ == ENGINES["bigquery"].ibis_module
+
+    def dialect(self, con: Any) -> str:
+        return ENGINES["bigquery"].name
+
+    def resolve_relation(self, con: Any, relation: RelationSpec) -> ibis.Table:
+        from terrine.execution import _bigquery
+
+        return _bigquery.resolve(con, relation)
+
+    def required_relations(self, catalog, con, *, units=None):
+        from terrine.execution import _bigquery
+
+        return _bigquery.required_relations(catalog, con, units=units)
+
+    def bind_resolver(self, catalog, con, **kwargs):
+        from terrine.execution import _bigquery
+        from terrine.execution.inputs import _INVALID
+
+        if kwargs.get("input_binding") is not None:
+            raise _CAPABILITY_UNAVAILABLE.error(
+                backend="bigquery",
+                operation="retained_snapshot",
+                status="unverified",
+                route="Retained input bindings are DuckDB-only; materialize directly.",
+            )
+        _bigquery.required_relations(catalog, con, units=kwargs.get("units"))
+        admitted: dict[tuple[str, str], Any] = {}
+        fingerprints: dict[tuple[str, str], str] = {}
+
+        def resolve(relation: RelationSpec) -> Any:
+            key = (relation.kind, relation.name if isinstance(relation, TableRef) else relation.sql)
+            fingerprint = _bigquery.admission_fingerprint(relation, con)
+            if key in admitted:
+                if fingerprints[key] != fingerprint:
+                    raise _INVALID.error(
+                        reason="relation definition or identity changed after Model binding"
+                    )
+                return admitted[key]
+            admitted[key] = _bigquery.resolve(con, relation, catalog.dialect)
+            fingerprints[key] = fingerprint
+            return admitted[key]
+
+        return resolve
+
+    def open_execution(self, catalog, con, *, units=None, input_binding=None):
+        from terrine.execution.inputs import _open_bigquery_execution
+
+        return _open_bigquery_execution(
+            self, catalog, con, units=units, input_binding=input_binding
+        )
+
+
+PROVIDER = _BigQueryProvider()

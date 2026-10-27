@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import pickle
 import subprocess
 import sys
 
@@ -41,6 +43,7 @@ def test_backend_provider_preserves_duckdb_relation_admission_and_identity():
 
 def test_unknown_backend_refuses_before_schema_or_source_query():
     from terrine import Model
+    from terrine.backends.registry import resolve_engine
     from terrine.execution.backend import backend_provider
 
     class Unknown:
@@ -54,14 +57,18 @@ def test_unknown_backend_refuses_before_schema_or_source_query():
 
     con = Unknown()
     for operation in (
+        lambda: resolve_engine(con),
         lambda: backend_provider(con),
         lambda: Model.from_catalog(_catalog(), con=con, readiness={}),
     ):
         with pytest.raises(TerrineError) as error:
             operation()
         assert error.value.code == "terrine.backend.capability_unavailable"
-        assert error.value.context["backend"] == "snowflake"
-        assert error.value.context["status"] == "unverified"
+        assert {key: value for key, value in error.value.context.items() if key != "route"} == {
+            "backend": "snowflake",
+            "operation": "query",
+            "status": "unverified",
+        }
         assert error.value.context["route"]
 
 
@@ -143,19 +150,27 @@ def test_unverified_backend_evidence_does_not_admit_queries(dialect):
 
 
 def test_raw_driver_connection_is_not_an_ibis_execution_provider():
+    from terrine.backends.registry import resolve_engine
     from terrine.execution._native import verify_native_backend
     from terrine.execution.backend import backend_capabilities, backend_provider
 
     raw = duckdb.connect()
     try:
         assert verify_native_backend(raw)[0] is raw
-        with pytest.raises(TerrineError) as error:
-            backend_provider(raw)
-        assert error.value.code == "terrine.backend.capability_unavailable"
-        assert "Ibis" in error.value.context["route"]
+        for operation in (backend_provider, resolve_engine):
+            with pytest.raises(TerrineError) as error:
+                operation(raw)
+            assert error.value.code == "terrine.backend.capability_unavailable"
+            assert {key: value for key, value in error.value.context.items() if key != "route"} == {
+                "backend": "duckdbpyconnection",
+                "operation": "query",
+                "status": "unverified",
+            }
+            assert "Ibis" in error.value.context["route"]
         assert backend_capabilities(raw).dialect_admission is None
     finally:
         raw.close()
+
 
 @pytest.mark.parametrize(
     ("version", "server", "status"),
@@ -191,28 +206,66 @@ def test_raw_driver_connection_is_not_an_ibis_execution_provider():
             "CockroachDB",
             "unsupported",
         ),
+        ("", "unknown", "unverified"),
+        (None, "unknown", "unverified"),
+        ("unknown version", "unknown", "unverified"),
+        ("OtherSQL 16", "OtherSQL", "unverified"),
     ],
 )
-def test_server_identity_classification(version, server, status):
-    from terrine.execution._postgres import classify_server_version
+def test_postgres_engine_identity_preserves_classification(
+    postgres_backend, version, server, status
+):
+    from terrine.backends.registry import ENGINES
 
-    identity = classify_server_version(version)
-    assert identity.server == server
-    assert identity.status == status
+    con = postgres_backend(version)
+    if status == "admitted":
+        ENGINES["postgres"].identify(con)
+    else:
+        with pytest.raises(TerrineError) as error:
+            ENGINES["postgres"].identify(con)
+        assert error.value.code == "terrine.backend.capability_unavailable"
+        assert {key: value for key, value in error.value.context.items() if key != "route"} == {
+            "backend": server,
+            "operation": "dialect_admission",
+            "status": status,
+        }
+        with pytest.raises(TypeError):
+            error.value.context["status"] = "admitted"  # ty: ignore[invalid-assignment]
+        for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
+            assert restored.code == error.value.code
+            assert restored.context == error.value.context
+    assert con.con.queries == ["SELECT pg_catalog.version()"]
 
 
-def test_postgres_admission_refuses_lookalike_before_source_schema_access():
+def test_postgres_identity_refuses_incompatible_ibis_before_query(postgres_backend, monkeypatch):
+    from terrine.backends.engines import postgres
+    from terrine.backends.registry import ENGINES
 
-    import copy
-    import pickle
+    monkeypatch.setattr(postgres, "version", lambda package: "11.0.0")
+    con = postgres_backend("PostgreSQL 16.4")
+    with pytest.raises(TerrineError) as error:
+        ENGINES["postgres"].identify(con)
+    assert error.value.code == "terrine.backend.capability_unavailable"
+    assert {key: value for key, value in error.value.context.items() if key != "route"} == {
+        "backend": "postgres",
+        "operation": "dialect_admission",
+        "status": "unsupported",
+    }
+    with pytest.raises(TypeError):
+        error.value.context["status"] = "admitted"  # ty: ignore[invalid-assignment]
+    for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
+        assert restored.code == error.value.code
+        assert restored.context == error.value.context
+    assert con.con.queries == []
 
-    from terrine import Model
-    from terrine.execution import backend as backend_module
-    from terrine.execution.backend import backend_provider
+
+@pytest.fixture
+def postgres_backend():
 
     class DriverConnection:
         def __init__(self):
             self.queries = []
+            self.rows = []
 
         def cursor(self):
             connection = self
@@ -229,12 +282,7 @@ def test_postgres_admission_refuses_lookalike_before_source_schema_access():
                     assert sql == "SELECT pg_catalog.version()"
 
                 def fetchall(self):
-                    return [
-                        (
-                            "PostgreSQL 8.0.2 on i686-pc-linux-gnu, compiled by GCC "
-                            "gcc (GCC) 3.4.2 20041017 (Red Hat 3.4.2-6.fc3), Redshift 1.0.77467",
-                        )
-                    ]
+                    return connection.rows
 
             return Cursor()
 
@@ -252,12 +300,28 @@ def test_postgres_admission_refuses_lookalike_before_source_schema_access():
         def sql(self, *args, **kwargs):
             raise AssertionError("source schema was accessed before identity admission")
 
+    def make(version):
+        con = PostgresBackend()
+        con.con.rows = [] if version is None else [(version,)]
+        return con
+
+    return make
+
+
+def test_postgres_admission_refuses_lookalike_before_source_schema_access(postgres_backend):
+    from terrine import Model
+    from terrine.execution import backend as backend_module
+    from terrine.execution.backend import backend_provider
+
+    def connection():
+        return postgres_backend("PostgreSQL 8.0.2 Redshift 1.0.77467")
+
     for operation in (
         lambda con: backend_provider(con),
         lambda con: Model.from_catalog(_catalog(), con=con, readiness={}),
     ):
         with pytest.raises(TerrineError) as error:
-            operation(PostgresBackend())
+            operation(connection())
         assert error.value.code == "terrine.backend.capability_unavailable"
         assert error.value.context["backend"] == "Redshift"
         assert error.value.context["operation"] == "dialect_admission"
@@ -267,6 +331,44 @@ def test_postgres_admission_refuses_lookalike_before_source_schema_access():
             assert restored.code == error.value.code
             assert restored.context == error.value.context
 
-    inspection_con = PostgresBackend()
+    inspection_con = connection()
     assert backend_module.backend_capabilities(inspection_con).dialect_admission is None
     assert inspection_con.con.queries == []
+
+
+@pytest.mark.parametrize("allow", [False, True])
+@pytest.mark.parametrize("kind", ["raw", "fake", "lookalike"])
+def test_opt_in_never_bypasses_connection_identity(postgres_backend, allow, kind):
+    from terrine.backends.registry import resolve_engine
+
+    class Fake:
+        name = "duckdb"
+
+        def table(self, *args, **kwargs):
+            raise AssertionError("source accessed")
+
+    con = (
+        duckdb.connect()
+        if kind == "raw"
+        else (
+            postgres_backend("PostgreSQL 8.0.2 Redshift 1.0.77467")
+            if kind == "lookalike"
+            else Fake()
+        )
+    )
+    try:
+        with pytest.raises(TerrineError) as caught:
+            resolve_engine(con, allow_unverified=allow)
+        assert caught.value.code == "terrine.backend.capability_unavailable"
+        assert {k: v for k, v in caught.value.context.items() if k != "route"} == (
+            {"backend": "Redshift", "operation": "dialect_admission", "status": "unsupported"}
+            if kind == "lookalike"
+            else {
+                "backend": "duckdbpyconnection" if kind == "raw" else "duckdb",
+                "operation": "query",
+                "status": "unverified",
+            }
+        )
+    finally:
+        if isinstance(con, duckdb.DuckDBPyConnection):
+            con.close()

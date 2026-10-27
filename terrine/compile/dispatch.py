@@ -50,7 +50,7 @@ def _compile_design(
     persisted_anchors: ibis.Table | None = None,
 ) -> CompiledStudy:
     if persisted_prefixes is not None or persisted_anchors is not None:
-        ensure_runtime_shape_supported(design.shape)
+        ensure_runtime_shape_supported(design.shape, anchor=design.anchor)
     if isinstance(design.shape, EventSequence):
         from terrine.compile.shapes.event_sequence import compile_event_sequence
 
@@ -121,11 +121,17 @@ def _compile_design(
     )
 
 
-def compile_cohort_summary(study: CompiledStudy, *, grouping, value_column: str) -> CompiledStudy:
-    """Apply a cohort summary to a compiled trajectory relation."""
+def compile_cohort_summary(
+    study: CompiledStudy, *, grouping, value_column: str, dialect: str | None = None
+) -> CompiledStudy:
+    """Apply a cohort summary to a compiled trajectory relation.
+
+    ``dialect`` is the admitted expression policy of the Model that compiled
+    ``study``; without it the relation's own backend selects the policy.
+    """
     from terrine.compile.shapes.cohorts import compile_cohorts
 
-    return compile_cohorts(study, grouping=grouping, value_column=value_column)
+    return compile_cohorts(study, grouping=grouping, value_column=value_column, dialect=dialect)
 
 
 def aggregate_life_table(

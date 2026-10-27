@@ -109,6 +109,7 @@ def load_catalog(path: str | Path) -> Catalog:
         raise _INVALID_YAML.error(reason="unsafe tag or malformed YAML") from exc
     return validate_catalog(value)
 
+
 def dump_catalog(catalog: Catalog) -> str:
     """Serialize a native Catalog using ordinary safe YAML values."""
     if not isinstance(catalog, Catalog):

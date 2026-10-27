@@ -10,14 +10,14 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
-from terrine.backends.dialect import dialect_of
+from terrine.backends.dialect import current_dialect
 from terrine.backends.extrema import greatest, least
 from terrine.backends.timestamps import _UNSUPPORTED as _TIMESTAMP_ORDER_UNSUPPORTED
 from terrine.backends.timestamps import (
-    _struct_key,
     compare_timestamps,
     lossless_scale,
     timestamp_extremes,
+    timestamp_parts,
     utc_wall_clock,
 )
 from terrine.compile.columns import CompiledStudy, compile_columns
@@ -43,7 +43,7 @@ _INCOMPLETE_HISTORY = "incomplete_initial_history"
 def _bounded_nanoseconds(scale: int | None) -> bool:
     """Whether a nanosecond axis is DuckDB's, bounded by int64 nanoseconds
     (1677-2262); Snowflake's spans years 1 to 9999 like a microsecond axis."""
-    return scale == 9 and dialect_of() == "duckdb"
+    return current_dialect().bounded_nanoseconds(scale)
 
 
 def _validate_nanosecond_axis(design: Design, timestamp_types) -> None:
@@ -99,9 +99,7 @@ def _narrow_bound(value, lower, upper, time_type) -> ir.TimestampValue:
         ibis.ifelse(above_upper, upper_timestamp, normalized.try_cast(time_type)),
     )
     if _bounded_nanoseconds(time_type.scale):
-        key = _struct_key(normalized)
-        seconds = cast(ir.IntegerValue, key["seconds"])
-        nanos = cast(ir.IntegerValue, key["nanos"])
+        _rank, seconds, nanos = timestamp_parts(normalized)
         min_seconds = ibis.literal(-9_223_372_036).cast("int64")
         min_nanos = ibis.literal(-854_775_808).cast("int64")
         max_seconds = ibis.literal(9_223_372_036).cast("int64")

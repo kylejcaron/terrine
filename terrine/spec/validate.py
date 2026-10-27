@@ -8,6 +8,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from typing import TYPE_CHECKING
 
+from terrine.backends.registry import engine_supports
 from terrine.errors import RefusalSpec
 from terrine.semantic.rules import (
     UNALIGNED_CALENDAR_AVERAGE,
@@ -72,11 +73,15 @@ _RUNTIME_SHAPE_UNSUPPORTED = RefusalSpec(
 )
 
 
-def ensure_runtime_shape_supported(shape: object) -> None:
-    """Apply the canonical persisted-layer runtime supported-shape matrix."""
+def ensure_runtime_shape_supported(shape: object, *, anchor: object = None) -> None:
+    """Apply the canonical persisted-layer supported-shape and anchor matrix."""
     from terrine.spec.panels import EventPanelSpec, SequentialSpec
     from terrine.spec.state_panel import StatePanel
 
+    if isinstance(anchor, EventAnchor) and anchor.offset:
+        raise _RUNTIME_SHAPE_UNSUPPORTED.error(
+            shape="EventAnchor.offset", route="ordinary Frame materialization or a full rebuild"
+        )
     if shape == "cross_section" or isinstance(shape, (SequentialSpec, EventPanelSpec, StatePanel)):
         return
     name = shape if isinstance(shape, str) else type(shape).__name__
@@ -451,12 +456,12 @@ def _expression(
     if isinstance(expr, (MetricQuantile, ApproxMetricQuantile)):
         for source_name in metric.source_names:
             dialect = model.sources[source_name].dialect
-            if dialect.casefold() != "duckdb":
+            if not engine_supports(dialect, "quantile"):
                 raise _QUANTILE_BACKEND.error(dialect=dialect)
     if isinstance(expr, ApproxMetricDistinct):
         for source_name in metric.source_names:
             dialect = model.sources[source_name].dialect
-            if dialect.casefold() != "duckdb":
+            if not engine_supports(dialect, "approx_distinct"):
                 raise RefusalSpec(
                     "terrine.metric.approx_backend_unavailable",
                     "Approximate distinct is unavailable for backend {dialect!r}.",

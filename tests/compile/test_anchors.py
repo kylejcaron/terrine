@@ -186,10 +186,11 @@ def test_nullable_fact_values_still_represent_each_events(native_model):
     assert any(row["anchor_id"].endswith(":1:z") for row in result)
 
 
-def test_first_event_is_selected_before_range_filter(native_model):
+@pytest.mark.parametrize("offset", ["0s", "1d"])
+def test_first_event_is_selected_before_range_filter(native_model, offset):
     design = Design(
         unit="user",
-        anchor=EventAnchor("occurred", "first"),
+        anchor=EventAnchor("occurred", "first", offset=offset),
         anchor_range=AnchorRange(start="2025-01-03"),
     )
     result = candidate_rows(design, native_model)
@@ -205,6 +206,37 @@ def test_nth_event_is_selected_before_range_filter(native_model):
     result = candidate_rows(design, native_model)
     user_a = next(row for row in result if row["unit"] == "a")
     assert user_a["t0"] == datetime(2025, 1, 3, 12, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("which,n", [("first", None), ("nth", 3), ("each", None)])
+def test_offset_shifts_selected_events_after_original_time_range(native_model, which, n):
+    bounds = AnchorRange(
+        start=datetime(2025, 1, 2, tzinfo=UTC),
+        end=datetime(2025, 1, 4, tzinfo=UTC),
+    )
+    original = candidate_rows(
+        Design("user", EventAnchor("occurred", which, n), anchor_range=bounds), native_model
+    )
+    shifted = candidate_rows(
+        Design("user", EventAnchor("occurred", which, n, offset="1d"), anchor_range=bounds),
+        native_model,
+    )
+    times = (
+        [datetime(2025, 1, 3, tzinfo=UTC)]
+        if which == "first"
+        else [datetime(2025, 1, 4, 12, tzinfo=UTC)]
+        if which == "nth"
+        else [
+            datetime(2025, 1, 3, tzinfo=UTC),
+            datetime(2025, 1, 3, tzinfo=UTC),
+            datetime(2025, 1, 4, 12, tzinfo=UTC),
+        ]
+    )
+    assert [(row["unit"], row["t0"]) for row in sorted(shifted, key=lambda row: row["t0"])] == [
+        ("a", instant) for instant in times
+    ]
+    assert {row["anchor_id"] for row in original}.isdisjoint(row["anchor_id"] for row in shifted)
+    assert {row["anchor_provenance"] for row in shifted} == {f"event:occurred:{which}:offset:86400"}
 
 
 def test_each_event_range_filters_selected_events(native_model):

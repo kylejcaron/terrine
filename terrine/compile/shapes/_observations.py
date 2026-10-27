@@ -33,6 +33,9 @@ class _ObservationCheck:
     query: ibis.Table
     reason: str
 
+    def reads(self) -> tuple[ibis.Table, ...]:
+        return (self.query,)
+
     def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None:
         result = execute(self.query)
         if (

@@ -165,6 +165,15 @@ def _measure(
     )
 
 
+def _load_semantics() -> tuple[Any, Any]:
+    try:
+        semantics = import_module("increment.semantics")
+        metric_models = import_module("increment.semantics.models")
+    except (ImportError, ModuleNotFoundError) as exc:
+        raise _MISSING.error(extra="increment") from exc
+    return semantics, metric_models
+
+
 def to_catalog(path_or_definitions: Any, *, dialect: str) -> Catalog:
     """Convert increment's published semantic definitions to a native Catalog.
 
@@ -174,11 +183,7 @@ def to_catalog(path_or_definitions: Any, *, dialect: str) -> Catalog:
     SQL is re-admitted by Terrine and execution remains the native Model.from_catalog
     path.
     """
-    try:
-        semantics = import_module("increment.semantics")
-        metric_models = import_module("increment.semantics.models")
-    except (ImportError, ModuleNotFoundError) as exc:
-        raise _MISSING.error(extra="increment") from exc
+    semantics, metric_models = _load_semantics()
 
     if isinstance(path_or_definitions, semantics.Definitions):
         definitions = path_or_definitions

@@ -16,7 +16,7 @@ import pyarrow as pa
 from terrine.data import Budget, MaterializedFrame
 from terrine.dataset.manifest import DatasetManifest, ManifestColumn, ManifestGeneration
 from terrine.errors import RefusalSpec
-from terrine.execution.backend import backend_provider
+from terrine.execution.backend import backend_capabilities, backend_provider
 from terrine.runtime.api import RunReceipt, run_serialized_plan
 from terrine.runtime.backends.base import PublicationReceipt
 from terrine.runtime.backends.duckdb import DuckDBBackend, _digest_relation, _digest_version
@@ -113,10 +113,9 @@ class _ModelResolver:
 
 def _require_runtime_reader(con: Any) -> None:
     """Refuse before database access when published generations cannot be read."""
-    provider = backend_provider(con)
-    provider.capabilities.require(
+    backend_capabilities(con).require(
         "runtime_reader",
-        backend=provider.dialect(con),
+        backend=str(getattr(con, "name", type(con).__name__)).casefold(),
         route="Published datasets live in the DuckDB runtime; reopen them with a DuckDB "
         "connection, or materialize this backend's Frame directly.",
     )
@@ -365,7 +364,7 @@ def stage_frame(
     from terrine.runtime.api import preflight_runtime_shape
 
     model = frame._model
-    provider = backend_provider(model.con)
+    provider = backend_provider(model.con, engine=model._engine)
     for operation in ("table_publication", "atomic_manifest_publish", "retained_snapshot"):
         provider.capabilities.require(
             operation,

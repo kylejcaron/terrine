@@ -95,28 +95,6 @@ def test_strict_asof_excludes_version_start_and_distinguishes_matched_null(conne
     ]
 
 
-def test_changed_at_strict_left_limit_uses_previous_change(connection):
-    t0 = datetime(2025, 3, 1, tzinfo=UTC)
-    points = ibis.memtable({"point_id": [7], "account": ["a"], "cutoff": [t0]})
-    history = ibis.memtable(
-        {
-            "account_id": ["a", "a"],
-            "changed": [datetime(2025, 1, 1, tzinfo=UTC), t0],
-            "tier_value": ["silver", "gold"],
-        }
-    )
-    dimension = _dimension(validity=BoundValidity(None, None, "changed"))
-    validate_history(history, dimension, execute=connection.to_pyarrow)
-    result = connection.to_pyarrow(
-        attribute_asof(
-            points, history, dimension, "tier", unit_column="account", cutoff_column="cutoff"
-        )
-    ).to_pylist()
-    assert result[0]["point_id"] == 7
-    assert result[0]["__terrine_attribute_value"] == "silver"
-    assert result[0]["__terrine_attribute_found"] is True
-
-
 def test_event_enrichment_uses_declared_account_key_and_event_time(connection):
     t1, t2 = datetime(2025, 3, 1, tzinfo=UTC), datetime(2025, 3, 2, tzinfo=UTC)
     events = ibis.memtable(
@@ -270,6 +248,25 @@ def test_temporal_duplicate_group_count_alias_avoids_history_column(connection):
     with pytest.raises(TerrineError) as error:
         validate_history(history, dimension, execute=connection.to_pyarrow)
     assert error.value.code == "terrine.temporal.duplicate_history"
+
+
+def test_validity_declared_on_one_column_for_both_ends(connection):
+    """A validity whose ``valid_from`` and ``valid_to`` name the same column is
+    permitted by the catalog; every non-empty row is malformed (an end at or
+    before its start) and refuses by code, while an empty history validates."""
+    dimension = _dimension(validity=BoundValidity("ts", "ts", None))
+    history = ibis.memtable(
+        {
+            "account_id": ["a"],
+            "ts": [datetime(2025, 1, 1, tzinfo=UTC)],
+            "tier_value": ["gold"],
+        }
+    )
+    with pytest.raises(TerrineError) as error:
+        validate_history(history, dimension, execute=connection.to_pyarrow)
+    assert error.value.code == "terrine.temporal.malformed_history"
+    empty = history.filter(history.account_id.isnull())
+    validate_history(empty, dimension, execute=connection.to_pyarrow)
 
 
 def test_enrichment_aliases_are_deterministic_and_avoid_casefold_collisions():

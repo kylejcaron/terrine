@@ -154,6 +154,7 @@ def test_snapshot_resolver_rebinding_keeps_filtered_catalog_sources(column_model
         resolver=column_model._resolver,
         input_binding=column_model.input_binding,
         source_names=set(column_model.sources),
+        engine=column_model._engine,
     )
     design = _design()
     key = plan_layers(design, filtered).keys[0]
@@ -177,7 +178,9 @@ def test_runtime_shape_preflight_refuses_unsupported_shape_without_a_model():
     from terrine.spec.design import Design
 
     with pytest.raises(TerrineError) as error:
-        preflight_materialization_shape(cast(Design, SimpleNamespace(shape="time_to_event")))
+        preflight_materialization_shape(
+            cast(Design, SimpleNamespace(shape="time_to_event", anchor=None))
+        )
     assert error.value.code == "terrine.compile.runtime_shape_unsupported"
 
 
@@ -320,6 +323,7 @@ def test_layer_identity_ignores_source_nullability_lost_in_snapshot(column_model
         ),
         input_binding=column_model.input_binding,
         source_names={"events"},
+        engine=column_model._engine,
     )
 
     assert plan_layers(_design(), from_not_null).keys == plan_layers(_design(), column_model).keys

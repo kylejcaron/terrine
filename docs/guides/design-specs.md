@@ -28,6 +28,15 @@ print(spec.spec_hash)
 
 `FixedDate("2025-03-01T12:34:56.123456Z")` preserves an intraday instant rather than reducing it to a calendar day. Portable instant definitions use exact microsecond precision: equivalent offsets and trailing-zero fractional precision canonicalize identically; nonzero submicroseconds are refused rather than truncated, including timestamp subclasses supplied by dataframe libraries. `Schedule` remains calendar-date-only.
 
+`EventAnchor(fact, which="first", n=None, offset=0)` can shift the selected
+event by a non-negative elapsed duration. For example,
+`EventAnchor("purchase", offset="1d")` starts analysis one elapsed day after
+purchase. First/nth selection and `anchor_range` still operate on original
+event times. Nonzero offsets are serialized as integral seconds and change
+anchor identity, provenance and `spec_hash`; zero is omitted, preserving
+existing saved Designs and hashes. See the low-level
+[landmark survival example](trajectories-survival.md#landmark-survival).
+
 Mixed date/timestamp bounds are ordered only after catalog binding resolves the calendar-day boundary.
 
 `agg(metric, window=(start, end))` stores a half-open interval as signed integral seconds using the shared `s`/`m`/`h`/`d`/`w` duration parser. Thus equivalent elapsed forms have identical specs and hashes, e.g. `60m` and `1h`. `asof(attribute, before=...)` stores an exact signed-second strict cutoff, including zero. Predicate constructors `gt`, `eq`, `is_null`, and `all_of` form typed true/false rules accepted in `features`, `outcomes`, and `eligibility`. Comparands are finite JSON scalars only; Python functions and other runtime objects are never serialized.

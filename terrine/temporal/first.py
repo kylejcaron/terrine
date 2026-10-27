@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-from typing import cast
-
 import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
-from terrine.backends.dialect import dialect_of
+from terrine.backends.dialect import current_dialect
 from terrine.backends.joins import asof_join
+from terrine.backends.registry import engine_supports
 from terrine.backends.timestamps import (
-    _struct_key,
     lossless_timestamp,
     timestamp_order_key,
-    timestamp_parts,
 )
 from terrine.data import ColumnMeta
 from terrine.errors import RefusalSpec
@@ -31,7 +28,6 @@ _UNSUPPORTED_BACKEND = RefusalSpec(
     "First-occurrence point lookup requires the DuckDB, PostgreSQL, BigQuery or "
     "Snowflake backend; got {backend!r}.",
 )
-_SUPPORTED_BACKENDS = frozenset({"duckdb", "postgres", "bigquery", "snowflake"})
 _INVALID = RefusalSpec(
     "terrine.temporal.first_occurrence_invalid_relation",
     "First-occurrence input relation is invalid ({reason}).",
@@ -62,27 +58,7 @@ def _lossless(table: ibis.Table, *columns: str) -> ibis.Table:
 
 def _reverse_time_key(value: ir.TimestampValue) -> ir.Value:
     """A key whose ascending order is the instants' descending order."""
-    dialect = dialect_of(value)
-    if dialect in {"postgres", "bigquery", "snowflake"}:
-        # One exact scalar: finite instants' nanoseconds stay far below 10**38.
-        rank, seconds, nanos = timestamp_parts(value, backend=dialect)
-        wide = dt.Decimal(38, 0)
-        billion = cast(ir.DecimalValue, ibis.literal(10**9, type=wide))
-        rank_weight = cast(ir.DecimalValue, ibis.literal(10**23, type=wide))
-        coordinate = cast(ir.DecimalValue, seconds.cast(wide)) * billion + cast(
-            ir.DecimalValue, nanos.cast(wide)
-        )
-        return cast(ir.DecimalValue, ibis.literal(0, type=wide)) - (
-            cast(ir.DecimalValue, rank.cast(wide)) * rank_weight + coordinate
-        )
-    key = _struct_key(value)
-    return ibis.struct(
-        {
-            "rank": -cast(ir.IntegerValue, key["rank"]),
-            "seconds": -cast(ir.IntegerValue, key["seconds"]),
-            "nanos": -cast(ir.IntegerValue, key["nanos"]),
-        }
-    )
+    return current_dialect(value).reverse_time_key(value)
 
 
 def first_occurrence(
@@ -128,7 +104,9 @@ def first_occurrence(
         backend_name = backend.name
     except Exception as exc:
         raise _UNSUPPORTED_BACKEND.error(backend="unbound") from exc
-    if backend_name not in _SUPPORTED_BACKENDS or candidate_backend is not backend:
+    # The admitted expression policy, not the raw connection name, carries the feature.
+    policy = current_dialect(events[timestamp]).name
+    if not engine_supports(policy, "first_occurrence") or candidate_backend is not backend:
         raise _UNSUPPORTED_BACKEND.error(backend=backend_name)
 
     used = {name.casefold() for name in candidates.columns}

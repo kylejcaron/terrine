@@ -6,9 +6,12 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 from terrine._time import utc_instant
+from terrine.errors import RefusalSpec
 from terrine.windows import seconds
 
 __all__ = ["FixedDate", "EventAnchor", "Schedule", "AnchorRange"]
+
+_INVALID = RefusalSpec("terrine.design.invalid", "Design validation failed: {reason}.")
 
 
 def _date(value: date | str) -> date:
@@ -49,22 +52,34 @@ class FixedDate:
         object.__setattr__(self, "date", bound)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class EventAnchor:
-    fact: str
-    which: str = "first"
-    n: int | None = None
+    """Select an original event, then shift time zero by a non-negative elapsed duration."""
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.fact, str) or not self.fact.strip():
+    fact: str
+    which: str
+    n: int | None
+    offset: int
+
+    def __init__(
+        self, fact: str, which: str = "first", n: int | None = None, offset: str | int = 0
+    ) -> None:
+        if not isinstance(fact, str) or not fact.strip():
             raise ValueError("fact must be a non-empty string")
-        if self.which not in ("first", "each", "nth"):
+        if which not in ("first", "each", "nth"):
             raise ValueError("which must be first, each, or nth")
-        if self.which == "nth":
-            if isinstance(self.n, bool) or not isinstance(self.n, int) or self.n < 1:
+        if which == "nth":
+            if isinstance(n, bool) or not isinstance(n, int) or n < 1:
                 raise ValueError("nth anchors require a positive one-based n")
-        elif self.n is not None:
+        elif n is not None:
             raise ValueError("n is only valid for nth anchors")
+        elapsed = seconds(offset)
+        if elapsed < 0:
+            raise _INVALID.error(reason="event anchor offset must be non-negative")
+        object.__setattr__(self, "fact", fact)
+        object.__setattr__(self, "which", which)
+        object.__setattr__(self, "n", n)
+        object.__setattr__(self, "offset", elapsed)
 
 
 @dataclass(frozen=True, slots=True, init=False)

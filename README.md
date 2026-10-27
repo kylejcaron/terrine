@@ -89,8 +89,9 @@ Each `tr.recipes` constructor returns an ordinary, editable `Design`; the [low-l
 | PostgreSQL 16 | Direct Frame materialization | DuckDB only |
 | BigQuery | Direct Frame materialization | DuckDB only |
 | Snowflake | Direct Frame materialization | DuckDB only |
+| Other Ibis backends | Read-only, unverified; needs `allow_unverified=True` per Model | Refused |
 
-See [backend compatibility](https://github.com/kylejcaron/terrine/blob/main/docs/guides/backend-compatibility.md) for extras, consistent-read semantics, supported operations, precision and executable warehouse examples.
+See [backend compatibility](https://github.com/kylejcaron/terrine/blob/main/docs/guides/backend-compatibility.md) for extras, consistent-read semantics, supported operations, precision, the unverified opt-in tier and executable warehouse examples.
 
 ## Guides
 

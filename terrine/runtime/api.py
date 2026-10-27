@@ -556,6 +556,7 @@ class DesignExecutor:
                 self.design, execution_model, persisted=persisted, budget=self._plan.budget
             )
             import terrine.compile.provenance as _provenance
+            from terrine.compile.columns import expression_policy
             from terrine.data import SamplingMeta
             from terrine.execution.gates import _eligibility_summary
             from terrine.spec.anchors import FixedDate
@@ -646,6 +647,9 @@ class DesignExecutor:
                     state_panel=_provenance.state_panel_metadata(self.design, self._model),
                     shape=shape,
                     treatment_design="baseline_binary" if baseline_binary else None,
+                    engine_name=context.snapshot.backend,
+                    dialect=expression_policy(self._model),
+                    engine_status=self._model._engine.status,
                     treatment_knowledge=(
                         "retrospective_effective_time" if treatment is not None else None
                     ),

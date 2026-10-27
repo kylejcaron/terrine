@@ -7,14 +7,15 @@ from typing import cast
 import ibis
 import ibis.expr.types as ir
 
-from terrine.backends.dialect import dialect_of, dialect_scope
+from terrine.backends.dialect import current_dialect, dialect_scope
 from terrine.backends.numeric import (
     EXACT_OVERFLOW,
+    _scaled_text,
     exact_literal,
     exact_sum,
     float_is_finite,
+    guard_accumulation,
 )
-from terrine.backends.timestamps import timestamp_parts
 from terrine.compile.columns import CompiledStudy
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
@@ -22,7 +23,6 @@ from terrine.spec.trajectory import CohortGrouping
 from terrine.temporal.aggregate import (
     _Check,
     _Failure,
-    _scaled_text,
     narrow_exact,
 )
 from terrine.temporal.prefix import FLOAT64_PRECISION
@@ -36,11 +36,20 @@ _INVALID = RefusalSpec(
 
 
 def compile_cohorts(
-    study: CompiledStudy, *, grouping: CohortGrouping, value_column: str
+    study: CompiledStudy,
+    *,
+    grouping: CohortGrouping,
+    value_column: str,
+    dialect: str | None = None,
 ) -> CompiledStudy:
-    """Group an already compiled LTV relation; this function never recompiles a Frame."""
-    # Summaries compile after the Design's compile scope ends; use the table's backend.
-    with dialect_scope(dialect_of(*(study.table[name] for name in study.table.columns[:1]))):
+    """Group an already compiled LTV relation; this function never recompiles a Frame.
+
+    Summaries compile after the Design's compile scope ends, so the admitted
+    policy is passed explicitly; without it the relation's backend selects one.
+    """
+    if dialect is None:
+        dialect = current_dialect(*(study.table[name] for name in study.table.columns)).name
+    with dialect_scope(dialect):
         return _compile_cohorts(study, grouping=grouping, value_column=value_column)
 
 
@@ -56,10 +65,10 @@ def _compile_cohorts(
     if complete_column not in study.table.columns:
         raise _INVALID.error(reason="missing_value_completeness")
     table = study.table
-    _rank, time_seconds, time_nanos = timestamp_parts(table.cohort_time)
+    dialect = current_dialect(table.cohort_time)
+    _rank, time_seconds, time_nanos = dialect.timestamp_parts(table.cohort_time)
     origin = cast(ir.TimestampValue, ibis.literal(grouping.bucket_origin))
-    backend = dialect_of(table.cohort_time)
-    _origin_rank, origin_seconds, origin_nanos = timestamp_parts(origin, backend=backend)
+    _origin_rank, origin_seconds, origin_nanos = dialect.timestamp_parts(origin)
     elapsed_seconds = time_seconds - origin_seconds
     elapsed_nanos = time_nanos - origin_nanos
     carry = elapsed_nanos // 1_000_000_000
@@ -102,10 +111,16 @@ def _compile_cohorts(
         exact_coefficient = coefficient_text.rpad(
             coefficient_text.length() + scale - fractional_digits, "0"
         ).cast(exact_type)
+        # A fixed-precision policy withholds a partition's coefficients before
+        # the backend adds them when their magnitudes may leave the domain; the
+        # NULL total then reports the overflow.
+        total_inputs, exact_coefficient, admitted = guard_accumulation(
+            total_inputs, exact_coefficient, partition=keys
+        )
         # Booleans count through INT: PostgreSQL cannot cast boolean to BIGINT, and
         # its SUM(integer) is BIGINT where SUM(bigint) would be NUMERIC.
         total_state = total_inputs.group_by(*keys).aggregate(
-            _total=exact_sum(exact_coefficient),
+            _total=exact_sum(exact_coefficient, admitted=admitted is not None),
             _total_count=total_inputs._value.notnull().cast("int32").sum(),
         )
         decimal_total = narrow_exact(total_state._total, scale, numeric_type)
@@ -138,8 +153,11 @@ def _compile_cohorts(
         exact_coefficient = coefficient_text.rpad(
             coefficient_text.length() + scale - fractional_digits, "0"
         ).cast(exact_type)
+        mean_inputs, exact_coefficient, admitted = guard_accumulation(
+            mean_inputs, exact_coefficient, partition=keys
+        )
         mean_state = mean_inputs.group_by(*keys).aggregate(
-            _mean_total=exact_sum(exact_coefficient),
+            _mean_total=exact_sum(exact_coefficient, admitted=admitted is not None),
             _mean_count=mean_inputs._mean_count.min(),
         )
         exact_total = _scaled_text(mean_state._mean_total, scale).try_cast("float64")
