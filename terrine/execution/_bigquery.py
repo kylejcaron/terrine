@@ -17,7 +17,7 @@ from terrine.backends.registry import ENGINES
 from terrine.errors import TerrineError
 from terrine.execution._metadata import invalidate_metadata
 from terrine.semantic.models import Catalog, RelationSpec, SqlQuery, TableRef
-from terrine.semantic.sql import _admit_read_query_ast, _verified, admit_read_query
+from terrine.semantic.sql import _admit_read_query_ast, _scopes, _verified, admit_read_query
 
 DIALECT = "bigquery"
 # Physical row sources; external tables are not snapshot-consistent.
@@ -120,11 +120,10 @@ def check_routines(sql: str) -> None:
 
 def _tables_in(sql: str, con: Any) -> list[tuple[str, str, str]]:
     from sqlglot import exp
-    from sqlglot.optimizer.scope import traverse_scope
 
     statement = _admit_read_query_ast(sql, DIALECT, DIALECT)
     found = []
-    for scope in traverse_scope(statement):
+    for scope in _scopes(statement):
         for source in scope.sources.values():
             if isinstance(source, exp.Table):
                 parts = [part for part in (source.catalog, source.db, source.name) if part]
@@ -134,11 +133,10 @@ def _tables_in(sql: str, con: Any) -> list[tuple[str, str, str]]:
 
 def _view_tables(sql: str, con: Any) -> list[tuple[str, str, str]]:
     from sqlglot import exp
-    from sqlglot.optimizer.scope import traverse_scope
 
     check_routines(sql)
     found = []
-    for scope in _verified(lambda: tuple(traverse_scope(_parsed(sql)))):
+    for scope in _scopes(_parsed(sql)):
         for source in scope.sources.values():
             if isinstance(source, exp.Table):
                 parts = [part for part in (source.catalog, source.db, source.name) if part]

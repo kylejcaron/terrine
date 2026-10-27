@@ -26,6 +26,7 @@ from terrine.semantic.sql import (
     _admit_read_query_ast,
     _admit_stored_view_query_ast,
     _render,
+    _scopes,
     admit_read_query,
 )
 
@@ -226,9 +227,7 @@ def _sql_tables(
     )
     if _capture:
         check_native_functions(raw, sql, None)
-    scopes = tuple(
-        __import__("sqlglot.optimizer.scope", fromlist=["traverse_scope"]).traverse_scope(statement)
-    )
+    scopes = _scopes(statement)
     physical: dict[tuple[str, str, str], NativeObject] = {}
     objects = native_objects(raw) if _objects is None else _objects
     for scope in scopes:

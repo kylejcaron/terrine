@@ -444,31 +444,46 @@ class Dialect:
         self, timestamp: ir.TimestampValue, offset_minutes: int
     ) -> tuple[ir.DateValue, ir.TimestampValue]:
         """The fixed-offset local calendar day of an instant and the UTC instant
-        starting it, from one epoch delta.
+        starting it, from one epoch delta, without leaving the integer range.
 
         With ``c`` the instant's epoch offset in its unit, ``o`` the offset in the
-        same unit and ``D`` one day, the local day number is ``n = floor((c + o) / D)``.
-        The remainder ``((s % D) + D) % D`` of ``s = c + o`` lies in ``[0, D)``
-        whether the backend's ``%`` follows the dividend's sign or the divisor's,
-        so ``s`` less it is the floor multiple and its quotient is exact. Local
-        midnight is ``n·86400`` seconds after the naive epoch, whose date is the
-        local day, and the day starts ``o`` earlier as a UTC instant; both are whole
-        seconds lowered as one interval each, so neither depends on the session
-        zone. One delta and one quotient keep the expression shallow where chained
-        conversions would nest.
+        same unit and ``D`` one day, the local day number is
+        ``n = floor((c + o) / D)``. ``c + o`` itself may overflow ``int64`` next to
+        an endpoint, so ``c`` is split first: ``q = floor(c / D)`` is the
+        truncating quotient less one where ``c % D`` is negative (a backend whose
+        ``%`` follows the divisor's sign never yields a negative remainder, and its
+        truncating quotient of the floor multiple is already the floor), and
+        ``r = ((c % D) + D) % D`` lies in ``[0, D)`` under either sign convention;
+        neither forms a value beyond ``c``. Then ``r + o`` lies within
+        ``(-D, 2D)``, so ``n = q + carry`` with ``carry`` in ``{-1, 0, 1}`` by
+        comparing ``r + o`` with ``0`` and ``D``; no division of the shifted
+        value is needed. Local midnight is ``n·86400`` seconds after the naive
+        epoch, whose date is the local day, and the day starts ``o`` earlier as a
+        UTC instant; both are whole seconds lowered as one interval each, so
+        neither depends on the session zone. A day start the timestamp type
+        cannot hold (within a day of its minimum) is a backend range error, which
+        execution reports by code. One delta and one quotient keep the expression
+        shallow where chained conversions would nest.
         """
         from terrine.backends.timestamps import _epoch
 
         coefficient, divisor, _dtype = self._epoch_coefficient(timestamp)
         day_units = 86_400 * divisor
         offset_seconds = offset_minutes * 60
-        shifted = (
-            cast(ir.IntegerValue, coefficient + offset_seconds * divisor)
-            if offset_seconds
-            else coefficient
+        signed_remainder = cast(ir.IntegerValue, coefficient % day_units)
+        zero = cast(ir.IntegerScalar, ibis.literal(0, type=dt.int64))
+        one = cast(ir.IntegerScalar, ibis.literal(1, type=dt.int64))
+        negative = cast(ir.IntegerValue, (signed_remainder < zero).ifelse(one, zero))
+        day_number = cast(
+            ir.IntegerValue, self.truncating_quotient(coefficient, day_units) - negative
         )
-        remainder = cast(ir.IntegerValue, (shifted % day_units + day_units) % day_units)
-        day_number = self.truncating_quotient(cast(ir.IntegerValue, shifted - remainder), day_units)
+        if offset_seconds:
+            remainder = cast(ir.IntegerValue, (signed_remainder + day_units) % day_units)
+            local = cast(ir.IntegerValue, remainder + offset_seconds * divisor)
+            full_day = cast(ir.IntegerScalar, ibis.literal(day_units, type=dt.int64))
+            overflow = cast(ir.IntegerValue, (local >= full_day).ifelse(one, zero))
+            carry = cast(ir.IntegerValue, (local < zero).ifelse(-one, overflow))
+            day_number = cast(ir.IntegerValue, day_number + carry)
         local_seconds = cast(ir.IntegerValue, day_number * 86_400)
         start_seconds = (
             cast(ir.IntegerValue, local_seconds - offset_seconds)
@@ -481,6 +496,12 @@ class Dialect:
         # window endpoints keep one schema.
         start = _epoch(dt.Timestamp(timezone="UTC")) + start_seconds.as_interval("s")
         return wall.date(), start
+
+    def day_start(self, timestamp: ir.TimestampValue, offset_minutes: int) -> ir.TimestampValue:
+        """The UTC instant starting the fixed-offset local day that contains
+        ``timestamp``; endpoint alignment compares an instant with it."""
+        _day, start = self.local_day(timestamp, offset_minutes)
+        return start
 
     def _rebuild(
         self,

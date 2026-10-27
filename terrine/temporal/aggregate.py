@@ -32,7 +32,7 @@ from terrine.backends.numeric import (
     normalized_quotient,
     rounded_normalized,
 )
-from terrine.backends.timestamps import local_day
+from terrine.backends.timestamps import day_start
 from terrine.data import ColumnMeta
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _SCHEMA
@@ -212,8 +212,7 @@ def narrow_exact(coefficient, scale: int, target: str | dt.DataType):
 
 def _aligned(timestamp, minutes: int):
     """Whether an instant is the start of its fixed-offset local day."""
-    _day, start = local_day(timestamp, minutes)
-    return timestamp == start
+    return timestamp == day_start(timestamp, minutes)
 
 
 def _exact_decimal(builder: _Builder, quantity: _Quantity) -> ir.Value:

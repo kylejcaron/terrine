@@ -34,7 +34,7 @@ from terrine.backends.registry import ENGINES
 from terrine.errors import RefusalSpec, TerrineError
 from terrine.execution._metadata import invalidate_metadata
 from terrine.semantic.models import Catalog, RelationSpec, SqlQuery, TableRef
-from terrine.semantic.sql import _admit_read_query_ast, _render, _verified
+from terrine.semantic.sql import _admit_read_query_ast, _render, _scopes, _verified
 
 DIALECT = "snowflake"
 # Physical row sources with Time Travel, and views over them. Temporary tables
@@ -343,10 +343,9 @@ def _physical_tables(statement: Any) -> list[Any]:
     """Physical relation references in every scope of a normalized statement:
     common table expressions, derived tables and table functions are not."""
     from sqlglot import exp
-    from sqlglot.optimizer.scope import traverse_scope
 
     found = []
-    for scope in traverse_scope(statement):
+    for scope in _scopes(statement):
         for source in scope.sources.values():
             if isinstance(source, exp.Table) and isinstance(source.this, exp.Identifier):
                 found.append(source)

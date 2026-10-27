@@ -22,6 +22,7 @@ from terrine.errors import RefusalSpec
 
 __all__ = [
     "compare_timestamps",
+    "day_start",
     "has_submicrosecond",
     "local_day",
     "lossless_scale",
@@ -101,6 +102,11 @@ def local_day(
     return current_dialect(timestamp).local_day(timestamp, offset_minutes)
 
 
+def day_start(timestamp: ir.TimestampValue, offset_minutes: int) -> ir.TimestampValue:
+    """The UTC instant starting the fixed-offset local day containing an instant."""
+    return current_dialect(timestamp).day_start(timestamp, offset_minutes)
+
+
 def native_local_day(
     dialect: Dialect, timestamp: ir.TimestampValue, offset_minutes: int
 ) -> tuple[ir.DateValue, ir.TimestampValue]:
@@ -136,6 +142,20 @@ def native_local_day(
         cast(ir.TimestampValue, day.cast("timestamp")) - ibis.interval(minutes=offset_minutes)
     )
     return day, start
+
+
+def native_day_start(
+    dialect: Dialect, timestamp: ir.TimestampValue, offset_minutes: int
+) -> ir.TimestampValue:
+    """``day_start`` through a registered engine's native UTC conversions: the
+    local wall clock's date, back to UTC, as the engines have always compiled
+    endpoint alignment."""
+    utc = dialect.utc_wall_clock(timestamp)
+    local = utc + ibis.interval(minutes=offset_minutes)
+    midnight = cast(ir.TimestampValue, local.date().cast("timestamp")) - ibis.interval(
+        minutes=offset_minutes
+    )
+    return dialect.utc_instant(midnight)
 
 
 def timestamp_text(value: ir.TimestampValue) -> ir.StringValue:

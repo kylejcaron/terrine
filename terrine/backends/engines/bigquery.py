@@ -11,7 +11,7 @@ from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE
 from terrine.backends.dialect import Dialect, current_dialect, unavailable
 from terrine.backends.numeric import _scaled_text
 from terrine.backends.registry import ENGINES, supported_engine_route
-from terrine.backends.timestamps import _UNSUPPORTED, _epoch, native_local_day
+from terrine.backends.timestamps import _UNSUPPORTED, _epoch, native_day_start, native_local_day
 
 # BIGNUMERIC holds integers to about 5.7e38 and 38 fractional digits. Overflow
 # is an error (sums) or NULL (SAFE_ arithmetic), both surfaced as exact_overflow.
@@ -146,6 +146,9 @@ class BigQueryDialect(Dialect):
         self, timestamp: ir.TimestampValue, offset_minutes: int
     ) -> tuple[ir.DateValue, ir.TimestampValue]:
         return native_local_day(self, timestamp, offset_minutes)
+
+    def day_start(self, timestamp: ir.TimestampValue, offset_minutes: int) -> ir.TimestampValue:
+        return native_day_start(self, timestamp, offset_minutes)
 
     def timestamp_text(self, value: ir.TimestampValue) -> ir.StringValue:
         return value.cast(dt.string)

@@ -17,7 +17,7 @@ from terrine.backends.numeric import (
     _scaled_float_result,
 )
 from terrine.backends.registry import ENGINES, supported_engine_route
-from terrine.backends.timestamps import _UNSUPPORTED, _epoch, native_local_day
+from terrine.backends.timestamps import _UNSUPPORTED, _epoch, native_day_start, native_local_day
 
 # Sums and differences beyond 38 digits remain exact-overflow query errors.
 _EXACT = dt.Decimal(38, 0)
@@ -189,6 +189,9 @@ class SnowflakeDialect(Dialect):
         self, timestamp: ir.TimestampValue, offset_minutes: int
     ) -> tuple[ir.DateValue, ir.TimestampValue]:
         return native_local_day(self, timestamp, offset_minutes)
+
+    def day_start(self, timestamp: ir.TimestampValue, offset_minutes: int) -> ir.TimestampValue:
+        return native_day_start(self, timestamp, offset_minutes)
 
     def timestamp_text(self, value: ir.TimestampValue) -> ir.StringValue:
         if cast(dt.Timestamp, value.type()).timezone is None:

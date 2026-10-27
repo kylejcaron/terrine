@@ -78,3 +78,29 @@ def test_compiled_statement_checks_refuse_unverifiable_depth_by_code(check):
         check(_TOO_DEEP)
     assert caught.value.code == "terrine.sql.invalid_read_query"
     assert caught.value.context["reason"] == "too_deep_to_verify"
+
+
+def test_dependency_discovery_reads_the_verified_scope_graph_from_any_caller():
+    """Scope traversal recurses per derived table like parsing does; dependency
+    discovery must read the verified graph, not rebuild it on the caller's stack."""
+    import duckdb
+    import ibis
+
+    from terrine.execution._native import _sql_tables
+    from terrine.execution._snowflake import _parsed, _physical_tables
+    from tests.execution.test_inputs import _catalog
+
+    nested = "SELECT value FROM events"
+    for level in range(40):
+        nested = f"SELECT value FROM ({nested}) AS d{level}"
+    raw = duckdb.connect()
+    ibis.duckdb  # noqa: B018 - the lazy backend import parses SQL of its own
+    try:
+        raw.execute("CREATE TABLE events(ts TIMESTAMP, user_id INTEGER, value INTEGER)")
+        objects = _from_depth(120, lambda: _sql_tables(nested, _catalog(), raw))
+    finally:
+        raw.close()
+    assert [item.name for item in objects] == ["events"]
+    statement = _parsed(nested, "query could not be parsed")
+    tables = _from_depth(120, lambda: _physical_tables(statement))
+    assert [table.name for table in tables] == ["events"]

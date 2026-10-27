@@ -300,49 +300,62 @@ def test_portable_nanosecond_utc_conversion_refuses_before_any_query(operation):
     assert caught.value.context["backend"] == "generic"
 
 
-_DAY_NS = 86_400 * 10**9
-_MINUTE_NS = 60 * 10**9
+_INT64_MAX = 2**63 - 1
+_INT64_MIN = -(2**63)
+# DuckDB's finite microsecond timestamps: 290309-12-22 (BC) 00:00:00, a local
+# midnight, up to 294247-01-10 04:00:54.775806; 2**63 - 1 is its infinity.
+_DUCKDB_MIN_US = -9_223_372_022_400_000_000
+_DUCKDB_MAX_US = 2**63 - 2
 
 
-def _local_day_oracle(instant_ns: int, offset_minutes: int):
-    """Independent oracle in integer nanoseconds: the local calendar day under a fixed
-    offset and the UTC instant at which it starts."""
-    from datetime import UTC, date, datetime, timedelta
+def _local_day_oracle(instant: int, per_second: int, offset_minutes: int) -> tuple[int, int, int]:
+    """Independent oracle in exact integers: the local day number since the epoch
+    under a fixed offset, the microseconds since the epoch of that local midnight
+    on the naive axis, and of the UTC instant at which the day starts."""
+    day = 86_400 * per_second
+    day_number = (instant + offset_minutes * 60 * per_second) // day
+    midnight_seconds = day_number * 86_400
+    start_seconds = midnight_seconds - offset_minutes * 60
+    return day_number, midnight_seconds * 10**6, start_seconds * 10**6
 
-    local = instant_ns + offset_minutes * _MINUTE_NS
-    day_number = local // _DAY_NS
-    start_ns = day_number * _DAY_NS - offset_minutes * _MINUTE_NS
-    assert start_ns % 10**9 == 0
-    return (
-        date(1970, 1, 1) + timedelta(days=day_number),
-        datetime(1970, 1, 1, tzinfo=UTC) + timedelta(seconds=start_ns // 10**9),
-    )
+
+def _local_day_cases(per_second: int) -> list[tuple[int, int]]:
+    """``(offset_minutes, instant)`` pairs one tick before, at and after local
+    midnight around a 2025 day, the day before the epoch and the epoch, under
+    west, UTC and east offsets."""
+    day = 86_400 * per_second
+    midnights = [1_743_292_800 * per_second, -day, 0]
+    cases: list[tuple[int, int]] = []
+    for offset in (-300, 0, 330, -720, 840):
+        for midnight in midnights:
+            local_midnight = midnight - offset * 60 * per_second
+            cases.extend(
+                (offset, at) for at in (local_midnight - 1, local_midnight, local_midnight + 1)
+            )
+    return cases
+
+
+def _epoch_integers(rows: pa.Table) -> tuple[int, int]:
+    """``(day number, start microseconds)``: years beyond 9999 have no Python datetime."""
+    import pyarrow.compute as pc
+
+    (day_number,) = pc.cast(rows["day"], pa.int32()).to_pylist()
+    (start,) = pc.cast(pc.cast(rows["start"], pa.timestamp("us")), pa.int64()).to_pylist()
+    return day_number, start
 
 
 @pytest.mark.parametrize("policy", ["generic", "duckdb"])
 @pytest.mark.parametrize("unit", ["us", "ns"])
 def test_local_day_boundaries_match_the_fixed_offset_oracle(policy, unit):
-    """Day buckets and their start instants, portable and native, at instants one
-    tick before, at and after local midnight under west, UTC and east offsets, before
-    and after the epoch; aware microseconds and naive nanoseconds (which denote UTC,
-    and which DuckDB holds only without a zone)."""
-    from datetime import UTC
+    """Day buckets and their start instants, portable and native; aware
+    microseconds and naive nanoseconds (which denote UTC, and which DuckDB holds
+    only without a zone)."""
+    import pyarrow.compute as pc
 
     from terrine.backends.timestamps import local_day
 
-    tick = 1000 if unit == "us" else 1
-    # UTC midnights: a 2025 day, the day before the epoch, and the epoch itself.
-    midnights_ns = [1_743_292_800 * 10**9, -_DAY_NS, 0]
-    offsets = [-300, 0, 330, -720, 840]
-    cases: list[tuple[int, int]] = []
-    for offset in offsets:
-        for midnight in midnights_ns:
-            local_midnight = midnight - offset * _MINUTE_NS
-            cases.extend(
-                (offset, at)
-                for at in (local_midnight - tick, local_midnight, local_midnight + tick)
-            )
-    scale = 1 if unit == "ns" else 1000
+    per_second = 10**9 if unit == "ns" else 10**6
+    cases = _local_day_cases(per_second)
     stored = pa.timestamp("ns") if unit == "ns" else pa.timestamp("us", tz="UTC")
     con = ibis.duckdb.connect()
     try:
@@ -352,25 +365,79 @@ def test_local_day_boundaries_match_the_fixed_offset_oracle(policy, unit):
                 {
                     "case": list(range(len(cases))),
                     "offset": pa.array([offset for offset, _ in cases], pa.int64()),
-                    "at": pa.array([at // scale for _, at in cases], pa.int64()).cast(stored),
+                    "at": pa.array([at for _, at in cases], pa.int64()).cast(stored),
                 }
             ),
         )
         results = {}
         with dialect_scope(policy):
-            for offset in offsets:
+            for offset in sorted({offset for offset, _ in cases}):
                 subset = table.filter(table.offset == offset)
                 day, start = local_day(subset.at, offset)
                 assert day.type() == dt.date
                 start_type = start.type()
                 assert isinstance(start_type, dt.Timestamp) and start_type.timezone == "UTC"
-                for row in con.to_pyarrow(subset.select("case", day=day, start=start)).to_pylist():
-                    results[row["case"]] = (row["day"], row["start"])
+                rows = con.to_pyarrow(subset.select("case", day=day, start=start))
+                days = pc.cast(rows["day"], pa.int32()).to_pylist()
+                starts = pc.cast(pc.cast(rows["start"], pa.timestamp("us")), pa.int64()).to_pylist()
+                for case, day_number, start_us in zip(
+                    rows["case"].to_pylist(), days, starts, strict=True
+                ):
+                    results[case] = (day_number, start_us)
     finally:
         con.disconnect()
     for index, (offset, at) in enumerate(cases):
-        day, start = results[index]
-        assert (day, start.astimezone(UTC)) == _local_day_oracle(at, offset), (offset, at)
+        day_number, _midnight, start_us = _local_day_oracle(at, per_second, offset)
+        assert results[index] == (day_number, start_us), (offset, at)
+
+
+@pytest.mark.parametrize("unit", ["us", "ns"])
+def test_local_day_at_the_integer_endpoints_is_exact_or_refused(unit):
+    """The portable arithmetic at both endpoints of the stored integer range under
+    the extreme offsets: every intermediate stays in ``int64``, so a local day
+    DuckDB can hold is exact, and one it cannot (a midnight or start beyond its
+    finite timestamps) is a backend range error coded by the session, never a
+    wrapped value. Naive columns: DuckDB's zone-aware microsecond deltas go
+    through a double beyond about year 287 000, and its nanosecond type has no
+    zone."""
+    from terrine.backends.timestamps import local_day
+    from terrine.execution._generic import NoSnapshotSession
+
+    per_second = 10**9 if unit == "ns" else 10**6
+    low, high = (_INT64_MIN, _INT64_MAX) if unit == "ns" else (_DUCKDB_MIN_US, _DUCKDB_MAX_US)
+    cases = [(offset, at) for offset in (-840, 0, 840) for at in (low, low + 1, high - 1, high)]
+    con = ibis.duckdb.connect()
+    try:
+        exact = refused = 0
+        for index, (offset, at) in enumerate(cases):
+            table = con.create_table(
+                f"endpoint_{index}",
+                pa.table({"at": pa.array([at], pa.int64()).cast(pa.timestamp(unit))}),
+            )
+            with dialect_scope("generic"):
+                day, start = local_day(table.at, offset)
+                query = table.select(day=day, start=start)
+            day_number, midnight_us, start_us = _local_day_oracle(at, per_second, offset)
+            representable = all(
+                _DUCKDB_MIN_US <= value <= _DUCKDB_MAX_US for value in (midnight_us, start_us)
+            )
+            if representable:
+                assert _epoch_integers(con.to_pyarrow(query)) == (day_number, start_us), (
+                    offset,
+                    at,
+                )
+                exact += 1
+            else:
+                with pytest.raises(TerrineError) as caught:
+                    NoSnapshotSession(con).execute(con, query, "")
+                assert caught.value.code == "terrine.backend.capability_unavailable"
+                assert caught.value.context["operation"] == "query"
+                assert caught.value.__cause__ is not None
+                refused += 1
+    finally:
+        con.disconnect()
+    assert exact >= 8
+    assert refused == (0 if unit == "ns" else 4)
 
 
 def test_cohort_summary_uses_the_passed_policy_scope(monkeypatch):

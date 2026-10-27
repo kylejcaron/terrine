@@ -22,6 +22,7 @@ from terrine.semantic.sql import (
     _admit_read_query_ast,
     _parse_read_query_ast,
     _render,
+    _scopes,
     _verified,
     admit_read_query,
 )
@@ -150,11 +151,10 @@ def _table_name(source: Any) -> str:
 
 def _sql_roots(sql: str, raw: Any) -> list[int]:
     from sqlglot import exp
-    from sqlglot.optimizer.scope import traverse_scope
 
     statement = _admit_read_query_ast(sql, DIALECT, DIALECT)
     oids: list[int] = []
-    for scope in traverse_scope(statement):
+    for scope in _scopes(statement):
         for source in scope.sources.values():
             if isinstance(source, exp.Table):
                 oids.append(_lookup(raw, _table_name(source)))

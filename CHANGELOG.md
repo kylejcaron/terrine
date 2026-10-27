@@ -32,9 +32,11 @@
   Time Travel pinning) runs on a fresh thread, whose recursion depth is
   counted separately, so a deeply nested compiled statement is verified
   whatever the caller's own stack depth without changing the interpreter's
-  recursion limit; a statement too deep to verify even then refuses with
-  `terrine.sql.invalid_read_query` and `reason="too_deep_to_verify"`, never
-  as unsafe SQL or a raw `RecursionError`. Unsupported primitives
+  recursion limit, and relation discovery reads the verified scope graph
+  rather than traversing nested derived tables again; a statement too deep to
+  verify even then refuses with `terrine.sql.invalid_read_query` and
+  `reason="too_deep_to_verify"`, never as unsafe SQL or a raw
+  `RecursionError`. Unsupported primitives
   refuse with `capability_unavailable` naming the backend and operation,
   chained from the backend's exception; owned Arrow readers are released on
   exhaustion, error, early close or context closure, and a failure during
@@ -79,11 +81,13 @@
   through a certified decimal residual correction and are NULL beyond int64
   or for a zero divisor. Timestamps use native order, typed UTC epoch deltas
   and signed parts; fixed-offset local days and their start instants derive
-  from one epoch delta and one floor quotient (`Dialect.local_day`), which
-  keeps day buckets and endpoint alignment shallow where chained conversions
-  would nest (registered engines keep their cast-based form); the
-  union/window as-of fallback, coalesced extrema and portable integer
-  sequences are the defaults. Measured on DuckDB and
+  from one epoch delta and one floor quotient (`Dialect.local_day`,
+  `Dialect.day_start`) with every intermediate inside `int64` at both
+  endpoints under the extreme offsets, which keeps day buckets and endpoint
+  alignment shallow where chained conversions would nest (registered engines
+  keep their cast-based forms, compiled unchanged); the union/window as-of
+  fallback, coalesced extrema and portable integer sequences are the
+  defaults. Measured on DuckDB and
   PostgreSQL 16 with the policy forced: shortest round-trip float text within
   half an ulp, exact `0.1 + 0.2` and scale-2 cancellation, both signed
   `int64` quotient endpoints, and nested quotients within `8u`. Registered

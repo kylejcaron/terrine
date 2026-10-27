@@ -5,7 +5,7 @@ import threading
 from collections.abc import Callable
 
 from sqlglot import exp, parse
-from sqlglot.optimizer.scope import traverse_scope
+from sqlglot.optimizer.scope import Scope, traverse_scope
 
 from terrine.errors import RefusalSpec, TerrineError
 
@@ -183,10 +183,14 @@ def admit_read_query(sql: str, declared_dialect: str, execution_dialect: str) ->
     return sql
 
 
-def _scopes(statement: exp.Expression) -> None:
-    """Materialize SQLGlot's lexical scope graph as a verification step."""
+def _scopes(statement: exp.Expression) -> tuple[Scope, ...]:
+    """SQLGlot's lexical scope graph, materialized as a verification step.
+
+    Scope traversal recurses per derived table, so dependency discovery reads
+    the graph from here rather than traversing again on its own stack.
+    """
     try:
-        _verified(lambda: tuple(traverse_scope(statement)))
+        return _verified(lambda: tuple(traverse_scope(statement)))
     except TerrineError:
         raise
     except Exception as exc:
