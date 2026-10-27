@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0.dev1
 
 ### Backend compatibility
 
@@ -147,6 +147,8 @@
   source timestamps enter through the instant conversion; the wrong answer was
   reachable only by applying the wall-clock conversion directly to a naive
   value, as endpoint alignment on naive values now does.
+- Source distributions no longer include internal planning documents or local
+  build and test output.
 
 ### Tests
 
@@ -165,17 +167,15 @@
 
 ### Documentation
 
-- Start the README with a runnable table-first dataset and its completeness
-  columns, then choose a dataset type. Add executable feature patterns for
-  rolling windows, conditional events, eligibility, as-of attributes, recency
-  and Boolean labels. Keep output budgets, staging, owned inputs and development
-  details in their guides.
 - Describe the verified, opted-in unverified and refused backend tiers, the
   portable numerical contract and its admission witnesses, and the engine
   stamp in the compatibility, capabilities and public API guides. Add
   `examples/unverified_backend.py`, which opts in to the Ibis SQLite backend,
   shows the default refusal, a coded operation refusal, a real read and its
   stamp.
+- Rewrite the README around a customer spend forecasting table built from
+  pandas DataFrames, with the shapes Terrine builds and how to read its output.
+  The first-dataset guide follows the same example.
 
 ### Public API
 
@@ -187,6 +187,25 @@
   Negative offsets refuse with `terrine.design.invalid`; persisted-layer
   substitution for shifted anchors refuses before source access with
   `terrine.compile.runtime_shape_unsupported`. Recipes are unchanged.
+
+### Breaking changes
+
+- Constructing `Provenance` requires `engine_name`, `dialect` and
+  `engine_status`; saved payloads without them still decode as their recorded
+  verified execution dialect.
+
+## 0.1.0.dev0
+
+### Documentation
+
+- Start the README with a runnable table-first dataset and its completeness
+  columns, then choose a dataset type. Add executable feature patterns for
+  rolling windows, conditional events, eligibility, as-of attributes, recency
+  and Boolean labels. Keep output budgets, staging, owned inputs and development
+  details in their guides.
+
+### Public API
+
 - Construct common dataset types with `terrine.recipes`: time series, trial
   panels, event panels, cumulative LTV, survival, life tables, state panels and
   bounded event sequences. Each returns a plain low-level `Design`, retains
@@ -218,9 +237,6 @@
   Event properties such as `kind_complete` remain values, not status evidence.
   User output names ending in either suffix now refuse during Design validation
   with `terrine.spec.reserved_output_name`.
-- Constructing `Provenance` requires `engine_name`, `dialect` and
-  `engine_status`; saved payloads without them still decode as their recorded
-  verified execution dialect.
 - Default Frame dataframe conversions are compact, lossy views that omit
   observation bounds, resolved times and anchor provenance. Pass
   `include_observation_metadata=True` to keep them. Arrow conversions, staged
