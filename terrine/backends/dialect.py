@@ -14,6 +14,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from fractions import Fraction
 from functools import cache
 from typing import Any, ClassVar, cast
 
@@ -265,35 +266,78 @@ class Dialect:
     def trim_leading_zeros(self, digits: ir.StringValue) -> ir.StringValue:
         return digits.re_replace("^0+", "")
 
-    def exact_sum(self, value: ir.Value) -> ir.Value:
+    def exact_sum(self, value: ir.Value, *, admitted: bool = False) -> ir.Value:
         """Sum in the backend, keeping the operand's fixed type; NULL when it cannot fit.
 
         Ibis widens a scale-0 decimal sum to scale 2; the cast back keeps
         counts and coefficients in their domain. The binary64 sum of the
-        operands' magnitudes bounds every partial sum, so a group whose
-        magnitudes reach the type's limit (less a ``2**-30`` margin covering the
-        bound's own rounding) yields NULL instead of an overflowing cast; the
-        accumulated magnitude state carried alongside turns that NULL into the
-        existing overflow refusals.
+        operands' magnitudes bounds every partial sum, so a group that
+        ``admits_accumulation`` rejects yields NULL instead of an overflowing
+        cast. The backend still adds every operand, so callers whose operands
+        may leave the type's domain withhold them first
+        (``numeric.guard_accumulation``) and pass ``admitted``: the sum is then
+        taken as it is, because re-deriving the admission from a differently
+        ordered magnitude sum could withhold a sum the guard admitted.
         """
-        total = cast(ir.NumericColumn, value).sum()
+        column = cast(ir.NumericColumn, value)
+        total = column.sum()
         dtype = value.type()
-        if not isinstance(dtype, dt.Decimal) or dtype.precision is None:
+        if admitted or not isinstance(dtype, dt.Decimal) or dtype.precision is None:
             return total.cast(dtype)
         bound = cast(ir.FloatingValue, self.magnitude(value).sum())
-        fits = bound < ibis.literal(self.magnitude_limit(dtype), type=dt.float64)
+        fits = self.admits_accumulation(bound, column.count(), dtype)
         return fits.ifelse(total, _typed_null(dtype)).cast(dtype)
 
     def magnitude(self, value: ir.Value) -> ir.FloatingColumn:
-        """A NULL-free binary64 magnitude whose sum bounds any sum of ``value``."""
-        floating = cast(ir.FloatingColumn, value.cast(dt.float64))
+        """A NULL-free binary64 magnitude whose sum bounds any sum of ``value``.
+
+        The conversion goes through the decimal text, which the verified
+        backends round correctly (``|m - |x|| <= u·|x|``), unlike a direct
+        decimal-to-binary64 cast.
+        """
+        floating = cast(ir.FloatingColumn, self.binary64(value.cast("string")))
         return cast(ir.FloatingColumn, floating.abs().fill_null(ibis.literal(0.0)))
 
     @staticmethod
     def magnitude_limit(dtype: dt.Decimal) -> float:
-        """The accumulated magnitude at which a fixed-precision sum may not fit."""
+        """The largest binary64 not above the type's largest magnitude."""
         assert dtype.precision is not None and dtype.scale is not None
-        return (10**dtype.precision - 1) / 10**dtype.scale * (1 - 2.0**-30)
+        exact = Fraction(10**dtype.precision - 1, 10**dtype.scale)
+        rounded = float(exact)
+        return rounded if Fraction(rounded) <= exact else math.nextafter(rounded, 0.0)
+
+    def admits_accumulation(
+        self, magnitude_sum: ir.Value, count: ir.Value, dtype: dt.Decimal
+    ) -> ir.BooleanValue:
+        """Whether a sum whose backend magnitude bound is ``magnitude_sum`` fits ``dtype``.
+
+        Let ``S = Σ|x_i|`` over the ``n = count`` contributing values and ``L``
+        the type's largest magnitude; every partial sum lies within ``S``, so
+        ``S < L`` admits the exact sum. The backend computes ``B`` from the
+        magnitudes ``m_i = |x_i|(1 + δ_i)``, ``|δ_i| <= u = 2**-53``, through at
+        most ``n - 1`` binary64 additions in any order, so each term carries a
+        factor within ``1 ± γ_{n-1}``, ``γ_k = k·u / (1 - k·u)``, and
+        ``|B - S| <= e·S`` for ``e = (1 + u)(1 + γ_{n-1}) - 1``. The lower
+        side, ``S <= B / (1 - e)``, makes ``B < L·(1 - e)`` sufficient;
+        ``B·(1 + e) < L`` is not, since ``1/(1 - e) > 1 + e``. In closed form
+        ``1 - e = (1 - (2n - 1)u) / (1 - (n - 1)u) >= 1 - 2n·u``.
+
+        The guard compares against ``t = fl(fl(1 - (n + 2)·2u) · L̂)`` with
+        ``L̂`` the largest binary64 not above ``L``: ``(n + 2)·2u`` is exact (an
+        integer below ``2**53`` scaled by a power of two), the two remaining
+        roundings contribute at most ``(1 + u)**2``, and
+        ``(1 - (2n + 4)u)(1 + u)**2 < 1 - (2n + 2)u < 1 - 2n·u``, so
+        ``t <= L·(1 - e)`` and ``B < t`` implies ``S < L``. From
+        ``n >= 2**52 - 2`` the threshold is not positive and nothing is
+        admitted; the model needs ``(n - 1)u < 1`` in any case. A NULL bound
+        (no contributing rows) is admitted.
+        """
+        limit = cast(ir.FloatingScalar, ibis.literal(self.magnitude_limit(dtype), type=dt.float64))
+        additions = cast(ir.FloatingValue, count.cast(dt.float64)) + 2.0
+        slack = cast(ir.FloatingValue, additions * (2 * _UNIT_ROUNDOFF))
+        threshold = cast(ir.FloatingValue, (1.0 - slack) * limit)
+        bound = cast(ir.FloatingValue, magnitude_sum).fill_null(ibis.literal(0.0))
+        return bound < threshold
 
     def exact_subtract(self, left: ir.Value, right: ir.Value) -> ir.Value:
         """Subtract exactly; a difference leaving the fixed domain is NULL.

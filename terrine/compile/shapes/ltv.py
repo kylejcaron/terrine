@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import ibis
+import ibis.expr.types as ir
 
-from terrine.backends.numeric import EXACT_OVERFLOW, exact_literal, exact_sum, float_is_finite
+from terrine.backends.numeric import (
+    EXACT_OVERFLOW,
+    exact_literal,
+    exact_sum,
+    float_is_finite,
+    guard_accumulation,
+)
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
@@ -171,11 +178,8 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
     outcome_names = ["period_value"]
     checks = list(compiled._checks)
     if trajectory.cumulative:
-        frame = ibis.window(
-            group_by=[table.unit, table.anchor_id, table.cohort_time],
-            order_by=[table.age],
-            rows=(None, 0),
-        )
+        partition = ["unit", "anchor_id", "cohort_time"]
+        scratch: list[str] = []
         if table.period_value.type().is_decimal():
             numeric_type = table.period_value.type()
             scale = numeric_type.scale
@@ -187,9 +191,29 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
             coefficient = coefficient_text.rpad(
                 coefficient_text.length() + scale - fractional_digits, "0"
             ).cast(exact_literal(0).type())
-            exact_total = exact_sum(coefficient).over(frame)
+            # A fixed-precision policy withholds each period's coefficient once
+            # the magnitudes accumulated through it may leave the domain, so
+            # the backend never evaluates a running sum outside it; any
+            # withheld period at or before an age makes that age's total NULL,
+            # which the exact-overflow check below refuses.
+            original = table.columns
+            table, coefficient, admitted = guard_accumulation(
+                table, coefficient, partition=partition, order="age"
+            )
+            scratch = [name for name in table.columns if name not in original]
+            frame = ibis.window(
+                group_by=[table[name] for name in partition], order_by=[table.age], rows=(None, 0)
+            )
+            exact_total = exact_sum(coefficient, admitted=admitted is not None).over(frame)
+            if admitted is not None:
+                flags = cast(ir.IntegerColumn, (~admitted).cast("int32"))
+                withheld = cast(ir.IntegerColumn, flags.sum().over(frame)) > 0
+                exact_total = withheld.ifelse(ibis.null().cast(exact_total.type()), exact_total)
             total = narrow_exact(exact_total, scale, numeric_type)
         else:
+            frame = ibis.window(
+                group_by=[table[name] for name in partition], order_by=[table.age], rows=(None, 0)
+            )
             total = table.period_value.sum().over(frame)
         # Through INT: PostgreSQL cannot cast boolean to BIGINT.
         missing = table.period_value.isnull().cast("int32").sum().over(frame) > 0
@@ -212,6 +236,8 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
             )
         cumulative = missing.ifelse(ibis.null().cast(total.type()), total)
         table = table.mutate(cumulative_value=cumulative)
+        if scratch:
+            table = table.drop(*scratch)
         if table.cumulative_value.type().is_floating():
             # A native binary64 running total that leaves the finite range
             # refuses instead of publishing an infinity or NaN.

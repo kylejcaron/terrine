@@ -150,7 +150,7 @@ class SnowflakeDialect(Dialect):
     def trim_leading_zeros(self, digits: ir.StringValue) -> ir.StringValue:
         return cast(ir.StringValue, _ltrim(digits, "0"))
 
-    def exact_sum(self, value: ir.Value) -> ir.Value:
+    def exact_sum(self, value: ir.Value, *, admitted: bool = False) -> ir.Value:
         # Keep NUMBER(38, 0); Ibis otherwise widens the scale and types later
         # fills and comparisons as NUMBER(38, 2).
         return cast(ir.NumericColumn, value).sum().cast(_EXACT)

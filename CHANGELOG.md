@@ -25,8 +25,17 @@
   coefficients stay in a separate `DECIMAL(38, 0)` domain whose literals,
   typed NULLs and narrowing bounds take the coefficient's type. Prefix
   differences leaving the fixed domain and outputs leaving their target type
-  refuse with the existing codes; sums beyond the backend's decimal range
-  remain backend errors, never silently narrowed values. Exact-state ratios
+  refuse with the existing codes. Accumulations are admitted only when a
+  binary64 bound on their magnitudes proves the exact sum fits: with `n`
+  contributing values the computed bound `B` lies within
+  `e = (1 + u)(1 + γ_{n-1}) - 1` of the true magnitude sum (`u = 2**-53`,
+  `γ_k = k·u / (1 - k·u)`), so a partition is admitted iff
+  `B < limit · (1 - e)`, evaluated with its own rounding on the conservative
+  side; otherwise its values are withheld before the backend adds them and
+  every consumer of the state (sums, averages, ratios, cohort totals and
+  means, cumulative trajectories) refuses with `float64_precision`
+  (`bound_overflow`) for float facts or `exact_overflow` for coefficients,
+  never a backend error, a narrowed value or a silent NULL. Exact-state ratios
   divide correctly rounded binary64 operands once (within `3.1u` before later
   rounding); integer quotients truncate toward zero through a certified
   decimal residual correction and are NULL beyond int64 or for a zero
@@ -36,9 +45,11 @@
   with the policy forced: shortest round-trip float text within half an ulp,
   exact `0.1 + 0.2` and scale-2 cancellation, both signed `int64` quotient
   endpoints, and nested quotients within `8u`. On PostgreSQL, Ibis lowers an
-  aware-timestamp delta through session wall clocks, so the forced portable
-  policy there is exact only for instants whose session offset matches the
-  epoch's; the registered PostgreSQL policy keeps its native UTC conversions.
+  aware-timestamp delta through session wall clocks, so unverified execution
+  there checks four known UTC wall clocks once per session before running a
+  query with an aware delta and refuses with `capability_unavailable`
+  (`utc_wall_clock`) when the session offset changes the answer; the
+  registered PostgreSQL policy keeps its native UTC conversions.
   Registered engines keep every previously refused operation (`exact_ratio`
   and `exact_is_nonfinite` on DuckDB and Snowflake; normalized significand
   division on PostgreSQL and BigQuery) through explicit overrides.

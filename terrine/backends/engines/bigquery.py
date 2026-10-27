@@ -102,7 +102,7 @@ class BigQueryDialect(Dialect):
         never = cast(ir.BooleanValue, ibis.literal(False))
         return cast(ir.FloatingValue, value.cast(dt.float64)), never, never
 
-    def exact_sum(self, value: ir.Value) -> ir.Value:
+    def exact_sum(self, value: ir.Value, *, admitted: bool = False) -> ir.Value:
         return _exact_sum(value)
 
     def exact_subtract(self, left: ir.Value, right: ir.Value) -> ir.Value:

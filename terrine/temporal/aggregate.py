@@ -13,7 +13,7 @@ import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 import pyarrow as pa
 
-from terrine.backends.dialect import Dialect, current_dialect
+from terrine.backends.dialect import current_dialect
 from terrine.backends.extrema import greatest, least
 from terrine.backends.numeric import (
     EXACT_OVERFLOW as _EXACT_OVERFLOW,
@@ -348,18 +348,21 @@ def _component(
     dtype = dt.dtype(measure.value_type)
     difference = exact_subtract(builder.col(sums[1]), builder.col(sums[0]))
     state_zero = exact_literal(0, difference)
-    if "sum_bound" in end:
-        # Portable fixed-precision state: the accumulated magnitude through the
-        # window end bounds every prefix, so reaching the limit means some sum
-        # was withheld rather than narrowed; refuse instead of trusting the state.
+    if "sum_withheld" in end:
+        # Portable fixed-precision state: a state withheld at or before the
+        # window end means the prefix is incomplete, so a non-empty window
+        # refuses through whichever consumer reads the difference, instead of
+        # trusting it or publishing NULL.
         state_type = cast(dt.Decimal, difference.type())
-        exceeded = builder.put(
-            "bound_exceeded",
-            builder.col(end["sum_bound"]) >= Dialect.magnitude_limit(state_type),
+        withheld = builder.put(
+            "state_withheld",
+            ~builder.col(empty) & (builder.col(end["sum_withheld"]) > zero),
         )
-        difference = builder.col(exceeded).ifelse(ibis.null().cast(state_type), difference)
+        difference = builder.col(withheld).ifelse(ibis.null().cast(state_type), difference)
         if dtype.is_floating():
-            builder.flag(~builder.col(empty) & builder.col(exceeded), "bound_overflow", context)
+            builder.flag(builder.col(withheld), "bound_overflow", context)
+        else:
+            builder.numeric.append((withheld, _EXACT_OVERFLOW, context))
     if dtype.is_floating():
         # Exact float state: an empty window is zero even when non-finite
         # history makes the prefix difference NaN.

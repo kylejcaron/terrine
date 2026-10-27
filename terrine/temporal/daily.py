@@ -25,6 +25,7 @@ from terrine.backends.numeric import (
     exact_sum,
     float_is_finite,
     float_scale,
+    guard_accumulation,
 )
 from terrine.backends.timestamps import utc_instant, utc_wall_clock
 from terrine.semantic.bind import _MISSING, _SCHEMA
@@ -415,12 +416,19 @@ def _sparse_group(
             scale = dtype.scale if isinstance(dtype, dt.Decimal) else 0
             exact = decimal_coefficient(source_value, scale or 0)
         coefficient = leaf.__terrine_selected.ifelse(exact, ibis.null().cast(exact.type()))
-        aggregates["sum_value"] = exact_sum(coefficient)
-        policy = current_dialect(coefficient)
-        if policy.bounds_accumulations:
-            # Bounds every partial sum, so an accumulation leaving the fixed
-            # domain is refused instead of silently narrowed or skipped.
-            aggregates["sum_bound"] = policy.magnitude(coefficient).sum()
+        # A fixed-precision policy withholds a group's coefficients before the
+        # backend adds them when their magnitudes may leave the domain, and
+        # reports the withheld rows so later prefixes refuse instead of
+        # reading an incomplete state.
+        leaf, coefficient, admitted = guard_accumulation(
+            leaf, coefficient, partition=["_unit", *keys]
+        )
+        aggregates["sum_value"] = exact_sum(coefficient, admitted=admitted is not None)
+        if admitted is not None:
+            aggregates["sum_bound"] = current_dialect(coefficient).magnitude(coefficient).sum()
+            aggregates["sum_withheld"] = exact_sum(
+                (~admitted).ifelse(exact_literal(1), exact_literal(0))
+            )
     grouped = leaf.group_by("_unit", *keys).aggregate(**aggregates)
     constants = {
         "value_type": ibis.literal(measure.value_type),

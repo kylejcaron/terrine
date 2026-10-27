@@ -394,12 +394,20 @@ _CATALOG = {
         "order_count": {"fact": "order", "aggregation": "count"},
         "quantity_average": {"fact": "quantity", "aggregation": "avg_event"},
         "amount_total": {"fact": "amount", "aggregation": "sum"},
+        "amount_average": {"fact": "amount", "aggregation": "avg_event"},
         "weight_total": {"fact": "weight", "aggregation": "sum"},
         "weight_average": {"fact": "weight", "aggregation": "avg_event"},
     },
     "metrics": {
         "orders": {"kind": "mean", "entity": "user", "measure": "order_count"},
         "spend": {"kind": "mean", "entity": "user", "measure": "amount_total"},
+        "average_spend": {"kind": "mean", "entity": "user", "measure": "amount_average"},
+        "spend_per_order": {
+            "kind": "ratio",
+            "entity": "user",
+            "numerator": "amount_total",
+            "denominator": "order_count",
+        },
         "weight": {"kind": "mean", "entity": "user", "measure": "weight_total"},
         "average_weight": {"kind": "mean", "entity": "user", "measure": "weight_average"},
         "weight_per_order": {
@@ -570,6 +578,13 @@ def test_domain_failures_are_coded_refusals(connection, events, metric, code, fa
         assert error.value.context["failure"] == failure
 
 
+_HUGE_AMOUNT = "6" + "0" * 35 + ".00"
+_SAME_DAY_HUGE_AMOUNTS = [
+    _event("a", datetime(2025, 1, 1, 12, tzinfo=UTC), amount=_HUGE_AMOUNT),
+    _event("a", datetime(2025, 1, 1, 13, tzinfo=UTC), amount=_HUGE_AMOUNT),
+]
+
+
 @pytest.mark.parametrize(
     ("events", "metric", "code", "failure"),
     [
@@ -593,24 +608,38 @@ def test_domain_failures_are_coded_refusals(connection, events, metric, code, fa
             "terrine.temporal.float64_precision",
             "bound_overflow",
         ),
+        # Three facts scale to 1.8e38, beyond a 128-bit accumulator: the group and
+        # prefix sums must never receive them.
         (
             [
-                _event("a", datetime(2025, 1, 1, 12, tzinfo=UTC), amount="6" + "0" * 35 + ".00"),
-                _event("a", datetime(2025, 1, 1, 13, tzinfo=UTC), amount="6" + "0" * 35 + ".00"),
+                _event("a", datetime(2025, 1, 1, hour, tzinfo=UTC), weight=6e28)
+                for hour in (12, 13, 14)
+            ],
+            "weight",
+            "terrine.temporal.float64_precision",
+            "bound_overflow",
+        ),
+        (
+            [_event("a", datetime(2024, 12, day, 12, tzinfo=UTC), weight=6e28) for day in (30, 31)]
+            + [_event("a", datetime(2025, 1, 1, 12, tzinfo=UTC), weight=6e28)],
+            "weight",
+            "terrine.temporal.float64_precision",
+            "bound_overflow",
+        ),
+        (_SAME_DAY_HUGE_AMOUNTS, "spend", "terrine.temporal.exact_overflow", None),
+        (
+            [
+                _event("a", datetime(2024, 12, 31, 12, tzinfo=UTC), amount=_HUGE_AMOUNT),
+                _event("a", datetime(2025, 1, 1, 12, tzinfo=UTC), amount=_HUGE_AMOUNT),
             ],
             "spend",
             "terrine.temporal.exact_overflow",
             None,
         ),
-        (
-            [
-                _event("a", datetime(2024, 12, 31, 12, tzinfo=UTC), amount="6" + "0" * 35 + ".00"),
-                _event("a", datetime(2025, 1, 1, 12, tzinfo=UTC), amount="6" + "0" * 35 + ".00"),
-            ],
-            "spend",
-            "terrine.temporal.exact_overflow",
-            None,
-        ),
+        # A withheld coefficient state must refuse through every consumer, not only
+        # the exact output: the average's quotient and a ratio's numerator.
+        (_SAME_DAY_HUGE_AMOUNTS, "average_spend", "terrine.temporal.exact_overflow", None),
+        (_SAME_DAY_HUGE_AMOUNTS, "spend_per_order", "terrine.temporal.exact_overflow", None),
     ],
 )
 def test_accumulated_state_overflow_is_a_coded_refusal(connection, events, metric, code, failure):

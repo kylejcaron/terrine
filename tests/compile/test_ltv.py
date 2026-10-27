@@ -257,6 +257,69 @@ def test_cumulative_float_overflow_refuses(monkeypatch):
         con.disconnect()
 
 
+def test_portable_cumulative_decimal_beyond_the_accumulator_refuses(monkeypatch):
+    """Three periods of 6e37 exceed a 128-bit running sum: the portable policy withholds
+    them before summing and refuses, instead of a backend error."""
+    from dataclasses import replace
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    import ibis.expr.datatypes as dt
+
+    from terrine.backends.dialect import dialect_scope
+    from terrine.compile.columns import compile_columns
+    from terrine.data import ColumnMeta
+    from terrine.windows import Window
+
+    con, model = _trajectory_model(decimal_type="DECIMAL(38, 0)", unit="u1")
+    try:
+        base = compile_columns(Design("user", EventAnchor("purchase", which="first")), model)
+        huge = ibis.literal(Decimal("6" + "0" * 37), type=dt.Decimal(38, 0))
+        periods = con.create_table(
+            "period_values",
+            base.table.mutate(
+                **{f"__trajectory_age_{age}": huge for age in range(3)},
+                complete=ibis.literal(True),
+                reason=ibis.null().cast("string"),
+                observed_from=ibis.literal(datetime(2025, 1, 1, tzinfo=UTC)),
+                observed_until=ibis.literal(datetime(2025, 1, 31, tzinfo=UTC)),
+            ),
+        )
+        period = 7 * 24 * 60 * 60
+        metadata = {
+            f"__trajectory_age_{age}": ColumnMeta(
+                Window(age * period, (age + 1) * period),
+                "outcome",
+                "observed_from",
+                "observed_until",
+                "complete",
+                "reason",
+                numeric_policy="exact",
+            )
+            for age in range(3)
+        }
+        prepared = replace(base, table=periods, columns=metadata)
+        monkeypatch.setattr("terrine.compile.shapes.ltv.compile_columns", lambda *_args: prepared)
+        with dialect_scope("generic"):
+            frame = compile_ltv(
+                Design(
+                    "user",
+                    EventAnchor("purchase", which="first"),
+                    shape=CohortSpec(
+                        origin="purchase",
+                        trajectory=Trajectory("decimal_revenue", "7d", periods=3, cumulative=True),
+                    ),
+                ),
+                model,
+            )
+        with pytest.raises(TerrineError) as error:
+            frame.validate(execute=con.to_pyarrow)
+        assert error.value.code == "terrine.temporal.exact_overflow"
+        assert error.value.context["output"] == "cumulative_value"
+    finally:
+        con.disconnect()
+
+
 def test_trajectory_generated_names_are_reserved_from_features():
     con, model = _trajectory_model()
     try:

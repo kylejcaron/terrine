@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import copy
+import math
 import pickle
 import subprocess
 import sys
 from decimal import Decimal
+from fractions import Fraction
 from types import SimpleNamespace
 
 import ibis
 import ibis.expr.datatypes as dt
+import pyarrow as pa
 import pytest
 from ibis.backends.sqlite import Backend
 
@@ -202,6 +205,76 @@ def test_portable_policy_compiles_every_operation_without_native_bindings():
     assert caught.value.code == "terrine.temporal.timestamp_order_unsupported"
     with pytest.raises(ValueError):
         policy.exact_to_float(table.s, 2)
+
+
+_UNIT_ROUNDOFF = Fraction(1, 2**53)
+
+
+def _admission_threshold(scale: int, count: int) -> Fraction:
+    """Independent oracle: the largest admissible magnitude sum for ``count`` rows.
+
+    With each magnitude converted within ``u`` and summed through ``count - 1``
+    roundings, the computed bound ``B`` satisfies ``|B - S| <= e * S`` for
+    ``e = (1 + u)(1 + gamma) - 1`` and ``gamma = (n - 1)u / (1 - (n - 1)u)``, so
+    the true sum is below the limit whenever ``B < limit * (1 - e)``.
+    """
+    limit = Fraction(10**38 - 1, 10**scale)
+    additions = (count - 1) * _UNIT_ROUNDOFF
+    gamma = additions / (1 - additions)
+    error = (1 + _UNIT_ROUNDOFF) * (1 + gamma) - 1
+    return limit * (1 - error)
+
+
+def _double_at_least(value: Fraction) -> float:
+    rounded = float(value)
+    return rounded if Fraction(rounded) >= value else math.nextafter(rounded, math.inf)
+
+
+def _double_at_most(value: Fraction) -> float:
+    rounded = float(value)
+    return rounded if Fraction(rounded) <= value else math.nextafter(rounded, 0.0)
+
+
+@pytest.mark.parametrize("scale", [9, 0])
+def test_accumulation_admission_is_sound_and_tight_at_the_threshold(scale):
+    """Admission never trusts a bound that could hide an overflow, and gives up at most
+    the derived slack plus a few units of the guard's own rounding."""
+    from terrine.backends.dialect import dialect_for_name
+
+    policy = dialect_for_name("generic")
+    counts = [0, 1, 2, 3, 1000, 2**40]
+    cases = {}
+    for count in counts:
+        threshold = _admission_threshold(scale, max(count, 1))
+        cases[f"at_{count}"] = (_double_at_least(threshold), count, False)
+        # The closed-form guard spends at most (n + 16)u beyond the derived threshold.
+        margin = threshold * (1 - (count + 16) * _UNIT_ROUNDOFF)
+        cases[f"below_{count}"] = (_double_at_most(margin), count, True)
+    limit = Fraction(10**38 - 1, 10**scale)
+    cases["limit_single"] = (_double_at_most(limit), 1, False)
+    cases["empty"] = (0.0, 0, True)
+    cases["null_bound"] = (None, 0, True)
+    # Beyond 2**52 additions the rounding model no longer bounds anything.
+    cases["void_model"] = (0.0, 2**53, False)
+    con = ibis.duckdb.connect()
+    try:
+        table = con.create_table(
+            "bounds",
+            pa.table(
+                {
+                    "case": list(cases),
+                    "bound": pa.array([bound for bound, _, _ in cases.values()], pa.float64()),
+                    "rows": pa.array([count for _, count, _ in cases.values()], pa.int64()),
+                }
+            ),
+        )
+        admitted = policy.admits_accumulation(table.bound, table.rows, dt.Decimal(38, scale))
+        rows = con.to_pyarrow(table.select("case", admitted=admitted)).to_pylist()
+    finally:
+        con.disconnect()
+    assert {row["case"]: row["admitted"] for row in rows} == {
+        name: expected for name, (_, _, expected) in cases.items()
+    }
 
 
 def test_cohort_summary_uses_the_passed_policy_scope(monkeypatch):

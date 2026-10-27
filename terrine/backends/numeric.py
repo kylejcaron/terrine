@@ -42,6 +42,7 @@ __all__ = [
     "exact_type",
     "float_is_finite",
     "float_scale",
+    "guard_accumulation",
     "has_scaled_float_state",
     "is_exact_type",
     "normalized",
@@ -408,8 +409,56 @@ def rounded_normalized(
     return cast(ir.FloatingValue, overflow.ifelse(ibis.null().cast(dt.float64), result)), overflow
 
 
-def exact_sum(value: ir.Value) -> ir.Value:
-    return current_dialect(value).exact_sum(value)
+def exact_sum(value: ir.Value, *, admitted: bool = False) -> ir.Value:
+    """Sum exactly; ``admitted`` operands were withheld by ``guard_accumulation`` already."""
+    return current_dialect(value).exact_sum(value, admitted=admitted)
+
+
+def guard_accumulation(
+    table: ibis.Table,
+    coefficient: ir.Value,
+    *,
+    partition: Sequence[str],
+    order: str | None = None,
+) -> tuple[ibis.Table, ir.Value, ir.BooleanValue | None]:
+    """Withhold coefficients whose partition's accumulated magnitudes may not fit.
+
+    A policy that bounds accumulations projects ``coefficient`` onto ``table``
+    and, over each partition (running along ``order`` when given), the
+    admission of its backend magnitude bound and contributing count by
+    ``Dialect.admits_accumulation``. Returns the projected table, the
+    coefficient withheld (NULL) where not admitted, and the admission flag,
+    both columns of that table: the withheld coefficient keeps every sum the
+    backend evaluates inside the type's domain, and the flag lets a running
+    consumer refuse rather than publish a partial sum. Other policies return
+    the inputs unchanged and no flag.
+    """
+    policy = current_dialect(coefficient)
+    if not policy.bounds_accumulations:
+        return table, coefficient, None
+    dtype = coefficient.type()
+    if not isinstance(dtype, dt.Decimal):
+        raise TypeError(f"{dtype} is not a fixed-precision coefficient type")
+    used = {name.casefold() for name in table.columns}
+    names = []
+    for stem in ("coefficient", "admitted"):
+        name = f"__terrine_{stem}"
+        while name.casefold() in used:
+            name = f"_{name}"
+        used.add(name.casefold())
+        names.append(name)
+    value_name, flag_name = names
+    staged = table.mutate(**{value_name: coefficient})
+    frame = ibis.window(
+        group_by=[staged[name] for name in partition],
+        order_by=[staged[order]] if order is not None else (),
+        rows=(None, 0) if order is not None else None,
+    )
+    bound = policy.magnitude(staged[value_name]).sum().over(frame)
+    count = staged[value_name].count().over(frame)
+    flagged = staged.mutate(**{flag_name: policy.admits_accumulation(bound, count, dtype)})
+    admitted = cast(ir.BooleanValue, flagged[flag_name])
+    return flagged, admitted.ifelse(flagged[value_name], ibis.null().cast(dtype)), admitted
 
 
 def exact_subtract(left: ir.Value, right: ir.Value) -> ir.Value:
