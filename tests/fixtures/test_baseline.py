@@ -14,7 +14,7 @@ from tests.fixtures.baseline import boundary_world, materialized_baseline
 def test_materialized_baseline_has_typed_honest_causal_metadata(weighted):
     world = simulate(WorldConfig(n_units=8, target_weight_slope=0.25), seed=7)
     frame = materialized_baseline(world, weighted=weighted)
-    assert frame.table.equals(world.analysis_table)
+    assert frame.table.equals(world.analysis_table.select(frame.table.column_names))
     assert frame.roles.unit == "unit_id"
     assert frame.roles.anchor == "anchor_id" and frame.roles.t0 == "t0"
     assert frame.roles.features == ("x", "plan_tier")

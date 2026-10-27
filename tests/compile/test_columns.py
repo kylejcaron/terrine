@@ -154,13 +154,25 @@ def test_time_series_columns_are_values_with_named_support(column_model):
         "rev_next_7d__complete",
         "rev_next_7d__reason",
     ]
-    full = frame.to_pyarrow(include_observation_metadata=True)
+    full = frame.to_pyarrow()
     assert "_observed_from" in full.column_names
+    assert list(frame.to_pandas(include_observation_metadata=True).columns) == full.column_names
+    assert frame.to_polars(include_observation_metadata=True).columns == full.column_names
     assert frame.columns["rev_14d"].complete_column == "rev_14d__complete"
 
 
 @pytest.mark.parametrize("field", ["features", "outcomes", "eligibility"])
-@pytest.mark.parametrize("name", ["revenue__complete", "revenue__reason", "x__REASON"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "revenue__complete",
+        "revenue__reason",
+        "x__REASON",
+        "anchor_provenance",
+        "_observed_from",
+        "_observed_until",
+    ],
+)
 def test_reserved_support_suffix_refuses(field, name):
     import copy
     import pickle

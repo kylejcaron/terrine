@@ -181,8 +181,14 @@ def test_risk_table_refuses_unrecoverable_entry_or_pooled_groups(frame, delayed,
 
 def test_incomplete_risk_bins_cannot_be_dropped_into_a_curve(frame):
     risk = _risk_table(frame)
-    table = risk.table.set_column(5, "events__complete", pa.array([False, True])).set_column(
-        6, "events__reason", pa.array(["incomplete_initial_history", None])
+    table = risk.table.set_column(
+        risk.table.schema.get_field_index("events__complete"),
+        "events__complete",
+        pa.array([False, True]),
+    ).set_column(
+        risk.table.schema.get_field_index("events__reason"),
+        "events__reason",
+        pa.array(["incomplete_initial_history", None]),
     )
     with pytest.raises(TerrineError) as error:
         exports.to_lifelines_km(replace(risk, table=table), drop_incomplete=True)

@@ -50,7 +50,11 @@ _RESERVED_OUTPUT_NAME = RefusalSpec(
 
 
 def _validate_support_name(name: str) -> None:
-    if name.casefold().endswith(("__complete", "__reason")):
+    if name.casefold().endswith(("__complete", "__reason")) or name.casefold() in {
+        "anchor_provenance",
+        "_observed_from",
+        "_observed_until",
+    }:
         raise _RESERVED_OUTPUT_NAME.error(name=name)
 
 

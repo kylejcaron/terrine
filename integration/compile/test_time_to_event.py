@@ -411,7 +411,8 @@ def test_life_table_matches_independent_pandas_risk_set_oracle():
             shape=LifeTable(TimeToEvent("churn", entry="enrolled", delayed_entry=True), "1d"),
             administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
         ).build(model)
-        rows = frame.materialize().table.to_pylist()
+        materialized = frame.materialize()
+        rows = materialized.table.to_pylist()
         expected = pd.DataFrame(
             [
                 {"time_bin": 0, "at_risk": 1, "events": 0, "censored": 0, "delayed_entries": 0},
@@ -424,6 +425,15 @@ def test_life_table_matches_independent_pandas_risk_set_oracle():
             actual[expected.columns], expected, check_dtype=False, check_exact=True
         )
         assert rows[-1]["censored_by_reason"] == [("administrative_cutoff", 1)]
+        from terrine.export import to_surrogate_arrow
+
+        surrogate = to_surrogate_arrow(materialized, features=(), outcomes=("events",))
+        assert (
+            materialized.columns["censored_by_reason"].complete_column
+            == "censored_by_reason__complete"
+        )
+        for name in ("censored_by_reason__complete", "censored_by_reason__reason"):
+            assert surrogate.data[name].to_pylist() == materialized.table[name].to_pylist()
     finally:
         con.disconnect()
 

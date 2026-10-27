@@ -33,50 +33,50 @@ def _model():
     con.raw_sql("CREATE TABLE churn_events AS SELECT user_id, ts FROM events WHERE kind = 'churn'")
     con.raw_sql("CREATE TABLE users AS SELECT * FROM (VALUES ('u1'), ('u2'), ('u3')) AS u(id)")
     catalog = {
-            "schema_version": 1,
-            "day_boundary": "UTC",
-            "dialect": "duckdb",
-            "sources": {
-                "events": {
-                    "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["purchase", "revenue"],
-                    "properties": ["kind"],
-                    "dimensions": [],
-                },
-                "churn_events": {
-                    "relation": {"kind": "table", "name": "churn_events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["churn"],
-                    "properties": [],
-                    "dimensions": [],
-                },
+        "schema_version": 1,
+        "day_boundary": "UTC",
+        "dialect": "duckdb",
+        "sources": {
+            "events": {
+                "relation": {"kind": "table", "name": "events"},
+                "timestamp": "ts",
+                "entities": {"user": "user_id"},
+                "facts": ["purchase", "revenue"],
+                "properties": ["kind"],
+                "dimensions": [],
             },
-            "facts": {
-                "purchase": {"source": "events", "column": None},
-                "revenue": {"source": "events", "column": "amount"},
-                "churn": {"source": "churn_events", "column": None},
+            "churn_events": {
+                "relation": {"kind": "table", "name": "churn_events"},
+                "timestamp": "ts",
+                "entities": {"user": "user_id"},
+                "facts": ["churn"],
+                "properties": [],
+                "dimensions": [],
             },
-            "properties": {
-                "kind": {
-                    "source": "events",
-                    "column": "kind",
-                    "dtype": "string",
-                    "as_of": "event_time",
-                }
-            },
-            "dimensions": {},
-            "measures": {"net_revenue_sum": {"fact": "revenue", "aggregation": "sum"}},
-            "metrics": {
-                "net_revenue": {
-                    "kind": "mean",
-                    "entity": "user",
-                    "measure": "net_revenue_sum",
-                }
-            },
-        }
+        },
+        "facts": {
+            "purchase": {"source": "events", "column": None},
+            "revenue": {"source": "events", "column": "amount"},
+            "churn": {"source": "churn_events", "column": None},
+        },
+        "properties": {
+            "kind": {
+                "source": "events",
+                "column": "kind",
+                "dtype": "string",
+                "as_of": "event_time",
+            }
+        },
+        "dimensions": {},
+        "measures": {"net_revenue_sum": {"fact": "revenue", "aggregation": "sum"}},
+        "metrics": {
+            "net_revenue": {
+                "kind": "mean",
+                "entity": "user",
+                "measure": "net_revenue_sum",
+            }
+        },
+    }
     model = Model.from_catalog(
         catalog,
         con=con,
@@ -118,7 +118,7 @@ def main() -> None:
         print(
             "Later cutoff completeness (readiness unchanged):",
             readiness == model.readiness,
-            sum(not row["cumulative_value_complete"] for row in later_rows),
+            sum(not row["cumulative_value__complete"] for row in later_rows),
         )
 
         life = (

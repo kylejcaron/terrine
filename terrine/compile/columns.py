@@ -38,6 +38,7 @@ from terrine.data import (
     FeatureCutoff,
     Roles,
     SequenceMeta,
+    _ordered_columns,
 )
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
@@ -269,6 +270,17 @@ class CompiledStudy:
                 renamed.get(name, name) for name in meta.session_fields
             )
             object.__setattr__(self, "sequence_meta", replace(meta, **updates))
+        for attribute in ("table", "audit_table"):
+            table = getattr(self, attribute)
+            object.__setattr__(
+                self,
+                attribute,
+                table.select(
+                    _ordered_columns(
+                        table.columns, self.roles, self.columns, self.expression_timings
+                    )
+                ),
+            )
 
     def __post_init__(self) -> None:
         self._publish()

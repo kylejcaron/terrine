@@ -151,10 +151,11 @@ need readiness declarations, even when the original catalog also defines labels.
 metadata, eligibility totals and execution provenance. Each value is immediately
 followed by `<name>__complete` and `<name>__reason`; for example,
 `sessions_before, sessions_before__complete, sessions_before__reason`.
-Default `to_pandas`, `to_polars` and `to_pyarrow` conversions omit observation
-bounds and anchor provenance from visible columns. Pass
-`include_observation_metadata=True` to inspect them. Arrow stores that evidence
-in schema metadata, restored by `MaterializedFrame.from_arrow`.
+Default `to_pandas` and `to_polars` conversions are compact, lossy views that
+omit observation bounds, resolved-time bookkeeping and anchor provenance.
+Pass `include_observation_metadata=True` to keep those columns. Arrow conversions
+are always lossless: bookkeeping follows the identity and value/support columns,
+so filtering or sorting keeps observation evidence aligned with its rows.
 `to_pandas` uses nullable Arrow-backed types; `to_polars` and `to_pandas` require
 their respective extras. `frame.expr` is an explicitly unsafe Ibis escape hatch:
 executing it directly bypasses validation, budgets and provenance.

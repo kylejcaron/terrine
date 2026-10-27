@@ -254,6 +254,7 @@ Use consistent coverage, roles and representable metadata.
 | --- | --- | --- | --- |
 | `terrine.metadata.invalid_eligibility_summary` | <code>Eligibility audit did not return one aggregate count record</code> | None | [terrine/execution/gates.py](../../terrine/execution/gates.py) |
 | `terrine.metadata.invalid_eligibility_summary` | <code>Eligibility counts must be nonnegative and reconcile</code> | None | [terrine/data.py](../../terrine/data.py) |
+| `terrine.metadata.missing_columns` | <code>Arrow table is missing required columns {columns!r}; use lossless Arrow with all observation columns.</code> | `columns` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.unrepresentable_coverage` | <code>Coverage boundary exceeds datetime&#x27;s range; use interior calendar dates</code> | None | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.unrepresentable_coverage` | <code>Coverage exceeds UTC datetime&#x27;s range; use interior instants</code> | None | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.unrepresentable_coverage` | <code>Coverage requires a following calendar day; use through before date.max</code> | None | [terrine/data.py](../../terrine/data.py) |

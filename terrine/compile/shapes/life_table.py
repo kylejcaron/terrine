@@ -217,8 +217,24 @@ def aggregate_life_table(
     )
     projection = []
     names = []
-    for name in table.column_names:
-        if name in ("complete", "reason"):
+    for name in (
+        "unit",
+        "anchor_id",
+        "t0",
+        *(
+            item
+            for value in group_by
+            for item in (value, f"{value}__complete", f"{value}__reason")
+            if item in table.column_names
+        ),
+        *(
+            item
+            for item in table.column_names
+            if item not in group_supports and item not in group_by
+        ),
+        *group_supports,
+    ):
+        if name in names or name in ("complete", "reason"):
             continue
         names.append(name)
         projection.append(table[name])

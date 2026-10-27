@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from base64 import b64decode, b64encode
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, date, datetime, timedelta
@@ -64,6 +64,11 @@ _COVERAGE_BOUND_OVERFLOW = RefusalSpec(
 _COVERAGE_UTC_OVERFLOW = RefusalSpec(
     "terrine.metadata.unrepresentable_coverage",
     "Coverage exceeds UTC datetime's range; use interior instants",
+)
+_MISSING_COLUMNS = RefusalSpec(
+    "terrine.metadata.missing_columns",
+    "Arrow table is missing required columns {columns!r}; "
+    "use lossless Arrow with all observation columns.",
 )
 _ARROW_METADATA_KEY = b"terrine.materialized_frame.v1"
 
@@ -1115,6 +1120,60 @@ def _metadata_payload(
     }
 
 
+def _bookkeeping_columns(
+    names: Sequence[str],
+    roles: Roles,
+    columns: Mapping[str, ColumnMeta],
+    timings: Mapping[str, ExpressionTiming],
+) -> tuple[str, ...]:
+    bookkeeping = {"_observed_from", "_observed_until", "anchor_provenance"}
+    for meta in columns.values():
+        bookkeeping.update(
+            name
+            for name in (meta.observed_from_column, meta.observed_until_column)
+            if name is not None
+        )
+    for timing in timings.values():
+        bookkeeping.update(
+            name
+            for name in (
+                timing.point_time_column,
+                timing.start_bound_column,
+                timing.end_bound_column,
+            )
+            if name is not None
+        )
+    bookkeeping.difference_update((roles.unit, roles.anchor, roles.t0, *columns))
+    return tuple(name for name in names if name in bookkeeping)
+
+
+def _ordered_columns(
+    names: Sequence[str],
+    roles: Roles,
+    columns: Mapping[str, ColumnMeta],
+    timings: Mapping[str, ExpressionTiming],
+) -> tuple[str, ...]:
+    bookkeeping = _bookkeeping_columns(names, roles, columns, timings)
+    support = {
+        name
+        for meta in columns.values()
+        for name in (meta.complete_column, meta.reason_column)
+        if name is not None and name not in columns
+    }
+    ordered = []
+    for name in (roles.unit, roles.anchor, roles.t0, *names):
+        if name not in names or name in ordered or name in bookkeeping or name in support:
+            continue
+        ordered.append(name)
+        if name in columns:
+            meta = columns[name]
+            for field in (meta.complete_column, meta.reason_column):
+                if field is not None and field in names and field not in ordered:
+                    ordered.append(field)
+    ordered.extend(name for name in names if name not in ordered and name not in bookkeeping)
+    return (*ordered, *bookkeeping)
+
+
 @dataclass(frozen=True, slots=True)
 class MaterializedFrame:
     table: pa.Table
@@ -1132,50 +1191,39 @@ class MaterializedFrame:
         ):
             raise TypeError("columns must map names to ColumnMeta")
         object.__setattr__(self, "columns", _typed_mapping(self.columns, "columns", ColumnMeta))
+        object.__setattr__(
+            self,
+            "table",
+            self.table.select(
+                _ordered_columns(
+                    self.table.column_names,
+                    self.roles,
+                    self.columns,
+                    self.provenance.expression_timings,
+                )
+            ),
+        )
 
     def to_metadata(self) -> dict[str, Any]:
         """Return a detached JSON-compatible metadata value."""
         return thaw(freeze(_metadata_payload(self.roles, self.columns, self.provenance)))
 
-    def to_arrow(self, *, include_observation_metadata: bool = False) -> pa.Table:
-        """Attach portable metadata, hiding observation bookkeeping unless requested."""
+    def to_arrow(self) -> pa.Table:
+        """Return lossless Arrow with value/support triples before observation columns."""
         payload = self.to_metadata()
+        payload["bookkeeping_columns"] = list(self._bookkeeping_columns())
         table = self.table
-        if not include_observation_metadata:
-            hidden = {"_observed_from", "_observed_until", "anchor_provenance"}
-            for meta in self.columns.values():
-                hidden.update(
-                    name
-                    for name in (meta.observed_from_column, meta.observed_until_column)
-                    if name is not None
-                )
-            for timing in self.provenance.expression_timings.values():
-                hidden.update(
-                    name
-                    for name in (
-                        timing.point_time_column,
-                        timing.start_bound_column,
-                        timing.end_bound_column,
-                    )
-                    if name is not None and name not in self.columns and name != self.roles.t0
-                )
-            hidden_columns = [name for name in table.column_names if name in hidden]
-            if hidden_columns:
-                sink = pa.BufferOutputStream()
-                observation = table.select(hidden_columns)
-                with pa.ipc.new_stream(sink, observation.schema) as writer:
-                    writer.write_table(observation)
-                payload["observation_columns"] = {
-                    "order": table.column_names,
-                    "arrow_ipc": b64encode(sink.getvalue().to_pybytes()).decode("ascii"),
-                }
-                table = table.drop(hidden_columns)
         encoded = json.dumps(
             payload, sort_keys=True, separators=(",", ":"), allow_nan=False
         ).encode("utf-8")
         metadata = dict(table.schema.metadata or {})
         metadata[_ARROW_METADATA_KEY] = encoded
         return table.replace_schema_metadata(metadata)
+
+    def _bookkeeping_columns(self) -> tuple[str, ...]:
+        return _bookkeeping_columns(
+            self.table.column_names, self.roles, self.columns, self.provenance.expression_timings
+        )
 
     @classmethod
     def from_arrow(cls, table: pa.Table) -> MaterializedFrame:
@@ -1190,19 +1238,14 @@ class MaterializedFrame:
         roles = _decode(payload["roles"], Roles)
         columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
         provenance = _decode(payload["provenance"], Provenance)
+        missing = tuple(
+            name for name in payload["bookkeeping_columns"] if name not in table.column_names
+        )
+        if missing:
+            raise _MISSING_COLUMNS.error(columns=missing)
         clean = dict(table.schema.metadata or {})
         del clean[_ARROW_METADATA_KEY]
-        table = table.replace_schema_metadata(clean or None)
-        observation = payload.get("observation_columns")
-        if observation is not None:
-            raw_columns = b64decode(observation["arrow_ipc"], validate=True)
-            hidden = pa.ipc.open_stream(pa.py_buffer(raw_columns)).read_all()
-            if hidden.num_rows != table.num_rows:
-                raise ValueError("observation metadata row count does not match the Arrow table")
-            for name in hidden.column_names:
-                table = table.append_column(hidden.schema.field(name), hidden[name])
-            table = table.select(observation["order"])
-        return cls(table, roles, columns, provenance)
+        return cls(table.replace_schema_metadata(clean or None), roles, columns, provenance)
 
     def to_json(self) -> str:
         """Serialize metadata plus an Arrow IPC stream, without pickle."""
