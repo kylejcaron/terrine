@@ -277,6 +277,29 @@ def test_accumulation_admission_is_sound_and_tight_at_the_threshold(scale):
     }
 
 
+@pytest.mark.parametrize("operation", ["utc_wall_clock", "utc_instant"])
+def test_portable_nanosecond_utc_conversion_refuses_before_any_query(operation):
+    """The portable conversions rebuild instants from microsecond intervals, so a
+    nanosecond column is refused with the capability code while the expression is
+    built, not with a backend or Ibis error at execution."""
+    from terrine.backends import timestamps
+
+    con = ibis.duckdb.connect()
+    try:
+        table = con.create_table(
+            "ticks",
+            pa.table({"naive": pa.array([1, -1], pa.int64()).cast(pa.timestamp("ns"))}),
+        )
+        assert table.naive.type() == dt.Timestamp(scale=9)
+        with dialect_scope("generic"), pytest.raises(TerrineError) as caught:
+            getattr(timestamps, operation)(table.naive)
+    finally:
+        con.disconnect()
+    assert caught.value.code == "terrine.backend.capability_unavailable"
+    assert caught.value.context["operation"] == operation
+    assert caught.value.context["backend"] == "generic"
+
+
 def test_cohort_summary_uses_the_passed_policy_scope(monkeypatch):
     from terrine.backends import dialect as policies
     from terrine.compile.shapes import cohorts

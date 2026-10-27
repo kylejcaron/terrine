@@ -448,14 +448,27 @@ class Dialect:
         shifted = _epoch(dtype) + seconds.as_interval("s") + remainder.as_interval(unit)
         return shifted
 
-    def utc_wall_clock(self, value: ir.Value) -> ir.TimestampValue:
+    def _microsecond_instant(self, value: ir.Value, operation: str) -> ir.TimestampValue:
+        """A UTC conversion operand; nanosecond values refuse before any query.
+
+        The portable conversions rebuild the instant from whole-second and
+        sub-second intervals, and Ibis lowers integer intervals at microsecond
+        resolution at best, so a nanosecond value has no portable construction.
+        """
         instant = cast(ir.TimestampValue, value)
+        dtype = instant.type()
+        if isinstance(dtype, dt.Timestamp) and dtype.scale == 9:
+            raise unavailable(operation, self.name)
+        return instant
+
+    def utc_wall_clock(self, value: ir.Value) -> ir.TimestampValue:
+        instant = self._microsecond_instant(value, "utc_wall_clock")
         seconds, remainder, divisor, dtype = self._epoch_offset(instant)
         naive = dt.Timestamp(scale=dtype.scale, nullable=dtype.nullable)
         return self._rebuild(naive, seconds, remainder, divisor)
 
     def utc_instant(self, value: ir.Value) -> ir.TimestampValue:
-        wall = cast(ir.TimestampValue, value)
+        wall = self._microsecond_instant(value, "utc_instant")
         seconds, remainder, divisor, dtype = self._epoch_offset(wall)
         aware = dt.Timestamp(timezone="UTC", scale=dtype.scale, nullable=dtype.nullable)
         return self._rebuild(aware, seconds, remainder, divisor)
