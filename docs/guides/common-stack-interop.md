@@ -77,8 +77,11 @@ conversions to keep them. A compact view is not a reconstructable MaterializedFr
 
 Arrow stores roles, design/model identities, temporal cutoffs,
 completeness/null-reason references, numeric policies and required bookkeeping
-column names under `terrine.materialized_frame.v1`. Unrelated schema metadata is
-retained. Neither pandas nor Polars promises to retain Terrine schema metadata.
+column names under `terrine.materialized_frame.v2` (payload version 2). Version-1
+Arrow envelopes refuse with `terrine.metadata.unsupported_version`; re-materialize
+the Design with the current Terrine version rather than editing saved metadata.
+Unrelated schema metadata is retained. Neither pandas nor Polars promises to
+retain Terrine schema metadata.
 Do not zero-fill unavailable values or discard their reason columns when preparing
 downstream data. `anchor_provenance`, `_observed_from` and `_observed_until` are
 reserved Design output names.

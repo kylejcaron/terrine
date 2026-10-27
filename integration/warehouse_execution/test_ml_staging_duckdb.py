@@ -682,7 +682,7 @@ def test_empty_training_export_preserves_complete_arrow_metadata(
     dataset, con = _staged_dataset(events_world, tmp_path, empty_training=True)
     assert dataset.manifest.generation.row_count == 0
     schema = dataset._arrow_schema()
-    assert schema.metadata and b"terrine.materialized_frame.v1" in schema.metadata
+    assert schema.metadata and b"terrine.materialized_frame.v2" in schema.metadata
     destination = tmp_path / "empty"
     export = dataset.export_parquet(
         destination=str(destination),
@@ -1772,7 +1772,7 @@ def test_local_arrow_preserves_exact_temporal_values_and_semantic_metadata(commo
     decorated = replace(
         materialized,
         table=materialized.table.replace_schema_metadata(
-            {b"consumer": b"kept", b"terrine.materialized_frame.v1": b"stale"}
+            {b"consumer": b"kept", b"terrine.materialized_frame.v2": b"stale"}
         ),
     )
     transported = decorated.to_arrow()

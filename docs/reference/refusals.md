@@ -259,6 +259,7 @@ Use consistent coverage, roles and representable metadata.
 | `terrine.metadata.unrepresentable_coverage` | <code>Coverage boundary exceeds datetime&#x27;s range; use interior calendar dates</code> | None | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.unrepresentable_coverage` | <code>Coverage exceeds UTC datetime&#x27;s range; use interior instants</code> | None | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.unrepresentable_coverage` | <code>Coverage requires a following calendar day; use through before date.max</code> | None | [terrine/data.py](../../terrine/data.py) |
+| `terrine.metadata.unsupported_version` | <code>Arrow metadata version {version!r} is unsupported; re-materialize the Design with the current Terrine version.</code> | `version` | [terrine/data.py](../../terrine/data.py) |
 
 ## metric
 

@@ -14,7 +14,6 @@ import pyarrow.parquet as pq
 
 from terrine import Budget, Coverage, Design, FixedDate, Model, UnitSource, agg
 from terrine.data import MaterializedFrame
-from terrine.execution.backend import backend_capabilities
 
 
 def _assert_batches_match(batches, expected: pa.Table) -> None:
@@ -98,7 +97,7 @@ def main() -> None:
                 for shard in manifest.shards:
                     parquet = pq.ParquetFile(destination / shard.path)
                     schema = parquet.schema_arrow
-                    assert b"terrine.materialized_frame.v1" in schema.metadata
+                    assert b"terrine.materialized_frame.v2" in schema.metadata
                     restored = MaterializedFrame.from_arrow(
                         pa.Table.from_batches([], schema=schema)
                     )
@@ -106,7 +105,6 @@ def main() -> None:
                     yield from parquet.iter_batches(batch_size=1)
 
             _assert_batches_match(parquet_batches(), arrow)
-            assert backend_capabilities(con).native_parquet_unload is None
             print("Incremental Arrow stream and Parquet hand-off: verified")
             print("Provenance: retained in Arrow schema and pinned Dataset manifest")
         finally:

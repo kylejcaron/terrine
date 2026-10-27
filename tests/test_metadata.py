@@ -349,6 +349,30 @@ def test_materialized_frame_arrow_schema_metadata_can_be_recovered():
     assert recovered.roles == frame.roles
     assert recovered.provenance == frame.provenance
     assert recovered.table.schema.metadata == frame.table.schema.metadata
+    encoded = frame.to_arrow().schema.metadata[b"terrine.materialized_frame.v2"]
+    assert json.loads(encoded)["version"] == 2
+
+
+def test_pre_change_arrow_metadata_refuses_with_portable_version_error():
+    import copy
+    import pickle
+    from importlib.resources import files
+
+    raw = files("tests.fixtures").joinpath("materialized_frame_v1.json").read_bytes()
+    table = pa.table({"unit": ["u"], "anchor": ["a"]}).replace_schema_metadata(
+        {b"terrine.materialized_frame.v1": raw}
+    )
+    with pytest.raises(TerrineError) as error:
+        MaterializedFrame.from_arrow(table)
+    for restored in (
+        error.value,
+        copy.deepcopy(error.value),
+        pickle.loads(pickle.dumps(error.value)),
+    ):
+        assert restored.code == "terrine.metadata.unsupported_version"
+        assert restored.context["version"] == 1
+        with pytest.raises(TypeError):
+            restored.context["version"] = 2  # ty: ignore[invalid-assignment] intentional mutation
 
 
 def test_budget_and_preview_validate_counts_and_coverage():

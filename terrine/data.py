@@ -71,7 +71,13 @@ _MISSING_COLUMNS = RefusalSpec(
     "Arrow table is missing required columns {columns!r}; "
     "use lossless Arrow with all observation columns.",
 )
-_ARROW_METADATA_KEY = b"terrine.materialized_frame.v1"
+_UNSUPPORTED_METADATA_VERSION = RefusalSpec(
+    "terrine.metadata.unsupported_version",
+    "Arrow metadata version {version!r} is unsupported; re-materialize the Design "
+    "with the current Terrine version.",
+)
+_ARROW_METADATA_KEY = b"terrine.materialized_frame.v2"
+_LEGACY_ARROW_METADATA_KEY = b"terrine.materialized_frame.v1"
 
 
 def _nonempty(value: str, field: str) -> None:
@@ -1244,6 +1250,7 @@ class MaterializedFrame:
     def to_arrow(self) -> pa.Table:
         """Return lossless Arrow with value/support triples before observation columns."""
         payload = self.to_metadata()
+        payload["version"] = 2
         payload["bookkeeping_columns"] = list(self._bookkeeping_columns())
         table = self.table
         encoded = json.dumps(
@@ -1263,11 +1270,13 @@ class MaterializedFrame:
         if not isinstance(table, pa.Table):
             raise TypeError("table must be a pyarrow.Table")
         raw = (table.schema.metadata or {}).get(_ARROW_METADATA_KEY)
+        if raw is None and _LEGACY_ARROW_METADATA_KEY in (table.schema.metadata or {}):
+            raise _UNSUPPORTED_METADATA_VERSION.error(version=1)
         if raw is None:
             raise ValueError("Arrow schema has no Terrine metadata")
         payload = json.loads(raw.decode("utf-8"))
-        if payload.get("version") != 1:
-            raise ValueError("unsupported Terrine metadata version")
+        if payload.get("version") != 2:
+            raise _UNSUPPORTED_METADATA_VERSION.error(version=payload.get("version"))
         roles = _decode(payload["roles"], Roles)
         columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
         provenance = _decode(payload["provenance"], Provenance)
