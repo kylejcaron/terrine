@@ -10,6 +10,9 @@
   implementing the operation, correcting stale DuckDB/PostgreSQL-only advice;
   exact-ratio routes name PostgreSQL and BigQuery. Refusal codes and non-route
   context are unchanged.
+  Admission gates and static inspection both honor the selected provider's
+  effective capability evidence; unavailable dialect admission still refuses
+  before materialization.
 
 ### Tests
 

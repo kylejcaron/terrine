@@ -61,11 +61,17 @@ def backend_capabilities(con: Any) -> BackendCapabilities:
             engine.identify(con)
         except TerrineError:
             return UNVERIFIED_CAPABILITIES
-        return engine.capabilities
+        return import_module(engine.provider_module).PROVIDER.capabilities
     return UNVERIFIED_CAPABILITIES
 
 
 def backend_provider(con: Any) -> BackendProvider:
     """Resolve verified native execution before schema or source access."""
     engine = resolve_engine(con)
-    return import_module(engine.provider_module).PROVIDER
+    provider = import_module(engine.provider_module).PROVIDER
+    provider.capabilities.require(
+        "dialect_admission",
+        backend=engine.name,
+        route="Use a native backend with verified read-only dialect admission.",
+    )
+    return provider

@@ -7,7 +7,7 @@ import sqlglot.expressions as sge
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE
 from terrine.backends.dialect import Dialect
-from terrine.backends.registry import ENGINES, supported_engine_route
+from terrine.backends.registry import supported_engine_route
 
 _EXACT = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
 
@@ -53,8 +53,3 @@ def identify(con: Any) -> None:
             status="unverified",
             route=supported_engine_route("query"),
         )
-    ENGINES["duckdb"].capabilities.require(
-        "dialect_admission",
-        backend="duckdb",
-        route="Use a native backend with verified read-only dialect admission.",
-    )
