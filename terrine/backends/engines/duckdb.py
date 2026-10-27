@@ -171,9 +171,15 @@ class DuckDBDialect(Dialect):
         )
 
     def utc_wall_clock(self, value: ir.Value) -> ir.TimestampValue:
+        # A naive value already is its UTC wall clock; timezone('UTC', naive) would
+        # attach the zone instead and leave later date extraction to the session.
+        if cast(dt.Timestamp, value.type()).timezone is None:
+            return cast(ir.TimestampValue, value)
         return cast(ir.TimestampValue, _utc_naive("UTC", value))
 
     def utc_instant(self, value: ir.Value) -> ir.TimestampValue:
+        if cast(dt.Timestamp, value.type()).timezone == "UTC":
+            return cast(ir.TimestampValue, value)
         return cast(ir.TimestampValue, _utc_aware("UTC", value))
 
     def local_day(

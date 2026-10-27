@@ -130,12 +130,27 @@
   admission in the registered engine policies. Strict/inclusive cutoffs, duplicate
   requests, aliases and existing feature/build boundaries are unchanged.
 
+### Fixed
+
+- The registered DuckDB, PostgreSQL and Snowflake UTC conversions treated a
+  naive timestamp as a value to attach UTC to, so the wall clock they returned
+  was zone-aware and any date read from it followed the session time zone: the
+  start of the day containing naive `2025-01-01 00:00:00` came out as
+  `2024-12-31` in an `America/New_York` session. A naive value is its own UTC
+  wall clock and is now returned unchanged, and a UTC-aware value is its own
+  instant. Dataset features were not affected: anchors are UTC-aware and naive
+  source timestamps enter through the instant conversion; the wrong answer was
+  reachable only by applying the wall-clock conversion directly to a naive
+  value, as endpoint alignment on naive values now does.
+
 ### Tests
 
 - Centralize known-answer engine conformance cases for whole-day schedules,
   NULL-ignoring extrema, cancellation-safe float and exact decimal windows,
   UTC timestamp conversion, tied event ordering, censor times and strict as-of
-  cutoffs. Run the same cases on DuckDB and live PostgreSQL.
+  cutoffs. Run the same cases on DuckDB and live PostgreSQL. Add the day
+  start of a naive timestamp in a non-UTC session, with a day-aligned feature
+  over naive source events.
 - Compile the same known answers with the portable base expression policy on
   each real connection under `--generic-dialect` (DuckDB by default, PostgreSQL
   with `-m postgres`), about twenty seconds per backend inside the existing

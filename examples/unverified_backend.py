@@ -1,8 +1,11 @@
 """Opt in to read-only use of an unverified Ibis backend and inspect its stamp.
 
-The Ibis SQLite backend ships with the base dependency, so no extra is needed:
+Ibis's SQLite backend needs its own extra (it imports pandas and packaging):
 
+    uv pip install "ibis-framework[sqlite]"
     uv run python examples/unverified_backend.py
+
+The repository's development environment already provides both.
 
 DuckDB, PostgreSQL, BigQuery and Snowflake are verified engines. Every other
 genuine Ibis backend is refused by default, before any source schema is read.
