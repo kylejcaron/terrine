@@ -9,7 +9,7 @@ uv pip install 'terrine[duckdb,pandas]'
 
 No sibling project, warehouse account or semantic adapter is required. The
 complete executable tutorial lives in the
-[README](../../README.md#build-a-study-dataset). To run it from a source checkout:
+[README](../../README.md#example-a-churn-training-table). To run it from a source checkout:
 
 ```sh
 uv sync --extra duckdb --extra pandas
@@ -39,9 +39,11 @@ descriptor, even if a Design will not use it. With `Model.from_catalog`, only
 sources selected by the Design need readiness declarations; unused Catalog
 sources, including unused label sources, do not.
 
-The tutorial uses two roster users, one without events. A complete empty count
-is zero. The event at exactly time zero is excluded from `[-1d,0s)` and included
-in `[0s,1d)`. The compact `to_pandas()` view keeps each value immediately followed
+The tutorial has three customers; `carol` has no orders. A complete empty count
+is zero, and every roster customer gets a row. An order at exactly time zero
+would be excluded from `[-30d,0s)` and included in `[0s,30d)`. Labels whose
+window extends past the declared completeness end are null with reason
+`incomplete_coverage`, not false. The compact `to_pandas()` view keeps each value immediately followed
 by `<name>__complete` and `<name>__reason`, while omitting observation bounds,
 resolved-time bookkeeping and anchor provenance. Pass
 `include_observation_metadata=True` to keep those columns. Arrow is always
@@ -55,10 +57,9 @@ rather than silently dropping a row.
 
 ## Handle an output refusal
 
-For these next snippets, keep the tutorial's connection open: put them inside
-its `try` block, before `finally`. A one-row output cap cannot return the two
-roster users. Catch its stable refusal code, then choose a sufficient explicit
-row and byte budget:
+For these next snippets, run them after the tutorial in the same session. A
+one-row output cap cannot return six customer snapshots. Catch its stable
+refusal code, then choose a sufficient explicit row and byte budget:
 
 ```python
 frame = design.build(model)
@@ -82,20 +83,36 @@ totals, and integrity checks can still scan upstream data. See
 
 ## Keep a pinned dataset
 
-Staging is a separate, optional durable lifecycle on file-backed DuckDB. In the
-same open tutorial connection:
+Staging is a separate, optional durable lifecycle that needs a file-backed DuckDB
+database. Bind the same tables there and stage the same Design:
 
 ```python
-dataset = frame.stage("first_dataset", budget=budget)
-reopened = tr.Dataset.from_manifest(dataset.manifest, con=con)
-rows = [
-    row
-    for batch in reopened.to_arrow_batches(batch_size=2)
-    for row in batch.select(["unit", "before", "after"]).to_pylist()
-]
-assert sorted(rows, key=lambda row: row["unit"]) == [
-    {"unit": "a", "before": 1, "after": 2},
-    {"unit": "b", "before": 0, "after": 0},
+from tempfile import TemporaryDirectory
+
+with TemporaryDirectory(prefix="terrine-first-") as directory:
+    local = ibis.duckdb.connect(f"{directory}/shop.duckdb")
+    local.create_table("customers", customers)
+    local.create_table("orders", orders)
+    local_model = tr.Model.from_tables(
+        local,
+        units={"customer": tr.UnitSource("customers", "customer_id")},
+        events={"orders": tr.Events(
+            "orders", "ordered_at", {"customer": "customer_id"},
+            values=("amount",), complete=("2025-01-01", "2025-03-20"),
+        )},
+    )
+    dataset = design.build(local_model).stage("churn_training", budget=budget)
+    reopened = tr.Dataset.from_manifest(dataset.manifest, con=local)
+    rows = [
+        row
+        for batch in reopened.to_arrow_batches(batch_size=2)
+        for row in batch.select(["unit", "orders_30d"]).to_pylist()
+    ]
+    local.disconnect()
+assert sorted(rows, key=lambda row: (row["unit"], row["orders_30d"])) == [
+    {"unit": "alice", "orders_30d": 1}, {"unit": "alice", "orders_30d": 2},
+    {"unit": "bob", "orders_30d": 0}, {"unit": "bob", "orders_30d": 1},
+    {"unit": "carol", "orders_30d": 0}, {"unit": "carol", "orders_30d": 0},
 ]
 ```
 
