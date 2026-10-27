@@ -52,25 +52,25 @@ with TemporaryDirectory(prefix="terrine-first-") as directory:
 <!-- --8<-- [end:first-dataset] -->
 
 **Model → Design → Frame → Dataset:** bind tables, describe rows, build lazily, then collect or optionally stage a pinned generation.
-The event at midnight belongs to `after`, not `before`. The compact pandas view keeps each value's `__complete` / `__reason` columns; [Arrow retains all observation metadata](docs/guides/common-stack-interop.md#bounded-frames).
-See [your first dataset](docs/guides/first-dataset.md) for budgets, refusals and staging.
+The event at midnight belongs to `after`, not `before`. The compact pandas view keeps each value's `__complete` / `__reason` columns; [Arrow retains all observation metadata](https://github.com/kylejcaron/terrine/blob/main/docs/guides/common-stack-interop.md#bounded-frames).
+See [your first dataset](https://github.com/kylejcaron/terrine/blob/main/docs/guides/first-dataset.md) for budgets, refusals and staging.
 
 ## Datasets you can build
 
-Each `tr.recipes` constructor returns an ordinary, editable `Design`; the [low-level API](docs/guides/public-api.md) remains available.
+Each `tr.recipes` constructor returns an ordinary, editable `Design`; the [low-level API](https://github.com/kylejcaron/terrine/blob/main/docs/guides/public-api.md) remains available.
 
 | Dataset | What a row represents |
 | --- | --- |
-| [Time series](docs/guides/temporal-engine.md#scheduled-time-series) | A roster unit at each scheduled anchor. |
-| [Trial panels](docs/guides/sequential-panels.md#scheduled-trial-panels) | An eligible unit at each trial time zero. |
-| [Event panels](docs/guides/sequential-panels.md#event-panels) | A selected event and relative period. |
-| [Conditional events](docs/guides/common-feature-patterns.md#conditional-events) | An expression evaluated relative to a label-filtered event, not a separate constructor. |
-| [LTV / cohorts](docs/guides/trajectories-survival.md#cumulative-ltv) | A unit's cumulative value at an age since cohort entry. |
-| [Survival / life tables](docs/guides/trajectories-survival.md#survival-records) | A unit's elapsed event/censor duration, or a group's risk interval. |
-| [State panels](docs/guides/state-panels.md) | A unit-period transition from prior to response state. |
-| [Event sequences](docs/guides/temporal-engine.md#bounded-event-sequences-and-event-time-origins) | An event anchor with a bounded, ordered sequence. |
+| [Time series](https://github.com/kylejcaron/terrine/blob/main/docs/guides/temporal-engine.md#scheduled-time-series) | A roster unit at each scheduled anchor. |
+| [Trial panels](https://github.com/kylejcaron/terrine/blob/main/docs/guides/sequential-panels.md#scheduled-trial-panels) | An eligible unit at each trial time zero. |
+| [Event panels](https://github.com/kylejcaron/terrine/blob/main/docs/guides/sequential-panels.md#event-panels) | A selected event and relative period. |
+| [Conditional events](https://github.com/kylejcaron/terrine/blob/main/docs/guides/common-feature-patterns.md#conditional-events) | An expression evaluated relative to a label-filtered event, not a separate constructor. |
+| [LTV / cohorts](https://github.com/kylejcaron/terrine/blob/main/docs/guides/trajectories-survival.md#cumulative-ltv) | A unit's cumulative value at an age since cohort entry. |
+| [Survival / life tables](https://github.com/kylejcaron/terrine/blob/main/docs/guides/trajectories-survival.md#survival-records) | A unit's elapsed event/censor duration, or a group's risk interval. |
+| [State panels](https://github.com/kylejcaron/terrine/blob/main/docs/guides/state-panels.md) | A unit-period transition from prior to response state. |
+| [Event sequences](https://github.com/kylejcaron/terrine/blob/main/docs/guides/temporal-engine.md#bounded-event-sequences-and-event-time-origins) | An event anchor with a bounded, ordered sequence. |
 
-[Common feature patterns](docs/guides/common-feature-patterns.md): rolling windows, active-before eligibility, attributes at t0, recency and true/false labels.
+[Common feature patterns](https://github.com/kylejcaron/terrine/blob/main/docs/guides/common-feature-patterns.md): rolling windows, active-before eligibility, attributes at t0, recency and true/false labels.
 
 ## Five rules
 
@@ -91,18 +91,18 @@ Each `tr.recipes` constructor returns an ordinary, editable `Design`; the [low-l
 | Snowflake | Direct Frame materialization | DuckDB only |
 | Other Ibis backends | Read-only, unverified; needs `allow_unverified=True` per Model | Refused |
 
-See [backend compatibility](docs/guides/backend-compatibility.md) for extras, consistent-read semantics, supported operations, precision, the unverified opt-in tier and executable warehouse examples.
+See [backend compatibility](https://github.com/kylejcaron/terrine/blob/main/docs/guides/backend-compatibility.md) for extras, consistent-read semantics, supported operations, precision, the unverified opt-in tier and executable warehouse examples.
 
 ## Guides
 
-- [All guides](docs/guides/index.md) · [Capabilities](docs/guides/capabilities.md) · [Inherent limits](docs/guides/limitations.md) · [Refusal codes](docs/reference/refusals.md)
-- [Training/scoring and saved dataset definitions](docs/guides/ml-staging.md) · [Library hand-offs](docs/guides/library-handoffs.md) (Terrine makes no causal estimates or identification claims)
-- [Durable runtime and saved plans](docs/guides/materialization-runtime.md) · [Owned inputs](docs/guides/materialization-runtime.md#owned-inputs-for-repeated-builds)
-- [Restricted dataset tools](docs/guides/dataset-agent-tools.md) · [Airflow, Dagster and dbt](docs/guides/orchestrators.md)
-- [Cost and data residency](docs/guides/cost-and-residency.md) · [Synthetic worlds with independent expected rows](docs/guides/synthetic-worlds.md)
+- [All guides](https://github.com/kylejcaron/terrine/blob/main/docs/guides/index.md) · [Capabilities](https://github.com/kylejcaron/terrine/blob/main/docs/guides/capabilities.md) · [Inherent limits](https://github.com/kylejcaron/terrine/blob/main/docs/guides/limitations.md) · [Refusal codes](https://github.com/kylejcaron/terrine/blob/main/docs/reference/refusals.md)
+- [Training/scoring and saved dataset definitions](https://github.com/kylejcaron/terrine/blob/main/docs/guides/ml-staging.md) · [Library hand-offs](https://github.com/kylejcaron/terrine/blob/main/docs/guides/library-handoffs.md) (Terrine makes no causal estimates or identification claims)
+- [Durable runtime and saved plans](https://github.com/kylejcaron/terrine/blob/main/docs/guides/materialization-runtime.md) · [Owned inputs](https://github.com/kylejcaron/terrine/blob/main/docs/guides/materialization-runtime.md#owned-inputs-for-repeated-builds)
+- [Restricted dataset tools](https://github.com/kylejcaron/terrine/blob/main/docs/guides/dataset-agent-tools.md) · [Airflow, Dagster and dbt](https://github.com/kylejcaron/terrine/blob/main/docs/guides/orchestrators.md)
+- [Cost and data residency](https://github.com/kylejcaron/terrine/blob/main/docs/guides/cost-and-residency.md) · [Synthetic worlds with independent expected rows](https://github.com/kylejcaron/terrine/blob/main/docs/guides/synthetic-worlds.md)
 
 Contributing? See [CONTRIBUTING.md](https://github.com/kylejcaron/terrine/blob/main/CONTRIBUTING.md) for setup, test tiers and the Contributor License Agreement.
 
 ## License
 
-[Apache License 2.0](LICENSE); see [NOTICE](NOTICE).
+[Apache License 2.0](https://github.com/kylejcaron/terrine/blob/main/LICENSE); see [NOTICE](https://github.com/kylejcaron/terrine/blob/main/NOTICE).
