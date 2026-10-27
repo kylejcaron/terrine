@@ -1,18 +1,21 @@
 # terrine
 
-**Build training data from event logs without leaking the future.**
+**Build datasets directly from event logs.**
 
-You have event tables: orders, sessions, payments. You want a modeling table with one row per customer per snapshot date, with features computed from the past and labels from the future. Terrine builds that table in your warehouse (DuckDB, PostgreSQL, BigQuery or Snowflake) from a few lines of Python.
+You have event tables: orders, sessions, payments. You want a modeling table, for example one row per customer per snapshot date, with features computed from the past and labels from the future. Terrine builds that table in your warehouse (DuckDB, PostgreSQL, BigQuery, Snowflake, and more) from a few lines of Python.
 
-## Why not just write the SQL?
+## Why Terrine?
 
-Hand-built training sets tend to have three bugs that don't raise errors:
+Most data science datasets come in a few shapes:
 
-- **Leakage.** A feature window reaches past the snapshot date, so the model trains on information it won't have at prediction time.
-- **Missing zeros.** Customers with no orders drop out of a `GROUP BY` instead of showing `0`.
-- **Fake negatives.** For recent snapshots the label window hasn't finished yet, so "no order in the next 30 days" looks like churn.
+- snapshots with features and labels;
+- cohort curves;
+- time-to-event tables;
+- before-and-after windows around an event.
 
-Terrine rules these out. Features can only look backwards from the snapshot. Every customer in your customer table gets a row. A label whose future isn't in the data yet is null, with a reason, rather than `False`.
+Each time, the SQL is the same pile of date joins and window boundaries, rewritten by hand. Terrine takes the shape as a starting point. You name the rows you want and the windows to aggregate over; Terrine writes and runs the queries.
+
+Because Terrine knows each row's snapshot time, features can only look backwards and labels only forwards. Each value also says whether its window was fully covered by your data, so you decide how to treat gaps for your problem.
 
 ## Example: a churn training table
 
@@ -83,9 +86,9 @@ carol 2025-03-01           0        0.0            <NA>     incomplete_coverage
 
 Reading the output:
 
-- **Carol has no orders** but still has both rows, with zero features. Her February label is `False`; her March label is unknown.
+- **Carol has no orders.** She still has a row at each snapshot, with zero counts.
 - **Alice's February 10 order** makes her February 1 label `True`, and it counts in her March 1 features. The same order is the future for one row and the past for the next.
-- **The March labels are unknown.** Their 30-day window runs past March 20, where the orders data ends. Training on them as `False` would teach the model that everyone churns.
+- **The March labels are unknown.** Their 30-day window runs past March 20, where the orders data ends. Drop them, keep them as unlabeled, or handle them however suits your model.
 
 Terrine names metrics after your table and columns: `orders_count`, `orders_amount_sum` and `orders_amount_mean`. Every value has a `<name>__complete` flag and a `<name>__reason` column, so you can filter or impute deliberately.
 
