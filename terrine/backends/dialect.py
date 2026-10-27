@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import cache
-from typing import ClassVar
+from typing import ClassVar, cast
 
+import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 from ibis.common.exceptions import IbisError
@@ -28,9 +30,80 @@ class Dialect:
 
     name: str
     operations: ClassVar[frozenset[str]] = frozenset()
+    has_scaled_float_state: ClassVar[bool] = False
 
     def exact_type(self) -> dt.DataType:
         raise unavailable("exact_state", self.name)
+
+    def decimal_coefficient(self, value: ir.Value, scale: int) -> ir.Value:
+        text = value.cast("string")
+        return (text.replace(".", "") if scale else text).cast(self.exact_type())
+
+    def coefficient_bounds(self, value: ir.Value) -> tuple[int, int]:
+        dtype = value.type()
+        if isinstance(dtype, (dt.SignedInteger, dt.UnsignedInteger)):
+            lower, upper = dtype.bounds
+            return lower, upper
+        if not isinstance(dtype, dt.Decimal) or dtype.precision is None:
+            raise TypeError(f"{dtype} is not an exact type with a known precision")
+        maximum = 10**dtype.precision - 1
+        return -maximum, maximum
+
+    def finite_text(self, value: ir.Value) -> tuple[ir.FloatingValue, ir.StringValue]:
+        widened = cast(ir.FloatingValue, value.cast(dt.float64))
+        finite = self.float_is_finite(widened).ifelse(widened, ibis.null(dt.float64))
+        return widened, finite.cast("string")
+
+    def binary64(self, text: ir.StringValue) -> ir.FloatingValue:
+        return cast(ir.FloatingValue, text.cast(dt.float64))
+
+    def exact_float(
+        self, value: ir.Value, scale: int | ir.IntegerValue | None = None
+    ) -> tuple[ir.Value, ir.BooleanValue, ir.BooleanValue]:
+        raise unavailable("exact_float", self.name)
+
+    def exact_ratio(self, numerator: ir.Value, denominator: ir.Value) -> ir.Value:
+        raise unavailable("exact_ratio", self.name)
+
+    def exact_is_nonfinite(self, value: ir.Value) -> ir.BooleanValue:
+        raise unavailable("exact_is_nonfinite", self.name)
+
+    def exact_to_float(
+        self, value: ir.Value, scale: int | ir.IntegerValue = 0
+    ) -> tuple[ir.FloatingValue, ir.BooleanValue, ir.BooleanValue]:
+        if not isinstance(scale, int) or scale:
+            raise ValueError(f"{self.name} exact state is unscaled; scale must be 0")
+        raise unavailable("exact_is_nonfinite", self.name)
+
+    def wide_type(self) -> dt.DataType:
+        raise unavailable("normalized", self.name)
+
+    def wide_abs(self, value: ir.Value) -> ir.Value:
+        return cast(ir.NumericValue, value).abs()
+
+    def wide_quotient(self, value: ir.Value, divisor: ir.Value) -> ir.Value:
+        raise unavailable("normalized", self.name)
+
+    def trim_leading_zeros(self, digits: ir.StringValue) -> ir.StringValue:
+        raise unavailable("normalized", self.name)
+
+    def exact_sum(self, value: ir.Value) -> ir.Value:
+        raise unavailable("exact_state", self.name)
+
+    def exact_subtract(self, left: ir.Value, right: ir.Value) -> ir.Value:
+        raise unavailable("exact_state", self.name)
+
+    def truncating_quotient(
+        self, value: ir.IntegerValue, divisor: int | ir.IntegerValue
+    ) -> ir.IntegerValue:
+        raise unavailable("integer_quotient", self.name)
+
+    def float_is_finite(self, value: ir.Value) -> ir.BooleanValue:
+        # PostgreSQL has no isfinite(double precision), and NaN equals NaN there.
+        nonfinite = [
+            ibis.literal(item, type=dt.float64) for item in (math.inf, -math.inf, math.nan)
+        ]
+        return cast(ir.FloatingValue, value.cast(dt.float64)).notin(nonfinite)
 
 
 @cache

@@ -13,6 +13,10 @@
   Admission gates and static inspection both honor the selected provider's
   effective capability evidence; unavailable dialect admission still refuses
   before materialization.
+- Encapsulate native numeric types, exact arithmetic and float conversion in
+  each engine's expression policy. Shared normalization retains the existing
+  coefficient bounds, NULL/nonfinite flags, overflow behavior and rounding
+  tolerances.
 
 ### Tests
 

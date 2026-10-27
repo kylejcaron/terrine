@@ -10,7 +10,7 @@ import ibis.expr.datatypes as dt
 import pytest
 
 from terrine.backends import registry
-from terrine.backends.dialect import dialect_scope, unavailable
+from terrine.backends.dialect import dialect_for_name, dialect_scope, unavailable
 from terrine.backends.numeric import exact_type
 from terrine.backends.registry import ENGINES, engine_supports, get_engine, resolve_engine
 from terrine.errors import TerrineError
@@ -76,6 +76,36 @@ def test_unavailable_route_names_only_verified_operation_providers(monkeypatch):
         ENGINES["bigquery"].dialect.operations - {"exact_ratio"},
     )
     assert destinations("exact_ratio") == set()
+
+
+@pytest.mark.parametrize(
+    ("method", "operands", "operation"),
+    [
+        ("exact_type", (), "exact_state"),
+        ("exact_float", (ibis.literal(1.5),), "exact_float"),
+        ("exact_ratio", (ibis.literal(1), ibis.literal(2)), "exact_ratio"),
+        ("exact_is_nonfinite", (ibis.literal(1),), "exact_is_nonfinite"),
+        ("wide_type", (), "normalized"),
+        ("exact_sum", (ibis.table({"value": "int64"}).value,), "exact_state"),
+        ("exact_subtract", (ibis.literal(2), ibis.literal(1)), "exact_state"),
+        ("truncating_quotient", (ibis.literal(3), 2), "integer_quotient"),
+    ],
+)
+def test_unknown_dialect_refuses_native_numeric_operations(method, operands, operation):
+    with pytest.raises(TerrineError) as caught:
+        getattr(dialect_for_name("unregistered"), method)(*operands)
+    error = caught.value
+    assert error.code == "terrine.backend.capability_unavailable"
+    assert {key: value for key, value in error.context.items() if key != "route"} == {
+        "backend": "unregistered",
+        "operation": operation,
+        "status": "unsupported",
+    }
+    with pytest.raises(TypeError):
+        error.context["status"] = "verified"  # ty: ignore[invalid-assignment]
+    for restored in (copy.deepcopy(error), pickle.loads(pickle.dumps(error))):
+        assert restored.code == error.code
+        assert restored.context == error.context
 
 
 def test_static_inspection_and_admission_preserve_native_handle_boundary():
