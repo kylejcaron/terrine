@@ -88,6 +88,9 @@ def preview(
                 unit_name=design.unit,
             )
             compiled = compile_design(design, execution_model)
+            # Admit every relation the count will run, integrity checks included,
+            # so an unsupported primitive refuses before the first source read.
+            context.admit(*compiled.reads())
             compiled.validate(execute=context.execute)
             summary = _eligibility_summary(compiled.audit_table, context.execute, cap=bounded_count)
         capped = summary.candidate > bounded_count

@@ -142,10 +142,11 @@ admission, never a `False` capability. Unavailable primitives refuse with
 operation and the original backend exception as cause; `TerrineError`,
 cancellation and process-control exceptions pass through unchanged. Two
 witnesses run lazily, once per execution context, and only when a relation
-needs them. A Frame submits every relation it will run (output, audit and each
-integrity check) for admission as soon as it is compiled, so an unsupported
-primitive anywhere in it refuses before the first source row is read, not
-after the roster checks have scanned; an independent statement on an
+needs them. Materialization and the bounded preview submit every relation
+they will run (output, audit and each integrity check) for admission as soon
+as the study is compiled, so an unsupported primitive anywhere in it refuses
+before the first source row is read, not after the roster checks have
+scanned; an independent statement on an
 execution context is admitted when it is issued:
 
 - A query carrying decimal state (study counts, sums, averages and ratios all

@@ -89,11 +89,22 @@ def test_public_count_frame_has_operation_specific_refusal(sqlite):
         assert result.table["count"].to_pylist() == [1]
 
 
-def test_frame_admission_precedes_every_source_read(sqlite, monkeypatch):
-    """The whole compiled Frame, validation graphs included, is admitted before
-    the first source statement: on SQLite the decimal witness refuses the count
-    Frame with zero roster or event reads, and a decimal-free Frame runs no
+def _source_reads(executed: list[str]) -> list[str]:
+    """Row-reading statements against the sources; PRAGMA schema inspection binds them."""
+    return [
+        sql
+        for sql in executed
+        if ("users" in sql or "events" in sql) and "PRAGMA" not in sql.upper()
+    ]
+
+
+@pytest.mark.parametrize("entry", ["materialize", "preview", "tool_preview"])
+def test_frame_admission_precedes_every_source_read(sqlite, monkeypatch, entry):
+    """Every entry point that compiles a study and then executes its integrity
+    checks admits the whole Frame first: on SQLite the decimal witness refuses the
+    count Frame with zero roster or event reads, and a decimal-free Frame runs no
     witness at all."""
+    from terrine import Budget, preview
     from terrine.execution import _generic
 
     statements: list[str] = []
@@ -107,27 +118,54 @@ def test_frame_admission_precedes_every_source_read(sqlite, monkeypatch):
     executed: list[str] = []
     sqlite.con.set_trace_callback(executed.append)
     model = bind(sqlite)
+
+    def run(design):
+        if entry == "materialize":
+            return design.build(model).materialize()
+        if entry == "preview":
+            return preview(design, model, bounded_count=1)
+        from terrine.agent import AgentPolicy, DatasetTools
+        from terrine.runtime.saved_plan import ModelReference
+        from terrine.spec.dataset import DatasetDefinition
+
+        reference = ModelReference.from_model(model, owner_key="owner")
+        tools = DatasetTools(
+            model,
+            AgentPolicy(
+                preview=True,
+                allowed_sources=frozenset({"events"}),
+                allowed_catalogs=frozenset({reference.catalog_hash}),
+                model_reference=reference,
+                budget=Budget(strict_scan=False),
+            ),
+            namespace="agent",
+        )
+        definition = DatasetDefinition(schema_version=1, base_design=design, view=None)
+        response = tools.preview_dataset(definition, bounded_count=1)
+        if response.status != "ok":
+            assert response.code is not None
+            raise TerrineError(response.code, code=response.code, context=response.context)
+        return response.output
+
     count = Design(
         "user",
         FixedDate(datetime(2025, 1, 2, tzinfo=UTC)),
         features={"count": agg("total", window=("-1d", "0d"))},
     )
     with pytest.raises(TerrineError) as caught:
-        count.build(model).materialize()
+        run(count)
     assert caught.value.context["operation"] == "exact_state"
-    # Schema inspection (PRAGMA table_info) binds the sources; no statement may read rows.
-    source_reads = [
-        sql
-        for sql in executed
-        if ("users" in sql or "events" in sql) and "PRAGMA" not in sql.upper()
-    ]
-    assert source_reads == [], source_reads
+    assert _source_reads(executed) == []
     assert "exact_state" in statements
 
     executed.clear()
     statements.clear()
-    roster = Design("user", FixedDate(datetime(2025, 1, 2, tzinfo=UTC))).build(model).materialize()
-    assert roster.table["unit"].to_pylist() == [1]
+    roster = run(Design("user", FixedDate(datetime(2025, 1, 2, tzinfo=UTC))))
+    if entry == "materialize":
+        assert roster.table["unit"].to_pylist() == [1]
+    else:
+        assert roster.candidate_rows == 1
+    assert _source_reads(executed)
     assert "exact_state" not in statements and "utc_wall_clock" not in statements
 
 
