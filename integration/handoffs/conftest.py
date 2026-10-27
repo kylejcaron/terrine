@@ -49,5 +49,8 @@ def handoff_frame():
             ExecutionSnapshot(None, "arrow", {}, None, "unverified"),
             "cross_section",
             "baseline_binary",
+            engine_name="arrow",
+            dialect="generic",
+            engine_status="unverified",
         ),
     )

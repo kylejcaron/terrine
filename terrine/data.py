@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 import pyarrow as pa
 
+from terrine.backends.registry import get_engine
 from terrine.errors import RefusalSpec, freeze, thaw
 from terrine.windows import Window, seconds
 
@@ -76,6 +77,12 @@ _UNSUPPORTED_METADATA_VERSION = RefusalSpec(
     "Arrow metadata version {version!r} is unsupported; re-materialize the Design "
     "with the current Terrine version.",
 )
+_INVALID_ENGINE_STAMP = RefusalSpec(
+    "terrine.metadata.invalid_engine_stamp",
+    "Engine stamp is {reason} (present fields {fields!r}); re-materialize the Design "
+    "with the current Terrine version.",
+)
+_ENGINE_STAMP_FIELDS = ("dialect", "engine_name", "engine_status")
 _ARROW_METADATA_KEY = b"terrine.materialized_frame.v2"
 _LEGACY_ARROW_METADATA_KEY = b"terrine.materialized_frame.v1"
 
@@ -836,6 +843,13 @@ class DatasetViewMeta:
 
 @dataclass(frozen=True, slots=True)
 class Provenance:
+    """Design, model, input and execution evidence recorded with every result.
+
+    ``engine_name`` is the actual backend that executed, ``dialect`` the admitted
+    expression policy and ``engine_status`` that policy's registered status; a
+    portable result records ``"generic"`` and ``"unverified"``.
+    """
+
     feature_cutoffs: Mapping[str, FeatureCutoff]
     eligibility_cutoffs: Mapping[str, FeatureCutoff]
     design_hash: str
@@ -844,6 +858,9 @@ class Provenance:
     execution_snapshot: ExecutionSnapshot
     shape: str
     treatment_design: Literal["baseline_binary", "grace_initiation"] | None
+    engine_name: str
+    dialect: str
+    engine_status: Literal["verified", "unverified"]
     eligibility_summary: EligibilitySummary | None = None
     treatment_knowledge: Literal["recorded_at", "retrospective_effective_time"] | None = None
     weight_kind: Literal["baseline_function", "sampled_control"] | None = None
@@ -866,6 +883,7 @@ class Provenance:
     def __post_init__(self) -> None:
         for name in ("design_hash", "model_hash", "shape"):
             _nonempty(getattr(self, name), name)
+        _check_engine_stamp(self.engine_name, self.dialect, self.engine_status)
         object.__setattr__(
             self,
             "feature_cutoffs",
@@ -1032,17 +1050,69 @@ def _encode(value: Any) -> Any:
     return value
 
 
+def _check_engine_stamp(
+    engine_name: Any,
+    dialect: Any,
+    engine_status: Any,
+    fields: tuple[str, ...] = _ENGINE_STAMP_FIELDS,
+) -> None:
+    """Refuse a complete stamp that contradicts the registered policy it names.
+
+    ``dialect`` names an expression policy, so the registry decides whether it
+    exists and which status it carries; a registered engine also executes under
+    its own name, whereas the portable policy records the actual backend.
+    """
+    engine = get_engine(dialect) if isinstance(dialect, str) and dialect else None
+    if (
+        engine is None
+        or not isinstance(engine_name, str)
+        or not engine_name
+        or engine_status != engine.status
+        or (engine.status == "verified" and engine_name != dialect)
+    ):
+        raise _INVALID_ENGINE_STAMP.error(reason="inconsistent", fields=fields)
+
+
+def _decode_engine_stamp(
+    value: Mapping[str, Any],
+) -> tuple[str, str, Literal["verified", "unverified"]]:
+    """Return ``(engine_name, dialect, engine_status)`` from saved provenance.
+
+    Writers before the stamp existed executed only through registered verified
+    engines and recorded that engine as ``execution_snapshot.backend``, so a
+    payload with all three fields absent decodes as that verified engine.
+    Any other incomplete stamp refuses rather than being upgraded.
+    """
+    present = tuple(name for name in _ENGINE_STAMP_FIELDS if name in value)
+    if not present:
+        snapshot = value.get("execution_snapshot")
+        backend = snapshot.get("backend") if isinstance(snapshot, Mapping) else None
+        engine = get_engine(backend) if isinstance(backend, str) else None
+        if engine is None or engine.status != "verified":
+            raise _INVALID_ENGINE_STAMP.error(reason="unknown_legacy_engine", fields=present)
+        return engine.name, engine.name, "verified"
+    if present != _ENGINE_STAMP_FIELDS:
+        raise _INVALID_ENGINE_STAMP.error(reason="partial", fields=present)
+    stamp = (value["engine_name"], value["dialect"], value["engine_status"])
+    _check_engine_stamp(*stamp, fields=present)
+    return stamp
+
+
 def _decode(value: Any, cls: type) -> Any:
     if cls is Window:
         return Window(*value["$window"])
     if not is_dataclass(cls):
         raise TypeError("metadata target must be a dataclass")
-    kwargs = {}
+    kwargs: dict[str, Any] = {}
     unknown = set(value) - {field.name for field in fields(cls)}
     if unknown:
         raise ValueError(f"unknown {cls.__name__} fields: {sorted(unknown)}")
+    if cls is Provenance:
+        kwargs["engine_name"], kwargs["dialect"], kwargs["engine_status"] = _decode_engine_stamp(
+            value
+        )
     for field in fields(cls):
-        if field.name not in value:
+        if field.name not in value or field.name in kwargs:
             continue
         item = value[field.name]
         if field.name == "approximation" and item is not None:

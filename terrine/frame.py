@@ -617,6 +617,7 @@ class Frame:
         enforce_shape_budget(self._design.shape, budget)
         for warning in _scan_policy(budget):
             warnings.warn(warning, RuntimeWarning, stacklevel=2)
+        from terrine.compile.columns import expression_policy
         from terrine.compile.dispatch import compile_design
         from terrine.execution.backend import backend_provider
         from terrine.execution.inputs import open_execution
@@ -836,6 +837,9 @@ class Frame:
                 execution_snapshot=context.snapshot,
                 shape=shape or shape_name,
                 treatment_design="baseline_binary" if baseline_binary else None,
+                engine_name=context.snapshot.backend,
+                dialect=expression_policy(model),
+                engine_status=model._engine.status,
                 eligibility_summary=summary,
                 treatment_knowledge="retrospective_effective_time"
                 if treatment is not None

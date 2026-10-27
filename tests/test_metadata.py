@@ -2,6 +2,7 @@ import json
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
+from typing import Literal
 
 import pyarrow as pa
 import pytest
@@ -26,8 +27,16 @@ from terrine.data import (
 )
 from terrine.errors import TerrineError
 
+_Stamp = tuple[str, str, Literal["verified", "unverified"]]
+_VERIFIED_STAMP: _Stamp = ("duckdb", "duckdb", "verified")
+_UNVERIFIED_STAMP: _Stamp = ("sqlite", "generic", "unverified")
+_STAMPS = pytest.mark.parametrize(
+    "stamp", [_VERIFIED_STAMP, _UNVERIFIED_STAMP], ids=["verified", "unverified"]
+)
 
-def _provenance():
+
+def _provenance(stamp: _Stamp = _VERIFIED_STAMP):
+    engine_name, dialect, engine_status = stamp
     return Provenance(
         feature_cutoffs={"revenue": FeatureCutoff(-1, True, "recorded_at")},
         eligibility_cutoffs={},
@@ -41,13 +50,16 @@ def _provenance():
         source_generations={"events": None},
         execution_snapshot=ExecutionSnapshot(
             snapshot_id=None,
-            backend="duckdb",
+            backend=engine_name,
             source_generations={"events": None},
             input_binding_id=None,
             replay_equivalence="unverified",
         ),
         shape="cross_section",
         treatment_design="baseline_binary",
+        engine_name=engine_name,
+        dialect=dialect,
+        engine_status=engine_status,
         treatment_known_at_t0=True,
         expression_timings={
             "first_purchase": ExpressionTiming(
@@ -62,6 +74,23 @@ def _provenance():
                 "end_bound",
             )
         },
+    )
+
+
+def _frame(provenance):
+    return MaterializedFrame(
+        table=pa.table(
+            {
+                "unit": ["u"],
+                "anchor": ["a"],
+                "t0": pa.array(
+                    [datetime(2025, 1, 1, tzinfo=UTC)], type=pa.timestamp("us", tz="UTC")
+                ),
+            }
+        ),
+        roles=Roles("unit", "anchor", "t0", None, (), ()),
+        columns={},
+        provenance=provenance,
     )
 
 
@@ -209,6 +238,9 @@ def test_metadata_mappings_are_deeply_immutable_and_detached():
         execution_snapshot=snapshot,
         shape="cross_section",
         treatment_design=None,
+        engine_name="duckdb",
+        dialect="duckdb",
+        engine_status="verified",
     )
     generations["events"] = "later"
     feature_cutoffs.clear()
@@ -232,20 +264,7 @@ def test_dataset_view_resolved_instant_round_trips_json_and_arrow():
             resolved_as_of=datetime(2025, 1, 1, tzinfo=UTC),
         ),
     )
-    frame = MaterializedFrame(
-        table=pa.table(
-            {
-                "unit": ["u"],
-                "anchor": ["a"],
-                "t0": pa.array(
-                    [datetime(2025, 1, 1, tzinfo=UTC)], type=pa.timestamp("us", tz="UTC")
-                ),
-            }
-        ),
-        roles=Roles("unit", "anchor", "t0", None, (), ()),
-        columns={},
-        provenance=provenance,
-    )
+    frame = _frame(provenance)
     assert (
         MaterializedFrame.from_json(frame.to_json()).provenance.dataset_view
         == provenance.dataset_view
@@ -256,7 +275,8 @@ def test_dataset_view_resolved_instant_round_trips_json_and_arrow():
     )
 
 
-def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values():
+@_STAMPS
+def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values(stamp):
     from terrine.windows import Window
 
     table = pa.table(
@@ -298,13 +318,19 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values():
                 "spend_reason",
             ),
         },
-        provenance=_provenance(),
+        provenance=_provenance(stamp),
     )
     restored = MaterializedFrame.from_json(frame.to_json())
     assert restored.roles == frame.roles
     assert restored.columns == frame.columns
     assert MaterializedFrame.from_arrow(frame.to_arrow()).columns == frame.columns
     assert restored.provenance == frame.provenance
+    assert MaterializedFrame.from_arrow(frame.to_arrow()).provenance == frame.provenance
+    assert (
+        restored.provenance.engine_name,
+        restored.provenance.dialect,
+        restored.provenance.engine_status,
+    ) == stamp
     assert restored.table.schema == table.schema
     assert restored.table.column("amount").to_pylist() == [Decimal("12.3400"), None]
     assert restored.table.column("treated").to_pylist() == [True, None]
@@ -330,20 +356,7 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values():
 
 
 def test_materialized_frame_arrow_schema_metadata_can_be_recovered():
-    frame = MaterializedFrame(
-        table=pa.table(
-            {
-                "unit": ["u"],
-                "anchor": ["a"],
-                "t0": pa.array(
-                    [datetime(2025, 1, 1, tzinfo=UTC)], type=pa.timestamp("us", tz="UTC")
-                ),
-            }
-        ),
-        roles=Roles("unit", "anchor", "t0", None, (), ()),
-        columns={},
-        provenance=_provenance(),
-    )
+    frame = _frame(_provenance())
     recovered = MaterializedFrame.from_arrow(frame.to_arrow())
     assert recovered.columns == frame.columns
     assert recovered.roles == frame.roles
@@ -373,6 +386,135 @@ def test_pre_change_arrow_metadata_refuses_with_portable_version_error():
         assert restored.context["version"] == 1
         with pytest.raises(TypeError):
             restored.context["version"] = 2  # ty: ignore[invalid-assignment] intentional mutation
+
+
+def test_engine_stamp_round_trips_and_historic_verified_metadata():
+    from importlib.resources import files
+
+    frame = _frame(_provenance(_UNVERIFIED_STAMP))
+    json_payload = json.loads(frame.to_json())
+    arrow_payload = json.loads(
+        frame.to_arrow().schema.metadata[b"terrine.materialized_frame.v2"].decode("utf-8")
+    )
+    assert json_payload["version"] == 1
+    assert arrow_payload["version"] == 2
+    for restored in (
+        MaterializedFrame.from_json(frame.to_json()),
+        MaterializedFrame.from_arrow(frame.to_arrow()),
+    ):
+        assert restored.provenance.engine_name == "sqlite"
+        assert restored.provenance.dialect == "generic"
+        assert restored.provenance.engine_status == "unverified"
+        assert restored.provenance == frame.provenance
+        assert restored.table.equals(frame.table)
+
+    # Saved before result stamps existed: its provenance records only the verified
+    # execution dialect, which decodes as that engine without re-materialization.
+    saved = json.loads(files("tests.fixtures").joinpath("materialized_frame_v1.json").read_bytes())
+    assert not {"engine_name", "dialect", "engine_status"} & set(saved["provenance"])
+    arrow_envelope = json.dumps({**saved, "version": 2, "bookkeeping_columns": []}).encode("utf-8")
+    for historical in (
+        MaterializedFrame.from_json(json.dumps({**saved, "arrow_ipc": json_payload["arrow_ipc"]})),
+        MaterializedFrame.from_arrow(
+            frame.table.replace_schema_metadata({b"terrine.materialized_frame.v2": arrow_envelope})
+        ),
+    ):
+        assert historical.provenance.engine_name == "duckdb"
+        assert historical.provenance.dialect == "duckdb"
+        assert historical.provenance.engine_status == "verified"
+        assert historical.provenance.execution_snapshot.backend == "duckdb"
+        assert historical.roles == frame.roles
+        assert historical.table.equals(frame.table)
+
+
+_ALL_STAMP_FIELDS = ("dialect", "engine_name", "engine_status")
+
+
+@pytest.mark.parametrize(
+    ("stamp", "reason", "fields"),
+    [
+        (
+            {"dialect": "generic", "engine_status": "unverified"},
+            "partial",
+            ("dialect", "engine_status"),
+        ),
+        (
+            {"engine_name": "sqlite", "engine_status": "unverified"},
+            "partial",
+            ("engine_name", "engine_status"),
+        ),
+        ({"engine_name": "sqlite", "dialect": "generic"}, "partial", ("dialect", "engine_name")),
+        ({"engine_name": "duckdb"}, "partial", ("engine_name",)),
+        (
+            {"engine_name": "sqlite", "dialect": "generic", "engine_status": "verified"},
+            "inconsistent",
+            _ALL_STAMP_FIELDS,
+        ),
+        (
+            {"engine_name": "duckdb", "dialect": "postgres", "engine_status": "verified"},
+            "inconsistent",
+            _ALL_STAMP_FIELDS,
+        ),
+        (
+            {"engine_name": "duckdb", "dialect": "duckdb", "engine_status": "trusted"},
+            "inconsistent",
+            _ALL_STAMP_FIELDS,
+        ),
+        ({}, "unknown_legacy_engine", ()),
+    ],
+    ids=[
+        "unverified_without_engine_name",
+        "unverified_without_dialect",
+        "unverified_without_status",
+        "verified_name_only",
+        "generic_claims_verified",
+        "registered_name_dialect_mismatch",
+        "invalid_status",
+        "absent_unknown_legacy_engine",
+    ],
+)
+def test_partial_or_inconsistent_engine_stamp_refuses(stamp, reason, fields):
+    import copy
+    import pickle
+
+    frame = _frame(_provenance())
+    payload = frame.to_metadata()
+    for name in _ALL_STAMP_FIELDS:
+        del payload["provenance"][name]
+    payload["provenance"].update(stamp)
+    if not stamp:
+        payload["provenance"]["execution_snapshot"]["backend"] = "arrow"
+    serialized = json.dumps({**payload, "arrow_ipc": json.loads(frame.to_json())["arrow_ipc"]})
+    arrow = frame.table.replace_schema_metadata(
+        {
+            b"terrine.materialized_frame.v2": json.dumps(
+                {**payload, "version": 2, "bookkeeping_columns": []}
+            ).encode("utf-8")
+        }
+    )
+    for decode in (
+        lambda: MaterializedFrame.from_json(serialized),
+        lambda: MaterializedFrame.from_arrow(arrow),
+    ):
+        with pytest.raises(TerrineError) as error:
+            decode()
+        for restored in (
+            error.value,
+            copy.deepcopy(error.value),
+            pickle.loads(pickle.dumps(error.value)),
+        ):
+            assert restored.code == "terrine.metadata.invalid_engine_stamp"
+            assert restored.context["reason"] == reason
+            assert restored.context["fields"] == fields
+            assert "re-materialize" in str(restored)
+            with pytest.raises(TypeError):
+                restored.context["reason"] = "partial"  # ty: ignore[invalid-assignment] intentional mutation
+    if len(stamp) == len(_ALL_STAMP_FIELDS):
+        with pytest.raises(TerrineError) as constructed:
+            _provenance((stamp["engine_name"], stamp["dialect"], stamp["engine_status"]))
+        assert constructed.value.code == "terrine.metadata.invalid_engine_stamp"
+        assert constructed.value.context["reason"] == "inconsistent"
+        assert constructed.value.context["fields"] == _ALL_STAMP_FIELDS
 
 
 def test_budget_and_preview_validate_counts_and_coverage():

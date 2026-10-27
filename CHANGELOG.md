@@ -16,6 +16,18 @@
   Ibis schema inspection on unverified backends may end an open caller
   transaction; use a connection with no pending writes or a dedicated read
   connection.
+- Record the engine stamp on every result: required `Provenance.engine_name`
+  (actual backend), `dialect` (admitted expression policy) and `engine_status`
+  (its registered status), written by direct materialization, the staged
+  runtime and every fixture builder, and retained through views, cohorts,
+  life tables, Arrow, JSON, manifests and exports. Arrow metadata stays
+  version 2 under `terrine.materialized_frame.v2` and JSON metadata version 1.
+  Payloads saved before the stamp existed decode as their recorded verified
+  execution dialect; a partial or contradictory stamp, or an absent stamp with
+  an unregistered execution backend, refuses with the new
+  `terrine.metadata.invalid_engine_stamp` (`reason`, present `fields`) instead
+  of acquiring verified status. Constructing `Provenance` now requires the
+  three fields.
 - Complete the portable base expression policy used after unverified
   admission, so every study expression is an ordinary Ibis expression without
   native bindings. Float facts enter as `DECIMAL(38, 9)` state by truncating

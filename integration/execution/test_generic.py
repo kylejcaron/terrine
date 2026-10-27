@@ -89,6 +89,35 @@ def test_public_count_frame_has_operation_specific_refusal(sqlite):
         assert result.table["count"].to_pylist() == [1]
 
 
+def test_generic_materialization_round_trips_unverified_stamp(sqlite):
+    import pyarrow as pa
+
+    from terrine.data import MaterializedFrame
+
+    result = (
+        Design("user", FixedDate(datetime(2025, 1, 2, tzinfo=UTC)))
+        .build(bind(sqlite))
+        .materialize()
+    )
+    provenance = result.provenance
+    assert result.table["unit"].to_pylist() == [1]
+    assert provenance.execution_snapshot.backend == "sqlite"
+    assert provenance.execution_snapshot.snapshot_id is None
+    assert (provenance.engine_name, provenance.dialect, provenance.engine_status) == (
+        "sqlite",
+        "generic",
+        "unverified",
+    )
+    stamped = result.to_arrow()
+    sink = pa.BufferOutputStream()
+    with pa.ipc.new_stream(sink, stamped.schema) as writer:
+        writer.write_table(stamped)
+    restored = MaterializedFrame.from_arrow(pa.ipc.open_stream(sink.getvalue()).read_all())
+    assert restored.provenance == provenance
+    assert restored.roles == result.roles
+    assert restored.table.equals(result.table)
+
+
 def test_generic_context_is_statement_scoped_and_borrowed(sqlite):
     from terrine.execution.inputs import open_execution
 

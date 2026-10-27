@@ -43,6 +43,9 @@ def test_fitted_limits_are_exact_under_small_decimal_context():
             ExecutionSnapshot(None, "arrow", {}, None, "unverified"),
             "cross_section",
             None,
+            engine_name="arrow",
+            dialect="generic",
+            engine_status="unverified",
             dataset_view=DatasetViewMeta(
                 "training",
                 ("value",),

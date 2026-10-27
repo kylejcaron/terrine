@@ -49,6 +49,15 @@ published Dataset reopening, native Parquet unload or transaction snapshots.
 Strict scan budgets still refuse unknown source costs. Suppressing the warning
 does not grant these capabilities or establish consistency.
 
+Every materialized, staged or exported result records its engine stamp in
+`Provenance`: `engine_name` is the actual backend (for example `sqlite`),
+`dialect` the admitted expression policy (`generic` after opt-in, otherwise the
+registered engine) and `engine_status` that policy's registered status. The
+stamp survives Arrow, JSON, manifests and exports unchanged. Results saved by
+earlier versions carry no stamp and decode as their recorded verified execution
+dialect; a partial or contradictory stamp refuses with
+`terrine.metadata.invalid_engine_stamp` and is never upgraded to verified.
+
 Runtime DuckDB publication retains its fenced, transactional manifest switch;
 Ibis SQL compilation or DDL support alone does not establish publication safety.
 

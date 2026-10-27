@@ -37,6 +37,9 @@ def test_materialized_baseline_has_typed_honest_causal_metadata(weighted):
     assert provenance.execution_snapshot.backend == "arrow"
     assert provenance.execution_snapshot.snapshot_id is None
     assert provenance.execution_snapshot.replay_equivalence == "unverified"
+    assert provenance.engine_name == "arrow"
+    assert provenance.dialect == "generic"
+    assert provenance.engine_status == "unverified"
     assert set(provenance.source_generations) == {
         "world_roster",
         "world_events",

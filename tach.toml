@@ -22,7 +22,7 @@ depends_on = []
 
 [[modules]]
 path = "terrine.data"
-depends_on = ["terrine.errors", "terrine.windows"]
+depends_on = ["terrine.backends", "terrine.errors", "terrine.windows"]
 
 
 [[modules]]
