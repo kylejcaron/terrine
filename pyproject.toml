@@ -68,6 +68,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["terrine"]
 
+[tool.hatch.build.targets.sdist]
+exclude = ["docs/superpowers", ".superpowers", ".worktrees", "mutants"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers --strict-config --durations=0 --durations-min=5.0 -n auto -m 'not scale and not postgres and not bigquery and not snowflake'"
