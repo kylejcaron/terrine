@@ -6,37 +6,72 @@ from decimal import Decimal
 import ibis
 import pyarrow as pa
 import pytest
+from sqlglot import exp
+from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 
 import terrine as tr
+from integration.warehouse_execution.bigquery_fixtures import (
+    bigquery_scratch as bigquery_scratch,  # noqa: F401
+)
 from integration.warehouse_execution.postgres_fixtures import (
     postgres_scratch as postgres_scratch,  # noqa: F401
 )
+from integration.warehouse_execution.snowflake_fixtures import (
+    snowflake_scratch as snowflake_scratch,  # noqa: F401
+)
 from terrine.backends.extrema import greatest, least
+from terrine.backends.registry import ENGINES
 from terrine.backends.timestamps import utc_instant, utc_wall_clock
 from terrine.semantic.models import BoundDimension, BoundValidity, PropertyBinding, TableRef
 from terrine.temporal.attributes import attribute_asof, validate_history
 
-_ENGINES = ("duckdb", pytest.param("postgres", marks=pytest.mark.postgres))
+_ENGINE_FIXTURES = {
+    "duckdb": "duckdb_connection",
+    "postgres": "postgres_scratch",
+    "bigquery": "bigquery_scratch",
+    "snowflake": "snowflake_scratch",
+}
+_LIVE_MARKERS = {
+    "postgres": pytest.mark.postgres,
+    "bigquery": pytest.mark.bigquery,
+    "snowflake": pytest.mark.snowflake,
+}
+_ENGINES = tuple(pytest.param(name, marks=_LIVE_MARKERS.get(name, ()), id=name) for name in ENGINES)
+_TIME_ZONE_SETUP = {
+    "duckdb": "SET TimeZone = 'America/New_York'",
+    "postgres": "SET TimeZone = 'America/New_York'",
+    # BigQuery has no session time zone: TIMESTAMP is an instant and DATETIME is naive.
+    "bigquery": None,
+    # Non-UTC: terrine.execution.snapshot_unavailable; test_non_utc_session_refuses.
+    "snowflake": "ALTER SESSION SET TIMEZONE = 'UTC'",
+}
 _ORIGIN = datetime(2025, 1, 1, tzinfo=UTC)
 _BUDGET = tr.Budget(max_rows=100, max_output_bytes=1_000_000, strict_scan=False)
+
+
+@pytest.fixture
+def duckdb_connection():
+    con = ibis.duckdb.connect()
+    try:
+        yield con
+    finally:
+        con.disconnect()
 
 
 @pytest.fixture(params=_ENGINES)
 def engine(request):
     """Keep engine selection separate from each engine-independent known answer."""
-    if request.param == "duckdb":
-        con = ibis.duckdb.connect()
-        try:
-            yield con
-        finally:
-            con.disconnect()
-    else:
-        yield request.getfixturevalue("postgres_scratch").con
+    scratch = request.getfixturevalue(_ENGINE_FIXTURES[request.param])
+    return scratch if request.param == "duckdb" else scratch.con
 
 
 def _model(con, events):
+    users_name, events_name = (
+        normalize_identifiers(exp.to_identifier(name), dialect=con.name).name
+        for name in ("users", "events")
+    )
     con.create_table(
-        "users",
+        users_name,
         pa.table(
             {
                 "id": ["u"],
@@ -44,13 +79,13 @@ def _model(con, events):
             }
         ),
     )
-    con.create_table("events", events)
+    con.create_table(events_name, events)
     return tr.Model.from_tables(
         con,
-        units={"user": tr.UnitSource("users", "id", observed_until="observed_until")},
+        units={"user": tr.UnitSource(users_name, "id", observed_until="observed_until")},
         events={
             "events": tr.Events(
-                "events",
+                events_name,
                 keys={"user": "user_id"},
                 time="ts",
                 values=tuple(name for name in ("amount", "weight") if name in events.column_names),
@@ -76,6 +111,10 @@ def _events(times, ids):
             ]
         ),
     )
+
+
+def test_every_registered_engine_has_a_conformance_connection():
+    assert set(_ENGINE_FIXTURES) == set(ENGINES)
 
 
 def test_schedule_whole_days_advance_by_every(engine):
@@ -141,7 +180,10 @@ def test_window_sums_preserve_small_values_after_large_history(engine):
 
 def test_utc_conversions_ignore_session_time_zone(engine):
     """Catch naive source timestamps interpreted in the session zone instead of UTC."""
-    engine.raw_sql("SET TimeZone = 'America/New_York'")
+    statement = _TIME_ZONE_SETUP[engine.name]
+    if statement is not None:
+        with engine._safe_raw_sql(statement):
+            pass
     instant = datetime(2025, 3, 9, 6, 30, tzinfo=UTC)
     table = engine.create_table(
         "instants", pa.table({"aware": [instant], "naive": [instant.replace(tzinfo=None)]})
