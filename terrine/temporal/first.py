@@ -8,6 +8,7 @@ import ibis.expr.types as ir
 
 from terrine.backends.dialect import current_dialect
 from terrine.backends.joins import asof_join
+from terrine.backends.registry import engine_supports
 from terrine.backends.timestamps import (
     lossless_timestamp,
     timestamp_order_key,
@@ -27,7 +28,6 @@ _UNSUPPORTED_BACKEND = RefusalSpec(
     "First-occurrence point lookup requires the DuckDB, PostgreSQL, BigQuery or "
     "Snowflake backend; got {backend!r}.",
 )
-_SUPPORTED_BACKENDS = frozenset({"duckdb", "postgres", "bigquery", "snowflake"})
 _INVALID = RefusalSpec(
     "terrine.temporal.first_occurrence_invalid_relation",
     "First-occurrence input relation is invalid ({reason}).",
@@ -104,7 +104,7 @@ def first_occurrence(
         backend_name = backend.name
     except Exception as exc:
         raise _UNSUPPORTED_BACKEND.error(backend="unbound") from exc
-    if backend_name not in _SUPPORTED_BACKENDS or candidate_backend is not backend:
+    if not engine_supports(backend_name, "first_occurrence") or candidate_backend is not backend:
         raise _UNSUPPORTED_BACKEND.error(backend=backend_name)
 
     used = {name.casefold() for name in candidates.columns}

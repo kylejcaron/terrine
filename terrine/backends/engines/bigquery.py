@@ -8,7 +8,7 @@ import ibis.expr.types as ir
 import sqlglot.expressions as sge
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE
-from terrine.backends.dialect import Dialect
+from terrine.backends.dialect import Dialect, current_dialect
 from terrine.backends.registry import ENGINES, supported_engine_route
 from terrine.backends.timestamps import _UNSUPPORTED, _epoch
 
@@ -55,6 +55,10 @@ class BigQueryDialect(Dialect):
             "utc_wall_clock",
             "utc_instant",
             "timestamp_text",
+            "asof_join",
+            "least",
+            "greatest",
+            "integer_sequence",
         }
     )
 
@@ -144,6 +148,9 @@ class BigQueryDialect(Dialect):
         if not isinstance(dtype, dt.Timestamp) or dtype.scale not in (None, 6):
             raise _UNSUPPORTED.error(dtype=str(dtype))
         return value
+
+    def supports_exact_prefix(self, backend_name: str) -> bool:
+        return backend_name == self.name and current_dialect().name == backend_name
 
 
 def identify(con: Any) -> None:

@@ -21,6 +21,9 @@
   output narrowing in each engine's expression policy. Explicit timestamp
   selection also governs nested operations without changing the enclosing
   expression scope; temporal windows and cohort bucket remainders are unchanged.
+- Centralize as-of joins, NULL-ignoring extrema, integer sequences and feature
+  admission in the registered engine policies. Strict/inclusive cutoffs, duplicate
+  requests, aliases and existing feature/build boundaries are unchanged.
 
 ### Tests
 

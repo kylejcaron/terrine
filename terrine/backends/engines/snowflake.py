@@ -1,5 +1,6 @@
 """Snowflake expression types and static module identity admission."""
 
+from functools import reduce
 from typing import Any, cast
 
 import ibis
@@ -8,7 +9,7 @@ import ibis.expr.types as ir
 import sqlglot.expressions as sge
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE
-from terrine.backends.dialect import Dialect
+from terrine.backends.dialect import Dialect, current_dialect
 from terrine.backends.numeric import (
     _checked_narrow_exact,
     _scaled_exact_to_float,
@@ -23,6 +24,7 @@ _EXACT = dt.Decimal(38, 0)
 _DECFLOAT = dt.Unknown(raw_type=sge.DataType.build("DECFLOAT", dialect="snowflake"))
 # Explicit formatting retains all digits independently of session output formats.
 _TEXT_FORMAT = "YYYY-MM-DD HH24:MI:SS.FF9"
+_RADIX = 10
 
 
 @ibis.udf.scalar.builtin(name="ltrim", signature=((dt.string, dt.string), dt.string))
@@ -83,6 +85,7 @@ def _sf_aware_text(timestamp, format):
 
 class SnowflakeDialect(Dialect):
     __slots__ = ()
+    has_native_asof = True
     has_scaled_float_state = True
     operations = frozenset(
         {
@@ -94,6 +97,10 @@ class SnowflakeDialect(Dialect):
             "utc_wall_clock",
             "utc_instant",
             "timestamp_text",
+            "asof_join",
+            "least",
+            "greatest",
+            "integer_sequence",
         }
     )
 
@@ -198,6 +205,44 @@ class SnowflakeDialect(Dialect):
         self, coefficient: ir.Value, scale: int, target: str | dt.DataType
     ) -> ir.Value:
         return _checked_narrow_exact(coefficient, scale, target, self)
+
+    def asof_join(
+        self,
+        left: ibis.Table,
+        right: ibis.Table,
+        *,
+        left_unit: str,
+        left_key: str,
+        right_unit: str,
+        right_key: str,
+        inclusive: bool,
+    ) -> ibis.Table:
+        on = left[left_key] >= right[right_key] if inclusive else left[left_key] > right[right_key]
+        return left.asof_join(right, on=on, predicates=[left[left_unit] == right[right_unit]])
+
+    def integer_sequence(self, stop: int, name: str) -> ibis.Table:
+        """Use decimal digits: native range unnesting has an invalid alias column list."""
+        digits = ibis.union(
+            *(ibis.literal(digit, type="int64").name("digit").as_table() for digit in range(_RADIX))
+        )
+        places = len(str(max(stop - 1, 0)))
+        table = reduce(
+            lambda joined, place: joined.cross_join(
+                digits.select(**{f"digit_{place}": digits.digit})
+            ),
+            range(1, places),
+            digits.select(digit_0=digits.digit),
+        )
+        ordinal = reduce(
+            lambda total, place: total + table[f"digit_{place}"] * _RADIX**place,
+            range(1, places),
+            table.digit_0,
+        )
+        sequence = table.select(**{name: ordinal.cast("int64")})
+        return sequence.filter(sequence[name] < stop)
+
+    def supports_exact_prefix(self, backend_name: str) -> bool:
+        return backend_name == self.name and current_dialect().name == backend_name
 
 
 def identify(con: Any) -> None:

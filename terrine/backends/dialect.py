@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import cache
-from typing import ClassVar, cast
+from typing import Any, ClassVar, cast
 
 import ibis
 import ibis.expr.datatypes as dt
@@ -24,6 +24,20 @@ __all__ = ["Dialect", "current_dialect", "dialect_for_name", "dialect_scope", "u
 _DIALECT: ContextVar[str | None] = ContextVar("terrine_compile_dialect", default=None)
 
 
+def _non_null(values: tuple[Any, ...]) -> tuple[Any, ...]:
+    """Replace each NULL with another argument; NULL only when all are NULL.
+
+    A substitute is already one of the arguments, so the extremum is unchanged.
+    """
+    expressions = [
+        value if isinstance(value, ibis.Value) else ibis.literal(value) for value in values
+    ]
+    return tuple(
+        ibis.coalesce(value, *(other for other in expressions if other is not value))
+        for value in expressions
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Dialect:
     """Immutable expression policy; unknown engines retain coded refusals."""
@@ -31,6 +45,7 @@ class Dialect:
     name: str
     operations: ClassVar[frozenset[str]] = frozenset()
     has_scaled_float_state: ClassVar[bool] = False
+    has_native_asof: ClassVar[bool] = False
 
     def exact_type(self) -> dt.DataType:
         raise unavailable("exact_state", self.name)
@@ -165,6 +180,66 @@ class Dialect:
         from terrine.backends.numeric import _scaled_text
 
         return _scaled_text(coefficient, scale).try_cast(target)
+
+    def asof_join(
+        self,
+        left: ibis.Table,
+        right: ibis.Table,
+        *,
+        left_unit: str,
+        left_key: str,
+        right_unit: str,
+        right_key: str,
+        inclusive: bool,
+    ) -> ibis.Table:
+        used = {name.casefold() for name in (*left.columns, *right.columns)}
+
+        def fresh(stem: str) -> str:
+            name = stem
+            while name.casefold() in used:
+                name = f"_{name}"
+            used.add(name.casefold())
+            return name
+
+        unit, key, kind, match = (
+            fresh(f"__terrine_asof_{part}") for part in ("unit", "key", "kind", "match")
+        )
+        # At an equal key, the right row sorts first when it is admitted.
+        left_kind, right_kind = (1, 0) if inclusive else (0, 1)
+        requests = left.select(
+            **{unit: left[left_unit], key: left[left_key], kind: ibis.literal(left_kind)}
+        ).distinct()
+        states = right.select(
+            **{unit: right[right_unit], key: right[right_key], kind: ibis.literal(right_kind)}
+        )
+        timeline = requests.union(states, distinct=False)
+        frame = ibis.window(
+            group_by=timeline[unit], order_by=[timeline[key], timeline[kind]], rows=(None, 0)
+        )
+        admitted = cast(ir.Column, ibis.ifelse(timeline[kind] == right_kind, timeline[key], None))
+        timeline = timeline.mutate(**{match: admitted.max().over(frame)})
+        mapping = timeline.filter(timeline[kind] == left_kind).select(unit, key, match)
+        mapped = left.left_join(
+            mapping, [left[left_unit] == mapping[unit], left[left_key] == mapping[key]]
+        )
+        mapped = mapped.select(*left.columns, match)
+        joined = mapped.left_join(
+            right, [mapped[left_unit] == right[right_unit], mapped[match] == right[right_key]]
+        )
+        return joined.select(*left.columns, *right.columns)
+
+    def least(self, *values: Any) -> Any:
+        return ibis.least(*_non_null(values))
+
+    def greatest(self, *values: Any) -> Any:
+        return ibis.greatest(*_non_null(values))
+
+    def integer_sequence(self, stop: int, name: str) -> ibis.Table:
+        return ibis.range(0, stop).unnest().cast("int64").name(name).as_table()
+
+    def supports_exact_prefix(self, backend_name: str) -> bool:
+        """Whether this expression policy admits the backend's exact prefix state."""
+        return False
 
 
 @cache

@@ -1,6 +1,8 @@
 from datetime import UTC, datetime
 
-from terrine.semantic.rules import calendar_average_alignment
+import pytest
+
+from terrine.semantic.rules import calendar_average_alignment, supports_event_resolution
 from terrine.windows import Window
 
 
@@ -39,3 +41,17 @@ def test_calendar_average_rejects_non_whole_day_domains():
         )
         == "unaligned"
     )
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("DUCKDB", True),
+        ("POSTGRES", True),
+        ("BIGQUERY", True),
+        ("SNOWFLAKE", True),
+        ("unregistered", False),
+    ],
+)
+def test_event_resolution_retains_registered_feature_boundary(name, expected):
+    assert supports_event_resolution(name) is expected

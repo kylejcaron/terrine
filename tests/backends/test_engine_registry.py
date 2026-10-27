@@ -3,7 +3,8 @@ from __future__ import annotations
 import copy
 import pickle
 from dataclasses import FrozenInstanceError, replace
-from types import MappingProxyType
+from importlib import metadata
+from types import MappingProxyType, SimpleNamespace
 
 import ibis
 import ibis.expr.datatypes as dt
@@ -15,6 +16,7 @@ from terrine.backends.numeric import exact_type
 from terrine.backends.registry import ENGINES, engine_supports, get_engine, resolve_engine
 from terrine.errors import TerrineError
 from terrine.execution.backend import backend_capabilities
+from terrine.temporal.prefix import _require_backend
 
 
 def test_registry_metadata_is_immutable_and_case_insensitive():
@@ -166,6 +168,53 @@ def test_timestamp_default_refusals_keep_operation_context(operation):
     }
     with pytest.raises(TypeError):
         error.context["status"] = "verified"  # ty: ignore[invalid-assignment]
+    for restored in (copy.deepcopy(error), pickle.loads(pickle.dumps(error))):
+        assert restored.code == error.code
+        assert restored.context == error.context
+
+
+@pytest.mark.parametrize(
+    ("backend", "build", "scope", "accepted"),
+    [
+        ("duckdb", "0.0.0", "unregistered", False),
+        ("postgres", "1.5.6", "unregistered", False),
+        ("bigquery", "1.5.6", "unregistered", False),
+        ("snowflake", "1.5.6", "unregistered", False),
+        ("unregistered", "1.5.6", "unregistered", False),
+        ("unbound", "1.5.6", "unregistered", False),
+        ("duckdb", "1.5.6", "postgres", True),
+        ("postgres", "1.5.6", "postgres", True),
+        ("bigquery", "1.5.6", "bigquery", True),
+        ("snowflake", "1.5.6", "snowflake", True),
+    ],
+)
+def test_exact_prefix_preserves_build_and_scope_admission_without_queries(
+    monkeypatch, backend, build, scope, accepted
+):
+    table = ibis.table({"value": "int64"})
+
+    class NoQueries:
+        name = backend
+
+        def raw_sql(self, *args, **kwargs):
+            raise AssertionError("exact-prefix admission queried the backend")
+
+        sql = raw_sql
+
+    if backend != "unbound":
+        monkeypatch.setattr(ibis.Table, "_find_backend", lambda *args, **kwargs: NoQueries())
+    monkeypatch.setattr(metadata, "distribution", lambda name: SimpleNamespace(version=build))
+    with dialect_scope(scope):
+        if accepted:
+            _require_backend(table)
+            return
+        with pytest.raises(TerrineError) as caught:
+            _require_backend(table)
+    error = caught.value
+    assert error.code == "terrine.temporal.exact_unsupported"
+    assert dict(error.context) == {"backend": backend}
+    with pytest.raises(TypeError):
+        error.context["backend"] = "other"  # ty: ignore[invalid-assignment]
     for restored in (copy.deepcopy(error), pickle.loads(pickle.dumps(error))):
         assert restored.code == error.code
         assert restored.context == error.context

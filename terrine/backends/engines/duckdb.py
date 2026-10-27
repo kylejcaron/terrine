@@ -1,5 +1,6 @@
 """DuckDB expression types and native identity admission."""
 
+from importlib.metadata import version
 from typing import Any, cast
 
 import ibis
@@ -80,6 +81,7 @@ def _timestamp_isfinite(value) -> bool:
 class DuckDBDialect(Dialect):
     __slots__ = ()
     has_scaled_float_state = True
+    has_native_asof = True
     operations = frozenset(
         {
             "exact_state",
@@ -90,6 +92,10 @@ class DuckDBDialect(Dialect):
             "utc_wall_clock",
             "utc_instant",
             "timestamp_text",
+            "asof_join",
+            "least",
+            "greatest",
+            "integer_sequence",
         }
     )
 
@@ -207,6 +213,29 @@ class DuckDBDialect(Dialect):
 
     def bounded_nanoseconds(self, scale: int | None) -> bool:
         return scale == 9
+
+    def asof_join(
+        self,
+        left: ibis.Table,
+        right: ibis.Table,
+        *,
+        left_unit: str,
+        left_key: str,
+        right_unit: str,
+        right_key: str,
+        inclusive: bool,
+    ) -> ibis.Table:
+        on = left[left_key] >= right[right_key] if inclusive else left[left_key] > right[right_key]
+        return left.asof_join(right, on=on, predicates=[left[left_unit] == right[right_unit]])
+
+    def least(self, *values: Any) -> Any:
+        return ibis.least(*values)
+
+    def greatest(self, *values: Any) -> Any:
+        return ibis.greatest(*values)
+
+    def supports_exact_prefix(self, backend_name: str) -> bool:
+        return backend_name == self.name and version("duckdb") == "1.5.6"
 
 
 def identify(con: Any) -> None:

@@ -11,7 +11,7 @@ import ibis.expr.types as ir
 import sqlglot.expressions as sge
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE, _SNAPSHOT_UNAVAILABLE
-from terrine.backends.dialect import Dialect
+from terrine.backends.dialect import Dialect, current_dialect
 from terrine.backends.numeric import _checked_narrow_exact
 from terrine.backends.registry import supported_engine_route
 from terrine.backends.timestamps import _UNSUPPORTED, _epoch
@@ -118,6 +118,7 @@ def _timestamp_isfinite(value) -> bool:
 
 class PostgresDialect(Dialect):
     __slots__ = ()
+    has_native_asof = True
     operations = frozenset(
         {
             "exact_state",
@@ -129,6 +130,10 @@ class PostgresDialect(Dialect):
             "utc_wall_clock",
             "utc_instant",
             "timestamp_text",
+            "asof_join",
+            "least",
+            "greatest",
+            "integer_sequence",
         }
     )
 
@@ -238,6 +243,29 @@ class PostgresDialect(Dialect):
         self, coefficient: ir.Value, scale: int, target: str | dt.DataType
     ) -> ir.Value:
         return _checked_narrow_exact(coefficient, scale, target, self)
+
+    def asof_join(
+        self,
+        left: ibis.Table,
+        right: ibis.Table,
+        *,
+        left_unit: str,
+        left_key: str,
+        right_unit: str,
+        right_key: str,
+        inclusive: bool,
+    ) -> ibis.Table:
+        on = left[left_key] >= right[right_key] if inclusive else left[left_key] > right[right_key]
+        return left.asof_join(right, on=on, predicates=[left[left_unit] == right[right_unit]])
+
+    def least(self, *values: Any) -> Any:
+        return ibis.least(*values)
+
+    def greatest(self, *values: Any) -> Any:
+        return ibis.greatest(*values)
+
+    def supports_exact_prefix(self, backend_name: str) -> bool:
+        return backend_name == self.name and current_dialect().name == backend_name
 
 
 def raw_connection(con: Any) -> Any:

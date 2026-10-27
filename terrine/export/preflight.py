@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import pyarrow as pa
 
+from terrine.backends.registry import engine_supports
 from terrine.data import ColumnMeta, MaterializedFrame, Provenance, Roles
 from terrine.errors import RefusalSpec
 
@@ -192,7 +193,7 @@ def preflight_warehouse(
 
     _check_metadata(provenance)
     con = cast("Backend", ibis.get_backend(table))
-    if con.name != "duckdb":
+    if not engine_supports(con.name, "warehouse_preflight"):
         raise _SNAPSHOT_REQUIRED.error()
     try:
         con.raw_sql("BEGIN TRANSACTION")

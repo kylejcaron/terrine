@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
+from terrine.backends.registry import engine_supports
 from terrine.errors import RefusalSpec
 from terrine.semantic.time import boundary_timezone
 from terrine.windows import Window
@@ -65,7 +66,7 @@ def supports_event_resolution(dialect: str) -> bool:
     PostgreSQL and BigQuery resolve exactly at their native microsecond
     precision, Snowflake at its nanosecond precision.
     """
-    return dialect.casefold() in {"duckdb", "postgres", "bigquery", "snowflake"}
+    return engine_supports(dialect, "event_resolution")
 
 
 def _wall_clock_aligned(anchor: datetime, offset_seconds: int, day_boundary: str) -> bool:
