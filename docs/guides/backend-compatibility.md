@@ -277,8 +277,11 @@ the version needed for native `BIGNUM` types.
 The [distribution acceptance command][distribution] builds a wheel from the
 sdist, compares package contents, installs it into a fresh environment outside
 the checkout, checks that optional distributions are absent, and imports every
-public facade with optional imports blocked. It then installs the DuckDB extra
-and executes the exact README tutorial, including retained staging and reopening.
+public facade with optional imports blocked. It then installs the DuckDB and
+pandas extras and executes the exact README tutorial to collect a compact
+dataframe with completeness and reason columns. Retained staging and reopening
+are exercised by the [first-dataset guide](first-dataset.md#keep-a-pinned-dataset)
+in the [source integration acceptance](../../integration/warehouse_execution/test_ml_staging_examples.py).
 The installed package location is checked, so a source checkout cannot mask
 missing wheel files. The sdist retains guides, examples, typed package data, the
 Apache-2.0 `LICENSE` and `NOTICE`, and the direct-dependency notice inventory;

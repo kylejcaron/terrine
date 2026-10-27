@@ -44,7 +44,8 @@ with TemporaryDirectory(prefix="terrine-first-") as directory:
             features={"before": tr.agg("sessions_count", window=("-1d", "0s"))},
             outcomes={"after": tr.agg("sessions_count", window=("0s", "1d"))},
         )
-        print(design.build(model).to_pandas().sort_values("unit").to_string(index=False))
+        data = design.build(model).to_pandas()
+        print(data.sort_values("unit").to_string(index=False))
     finally:
         con.disconnect()
 ```
