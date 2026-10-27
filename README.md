@@ -15,9 +15,9 @@ Most data science datasets come in a few shapes:
 
 Each time, the SQL is the same pile of date joins and window boundaries, rewritten by hand. Terrine takes the shape as a starting point. You name the rows you want and the windows to aggregate over; Terrine writes and runs the queries.
 
-Because Terrine knows each row's snapshot time, features can only look backwards and labels only forwards. Each value also says whether its window was fully covered by your data, so you decide how to treat gaps for your problem.
+Because Terrine knows each row's snapshot time, features can only look backwards and targets only forwards. Each value also says whether its window was fully covered by your data, so you decide how to treat gaps for your problem.
 
-## Example: a churn training table
+## Example: a customer spend forecasting table
 
 Requires Python 3.13 or 3.14.
 
@@ -54,7 +54,8 @@ model = tr.Model.from_tables(
     )},
 )
 
-# One row per customer every 28 days: 30 days of history, 30 days of future.
+# One row per customer every 28 days: the last 30 days as features,
+# spend in the next 30 days as the target.
 design = tr.recipes.time_series(
     "customer", every="28d", start="2025-02-01", end="2025-03-02",
     features={
@@ -62,24 +63,24 @@ design = tr.recipes.time_series(
         "spend_30d": tr.agg("orders_amount_sum", window=("-30d", "0s")),
     },
     outcomes={
-        "orders_next_30d": tr.gt(tr.agg("orders_count", window=("0s", "30d")), 0),
+        "spend_next_30d": tr.agg("orders_amount_sum", window=("0s", "30d")),
     },
 )
 
 data = design.build(model).to_pandas()
-columns = ["unit", "t0", "orders_30d", "spend_30d", "orders_next_30d", "orders_next_30d__reason"]
+columns = ["unit", "t0", "orders_30d", "spend_30d", "spend_next_30d", "spend_next_30d__reason"]
 print(data[columns].assign(t0=data["t0"].dt.date).sort_values(["t0", "unit"]).to_string(index=False))
 ```
 <!-- --8<-- [end:first-dataset] -->
 
 ```text
- unit         t0  orders_30d  spend_30d orders_next_30d orders_next_30d__reason
-alice 2025-02-01           2       75.0            True                    <NA>
-  bob 2025-02-01           1       80.0           False                    <NA>
-carol 2025-02-01           0        0.0           False                    <NA>
-alice 2025-03-01           1       25.0            <NA>     incomplete_coverage
-  bob 2025-03-01           0        0.0            <NA>     incomplete_coverage
-carol 2025-03-01           0        0.0            <NA>     incomplete_coverage
+ unit         t0  orders_30d  spend_30d  spend_next_30d spend_next_30d__reason
+alice 2025-02-01           2       75.0            25.0                   <NA>
+  bob 2025-02-01           1       80.0             0.0                   <NA>
+carol 2025-02-01           0        0.0             0.0                   <NA>
+alice 2025-03-01           1       25.0            <NA>    incomplete_coverage
+  bob 2025-03-01           0        0.0            <NA>    incomplete_coverage
+carol 2025-03-01           0        0.0            <NA>    incomplete_coverage
 ```
 
 (Only some columns are printed; `t0` is shown as a date.)
@@ -87,8 +88,8 @@ carol 2025-03-01           0        0.0            <NA>     incomplete_coverage
 Reading the output:
 
 - **Carol has no orders.** She still has a row at each snapshot, with zero counts.
-- **Alice's February 10 order** makes her February 1 label `True`, and it counts in her March 1 features. The same order is the future for one row and the past for the next.
-- **The March labels are unknown.** Their 30-day window runs past March 20, where the orders data ends. Drop them, keep them as unlabeled, or handle them however suits your model.
+- **Alice's February 10 order** is in her February 1 target and her March 1 features. The same order is the future for one row and the past for the next.
+- **The March targets are unknown.** Their 30-day window runs past March 20, where the orders data ends. Drop them, keep them for scoring, or handle them however suits your model.
 
 Terrine names metrics after your table and columns: `orders_count`, `orders_amount_sum` and `orders_amount_mean`. Every value has a `<name>__complete` flag and a `<name>__reason` column, so you can filter or impute deliberately.
 
@@ -107,7 +108,7 @@ Terrine names metrics after your table and columns: `orders_count`, `orders_amou
 
 | You want | Recipe | Guide |
 | --- | --- | --- |
-| Churn, propensity, forecasting features with labels | `time_series` | [Scheduled time series](https://github.com/kylejcaron/terrine/blob/main/docs/guides/temporal-engine.md#scheduled-time-series) |
+| Forecasting, propensity and other features-plus-target tables | `time_series` | [Scheduled time series](https://github.com/kylejcaron/terrine/blob/main/docs/guides/temporal-engine.md#scheduled-time-series) |
 | Customer lifetime value curves by cohort | `ltv` | [Cumulative LTV](https://github.com/kylejcaron/terrine/blob/main/docs/guides/trajectories-survival.md#cumulative-ltv) |
 | Time-to-event / survival analysis | `survival`, `life_table` | [Survival records](https://github.com/kylejcaron/terrine/blob/main/docs/guides/trajectories-survival.md#survival-records) |
 | Behavior before and after an event (event study) | `event_panel` | [Event panels](https://github.com/kylejcaron/terrine/blob/main/docs/guides/sequential-panels.md#event-panels) |

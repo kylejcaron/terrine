@@ -51,10 +51,10 @@ def test_readme_builds_and_reopens_first_dataset(tmp_path, monkeypatch):
     assert data["unit"].tolist() == ["alice", "bob", "carol"] * 2
     assert data["orders_30d"].tolist() == [2, 1, 0, 1, 0, 0]
     assert data["spend_30d"].tolist() == [75.0, 80.0, 0.0, 25.0, 0.0, 0.0]
-    assert data["orders_next_30d"].iloc[:3].tolist() == [True, False, False]
-    assert data["orders_next_30d"].iloc[3:].isna().all()
-    assert data["orders_next_30d__reason"].iloc[:3].isna().all()
-    assert data["orders_next_30d__reason"].iloc[3:].eq("incomplete_coverage").all()
+    assert data["spend_next_30d"].iloc[:3].tolist() == [25.0, 0.0, 0.0]
+    assert data["spend_next_30d"].iloc[3:].isna().all()
+    assert data["spend_next_30d__reason"].iloc[:3].isna().all()
+    assert data["spend_next_30d__reason"].iloc[3:].eq("incomplete_coverage").all()
     assert namespace["result"].roles.features == ("orders_30d", "spend_30d")
-    assert namespace["result"].roles.outcomes == ("orders_next_30d",)
+    assert namespace["result"].roles.outcomes == ("spend_next_30d",)
     assert namespace["reopened"].manifest == namespace["dataset"].manifest

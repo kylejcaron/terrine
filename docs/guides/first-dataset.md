@@ -9,7 +9,7 @@ uv pip install 'terrine[duckdb,pandas]'
 
 No sibling project, warehouse account or semantic adapter is required. The
 complete executable tutorial lives in the
-[README](../../README.md#example-a-churn-training-table). To run it from a source checkout:
+[README](../../README.md#example-a-customer-spend-forecasting-table). To run it from a source checkout:
 
 ```sh
 uv sync --extra duckdb --extra pandas
@@ -41,9 +41,9 @@ sources, including unused label sources, do not.
 
 The tutorial has three customers; `carol` has no orders. A complete empty count
 is zero, and every roster customer gets a row. An order at exactly time zero
-would be excluded from `[-30d,0s)` and included in `[0s,30d)`. Labels whose
+would be excluded from `[-30d,0s)` and included in `[0s,30d)`. Targets whose
 window extends past the declared completeness end are null with reason
-`incomplete_coverage`, not false. The compact `to_pandas()` view keeps each value immediately followed
+`incomplete_coverage`. The compact `to_pandas()` view keeps each value immediately followed
 by `<name>__complete` and `<name>__reason`, while omitting observation bounds,
 resolved-time bookkeeping and anchor provenance. Pass
 `include_observation_metadata=True` to keep those columns. Arrow is always
@@ -101,7 +101,7 @@ with TemporaryDirectory(prefix="terrine-first-") as directory:
             values=("amount",), complete=("2025-01-01", "2025-03-20"),
         )},
     )
-    dataset = design.build(local_model).stage("churn_training", budget=budget)
+    dataset = design.build(local_model).stage("spend_forecast", budget=budget)
     reopened = tr.Dataset.from_manifest(dataset.manifest, con=local)
     rows = [
         row
