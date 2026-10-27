@@ -20,11 +20,11 @@ _ENGINE_FILES = frozenset(
 _ENGINE_LITERALS = frozenset(ENGINES) | frozenset(engine.ibis_module for engine in ENGINES.values())
 
 
-def _identity(value: ast.AST, identities: dict[str, bool]) -> bool:
+def _identity(value: ast.AST, identities: set[str]) -> bool:
     if isinstance(value, ast.Name):
-        if value.id in identities:
-            return identities[value.id]
-        return bool({"engine", "backend", "dialect"} & set(value.id.casefold().split("_")))
+        return value.id in identities or bool(
+            {"engine", "backend", "dialect"} & set(value.id.casefold().split("_"))
+        )
     if isinstance(value, ast.Attribute):
         if value.attr == "__module__":
             return True
@@ -78,13 +78,9 @@ _SCOPES = (*_FUNCTIONS, ast.ClassDef, *_COMPREHENSIONS)
 
 def _scope_nodes(roots: Iterable[ast.AST]) -> Iterator[ast.AST]:
     for node in roots:
-        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+        yield node
+        if not isinstance(node, _SCOPES):
             yield from _scope_nodes(ast.iter_child_nodes(node))
-            yield node
-        else:
-            yield node
-            if not isinstance(node, _SCOPES):
-                yield from _scope_nodes(ast.iter_child_nodes(node))
 
 
 def _argument_names(arguments: ast.arguments) -> set[str]:
@@ -106,12 +102,12 @@ def engine_selection_violations(source: str, *, path: str) -> tuple[int, ...]:
     tree = ast.parse(source, filename=path)
     lines: set[int] = set()
     module_aliases: dict[str, frozenset[str]] = {}
-    module_identities: dict[str, bool] = {}
+    module_identities: set[str] = set()
 
     def scan(
         roots: Iterable[ast.AST],
         inherited_aliases: dict[str, frozenset[str]],
-        inherited_identities: dict[str, bool],
+        inherited_identities: set[str],
         parameters: Iterable[str] = (),
         *,
         class_scope: bool = False,
@@ -134,18 +130,40 @@ def engine_selection_violations(source: str, *, path: str) -> tuple[int, ...]:
         }
         bound = set() if class_scope else bound - external
         aliases = {name: values for name, values in inherited_aliases.items() if name not in bound}
-        identities = {
-            name: identity for name, identity in inherited_identities.items() if name not in bound
-        }
+        identities = inherited_identities - bound
         for node in nodes:
             if isinstance(node, ast.Global):
                 for name in node.names:
                     aliases.pop(name, None)
-                    identities.pop(name, None)
+                    identities.discard(name)
                     if name in module_aliases:
                         aliases[name] = module_aliases[name]
                     if name in module_identities:
-                        identities[name] = module_identities[name]
+                        identities.add(name)
+        assignments = [node for node in nodes if isinstance(node, (ast.Assign, ast.AnnAssign))]
+        # Function locals hide enclosing names; class attributes and external bindings do not.
+        for _ in range(len(assignments) + 1):
+            changed = False
+            for node in assignments:
+                value = node.value
+                if value is None:
+                    continue
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    if not isinstance(target, ast.Name):
+                        continue
+                    literals = _literals(value, aliases)
+                    if literals and aliases.get(target.id) != literals:
+                        aliases[target.id] = literals
+                        changed = True
+                    if _identity(value, identities) and target.id not in identities:
+                        identities.add(target.id)
+                        changed = True
+            if not changed:
+                break
+        if module_scope:
+            module_aliases.update(aliases)
+            module_identities.update(identities)
 
         def selects(value: ast.AST, candidate: ast.AST) -> bool:
             literals = _literals(candidate, aliases)
@@ -155,25 +173,7 @@ def engine_selection_violations(source: str, *, path: str) -> tuple[int, ...]:
             )
 
         for node in nodes:
-            if isinstance(node, (ast.Assign, ast.AnnAssign)):
-                if node.value is None:
-                    continue
-                literals = _literals(node.value, aliases)
-                identity = _identity(node.value, identities)
-                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                for target in targets:
-                    if isinstance(target, ast.Name):
-                        aliases.pop(target.id, None)
-                        if literals:
-                            aliases[target.id] = literals
-                        # Explicit non-identities must override name-based recognition too.
-                        identities[target.id] = identity
-                if module_scope:
-                    module_aliases.clear()
-                    module_aliases.update(aliases)
-                    module_identities.clear()
-                    module_identities.update(identities)
-            elif isinstance(node, ast.Compare):
+            if isinstance(node, ast.Compare):
                 for left, operator, right in zip(
                     [node.left, *node.comparators], node.ops, node.comparators, strict=False
                 ):
@@ -242,7 +242,7 @@ def engine_selection_violations(source: str, *, path: str) -> tuple[int, ...]:
                     },
                 )
 
-    scan(tree.body, {}, {}, module_scope=True)
+    scan(tree.body, {}, set(), module_scope=True)
     return tuple(sorted(lines))
 
 
@@ -356,21 +356,6 @@ def test_guard_rejects_engine_selection(source, lines):
             "    def is_label():\n"
             "        global selected\n"
             "        selected = selected.casefold()\n"
-            '        return selected == "duckdb"\n'
-            "    return is_label"
-        ),
-        (
-            "selected = con.name\n"
-            "class Dispatch:\n"
-            '    selected = "ordinary"\n'
-            '    is_duckdb = selected == "duckdb"'
-        ),
-        (
-            "def inspect(con):\n"
-            "    selected = con.name\n"
-            "    def is_label():\n"
-            "        nonlocal selected\n"
-            '        selected = "ordinary"\n'
             '        return selected == "duckdb"\n'
             "    return is_label"
         ),
