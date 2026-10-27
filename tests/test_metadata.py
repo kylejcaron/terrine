@@ -431,36 +431,58 @@ _ALL_STAMP_FIELDS = ("dialect", "engine_name", "engine_status")
 
 
 @pytest.mark.parametrize(
-    ("stamp", "reason", "fields"),
+    ("stamp", "backend", "reason", "fields"),
     [
         (
             {"dialect": "generic", "engine_status": "unverified"},
+            "sqlite",
             "partial",
             ("dialect", "engine_status"),
         ),
         (
             {"engine_name": "sqlite", "engine_status": "unverified"},
+            "sqlite",
             "partial",
             ("engine_name", "engine_status"),
         ),
-        ({"engine_name": "sqlite", "dialect": "generic"}, "partial", ("dialect", "engine_name")),
-        ({"engine_name": "duckdb"}, "partial", ("engine_name",)),
+        (
+            {"engine_name": "sqlite", "dialect": "generic"},
+            "sqlite",
+            "partial",
+            ("dialect", "engine_name"),
+        ),
+        ({"engine_name": "duckdb"}, "duckdb", "partial", ("engine_name",)),
         (
             {"engine_name": "sqlite", "dialect": "generic", "engine_status": "verified"},
+            "sqlite",
             "inconsistent",
             _ALL_STAMP_FIELDS,
         ),
         (
             {"engine_name": "duckdb", "dialect": "postgres", "engine_status": "verified"},
+            "duckdb",
             "inconsistent",
             _ALL_STAMP_FIELDS,
         ),
         (
             {"engine_name": "duckdb", "dialect": "duckdb", "engine_status": "trusted"},
+            "duckdb",
             "inconsistent",
             _ALL_STAMP_FIELDS,
         ),
-        ({}, "unknown_legacy_engine", ()),
+        (
+            {"engine_name": "duckdb", "dialect": "duckdb", "engine_status": "verified"},
+            "sqlite",
+            "inconsistent",
+            _ALL_STAMP_FIELDS,
+        ),
+        (
+            {"engine_name": "sqlite", "dialect": "generic", "engine_status": "unverified"},
+            "duckdb",
+            "inconsistent",
+            _ALL_STAMP_FIELDS,
+        ),
+        ({}, "arrow", "unknown_legacy_engine", ()),
     ],
     ids=[
         "unverified_without_engine_name",
@@ -470,10 +492,12 @@ _ALL_STAMP_FIELDS = ("dialect", "engine_name", "engine_status")
         "generic_claims_verified",
         "registered_name_dialect_mismatch",
         "invalid_status",
+        "verified_stamp_contradicts_execution_backend",
+        "generic_stamp_contradicts_execution_backend",
         "absent_unknown_legacy_engine",
     ],
 )
-def test_partial_or_inconsistent_engine_stamp_refuses(stamp, reason, fields):
+def test_partial_or_inconsistent_engine_stamp_refuses(stamp, backend, reason, fields):
     import copy
     import pickle
 
@@ -482,8 +506,7 @@ def test_partial_or_inconsistent_engine_stamp_refuses(stamp, reason, fields):
     for name in _ALL_STAMP_FIELDS:
         del payload["provenance"][name]
     payload["provenance"].update(stamp)
-    if not stamp:
-        payload["provenance"]["execution_snapshot"]["backend"] = "arrow"
+    payload["provenance"]["execution_snapshot"]["backend"] = backend
     serialized = json.dumps({**payload, "arrow_ipc": json.loads(frame.to_json())["arrow_ipc"]})
     arrow = frame.table.replace_schema_metadata(
         {
@@ -511,7 +534,13 @@ def test_partial_or_inconsistent_engine_stamp_refuses(stamp, reason, fields):
                 restored.context["reason"] = "partial"  # ty: ignore[invalid-assignment] intentional mutation
     if len(stamp) == len(_ALL_STAMP_FIELDS):
         with pytest.raises(TerrineError) as constructed:
-            _provenance((stamp["engine_name"], stamp["dialect"], stamp["engine_status"]))
+            replace(
+                _provenance(),
+                execution_snapshot=ExecutionSnapshot(None, backend, {}, None, "unverified"),
+                engine_name=stamp["engine_name"],
+                dialect=stamp["dialect"],
+                engine_status=stamp["engine_status"],
+            )
         assert constructed.value.code == "terrine.metadata.invalid_engine_stamp"
         assert constructed.value.context["reason"] == "inconsistent"
         assert constructed.value.context["fields"] == _ALL_STAMP_FIELDS

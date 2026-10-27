@@ -883,7 +883,6 @@ class Provenance:
     def __post_init__(self) -> None:
         for name in ("design_hash", "model_hash", "shape"):
             _nonempty(getattr(self, name), name)
-        _check_engine_stamp(self.engine_name, self.dialect, self.engine_status)
         object.__setattr__(
             self,
             "feature_cutoffs",
@@ -927,6 +926,12 @@ class Provenance:
             raise TypeError("eligibility_summary must be EligibilitySummary or None")
         if not isinstance(self.execution_snapshot, ExecutionSnapshot):
             raise TypeError("execution_snapshot must be ExecutionSnapshot")
+        _check_engine_stamp(
+            self.engine_name,
+            self.dialect,
+            self.engine_status,
+            self.execution_snapshot.backend,
+        )
         if self.state_panel is not None and not isinstance(self.state_panel, StatePanelMeta):
             raise TypeError("state_panel must be StatePanelMeta or None")
         if self.dataset_view is not None and not isinstance(self.dataset_view, DatasetViewMeta):
@@ -1054,10 +1059,12 @@ def _check_engine_stamp(
     engine_name: Any,
     dialect: Any,
     engine_status: Any,
+    backend: Any,
     fields: tuple[str, ...] = _ENGINE_STAMP_FIELDS,
 ) -> None:
-    """Refuse a complete stamp that contradicts the registered policy it names.
+    """Refuse a complete stamp that contradicts its execution evidence.
 
+    ``engine_name`` must be the backend the execution snapshot recorded.
     ``dialect`` names an expression policy, so the registry decides whether it
     exists and which status it carries; a registered engine also executes under
     its own name, whereas the portable policy records the actual backend.
@@ -1067,6 +1074,7 @@ def _check_engine_stamp(
         engine is None
         or not isinstance(engine_name, str)
         or not engine_name
+        or engine_name != backend
         or engine_status != engine.status
         or (engine.status == "verified" and engine_name != dialect)
     ):
@@ -1083,18 +1091,18 @@ def _decode_engine_stamp(
     payload with all three fields absent decodes as that verified engine.
     Any other incomplete stamp refuses rather than being upgraded.
     """
+    snapshot = value.get("execution_snapshot")
+    backend = snapshot.get("backend") if isinstance(snapshot, Mapping) else None
     present = tuple(name for name in _ENGINE_STAMP_FIELDS if name in value)
     if not present:
-        snapshot = value.get("execution_snapshot")
-        backend = snapshot.get("backend") if isinstance(snapshot, Mapping) else None
         engine = get_engine(backend) if isinstance(backend, str) else None
-        if engine is None or engine.status != "verified":
+        if not isinstance(backend, str) or engine is None or engine.status != "verified":
             raise _INVALID_ENGINE_STAMP.error(reason="unknown_legacy_engine", fields=present)
-        return engine.name, engine.name, "verified"
+        return backend, backend, "verified"
     if present != _ENGINE_STAMP_FIELDS:
         raise _INVALID_ENGINE_STAMP.error(reason="partial", fields=present)
     stamp = (value["engine_name"], value["dialect"], value["engine_status"])
-    _check_engine_stamp(*stamp, fields=present)
+    _check_engine_stamp(*stamp, backend, fields=present)
     return stamp
 
 

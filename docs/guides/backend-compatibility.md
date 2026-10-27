@@ -55,7 +55,8 @@ Every materialized, staged or exported result records its engine stamp in
 registered engine) and `engine_status` that policy's registered status. The
 stamp survives Arrow, JSON, manifests and exports unchanged. Results saved by
 earlier versions carry no stamp and decode as their recorded verified execution
-dialect; a partial or contradictory stamp refuses with
+dialect; a partial stamp, or one contradicting the registered policy or the
+execution snapshot's backend, refuses with
 `terrine.metadata.invalid_engine_stamp` and is never upgraded to verified.
 
 Runtime DuckDB publication retains its fenced, transactional manifest switch;

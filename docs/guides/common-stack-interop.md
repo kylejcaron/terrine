@@ -86,12 +86,15 @@ schema metadata.
 
 The engine stamp (`Provenance.engine_name`, `dialect`, `engine_status`) names
 the backend that executed, the admitted expression policy and whether that
-policy is verified. Payloads saved before the stamp existed carry none of the
-three fields and decode as their recorded verified execution dialect; a payload
-with some fields, a contradictory stamp, or no stamp and an unregistered
-execution backend refuses with `terrine.metadata.invalid_engine_stamp`
-(`reason` of `partial`, `inconsistent` or `unknown_legacy_engine`, plus the
-present `fields`) rather than reporting verified status it cannot establish.
+policy is verified. `engine_name` always equals
+`execution_snapshot.backend`. Payloads saved before the stamp existed carry
+none of the three fields and decode as their recorded verified execution
+dialect; a payload with some fields, a contradictory stamp (a status or
+`engine_name` the registered policy or the execution snapshot does not
+support), or no stamp and an unregistered execution backend refuses with
+`terrine.metadata.invalid_engine_stamp` (`reason` of `partial`, `inconsistent`
+or `unknown_legacy_engine`, plus the present `fields`) rather than reporting
+verified status it cannot establish.
 
 Do not zero-fill unavailable values or discard their reason columns when preparing
 downstream data. `anchor_provenance`, `_observed_from` and `_observed_until` are

@@ -23,8 +23,9 @@
   life tables, Arrow, JSON, manifests and exports. Arrow metadata stays
   version 2 under `terrine.materialized_frame.v2` and JSON metadata version 1.
   Payloads saved before the stamp existed decode as their recorded verified
-  execution dialect; a partial or contradictory stamp, or an absent stamp with
-  an unregistered execution backend, refuses with the new
+  execution dialect; a partial stamp, one contradicting the registered policy
+  or the execution snapshot's backend, or an absent stamp with an unregistered
+  execution backend, refuses with the new
   `terrine.metadata.invalid_engine_stamp` (`reason`, present `fields`) instead
   of acquiring verified status. Constructing `Provenance` now requires the
   three fields.
