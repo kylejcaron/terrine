@@ -29,6 +29,8 @@ import ibis
 import ibis.expr.datatypes as dt
 import pyarrow as pa
 
+from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE, _SNAPSHOT_UNAVAILABLE
+from terrine.backends.registry import ENGINES
 from terrine.errors import RefusalSpec
 from terrine.execution._metadata import invalidate_metadata
 from terrine.semantic.models import Catalog, RelationSpec, SqlQuery, TableRef
@@ -60,8 +62,6 @@ Key = tuple[str, str, str]
 
 
 def _snapshot_error(reason: str):
-    from terrine.execution.inputs import _SNAPSHOT_UNAVAILABLE
-
     return _SNAPSHOT_UNAVAILABLE.error(reason=reason)
 
 
@@ -682,3 +682,69 @@ def _arrow_refusal() -> Generator[None]:
         if "out of bounds timestamp" in message or "overflows int64 range" in message:
             raise _TIMESTAMP_RANGE.error(detail=message.split(":")[-1].strip()[:200]) from exc
         raise
+
+
+class _SnowflakeProvider:
+    capabilities = ENGINES["snowflake"].capabilities
+
+    def matches(self, con: Any) -> bool:
+        return type(con).__module__ == ENGINES["snowflake"].ibis_module
+
+    def dialect(self, con: Any) -> str:
+        return ENGINES["snowflake"].name
+
+    def resolve_relation(self, con: Any, relation: RelationSpec) -> ibis.Table:
+        from terrine.execution import _snowflake
+
+        return _snowflake.resolve(con, relation)
+
+    def required_relations(self, catalog, con, *, units=None):
+        from terrine.execution import _snowflake
+
+        return _snowflake.required_relations(catalog, con, units=units)
+
+    def bind_resolver(self, catalog, con, **kwargs):
+        """Resolve relations; with ``session`` (the execution's Time Travel pin)
+        every relation is admitted to it and re-verified after each read."""
+        from terrine.execution import _snowflake
+        from terrine.execution.inputs import _INVALID
+
+        if kwargs.get("input_binding") is not None:
+            raise _CAPABILITY_UNAVAILABLE.error(
+                backend="snowflake",
+                operation="retained_snapshot",
+                status="unverified",
+                route="Retained input bindings are DuckDB-only; materialize directly.",
+            )
+        session = kwargs.get("session")
+        _snowflake.required_relations(catalog, con, units=kwargs.get("units"))
+        admitted: dict[tuple[str, str], Any] = {}
+        fingerprints: dict[tuple[str, str], str] = {}
+
+        def resolve(relation: RelationSpec) -> Any:
+            key = (relation.kind, relation.name if isinstance(relation, TableRef) else relation.sql)
+            closure = _snowflake.closure_for(relation, con)
+            if session is not None:
+                session.admit(closure.values())
+            fingerprint = _snowflake.fingerprint(closure)
+            if key in admitted:
+                if fingerprints[key] != fingerprint:
+                    raise _INVALID.error(
+                        reason="relation definition or identity changed after Model binding"
+                    )
+                return admitted[key]
+            admitted[key] = _snowflake.resolve(con, relation, catalog.dialect, closure)
+            fingerprints[key] = fingerprint
+            return admitted[key]
+
+        return resolve
+
+    def open_execution(self, catalog, con, *, units=None, input_binding=None):
+        from terrine.execution.inputs import _open_snowflake_execution
+
+        return _open_snowflake_execution(
+            self, catalog, con, units=units, input_binding=input_binding
+        )
+
+
+PROVIDER = _SnowflakeProvider()

@@ -7,7 +7,7 @@ from typing import cast
 import ibis
 import ibis.expr.types as ir
 
-from terrine.backends.dialect import dialect_of, dialect_scope
+from terrine.backends.dialect import current_dialect, dialect_scope
 from terrine.backends.numeric import (
     EXACT_OVERFLOW,
     exact_literal,
@@ -40,7 +40,9 @@ def compile_cohorts(
 ) -> CompiledStudy:
     """Group an already compiled LTV relation; this function never recompiles a Frame."""
     # Summaries compile after the Design's compile scope ends; use the table's backend.
-    with dialect_scope(dialect_of(*(study.table[name] for name in study.table.columns[:1]))):
+    with dialect_scope(
+        current_dialect(*(study.table[name] for name in study.table.columns[:1])).name
+    ):
         return _compile_cohorts(study, grouping=grouping, value_column=value_column)
 
 
@@ -58,7 +60,7 @@ def _compile_cohorts(
     table = study.table
     _rank, time_seconds, time_nanos = timestamp_parts(table.cohort_time)
     origin = cast(ir.TimestampValue, ibis.literal(grouping.bucket_origin))
-    backend = dialect_of(table.cohort_time)
+    backend = current_dialect(table.cohort_time).name
     _origin_rank, origin_seconds, origin_nanos = timestamp_parts(origin, backend=backend)
     elapsed_seconds = time_seconds - origin_seconds
     elapsed_nanos = time_nanos - origin_nanos

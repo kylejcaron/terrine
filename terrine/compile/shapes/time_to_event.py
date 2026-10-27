@@ -10,7 +10,7 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
-from terrine.backends.dialect import dialect_of
+from terrine.backends.dialect import current_dialect
 from terrine.backends.extrema import greatest, least
 from terrine.backends.timestamps import _UNSUPPORTED as _TIMESTAMP_ORDER_UNSUPPORTED
 from terrine.backends.timestamps import (
@@ -43,7 +43,7 @@ _INCOMPLETE_HISTORY = "incomplete_initial_history"
 def _bounded_nanoseconds(scale: int | None) -> bool:
     """Whether a nanosecond axis is DuckDB's, bounded by int64 nanoseconds
     (1677-2262); Snowflake's spans years 1 to 9999 like a microsecond axis."""
-    return scale == 9 and dialect_of() == "duckdb"
+    return scale == 9 and current_dialect().name == "duckdb"
 
 
 def _validate_nanosecond_axis(design: Design, timestamp_types) -> None:

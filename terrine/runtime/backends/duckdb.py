@@ -12,7 +12,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 
-from terrine.backends.capabilities import DUCKDB_CAPABILITIES
+from terrine.backends.registry import ENGINES
 from terrine.errors import RefusalSpec
 from terrine.runtime.backends.base import (
     PublicationReceipt,
@@ -35,7 +35,7 @@ _LAZY_DURATION_UNSUPPORTED = RefusalSpec(
 class DuckDBBackend:
     """DuckDB publication via one transaction containing immutable tables and manifest switch."""
 
-    capabilities = DUCKDB_CAPABILITIES
+    capabilities = ENGINES["duckdb"].capabilities
 
     def __init__(self, con: Any, *, namespace: str) -> None:
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", namespace):

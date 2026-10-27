@@ -9,8 +9,9 @@ from integration.warehouse_execution.postgres_fixtures import connect_postgres
 from integration.warehouse_execution.postgres_fixtures import (
     postgres_scratch as postgres_scratch,  # noqa: F401
 )
+from terrine.backends.engines.postgres import raw_connection
 from terrine.errors import TerrineError
-from terrine.execution._postgres import PostgresSession, check_functions, raw_connection
+from terrine.execution._postgres import PostgresSession, check_functions
 from terrine.execution.backend import backend_provider
 from terrine.execution.inputs import open_execution
 from terrine.semantic.models import SqlQuery, TableRef
@@ -59,7 +60,6 @@ def _count(context, relation) -> int:
     return int(context.execute(context.resolve(relation).count()).as_py())
 
 
-
 def test_server_identity_ignores_shadowed_version_function(postgres_scratch):  # noqa: F811
     con = postgres_scratch.con
     schema = postgres_scratch.schema
@@ -72,6 +72,7 @@ def test_server_identity_ignores_shadowed_version_function(postgres_scratch):  #
     provider = backend_provider(con)
 
     assert provider.dialect(con) == "postgres"
+
 
 def test_private_read_holds_one_snapshot_and_never_touches_the_callers_transaction(
     postgres_scratch,  # noqa: F811

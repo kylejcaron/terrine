@@ -8,7 +8,7 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
-from terrine.backends.dialect import dialect_of
+from terrine.backends.dialect import current_dialect
 from terrine.backends.joins import asof_join
 from terrine.backends.timestamps import (
     _struct_key,
@@ -62,7 +62,7 @@ def _lossless(table: ibis.Table, *columns: str) -> ibis.Table:
 
 def _reverse_time_key(value: ir.TimestampValue) -> ir.Value:
     """A key whose ascending order is the instants' descending order."""
-    dialect = dialect_of(value)
+    dialect = current_dialect(value).name
     if dialect in {"postgres", "bigquery", "snowflake"}:
         # One exact scalar: finite instants' nanoseconds stay far below 10**38.
         rank, seconds, nanos = timestamp_parts(value, backend=dialect)

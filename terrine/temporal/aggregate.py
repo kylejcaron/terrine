@@ -13,7 +13,7 @@ import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 import pyarrow as pa
 
-from terrine.backends.dialect import dialect_of
+from terrine.backends.dialect import current_dialect
 from terrine.backends.extrema import greatest, least
 from terrine.backends.numeric import (
     EXACT_OVERFLOW as _EXACT_OVERFLOW,
@@ -222,7 +222,7 @@ def narrow_exact(coefficient, scale: int, target: str | dt.DataType):
     overflow, so the range is checked on the exact coefficient before casting.
     """
     text = _scaled_text(coefficient, scale)
-    if dialect_of() not in {"postgres", "snowflake"}:
+    if current_dialect().name not in {"postgres", "snowflake"}:
         return text.try_cast(target)
     target_type = dt.dtype(target)
     if isinstance(target_type, dt.SignedInteger):

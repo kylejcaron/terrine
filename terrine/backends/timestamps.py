@@ -16,7 +16,7 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
-from terrine.backends.dialect import dialect_of, unavailable
+from terrine.backends.dialect import current_dialect, unavailable
 from terrine.backends.numeric import truncating_quotient
 from terrine.errors import RefusalSpec
 
@@ -73,7 +73,7 @@ def _isfinite(value) -> bool:
 
 
 def timestamp_is_finite(value: ir.TimestampValue) -> ir.BooleanValue:
-    dialect = dialect_of(value)
+    dialect = current_dialect(value).name
     if dialect in _FINITE:
         return cast(ir.BooleanValue, ibis.literal(True))
     if dialect not in _NATIVE:
@@ -85,7 +85,7 @@ def timestamp_extremes(dtype: dt.Timestamp) -> tuple[ir.TimestampScalar, ir.Time
     """The lowest and highest values of ``dtype``: infinities where the backend has
     them (DuckDB, PostgreSQL), else the year 1 and year 9999 limits at the type's
     precision (BigQuery microseconds; Snowflake its declared scale, 9 by default)."""
-    dialect = dialect_of()
+    dialect = current_dialect().name
     if dialect in _FINITE:
         digits = 6 if dialect == "bigquery" else (dtype.scale if dtype.scale is not None else 9)
         low, high = "0001-01-01 00:00:00", "9999-12-31 23:59:59." + "9" * digits
@@ -147,7 +147,7 @@ def _sf_instant(timestamp):
 
 def utc_wall_clock(value: ir.Value) -> ir.TimestampValue:
     """An instant's naive UTC wall clock, independent of the session time zone."""
-    dialect = dialect_of(value)
+    dialect = current_dialect(value).name
     if dialect == "bigquery":
         # TIMESTAMP -> DATETIME converts in UTC; terrine's session sets no time zone.
         return cast(ir.TimestampValue, value.cast(dt.Timestamp()))
@@ -161,7 +161,7 @@ def utc_wall_clock(value: ir.Value) -> ir.TimestampValue:
 
 def utc_instant(value: ir.Value) -> ir.TimestampValue:
     """The UTC instant a naive UTC wall-clock value denotes."""
-    dialect = dialect_of(value)
+    dialect = current_dialect(value).name
     if dialect == "bigquery":
         return cast(ir.TimestampValue, value.cast(dt.Timestamp(timezone="UTC")))
     if dialect == "snowflake":
@@ -190,7 +190,7 @@ def timestamp_text(value: ir.TimestampValue) -> ir.StringValue:
     cast; Snowflake's cast follows the session's output format, so it renders
     with an explicit full-precision format instead.
     """
-    dialect = dialect_of(value)
+    dialect = current_dialect(value).name
     if dialect == "snowflake":
         if cast(dt.Timestamp, value.type()).timezone is None:
             return cast(ir.StringValue, _sf_naive_text(value, _SF_TEXT_FORMAT))
@@ -251,7 +251,7 @@ def timestamp_parts(
     Every part is NULL when the value is NULL. Naive timestamps denote UTC. Pass
     ``backend`` when ``value`` may be an unbound literal compared with a bound column.
     """
-    dialect = backend or dialect_of(value)
+    dialect = backend or current_dialect(value).name
     if dialect == "bigquery":
         return _bigquery_parts(value)
     if dialect == "snowflake":
@@ -331,7 +331,7 @@ def timestamp_order_key(value: ir.TimestampValue) -> ir.Value:
     dtype = value.type()
     if not isinstance(dtype, dt.Timestamp):
         raise _UNSUPPORTED.error(dtype=str(dtype))
-    dialect = dialect_of(value)
+    dialect = current_dialect(value).name
     if dialect == "snowflake":
         return value
     if dialect in {"postgres", "bigquery"}:
@@ -387,7 +387,7 @@ def compare_timestamps(
     right_offset_seconds: int = 0,
 ) -> ir.BooleanValue:
     """Compare instants with an optional exact whole-second shift of the right operand."""
-    backend = dialect_of(left, right)
+    backend = current_dialect(left, right).name
     left_rank, left_seconds, left_nanos = timestamp_parts(left, backend=backend)
     right_rank, right_seconds, right_nanos = timestamp_parts(right, backend=backend)
     if right_offset_seconds:

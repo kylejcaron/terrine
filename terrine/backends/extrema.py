@@ -6,7 +6,7 @@ from typing import Any
 
 import ibis
 
-from terrine.backends.dialect import dialect_of
+from terrine.backends.dialect import current_dialect
 
 __all__ = ["greatest", "least"]
 
@@ -22,7 +22,7 @@ def _non_null(values: tuple[Any, ...]) -> tuple[Any, ...]:
     expressions = [
         value if isinstance(value, ibis.Value) else ibis.literal(value) for value in values
     ]
-    if dialect_of(*expressions) in _SKIPS_NULLS:
+    if current_dialect(*expressions).name in _SKIPS_NULLS:
         return values
     return tuple(
         ibis.coalesce(value, *(other for other in expressions if other is not value))

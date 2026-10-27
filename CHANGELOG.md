@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Backend compatibility
+
+- Centralize verified engine admission, capability records and expression
+  selection without changing supported builds or connection ownership.
+  Unsupported-operation refusal routes now name registered verified engines
+  implementing the operation, correcting stale DuckDB/PostgreSQL-only advice;
+  exact-ratio routes name PostgreSQL and BigQuery. Refusal codes and non-route
+  context are unchanged.
+
 ### Tests
 
 - Centralize known-answer engine conformance cases for whole-day schedules,

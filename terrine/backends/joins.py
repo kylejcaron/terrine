@@ -7,7 +7,7 @@ from typing import cast
 import ibis
 import ibis.expr.types as ir
 
-from terrine.backends.dialect import dialect_of
+from terrine.backends.dialect import current_dialect
 
 __all__ = ["asof_join", "has_native_asof"]
 
@@ -16,7 +16,7 @@ _NATIVE_ASOF = frozenset({"duckdb", "postgres", "snowflake"})
 
 def has_native_asof(*values: ibis.Value) -> bool:
     """Whether Ibis lowers ``asof_join`` to valid SQL on this backend."""
-    return dialect_of(*values) in _NATIVE_ASOF
+    return current_dialect(*values).name in _NATIVE_ASOF
 
 
 def asof_join(

@@ -24,7 +24,7 @@ import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 import sqlglot.expressions as sge
 
-from terrine.backends.dialect import dialect_of, unavailable
+from terrine.backends.dialect import current_dialect, unavailable
 from terrine.errors import RefusalSpec
 
 __all__ = [
@@ -71,16 +71,7 @@ _SCALED = frozenset({"duckdb", "snowflake"})
 
 
 def exact_type(*like: ir.Value) -> dt.DataType:
-    dialect = dialect_of(*like)
-    if dialect == "postgres":
-        return _PG_EXACT
-    if dialect == "duckdb":
-        return _DUCKDB_EXACT
-    if dialect == "bigquery":
-        return _BQ_EXACT
-    if dialect == "snowflake":
-        return _SF_EXACT
-    raise unavailable("exact_state", dialect)
+    return current_dialect(*like).exact_type()
 
 
 def is_exact_type(dtype: dt.DataType) -> bool:
@@ -90,7 +81,7 @@ def is_exact_type(dtype: dt.DataType) -> bool:
 
 def has_scaled_float_state(*like: ir.Value) -> bool:
     """Whether float state is a coefficient at a per-unit scale (DuckDB, Snowflake)."""
-    return dialect_of(*like) in _SCALED
+    return current_dialect(*like).name in _SCALED
 
 
 def exact_literal(value: int, *like: ir.Value) -> ir.Value:
@@ -126,7 +117,7 @@ def decimal_coefficient(value: ir.Value, scale: int) -> ir.Value:
     so its text without the point is the coefficient; BigQuery prints NUMERIC
     1.50 as ``1.5``, so it multiplies instead.
     """
-    dialect = dialect_of(value)
+    dialect = current_dialect(value).name
     if dialect == "bigquery":
         exact = value.cast(_BQ_EXACT)
         return _bq_exact_multiply(exact, exact_literal(10**scale, value)) if scale else exact
@@ -148,7 +139,7 @@ def coefficient_bounds(value: ir.Value) -> tuple[int, int]:
         return lower, upper
     if not isinstance(dtype, dt.Decimal) or dtype.precision is None:
         raise TypeError(f"{dtype} is not an exact type with a known precision")
-    if dtype.precision == 38 and dtype.scale == 0 and dialect_of(value) == "duckdb":
+    if dtype.precision == 38 and dtype.scale == 0 and current_dialect(value).name == "duckdb":
         return -(1 << 127), (1 << 127) - 1
     maximum = 10**dtype.precision - 1
     return -maximum, maximum
@@ -219,7 +210,7 @@ def _finite_text(value: ir.Value) -> tuple[ir.FloatingValue, ir.StringValue]:
     """
     widened = cast(ir.FloatingValue, value.cast(dt.float64))
     finite = float_is_finite(widened).ifelse(widened, ibis.null(dt.float64))
-    if dialect_of(value) == "snowflake":
+    if current_dialect(value).name == "snowflake":
         text = _sf_decfloat(finite).cast("string").lower()
     else:
         text = finite.cast("string")
@@ -283,7 +274,7 @@ def exact_float(
     widened = value.cast(dt.float64)
     text = widened.cast("string")
     never = cast(ir.BooleanValue, ibis.literal(False))
-    dialect = dialect_of(value)
+    dialect = current_dialect(value).name
     if dialect == "postgres":
         return text.cast(_PG_EXACT), never, never
     floating = cast(ir.FloatingValue, widened)
@@ -321,7 +312,7 @@ def exact_ratio(numerator: ir.Value, denominator: ir.Value) -> ir.Value:
     (``normalized_quotient``). PostgreSQL divides to at least 16 significant
     digits; BigQuery to 38 fractional digits.
     """
-    dialect = dialect_of(numerator, denominator)
+    dialect = current_dialect(numerator, denominator).name
     if dialect == "bigquery":
         return _bq_exact_divide(numerator, denominator)
     if dialect != "postgres":
@@ -343,7 +334,7 @@ def exact_is_nonfinite(value: ir.Value) -> ir.BooleanValue:
 
     Only PostgreSQL NUMERIC has non-finite values; BIGNUMERIC has none.
     """
-    dialect = dialect_of(value)
+    dialect = current_dialect(value).name
     if dialect == "bigquery":
         return cast(
             ir.BooleanValue, value.isnull().ifelse(ibis.null(dt.boolean), ibis.literal(False))
@@ -368,7 +359,7 @@ def exact_to_float(
     """
     false = ibis.literal(False)
     never = cast(ir.BooleanValue, false)
-    dialect = dialect_of(value)
+    dialect = current_dialect(value).name
     if dialect in _SCALED:
         text = value.cast("string") + "e-" + _scale_text(scale)
         result = _binary64(text, dialect)
@@ -465,7 +456,7 @@ def normalized(
     Digits past the 19th are dropped, perturbing the value by less than
     ``10**-18`` relative. A NULL or non-finite float gives NULL.
     """
-    dialect = dialect_of(value)
+    dialect = current_dialect(value).name
     wide = _wide_type(dialect)
     text = _finite_text(value)[1] if value.type().is_floating() else value.cast("string")
     sign, digits, fraction_digits, exponent = _decimal_parts(text)
@@ -493,7 +484,7 @@ def normalized_quotient(
     losing nothing but its truncation (less than ``10**-18`` relative). A zero
     denominator or a NULL operand gives NULL.
     """
-    dialect = dialect_of(n_significand, d_significand)
+    dialect = current_dialect(n_significand, d_significand).name
     wide = _wide_type(dialect)
     zero = _wide("0", dialect)
     numerator = _wide_abs(n_significand, dialect)
@@ -550,7 +541,7 @@ def rounded_normalized(
     ``p / q`` never rounds to infinity: that needs ``|t| ≥ MAX(1 + u / 2)``.
     """
     text = significand.cast("string") + "e" + (exponent - (_SIGNIFICAND_DIGITS - 1)).cast("string")
-    result = _binary64(text, dialect_of(significand))
+    result = _binary64(text, current_dialect(significand).name)
     overflow = (significand.notnull() & _not_converted(result)).fill_null(ibis.literal(False))
     return cast(ir.FloatingValue, overflow.ifelse(ibis.null().cast(dt.float64), result)), overflow
 
@@ -588,7 +579,7 @@ def _bq_exact_subtract(left, right):
 
 
 def exact_sum(value):
-    dialect = dialect_of(value)
+    dialect = current_dialect(value).name
     if dialect == "postgres":
         return _pg_exact_sum(value)
     if dialect == "duckdb":
@@ -604,7 +595,7 @@ def exact_sum(value):
 
 
 def exact_subtract(left, right):
-    dialect = dialect_of(left, right)
+    dialect = current_dialect(left, right).name
     if dialect == "postgres":
         return _pg_exact_subtract(left, right)
     if dialect == "duckdb":
@@ -630,7 +621,7 @@ def truncating_quotient(
     value: ir.IntegerValue, divisor: int | ir.IntegerValue, *, like: ir.Value
 ) -> ir.IntegerValue:
     """Integer division truncating toward zero; Ibis ``//`` floors through doubles."""
-    dialect = dialect_of(like, value)
+    dialect = current_dialect(like, value).name
     if dialect in {"postgres", "bigquery"}:
         quotient = _div(value, divisor)
     elif dialect == "duckdb":
@@ -650,7 +641,7 @@ def _duckdb_isfinite(value):
 
 
 def float_is_finite(value) -> ir.BooleanValue:
-    if dialect_of(value) == "duckdb":
+    if current_dialect(value).name == "duckdb":
         return cast(ir.BooleanValue, _duckdb_isfinite(value))
     # PostgreSQL has no isfinite(double precision), and NaN equals NaN there.
     nonfinite = [ibis.literal(item, type=dt.float64) for item in (math.inf, -math.inf, math.nan)]

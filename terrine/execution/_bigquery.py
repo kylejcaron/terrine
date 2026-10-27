@@ -9,8 +9,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
+import ibis
 import pyarrow as pa
 
+from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE, _SNAPSHOT_UNAVAILABLE
+from terrine.backends.registry import ENGINES
 from terrine.execution._metadata import invalidate_metadata
 from terrine.semantic.models import Catalog, RelationSpec, SqlQuery, TableRef
 from terrine.semantic.sql import _admit_read_query_ast, admit_read_query
@@ -21,8 +24,6 @@ _TABLE_TYPES = {"TABLE": "table", "SNAPSHOT": "table", "VIEW": "view"}
 
 
 def _snapshot_error(reason: str):
-    from terrine.execution.inputs import _SNAPSHOT_UNAVAILABLE
-
     return _SNAPSHOT_UNAVAILABLE.error(reason=reason)
 
 
@@ -316,3 +317,63 @@ def _overflow_refusal() -> Generator[None]:
         if "overflow" in str(exc).casefold():
             raise EXACT_OVERFLOW.error() from exc
         raise
+
+
+class _BigQueryProvider:
+    capabilities = ENGINES["bigquery"].capabilities
+
+    def matches(self, con: Any) -> bool:
+        return type(con).__module__ == ENGINES["bigquery"].ibis_module
+
+    def dialect(self, con: Any) -> str:
+        return ENGINES["bigquery"].name
+
+    def resolve_relation(self, con: Any, relation: RelationSpec) -> ibis.Table:
+        from terrine.execution import _bigquery
+
+        return _bigquery.resolve(con, relation)
+
+    def required_relations(self, catalog, con, *, units=None):
+        from terrine.execution import _bigquery
+
+        return _bigquery.required_relations(catalog, con, units=units)
+
+    def bind_resolver(self, catalog, con, **kwargs):
+        from terrine.execution import _bigquery
+        from terrine.execution.inputs import _INVALID
+
+        if kwargs.get("input_binding") is not None:
+            raise _CAPABILITY_UNAVAILABLE.error(
+                backend="bigquery",
+                operation="retained_snapshot",
+                status="unverified",
+                route="Retained input bindings are DuckDB-only; materialize directly.",
+            )
+        _bigquery.required_relations(catalog, con, units=kwargs.get("units"))
+        admitted: dict[tuple[str, str], Any] = {}
+        fingerprints: dict[tuple[str, str], str] = {}
+
+        def resolve(relation: RelationSpec) -> Any:
+            key = (relation.kind, relation.name if isinstance(relation, TableRef) else relation.sql)
+            fingerprint = _bigquery.admission_fingerprint(relation, con)
+            if key in admitted:
+                if fingerprints[key] != fingerprint:
+                    raise _INVALID.error(
+                        reason="relation definition or identity changed after Model binding"
+                    )
+                return admitted[key]
+            admitted[key] = _bigquery.resolve(con, relation, catalog.dialect)
+            fingerprints[key] = fingerprint
+            return admitted[key]
+
+        return resolve
+
+    def open_execution(self, catalog, con, *, units=None, input_binding=None):
+        from terrine.execution.inputs import _open_bigquery_execution
+
+        return _open_bigquery_execution(
+            self, catalog, con, units=units, input_binding=input_binding
+        )
+
+
+PROVIDER = _BigQueryProvider()

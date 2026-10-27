@@ -21,6 +21,16 @@ connection remains open. A transaction view is **not** a durable replay snapshot
 Runtime DuckDB publication retains its fenced, transactional manifest switch;
 Ibis SQL compilation or DDL support alone does not establish publication safety.
 
+Verified engine identities, capability values, feature boundaries and lazy
+implementation paths have one immutable registry in
+`terrine.backends.registry`. Expression policies live in
+`terrine.backends.engines`; execution providers retain their engine-specific
+session lifetimes. Adding an engine requires a registry entry and verified
+implementations, not another supported-engine list in a consumer.
+Capability inspection never queries a server; PostgreSQL identity therefore
+remains unverified until admission. Unsupported-operation refusals offer only
+registered, verified engines implementing that operation.
+
 The local workflow accesses no paid warehouse, credentials or remote resources;
 BigQuery and Snowflake are reached only when a Model binds an Ibis connection to
 them. Named dbt relation binding is owner-gated; an existing dbt workflow is not
@@ -43,7 +53,8 @@ compatibility suite. PostgreSQL versions not yet measured are unverified;
 PostgreSQL-wire-compatible servers such as Redshift, Greenplum and CockroachDB
 are unsupported and refuse with `terrine.backend.capability_unavailable`. The
 qualified built-in cannot be shadowed through `search_path`; no writes or
-session settings are issued. This check is made at provider admission because
+session settings are issued. The PostgreSQL engine identity callback makes this
+check at admission, after checking the Ibis floor, because
 relation discovery and binding may access source schema before materialization
 opens its private connection. Materialization reads remain on that private
 owned connection described below.

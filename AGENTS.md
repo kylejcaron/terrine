@@ -256,7 +256,17 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   integer seconds, then `.as_interval("s")`).
 - Raw SQL is acceptable only for: terrine's own DuckDB runtime state tables
   (`terrine/runtime/`), backend-provider catalog introspection and transaction
-  control (`terrine/execution/`), and admitted user SQL relations.
+  control (`terrine/execution/`), admitted user SQL relations, and the existing
+  qualified read-only PostgreSQL identity callback in `terrine/backends/engines/`.
+- `terrine/backends/registry.py` owns verified engine names, capability values,
+  feature boundaries and lazy dialect, identity and execution-provider paths.
+  Add an engine there with its expression policy and admission evidence; do not
+  introduce supported-engine lists in consumers. Capability inspection is
+  metadata-only and never runs querying identity admission.
+- The PostgreSQL engine's identity callback owns the existing qualified,
+  read-only `SELECT pg_catalog.version()` admission exception. It checks the
+  Ibis floor before reading identity and refuses before source metadata access;
+  expression policies otherwise issue no connection probes.
 - Warehouse results match the DuckDB reference within a stated tolerance
   (floats: tight, relative to the window's absolute sum, since cancellation
   defeats a purely relative bound; exact for counts and decimal sums).
