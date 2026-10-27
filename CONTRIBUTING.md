@@ -9,6 +9,42 @@ and the CLA check pass.
 Development commands, test tiers and API rules are in the "Contributor
 guidelines" section of [AGENTS.md](AGENTS.md).
 
+## Development setup and checks
+
+Install [uv](https://docs.astral.sh/uv/) and sync the checkout:
+
+```sh
+uv sync --group dev --group docs --all-extras
+make check
+```
+
+`uv sync` installs the current checkout, not a released distribution.
+`make check` runs static checks and the ordinary unit tier (`tests/`).
+Use `make check TESTS="tests/test_windows.py"` for focused checks, or
+`make test TESTS="tests/test_windows.py"` for tests alone.
+
+Tests run in three tiers:
+
+| Tier | Command | When it runs |
+| --- | --- | --- |
+| Unit | `uv run pytest tests` | Every local check and push |
+| Integration | `uv run pytest -q integration` | Every push and before merges |
+| Scale | `make test-scale` | Scheduled and on demand; deselected by ordinary runs |
+
+The `lint`, `typecheck` and `fmt` targets run Ruff/Vulture/pydoclint/Tach, ty,
+and Ruff formatting respectively over the package, `tests/` and `integration/`.
+`make complexity` is informational, not part of the gate.
+Keep tests at the cheapest boundary that protects consumer-visible behavior;
+see [AGENTS.md](AGENTS.md#tests-and-validation) for the complete rules.
+
+Documentation checks:
+
+```sh
+uv run python examples/first_dataset.py
+uv run pytest -q tests/test_documentation.py
+uv run python -m tests.documentation --build
+```
+
 ## License and the CLA
 
 terrine is licensed under the [Apache License 2.0](LICENSE).

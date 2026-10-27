@@ -26,6 +26,15 @@ BigQuery and Snowflake are reached only when a Model binds an Ibis connection to
 them. Named dbt relation binding is owner-gated; an existing dbt workflow is not
 evidence of a reviewed relation-to-Catalog bridge.
 
+Runnable table-to-dataset examples:
+[`PostgreSQL`](../../examples/postgres/dataset.py),
+[`BigQuery`](../../examples/bigquery/dataset.py), and
+[`Snowflake`](../../examples/snowflake/dataset.py).
+Install the corresponding `postgres`, `bigquery`, or `snowflake` extra and bind
+the Model directly to its Ibis connection; no preliminary copy to DuckDB is
+needed for Frame materialization. Dataset staging and publication remain
+DuckDB-only.
+
 ## PostgreSQL
 
 Admission uses only the built-in `SELECT pg_catalog.version()` before source
