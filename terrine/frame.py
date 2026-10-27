@@ -739,8 +739,10 @@ class Frame:
                 columns["time_bin"] = ColumnMeta(None, "feature", None, None, None, None)
                 columns.update(
                     {
-                        name: ColumnMeta(None, "outcome", None, None, "complete", "reason")
-                        for name in roles.outcomes
+                        name: ColumnMeta(
+                            None, "outcome", None, None, f"{name}__complete", f"{name}__reason"
+                        )
+                        for name in (*roles.outcomes, "censored_by_reason")
                     }
                 )
             table = self._normalize_output(table)
@@ -934,18 +936,30 @@ class Frame:
         return table
 
     def to_pyarrow(self, *, budget: Budget | None = None) -> pa.Table:
-        """Execute once and attach portable study metadata to the Arrow schema."""
+        """Execute once and return lossless Arrow with portable study metadata."""
         return self.materialize(budget).to_arrow()
 
-    def to_pandas(self, *, budget: Budget | None = None):
-        """Convert using nullable Arrow-backed dtypes; import pandas only on demand."""
+    def to_pandas(
+        self, *, budget: Budget | None = None, include_observation_metadata: bool = False
+    ):
+        """Return a compact, lossy dataframe unless observation columns are requested."""
         pandas = _optional_dependency("pandas")
-        return self.to_pyarrow(budget=budget).to_pandas(types_mapper=pandas.ArrowDtype)
+        materialized = self.materialize(budget)
+        table = materialized.table
+        if not include_observation_metadata:
+            table = table.drop(materialized._bookkeeping_columns())
+        return table.to_pandas(types_mapper=pandas.ArrowDtype)
 
-    def to_polars(self, *, budget: Budget | None = None):
-        """Convert using the optional native Polars Arrow conversion."""
+    def to_polars(
+        self, *, budget: Budget | None = None, include_observation_metadata: bool = False
+    ):
+        """Return a compact, lossy dataframe unless observation columns are requested."""
         polars = _optional_dependency("polars")
-        return polars.from_arrow(self.to_pyarrow(budget=budget))
+        materialized = self.materialize(budget)
+        table = materialized.table
+        if not include_observation_metadata:
+            table = table.drop(materialized._bookkeeping_columns())
+        return polars.from_arrow(table)
 
     def cohorts(self, *, grouping: CohortGrouping, value_column: str) -> CohortTable:
         if not isinstance(self._design.shape, CohortSpec):

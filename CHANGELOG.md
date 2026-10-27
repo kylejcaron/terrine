@@ -10,6 +10,20 @@
 
 ### Breaking changes
 
+- Publish per-value completeness as adjacent `<name>__complete` and
+  `<name>__reason` columns across every dataset shape, including boolean outputs
+  and eligibility. Life-table reason columns retain lists of exact reasons.
+  Event properties such as `kind_complete` remain values, not status evidence.
+  User output names ending in either suffix now refuse during Design validation
+  with `terrine.spec.reserved_output_name`.
+- Default Frame dataframe conversions are compact, lossy views that omit
+  observation bounds, resolved times and anchor provenance. Pass
+  `include_observation_metadata=True` to keep them. Arrow conversions, staged
+  datasets, manifests and saved fixtures retain every column, with identity
+  first, adjacent value/support triples next, and bookkeeping last. Missing
+  required observation columns refuse Arrow reconstruction with
+  `terrine.metadata.missing_columns`. Anchor provenance and frame observation-bound
+  names are reserved at Design validation.
 - Rename the saved recipe family without compatibility aliases:
   `DatasetRecipe` → `DatasetDefinition`,
   `DatasetRecipeStore` → `DatasetDefinitionStore`,

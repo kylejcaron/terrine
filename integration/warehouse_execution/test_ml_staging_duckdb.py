@@ -1784,6 +1784,19 @@ def test_local_arrow_preserves_exact_temporal_values_and_semantic_metadata(commo
 def test_optional_dataframe_values_are_lossless_but_metadata_stays_in_arrow(common_frame, extra):
     module = pytest.importorskip(extra)
     expected = common_frame.to_pyarrow(budget=Budget(max_rows=3)).sort_by("unit")
+    expected = expected.select(
+        [
+            "unit",
+            "anchor_id",
+            "t0",
+            "amount",
+            "amount__complete",
+            "amount__reason",
+            "note",
+            "note__complete",
+            "note__reason",
+        ]
+    )
     converted = getattr(common_frame, f"to_{extra}")(budget=Budget(max_rows=3))
     if extra == "pandas":
         assert all(isinstance(dtype, module.ArrowDtype) for dtype in converted.dtypes)

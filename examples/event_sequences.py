@@ -124,9 +124,9 @@ def main() -> None:
             for row in positions.table.to_pylist()
             if row["unit"] == "u3" and not row["is_event"]
         )
-        assert empty_header["event_count"] == 0 and empty_header["sequence_complete"]
+        assert empty_header["event_count"] == 0 and empty_header["event_count__complete"]
         null_child = next(row for row in children if row["unit"] == "u2")
-        assert null_child["kind"] is None and null_child["kind_reason"] == "known_null"
+        assert null_child["kind"] is None and null_child["kind__reason"] == "known_null"
         reopened = type(positions).from_arrow(positions.to_arrow())
         assert reopened.provenance.sequence_meta == positions.provenance.sequence_meta
 
@@ -145,8 +145,8 @@ def main() -> None:
         )
         assert (
             limited_header["event_count"] is None
-            and not limited_header["sequence_complete"]
-            and limited_header["sequence_reason"] == "unit_observation"
+            and not limited_header["event_count__complete"]
+            and limited_header["event_count__reason"] == "unit_observation"
         )
 
         arrays_design = Design(

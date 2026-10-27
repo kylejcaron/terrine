@@ -639,7 +639,6 @@ def event_sequence(
                 "session_end_time",
                 "previous_event_id",
                 "previous_event_time",
-                "transition_reason",
                 "transition",
             )
             if session_gap_seconds is not None
@@ -723,7 +722,7 @@ def event_sequence(
                 joined.sequence_reason,
             ),
         )
-        feature_names = (*feature_names, "sessions", "sessions_complete", "sessions_reason")
+        feature_names = (*feature_names, "sessions")
     if funnel_event_property is not None:
         if (
             not funnel_steps
@@ -866,25 +865,36 @@ def event_sequence(
                 ),
             ),
         )
-        feature_names = (
-            *feature_names,
-            "funnel_attempts",
-            "funnel_attempts_complete",
-            "funnel_attempts_reason",
+        feature_names = (*feature_names, "funnel_attempts")
+    value_support = {}
+    if representation == "positions":
+        value_support.update({name: (f"{name}__complete", f"{name}_reason") for name in properties})
+    if session_gap_seconds is not None:
+        value_support.update(
+            transition=("transition__complete", "transition_reason"),
+            sessions=("sessions_complete", "sessions_reason"),
         )
+    if funnel_event_property is not None:
+        value_support["funnel_attempts"] = ("funnel_attempts_complete", "funnel_attempts_reason")
     roles = Roles("unit", "anchor_id", "t0", None, feature_names, ())
-    columns = {
-        name: ColumnMeta(Window(window_start, window_end), "event_property", None, None, None, None)
-        for name in feature_names
-    }
-    columns.update(
-        {
-            "event_count": ColumnMeta(
-                None, "event_count", None, None, "sequence_complete", "sequence_reason"
-            ),
-            "sequence_complete": ColumnMeta(
-                None, "completeness", None, None, None, "sequence_reason"
-            ),
-        }
-    )
+    columns = {}
+    for name in (*feature_names, "event_count"):
+        complete_name, reason_name = value_support.get(
+            name, ("sequence_complete", "sequence_reason")
+        )
+        if complete_name not in table.columns:
+            table = table.mutate(
+                **{
+                    complete_name: table[reason_name].isnull()
+                    | (table[reason_name] == "known_null")
+                }
+            )
+        columns[name] = ColumnMeta(
+            Window(window_start, window_end),
+            "event_property",
+            None,
+            None,
+            complete_name,
+            reason_name,
+        )
     return SequenceResult(table, roles, columns, None, {}, over_limit, max_events)

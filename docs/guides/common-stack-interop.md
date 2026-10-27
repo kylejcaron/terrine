@@ -56,13 +56,32 @@ large-string Arrow offsets on readback; this does not change string values or
 imply physical Arrow schema identity. Neither dataframe carries a promise to
 round-trip Terrine schema metadata.
 
-`MaterializedFrame.to_arrow()` stores roles, design/model identities, temporal
-cutoffs, completeness/null-reason references and numeric policy references
-under the reserved `terrine.materialized_frame.v1` schema key.
-`MaterializedFrame.from_arrow()` restores typed metadata. Unrelated schema
-metadata is retained; stale content at the reserved key is replaced by current
-Terrine metadata. Do not zero-fill unavailable values or discard their reason
-columns when preparing downstream data.
+Each output value `name` is followed by `name__complete` (Boolean) and
+`name__reason` (string, or a list of exact reasons for LifeTable aggregates).
+This includes boolean features/outcomes, treatment and eligibility. Output
+names ending in `__complete` or `__reason` are reserved.
+Single-underscore names such as `kind_complete` remain ordinary value names.
+
+`Frame.to_pyarrow()` and `MaterializedFrame.to_arrow()` are lossless. Identity
+columns come first, value/support triples stay adjacent, and observation bounds,
+resolved times and anchor provenance appear last as real columns. Filtering or
+sorting Arrow carries this evidence with the rows; there is no row-valued payload
+in schema metadata. Staged generations, manifests and JSON fixtures retain the
+same observation evidence.
+
+Default `to_pandas()` and `to_polars()` calls return compact, lossy views without
+bookkeeping columns. Use `include_observation_metadata=True` on those dataframe
+conversions to keep them. A compact view is not a reconstructable MaterializedFrame.
+`MaterializedFrame.from_arrow()` refuses missing required observation columns with
+`terrine.metadata.missing_columns` rather than guessing or reattaching rows.
+
+Arrow stores roles, design/model identities, temporal cutoffs,
+completeness/null-reason references, numeric policies and required bookkeeping
+column names under `terrine.materialized_frame.v1`. Unrelated schema metadata is
+retained. Neither pandas nor Polars promises to retain Terrine schema metadata.
+Do not zero-fill unavailable values or discard their reason columns when preparing
+downstream data. `anchor_provenance`, `_observed_from` and `_observed_until` are
+reserved Design output names.
 
 Output row/byte limits do not bound upstream scan work or peak query memory.
 Strict scan budgets refuse when no verified scan bound exists. Non-strict scan

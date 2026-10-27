@@ -54,8 +54,8 @@ def test_unobserved_initial_history_is_explained_and_excluded():
         design = Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
         result = _collect(design, model)
         rows = {row["unit"]: row for row in result.to_pylist()}
-        assert rows["u1"]["complete"] is False
-        assert rows["u1"]["reason"] == "incomplete_initial_history"
+        assert rows["u1"]["duration__complete"] is False
+        assert rows["u1"]["duration__reason"] == "incomplete_initial_history"
     finally:
         con.disconnect()
 
@@ -74,8 +74,8 @@ def test_non_delayed_entry_advance_without_prior_event_is_incomplete():
             shape=TimeToEvent("churn", entry="enrolled"),
         )
         rows = {row["unit"]: row for row in _collect(design, model).to_pylist()}
-        assert rows["u1"]["complete"] is False
-        assert rows["u1"]["reason"] == "incomplete_initial_history"
+        assert rows["u1"]["duration__complete"] is False
+        assert rows["u1"]["duration__reason"] == "incomplete_initial_history"
     finally:
         con.disconnect()
 
@@ -152,7 +152,7 @@ def test_cutoff_before_anchor_is_not_emitted_as_complete_followup():
             administrative_cutoff=datetime(2024, 12, 31, tzinfo=UTC),
         )
         result = _collect(design, model)
-        assert all(row["complete"] is False for row in result.to_pylist())
+        assert all(row["duration__complete"] is False for row in result.to_pylist())
     finally:
         con.disconnect()
 
@@ -203,7 +203,7 @@ def test_nanosecond_delayed_entry_keeps_entry_before_outcome_coverage():
             model,
         )
         rows = {row["unit"]: row for row in result.to_pylist()}
-        assert rows["u1"]["complete"] is True
+        assert rows["u1"]["duration__complete"] is True
     finally:
         con.disconnect()
 
@@ -223,11 +223,11 @@ def test_nanosecond_exit_before_outcome_coverage_is_not_ignored(monkeypatch):
                 shape=TimeToEvent("churn", exit="closed"),
             ),
             model,
-            columns=("unit", "complete", "event", "censor_time"),
+            columns=("unit", "duration__complete", "event", "censor_time"),
             monkeypatch=monkeypatch,
         )
         rows = {row["unit"]: row for row in result.to_pylist()}
-        assert rows["u1"]["complete"] is False
+        assert rows["u1"]["duration__complete"] is False
         assert rows["u1"]["event"] is False
         assert rows["u1"]["censor_time"] == datetime(2025, 1, 2, tzinfo=UTC)
     finally:
@@ -388,8 +388,8 @@ def test_survival_preserves_event_feature_timing_through_arrow_round_trip():
         restored = MaterializedFrame.from_arrow(arrow)
         timing = restored.provenance.expression_timings["signup_time"]
         assert timing.point_time_column in arrow.column_names
-        assert timing.start_bound_column in arrow.column_names
-        assert timing.end_bound_column in arrow.column_names
+        assert timing.start_bound_column in restored.table.column_names
+        assert timing.end_bound_column in restored.table.column_names
     finally:
         con.disconnect()
 
@@ -411,7 +411,8 @@ def test_life_table_matches_independent_pandas_risk_set_oracle():
             shape=LifeTable(TimeToEvent("churn", entry="enrolled", delayed_entry=True), "1d"),
             administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
         ).build(model)
-        rows = frame.materialize().table.to_pylist()
+        materialized = frame.materialize()
+        rows = materialized.table.to_pylist()
         expected = pd.DataFrame(
             [
                 {"time_bin": 0, "at_risk": 1, "events": 0, "censored": 0, "delayed_entries": 0},
@@ -424,6 +425,15 @@ def test_life_table_matches_independent_pandas_risk_set_oracle():
             actual[expected.columns], expected, check_dtype=False, check_exact=True
         )
         assert rows[-1]["censored_by_reason"] == [("administrative_cutoff", 1)]
+        from terrine.export import to_surrogate_arrow
+
+        surrogate = to_surrogate_arrow(materialized, features=(), outcomes=("events",))
+        assert (
+            materialized.columns["censored_by_reason"].complete_column
+            == "censored_by_reason__complete"
+        )
+        for name in ("censored_by_reason__complete", "censored_by_reason__reason"):
+            assert surrogate.data[name].to_pylist() == materialized.table[name].to_pylist()
     finally:
         con.disconnect()
 
@@ -437,9 +447,7 @@ def test_nanosecond_duration_outside_int64_range_uses_timestamp_range_refusal():
     )
     try:
         con.raw_sql("DELETE FROM outcomes")
-        con.raw_sql(
-            "INSERT INTO outcomes VALUES ('u1', TIMESTAMP_NS '2200-01-01 00:00:00')"
-        )
+        con.raw_sql("INSERT INTO outcomes VALUES ('u1', TIMESTAMP_NS '2200-01-01 00:00:00')")
         design = Design(
             "user",
             FixedDate("1700-01-01"),

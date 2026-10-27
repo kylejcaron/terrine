@@ -38,12 +38,14 @@ from terrine.data import (
     FeatureCutoff,
     Roles,
     SequenceMeta,
+    _ordered_columns,
 )
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import BoundDimension
 from terrine.semantic.rules import calendar_average_alignment
 from terrine.spec.anchors import FixedDate, Schedule
+from terrine.spec.design import _RESERVED_OUTPUT_NAME as _RESERVED_NAME
 from terrine.spec.design import Design
 from terrine.spec.expressions import (
     And,
@@ -85,10 +87,6 @@ __all__ = ["CompiledStudy", "compile_columns", "resolve_sketch_sidecars"]
 _NAME_CONFLICT = RefusalSpec(
     "terrine.spec.output_name_conflict",
     "Study output name {name!r} conflicts with {other!r}.",
-)
-_RESERVED_NAME = RefusalSpec(
-    "terrine.spec.reserved_output_name",
-    "Study output name {name!r} is reserved.",
 )
 _RESERVED = {"unit", "anchor_id", "t0", "treatment", "_observed_from", "_observed_until"}
 
@@ -189,7 +187,103 @@ class CompiledStudy:
     sketches: tuple[SketchSidecar, ...] = ()
     range_plans: Mapping[str, RangePlan] = field(default_factory=dict)
 
+    def _publish(self) -> None:
+        columns = dict(self.columns)
+        supports = {
+            support
+            for meta in columns.values()
+            for support in (meta.complete_column, meta.reason_column)
+            if support is not None
+        }
+        # Completeness fields describe values; they are not themselves features.
+        values = {name: meta for name, meta in columns.items() if name not in supports}
+        renamed: dict[str, str] = {}
+        for name, meta in values.items():
+            for old, new in (
+                (meta.complete_column, f"{name}__complete"),
+                (meta.reason_column, f"{name}__reason"),
+            ):
+                if old is not None:
+                    renamed.setdefault(old, new)
+
+        def project(table: ibis.Table) -> ibis.Table:
+            fields = {}
+            for name in (self.roles.unit, self.roles.anchor, self.roles.t0, *table.columns):
+                if name in fields or name in supports or name not in table.columns:
+                    continue
+                fields[name] = table[name]
+                if name in values:
+                    meta = values[name]
+                    fields[f"{name}__complete"] = (
+                        table[meta.complete_column]
+                        if meta.complete_column is not None
+                        else ibis.literal(True)
+                    )
+                    fields[f"{name}__reason"] = (
+                        table[meta.reason_column]
+                        if meta.reason_column is not None
+                        else ibis.null().cast("string")
+                    )
+            return table.select(**fields)
+
+        object.__setattr__(self, "table", project(self.table))
+        object.__setattr__(self, "audit_table", project(self.audit_table))
+        object.__setattr__(
+            self,
+            "columns",
+            {
+                name: replace(
+                    meta, complete_column=f"{name}__complete", reason_column=f"{name}__reason"
+                )
+                for name, meta in values.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "roles",
+            replace(
+                self.roles,
+                features=tuple(name for name in self.roles.features if name not in supports),
+                outcomes=tuple(name for name in self.roles.outcomes if name not in supports),
+            ),
+        )
+        if self.sequence_meta is not None:
+            meta = self.sequence_meta
+            updates = {
+                attribute: renamed.get(getattr(meta, attribute), getattr(meta, attribute))
+                for attribute in (
+                    "complete_column",
+                    "reason_column",
+                    "sessions_complete_column",
+                    "sessions_reason_column",
+                    "funnel_attempts_complete_column",
+                    "funnel_attempts_reason_column",
+                )
+            }
+            updates["complete_column"] = "event_count__complete"
+            updates["reason_column"] = "event_count__reason"
+            updates["property_reason_columns"] = {
+                name: renamed.get(column, column)
+                for name, column in meta.property_reason_columns.items()
+            }
+            updates["session_fields"] = tuple(
+                renamed.get(name, name) for name in meta.session_fields
+            )
+            object.__setattr__(self, "sequence_meta", replace(meta, **updates))
+        for attribute in ("table", "audit_table"):
+            table = getattr(self, attribute)
+            object.__setattr__(
+                self,
+                attribute,
+                table.select(
+                    _ordered_columns(
+                        table.columns, self.roles, self.columns, self.expression_timings
+                    )
+                ),
+            )
+
     def __post_init__(self) -> None:
+        self._publish()
         for name in (
             "columns",
             "feature_cutoffs",

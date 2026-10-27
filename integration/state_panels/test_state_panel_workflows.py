@@ -127,7 +127,7 @@ def test_float_metric_bin_compares_the_rounded_value_at_a_near_boundary_cut(nati
     )
     row = next(row for row in rows if row["unit"] == "a")
     assert row["to_state"] == "low"
-    assert row["to_state_reason"] is None
+    assert row["to_state__reason"] is None
 
 
 def test_binned_panel_retains_named_eligibility_column(panel_model):
@@ -259,7 +259,7 @@ def test_binned_response_remains_complete_at_membership_exit(native_inputs):
     )
     row = next(row for row in rows if row["unit"] == "a")
     assert row["to_state"] == "some"
-    assert row["to_state_complete"] is True
+    assert row["to_state__complete"] is True
 
 
 def test_binned_missing_period_sides_and_unit_end_exclusivity(native_inputs):
@@ -307,10 +307,10 @@ def test_binned_missing_period_sides_and_unit_end_exclusivity(native_inputs):
         .table.to_pylist()
     )
     by_unit = {row["unit"]: row for row in rows}
-    assert by_unit["a"]["from_state_complete"] is False
-    assert by_unit["a"]["to_state_complete"] is True
-    assert by_unit["b"]["from_state_complete"] is True
-    assert by_unit["b"]["to_state_complete"] is False
+    assert by_unit["a"]["from_state__complete"] is False
+    assert by_unit["a"]["to_state__complete"] is True
+    assert by_unit["b"]["from_state__complete"] is True
+    assert by_unit["b"]["to_state__complete"] is False
 
 
 @pytest.mark.parametrize(

@@ -682,7 +682,7 @@ class DesignExecutor:
                     for batch in reader:
                         normalized = self._frame._normalize_output(pa.Table.from_batches([batch]))
                         normalized = self._frame._winsorize_output(normalized)
-                        yield from normalized.cast(metadata).to_batches()
+                        yield from normalized.select(metadata.names).cast(metadata).to_batches()
                 finally:
                     reader.close()
 

@@ -48,6 +48,7 @@ def _duration_nanoseconds(table: pa.Table, name: str) -> list[int | None]:
     values = column.cast(pa.int64()).to_pylist()
     return [None if value is None else value * multiplier for value in values]
 
+
 def aggregate_life_table(
     records: pa.Table,
     *,
@@ -71,13 +72,13 @@ def aggregate_life_table(
     entry = _nanoseconds(records, "entry_time")
     events = records["event"].to_pylist()
     complete = (
-        records["complete"].to_pylist()
-        if "complete" in records.column_names
+        records["duration__complete"].to_pylist()
+        if "duration__complete" in records.column_names
         else [True] * records.num_rows
     )
     record_reasons = (
-        records["reason"].to_pylist()
-        if "reason" in records.column_names
+        records["duration__reason"].to_pylist()
+        if "duration__reason" in records.column_names
         else [None] * records.num_rows
     )
     censor_reasons = records["censor_reason"].to_pylist()
@@ -204,4 +205,40 @@ def aggregate_life_table(
                 censor_rate=censored_count / at_risk if at_risk else None,
             )
             rows.append(row)
-    return pa.Table.from_pylist(rows, schema=schema)
+    table = pa.Table.from_pylist(rows, schema=schema)
+    values = (
+        "at_risk",
+        "events",
+        "censored",
+        "censored_by_reason",
+        "delayed_entries",
+        "event_rate",
+        "censor_rate",
+    )
+    projection = []
+    names = []
+    for name in (
+        "unit",
+        "anchor_id",
+        "t0",
+        *(
+            item
+            for value in group_by
+            for item in (value, f"{value}__complete", f"{value}__reason")
+            if item in table.column_names
+        ),
+        *(
+            item
+            for item in table.column_names
+            if item not in group_supports and item not in group_by
+        ),
+        *group_supports,
+    ):
+        if name in names or name in ("complete", "reason"):
+            continue
+        names.append(name)
+        projection.append(table[name])
+        if name in values:
+            names.extend((f"{name}__complete", f"{name}__reason"))
+            projection.extend((table["complete"], table["reason"]))
+    return pa.Table.from_arrays(projection, names=names)
