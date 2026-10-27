@@ -177,6 +177,71 @@ def test_missing_optional_conversion_dependency_refuses_before_data(native_input
     assert error.value.code == "terrine.convert.missing_dependency"
 
 
+@pytest.mark.parametrize("library", ["pandas", "polars"])
+def test_dataframe_conversion_selects_compact_or_lossless_columns(
+    native_inputs, monkeypatch, library
+):
+    from terrine.data import ColumnMeta, ExecutionSnapshot, MaterializedFrame, Provenance, Roles
+    from terrine.frame import Frame
+
+    materialized = MaterializedFrame(
+        pa.table(
+            {
+                "unit": ["a"],
+                "anchor_id": ["a1"],
+                "t0": [datetime(2025, 1, 1, tzinfo=UTC)],
+                "value": [None],
+                "value__complete": [False],
+                "value__reason": ["incomplete_observation"],
+                "label": [True],
+                "label__complete": [True],
+                "label__reason": [None],
+                "_observed_from": [datetime(2024, 1, 1, tzinfo=UTC)],
+            }
+        ),
+        Roles("unit", "anchor_id", "t0", None, ("value",), ("label",)),
+        {
+            "value": ColumnMeta(
+                None, "feature", "_observed_from", None, "value__complete", "value__reason"
+            ),
+            "label": ColumnMeta(None, "outcome", None, None, "label__complete", "label__reason"),
+        },
+        Provenance(
+            {},
+            {},
+            "design",
+            "model",
+            {},
+            ExecutionSnapshot(None, "duckdb", {}, None, "unverified"),
+            "cross_section",
+            None,
+        ),
+    )
+    frame = _design().build(_model(native_inputs))
+    monkeypatch.setattr(Frame, "materialize", lambda self, budget=None: materialized)
+    convert = getattr(frame, f"to_{library}")
+    compact = convert()
+    lossless = convert(include_observation_metadata=True)
+    assert list(compact.columns) == [
+        "unit",
+        "anchor_id",
+        "t0",
+        "value",
+        "value__complete",
+        "value__reason",
+        "label",
+        "label__complete",
+        "label__reason",
+    ]
+    assert list(lossless.columns) == materialized.table.column_names
+    if library == "pandas":
+        assert compact["value"].isna().all()
+        assert compact["value__reason"].tolist() == ["incomplete_observation"]
+    else:
+        assert compact["value"].null_count() == 1
+        assert compact["value__reason"].to_list() == ["incomplete_observation"]
+
+
 def test_empty_cohort_has_zero_eligibility_totals(native_inputs):
     _, con = native_inputs
     con.raw_sql("DELETE FROM events")

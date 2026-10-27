@@ -237,5 +237,3 @@ def first_occurrence(
     result = joined.select(**output)
     meta = ColumnMeta(None, "event", None, None, None, None)
     return TemporalResult(result, {"first_timestamp": meta}, checks)
-
-

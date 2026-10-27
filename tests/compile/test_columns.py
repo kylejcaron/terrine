@@ -137,27 +137,27 @@ def test_reserved_output_names_refuse(column_model, name):
 
 
 def test_time_series_columns_are_values_with_named_support(column_model):
-    frame = Design(
-        "user",
-        Schedule("1d", "2025-01-02", "2025-01-04"),
-        features={"rev_14d": agg("total", window=("-14d", "0d"))},
-        outcomes={"rev_next_7d": agg("total", window=("0d", "7d"))},
-    ).build(column_model)
-    assert list(frame.to_pandas().columns) == [
+    frame = (
+        Design(
+            "user",
+            Schedule("1d", "2025-01-02", "2025-01-04"),
+            features={"rev_14d": agg("total", window=("-14d", "0d"))},
+        )
+        .build(column_model)
+        .materialize()
+    )
+    full = frame.to_arrow()
+    compact = full.drop(frame._bookkeeping_columns())
+    assert compact.column_names == [
         "unit",
         "anchor_id",
         "t0",
         "rev_14d",
         "rev_14d__complete",
         "rev_14d__reason",
-        "rev_next_7d",
-        "rev_next_7d__complete",
-        "rev_next_7d__reason",
     ]
-    full = frame.to_pyarrow()
     assert "_observed_from" in full.column_names
-    assert list(frame.to_pandas(include_observation_metadata=True).columns) == full.column_names
-    assert frame.to_polars(include_observation_metadata=True).columns == full.column_names
+    assert set(compact.column_names) < set(full.column_names)
     assert frame.columns["rev_14d"].complete_column == "rev_14d__complete"
 
 
