@@ -159,3 +159,34 @@ jobs:
           python-version: "3.13"
       - run: uv sync --locked --group dev --extra duckdb --extra doubleml --extra dowhy --extra duckreg --extra lifelines --extra diff-diff
       - run: uv run pytest -q integration/handoffs
+
+  # Single check to require in branch protection. Matrix jobs report one check
+  # per entry, so requiring them individually means editing the ruleset every
+  # time a matrix changes.
+  ci-ok:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      - checks
+      - unit
+      - integration
+      - docs-and-examples
+      - distributions
+      - sketches
+      - postgres
+      - increment-compatibility
+      - library-handoffs
+    if: always()
+    permissions: {}
+    steps:
+      - name: Require every job to succeed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          failed=$(echo "$NEEDS" | jq -r '[to_entries[] | select(.value.result != "success") | .key] | join(", ")')
+          if [ -n "$failed" ]; then
+            echo "::error::jobs did not succeed: $failed"
+            exit 1
+          fi
