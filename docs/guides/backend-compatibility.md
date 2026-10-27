@@ -251,7 +251,8 @@ lifetime, early reader release and the operation-specific `exact_state`
 refusal. This is evidence for the policy on those connections, not a promise
 that every Ibis backend materializes every Frame; coverage remains
 operation-specific and refusals carry the operation that was unavailable.
-Run the forced checks locally with
+The forced conformance run is part of the ordinary integration and
+PostgreSQL checks; run the forced checks locally with
 `uv run pytest integration/conformance integration/backends/test_generic.py --generic-dialect`
 and, on a configured scratch server,
 `uv run --extra postgres pytest integration/conformance integration/backends/test_generic.py --generic-dialect -m postgres`.
@@ -638,4 +639,4 @@ without increment; unsupported semantic mappings are listed separately in the
 [snowflake-admission]: ../../integration/warehouse_execution/test_snowflake_admission.py
 [conformance]: ../../integration/conformance/test_engines.py
 [generic-oracles]: ../../integration/backends/test_generic.py
-[generic-reads]: ../../integration/execution/test_generic.py
+[generic-reads]: ../../integration/execution/test_generic_provider.py

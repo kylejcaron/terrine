@@ -94,7 +94,8 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   random sample without replacement; the default executes every mutant.
   Campaigns are local only, not part of ordinary checks or CI.
 - `make test-postgres` runs the live PostgreSQL probes (`@pytest.mark.postgres`,
-  deselected by default); they fail, never skip, without
+  deselected by default) and then the conformance known answers with the
+  portable base expression policy forced; they fail, never skip, without
   `TERRINE_TEST_POSTGRES_*` settings. Start a throwaway local server with
   `eval "$(uv run python -m tests.integration.postgres_scratch start)"` and stop it
   with `uv run python -m tests.integration.postgres_scratch stop`. CI runs them
@@ -109,9 +110,14 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   every registered engine. Add `--generic-dialect` to compile the same known
   answers with the portable base expression policy on each real connection
   (`uv run pytest integration/conformance --generic-dialect`; with
-  `--extra postgres ... -m postgres` on the scratch server); the portable
-  policy's own numerical and relational oracles live in
-  `integration/backends/test_generic.py` and force it unconditionally.
+  `--extra postgres ... -m postgres` on the scratch server). The forced run
+  takes about twenty seconds per backend and is part of the integration and
+  PostgreSQL checks on every push; the portable policy's own numerical and
+  relational oracles live in `integration/backends/test_generic.py` and force
+  it unconditionally, and its real unregistered-backend reads on Ibis SQLite
+  live in `integration/execution/test_generic_provider.py`. Test module
+  basenames under `integration/` must be unique: the tree has no packages, so
+  two `test_x.py` files cannot both be collected.
 - `make test-bigquery` runs the live BigQuery probes (`@pytest.mark.bigquery`,
   deselected by default); they fail, never skip, without
   `TERRINE_TEST_BIGQUERY_PROJECT`, `TERRINE_TEST_BIGQUERY_DATASET` and

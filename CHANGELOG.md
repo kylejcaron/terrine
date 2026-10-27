@@ -125,9 +125,10 @@
   cutoffs. Run the same cases on DuckDB and live PostgreSQL.
 - Compile the same known answers with the portable base expression policy on
   each real connection under `--generic-dialect` (DuckDB by default, PostgreSQL
-  with `-m postgres`), and check the policy's numerical and relational
-  contracts against independent oracles on both, plus real unregistered-backend
-  reads and refusals on the Ibis SQLite backend.
+  with `-m postgres`), about twenty seconds per backend inside the existing
+  integration and `make test-postgres` checks, and check the policy's
+  numerical and relational contracts against independent oracles on both, plus
+  real unregistered-backend reads and refusals on the Ibis SQLite backend.
 
 ### Documentation
 
