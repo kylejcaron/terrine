@@ -1,0 +1,295 @@
+"""Common dataset row shapes, expressed as ordinary low-level Designs."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from datetime import date, datetime
+from typing import Literal
+
+from terrine.errors import RefusalSpec
+from terrine.spec import (
+    AnchorRange,
+    BinnedMetricState,
+    CohortSpec,
+    Design,
+    EventAnchor,
+    EventPanel,
+    EventSequence,
+    Initiation,
+    LifeTable,
+    PersistentAdoption,
+    Schedule,
+    Sequential,
+    SessionSpec,
+    StateObservations,
+    StatePanel,
+    TimeToEvent,
+    Trajectory,
+    Treatment,
+    TrialWeight,
+)
+from terrine.spec.expressions import Expr, Predicate
+from terrine.windows import Window, seconds
+
+__all__ = [
+    "time_series",
+    "trial_panel",
+    "event_panel",
+    "ltv",
+    "survival",
+    "life_table",
+    "state_panel",
+    "event_sequence",
+]
+
+_INVALID = RefusalSpec("terrine.design.invalid", "Design validation failed: {reason}.")
+
+
+def _entry_anchor(event: str, occurrence: str, n: int | None) -> EventAnchor:
+    if occurrence not in ("first", "nth"):
+        raise _INVALID.error(reason="single-entry shapes require first or nth occurrence")
+    return EventAnchor(event, which=occurrence, n=n)
+
+
+def time_series(
+    unit: str,
+    *,
+    every: str | int,
+    start: date | str,
+    end: date | str,
+    features: Mapping[str, Expr] | None = None,
+    outcomes: Mapping[str, Expr] | None = None,
+    eligibility: Mapping[str, Predicate] | None = None,
+    treatment: Treatment | None = None,
+    anchor_range: AnchorRange | None = None,
+    gap: str | int = "0d",
+) -> Design:
+    """Build a Design on a calendar-date Schedule with an exclusive end."""
+    return Design(
+        unit,
+        Schedule(every, start, end),
+        features=features,
+        outcomes=outcomes,
+        eligibility=eligibility,
+        treatment=treatment,
+        anchor_range=anchor_range,
+        gap=gap,
+    )
+
+
+def trial_panel(
+    unit: str,
+    *,
+    every: str | int,
+    start: date | str,
+    end: date | str,
+    treatment: Initiation | PersistentAdoption,
+    trial_weight: TrialWeight | None = None,
+    anticipation: str = "0d",
+    reference_period: str = "-1d",
+    features: Mapping[str, Expr] | None = None,
+    outcomes: Mapping[str, Expr] | None = None,
+    eligibility: Mapping[str, Predicate] | None = None,
+    anchor_range: AnchorRange | None = None,
+    gap: str | int = "0d",
+) -> Design:
+    """Apply Sequential to a Design whose Schedule dates define the trials."""
+    base = Design(
+        unit,
+        Schedule(every, start, end),
+        features=features,
+        outcomes=outcomes,
+        eligibility=eligibility,
+        anchor_range=anchor_range,
+        gap=gap,
+    )
+    return Sequential(
+        base,
+        treatment=treatment,
+        trial_weight=trial_weight,
+        anticipation=anticipation,
+        reference_period=reference_period,
+    )
+
+
+def event_panel(
+    unit: str,
+    *,
+    event: str,
+    periods: tuple[int, ...],
+    period: str | int,
+    occurrence: Literal["first", "each", "nth"] = "first",
+    n: int | None = None,
+    reference_period: int = -1,
+    features: Mapping[str, Expr] | None = None,
+    outcomes: Mapping[str, Expr] | None = None,
+    eligibility: Mapping[str, Predicate] | None = None,
+    anchor_range: AnchorRange | None = None,
+    gap: str | int = "0d",
+) -> Design:
+    """Apply EventPanel to an event-anchored Design for explicit relative periods."""
+    base = Design(
+        unit,
+        EventAnchor(event, which=occurrence, n=n),
+        features=features,
+        outcomes=outcomes,
+        eligibility=eligibility,
+        anchor_range=anchor_range,
+        gap=gap,
+    )
+    return EventPanel(
+        base,
+        periods=periods,
+        period_seconds=seconds(period),
+        reference_period=reference_period,
+    )
+
+
+def ltv(
+    unit: str,
+    *,
+    start_event: str,
+    metric: str,
+    period: str | int,
+    periods: int,
+    features: Mapping[str, Expr] | None = None,
+    eligibility: Mapping[str, Predicate] | None = None,
+    treatment: Treatment | None = None,
+    anchor_range: AnchorRange | None = None,
+    gap: str | int = "0d",
+    administrative_cutoff: datetime | None = None,
+) -> Design:
+    """Build an origin-inclusive cumulative trajectory from a native SUM metric.
+
+    The metric must be untransformed and backed by exactly one SUM measure.
+    With Model.from_tables, use <source>_<value>_sum; generated count and mean
+    metrics are not accepted by this shape.
+    """
+    return Design(
+        unit,
+        EventAnchor(start_event),
+        shape=CohortSpec(start_event, Trajectory(metric, period, periods, cumulative=True)),
+        features=features,
+        eligibility=eligibility,
+        treatment=treatment,
+        anchor_range=anchor_range,
+        gap=gap,
+        administrative_cutoff=administrative_cutoff,
+    )
+
+
+def survival(
+    unit: str,
+    *,
+    start_event: str,
+    end_event: str,
+    occurrence: Literal["first", "nth"] = "first",
+    n: int | None = None,
+    features: Mapping[str, Expr] | None = None,
+    eligibility: Mapping[str, Predicate] | None = None,
+    treatment: Treatment | None = None,
+    anchor_range: AnchorRange | None = None,
+    gap: str | int = "0d",
+    administrative_cutoff: datetime | None = None,
+) -> Design:
+    """Build TimeToEvent follow-up from a first or nth start event, bounded by coverage/cutoff."""
+    return Design(
+        unit,
+        _entry_anchor(start_event, occurrence, n),
+        shape=TimeToEvent(end_event),
+        features=features,
+        eligibility=eligibility,
+        treatment=treatment,
+        anchor_range=anchor_range,
+        gap=gap,
+        administrative_cutoff=administrative_cutoff,
+    )
+
+
+def life_table(
+    unit: str,
+    *,
+    start_event: str,
+    end_event: str,
+    bin: str | int,
+    occurrence: Literal["first", "nth"] = "first",
+    n: int | None = None,
+    features: Mapping[str, Expr] | None = None,
+    group_by: tuple[str, ...] = (),
+    eligibility: Mapping[str, Predicate] | None = None,
+    anchor_range: AnchorRange | None = None,
+    gap: str | int = "0d",
+    administrative_cutoff: datetime | None = None,
+) -> Design:
+    """Build a LifeTable over TimeToEvent, retaining exactly the declared grouping features."""
+    shape = LifeTable(TimeToEvent(end_event), bin, group_by=group_by)
+    if set(shape.group_by) != set(features or {}):
+        raise ValueError("life-table features must exactly match group_by names")
+    return Design(
+        unit,
+        _entry_anchor(start_event, occurrence, n),
+        shape=shape,
+        features=features,
+        eligibility=eligibility,
+        anchor_range=anchor_range,
+        gap=gap,
+        administrative_cutoff=administrative_cutoff,
+    )
+
+
+def state_panel(
+    unit: str,
+    *,
+    state_source: StateObservations | BinnedMetricState,
+    every: str | int,
+    start: date | str,
+    end: date | str,
+    periods: int,
+    features: Mapping[str, Expr] | None = None,
+    eligibility: Mapping[str, Predicate] | None = None,
+    anchor_range: AnchorRange | None = None,
+    gap: str | int = "0d",
+) -> Design:
+    """Build a Schedule Design with a StatePanel bounded by the required period count."""
+    return Design(
+        unit,
+        Schedule(every, start, end),
+        shape=StatePanel(state_source, max_periods=periods),
+        features=features,
+        eligibility=eligibility,
+        anchor_range=anchor_range,
+        gap=gap,
+    )
+
+
+def event_sequence(
+    unit: str,
+    *,
+    event: str,
+    horizon: str | int,
+    max_events: int,
+    occurrence: Literal["first", "each", "nth"] = "first",
+    n: int | None = None,
+    session_gap: str | int | None = None,
+    features: Mapping[str, Expr] | None = None,
+    outcomes: Mapping[str, Expr] | None = None,
+    eligibility: Mapping[str, Predicate] | None = None,
+    anchor_range: AnchorRange | None = None,
+    gap: str | int = "0d",
+) -> Design:
+    """Build an EventSequence over [anchor, anchor + horizon), optionally grouped into sessions."""
+    return Design(
+        unit,
+        EventAnchor(event, which=occurrence, n=n),
+        shape=EventSequence(
+            event,
+            Window(0, horizon),
+            max_events=max_events,
+            sessions=None if session_gap is None else SessionSpec(session_gap),
+        ),
+        features=features,
+        outcomes=outcomes,
+        eligibility=eligibility,
+        anchor_range=anchor_range,
+        gap=gap,
+    )

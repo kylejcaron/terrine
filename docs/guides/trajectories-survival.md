@@ -1,12 +1,65 @@
 # Trajectories and time-to-event datasets
 
-A `Trajectory` builds period and cumulative metric datasets; a `CohortTable`
+Start with `terrine.recipes` for cumulative LTV, survival records, and grouped
+life tables. These return ordinary Designs; build and materialize them with an
+explicit output budget. The low-level shapes remain available for other cohort
+and trajectory choices. See [synthetic worlds](synthetic-worlds.md) for raw-source
+workflows and run `uv run python examples/trajectories_survival.py` for all three
+constructors with assertions on values and materialized roles.
+
+## Cumulative LTV
+
+`recipes.ltv` returns one row per unit/cohort origin and age. Required arguments
+are `unit`, `start_event`, `metric`, `period`, and positive `periods`. `metric`
+must be an untransformed native metric backed by exactly one SUM measure.
+With `Model.from_tables`, use the generated `<source>_<value>_sum` metric;
+`<source>_count` and `<source>_<value>_mean` are not accepted by this shape.
+Other aggregations, multi-measure metrics, and transforms refuse with
+`terrine.design.invalid` (reason `trajectory_metric_must_be_additive`).
+The first start event is the origin; each age represents a period of elapsed
+time from it. For ages `a = 0, ..., periods - 1` and positive period width `p`,
+let `m_j` be the metric value in `[t0 + j*p, t0 + (j+1)*p)`. The cumulative
+value is `m_0 + ... + m_a`, the total in `[t0, t0 + (a+1)*p)`.
+**Age 0 includes the origin event**, rather than starting
+after it. A generated event fact such as `orders` from
+[`Model.from_tables`](temporal-engine.md#binding-event-tables) can be the origin.
+
+Supported options are `features`, `eligibility`, `treatment`, `anchor_range`,
+`gap="0d"`, and `administrative_cutoff=None`. Other optional inputs default to
+`None`. Arbitrary `outcomes` are not accepted: the trajectory defines the value
+columns. The absolute cutoff bounds observation without changing source
+readiness.
+
+```python
+from datetime import UTC, datetime
+from terrine import recipes
+
+cutoff = datetime(2025, 1, 22, tzinfo=UTC)
+ltv = recipes.ltv(
+    "user", start_event="purchase", metric="net_revenue", period="7d", periods=3,
+    administrative_cutoff=cutoff,
+)
+```
+
+### Under the hood
+
+```python
+from terrine import CohortSpec, Design, EventAnchor, Trajectory
+
+equivalent_ltv = Design(
+    "user", EventAnchor("purchase"),
+    shape=CohortSpec("purchase", Trajectory("net_revenue", "7d", 3, cumulative=True)),
+    administrative_cutoff=cutoff,
+)
+assert ltv == equivalent_ltv
+```
+
+A `Trajectory` also supports period-only values through the low-level API. A
+`CohortTable`, returned by `frame.cohorts(grouping=..., value_column=...)`,
 aggregates values by cohort age. Both preserve observation completeness, null
-reasons, and cohort denominators. See the dataset constructors and examples in
-[`synthetic-worlds.md`](synthetic-worlds.md) for raw-source workflows.
-Exact decimal cumulative values retain their declared precision and scale. If
-all contributing periods are present but the cumulative total cannot fit that
-exact output type, materialization refuses with
+reasons, and cohort denominators. Exact decimal cumulative values retain their
+declared precision and scale. If all contributing periods are present but the
+cumulative total cannot fit that exact output type, materialization refuses with
 `terrine.temporal.exact_overflow` rather than returning a null value. When an
 earlier period is unavailable, its null and reason remain visible in cumulative
 outputs instead of being reported as arithmetic overflow.
@@ -16,17 +69,45 @@ cumulative_value__reason`. Cohort summaries use `value__complete` and
 `value__reason`, with the same adjacency rule.
 
 
-`TimeToEvent` builds one per-unit record containing elapsed `duration`, the
-terminal `event_time` or `censor_time`, entry time, and completeness/reason
-metadata. `duration` is an Arrow duration measured from `t0`; delayed entry does
-not change its origin. These are observed dataset rows: Terrine does not fit a
-curve or infer a survival probability. Use the records with a downstream
-package such as lifelines when a model or curve is required.
+## Survival records
+
+`recipes.survival` requires `unit`, `start_event`, and `end_event`. It returns one
+per-unit start record with elapsed `duration`, terminal `event_time` or
+`censor_time`, entry time, and completeness/reason metadata. Start occurrence
+defaults to `"first"`; use `occurrence="nth", n=2` for the second start. `n` must
+be positive and is omitted for `"first"`; `"each"` is not supported.
+
+Supported options are `features`, `eligibility`, `treatment`, `anchor_range`,
+`gap="0d"`, and `administrative_cutoff=None`. There is **no relative duration
+horizon**: observation coverage or the optional absolute cutoff ends follow-up.
+No arbitrary `outcomes` are accepted. `duration` is an Arrow duration measured
+from `t0`; delayed entry does not change its origin. These are observed dataset
+rows: Terrine does not fit a curve or infer a survival probability. Use a
+downstream package such as lifelines when a model or curve is required.
+
+```python
+survival = recipes.survival(
+    "user", start_event="purchase", end_event="churn",
+    administrative_cutoff=cutoff,
+)
+```
+
+### Under the hood
+
+```python
+from terrine import TimeToEvent
+
+equivalent_survival = Design(
+    "user", EventAnchor("purchase"), shape=TimeToEvent("churn"),
+    administrative_cutoff=cutoff,
+)
+assert survival == equivalent_survival
+```
+
 Per-unit survival columns use `duration__complete`/`duration__reason`,
 `event__complete`/`event__reason`, and `event_time__complete`/`event_time__reason`.
 `censor_reason` remains a distinct value describing censoring, not a shared
 completeness field.
-
 
 Nanosecond axes retain nanoseconds in the Arrow duration. DuckDB's lazy
 published-generation relation cannot express nanosecond intervals and refuses
@@ -37,21 +118,49 @@ When a design declares a treatment, each retained survival row includes the
 `treatment` value and its support metadata. The `treatment` role refers to that
 output column; event and censoring rules are unchanged.
 
-The `LifeTable` design shape bins those records into a descriptive risk-set
-summary. Each group/time bin reports number at risk, events, delayed entries,
-and censor counts by reason, along with plain rates. It does not multiply
-interval survival probabilities, assume independent censoring, or attach
-intervals; these are dataset summaries only.
+## Grouped life tables
+
+`recipes.life_table` requires `unit`, `start_event`, `end_event`, and `bin`. A
+row is a descriptive risk-set summary for one declared feature group and
+elapsed-time bin. Start selection has the same `occurrence="first"` / `"nth"`
+and positive `n` rules as survival. Supported options are `features`,
+`group_by=()`, `eligibility`, `anchor_range`, `gap="0d"`, and
+`administrative_cutoff=None`. Follow-up uses coverage or the absolute cutoff,
+not a relative duration horizon. Neither `treatment` nor `outcomes` is accepted.
+
+Every `group_by` name must be a declared feature, and the feature names must
+exactly match `group_by`. Extra features raise `ValueError` before building;
+they never silently disappear. With no groups, omit features too.
 
 ```python
-from terrine.spec import Design, EventAnchor, LifeTable, TimeToEvent
+from terrine import asof
 
-life = Design(
-    "user",
-    EventAnchor("signup", which="first"),
-    shape=LifeTable(TimeToEvent(event="churn"), interval="7d"),
-).build(model).materialize()
+features = {"region": asof("region", before="-1d")}
+life = recipes.life_table(
+    "user", start_event="purchase", end_event="churn", bin="7d",
+    features=features, group_by=("region",), administrative_cutoff=cutoff,
+)
 ```
+
+### Under the hood
+
+```python
+from terrine import LifeTable
+
+equivalent_life = Design(
+    "user", EventAnchor("purchase"),
+    shape=LifeTable(TimeToEvent("churn"), "7d", group_by=("region",)),
+    features=features, administrative_cutoff=cutoff,
+)
+assert life == equivalent_life
+```
+
+Materialized grouping columns remain visible: this example has
+`roles.features == ("region", "time_bin")`. The outcome roles are
+`("at_risk", "events", "censored", "delayed_entries", "event_rate", "censor_rate")`,
+and `roles.treatment is None`. Life tables summarize counts and plain rates;
+they do not multiply interval survival probabilities, assume independent
+censoring, or attach intervals.
 
 Bins are half-open elapsed-time intervals from each row's analysis origin.
 Delayed entry contributes to the risk set starting at its actual entry bin;

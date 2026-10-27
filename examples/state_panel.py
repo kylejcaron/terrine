@@ -6,8 +6,9 @@ import ibis
 import pyarrow as pa
 
 import terrine as tr
+from terrine import recipes
 from terrine.data import MaterializedFrame
-from terrine.spec import BinnedMetricState, Design, Schedule, StatePanel, agg
+from terrine.spec import BinnedMetricState, agg
 
 
 def main() -> None:
@@ -99,21 +100,18 @@ def main() -> None:
             },
             units={"user": tr.UnitSource("users", "user_id")},
         )
-        design = Design(
-            unit="user",
-            anchor=Schedule("1w", "2025-01-06", "2025-03-31"),
-            features={"sessions_before": agg("weekly_sessions", window=("-4w", "0d"))},
-            shape=StatePanel(
-                BinnedMetricState(
-                    "weekly_sessions",
-                    cutpoints=(0, 3, 9),
-                    levels=("inactive", "occasional", "regular", "power"),
-                ),
-                max_periods=12,
-                baseline_features={
-                    "baseline_sessions": agg("weekly_sessions", window=("-1w", "0d"))
-                },
+        design = recipes.state_panel(
+            "user",
+            state_source=BinnedMetricState(
+                "weekly_sessions",
+                cutpoints=(0, 3, 9),
+                levels=("inactive", "occasional", "regular", "power"),
             ),
+            every="1w",
+            start="2025-01-06",
+            end="2025-03-31",
+            periods=12,
+            features={"sessions_before": agg("weekly_sessions", window=("-4w", "0d"))},
         )
         materialized = design.build(model).materialize(
             tr.Budget(max_rows=10_000, max_output_bytes=8_000_000)
@@ -124,14 +122,22 @@ def main() -> None:
         assert panel_meta.levels == ("inactive", "occasional", "regular", "power")
         assert restored.roles.prior_state == "from_state"
         assert restored.roles.outcomes == ("to_state",)
+        assert restored.table.num_rows == 24
+        rows = restored.table.to_pylist()
+        assert {row["period_index"] for row in rows} == set(range(12))
+        february = {row["unit"]: row for row in rows if row["period_index"] == 4}
+        assert february["u1"]["sessions_before"] == 4
+        assert february["u2"]["sessions_before"] == 0
         print(restored.table.select(["unit", "period_index", "from_state", "to_state", "terminal"]))
-        status_design = Design(
-            unit="user",
-            anchor=Schedule("1w", "2025-01-06", "2025-03-31"),
-            shape=StatePanel(
-                tr.StateObservations("status", levels=("active", "closed"), absorbing=("closed",)),
-                max_periods=12,
+        status_design = recipes.state_panel(
+            "user",
+            state_source=tr.StateObservations(
+                "status", levels=("active", "closed"), absorbing=("closed",)
             ),
+            every="1w",
+            start="2025-01-06",
+            end="2025-03-31",
+            periods=12,
         )
         status_frame = status_design.build(model).materialize(
             tr.Budget(max_rows=10_000, max_output_bytes=8_000_000)

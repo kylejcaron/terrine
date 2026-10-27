@@ -7,8 +7,9 @@ from terrine.errors import TerrineError
 from terrine.windows import Window
 
 if TYPE_CHECKING:
+    from terrine import recipes as recipes
     from terrine.compile.cost import preview
-    from terrine.data import Budget, Coverage, UnitSource
+    from terrine.data import Budget, Coverage, Events, UnitSource
     from terrine.dataset.reference import Dataset
     from terrine.frame import Frame
     from terrine.model import Model
@@ -58,6 +59,7 @@ __all__ = [
     "FunnelSpec",
     "SessionSpec",
     "Coverage",
+    "Events",
     "Design",
     "EventAnchor",
     "FixedDate",
@@ -91,6 +93,7 @@ __all__ = [
     "TimeToEvent",
     "to_yaml",
     "quantile",
+    "recipes",
 ]
 
 _LAZY_MODULES = {
@@ -99,6 +102,7 @@ _LAZY_MODULES = {
     "Frame": "terrine.frame",
     "preview": "terrine.compile.cost",
     "Coverage": "terrine.data",
+    "Events": "terrine.data",
     "Model": "terrine.model",
     "UnitSource": "terrine.data",
 }
@@ -107,6 +111,10 @@ _LAZY_MODULES = {
 def __getattr__(name: str):
     if name not in __all__:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    value = getattr(import_module(_LAZY_MODULES.get(name, "terrine.spec")), name)
+    value = (
+        import_module("terrine.recipes")
+        if name == "recipes"
+        else getattr(import_module(_LAZY_MODULES.get(name, "terrine.spec")), name)
+    )
     globals()[name] = value
     return value

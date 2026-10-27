@@ -159,6 +159,7 @@ Repair temporal/history contracts; do not zero-fill unknowns.
 | `terrine.design.incomplete_treatment_history` | <code>Treatment history for source {source!r} does not cover {boundary!r}.</code> | `boundary`, `source` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 | `terrine.design.incomplete_unit_treatment_history` | <code>Roster observation bounds do not cover a scheduled treatment history.</code> | None | [terrine/compile/shapes/sequential.py](../../terrine/compile/shapes/sequential.py) |
 | `terrine.design.incomplete_unit_treatment_history` | <code>Roster observation bounds do not cover the required calendar treatment history.</code> | None | [terrine/compile/shapes/calendar_comparison.py](../../terrine/compile/shapes/calendar_comparison.py) |
+| `terrine.design.invalid` | <code>Design validation failed: {reason}.</code> | `reason` | [terrine/recipes.py](../../terrine/recipes.py) |
 | `terrine.design.invalid` | <code>Design validation failed: {reason}.</code> | `reason` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 | `terrine.design.invalid_calendar_comparison` | <code>Calendar comparison specification is invalid: {reason}.</code> | `reason` | [terrine/spec/panels.py](../../terrine/spec/panels.py) |
 | `terrine.design.invalid_matched_t0_sample` | <code>Matched-t0 sample policy is invalid: {reason}.</code> | `reason` | [terrine/spec/panels.py](../../terrine/spec/panels.py) |
@@ -294,7 +295,10 @@ Correct source, roster and coverage bindings; rebind the Model.
 
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
+| `terrine.model.generated_metric_collision` | <code>Generated name {name!r} conflicts for event sources {sources}; rename the source or value declaration, or use Model.from_catalog for explicit names.</code> | `name`, `sources` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.model.invalid_binding` | <code>Model binding input is invalid: {reason}.</code> | `reason` | [terrine/model.py](../../terrine/model.py) |
+| `terrine.model.missing_event_completeness` | <code>Event source {source!r} requires complete=(start, end); declare authoritative inclusive local calendar days, not observed event maxima.</code> | `source` | [terrine/model.py](../../terrine/model.py) |
+| `terrine.model.multiple_event_units` | <code>Event source {source!r} declares multiple units {units}; use Model.from_catalog for multi-unit source semantics.</code> | `source`, `units` | [terrine/model.py](../../terrine/model.py) |
 
 ## readiness
 

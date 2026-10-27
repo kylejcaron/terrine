@@ -28,6 +28,7 @@ __all__ = [
     "CoverageSummary",
     "DatasetViewMeta",
     "EligibilitySummary",
+    "Events",
     "ExecutionSnapshot",
     "ExpressionTiming",
     "FeatureCutoff",
@@ -180,6 +181,38 @@ class UnitSource:
             value = getattr(self, name)
             if value is not None:
                 _nonempty(value, name)
+
+
+@dataclass(frozen=True, slots=True)
+class Events:
+    """Table-backed event declarations with explicit inclusive completeness days."""
+
+    table: str
+    time: str
+    keys: Mapping[str, str]
+    values: tuple[str, ...] = ()
+    complete: tuple[date | str, date | str] | None = None
+
+    def __post_init__(self) -> None:
+        _nonempty(self.table, "table")
+        _nonempty(self.time, "time")
+        keys = _mapping(self.keys, "keys")
+        for unit, column in keys.items():
+            _nonempty(unit, "unit name")
+            _nonempty(column, "key column")
+        if isinstance(self.values, str):
+            raise TypeError("values must be a sequence of column names")
+        values = tuple(self.values)
+        for value in values:
+            _nonempty(value, "value column")
+        object.__setattr__(self, "keys", keys)
+        object.__setattr__(self, "values", values)
+        if self.complete is not None:
+            if len(self.complete) != 2:
+                raise ValueError("complete must be a pair of inclusive calendar days")
+            complete = (self.complete[0], self.complete[1])
+            Coverage(*complete)
+            object.__setattr__(self, "complete", complete)
 
 
 @dataclass(frozen=True, slots=True)
