@@ -79,6 +79,10 @@ def _fresh_alias(prefix: str, reserved: set[str]) -> str:
     return candidate
 
 
+def _reserved(table: ibis.Table) -> set[str]:
+    return {column.casefold() for column in table.columns}
+
+
 def _check_columns(table: ibis.Table, columns: Iterable[str], *, field: str) -> None:
     available = set(table.columns)
     for column in columns:
@@ -305,13 +309,16 @@ def history_checks(
     columns = [dimension.entity_column, *([start] if start else []), *([end] if end else [])]
     _check_columns(history, columns, field=f"dimension {dimension.name}")
     key = history[dimension.entity_column]
-    reserved = {column.casefold() for column in history.columns}
+
+    def fresh(prefix: str, taken: set[str] | None = None) -> str:
+        # Each alias is reserved against the history's own columns, as before.
+        return _fresh_alias(prefix, taken if taken is not None else _reserved(history))
 
     def count(rows: ibis.Table) -> ibis.Table:
         return rows.aggregate(__terrine_count=rows.count())
 
     if validity is None:
-        count_alias = _fresh_alias("__terrine_n", reserved)
+        count_alias = fresh("__terrine_n")
         repeated = history.group_by(dimension.entity_column).aggregate(
             **{count_alias: history.count()}
         )
@@ -326,7 +333,7 @@ def history_checks(
     if end:
         finished = history[end]
         malformed = malformed | (finished.notnull() & compare_timestamps(finished, began, "le"))
-    count_alias = _fresh_alias("__terrine_n", reserved)
+    count_alias = fresh("__terrine_n")
     grouped = history.group_by(dimension.entity_column, start).aggregate(
         **{count_alias: history.count()}
     )
@@ -335,11 +342,13 @@ def history_checks(
         (count(grouped.filter(grouped[count_alias] > 1)), _DUPLICATE_HISTORY),
     ]
     if end:
-        prior_end_alias = _fresh_alias("__terrine_prior_max_end", reserved)
-        prior_open_alias = _fresh_alias("__terrine_prior_open", reserved)
-        # Only the key and validity columns take part; project them so the
-        # window carries no unrelated column into the query.
-        ranges = history.select(dimension.entity_column, start, end)
+        reserved = _reserved(history)
+        prior_end_alias = fresh("__terrine_prior_max_end", reserved)
+        prior_open_alias = fresh("__terrine_prior_open", reserved)
+        # Only the key and validity columns take part; project them so the window
+        # carries no unrelated column into the query. A validity declared with one
+        # column for both ends names it once.
+        ranges = history.select(*dict.fromkeys((dimension.entity_column, start, end)))
         prior_window = ibis.window(
             group_by=[ranges[dimension.entity_column]],
             order_by=[timestamp_order_key(ranges[start])],
@@ -359,7 +368,7 @@ def history_checks(
         )
         checks.append((count(overlaps), _OVERLAPPING_HISTORY))
     elif validity.changed_at is None:
-        entity_count_alias = _fresh_alias("__terrine_n", reserved)
+        entity_count_alias = fresh("__terrine_n")
         multiple_ranges = history.group_by(dimension.entity_column).aggregate(
             **{entity_count_alias: history.count()}
         )
