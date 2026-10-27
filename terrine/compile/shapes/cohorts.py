@@ -35,11 +35,20 @@ _INVALID = RefusalSpec(
 
 
 def compile_cohorts(
-    study: CompiledStudy, *, grouping: CohortGrouping, value_column: str
+    study: CompiledStudy,
+    *,
+    grouping: CohortGrouping,
+    value_column: str,
+    dialect: str | None = None,
 ) -> CompiledStudy:
-    """Group an already compiled LTV relation; this function never recompiles a Frame."""
-    # Summaries compile after the Design's compile scope ends; use the table's backend.
-    with dialect_scope(current_dialect(*(study.table[name] for name in study.table.columns)).name):
+    """Group an already compiled LTV relation; this function never recompiles a Frame.
+
+    Summaries compile after the Design's compile scope ends, so the admitted
+    policy is passed explicitly; without it the relation's backend selects one.
+    """
+    if dialect is None:
+        dialect = current_dialect(*(study.table[name] for name in study.table.columns)).name
+    with dialect_scope(dialect):
         return _compile_cohorts(study, grouping=grouping, value_column=value_column)
 
 

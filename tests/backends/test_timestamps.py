@@ -10,6 +10,7 @@ from terrine.backends.timestamps import (
     lossless_scale,
     timestamp_parts,
     timestamp_text,
+    utc_instant,
     utc_wall_clock,
 )
 from terrine.errors import TerrineError
@@ -63,6 +64,36 @@ def test_aware_timestamp_parts_ignore_the_session_time_zone():
     rank, seconds, nanos = timestamp_parts(t.aware)
     row = con.to_pyarrow(t.select(rank=rank, seconds=seconds, nanos=nanos)).to_pylist()[0]
     assert row == {"rank": 0, "seconds": 1_741_501_800, "nanos": 0}
+
+
+def test_portable_policy_conversions_and_parts_ignore_the_session_time_zone():
+    """Typed epoch deltas rebuild instants and wall clocks across a DST boundary."""
+    con, t = _new_york_session()
+    con.raw_sql(
+        "INSERT INTO t VALUES (TIMESTAMPTZ '2025-07-01 12:00:00.123456+00', "
+        "TIMESTAMP '2025-07-01 12:00:00.123456'), "
+        "(TIMESTAMPTZ '1969-12-31 23:59:59.999999+00', TIMESTAMP '1969-12-31 23:59:59.999999')"
+    )
+    with dialect_scope("generic"):
+        rank, seconds, nanos = timestamp_parts(t.aware)
+        rows = con.to_pyarrow(
+            t.select(
+                wall=utc_wall_clock(t.aware),
+                instant=utc_instant(t.naive),
+                text=timestamp_text(t.aware),
+                rank=rank,
+                seconds=seconds,
+                nanos=nanos,
+            ).order_by("seconds")
+        ).to_pylist()
+    assert [(row["rank"], row["seconds"], row["nanos"]) for row in rows] == [
+        (0, 0, -1000),
+        (0, 1_741_501_800, 0),
+        (0, 1_751_371_200, 123_456_000),
+    ]
+    for row in rows:
+        assert row["instant"].replace(tzinfo=None) == row["wall"]
+        assert row["text"] == str(row["wall"])
 
 
 def test_timestamp_text_keeps_microsecond_distinct_instants_apart():

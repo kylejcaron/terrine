@@ -9,7 +9,7 @@ import ibis.expr.types as ir
 import sqlglot.expressions as sge
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE
-from terrine.backends.dialect import Dialect, current_dialect
+from terrine.backends.dialect import Dialect, current_dialect, unavailable
 from terrine.backends.numeric import (
     _checked_narrow_exact,
     _scaled_exact_to_float,
@@ -129,6 +129,13 @@ class SnowflakeDialect(Dialect):
     ) -> tuple[ir.FloatingValue, ir.BooleanValue, ir.BooleanValue]:
         return _scaled_exact_to_float(value, scale, self)
 
+    def exact_ratio(self, numerator: ir.Value, denominator: ir.Value) -> ir.Value:
+        # Quotients divide normalized significands; the portable default is not native.
+        raise unavailable("exact_ratio", self.name)
+
+    def exact_is_nonfinite(self, value: ir.Value) -> ir.BooleanValue:
+        raise unavailable("exact_is_nonfinite", self.name)
+
     def wide_type(self) -> dt.DataType:
         return _EXACT
 
@@ -204,7 +211,7 @@ class SnowflakeDialect(Dialect):
     def narrow_exact(
         self, coefficient: ir.Value, scale: int, target: str | dt.DataType
     ) -> ir.Value:
-        return _checked_narrow_exact(coefficient, scale, target, self)
+        return _checked_narrow_exact(coefficient, scale, target)
 
     def asof_join(
         self,

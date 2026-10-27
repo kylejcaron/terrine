@@ -11,7 +11,7 @@ import ibis.expr.types as ir
 import sqlglot.expressions as sge
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE, _SNAPSHOT_UNAVAILABLE
-from terrine.backends.dialect import Dialect, current_dialect
+from terrine.backends.dialect import Dialect, current_dialect, unavailable
 from terrine.backends.numeric import _checked_narrow_exact
 from terrine.backends.registry import supported_engine_route
 from terrine.backends.timestamps import _UNSUPPORTED, _epoch
@@ -140,6 +140,9 @@ class PostgresDialect(Dialect):
     def exact_type(self) -> dt.DataType:
         return _EXACT
 
+    def coefficient_type(self) -> dt.DataType:
+        return _EXACT
+
     def exact_float(
         self, value: ir.Value, scale: int | ir.IntegerValue | None = None
     ) -> tuple[ir.Value, ir.BooleanValue, ir.BooleanValue]:
@@ -186,6 +189,16 @@ class PostgresDialect(Dialect):
     def exact_subtract(self, left: ir.Value, right: ir.Value) -> ir.Value:
         return _exact_subtract(left, right)
 
+    def wide_type(self) -> dt.DataType:
+        # Quotients divide in NUMERIC; the normalized significand path is not native.
+        raise unavailable("normalized", self.name)
+
+    def wide_quotient(self, value: ir.Value, divisor: ir.Value) -> ir.Value:
+        raise unavailable("normalized", self.name)
+
+    def trim_leading_zeros(self, digits: ir.StringValue) -> ir.StringValue:
+        raise unavailable("normalized", self.name)
+
     def truncating_quotient(
         self, value: ir.IntegerValue, divisor: int | ir.IntegerValue
     ) -> ir.IntegerValue:
@@ -194,6 +207,14 @@ class PostgresDialect(Dialect):
 
     def timestamp_is_finite(self, value: ir.TimestampValue) -> ir.BooleanValue:
         return cast(ir.BooleanValue, _timestamp_isfinite(value))
+
+    def timestamp_extremes(
+        self, dtype: dt.Timestamp
+    ) -> tuple[ir.TimestampScalar, ir.TimestampScalar]:
+        return (
+            cast(ir.TimestampScalar, ibis.literal("-infinity").cast(dtype)),
+            cast(ir.TimestampScalar, ibis.literal("infinity").cast(dtype)),
+        )
 
     def utc_wall_clock(self, value: ir.Value) -> ir.TimestampValue:
         return cast(ir.TimestampValue, _utc_naive("UTC", value))
@@ -242,7 +263,7 @@ class PostgresDialect(Dialect):
     def narrow_exact(
         self, coefficient: ir.Value, scale: int, target: str | dt.DataType
     ) -> ir.Value:
-        return _checked_narrow_exact(coefficient, scale, target, self)
+        return _checked_narrow_exact(coefficient, scale, target)
 
     def asof_join(
         self,

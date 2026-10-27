@@ -8,7 +8,8 @@ import ibis.expr.types as ir
 import sqlglot.expressions as sge
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE
-from terrine.backends.dialect import Dialect, current_dialect
+from terrine.backends.dialect import Dialect, current_dialect, unavailable
+from terrine.backends.numeric import _scaled_text
 from terrine.backends.registry import ENGINES, supported_engine_route
 from terrine.backends.timestamps import _UNSUPPORTED, _epoch
 
@@ -65,6 +66,9 @@ class BigQueryDialect(Dialect):
     def exact_type(self) -> dt.DataType:
         return _EXACT
 
+    def coefficient_type(self) -> dt.DataType:
+        return _EXACT
+
     def decimal_coefficient(self, value: ir.Value, scale: int) -> ir.Value:
         exact = value.cast(_EXACT)
         return _exact_multiply(exact, ibis.literal(str(10**scale)).cast(_EXACT)) if scale else exact
@@ -102,6 +106,16 @@ class BigQueryDialect(Dialect):
 
     def exact_subtract(self, left: ir.Value, right: ir.Value) -> ir.Value:
         return _exact_subtract(left, right)
+
+    def wide_type(self) -> dt.DataType:
+        # Quotients divide in BIGNUMERIC; the normalized significand path is not native.
+        raise unavailable("normalized", self.name)
+
+    def wide_quotient(self, value: ir.Value, divisor: ir.Value) -> ir.Value:
+        raise unavailable("normalized", self.name)
+
+    def trim_leading_zeros(self, digits: ir.StringValue) -> ir.StringValue:
+        raise unavailable("normalized", self.name)
 
     def truncating_quotient(
         self, value: ir.IntegerValue, divisor: int | ir.IntegerValue
@@ -148,6 +162,11 @@ class BigQueryDialect(Dialect):
         if not isinstance(dtype, dt.Timestamp) or dtype.scale not in (None, 6):
             raise _UNSUPPORTED.error(dtype=str(dtype))
         return value
+
+    def narrow_exact(
+        self, coefficient: ir.Value, scale: int, target: str | dt.DataType
+    ) -> ir.Value:
+        return _scaled_text(coefficient, scale).try_cast(target)
 
     def supports_exact_prefix(self, backend_name: str) -> bool:
         return backend_name == self.name and current_dialect().name == backend_name

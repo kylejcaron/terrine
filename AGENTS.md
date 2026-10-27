@@ -106,7 +106,12 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   `uv run --extra <engine> pytest integration/conformance -m <engine>` for
   `postgres`, `bigquery` or `snowflake`; they are also included in the matching
   `make test-<engine>` target. The module's connection-fixture table must cover
-  every registered engine.
+  every registered engine. Add `--generic-dialect` to compile the same known
+  answers with the portable base expression policy on each real connection
+  (`uv run pytest integration/conformance --generic-dialect`; with
+  `--extra postgres ... -m postgres` on the scratch server); the portable
+  policy's own numerical and relational oracles live in
+  `integration/backends/test_generic.py` and force it unconditionally.
 - `make test-bigquery` runs the live BigQuery probes (`@pytest.mark.bigquery`,
   deselected by default); they fail, never skip, without
   `TERRINE_TEST_BIGQUERY_PROJECT`, `TERRINE_TEST_BIGQUERY_DATASET` and

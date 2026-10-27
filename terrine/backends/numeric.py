@@ -10,6 +10,8 @@ significant digits), and leaves it through text, which both convert to
 binary64 with correct rounding; quotients divide 19-digit normalized
 significands as wide integers and round once at output. PostgreSQL and
 BigQuery hold the shortest text unscaled in their exact types and divide there.
+The portable base policy quantizes a float's text once to ``DECIMAL(38, 9)``,
+keeps counts and coefficients in ``DECIMAL(38, 0)``, and divides in binary64.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ import ibis.expr.types as ir
 
 from terrine.backends.dialect import Dialect, current_dialect, dialect_for_name
 from terrine.backends.extrema import greatest
-from terrine.backends.registry import ENGINES
+from terrine.backends.registry import ENGINES, GENERIC
 from terrine.errors import RefusalSpec
 
 __all__ = [
@@ -61,8 +63,9 @@ def exact_type(*like: ir.Value) -> dt.DataType:
 
 
 def is_exact_type(dtype: dt.DataType) -> bool:
-    """Whether ``dtype`` is an internal exact-state type on any backend."""
-    return any(dtype == dialect_for_name(name).exact_type() for name in ENGINES)
+    """Whether ``dtype`` is an internal exact-state type on any policy."""
+    policies = [dialect_for_name(name) for name in (*ENGINES, GENERIC.name)]
+    return any(dtype in {policy.exact_type(), policy.coefficient_type()} for policy in policies)
 
 
 def has_scaled_float_state(*like: ir.Value) -> bool:
@@ -71,8 +74,16 @@ def has_scaled_float_state(*like: ir.Value) -> bool:
 
 
 def exact_literal(value: int, *like: ir.Value) -> ir.Scalar:
-    """An exact native integer, without an inferred fixed-width literal type."""
-    return cast(ir.Scalar, ibis.literal(str(value)).cast(exact_type(*like)))
+    """An exact integer typed like the first exact ``like`` operand, else as a count.
+
+    Counts, thresholds and day divisors live in the coefficient domain. A
+    fill or comparison against float state passes that state operand so the
+    literal keeps its fixed-scale type instead of promoting the operand.
+    """
+    dialect = current_dialect(*like)
+    exact = {dialect.exact_type(), dialect.coefficient_type()}
+    dtype = next((item.type() for item in like if item.type() in exact), None)
+    return cast(ir.Scalar, ibis.literal(str(value)).cast(dtype or dialect.coefficient_type()))
 
 
 def decimal_coefficient(value: ir.Value, scale: int) -> ir.Value:
@@ -111,10 +122,12 @@ def _scaled_text(coefficient, scale: int):
     )
 
 
-def _checked_narrow_exact(
-    coefficient: ir.Value, scale: int, target: str | dt.DataType, dialect: Dialect
-) -> ir.Value:
-    """Check exact coefficient bounds where TRY_CAST would be an ordinary CAST."""
+def _checked_narrow_exact(coefficient: ir.Value, scale: int, target: str | dt.DataType) -> ir.Value:
+    """Check exact coefficient bounds where TRY_CAST would be an ordinary CAST.
+
+    The bounds take the coefficient's own type, so a scale-0 coefficient is
+    never promoted into a narrower fixed-scale state for the comparison.
+    """
     text = _scaled_text(coefficient, scale)
     target_type = dt.dtype(target)
     if isinstance(target_type, dt.SignedInteger):
@@ -125,10 +138,11 @@ def _checked_narrow_exact(
     else:
         # An unbounded NUMERIC target cannot overflow.
         return text.cast(target_type)
-    lower = ibis.literal(str(low)).cast(dialect.exact_type())
-    upper = ibis.literal(str(high)).cast(dialect.exact_type())
+    lower = ibis.literal(str(low)).cast(coefficient.type())
+    upper = ibis.literal(str(high)).cast(coefficient.type())
     fits = (coefficient >= lower) & (coefficient <= upper)
-    return fits.ifelse(text.cast(target_type), ibis.null().cast(target_type))
+    # The cast only ever sees text that fits, whichever branches a backend evaluates.
+    return fits.ifelse(text, ibis.null(dt.string)).cast(target_type)
 
 
 def _decimal_parts(
@@ -237,7 +251,8 @@ def exact_float(
     so both flags are false there. BigQuery BIGNUMERIC has neither and holds
     magnitudes below about 5.7e38 to 38 fractional digits; non-finite and
     out-of-range values become NULL and are flagged so the caller can refuse
-    them.
+    them. The portable policy truncates the text toward zero at nine places
+    into ``DECIMAL(38, 9)``, flagging ``|value| >= 10**29`` as unrepresentable.
     """
     return current_dialect(value).exact_float(value, scale)
 
@@ -247,7 +262,8 @@ def exact_ratio(numerator: ir.Value, denominator: ir.Value) -> ir.Value:
 
     Not for DuckDB or Snowflake, which divide normalized significands
     (``normalized_quotient``). PostgreSQL divides to at least 16 significant
-    digits; BigQuery to 38 fractional digits.
+    digits; BigQuery to 38 fractional digits; the portable policy divides
+    correctly rounded binary64 operands once.
     """
     return current_dialect(numerator, denominator).exact_ratio(numerator, denominator)
 
@@ -255,7 +271,8 @@ def exact_ratio(numerator: ir.Value, denominator: ir.Value) -> ir.Value:
 def exact_is_nonfinite(value: ir.Value) -> ir.BooleanValue:
     """Whether an exact value is NaN or infinite; NULL stays NULL.
 
-    Only PostgreSQL NUMERIC has non-finite values; BIGNUMERIC has none.
+    Only PostgreSQL NUMERIC has non-finite values; BIGNUMERIC has none. The
+    portable policy's decimal state has none either; its binary64 quotients may.
     """
     return current_dialect(value).exact_is_nonfinite(value)
 
@@ -270,8 +287,9 @@ def exact_to_float(
     their string-to-double conversions round correctly (ties to even); a
     magnitude beyond binary64's range is an infinity on DuckDB and NULL from
     Snowflake's ``TRY_TO_DOUBLE``, flagged either way. PostgreSQL and BigQuery
-    hold unscaled exact state, so ``scale`` is 0 there. Magnitudes at or
-    below 2**-1075 become 0.0, as round-to-nearest gives.
+    hold unscaled exact state, so ``scale`` is 0 there, as does the portable
+    policy, which converts its fixed-scale text. Magnitudes at or below
+    2**-1075 become 0.0, as round-to-nearest gives.
     """
     return current_dialect(value).exact_to_float(value, scale)
 

@@ -1032,12 +1032,14 @@ class CohortTable:
             parent_design_hash,
             operation_hash,
         )
+        from terrine.compile.columns import expression_policy
         from terrine.compile.dispatch import compile_cohort_summary
 
+        policy = expression_policy(self.parent_frame._model)
         return self.parent_frame._materialize(
             budget,
             transform=lambda study: compile_cohort_summary(
-                study, grouping=self.grouping, value_column=self.value_column
+                study, grouping=self.grouping, value_column=self.value_column, dialect=policy
             ),
             shape="cohort_table",
             cohort_operation=operation,

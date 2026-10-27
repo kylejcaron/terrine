@@ -341,9 +341,14 @@ def resolve_sketch_sidecars(table: pa.Table, compiled: CompiledStudy, con) -> pa
     return table
 
 
+def expression_policy(model: Model) -> str:
+    """The admitted expression policy name a Model's study expressions compile for."""
+    return expression_dialect(model._engine)
+
+
 def exact_scope(model: Model) -> AbstractContextManager[None]:
     """Build window expressions using the Model's admitted expression policy."""
-    return dialect_scope(expression_dialect(model._engine))
+    return dialect_scope(expression_policy(model))
 
 
 def compile_columns(

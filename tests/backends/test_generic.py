@@ -4,12 +4,16 @@ import copy
 import pickle
 import subprocess
 import sys
+from decimal import Decimal
+from types import SimpleNamespace
 
 import ibis
+import ibis.expr.datatypes as dt
 import pytest
 from ibis.backends.sqlite import Backend
 
 from terrine import Model
+from terrine.backends.dialect import dialect_scope
 from terrine.errors import TerrineError
 from tests.execution.test_inputs import _catalog
 
@@ -127,3 +131,91 @@ def test_admitted_engine_cannot_be_reused_for_another_identity():
                 backend_provider(connection, engine=engine)
     finally:
         con.disconnect()
+
+
+def test_portable_policy_types_and_flags():
+    from terrine.backends.dialect import Dialect, dialect_for_name
+    from terrine.backends.numeric import exact_literal, exact_type, is_exact_type
+
+    policy = dialect_for_name("generic")
+    assert isinstance(policy, Dialect) and policy.name == "generic"
+    assert policy.exact_type() == dt.Decimal(38, 9)
+    assert policy.wide_type() == dt.Decimal(38, 0)
+    assert policy.coefficient_type() == dt.Decimal(38, 0)
+    assert not policy.has_scaled_float_state
+    assert not policy.has_native_asof
+    assert policy.supports_exact_prefix("sqlite")
+    assert is_exact_type(dt.Decimal(38, 9)) and is_exact_type(dt.Decimal(38, 0))
+    assert not is_exact_type(dt.Decimal(38, 2))
+    with dialect_scope("generic"):
+        assert exact_type() == dt.Decimal(38, 9)
+        count = exact_literal(1)
+        assert count.type() == dt.Decimal(38, 0)
+        state = ibis.literal(Decimal("0.5"), type=dt.Decimal(38, 9))
+        coefficient = ibis.literal(7, type=dt.Decimal(38, 0))
+        # Literals anchor to the first exact operand; other operands do not change them.
+        assert exact_literal(0, state).type() == dt.Decimal(38, 9)
+        assert exact_literal(0, ibis.literal(1.5), coefficient).type() == dt.Decimal(38, 0)
+        assert exact_literal(0, ibis.literal(2.5)).type() == dt.Decimal(38, 0)
+
+
+def test_portable_policy_compiles_every_operation_without_native_bindings():
+    """Each base operation builds an Ibis expression; nothing raises or needs a UDF."""
+    from terrine.backends.dialect import dialect_for_name
+
+    policy = dialect_for_name("generic")
+    table = ibis.table(
+        {
+            "f": "float64",
+            "n": "int64",
+            "c": "decimal(38, 0)",
+            "s": "decimal(38, 9)",
+            "t": "timestamp(6)",
+            "a": "timestamp('UTC', 6)",
+        },
+        name="events",
+    )
+    exact, nonfinite, unrepresentable = policy.exact_float(table.f)
+    assert (exact.type(), nonfinite.type(), unrepresentable.type()) == (
+        dt.Decimal(38, 9),
+        dt.boolean,
+        dt.boolean,
+    )
+    assert policy.exact_ratio(table.s, table.c).type().is_float64()
+    assert policy.exact_is_nonfinite(table.s).type().is_boolean()
+    assert policy.exact_to_float(table.s)[0].type().is_float64()
+    assert policy.exact_sum(table.c).type() == dt.Decimal(38, 0)
+    assert policy.exact_subtract(table.s, table.s).type() == dt.Decimal(38, 9)
+    assert policy.truncating_quotient(table.n, 7).type().is_int64()
+    assert policy.wide_quotient(table.c, table.c).type() == dt.Decimal(38, 0)
+    assert policy.decimal_coefficient(table.s, 9).type() == dt.Decimal(38, 0)
+    assert policy.narrow_exact(table.c, 2, dt.Decimal(38, 2)).type() == dt.Decimal(38, 2)
+    assert policy.utc_wall_clock(table.a).type() == dt.Timestamp(scale=6)
+    assert policy.utc_instant(table.t).type() == dt.Timestamp(timezone="UTC", scale=6)
+    assert policy.timestamp_text(table.a).type().is_string()
+    assert policy.timestamp_order_key(table.a).equals(table.a)
+    assert policy.reverse_time_key(table.t).type() == dt.Decimal(38, 0)
+    assert policy.timestamp_extremes(dt.Timestamp(scale=6))[1].type() == dt.Timestamp(scale=6)
+    assert policy.integer_sequence(3, "ordinal").schema()["ordinal"].is_int64()
+    with pytest.raises(TerrineError) as caught:
+        policy.timestamp_parts(table.t.cast(dt.Timestamp(scale=3)))
+    assert caught.value.code == "terrine.temporal.timestamp_order_unsupported"
+    with pytest.raises(ValueError):
+        policy.exact_to_float(table.s, 2)
+
+
+def test_cohort_summary_uses_the_passed_policy_scope(monkeypatch):
+    from terrine.backends import dialect as policies
+    from terrine.compile.shapes import cohorts
+
+    seen = []
+
+    def record(study, *, grouping, value_column):
+        seen.append(policies.current_dialect().name)
+        return study
+
+    monkeypatch.setattr(cohorts, "_compile_cohorts", record)
+    study = SimpleNamespace(table=ibis.table({"value": "int64"}, name="study"))
+    cohorts.compile_cohorts(study, grouping=None, value_column="value", dialect="generic")  # ty: ignore[invalid-argument-type]
+    assert seen == ["generic"]
+    assert policies.current_dialect().name == "duckdb"

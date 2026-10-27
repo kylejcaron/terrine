@@ -22,7 +22,6 @@ from terrine.backends.numeric import (
     exact_literal,
     exact_subtract,
     exact_sum,
-    exact_type,
     float_is_finite,
     float_scale,
 )
@@ -227,10 +226,12 @@ def _exact_comparison(value, coefficient, scale, bounds, item, op, name):
 
     A threshold outside the column's physical range settles the comparison
     without a literal, which the exact type might not hold (Snowflake's
-    NUMBER(38, 0) has no 39th digit for one past a 38-digit column).
+    NUMBER(38, 0) has no 39th digit for one past a 38-digit column). Literals
+    and typed NULLs take the coefficient's own type, so a scale-0 coefficient
+    is never promoted into a narrower fixed-scale state.
     """
     if item is None:
-        return _COMPARISONS[op](coefficient, ibis.null().cast(exact_type()))
+        return _COMPARISONS[op](coefficient, ibis.null().cast(coefficient.type()))
     floor, ceil, integral = _numeric_threshold(item, scale, bounds, name)
     if op in {"equals", "not_equals"} and not integral:
         return _known(value, op == "not_equals")
@@ -240,7 +241,7 @@ def _exact_comparison(value, coefficient, scale, bounds, item, op, name):
         if op in {"equals", "not_equals"}:
             return _known(value, op == "not_equals")
         return _known(value, _ABOVE_RANGE[op] if threshold > upper else not _ABOVE_RANGE[op])
-    return _COMPARISONS[op](coefficient, exact_literal(threshold))
+    return _COMPARISONS[op](coefficient, exact_literal(threshold, coefficient))
 
 
 def _filter_literal(value, item, name):
@@ -412,7 +413,7 @@ def _sparse_group(
         else:
             scale = dtype.scale if isinstance(dtype, dt.Decimal) else 0
             exact = decimal_coefficient(source_value, scale or 0)
-        coefficient = leaf.__terrine_selected.ifelse(exact, ibis.null().cast(exact_type()))
+        coefficient = leaf.__terrine_selected.ifelse(exact, ibis.null().cast(exact.type()))
         aggregates["sum_value"] = exact_sum(coefficient)
     grouped = leaf.group_by("_unit", *keys).aggregate(**aggregates)
     constants = {

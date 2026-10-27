@@ -8,7 +8,7 @@ import ibis
 import ibis.expr.datatypes as dt
 from ibis.common.exceptions import IbisError
 
-from terrine.backends.dialect import dialect_for_name
+from terrine.backends.dialect import current_dialect
 from terrine.backends.numeric import exact_literal, exact_subtract, exact_sum
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _SCHEMA
@@ -31,12 +31,17 @@ type Float64Failure = Literal["nonfinite_input", "bound_overflow"]
 
 
 def _require_backend(table: ibis.Table) -> None:
-    """Check static backend/build metadata; never run a capability query here."""
+    """Check static backend/build metadata; never run a capability query here.
+
+    The policy in effect (the admitted scope, else the table's own backend)
+    decides whether it can hold this backend's exact prefix state.
+    """
     try:
         backend = table._find_backend(use_default=False).name
     except IbisError:
         backend = "unbound"
-    if not dialect_for_name(backend).supports_exact_prefix(backend):
+    policy = current_dialect(*(table[name] for name in table.columns))
+    if not policy.supports_exact_prefix(backend):
         raise _EXACT_UNSUPPORTED.error(backend=backend)
 
 
@@ -90,7 +95,9 @@ def sparse_prefix(
         else exact_literal(0)
         for name in _COUNT_FIELDS
     }
-    fields["sum_value"] = exact_sum(state.sum_value).over(window).fill_null(exact_literal(0))
+    fields["sum_value"] = (
+        exact_sum(state.sum_value).over(window).fill_null(exact_literal(0, state.sum_value))
+    )
     if exact_floats:
         for name in _EXACT_FLOAT_COUNTS:
             fields[name] = exact_sum(state[name]).over(window).fill_null(exact_literal(0))

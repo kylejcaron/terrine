@@ -16,6 +16,32 @@
   Ibis schema inspection on unverified backends may end an open caller
   transaction; use a connection with no pending writes or a dedicated read
   connection.
+- Complete the portable base expression policy used after unverified
+  admission, so every study expression is an ordinary Ibis expression without
+  native bindings. Float facts enter as `DECIMAL(38, 9)` state by truncating
+  the backend's decimal text toward zero at nine places (`|Q9(t) - t| <
+  10**-9`; magnitudes at or above `10**29` and non-finite values refuse with
+  the existing `float64_precision` failures); counts and source-decimal
+  coefficients stay in a separate `DECIMAL(38, 0)` domain whose literals,
+  typed NULLs and narrowing bounds take the coefficient's type. Prefix
+  differences leaving the fixed domain and outputs leaving their target type
+  refuse with the existing codes; sums beyond the backend's decimal range
+  remain backend errors, never silently narrowed values. Exact-state ratios
+  divide correctly rounded binary64 operands once (within `3.1u` before later
+  rounding); integer quotients truncate toward zero through a certified
+  decimal residual correction and are NULL beyond int64 or for a zero
+  divisor. Timestamps use native order, typed UTC epoch deltas and signed
+  parts; the union/window as-of fallback, coalesced extrema and portable
+  integer sequences are the defaults. Measured on DuckDB and PostgreSQL 16
+  with the policy forced: shortest round-trip float text within half an ulp,
+  exact `0.1 + 0.2` and scale-2 cancellation, both signed `int64` quotient
+  endpoints, and nested quotients within `8u`. On PostgreSQL, Ibis lowers an
+  aware-timestamp delta through session wall clocks, so the forced portable
+  policy there is exact only for instants whose session offset matches the
+  epoch's; the registered PostgreSQL policy keeps its native UTC conversions.
+  Registered engines keep every previously refused operation (`exact_ratio`
+  and `exact_is_nonfinite` on DuckDB and Snowflake; normalized significand
+  division on PostgreSQL and BigQuery) through explicit overrides.
 - Centralize verified engine admission, capability records and expression
   selection without changing engine execution behavior, supported builds,
   session lifetimes or connection ownership.

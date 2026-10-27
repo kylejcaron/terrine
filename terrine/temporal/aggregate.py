@@ -220,12 +220,20 @@ def _aligned(timestamp, minutes: int):
 
 
 def _exact_decimal(builder: _Builder, quantity: _Quantity) -> ir.Value:
-    """An exact-state operand on PostgreSQL or BigQuery, whose float state is unscaled."""
+    """An exact-state operand whose float state is unscaled (PostgreSQL, BigQuery, portable).
+
+    An unbounded exact type holds a scaled coefficient as it is; a fixed
+    38-digit state keeps every coefficient digit by carrying the scale in its
+    type instead of the 29 integer digits of the scale-9 float state.
+    """
     value = builder.col(quantity.value)
     assert isinstance(quantity.scale, int)
     if quantity.scale == 0:
         return value
-    return _scaled_text(value, quantity.scale).cast(exact_type(value))
+    target = exact_type(value)
+    if isinstance(target, dt.Decimal) and target.precision is not None:
+        target = dt.Decimal(target.precision, quantity.scale)
+    return _scaled_text(value, quantity.scale).cast(target)
 
 
 def _normalized(builder: _Builder, quantity: _Quantity) -> tuple[ir.Value, ir.IntegerValue]:
@@ -332,19 +340,18 @@ def _component(
     for endpoint in (start, end):
         # A matched all-null prefix has the mathematical sum zero, not a missing state.
         count = builder.col(endpoint["nonnull_count"])
+        state = builder.col(endpoint["sum_value"])
         sums.append(
-            builder.put(
-                "endpoint_sum",
-                (count == zero).ifelse(zero, builder.col(endpoint["sum_value"])),
-            )
+            builder.put("endpoint_sum", (count == zero).ifelse(exact_literal(0, state), state))
         )
     assert measure.value_type is not None  # callers pass resolved measures
     dtype = dt.dtype(measure.value_type)
     difference = exact_subtract(builder.col(sums[1]), builder.col(sums[0]))
+    state_zero = exact_literal(0, difference)
     if dtype.is_floating():
         # Exact float state: an empty window is zero even when non-finite
         # history makes the prefix difference NaN.
-        value = builder.put("sum", builder.col(empty).ifelse(zero, difference))
+        value = builder.put("sum", builder.col(empty).ifelse(state_zero, difference))
         invalid = cast(ir.BooleanValue, ibis.literal(False))
         # Inputs the exact state could not hold, at or before the window end,
         # refuse a non-empty window.
@@ -365,14 +372,14 @@ def _component(
         )
         # A sum that only looks zero because inputs were dropped is not a zero
         # denominator: its refusal must not be masked by a zero_denominator reason.
-        known_zero = builder.put("sum_zero", (builder.col(value) == zero) & ~invalid)
+        known_zero = builder.put("sum_zero", (builder.col(value) == state_zero) & ~invalid)
         # DuckDB and Snowflake hold the unit's coefficients at the state's scale;
         # the exact types of PostgreSQL and BigQuery hold the shortest text unscaled.
         scale = end["exact_scale"] if has_scaled_float_state(builder.table.t0) else 0
         quantity = _Quantity(value, reason, known_zero, scale=scale, binary64=True)
     else:
         value = builder.put("sum", difference)
-        known_zero = builder.put("sum_zero", builder.col(value) == zero)
+        known_zero = builder.put("sum_zero", builder.col(value) == state_zero)
         scale = 0
         if isinstance(dtype, dt.Decimal):
             assert dtype.scale is not None
