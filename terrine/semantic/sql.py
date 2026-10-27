@@ -1,11 +1,20 @@
 """Dialect-aware read-only SQL admission; the original query is never rewritten."""
 
+import sys
+
 from sqlglot import exp, parse
 from sqlglot.optimizer.scope import traverse_scope
 
 from terrine.errors import RefusalSpec
 
 __all__ = ["admit_read_query"]
+
+# SQLGlot parses by recursive descent, roughly twenty Python frames per nesting
+# level of an expression. Compiled study statements nest deeply (the portable
+# policy's timestamp reconstruction alone needs about 850 frames), so the parse
+# is given a fixed budget above the default interpreter limit rather than
+# whatever the caller's own stack happens to leave.
+_PARSE_RECURSION_LIMIT = 10_000
 
 DIALECT_MISMATCH = RefusalSpec(
     "terrine.semantic.dialect_mismatch",
@@ -85,12 +94,23 @@ _READ_FUNCTIONS = frozenset(
 )
 
 
+def _statements(sql: str, dialect: str, reason: str) -> list[exp.Expression | None]:
+    """Parse ``sql`` with a recursion budget independent of the caller's depth."""
+    limit = sys.getrecursionlimit()
+    if limit < _PARSE_RECURSION_LIMIT:
+        sys.setrecursionlimit(_PARSE_RECURSION_LIMIT)
+    try:
+        return parse(sql, read=dialect)
+    except Exception as exc:
+        raise _INVALID.error(reason=reason) from exc
+    finally:
+        if limit < _PARSE_RECURSION_LIMIT:
+            sys.setrecursionlimit(limit)
+
+
 def _parse_read_query_ast(sql: str, dialect: str) -> exp.Query:
     """Parse one read-only query structure without admitting its functions."""
-    try:
-        statements = parse(sql, read=dialect)
-    except Exception as exc:
-        raise _INVALID.error(reason="parse failed for the execution dialect") from exc
+    statements = _statements(sql, dialect, "parse failed for the execution dialect")
     if len(statements) != 1 or statements[0] is None:
         raise _INVALID.error(reason="expected exactly one statement")
     statement = statements[0]
@@ -139,10 +159,7 @@ def _admit_read_query_ast(sql: str, declared_dialect: str, execution_dialect: st
 
 def _admit_stored_view_query_ast(definition: str, dialect: str) -> exp.Query:
     """Extract and admit the SELECT AST stored for a native view."""
-    try:
-        statements = parse(definition, read=dialect)
-    except Exception as exc:
-        raise _INVALID.error(reason="stored view definition could not be parsed") from exc
+    statements = _statements(definition, dialect, "stored view definition could not be parsed")
     if len(statements) != 1 or statements[0] is None:
         raise _INVALID.error(reason="stored view definition is not one query")
     statement = statements[0]
@@ -171,10 +188,7 @@ def _admit_capture_result_query_ast(sql: str, dialect: str) -> exp.Query:
 
 
 def _admit_capture_stored_view_query_ast(definition: str, dialect: str) -> exp.Query:
-    try:
-        statements = parse(definition, read=dialect)
-    except Exception as exc:
-        raise _INVALID.error(reason="stored capture view could not be parsed") from exc
+    statements = _statements(definition, dialect, "stored capture view could not be parsed")
     if len(statements) != 1 or statements[0] is None:
         raise _INVALID.error(reason="stored capture view is not one query")
     statement = statements[0]

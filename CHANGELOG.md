@@ -26,7 +26,11 @@
   pending writes or a dedicated read connection. The execution snapshot has
   no identity and `replay_equivalence="unverified"`. Admitted SQL and every
   compiled statement are parsed for read-only safety in the real dialect and
-  fail closed with `terrine.sql.invalid_read_query`. Unsupported primitives
+  fail closed with `terrine.sql.invalid_read_query`; that parse now runs with
+  its own recursion budget, so a deeply nested compiled statement (the
+  portable timestamp reconstruction alone needs about 850 interpreter frames
+  to parse) is admitted regardless of how deep the caller's own stack is,
+  instead of surfacing as a parse failure. Unsupported primitives
   refuse with `capability_unavailable` naming the backend and operation,
   chained from the backend's exception; owned Arrow readers are released on
   exhaustion, error, early close or context closure, and a failure during
