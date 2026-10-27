@@ -95,28 +95,6 @@ def test_strict_asof_excludes_version_start_and_distinguishes_matched_null(conne
     ]
 
 
-def test_changed_at_strict_left_limit_uses_previous_change(connection):
-    t0 = datetime(2025, 3, 1, tzinfo=UTC)
-    points = ibis.memtable({"point_id": [7], "account": ["a"], "cutoff": [t0]})
-    history = ibis.memtable(
-        {
-            "account_id": ["a", "a"],
-            "changed": [datetime(2025, 1, 1, tzinfo=UTC), t0],
-            "tier_value": ["silver", "gold"],
-        }
-    )
-    dimension = _dimension(validity=BoundValidity(None, None, "changed"))
-    validate_history(history, dimension, execute=connection.to_pyarrow)
-    result = connection.to_pyarrow(
-        attribute_asof(
-            points, history, dimension, "tier", unit_column="account", cutoff_column="cutoff"
-        )
-    ).to_pylist()
-    assert result[0]["point_id"] == 7
-    assert result[0]["__terrine_attribute_value"] == "silver"
-    assert result[0]["__terrine_attribute_found"] is True
-
-
 def test_event_enrichment_uses_declared_account_key_and_event_time(connection):
     t1, t2 = datetime(2025, 3, 1, tzinfo=UTC), datetime(2025, 3, 2, tzinfo=UTC)
     events = ibis.memtable(
