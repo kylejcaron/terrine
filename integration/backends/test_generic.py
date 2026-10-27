@@ -757,3 +757,49 @@ def test_naive_utc_round_trip_and_signed_parts_ignore_session_zone(connection):
         assert row["nanos"] == (micros - expected_seconds * 10**6) * 1000
     assert rows["pre_epoch"]["seconds"] == 0
     assert rows["pre_epoch"]["nanos"] == -1000
+
+
+# Offsets from the epoch in nanoseconds, one tick either side of a whole second
+# and of the epoch itself; the microsecond variant scales each tick by 1000.
+_SUBSECOND_OFFSETS = {
+    "after_second": 10**9 + 1,
+    "before_second": -(10**9) - 1,
+    "after_epoch": 1,
+    "before_epoch": -1,
+}
+
+
+def test_subsecond_parts_split_whole_seconds_and_signed_remainders(connection):
+    """Whole seconds truncate toward zero and the remainder keeps the sign, at the
+    microsecond precision every backend holds and at nanoseconds where the backend
+    has them (PostgreSQL timestamps stop at microseconds)."""
+    units = ["us", "ns"] if connection.name == "duckdb" else ["us"]
+    for unit in units:
+        tick = 1 if unit == "ns" else 1000
+        offsets = {name: offset * tick for name, offset in _SUBSECOND_OFFSETS.items()}
+        table = connection.create_table(
+            f"ticks_{unit}",
+            pa.table(
+                {
+                    "case": list(offsets),
+                    "naive": pa.array(
+                        [offset // tick for offset in offsets.values()], pa.int64()
+                    ).cast(pa.timestamp(unit)),
+                }
+            ),
+        )
+        rank, seconds, nanos = timestamp_parts(table.naive)
+        rows = {
+            row["case"]: row
+            for row in _rows(
+                connection, table.select("case", rank=rank, seconds=seconds, nanos=nanos)
+            )
+        }
+        for name, offset in offsets.items():
+            expected_seconds = _truncating_quotient(offset, 10**9)
+            assert expected_seconds is not None
+            expected = (0, expected_seconds, offset - expected_seconds * 10**9)
+            assert (rows[name]["rank"], rows[name]["seconds"], rows[name]["nanos"]) == expected, (
+                unit,
+                name,
+            )

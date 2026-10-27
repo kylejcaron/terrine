@@ -20,6 +20,7 @@ from typing import Any, ClassVar, cast
 
 import ibis
 import ibis.expr.datatypes as dt
+import ibis.expr.operations as ops
 import ibis.expr.types as ir
 from ibis.common.exceptions import IbisError
 
@@ -410,7 +411,10 @@ class Dialect:
         The delta against an epoch literal of the value's own type is an instant
         difference, independent of the session zone; a naive value denotes UTC.
         The remainder keeps the dividend's sign, so pre-epoch instants split as
-        ``(0, -1)`` rather than ``(-1, 999999)``.
+        ``(0, -1)`` rather than ``(-1, 999999)``. A nanosecond delta is lowered
+        as a bare ``a - b``, so it is held in an explicit cast node (``Value.cast``
+        drops a same-type cast) and stays one operand of the quotient and the
+        remainder.
         """
         from terrine.backends.timestamps import _UNSUPPORTED, _epoch
 
@@ -418,7 +422,10 @@ class Dialect:
         if not isinstance(dtype, dt.Timestamp) or dtype.scale not in (None, 6, 9):
             raise _UNSUPPORTED.error(dtype=str(dtype))
         unit, divisor = ("nanosecond", 10**9) if dtype.scale == 9 else ("microsecond", 10**6)
-        coefficient = value.delta(_epoch(dtype), unit=unit)
+        delta = value.delta(_epoch(dtype), unit=unit)
+        # Ibis types the node constructor's operand loosely; the expression is an int64.
+        atomic = ops.Cast(delta, to=dt.int64)  # ty: ignore[invalid-argument-type]
+        coefficient = cast(ir.IntegerValue, atomic.to_expr())
         seconds = self.truncating_quotient(coefficient, divisor)
         remainder = cast(ir.IntegerValue, coefficient % divisor)
         return seconds, remainder, divisor, dtype
