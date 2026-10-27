@@ -50,7 +50,7 @@ def _compile_design(
     persisted_anchors: ibis.Table | None = None,
 ) -> CompiledStudy:
     if persisted_prefixes is not None or persisted_anchors is not None:
-        ensure_runtime_shape_supported(design.shape)
+        ensure_runtime_shape_supported(design.shape, anchor=design.anchor)
     if isinstance(design.shape, EventSequence):
         from terrine.compile.shapes.event_sequence import compile_event_sequence
 

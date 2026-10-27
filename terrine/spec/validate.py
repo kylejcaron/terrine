@@ -72,11 +72,15 @@ _RUNTIME_SHAPE_UNSUPPORTED = RefusalSpec(
 )
 
 
-def ensure_runtime_shape_supported(shape: object) -> None:
-    """Apply the canonical persisted-layer runtime supported-shape matrix."""
+def ensure_runtime_shape_supported(shape: object, *, anchor: object = None) -> None:
+    """Apply the canonical persisted-layer supported-shape and anchor matrix."""
     from terrine.spec.panels import EventPanelSpec, SequentialSpec
     from terrine.spec.state_panel import StatePanel
 
+    if isinstance(anchor, EventAnchor) and anchor.offset:
+        raise _RUNTIME_SHAPE_UNSUPPORTED.error(
+            shape="EventAnchor.offset", route="ordinary Frame materialization or a full rebuild"
+        )
     if shape == "cross_section" or isinstance(shape, (SequentialSpec, EventPanelSpec, StatePanel)):
         return
     name = shape if isinstance(shape, str) else type(shape).__name__

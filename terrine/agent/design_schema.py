@@ -58,6 +58,7 @@ def design_schema() -> dict[str, Any]:
             "fact": text,
             "which": {"enum": ["first", "nth", "each"]},
             "n": nullable(integer),
+            "offset": duration,
         },
         "Schedule": {"every": duration, "start": ref("Temporal"), "end": ref("Temporal")},
         "AnchorRange": {"start": nullable(ref("Temporal")), "end": nullable(ref("Temporal"))},
@@ -170,7 +171,7 @@ def design_schema() -> dict[str, Any]:
         },
     }
     optional = {
-        "EventAnchor": {"n"},
+        "EventAnchor": {"n", "offset"},
         "MetricAgg": {"relative_to"},
         "AttributeAsOf": {"relative_to"},
         "EventTime": {"relative_to"},

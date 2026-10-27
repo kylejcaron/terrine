@@ -71,6 +71,7 @@ def test_discovery_schema_accepts_canonical_temporal_nodes():
         (Schedule("1d", "2025-01-01", "2025-01-05"), "cross_section"),
         (EventAnchor("start"), CohortSpec("start", Trajectory("total", "1d", 2))),
         (FixedDate("2025-01-01"), LifeTable(TimeToEvent("end"), "1d")),
+        (EventAnchor("start", offset="1d"), TimeToEvent("end")),
     ):
         design = Design("user", anchor, shape=shape)
         validator.validate(json.loads(to_json(design)))

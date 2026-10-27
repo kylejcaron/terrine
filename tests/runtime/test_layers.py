@@ -177,7 +177,9 @@ def test_runtime_shape_preflight_refuses_unsupported_shape_without_a_model():
     from terrine.spec.design import Design
 
     with pytest.raises(TerrineError) as error:
-        preflight_materialization_shape(cast(Design, SimpleNamespace(shape="time_to_event")))
+        preflight_materialization_shape(
+            cast(Design, SimpleNamespace(shape="time_to_event", anchor=None))
+        )
     assert error.value.code == "terrine.compile.runtime_shape_unsupported"
 
 

@@ -118,6 +118,40 @@ When a design declares a treatment, each retained survival row includes the
 `treatment` value and its support metadata. The `treatment` role refers to that
 output column; event and censoring rules are unchanged.
 
+### Landmark survival
+
+To begin follow-up after a baseline period, use an offset event anchor with the
+low-level Design. The recipes keep their original start-event behavior.
+
+```python
+from terrine import Design, EventAnchor, TimeToEvent, agg
+
+landmark_survival = Design(
+    "user",
+    EventAnchor("purchase", which="first", offset="1d"),
+    features={"day_one_sessions": agg("sessions", window=("-1d", "0s"))},
+    shape=TimeToEvent("churn"),
+    administrative_cutoff=cutoff,
+)
+```
+
+Here `t0 = purchase + 1d`, and the half-open feature window covers
+`[purchase, purchase + 1d)`, excluding the landmark instant. `duration` is
+measured from the landmark, not from purchase. A churn event strictly before
+the landmark excludes that unit as prevalent; an event exactly at the
+landmark remains eligible. This conditions the dataset on being at risk at
+the landmark; it is not survival from purchase. Prevalent exclusions are not
+currently reported as a separate count.
+
+Offsets are non-negative elapsed durations, not calendar-day shifts.
+`anchor_range` filters original purchase instants after first/nth selection,
+before the offset is applied. Nonzero offsets participate in saved Design
+hashes, anchor identity and provenance; zero-offset serialization is unchanged.
+Use ordinary Frame materialization or a full rebuild: persisted-layer
+substitution for shifted anchors refuses before source access with
+`terrine.compile.runtime_shape_unsupported`.
+
+
 ## Grouped life tables
 
 `recipes.life_table` requires `unit`, `start_event`, `end_event`, and `bin`. A

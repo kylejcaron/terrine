@@ -160,6 +160,7 @@ Repair temporal/history contracts; do not zero-fill unknowns.
 | `terrine.design.incomplete_unit_treatment_history` | <code>Roster observation bounds do not cover a scheduled treatment history.</code> | None | [terrine/compile/shapes/sequential.py](../../terrine/compile/shapes/sequential.py) |
 | `terrine.design.incomplete_unit_treatment_history` | <code>Roster observation bounds do not cover the required calendar treatment history.</code> | None | [terrine/compile/shapes/calendar_comparison.py](../../terrine/compile/shapes/calendar_comparison.py) |
 | `terrine.design.invalid` | <code>Design validation failed: {reason}.</code> | `reason` | [terrine/recipes.py](../../terrine/recipes.py) |
+| `terrine.design.invalid` | <code>Design validation failed: {reason}.</code> | `reason` | [terrine/spec/anchors.py](../../terrine/spec/anchors.py) |
 | `terrine.design.invalid` | <code>Design validation failed: {reason}.</code> | `reason` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 | `terrine.design.invalid_calendar_comparison` | <code>Calendar comparison specification is invalid: {reason}.</code> | `reason` | [terrine/spec/panels.py](../../terrine/spec/panels.py) |
 | `terrine.design.invalid_matched_t0_sample` | <code>Matched-t0 sample policy is invalid: {reason}.</code> | `reason` | [terrine/spec/panels.py](../../terrine/spec/panels.py) |

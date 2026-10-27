@@ -15,7 +15,7 @@ from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.spec import agg
-from terrine.spec.anchors import FixedDate
+from terrine.spec.anchors import EventAnchor, FixedDate
 from terrine.spec.design import Design
 
 
@@ -115,7 +115,8 @@ def test_owner_plan_rolls_back_snapshot_pin_when_invocation_persistence_fails(
         connection.disconnect()
 
 
-def test_owner_plan_refuses_unsupported_runtime_shape_before_resolving_sources():
+@pytest.mark.parametrize("entry", ["sequence", "offset"])
+def test_owner_plan_refuses_unsupported_runtime_shape_before_resolving_sources(entry):
     from terrine.errors import TerrineError
     from terrine.spec.sequence import EventSequence
     from terrine.windows import Window
@@ -123,7 +124,9 @@ def test_owner_plan_refuses_unsupported_runtime_shape_before_resolving_sources()
     request = PlanRequest(
         "unsupported-shape",
         _request().model,
-        Design(
+        Design("user", EventAnchor("purchase", offset="1d"))
+        if entry == "offset"
+        else Design(
             "user",
             FixedDate("2025-01-15"),
             shape=EventSequence("purchase", Window("0s", "1d"), max_events=3),
