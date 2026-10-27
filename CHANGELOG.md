@@ -14,6 +14,8 @@
   Constructor-first guides include equivalent low-level Designs.
   LTV requires an untransformed native metric with exactly one SUM measure;
   generated count and mean metrics are not accepted by that shape.
+- Recipe examples use the same adjacent per-value completeness columns as their
+  materialized datasets, including LTV values and empty event-sequence counts.
 - Bind table-backed events with immutable `Events` descriptors and
   `Model.from_tables`, retaining explicit unit rosters and completeness.
   Generate event/value facts and count, sum and event-mean metrics; refuse

@@ -109,7 +109,7 @@ def main() -> None:
         assert {unit: row["event_count"] for unit, row in headers.items()} == {
             "u1": 3, "u2": 1, "u3": 0,
         }
-        assert headers["u3"]["sequence_complete"]
+        assert headers["u3"]["event_count__complete"]
         u1_events = sorted(
             (row for row in recipe_rows if row["is_event"] and row["unit"] == "u1"),
             key=lambda row: (row["event_time"], row["event_id"]),

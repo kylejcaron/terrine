@@ -108,7 +108,7 @@ def main() -> None:
         rows = sorted(ltv.table.to_pylist(), key=lambda row: row["age"])
         assert [row["unit"] for row in rows] == ["active", "active"]
         assert [row["cumulative_value"] for row in rows] == [7, 20]
-        assert all(row["cumulative_value_complete"] for row in rows)
+        assert all(row["cumulative_value__complete"] for row in rows)
         print(
             "Scheduled roster values:",
             {
