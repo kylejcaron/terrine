@@ -168,6 +168,37 @@ def test_decimal_admission_is_lazy_and_cached_per_session():
     assert -9223372036854775808 in answers.values()
 
 
+def test_frame_admission_witnesses_once_and_only_when_needed():
+    """``context.admit`` takes every relation a Frame will run: a decimal relation
+    anywhere among them runs the witness once, before any of them executes;
+    decimal-free relations run none; per-statement preflight then finds it cached."""
+    from terrine.execution import _generic
+
+    con = FailingBackend()
+    _witnesses, answers = _generic._decimal_witnesses()
+    con.witness_answers = answers
+    plain = ibis.literal(1).name("value").as_table()
+    decimal = ibis.literal(Decimal("1.000000001"), type="decimal(38,9)").name("value").as_table()
+    with context_for(con) as context:
+        context.admit(plain, plain)
+        assert con.decimal_reads == 0
+        context.admit(plain, decimal, plain)
+        assert con.decimal_reads == 1
+        # The double counts the user's own decimal read; no second witness runs.
+        context.execute(decimal)
+        context.admit(decimal)
+        assert con.decimal_reads == 2
+    con.witness_answers = {"rounded": 0}
+    with context_for(con) as context, pytest.raises(TerrineError) as caught:
+        context.admit(plain, decimal)
+    assert caught.value.context["operation"] == "exact_state"
+    with context_for(con) as context:
+        context.close()
+        with pytest.raises(TerrineError) as closed:
+            context.admit(plain)
+    assert closed.value.code == "terrine.execution.snapshot_unavailable"
+
+
 def test_inexact_decimal_witness_never_admits_user_query():
     con = FailingBackend()
     con.witness_answers = {"rounded": 0}

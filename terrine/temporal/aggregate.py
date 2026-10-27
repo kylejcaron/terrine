@@ -77,6 +77,9 @@ class _Check:
     table: ibis.Table
     failures: tuple[_Failure, ...]
 
+    def reads(self) -> tuple[ibis.Table, ...]:
+        return (self.table,)
+
     def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None:
         result = execute(self.table)
         expected = [failure.column for failure in self.failures]
@@ -110,6 +113,9 @@ class TemporalResult:
     def __post_init__(self) -> None:
         object.__setattr__(self, "columns", MappingProxyType(dict(self.columns)))
         object.__setattr__(self, "_checks", tuple(self._checks))
+
+    def reads(self) -> tuple[ibis.Table, ...]:
+        return tuple(check.table for check in self._checks)
 
     def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None:
         """Run bounded scalar checks using the same pinned executor as final export."""

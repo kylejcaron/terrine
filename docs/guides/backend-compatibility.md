@@ -141,8 +141,12 @@ admission, never a `False` capability. Unavailable primitives refuse with
 `terrine.backend.capability_unavailable`, the actual backend, the owning
 operation and the original backend exception as cause; `TerrineError`,
 cancellation and process-control exceptions pass through unchanged. Two
-witnesses run lazily, once per execution context, before any source row is
-read, and only when the compiled query needs them:
+witnesses run lazily, once per execution context, and only when a relation
+needs them. A Frame submits every relation it will run (output, audit and each
+integrity check) for admission as soon as it is compiled, so an unsupported
+primitive anywhere in it refuses before the first source row is read, not
+after the roster checks have scanned; an independent statement on an
+execution context is admitted when it is issued:
 
 - A query carrying decimal state (study counts, sums, averages and ratios all
   do) first compiles and executes scalar known answers for scale-9 low digits

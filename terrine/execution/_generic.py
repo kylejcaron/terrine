@@ -110,6 +110,13 @@ def _has_decimal(dtype: dt.DataType) -> bool:
     return dtype.is_decimal()
 
 
+def _needs_decimal(query: Any) -> bool:
+    """Owned expression metadata, inspected outside the backend exception boundary."""
+    return any(_has_decimal(dtype) for dtype in query.as_table().schema().types) or any(
+        _has_decimal(value.dtype) for value in query.op().find(ops.Value)
+    )
+
+
 class _Reader:
     """Release the borrowed statement's reader even when consumption stops early."""
 
@@ -209,29 +216,35 @@ class NoSnapshotSession:
         finally:
             invalidate_metadata()
 
+    def _witness(self, operation: str, witness: Any, answers: dict[str, Any]) -> None:
+        """Compile and execute scalar known answers; any difference refuses ``operation``."""
+        self._call_backend(operation, lambda: self.con.compile(witness))
+        result = self._call_backend(operation, lambda: self.con.to_pyarrow(witness))
+        if result.to_pylist() != [answers]:
+            raise self._unavailable(operation)
+
+    def admit_primitives(self, *queries: Any) -> None:
+        """Witness every primitive the given relations need, once per session.
+
+        A Frame passes all of its relations (output, audit, integrity checks)
+        before its first statement, so an unsupported primitive refuses before
+        any source row is read; a relation needing no witness costs nothing.
+        """
+        for query in queries:
+            if not self._decimal_admitted and _needs_decimal(query):
+                self._witness("exact_state", *_decimal_witnesses())
+                self._decimal_admitted = True
+            if not self._utc_admitted and _needs_aware_delta(query):
+                # A delta lowered through session wall clocks misplaces instants whose
+                # offset differs from the epoch's; refuse rather than answer wrongly.
+                self._witness("utc_wall_clock", *_utc_witnesses())
+                self._utc_admitted = True
+
     def admit(self, query: Any) -> str:
-        # Inspect owned expression metadata outside the backend exception boundary.
-        needs_decimal = any(
-            _has_decimal(dtype) for dtype in query.as_table().schema().types
-        ) or any(_has_decimal(value.dtype) for value in query.op().find(ops.Value))
-        if needs_decimal and not self._decimal_admitted:
-            witness, answers = _decimal_witnesses()
-            self._call_backend("exact_state", lambda: self.con.compile(witness))
-            result = self._call_backend("exact_state", lambda: self.con.to_pyarrow(witness))
-            if result.to_pylist() != [answers]:
-                raise self._unavailable("exact_state")
-            self._decimal_admitted = True
-        if _needs_aware_delta(query) and not self._utc_admitted:
-            # A delta lowered through session wall clocks misplaces instants whose
-            # offset differs from the epoch's; refuse rather than answer wrongly.
-            witness, expected = _utc_witnesses()
-            self._call_backend("utc_wall_clock", lambda: self.con.compile(witness))
-            walls = self._call_backend("utc_wall_clock", lambda: self.con.to_pyarrow(witness))
-            if walls.to_pylist() != [expected]:
-                raise self._unavailable("utc_wall_clock")
-            self._utc_admitted = True
+        """Admit one statement's primitives, then compile it at the backend boundary."""
+        self.admit_primitives(query)
         return self._call_backend(
-            "exact_state" if needs_decimal else "query", lambda: self.con.compile(query)
+            "exact_state" if _needs_decimal(query) else "query", lambda: self.con.compile(query)
         )
 
     def check_query(self, sql: str) -> None:
@@ -355,6 +368,7 @@ class _GenericProvider:
             _session=session,
             owner_con=con,
             _preflight=session.admit,
+            _admit=session.admit_primitives,
         )
         try:
             yield context

@@ -577,11 +577,24 @@ class ExecutionContext:
     owner_con: Any = None
     _revalidate: Callable[[], None] | None = None
     _preflight: Callable[[Any], str] | None = None
+    _admit: Callable[..., None] | None = None
 
     def resolve(self, relation: RelationSpec) -> Any:
         if self._session is None:
             raise _SNAPSHOT_UNAVAILABLE.error(reason="execution context is closed")
         return self._resolver(relation)
+
+    def admit(self, *queries: Any) -> None:
+        """Admit every primitive the given relations need before any of them runs.
+
+        Verified providers need no admission; an unverified provider witnesses
+        the primitives once per context, so a Frame that passes all of its
+        relations here is refused, if at all, before its first source read.
+        """
+        if self._session is None:
+            raise _SNAPSHOT_UNAVAILABLE.error(reason="execution context is closed")
+        if self._admit is not None:
+            self._admit(*queries)
 
     @metadata_operation()
     def _check_query(self, query: Any) -> tuple[ExecutionSession, str]:

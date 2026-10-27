@@ -42,7 +42,11 @@
   exhaustion, error, early close or context closure, and a failure during
   batch consumption carries the same code.
 - Run lazy scalar known-answer witnesses once per execution context, before
-  any source row and only when a query needs them: exact decimal arithmetic
+  any source row and only when a relation needs them; a Frame submits every
+  relation it will run (output, audit and each integrity check) as soon as it
+  is compiled, so an unsupported primitive refuses before its roster and
+  event checks scan, while an independent statement on an execution context
+  is admitted when issued: exact decimal arithmetic
   (scale-9 low digits at a large offset, cancellation, the domain edges,
   signed quotients, both `int64` endpoints and a 38-digit coefficient), which
   refuses `operation="exact_state"` on a backend such as SQLite that stores

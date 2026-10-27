@@ -61,6 +61,10 @@ class AnchorTable:
     table: ibis.Table
     _checks: tuple[_AnchorCheck, ...]
 
+    def reads(self) -> tuple[ibis.Table, ...]:
+        """Every relation ``validate`` executes, for admission before any read."""
+        return tuple(check.query for check in self._checks)
+
     def validate(self, *, execute: Callable[[ibis.Table], pa.Table]) -> None:
         """Execute aggregate checks through the caller's pinned Arrow executor."""
         if not callable(execute):

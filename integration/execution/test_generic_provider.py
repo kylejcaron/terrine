@@ -89,6 +89,48 @@ def test_public_count_frame_has_operation_specific_refusal(sqlite):
         assert result.table["count"].to_pylist() == [1]
 
 
+def test_frame_admission_precedes_every_source_read(sqlite, monkeypatch):
+    """The whole compiled Frame, validation graphs included, is admitted before
+    the first source statement: on SQLite the decimal witness refuses the count
+    Frame with zero roster or event reads, and a decimal-free Frame runs no
+    witness at all."""
+    from terrine.execution import _generic
+
+    statements: list[str] = []
+    original = _generic.NoSnapshotSession._call_backend
+
+    def recording(self, operation, action):
+        statements.append(operation)
+        return original(self, operation, action)
+
+    monkeypatch.setattr(_generic.NoSnapshotSession, "_call_backend", recording)
+    executed: list[str] = []
+    sqlite.con.set_trace_callback(executed.append)
+    model = bind(sqlite)
+    count = Design(
+        "user",
+        FixedDate(datetime(2025, 1, 2, tzinfo=UTC)),
+        features={"count": agg("total", window=("-1d", "0d"))},
+    )
+    with pytest.raises(TerrineError) as caught:
+        count.build(model).materialize()
+    assert caught.value.context["operation"] == "exact_state"
+    # Schema inspection (PRAGMA table_info) binds the sources; no statement may read rows.
+    source_reads = [
+        sql
+        for sql in executed
+        if ("users" in sql or "events" in sql) and "PRAGMA" not in sql.upper()
+    ]
+    assert source_reads == [], source_reads
+    assert "exact_state" in statements
+
+    executed.clear()
+    statements.clear()
+    roster = Design("user", FixedDate(datetime(2025, 1, 2, tzinfo=UTC))).build(model).materialize()
+    assert roster.table["unit"].to_pylist() == [1]
+    assert "exact_state" not in statements and "utc_wall_clock" not in statements
+
+
 def test_generic_materialization_round_trips_unverified_stamp(sqlite):
     import pyarrow as pa
 

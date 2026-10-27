@@ -29,6 +29,10 @@ class AsOfResult:
     history: ibis.Table
     dimension: BoundDimension
 
+    def reads(self) -> tuple[ibis.Table, ...]:
+        # History validation filters and counts this relation; no primitive of its own.
+        return (self.history,)
+
     def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None:
         validate_history(self.history, self.dimension, execute=execute)
 

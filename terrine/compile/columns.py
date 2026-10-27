@@ -93,6 +93,10 @@ _RESERVED = {"unit", "anchor_id", "t0", "treatment", "_observed_from", "_observe
 
 
 class _DeferredCheck(Protocol):
+    def reads(self) -> tuple[ibis.Table, ...]:
+        """The relations ``validate`` executes, admitted before any read runs."""
+        ...
+
     def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None: ...
 
 
@@ -159,6 +163,10 @@ def _validate_names(design: Design) -> None:
 class _HistoryValidation:
     table: ibis.Table
     dimension: BoundDimension
+
+    def reads(self) -> tuple[ibis.Table, ...]:
+        # The checks filter and count this table; they add no primitive of their own.
+        return (self.table,)
 
     def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None:
         validate_history(self.table, self.dimension, execute=execute)
@@ -296,6 +304,18 @@ class CompiledStudy:
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
         object.__setattr__(self, "_checks", tuple(self._checks))
         object.__setattr__(self, "sketches", tuple(self.sketches))
+
+    def reads(self) -> tuple[ibis.Table, ...]:
+        """Every relation materialization may execute: the output, its audit, each
+        deferred integrity check and each sketch sidecar, so admission can
+        inspect them before the first source row is read."""
+        return (
+            self.table,
+            self.audit_table,
+            *self._anchors.reads(),
+            *(relation for check in self._checks for relation in check.reads()),
+            *(sidecar.rows for sidecar in self.sketches),
+        )
 
     def validate(self, *, execute: Callable[[ibis.Table], pa.Table]) -> None:
         """Run every deferred integrity check before audit or output leaves its view."""

@@ -644,6 +644,9 @@ class Frame:
                 unit_name=self._design.unit,
             )
             compiled = compile_design(self._design, execution_model)
+            # Admit every relation the Frame will run, integrity checks included,
+            # so an unsupported primitive refuses before the first source read.
+            context.admit(*compiled.reads())
             excluded_counts = {}
             if self._training_view is not None:
                 compiled.validate(execute=context.execute)
@@ -654,6 +657,7 @@ class Frame:
                 compiled = _apply_training_view(compiled, self._training_view)
             if transform is not None:
                 compiled = transform(compiled)
+                context.admit(*compiled.reads())
             compiled = self._with_winsorization_metadata(compiled)
             summary = validate_compiled_output(compiled, context.execute)
             query = compiled.table
