@@ -135,15 +135,15 @@
 
 - Stage immutable DuckDB generations with bounded Arrow transfers and pinned
   reads. Preserve logical types, column roles, coverage, completeness, precision
-  metadata and construction recipes through manifests and Arrow serialization.
-- Reopen and refresh saved training/scoring recipes in a fresh process. Explicit
+  metadata and construction definitions through manifests and Arrow serialization.
+- Reopen and refresh saved training/scoring definitions in a fresh process. Explicit
   source corrections publish a new generation without mutating existing readers.
 - Select training features/labels with exact incomplete-label exclusions and
   leakage-aware group/time splits, purging, embargo and unassigned-row reasons.
 - Resolve scoring instants once, select an explicit eligible roster and omit
   unused labels, treatment and label-source reads.
 - Apply fixed or train-only fitted post-aggregation winsorization, retain exact
-  frozen limits and require matching feature/recipe/snapshot identities on reuse.
+  frozen limits and require matching feature/definition/snapshot identities on reuse.
 - Export resumable checksum-verified local Parquet shards with semantic metadata,
   exact decimal/timestamp/null values and typed empty outputs.
 - Enforce output-byte budgets against cumulative Arrow batches before Parquet

@@ -12,10 +12,9 @@ from typing import Any
 import ibis
 import pyarrow.parquet as pq
 
-from terrine import Budget, Coverage, Design, FixedDate, Model, UnitSource, agg, asof
-from terrine.dataset.manifest import DatasetManifest
-from terrine import Dataset
+from terrine import Budget, Coverage, Dataset, Design, FixedDate, Model, UnitSource, agg, asof
 from terrine.dataset import GroupSplit
+from terrine.dataset.manifest import DatasetManifest
 from terrine.runtime.changes import Change, ChangeSet
 
 

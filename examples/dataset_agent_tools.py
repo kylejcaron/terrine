@@ -16,8 +16,8 @@ from terrine.runtime import (
     RuntimeOwner,
     SnapshotAuthority,
 )
-from terrine.spec import DatasetDefinition
 from terrine.runtime.changes import Change, ChangeSet
+from terrine.spec import DatasetDefinition
 
 
 def main() -> None:

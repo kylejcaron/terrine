@@ -8,7 +8,6 @@ from pathlib import Path
 
 import ibis
 
-from terrine.compile.columns import compile_columns
 from terrine.data import Budget, Coverage, UnitSource
 from terrine.model import Model
 from terrine.runtime import (
@@ -74,9 +73,9 @@ class ModelResolver:
 
 
 def _clean_rebuild_rows(model: Model, design: Design) -> list[dict[str, object]]:
-    compiled = compile_columns(design, model)
-    compiled.validate(execute=model.con.to_pyarrow)
-    rows = model.con.to_pyarrow(compiled.table).to_pylist()
+    rows = design.build(model).materialize(
+        Budget(max_rows=100, max_output_bytes=1_000_000)
+    ).table.to_pylist()
     return sorted(
         [{"user_id": row["unit"], "total": row["total"], "tier": row["tier"]} for row in rows],
         key=lambda row: row["user_id"],
