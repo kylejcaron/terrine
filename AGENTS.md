@@ -273,6 +273,24 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   Capability inspection is metadata-only and never runs querying identity admission.
   `tests/test_engine_dispatch.py` rejects engine-name selection outside those
   modules; it is a heuristic review aid, not proof of centralized dispatch.
+- Backends have three tiers. Verified engines are the `ENGINES` registrations
+  with native dialect overrides and consistent-view providers. Any other
+  genuine Ibis backend is unverified: it refuses by default and, only after a
+  Model's `allow_unverified=True`, runs read-only statement-scoped reads under
+  the separate `GENERIC` record, whose expression policy is the unmodified
+  base `Dialect` in `terrine/backends/dialect.py` and whose provider is
+  `terrine/execution/_generic.py`. Raw drivers, name-only objects and failed
+  registered identities stay refused with or without the flag, as do every
+  effect (staging, retained capture, publication, reopening) on an unverified
+  backend. Extend the portable tier by completing the base `Dialect` method
+  or adding an operation-specific coded refusal there, never by naming a
+  backend; a base default must not advertise an operation a registered
+  engine's `operations` declaration excludes, so add the engine override that
+  keeps its refusal. The portable policy answers exactly or refuses by code:
+  lazy scalar known-answer witnesses (exact decimals, UTC wall clocks across
+  daylight saving) run once per execution context before source rows are
+  read, and accumulations are withheld by a derived magnitude bound rather
+  than trusted to the backend.
 - The PostgreSQL engine's identity callback owns the existing qualified,
   read-only `SELECT pg_catalog.version()` admission exception. It checks the
   Ibis floor before reading identity and refuses before source metadata access;

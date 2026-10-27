@@ -6,14 +6,26 @@ DuckDB is the reference execution provider. An Ibis PostgreSQL backend
 (`terrine[bigquery]`) and an Ibis Snowflake backend (`terrine[snowflake]`)
 materialize Frames directly from their tables.
 
-Other genuine Ibis backends refuse by default, before source schema access.
-Explicitly pass `allow_unverified=True` to `Model.from_catalog`,
-`Model.from_tables` or `Model.from_increment` to admit read-only operations.
-Admission emits the filterable `terrine.UnverifiedBackendWarning`; permission
-belongs to that Model, not the connection. A second Model still needs consent.
-Raw driver connections and name-only objects remain refused, as do rejected
-registered identities such as a PostgreSQL-wire-compatible server. Raw DuckDB
-connections remain valid for native runtime protocols, not Ibis execution.
+Backends fall into three tiers:
+
+- **Verified engines**: DuckDB, PostgreSQL 16, BigQuery and Snowflake. Each has
+  registered identity admission, a native expression policy with the measured
+  numerical contracts in its section below, and one consistent view per
+  materialization. Nothing in the unverified tier changes these guarantees:
+  their SQL, refusals and session lifetimes are unaffected by the portable
+  policy.
+- **Opted-in unverified backends**: any other genuine Ibis backend, admitted
+  for read-only operations only after `allow_unverified=True`, executed under
+  the portable expression policy with coded, operation-specific refusals. See
+  [unverified Ibis backends](#unverified-ibis-backends).
+- **Refused**: raw driver connections, objects that merely claim an engine
+  name, and registered identities that fail admission, such as an unmeasured
+  PostgreSQL major or a PostgreSQL-wire-compatible server. `allow_unverified`
+  never admits them. Raw DuckDB connections remain valid for native runtime
+  protocols, not Ibis execution. Effects stay refused on unverified backends:
+  retained input capture, staging, publication, published Dataset reopening
+  and native Parquet unload refuse with `terrine.backend.capability_unavailable`
+  (`status="unsupported"`) before any write.
 
 Execution and publication share an immutable capability record without making
 Model or the compiler depend on runtime. Verified providers preserve the
@@ -24,40 +36,8 @@ Travel instant) and releases it after success, error or cancellation.
 The caller's connection remains open. A transaction view is **not** a durable
 replay snapshot.
 
-An opted-in unverified provider instead borrows the caller's connection.
-Every statement reads independently: schema checks, validation and output
-queries do not share a coherent view. Terrine does not directly begin or end
-transactions, change session settings, clone or disconnect that connection.
-However, Ibis schema inspection on an unverified backend may end an open
-transaction on the caller's connection. Use a connection with no pending writes
-or a dedicated read connection; transaction preservation is not guaranteed.
-Owned Arrow readers are released on exhaustion, error, early close or context
-closure.
-
-The actual backend name (for example `sqlite`), expression policy (`generic`)
-and SQL dialect (`sqlite`) are distinct. Keep the real SQL dialect in
-`Catalog.dialect`, never `generic`. Only required read primitives may be
-attempted without verified evidence; unavailable primitives raise
-`terrine.backend.capability_unavailable` with their operation. Decimal queries
-first execute scalar exact-arithmetic witnesses within each execution context;
-a count-only read does not need decimal admission. Generic timestamp and
-arithmetic expression coverage remains operation-specific, not a promise that
-every Ibis backend can materialize every Frame.
-
-Unverified reads never enable retained input capture, staging, publication,
-published Dataset reopening, native Parquet unload or transaction snapshots.
-Strict scan budgets still refuse unknown source costs. Suppressing the warning
-does not grant these capabilities or establish consistency.
-
-Every materialized, staged or exported result records its engine stamp in
-`Provenance`: `engine_name` is the actual backend (for example `sqlite`),
-`dialect` the admitted expression policy (`generic` after opt-in, otherwise the
-registered engine) and `engine_status` that policy's registered status. The
-stamp survives Arrow, JSON, manifests and exports unchanged. Results saved by
-earlier versions carry no stamp and decode as their recorded verified execution
-dialect; a partial stamp, or one contradicting the registered policy or the
-execution snapshot's backend, refuses with
-`terrine.metadata.invalid_engine_stamp` and is never upgraded to verified.
+An opted-in unverified backend instead borrows the caller's connection and
+reads each statement independently, as described in its section below.
 
 Runtime DuckDB publication retains its fenced, transactional manifest switch;
 Ibis SQL compilation or DDL support alone does not establish publication safety.
@@ -69,9 +49,13 @@ callback, expression policy and execution provider. Its `SessionStrategy`
 describes the existing consistent-read lifetime: `TRANSACTION` for DuckDB and
 PostgreSQL, `SESSION_TRANSACTION` for BigQuery, and `TIME_TRAVEL` for Snowflake.
 These records do not replace the engine-specific session implementations.
-Expression overrides live in one `terrine.backends.engines.<name>` module per
-engine. Adding an engine requires a registry entry, its dialect overrides and
-verified admission evidence, not another supported-engine list in a consumer.
+The base `terrine.backends.dialect.Dialect` is the complete portable
+expression policy; each verified engine overrides it in one
+`terrine.backends.engines.<name>` module, and the separate `GENERIC` record
+(status `unverified`, strategy `NO_SNAPSHOT`, provider
+`terrine.execution._generic`) selects the unmodified base policy. Adding an
+engine requires a registry entry, its dialect overrides and verified admission
+evidence, not another supported-engine list in a consumer.
 Capability inspection is metadata-only and never queries a server; PostgreSQL
 identity therefore remains unverified until admission. Admission checks exact
 Ibis backend identity before exposing source metadata. Unsupported-operation
@@ -90,7 +74,192 @@ Runnable table-to-dataset examples:
 Install the corresponding `postgres`, `bigquery`, or `snowflake` extra and bind
 the Model directly to its Ibis connection; no preliminary copy to DuckDB is
 needed for Frame materialization. Dataset staging and publication remain
-DuckDB-only.
+DuckDB-only. [`unverified_backend.py`](../../examples/unverified_backend.py)
+opts in to the Ibis SQLite backend, shows the default refusal, the coded
+refusal of an operation SQLite cannot represent, a real read and its stamp.
+
+## Unverified Ibis backends
+
+Any genuine `ibis.backends.BaseBackend` instance outside the registry refuses
+by default, before source schema access, with
+`terrine.backend.capability_unavailable` and context `backend` (the actual
+backend name, for example `sqlite`), `operation="query"`,
+`status="unverified"` and a route naming `allow_unverified=True` and the
+verified engines. Pass `allow_unverified=True` to `Model.from_catalog`,
+`Model.from_tables` or `Model.from_increment` to admit read-only operations for
+that Model only; a second Model on the same connection needs its own consent,
+and the choice must be a Boolean (`"true"` refuses with
+`terrine.model.invalid_binding`). Admission emits
+`terrine.UnverifiedBackendWarning`, a `UserWarning` subclass, once at the
+caller's line; individual statements do not emit it again. Filter it with
+`warnings.filterwarnings("ignore", category=UnverifiedBackendWarning)` when the
+terms are accepted. Filtering changes neither the capability gates nor the
+result's `engine_status="unverified"`.
+
+### Statement-scoped reads on a borrowed connection
+
+The opted-in provider borrows the caller's connection. Every statement reads
+independently: schema checks, admission witnesses and output queries do not
+share a coherent view, and a change to a source between two statements of one
+materialization is visible to the later one. Terrine does not directly begin
+or end transactions, change session settings, create temporary objects, clone
+or disconnect that connection. Ibis schema inspection on an unverified backend
+may nevertheless end an open transaction on it. Use a connection with no
+pending writes or a dedicated read connection; transaction preservation is not
+guaranteed. The execution snapshot records `snapshot_id=None`, the actual
+backend name, unknown source generations and
+`replay_equivalence="unverified"`. Owned Arrow readers are released on
+exhaustion, error, early close or context closure, and a read failure during
+batch consumption is translated to the same coded refusal as one at
+statement start.
+
+### Engine name, expression policy and SQL dialect
+
+Three names stay distinct on an admitted Model. The engine name is the actual
+backend (`sqlite`). The expression policy is `generic`, the portable base
+policy, visible as `BoundSource.dialect`. The SQL dialect is the backend's real
+compiler dialect (`sqlite`), which `Catalog.dialect` must declare; declaring
+`generic` refuses with `terrine.semantic.dialect_mismatch`. A `SqlQuery`
+relation is admitted by the same read-only parse as on verified engines, in
+that real dialect. Verified engines then check each compiled study statement
+for functions their own catalogs or routine rules do not own; an unverified
+backend has no such rule, so every compiled statement is instead re-parsed
+with the same read-only rules and built-in allowlist as admitted SQL, failing
+closed: a statement that lowers to a dialect function without an admitted
+read-only contract refuses with `terrine.sql.invalid_read_query` rather than
+executing.
+
+### Operation admission before source data
+
+Only required read primitives are attempted without verified evidence:
+`BackendCapabilities.require` admits `None` for `dialect_admission`,
+`exact_timestamps`, `exact_decimals` and `arrow_batches` after generic
+admission, never a `False` capability. Unavailable primitives refuse with
+`terrine.backend.capability_unavailable`, the actual backend, the owning
+operation and the original backend exception as cause; `TerrineError`,
+cancellation and process-control exceptions pass through unchanged. Two
+witnesses run lazily, once per execution context, before any source row is
+read, and only when the compiled query needs them:
+
+- A query carrying decimal state (study counts, sums, averages and ratios all
+  do) first compiles and executes scalar known answers for scale-9 low digits
+  at a large offset (`9007199254740993.000000001`), cancellation, the domain
+  edges `±(10**29 - 10**-9)`, signed truncating quotients, both `int64`
+  endpoints and a 38-digit coefficient. A backend whose answers differ, or
+  whose decimals are stored by affinity (SQLite), refuses
+  `operation="exact_state"`; a query without decimal state, such as a roster
+  read, never runs this witness.
+- A query carrying an aware-timestamp delta first reconstructs four known UTC
+  wall clocks (2025-07-01, 2025-01-15, 1969-12-31 and 1850-06-01) through the
+  portable conversion. Ibis lowers that delta through session wall clocks on
+  PostgreSQL-family backends, so a session whose zone is not UTC reconstructs
+  at least one of them wrongly and refuses `operation="utc_wall_clock"` instead
+  of answering by the session offset; the registered PostgreSQL engine is
+  unaffected because it keeps its native conversions on a UTC private
+  connection. DuckDB's lowering is instant-exact and admits.
+
+Nanosecond timestamps refuse the portable UTC conversions (`utc_wall_clock`,
+`utc_instant`) while the expression is built, because Ibis lowers the integer
+intervals that rebuild the instant at microsecond resolution at best;
+microsecond and unscaled values convert exactly, and signed sub-second parts
+keep nanosecond support.
+
+### Portable numerical contract
+
+The portable policy has no native wide integer, so it holds state in fixed
+precision and refuses rather than narrows.
+
+- A float fact enters state as `DECIMAL(38, 9)` by truncating the backend's
+  decimal text `t` toward zero at nine fractional digits
+  (`Q9(t) = sign(t) · ⌊|t| · 10⁹⌋ / 10⁹`, cut from the digit string, never
+  multiplied in binary64), so `|Q9(t) − t| < 10⁻⁹`. Magnitudes at or above
+  `10²⁹` refuse with `terrine.temporal.float64_precision` (`bound_overflow`),
+  non-finite values with `nonfinite_input`, and NULL stays NULL. On DuckDB and
+  PostgreSQL the text is the shortest round-trip rendering, within half an ulp
+  of the stored float; another backend's text conversion must be measured
+  separately, and the policy makes no universal correctly-rounded claim.
+- A window sum is `Σ Q9(t(xᵢ))` with older history subtracted exactly, then
+  rounded once to binary64 through its text, so before that rounding
+  `|S − Σxᵢ| ≤ Σ|t(xᵢ) − xᵢ| + n · 10⁻⁹` over the `n` window values.
+  Ratios divide correctly rounded binary64 operands once, within `3.1u`
+  (`u = 2⁻⁵³`) of the exact quotient before later rounding; a ratio of two
+  averages was measured within `8u`. A zero divisor gives a NULL with the
+  `zero_denominator` reason.
+- Counts and source decimals keep their coefficients in a separate
+  `DECIMAL(38, 0)` domain (`|c| ≤ 10³⁸ − 1`, scale carried separately), so a
+  `numeric(38, 2)` source is neither rounded through binary64 nor mistaken for
+  scale 9. Signed integer quotients truncate toward zero through a certified
+  decimal residual correction, exact at both `int64` endpoints, and are NULL
+  beyond `int64` or for a zero divisor.
+- Accumulations are admitted only when a binary64 bound on the summed
+  magnitudes proves the exact sum fits the type: with `n` contributing values
+  the computed bound `B` lies within `e = (1 + u)(1 + γₙ₋₁) − 1` of the true
+  magnitude sum (`γₖ = k · u / (1 − k · u)`), so a partition is admitted iff
+  `B < limit · (1 − e)`. Otherwise its values are withheld before the backend
+  adds them and every consumer of that state refuses: sums, averages and
+  ratios with `float64_precision` (`bound_overflow`) for float facts or
+  `terrine.temporal.exact_overflow` for coefficients, cohort totals and means
+  and cumulative trajectories with their existing overflow reasons. This
+  bound is deliberately conservative: opposite-sign history whose magnitudes
+  alone exceed the domain is refused even where the exact difference would
+  fit, and a prefix difference leaving the fixed domain refuses likewise.
+  Nothing is answered by a backend overflow error, a narrowed value or a
+  silent NULL.
+- Timestamps use native order, typed UTC epoch deltas and signed sub-second
+  parts; the union/window as-of fallback (never a range join), NULL-ignoring
+  coalesced extrema and portable integer sequences (seconds multiplied first,
+  then cast to an interval) are the defaults.
+
+Registered engines keep their native state and every previously refused
+operation through explicit overrides: `exact_ratio` and `exact_is_nonfinite`
+on DuckDB and Snowflake, normalized significand division on PostgreSQL and
+BigQuery. Their numerical sections below are unchanged.
+
+### Provenance stamp
+
+Every materialized, staged or exported result records its engine stamp in
+`Provenance`: `engine_name` is the actual backend (for example `sqlite`),
+`dialect` the admitted expression policy (`generic` after opt-in, otherwise the
+registered engine) and `engine_status` that policy's registered status. The
+stamp survives Arrow, JSON, manifests and exports unchanged, and
+`engine_name` always equals `execution_snapshot.backend`. Results saved before
+the stamp existed carry none of the three fields and decode as their recorded
+verified execution dialect, because no earlier writer had an unverified path; a
+partial stamp, one contradicting the registered policy or the execution
+snapshot's backend, or an absent stamp with an unregistered execution backend
+refuses with `terrine.metadata.invalid_engine_stamp` (`reason` of `partial`,
+`inconsistent` or `unknown_legacy_engine`, plus the present `fields`) and is
+never upgraded to verified.
+
+### What is and is not measured
+
+The policy was measured on DuckDB 1.5.6 and PostgreSQL 16 by forcing it in
+place of their native policies: the [seven engine known answers][conformance]
+(whole-day schedules, NULL-ignoring extrema, float and scale-2 decimal
+cancellation, non-UTC conversions, tied events, NULL observation censoring and
+strict as-of cutoffs) pass unchanged with `--generic-dialect`, and the
+[portable numerical and relational oracles][generic-oracles] check
+fixed-scale entry and the coefficient domain, filtered wide source decimals,
+signed quotients, window cancellation and order invariance, domain and
+accumulation refusals, zero versus NULL versus non-finite flags, session-zone
+independent UTC round trips, signed sub-second parts, daylight-saving deltas
+and as-of request multiplicity against independent Python `Decimal`,
+`Fraction` and integer oracles. Real unregistered-backend
+reads are exercised on [Ibis SQLite][generic-reads]: roster reads, integer
+counts through the execution context, SQL relation admission, borrowed-connection
+lifetime, early reader release and the operation-specific `exact_state`
+refusal. This is evidence for the policy on those connections, not a promise
+that every Ibis backend materializes every Frame; coverage remains
+operation-specific and refusals carry the operation that was unavailable.
+Run the forced checks locally with
+`uv run pytest integration/conformance integration/backends/test_generic.py --generic-dialect`
+and, on a configured scratch server,
+`uv run --extra postgres pytest integration/conformance integration/backends/test_generic.py --generic-dialect -m postgres`.
+
+Unverified reads never enable retained input capture, staging, publication,
+published Dataset reopening, native Parquet unload or transaction snapshots.
+Strict scan budgets still refuse unknown source costs. Suppressing the warning
+does not grant these capabilities or establish consistency.
 
 ## PostgreSQL
 
@@ -320,8 +489,10 @@ Capabilities distinguish verified (`True`), unsupported (`False`), and unverifie
 without querying source metadata or changing connection state. PostgreSQL is
 reported as unverified by this inspection because server identity requires a
 query; `backend_provider()` performs the qualified version check before
-admitting source access. Unregistered backend connections likewise return
-unverified operation values.
+admitting source access. An unregistered genuine Ibis backend reports the
+generic record: snapshots, publication, retained capture, the runtime reader
+and native unload `False`; read primitives, scan bounds and cancellation
+`None`. Raw drivers report every value as `None`.
 
 ## Python and dependency support
 
@@ -430,9 +601,11 @@ PostgreSQL evidence was measured on PostgreSQL 16, BigQuery evidence on the US
 multi-region with google-cloud-bigquery 3.46, and Snowflake evidence on an
 X-Small warehouse with snowflake-connector-python 5.1 through the
 `warehouse-backends` workflow (key-pair service user; no local credentials).
-Unknown backends refuse with an actionable local route before schema or source
-access. The [operation-gate tests][gates] separately prove that missing
-publication, retained capture or Arrow evidence does not disable unrelated work.
+Unregistered backends refuse with an actionable local route before schema or
+source access unless a Model explicitly opts in; opted-in backends are not in
+this table, since their operations are admitted per statement, not verified.
+The [operation-gate tests][gates] separately prove that missing publication,
+retained capture or Arrow evidence does not disable unrelated work.
 
 | Common-stack component | Measured version | Exercised contract |
 | --- | --- | --- |
@@ -463,3 +636,6 @@ without increment; unsupported semantic mappings are listed separately in the
 [bigquery]: ../../integration/warehouse_execution/test_bigquery_parity.py
 [snowflake]: ../../integration/warehouse_execution/test_snowflake_parity.py
 [snowflake-admission]: ../../integration/warehouse_execution/test_snowflake_admission.py
+[conformance]: ../../integration/conformance/test_engines.py
+[generic-oracles]: ../../integration/backends/test_generic.py
+[generic-reads]: ../../integration/execution/test_generic.py

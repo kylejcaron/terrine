@@ -68,14 +68,18 @@ unit. Its immutable typed descriptor is defined in `terrine.data`. Use
 histories, SQL relations, multi-unit sources, or explicit Catalog names.
 
 All three Model binding constructors accept keyword-only
-`allow_unverified: bool = False`. A genuine unregistered Ibis backend needs
-`allow_unverified=True`; truthy strings are not consent. This emits
-`UnverifiedBackendWarning`, available from `terrine` for warning filters.
-The choice applies only to the returned Model. Registered engine identity
-failures, raw drivers and name-only connections cannot opt in.
-Ibis schema inspection on an unverified backend may end an open transaction on
-the caller's connection. Pass a connection with no pending writes or a dedicated
-read connection; transaction preservation is not guaranteed.
+`allow_unverified: bool = False`. A genuine unregistered Ibis backend refuses
+by default with `terrine.backend.capability_unavailable` (`operation="query"`,
+`status="unverified"`) before its schema is read, and needs
+`allow_unverified=True`; truthy strings are not consent and refuse with
+`terrine.model.invalid_binding`. Admission emits `UnverifiedBackendWarning`, a
+`UserWarning` subclass exported from `terrine` for warning filters; filtering
+it changes no gate and no stamp. The choice applies only to the returned Model.
+Registered engine identity failures, raw drivers and name-only connections
+cannot opt in. Ibis schema inspection on an unverified backend may end an open
+transaction on the caller's connection. Pass a connection with no pending
+writes or a dedicated read connection; transaction preservation is not
+guaranteed.
 
 ```python
 from terrine import Model, UnverifiedBackendWarning
@@ -87,10 +91,14 @@ model = Model.from_catalog(
 ```
 
 This permits read-only attempts, not verified semantics: each statement has an
-independent source view, and an unavailable primitive gives a coded refusal.
-It never enables retained inputs, staging, publication or published Dataset
-reopening. See [backend compatibility](backend-compatibility.md) for ownership,
-consistency and exact-type admission.
+independent source view, an unavailable primitive gives a coded refusal naming
+its operation, and every result's `Provenance` records the actual backend as
+`engine_name`, `generic` as `dialect` and `engine_status="unverified"`. It
+never enables retained inputs, staging, publication or published Dataset
+reopening. See [backend compatibility](backend-compatibility.md#unverified-ibis-backends)
+for ownership, consistency, admission witnesses and the portable numerical
+contract, and [`examples/unverified_backend.py`](../../examples/unverified_backend.py)
+for a runnable opt-in on the Ibis SQLite backend.
 
 Use the expression functions rather than constructing their underlying node
 records. Advanced code inspecting a returned node can import its type from

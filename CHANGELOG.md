@@ -4,31 +4,46 @@
 
 ### Backend compatibility
 
-- Add explicit `allow_unverified=True` to all Model binding constructors for
-  read-only use of genuine unregistered Ibis backends, with the filterable
-  `UnverifiedBackendWarning`. Registered identity failures and raw/name-only
-  connections remain refused. Consent stays local to the Model.
-  Unverified execution borrows the caller connection for independent
-  statements, releases owned readers and checks decimal arithmetic only when
-  needed. It provides no shared snapshot, retained inputs or publication;
-  strict scan-budget policy is unchanged.
-  Early reader closure also releases cursor-owning iterators immediately.
-  Ibis schema inspection on unverified backends may end an open caller
-  transaction; use a connection with no pending writes or a dedicated read
-  connection.
-- Record the engine stamp on every result: required `Provenance.engine_name`
-  (actual backend), `dialect` (admitted expression policy) and `engine_status`
-  (its registered status), written by direct materialization, the staged
-  runtime and every fixture builder, and retained through views, cohorts,
-  life tables, Arrow, JSON, manifests and exports. Arrow metadata stays
-  version 2 under `terrine.materialized_frame.v2` and JSON metadata version 1.
-  Payloads saved before the stamp existed decode as their recorded verified
-  execution dialect; a partial stamp, one contradicting the registered policy
-  or the execution snapshot's backend, or an absent stamp with an unregistered
-  execution backend, refuses with the new
-  `terrine.metadata.invalid_engine_stamp` (`reason`, present `fields`) instead
-  of acquiring verified status. Constructing `Provenance` now requires the
-  three fields.
+- Admit any other genuine Ibis backend for read-only use only after an
+  explicit `allow_unverified=True` on `Model.from_catalog`, `Model.from_tables`
+  or `Model.from_increment`. By default such a backend refuses with
+  `terrine.backend.capability_unavailable` (`operation="query"`,
+  `status="unverified"`, a route naming the flag and the verified engines)
+  before its schema is read; a non-Boolean choice refuses with
+  `terrine.model.invalid_binding`. Admission emits the new filterable
+  `terrine.UnverifiedBackendWarning` once at the caller's line and binds
+  consent to that Model, not the connection. Registered identity failures,
+  raw drivers and name-only connections remain refused with or without the
+  flag. The separate `GENERIC` engine record is read-only: retained input
+  capture, staging, publication, published Dataset reopening, native Parquet
+  unload and transaction snapshots refuse before any write, and strict scan
+  budgets still refuse unknown source costs. `Catalog.dialect` keeps the
+  connection's real SQL dialect; the expression policy is `generic`.
+- Execute admitted reads on the caller's borrowed connection, one independent
+  statement at a time: Terrine issues no transaction control, session
+  settings, temporary objects, cloning or disconnection, but Ibis schema
+  inspection may end an open caller transaction, so pass a connection with no
+  pending writes or a dedicated read connection. The execution snapshot has
+  no identity and `replay_equivalence="unverified"`. Admitted SQL and every
+  compiled statement are parsed for read-only safety in the real dialect and
+  fail closed with `terrine.sql.invalid_read_query`. Unsupported primitives
+  refuse with `capability_unavailable` naming the backend and operation,
+  chained from the backend's exception; owned Arrow readers are released on
+  exhaustion, error, early close or context closure, and a failure during
+  batch consumption carries the same code.
+- Run lazy scalar known-answer witnesses once per execution context, before
+  any source row and only when a query needs them: exact decimal arithmetic
+  (scale-9 low digits at a large offset, cancellation, the domain edges,
+  signed quotients, both `int64` endpoints and a 38-digit coefficient), which
+  refuses `operation="exact_state"` on a backend such as SQLite that stores
+  decimals by affinity, and UTC wall clocks of aware-timestamp deltas at four
+  instants across daylight-saving, pre-epoch and local-mean-time offsets,
+  which refuses `operation="utc_wall_clock"` where Ibis lowers the delta
+  through session wall clocks (PostgreSQL-family backends in a non-UTC
+  session) rather than answering by the session offset. Nanosecond
+  timestamps refuse the portable UTC conversions (`utc_wall_clock`,
+  `utc_instant`) while the expression is built; sub-second parts keep
+  nanosecond support.
 - Complete the portable base expression policy used after unverified
   admission, so every study expression is an ordinary Ibis expression without
   native bindings. Float facts enter as `DECIMAL(38, 9)` state by truncating
@@ -48,24 +63,34 @@
   every consumer of the state (sums, averages, ratios, cohort totals and
   means, cumulative trajectories) refuses with `float64_precision`
   (`bound_overflow`) for float facts or `exact_overflow` for coefficients,
-  never a backend error, a narrowed value or a silent NULL. Exact-state ratios
-  divide correctly rounded binary64 operands once (within `3.1u` before later
-  rounding); integer quotients truncate toward zero through a certified
-  decimal residual correction and are NULL beyond int64 or for a zero
-  divisor. Timestamps use native order, typed UTC epoch deltas and signed
-  parts; the union/window as-of fallback, coalesced extrema and portable
-  integer sequences are the defaults. Measured on DuckDB and PostgreSQL 16
-  with the policy forced: shortest round-trip float text within half an ulp,
-  exact `0.1 + 0.2` and scale-2 cancellation, both signed `int64` quotient
-  endpoints, and nested quotients within `8u`. On PostgreSQL, Ibis lowers an
-  aware-timestamp delta through session wall clocks, so unverified execution
-  there checks four known UTC wall clocks once per session before running a
-  query with an aware delta and refuses with `capability_unavailable`
-  (`utc_wall_clock`) when the session offset changes the answer; the
-  registered PostgreSQL policy keeps its native UTC conversions.
-  Registered engines keep every previously refused operation (`exact_ratio`
-  and `exact_is_nonfinite` on DuckDB and Snowflake; normalized significand
-  division on PostgreSQL and BigQuery) through explicit overrides.
+  never a backend error, a narrowed value or a silent NULL. The bound is
+  deliberately conservative: opposite-sign history whose magnitudes alone
+  exceed the domain is refused even where the exact difference would fit.
+  Exact-state ratios divide correctly rounded binary64 operands once (within
+  `3.1u` before later rounding); integer quotients truncate toward zero
+  through a certified decimal residual correction and are NULL beyond int64
+  or for a zero divisor. Timestamps use native order, typed UTC epoch deltas
+  and signed parts; the union/window as-of fallback, coalesced extrema and
+  portable integer sequences are the defaults. Measured on DuckDB and
+  PostgreSQL 16 with the policy forced: shortest round-trip float text within
+  half an ulp, exact `0.1 + 0.2` and scale-2 cancellation, both signed
+  `int64` quotient endpoints, and nested quotients within `8u`. Registered
+  engines keep their native state and every previously refused operation
+  (`exact_ratio` and `exact_is_nonfinite` on DuckDB and Snowflake; normalized
+  significand division on PostgreSQL and BigQuery) through explicit
+  overrides; their SQL, refusals and session lifetimes are unchanged.
+- Record the engine stamp on every result: required `Provenance.engine_name`
+  (actual backend), `dialect` (admitted expression policy) and `engine_status`
+  (its registered status), written by direct materialization, the staged
+  runtime and every fixture builder, and retained through views, cohorts,
+  life tables, Arrow, JSON, manifests and exports. Arrow metadata stays
+  version 2 under `terrine.materialized_frame.v2` and JSON metadata version 1.
+  Payloads saved before the stamp existed decode as their recorded verified
+  execution dialect; a partial stamp, one contradicting the registered policy
+  or the execution snapshot's backend, or an absent stamp with an unregistered
+  execution backend, refuses with the new
+  `terrine.metadata.invalid_engine_stamp` (`reason`, present `fields`) instead
+  of acquiring verified status.
 - Centralize verified engine admission, capability records and expression
   selection without changing engine execution behavior, supported builds,
   session lifetimes or connection ownership.
@@ -94,6 +119,11 @@
   NULL-ignoring extrema, cancellation-safe float and exact decimal windows,
   UTC timestamp conversion, tied event ordering, censor times and strict as-of
   cutoffs. Run the same cases on DuckDB and live PostgreSQL.
+- Compile the same known answers with the portable base expression policy on
+  each real connection under `--generic-dialect` (DuckDB by default, PostgreSQL
+  with `-m postgres`), and check the policy's numerical and relational
+  contracts against independent oracles on both, plus real unregistered-backend
+  reads and refusals on the Ibis SQLite backend.
 
 ### Documentation
 
@@ -102,6 +132,12 @@
   rolling windows, conditional events, eligibility, as-of attributes, recency
   and Boolean labels. Keep output budgets, staging, owned inputs and development
   details in their guides.
+- Describe the verified, opted-in unverified and refused backend tiers, the
+  portable numerical contract and its admission witnesses, and the engine
+  stamp in the compatibility, capabilities and public API guides. Add
+  `examples/unverified_backend.py`, which opts in to the Ibis SQLite backend,
+  shows the default refusal, a coded operation refusal, a real read and its
+  stamp.
 
 ### Public API
 
@@ -144,6 +180,9 @@
   Event properties such as `kind_complete` remain values, not status evidence.
   User output names ending in either suffix now refuse during Design validation
   with `terrine.spec.reserved_output_name`.
+- Constructing `Provenance` requires `engine_name`, `dialect` and
+  `engine_status`; saved payloads without them still decode as their recorded
+  verified execution dialect.
 - Default Frame dataframe conversions are compact, lossy views that omit
   observation bounds, resolved times and anchor provenance. Pass
   `include_observation_metadata=True` to keep them. Arrow conversions, staged
