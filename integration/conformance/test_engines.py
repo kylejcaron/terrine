@@ -23,7 +23,7 @@ from integration.warehouse_execution.snowflake_fixtures import (
 )
 from terrine.backends.dialect import current_dialect, dialect_scope
 from terrine.backends.extrema import greatest, least
-from terrine.backends.numeric import exact_float
+from terrine.backends.numeric import exact_float, float_scale
 from terrine.backends.registry import ENGINES
 from terrine.backends.timestamps import day_start, utc_instant, utc_wall_clock
 from terrine.semantic.models import BoundDimension, BoundValidity, PropertyBinding, TableRef
@@ -132,12 +132,18 @@ def test_forced_generic_selection_reaches_nested_literals(engine, request):
     forced = request.config.getoption("--generic-dialect")
     outer = current_dialect().name
     with dialect_scope(engine.name), dialect_scope(engine.name.upper()):
-        exact, nonfinite, unrepresentable = exact_float(ibis.literal(0.1234567899), 10)
+        # Text through DOUBLE: Snowflake types a bare decimal literal as an exact
+        # NUMBER, and Ibis elides a float64 cast of a float64 literal.
+        value = ibis.literal("0.1234567899").cast(dt.float64)
+        values = ibis.literal(0).as_table().select(value=value)
+        # Native float text differs per engine (DuckDB's shortest round trip is
+        # 10 fractional digits, Snowflake's DECFLOAT 18), so the scale comes from
+        # the same text, as the daily aggregation derives it for each unit.
+        scaled = values.mutate(scale=float_scale(values.value, []))
+        exact, nonfinite, unrepresentable = exact_float(scaled.value, scaled.scale)
         state_type = exact.type()
         (row,) = engine.to_pyarrow(
-            ibis.literal(0)
-            .as_table()
-            .select(
+            scaled.select(
                 state=exact.cast("string"), nonfinite=nonfinite, unrepresentable=unrepresentable
             )
         ).to_pylist()
@@ -147,7 +153,7 @@ def test_forced_generic_selection_reaches_nested_literals(engine, request):
         assert state_type == dt.Decimal(38, 9)
         assert Decimal(row["state"]) == Decimal("0.123456789")
     else:
-        # Native state keeps every shortest-text digit of the binary64 value.
+        # Native state keeps every digit of the engine's text for the binary64 value.
         assert "1234567899" in row["state"]
 
 
