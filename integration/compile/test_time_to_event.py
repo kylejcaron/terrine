@@ -11,6 +11,49 @@ from terrine.spec.trajectory import TimeToEvent
 from tests.compile.test_time_to_event import _collect, _model
 
 
+def test_life_table_grouping_features_retain_conservative_surrogate_timing():
+    from examples.trajectories_survival import _model as trajectory_model
+    from terrine import Budget, asof, eq, recipes
+    from terrine.export import ArrowSurrogate, to_surrogate_arrow
+
+    con, model = trajectory_model()
+    try:
+        life = (
+            recipes.life_table(
+                "user",
+                start_event="purchase",
+                end_event="churn",
+                bin="7d",
+                features={
+                    "region": asof("region", before="-1d"),
+                    "north": eq(asof("region", before="-1d"), "north"),
+                },
+                group_by=("region", "north"),
+                administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
+            )
+            .build(model)
+            .materialize(Budget(max_rows=100, max_output_bytes=1_000_000))
+        )
+        for feature in ("region", "north"):
+            surrogate = to_surrogate_arrow(life, features=(feature,), outcomes=("events",))
+            restored = ArrowSurrogate.from_arrow(surrogate.to_arrow())
+            timing = life.provenance.expression_timings[feature]
+            assert timing.point_time_column is None
+            assert timing.start_bound_column is not None
+            assert timing.end_bound_column is not None
+            assert timing.start_bound_column in restored.data.column_names
+            assert timing.end_bound_column in restored.data.column_names
+            for row in life.table.to_pylist():
+                assert row[timing.start_bound_column] == datetime(2024, 12, 31, tzinfo=UTC)
+                assert row[timing.end_bound_column] == (
+                    datetime(2025, 1, 14, tzinfo=UTC)
+                    if row["north"]
+                    else datetime(2024, 12, 31, tzinfo=UTC)
+                )
+    finally:
+        con.disconnect()
+
+
 def test_prevalent_events_are_excluded_and_cutoff_equality_is_censored():
     con, model = _model()
     try:

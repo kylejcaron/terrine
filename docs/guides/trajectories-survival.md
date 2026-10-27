@@ -132,6 +132,12 @@ Every `group_by` name must be a declared feature, and the feature names must
 exactly match `group_by`. Extra features raise `ValueError` before building;
 they never silently disappear. With no groups, omit features too.
 
+Grouping features may be expressions or Boolean predicates. Their timing support
+is the conservative interval from the earliest contributing start to the latest
+contributing end across the group, not the elapsed-time bin identity. These
+absolute bounds are retained when selecting grouping features for surrogate Arrow
+export.
+
 ```python
 from terrine import asof
 

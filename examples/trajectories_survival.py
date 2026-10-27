@@ -167,7 +167,9 @@ def main() -> None:
         )
         assert life.roles.treatment is None
         print("Risk-set table rows:", life.table.to_pylist())
-        surrogate = to_surrogate_arrow(life, features=("time_bin",), outcomes=("at_risk", "events"))
+        surrogate = to_surrogate_arrow(
+            life, features=("region", "time_bin"), outcomes=("at_risk", "events")
+        )
         restored = type(surrogate).from_arrow(surrogate.to_arrow())
         print("Surrogate metadata:", dict(restored.metadata))
     finally:

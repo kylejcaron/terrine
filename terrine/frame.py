@@ -696,6 +696,24 @@ class Frame:
                 life_table = self._design.shape
                 group_supports: dict[str, str] = {}
                 for name in life_table.group_by:
+                    timing = compiled.expression_timings.get(name)
+                    if timing is not None:
+                        # A group has an interval of contributing times, not a row origin.
+                        for field, offset, policy in (
+                            ("start_bound_column", timing.support_seconds[0], "min"),
+                            ("end_bound_column", timing.support_seconds[1], "max"),
+                        ):
+                            column = getattr(timing, field)
+                            if column is None:
+                                column = f"__terrine_{name}_{field.removesuffix('_column')}"
+                                table = table.append_column(
+                                    column,
+                                    # pyarrow.compute lacks a stub for this checked Arrow kernel.
+                                    pc.add_checked(  # ty: ignore[unresolved-attribute]
+                                        table["t0"], pa.scalar(offset, pa.duration("s"))
+                                    ),
+                                )
+                            group_supports[column] = policy
                     meta = compiled.columns[name]
                     for column, policy in (
                         (meta.observed_from_column, "min"),
@@ -793,7 +811,14 @@ class Frame:
                     if name in self._design.shape.group_by
                 }
                 expression_timings = {
-                    name: timing
+                    name: replace(
+                        timing,
+                        point_time_column=None,
+                        start_bound_column=(
+                            timing.start_bound_column or f"__terrine_{name}_start_bound"
+                        ),
+                        end_bound_column=timing.end_bound_column or f"__terrine_{name}_end_bound",
+                    )
                     for name, timing in compiled.expression_timings.items()
                     if name in self._design.shape.group_by
                 }
