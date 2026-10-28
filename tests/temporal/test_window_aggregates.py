@@ -6,13 +6,14 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from fractions import Fraction
 
+import duckdb
 import ibis
 import pyarrow as pa
 import pytest
 
 from terrine.backends.numeric import exact_literal
-from terrine.data import BoundCoverage
-from terrine.errors import TerrineError
+from terrine.data import BoundCoverage, RowCheck
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import (
     BoundFilter,
@@ -28,6 +29,7 @@ from terrine.temporal.readiness import Readiness
 from terrine.windows import Window
 
 _DEFAULT_WINDOW = Window(0, 86400)
+_REFUSAL = RefusalSpec("terrine.test.failed_rows", "{failed_count} rows failed")
 
 
 @pytest.fixture
@@ -223,6 +225,47 @@ def test_nonfinite_history_refuses(con):
     assert set(error.value.context) == {"failure", "failed_count", "source", "measure", "output"}
 
 
+def _recording(con):
+    executed = []
+
+    def execute(query):
+        executed.append(query)
+        return con.to_pyarrow(query)
+
+    return executed, execute
+
+
+def test_validate_runs_one_aggregate_for_every_row_check(con):
+    pair = _state(
+        con,
+        [float("nan"), 2.0],
+        times=[datetime(2025, 1, d, 12, tzinfo=UTC) for d in (1, 2)],
+    )
+    result = _result(_anchors(con), [pair])
+    assert len(result.row_checks) >= 2
+    assert all(check.column in result.table.columns for check in result.row_checks)
+    executed, execute = _recording(con)
+    with pytest.raises(TerrineError) as error:
+        result.validate(execute)
+    assert len(executed) == 1
+    assert error.value.code == "terrine.temporal.float64_precision"
+    assert error.value.context["failure"] == "nonfinite_input"
+    assert error.value.context["failed_count"] == 1
+
+
+def test_row_check_columns_are_true_only_on_failing_rows(con):
+    pair = _state(con, [float("nan"), 2.0], units=["bad", "good"])
+    result = _result(_anchors(con, units=("bad", "good")), [pair])
+    nonfinite = next(
+        check for check in result.row_checks if check.context.get("failure") == "nonfinite_input"
+    )
+    table = result.table
+    rows = con.to_pyarrow(
+        table.select("unit", flag=table[nonfinite.column]).order_by("unit")
+    ).to_pylist()
+    assert rows == [{"unit": "bad", "flag": True}, {"unit": "good", "flag": False}]
+
+
 @pytest.mark.parametrize(
     "aggregation,kind,expected,reasons",
     [
@@ -349,6 +392,43 @@ def test_count_and_conversion_ignore_nonfinite_float_inputs(con):
     assert error.value.code == "terrine.temporal.exact_overflow"
 
 
+def test_count_metric_matches_sum_of_ones_and_has_no_unknown_check(con):
+    from terrine.semantic.rules import UNKNOWN_FILTER
+
+    measure, state = _state(con, [1.0, 2.0, 3.0], aggregation="count")
+    # A count's sufficient state is the event count alone.
+    pair = (measure, state.select("_unit", "_timestamp", "event_count"))
+    result = _result(_anchors(con), [pair])
+    assert _rows(con, result)[0]["requested"] == 3
+    assert all(check.refusal is not UNKNOWN_FILTER for check in result.row_checks)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        None,
+        pa.array([None], type=pa.int64()),
+        pa.array([-1]),
+        pa.array(["0"]),
+        pa.array([0.0]),
+        pa.array([0, 0]),
+    ],
+)
+def test_deferred_scalar_checks_fail_closed(con, bad):
+    pair = _state(con, [1.0])
+    result = _result(_anchors(con), [pair])
+
+    def malformed(query):
+        if bad is None:
+            return None
+        columns = {name: pa.array([0] * len(bad), type=pa.int64()) for name in query.columns}
+        columns[query.columns[0]] = bad
+        return pa.table(columns)
+
+    with pytest.raises((TypeError, ValueError)):
+        result.validate(malformed)
+
+
 @pytest.mark.parametrize(
     "bad",
     [
@@ -360,19 +440,22 @@ def test_count_and_conversion_ignore_nonfinite_float_inputs(con):
         pa.array(["0", "0"]),
     ],
 )
-def test_deferred_scalar_checks_fail_closed(con, bad):
-    pair = _state(con, [1.0])
-    result = _result(_anchors(con), [pair])
+def test_aggregate_string_counts_fail_closed(con, bad):
+    from terrine.temporal.aggregate import _Check
+
+    anchors = _anchors(con)
+    check = _Check(
+        anchors.aggregate(failed_0=anchors.count().cast("string")),
+        (RowCheck("failed_0", _REFUSAL, {}),),
+    )
 
     def malformed(query):
         if bad is None:
             return None
-        columns = {name: pa.array(["0"] * len(bad)) for name in query.columns}
-        columns[query.columns[0]] = bad
-        return pa.table(columns)
+        return pa.table({query.columns[0]: bad})
 
     with pytest.raises((TypeError, ValueError)):
-        result.validate(malformed)
+        check.validate(malformed)
 
 
 def test_integer_sum_widens_without_losing_units_above_binary64_precision(con):
@@ -381,6 +464,43 @@ def test_integer_sum_widens_without_losing_units_above_binary64_precision(con):
     row = _rows(con, result)[0]
     assert row["requested"] == Decimal(2**64 - 2)
     assert result.columns["requested"].numeric_policy == "exact"
+
+
+def _count_groups(con, counts):
+    """Grouped count states twelve hours apart from 2025-01-01 12:00, as stored HUGEINT."""
+    values = ",".join(
+        f"(TIMESTAMPTZ '2025-01-01 12:00:00+00' + INTERVAL {index * 12} HOUR, {count})"
+        for index, count in enumerate(counts)
+    )
+    return con.sql(
+        "SELECT 'a' AS _unit, ts AS _timestamp, n::HUGEINT AS event_count,"
+        " n::HUGEINT AS nonnull_count, n::HUGEINT AS sum_value"
+        f" FROM (VALUES {values}) AS s(ts, n)"
+    )
+
+
+def test_count_prefixes_beyond_int64_refuse_instead_of_wrapping(con):
+    # Three groups of 2**62 merge to the prefixes 2**62, 2**63 and 3 * 2**62: the
+    # window [t0, t0 + 12h) reads the first two and publishes their difference
+    # exactly, the windows ending at t0 + 1d read a difference of 2**63 or more.
+    measure, _ = _state(con, [1], aggregation="count")
+    prefix = sparse_prefix(_count_groups(con, [2**62] * 3), measure, resolution="event")
+    pair = (measure, prefix)
+    fits = _result(_anchors(con), [pair], window=Window(0, 12 * 3600))
+    assert _rows(con, fits)[0]["requested"] == 2**62
+    for window in (Window(0, 86400), Window(-86400, 86400)):
+        with pytest.raises(TerrineError) as error:
+            _rows(con, _result(_anchors(con), [pair], window=window))
+        assert error.value.code == "terrine.temporal.exact_overflow"
+    # A prefix at the HUGEINT limit still narrows by refusal, never by wrapping,
+    # and accumulating past the limit raises.
+    prefix = sparse_prefix(_count_groups(con, [0, 2**127 - 1]), measure, resolution="event")
+    with pytest.raises(TerrineError) as error:
+        _rows(con, _result(_anchors(con), [(measure, prefix)]))
+    assert error.value.code == "terrine.temporal.exact_overflow"
+    prefix = sparse_prefix(_count_groups(con, [2**127 - 1, 1]), measure, resolution="event")
+    with pytest.raises(duckdb.OutOfRangeException):
+        _rows(con, _result(_anchors(con), [(measure, prefix)]))
 
 
 def test_day_prefixes_cannot_answer_an_intraday_request(con):

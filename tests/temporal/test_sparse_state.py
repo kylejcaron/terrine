@@ -23,7 +23,7 @@ from terrine.semantic.models import (
 )
 from terrine.temporal.attributes import enrich_events
 from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
-from terrine.temporal.prefix import sparse_prefix
+from terrine.temporal.prefix import _UNKNOWN_FIELDS, sparse_prefix
 
 
 @pytest.fixture
@@ -213,6 +213,14 @@ def test_filters_retain_unknown_provenance_and_false_overrides_unknown(connectio
     in_literal = replace(null_literal, filters=(BoundFilter("active", "in", ("yes", None)),))
     row = _rows(connection, sparse_daily(enriched, in_literal, "UTC", "user_id", source=source))[0]
     assert (row["event_count"], row["unknown_filter_count"]) == ("3", "2")
+
+
+def test_unfiltered_measures_have_no_unknown_filter_state(connection):
+    daily, measure = _daily(connection, [1.0, 2.0])
+    assert not set(_UNKNOWN_FIELDS) & set(daily.columns)
+    prefix = sparse_prefix(daily, measure, resolution="day")
+    assert not set(_UNKNOWN_FIELDS) & set(prefix.columns)
+    assert _rows(connection, prefix)[0]["event_count"] == "2"
 
 
 def test_event_grouping_uses_same_filters_and_exact_original_counts(connection):

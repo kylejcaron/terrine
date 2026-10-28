@@ -899,6 +899,38 @@ def test_stage_never_collects_full_output_through_snapshot_execute(
     con.disconnect()
 
 
+def test_staging_runs_the_check_schedule_once(events_world, tmp_path, monkeypatch):
+    """Composition validates the frame; staging then reads only its eligibility
+    summary, so no gate or anchor statement runs twice in one task."""
+    import ibis
+    from ibis.backends.duckdb import Backend
+
+    from terrine.execution.inputs import ExecutionContext
+
+    frame, con = _durable_frame(events_world, tmp_path)
+    executed = []
+    context_execute, backend_to_pyarrow = ExecutionContext.execute, Backend.to_pyarrow
+
+    def execute(self, query):
+        executed.append(ibis.to_sql(query, dialect="duckdb"))
+        return context_execute(self, query)
+
+    def to_pyarrow(self, expr, **kwargs):
+        executed.append(ibis.to_sql(expr, dialect="duckdb"))
+        return backend_to_pyarrow(self, expr, **kwargs)
+
+    monkeypatch.setattr(ExecutionContext, "execute", execute)
+    monkeypatch.setattr(Backend, "to_pyarrow", to_pyarrow)
+    try:
+        frame.stage("dataset")
+    finally:
+        con.disconnect()
+    gates = [sql for sql in executed if "__terrine_gate_check_" in sql]
+    anchors = [sql for sql in executed if "invalid_count" in sql]
+    assert len(gates) == 1
+    assert anchors and len(anchors) == len(set(anchors))
+
+
 def test_scoring_today_is_resolved_once_at_catalog_day_boundary(
     native_inputs, tmp_path, monkeypatch
 ):
@@ -1105,7 +1137,7 @@ def test_percentile_threshold_fits_training_rows_only_and_freezes_definition(mod
     assert Winsorization.from_json(fitted.to_json()) == fitted
     transformed = frame.winsorize(fitted)
     result = transformed.materialize()
-    assert result.table["value"].to_pylist() == [
+    assert result.table.sort_by("t0")["value"].to_pylist() == [
         Decimal(5),
         Decimal(10),
         Decimal(15),
@@ -1195,7 +1227,9 @@ def test_independently_fitted_features_compose_and_reopen(model):
     definition = DatasetDefinition.from_json(_definition_for(transformed).canonical_json())
     result = definition.build(model).materialize()
     assert definition.transforms == (first, second)
-    assert result.table["value"].to_pylist() == [Decimal(value) for value in (5, 10, 15, 15, 15)]
+    assert result.table.sort_by("t0")["value"].to_pylist() == [
+        Decimal(value) for value in (5, 10, 15, 15, 15)
+    ]
     assert result.table["other"].equals(result.table["value"])
     assert first.fit.definition_hash == second.fit.definition_hash == _definition_for(frame).digest
 

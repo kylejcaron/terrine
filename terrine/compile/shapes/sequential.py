@@ -14,14 +14,14 @@ from terrine.backends.extrema import greatest
 from terrine.backends.timestamps import compare_timestamps
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.compile.shapes.matched_t0 import sample_risk_sets
-from terrine.data import ColumnMeta, Roles
+from terrine.data import ColumnMeta, Roles, RowCheck
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
 from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
 from terrine.spec.panels import Initiation, PersistentAdoption, SequentialSpec
 from terrine.spec.validate import _outcome_bounds
-from terrine.temporal.aggregate import _Check, _Failure
+from terrine.temporal.aggregate import _Check
 
 _INVALID_TRIAL_WEIGHT = RefusalSpec(
     "terrine.design.invalid_trial_weight",
@@ -159,7 +159,7 @@ def _persistent_contradictions(design: Design, model):
 def _deferred_refusal(query, refusal: RefusalSpec) -> _Check:
     return _Check(
         query.aggregate(failed_0=query.count().cast("string")),
-        (_Failure("failed_0", refusal, {}),),
+        (RowCheck("failed_0", refusal, {}),),
     )
 
 

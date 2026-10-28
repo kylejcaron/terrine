@@ -6,10 +6,12 @@ from typing import Literal
 
 import ibis
 import ibis.expr.datatypes as dt
+import ibis.expr.types as ir
 from ibis.common.exceptions import IbisError
+from ibis.expr.builders import WindowBuilder
 
 from terrine.backends.dialect import current_dialect
-from terrine.backends.numeric import exact_literal, exact_subtract, exact_sum
+from terrine.backends.numeric import count_literal, exact_literal, exact_subtract, exact_sum
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _SCHEMA
 from terrine.semantic.models import BoundMeasure
@@ -45,9 +47,11 @@ def _require_backend(table: ibis.Table) -> None:
         raise _EXACT_UNSUPPORTED.error(backend=backend)
 
 
-_COUNT_FIELDS = (
-    "event_count",
-    "nonnull_count",
+_COUNT_FIELDS = ("event_count", "nonnull_count")
+# Provenance of events whose filter predicate is unknown; only a filtered
+# measure's state holds them, since an unfiltered predicate is the literal
+# TRUE and every such count would be zero.
+_UNKNOWN_FIELDS = (
     "unknown_filter_count",
     "unknown_filter_null_count",
     "unknown_filter_missing_count",
@@ -56,6 +60,15 @@ _COUNT_FIELDS = (
 )
 # Inputs exact float state cannot hold: non-finite, or beyond the exact type.
 _EXACT_FLOAT_COUNTS = ("float64_nonfinite_count", "float64_unrepresentable_count")
+
+
+def _running_sum(value: ir.Value, window: WindowBuilder, *, admitted: bool = False) -> ir.Value:
+    """The exact cumulative sum over ``window``, zero where no state has contributed.
+
+    The fill takes the sum's own type, which is wider than a stored count's.
+    """
+    total = exact_sum(value, admitted=admitted).over(window)
+    return total.fill_null(exact_literal(0, total))
 
 
 def sparse_prefix(
@@ -72,7 +85,8 @@ def sparse_prefix(
     """
     if resolution not in {"day", "event"}:
         raise ValueError("resolution must be day or event")
-    required = ("_unit", "_timestamp", *_COUNT_FIELDS, "sum_value")
+    counts = (*_COUNT_FIELDS, *(_UNKNOWN_FIELDS if measure.filters else ()))
+    required = ("_unit", "_timestamp", *counts, "sum_value")
     if resolution == "day":
         required += ("local_day",)
     # A float fact's exact state carries its unit's scale and the counts of
@@ -94,20 +108,14 @@ def sparse_prefix(
             raise _SCHEMA.error(field="sufficient state", column=column)
     _require_backend(state)
     window = ibis.window(group_by=state._unit, order_by=state._timestamp, rows=(None, 0))
-    fields = {
-        name: exact_sum(state[name]).over(window)
-        if name in {"event_count", "nonnull_count"} or measure.filters
-        else exact_literal(0)
-        for name in _COUNT_FIELDS
-    }
-    state_zero = exact_literal(0, state.sum_value)
+    fields = {name: exact_sum(state[name]).over(window) for name in counts}
     if bounded:
         fields["sum_bound"] = state.sum_bound.sum().over(window).fill_null(ibis.literal(0.0))
     else:
-        fields["sum_value"] = exact_sum(state.sum_value).over(window).fill_null(state_zero)
+        fields["sum_value"] = _running_sum(state.sum_value, window)
     if exact_floats:
         for name in _EXACT_FLOAT_COUNTS:
-            fields[name] = exact_sum(state[name]).over(window).fill_null(exact_literal(0))
+            fields[name] = _running_sum(state[name], window)
     cumulative = state.mutate(**fields)
     if bounded:
         # A state is withheld when the magnitudes accumulated through it may
@@ -122,16 +130,14 @@ def sparse_prefix(
         admitted = policy.admits_accumulation(
             cumulative.sum_bound, cumulative.nonnull_count, state_type
         )
-        withheld = ~admitted | (cumulative.sum_withheld > exact_literal(0))
+        withheld = ~admitted | (cumulative.sum_withheld > exact_literal(0, cumulative.sum_withheld))
         held = withheld.ifelse(ibis.null().cast(state_type), cumulative.sum_value)
         running = ibis.window(
             group_by=cumulative._unit, order_by=cumulative._timestamp, rows=(None, 0)
         )
         cumulative = cumulative.mutate(
-            sum_value=exact_sum(held, admitted=True).over(running).fill_null(state_zero),
-            sum_withheld=exact_sum(withheld.ifelse(exact_literal(1), exact_literal(0)))
-            .over(running)
-            .fill_null(exact_literal(0)),
+            sum_value=_running_sum(held, running, admitted=True),
+            sum_withheld=_running_sum(withheld.ifelse(count_literal(1), count_literal(0)), running),
         ).drop("sum_bound")
     return cumulative.mutate(
         observed_null_count=exact_subtract(cumulative.event_count, cumulative.nonnull_count)

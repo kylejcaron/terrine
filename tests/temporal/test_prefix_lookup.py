@@ -222,19 +222,21 @@ def test_coarse_timestamp_ordering_refuses_without_lossless_native_extraction(dt
 
 
 @pytest.mark.parametrize("strategy", ["native", "union_window"])
-def test_infinite_timestamp_keys_keep_strict_order_and_null_requests(strategy):
+@pytest.mark.parametrize("state_type", ["TIMESTAMP_NS", "TIMESTAMPTZ", "TIMESTAMP"])
+def test_infinite_timestamp_keys_keep_strict_order_and_null_requests(strategy, state_type):
     from terrine.temporal.lookup import lookup_prefix
 
     con = ibis.duckdb.connect()
     try:
-        prefix = con.sql("""
-            SELECT 'a' AS _unit, ts::TIMESTAMP_NS AS _timestamp, n
-            FROM (VALUES ('-infinity', 1), ('1969-12-31 23:59:59.999999999', 2),
+        prefix = con.sql(f"""
+            SELECT 'a' AS _unit, ts::{state_type} AS _timestamp, n
+            FROM (VALUES ('-infinity', 1), ('1969-12-31 23:59:59.999999999+00', 2),
                          ('infinity', 3)) AS s(ts, n)
         """)
         points = con.sql("""
             SELECT request, 'a' AS unit, ts::TIMESTAMPTZ AS cutoff
-            FROM (VALUES (1, '-infinity'), (2, '1970-01-01'), (3, 'infinity'), (4, NULL))
+            FROM (VALUES (1, '-infinity'), (2, '1970-01-01 00:00:00+00'), (3, 'infinity'),
+                         (4, NULL))
             AS p(request, ts)
         """)
         result = lookup_prefix(
@@ -245,5 +247,78 @@ def test_infinite_timestamp_keys_keep_strict_order_and_null_requests(strategy):
             table.select("request", n=table[result.columns["n"]]).order_by("request")
         ).to_pylist()
         assert [row["n"] for row in rows] == [0, 2, 2, 0]
+    finally:
+        con.disconnect()
+
+
+@pytest.mark.parametrize("strategy", ["native", "union_window"])
+def test_native_keys_read_naive_states_as_utc_under_a_local_session(strategy):
+    from terrine.temporal.lookup import lookup_prefix
+
+    con = ibis.duckdb.connect()
+    try:
+        con.raw_sql("SET TimeZone = 'America/New_York'")
+        prefix = con.sql("""
+            SELECT 'a' AS _unit, ts::TIMESTAMP AS _timestamp, n
+            FROM (VALUES ('2025-01-02 11:59:59.999999', 1), ('2025-01-02 12:00:00', 2))
+            AS s(ts, n)
+        """)
+        points = con.sql("""
+            SELECT request, 'a' AS unit, ts::TIMESTAMPTZ AS cutoff
+            FROM (VALUES (1, '2025-01-02 12:00:00+00'), (2, '2025-01-02 12:00:00.000001+00'))
+            AS p(request, ts)
+        """)
+        result = lookup_prefix(
+            points, prefix, unit_column="unit", timestamp_column="cutoff", strategy=strategy
+        )
+        table = result.table
+        rows = con.to_pyarrow(
+            table.select("request", n=table[result.columns["n"]]).order_by("request")
+        ).to_pylist()
+        assert [row["n"] for row in rows] == [1, 2]
+    finally:
+        con.disconnect()
+
+
+@pytest.mark.parametrize("strategy", ["native", "union_window"])
+def test_lookup_carries_only_requested_fields(strategy):
+    from terrine.temporal.lookup import lookup_prefix
+
+    con = ibis.duckdb.connect()
+    try:
+        prefix = con.sql("""
+            SELECT 'a' AS _unit, TIMESTAMPTZ '2025-01-01 12:00:00+00' AS _timestamp,
+                   2::BIGNUM AS event_count, 1::BIGNUM AS nonnull_count, 'int64' AS value_type
+        """)
+        points = con.sql("SELECT 'a' AS unit, TIMESTAMPTZ '2025-01-01 13:00:00+00' AS cutoff")
+        result = lookup_prefix(
+            points,
+            prefix,
+            unit_column="unit",
+            timestamp_column="cutoff",
+            strategy=strategy,
+            fields=("event_count",),
+        )
+        assert set(result.columns) == {"event_count"}
+        table = result.table
+        assert set(table.columns) == {
+            "unit",
+            "cutoff",
+            result.matched_column,
+            *result.columns.values(),
+        }
+        rows = con.to_pyarrow(
+            table.select(events=table[result.columns["event_count"]].cast("string"))
+        ).to_pylist()
+        assert rows == [{"events": "2"}]
+        with pytest.raises(ValueError):
+            lookup_prefix(
+                points,
+                prefix,
+                unit_column="unit",
+                timestamp_column="cutoff",
+                strategy=strategy,
+                fields=("missing",),
+            )
     finally:
         con.disconnect()

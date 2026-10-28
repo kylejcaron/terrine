@@ -27,7 +27,13 @@ from terrine.data import (
     SamplingMeta,
 )
 from terrine.errors import RefusalSpec
-from terrine.execution.gates import enforce_shape_budget, validate_compiled_output
+from terrine.execution.gates import (
+    GatedStream,
+    enforce_shape_budget,
+    gate_totals,
+    gated_output,
+    run_schedule,
+)
 from terrine.spec.anchors import FixedDate
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import BinnedMetricState, StatePanel
@@ -647,20 +653,17 @@ class Frame:
             # Admit every relation the Frame will run, integrity checks included,
             # so an unsupported primitive refuses before the first source read.
             context.admit(*compiled.reads())
-            excluded_counts = {}
+            study = compiled
             if self._training_view is not None:
-                compiled.validate(execute=context.execute)
-                if self._training_view.incomplete_labels == "drop":
-                    excluded_counts = _excluded_label_counts(
-                        compiled, self._training_view, context.execute
-                    )
                 compiled = _apply_training_view(compiled, self._training_view)
             if transform is not None:
                 compiled = transform(compiled)
                 context.admit(*compiled.reads())
             compiled = self._with_winsorization_metadata(compiled)
-            summary = validate_compiled_output(compiled, context.execute)
-            query = compiled.table
+            # Anchor checks, every earlier run and each in-place check run first; the
+            # final run and the eligibility summary ride on the output statement.
+            final = run_schedule(compiled, context.execute)
+            query = gated_output(compiled.table, compiled.audit_table, final)
             chunk_size = 65_536
             is_life_table = isinstance(self._design.shape, LifeTable)
             if budget is not None and budget.max_rows is not None and not is_life_table:
@@ -669,13 +672,19 @@ class Frame:
                 chunk_size = min(chunk_size, limit)
             batches = []
             row_count = byte_count = 0
-            reader = context.to_arrow_batches(query, chunk_size=chunk_size)
+            stream = GatedStream(
+                context.to_arrow_batches(query, chunk_size=chunk_size),
+                final,
+                compiled.table.columns,
+                lambda: context.execute(gate_totals(compiled.audit_table, final)),
+            )
             try:
-                schema = reader.schema
+                summary = stream.resolve()
+                schema = stream.schema
                 output_schema = self._winsorize_output(
                     pa.Table.from_batches([], schema=schema)
                 ).schema
-                for batch in reader:
+                for batch in stream:
                     if batch.schema != schema:
                         batch = batch.cast(schema)
                     batch = self._winsorize_output(batch)
@@ -692,7 +701,12 @@ class Frame:
                     batches.append(batch)
                 table = pa.Table.from_batches(batches, schema=output_schema)
             finally:
-                reader.close()
+                stream.close()
+            excluded_counts = {}
+            if self._training_view is not None and self._training_view.incomplete_labels == "drop":
+                excluded_counts = _excluded_label_counts(
+                    study, self._training_view, context.execute
+                )
             from terrine.compile.columns import resolve_sketch_sidecars
 
             table = resolve_sketch_sidecars(table, compiled, context.con)

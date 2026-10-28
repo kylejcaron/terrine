@@ -21,7 +21,23 @@ from terrine.backends.timestamps import _UNSUPPORTED, _epoch, native_day_start, 
 
 _EXACT = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
 _HUGE = dt.Unknown(raw_type=sge.DataType.build("HUGEINT", dialect="duckdb"))
+# A HUGEINT column read back from a stored relation.
+_STORED_HUGE = dt.Decimal(38, 0)
 _KEY = dt.Struct.from_tuples((("rank", dt.int8), ("seconds", dt.int64), ("nanos", dt.int64)))
+
+
+def _is_stored_huge(dtype: dt.DataType) -> bool:
+    return isinstance(dtype, dt.Decimal) and (dtype.precision, dtype.scale) == (38, 0)
+
+
+def _huge(value: ir.Value) -> ir.Value:
+    """A count operand as HUGEINT: a 64-bit term or a stored count widens exactly."""
+    dtype = value.type()
+    if dtype == _HUGE:
+        return value
+    if isinstance(dtype, dt.Int64) or _is_stored_huge(dtype):
+        return value.cast(_HUGE)
+    raise TypeError(f"{dtype} is not a DuckDB count or HUGEINT operand")
 
 
 @ibis.udf.scalar.builtin(name="divide", signature=((_HUGE, _HUGE), _HUGE))
@@ -47,6 +63,21 @@ def _exact_sum(value):
 @ibis.udf.scalar.builtin(name="subtract", signature=((_EXACT, _EXACT), _EXACT))
 def _exact_subtract(left, right):
     """Native exact coefficient/count subtraction."""
+
+
+@ibis.udf.agg.builtin(name="sum", signature=((dt.int64,), _HUGE))
+def _count_sum(value):
+    """Sum of 64-bit count terms; DuckDB accumulates it in HUGEINT."""
+
+
+@ibis.udf.agg.builtin(name="sum", signature=((_HUGE,), _HUGE))
+def _huge_sum(value):
+    """Sum of 128-bit counts; DuckDB raises on overflow instead of wrapping."""
+
+
+@ibis.udf.scalar.builtin(name="subtract", signature=((_HUGE, _HUGE), _HUGE))
+def _huge_subtract(left, right):
+    """128-bit count difference; DuckDB raises on overflow instead of wrapping."""
 
 
 @ibis.udf.scalar.builtin(name="divide", signature=((dt.int64, dt.int64), dt.int64))
@@ -107,10 +138,27 @@ class DuckDBDialect(Dialect):
     def coefficient_type(self) -> dt.DataType:
         return _EXACT
 
+    def count_type(self) -> dt.DataType:
+        """Counts are native integers; ``exact_sum`` accumulates them in HUGEINT.
+
+        A 0/1 term is ``BIGINT``. A group's count is the sum of its terms and a
+        prefix the sum of its groups' counts, so every count ``P`` satisfies
+        ``0 <= P <= rows < 2**63`` (``row_t`` is ``int64``), and a window
+        difference ``|P(e) - P(s)| < 2**63``: both lie far inside HUGEINT's
+        ``±2**127``, and the published ``int64`` holds every genuine
+        difference. A state written outside that bound is still narrowed by
+        ``TRY_CAST``, which is NULL beyond ``int64`` and refuses as
+        ``exact_overflow``; DuckDB raises on HUGEINT overflow instead of
+        wrapping, so no sum silently leaves the type. Coefficients keep BIGNUM.
+        """
+        return dt.int64
+
+    def exact_types(self) -> frozenset[dt.DataType]:
+        # A stored HUGEINT reads back as decimal(38, 0).
+        return super().exact_types() | {_HUGE, _STORED_HUGE}
+
     def coefficient_bounds(self, value: ir.Value) -> tuple[int, int]:
-        dtype = value.type()
-        # DuckDB reports its physical HUGEINT as decimal(38, 0).
-        if isinstance(dtype, dt.Decimal) and dtype.precision == 38 and dtype.scale == 0:
+        if _is_stored_huge(value.type()):
             return -(1 << 127), (1 << 127) - 1
         return super().coefficient_bounds(value)
 
@@ -145,10 +193,17 @@ class DuckDBDialect(Dialect):
         return cast(ir.StringValue, _ltrim(digits, "0"))
 
     def exact_sum(self, value: ir.Value, *, admitted: bool = False) -> ir.Value:
-        return _exact_sum(value)
+        dtype = value.type()
+        if dtype == _EXACT:
+            return _exact_sum(value)
+        if isinstance(dtype, dt.Int64):
+            return _count_sum(value)
+        return _huge_sum(_huge(value))
 
     def exact_subtract(self, left: ir.Value, right: ir.Value) -> ir.Value:
-        return _exact_subtract(left, right)
+        if left.type() == _EXACT and right.type() == _EXACT:
+            return _exact_subtract(left, right)
+        return _huge_subtract(_huge(left), _huge(right))
 
     def truncating_quotient(
         self, value: ir.IntegerValue, divisor: int | ir.IntegerValue
@@ -235,6 +290,31 @@ class DuckDBDialect(Dialect):
         )
         return cast(ir.StructValue, value.isnull().ifelse(ibis.null().cast(_KEY), key))
 
+    def lookup_keys(
+        self, point: ir.TimestampValue, state: ir.TimestampValue
+    ) -> tuple[ir.Value, ir.Value]:
+        """Microsecond instants compare natively; a nanosecond side keeps the struct
+        keys, since TIMESTAMPTZ and TIMESTAMP_NS compare only through a narrowing or
+        overflowing cast."""
+        point_type, state_type = point.type(), state.type()
+        if not (
+            isinstance(point_type, dt.Timestamp)
+            and isinstance(state_type, dt.Timestamp)
+            and point_type.scale in (None, 6)
+            and state_type.scale in (None, 6)
+        ):
+            return self.timestamp_order_key(point), self.timestamp_order_key(state)
+        if point_type.timezone != state_type.timezone:
+            # A naive side is its UTC wall clock, attached explicitly: the implicit
+            # TIMESTAMP to TIMESTAMPTZ cast of a comparison applies the session zone.
+            if point_type.timezone is None:
+                point = self.utc_instant(point)
+            if state_type.timezone is None:
+                state = self.utc_instant(state)
+        # One key type on both sides, so a union timeline of points and states binds;
+        # the cast only aligns the declared scale of equal native types.
+        return point, state.cast(point.type())
+
     def reverse_time_key(self, value: ir.TimestampValue) -> ir.Value:
         key = self.timestamp_order_key(value)
         return ibis.struct(
@@ -251,6 +331,9 @@ class DuckDBDialect(Dialect):
     def narrow_exact(
         self, coefficient: ir.Value, scale: int, target: str | dt.DataType
     ) -> ir.Value:
+        # TRY_CAST narrows a native integer directly: NULL beyond the target.
+        if scale == 0 and coefficient.type() != _EXACT:
+            return coefficient.try_cast(target)
         return _scaled_text(coefficient, scale).try_cast(target)
 
     def asof_join(

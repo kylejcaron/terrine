@@ -1,10 +1,11 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
 import ibis
 import pytest
 
-from terrine.data import Coverage, UnitSource
+from terrine.data import Coverage, RowCheckGroup, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.models import Catalog
@@ -217,6 +218,71 @@ def test_conflicting_inline_history_is_refused_even_for_false_eligibility(column
     with pytest.raises(TerrineError) as error:
         compiled.validate(execute=column_model.con.to_pyarrow)
     assert error.value.code == "terrine.temporal.duplicate_history"
+
+
+def test_row_checks_are_lifted_into_the_audit_at_their_schedule_position(column_model):
+    from terrine.temporal.aggregate import TemporalResult
+
+    compiled = _compile(
+        column_model,
+        features={"state": asof("tier", before=0), "total": agg("total", window=("-1d", "0s"))},
+    )
+    kinds = [type(check).__name__ for check in compiled._checks]
+    assert kinds.index("AsOfResult") < kinds.index("RowCheckGroup")
+    group = next(check for check in compiled._checks if isinstance(check, RowCheckGroup))
+    assert group.checks and group.table.equals(compiled.audit_table)
+    assert all(
+        check.column.startswith("__terrine_check_") and check.column in compiled.audit_table.columns
+        for check in group.checks
+    )
+    assert not any(check.column in compiled.table.columns for check in group.checks)
+    assert not any(isinstance(check, TemporalResult) for check in compiled._checks)
+
+
+def test_compiled_study_rejects_a_row_check_outside_its_relation(column_model):
+    compiled = _compile(column_model, features={"total": agg("total", window=("-1d", "0s"))})
+    group = next(check for check in compiled._checks if isinstance(check, RowCheckGroup))
+    bad = RowCheckGroup(compiled.audit_table.drop(group.checks[0].column), group.checks)
+    with pytest.raises(ValueError):
+        replace(compiled, _checks=(bad,))
+
+
+def test_row_check_counts_survive_a_later_unvalidated_join(column_model):
+    """A failing window registered before an as-of lookup whose static history
+    holds two values for a unit reports its own failed count: the lookup's
+    duplicate rows belong to its own, later, refusal."""
+    con = column_model.con
+    con.raw_sql("ALTER TABLE events ADD COLUMN weight DOUBLE")
+    con.raw_sql("UPDATE events SET weight = CASE WHEN tier = 'old' THEN 'NaN'::DOUBLE ELSE 1 END")
+    definition = column_model.catalog.model_dump(mode="python")
+    definition["properties"]["tier"]["as_of"] = "static"
+    definition["sources"]["events"]["facts"] = (*definition["sources"]["events"]["facts"], "weight")
+    definition["facts"]["weight"] = {"source": "events", "column": "weight"}
+    definition["measures"]["weight_total"] = {"fact": "weight", "aggregation": "sum"}
+    definition["metrics"]["weight_total"] = {
+        "kind": "mean",
+        "entity": "user",
+        "measure": "weight_total",
+    }
+    model = Model.from_catalog(
+        Catalog.model_validate(definition),
+        con=con,
+        readiness=column_model.readiness,
+        units=column_model.units,
+    )
+    # Outputs register in name order: the window precedes the lookup.
+    compiled = _compile(
+        model,
+        features={
+            "a_weight": agg("weight_total", window=("-1d", "0s")),
+            "b_tier": asof("tier", before=0),
+        },
+    )
+    assert type(compiled._checks[-1]).__name__ == "AsOfResult"
+    with pytest.raises(TerrineError) as error:
+        compiled.validate(execute=con.to_pyarrow)
+    assert error.value.code == "terrine.temporal.float64_precision"
+    assert error.value.context["failed_count"] == 1
 
 
 @pytest.mark.parametrize("authority", ["range", "changes"])

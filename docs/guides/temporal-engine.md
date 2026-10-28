@@ -422,8 +422,10 @@ accompany each state:
   numeric filter property.
 
 The provenance counters are nonexclusive. They do not partition the total.
-No-filter states use constant zero counters, without reductions over zeros.
-A window consumer retains these fields and refuses unresolved membership with
+Only a filtered measure's state carries them: without filters the predicate
+is the literal `TRUE`, so every counter would be zero, and the state omits
+them. A window consumer carries only the fields its measure reads (a count
+or conversion reads `event_count` alone) and refuses unresolved membership with
 `terrine.filter.unknown` before output. NaN and both infinities in a referenced
 numeric property make its comparison unknown, not false and not an observed
 SQL NULL. Known false still overrides unknown. Only an otherwise available
@@ -485,14 +487,30 @@ For DuckDB's signed `HUGEINT`, threshold clipping covers its full signed
 
 ### Exact numeric state
 
-On the supported native DuckDB 1.5.6 route, integer and decimal sums and counts
-use internal `BIGNUM` coefficients. For decimal scale `s`, the coefficient is
+On the supported native DuckDB 1.5.6 route, integer and decimal sums use
+internal `BIGNUM` coefficients. For decimal scale `s`, the coefficient is
 the exact integer `z` in `value = z * 10**(-s)`. `value_type` and `value_scale`
 retain the schema type and original scale; `numeric_policy` is `exact`.
 Grouping, cumulative addition, and `exact_subtract` never multiply or divide
 BIGNUM values and do not narrow prefixes to HUGEINT or decimal precision 38.
 A large historical prefix is not a reason to reject a representable later
 window.
+
+Counts take a cheaper route there, because their bound is trivial. Every
+count term (`event_count`, `nonnull_count`, the unknown-filter counters and
+the float provenance counters) is a native `BIGINT` 0 or 1; a group's count
+is the sum of its terms and a prefix the sum of its groups' counts, so every
+count `P` satisfies `0 <= P <= rows < 2**63`, and a window difference
+`|P(e) - P(s)| < 2**63`. DuckDB accumulates those sums in `HUGEINT`
+(`±2**127`), far outside both bounds, and raises on overflow rather than
+wrapping, so no genuine count or difference leaves the type. The published
+`int64` is reached by `TRY_CAST`, which is NULL beyond `int64`, so a state
+written outside the bound (an external relation, a damaged persisted layer)
+refuses `terrine.temporal.exact_overflow`, never a wrapped integer. A stored
+`HUGEINT` reads back as `DECIMAL(38, 0)`, which holds every count exactly;
+persisted prefix layers carry counts as Arrow `decimal128(38, 0)`, and
+layers written in the earlier text form restore and compose identically.
+The other engines count in their coefficient type.
 
 Raw BIGNUM is **not** an Arrow numeric export. Diagnostic projections must
 cast it to canonical strings. A final-output consumer must construct the
@@ -521,13 +539,37 @@ PostgreSQL and BigQuery hold the shortest text unscaled in
 `NUMERIC`/`BIGNUMERIC`, and PostgreSQL's `NUMERIC` admits NaN and infinities,
 which the output rounding refuses instead.
 
-Window aggregation exposes its data-dependent checks through
-`TemporalResult.validate(pinned_executor)`. Checks and export must use the
-**same snapshot**. Neither builder opens a transaction nor executes a hidden
-probe. Refusals contain aggregate failed counts and identifiers only, never
-customer rows, keys, or values. `terrine.temporal.float64_precision`
-identifies `nonfinite_input` (a non-finite value at or before the end of a
-non-empty window) or `bound_overflow` (a result beyond binary64's range).
+Window aggregation keeps its data-dependent checks as boolean flag columns
+of its own relation (`TemporalResult.row_checks`: endpoint alignment,
+unknown filters, exact overflow and the float precision flags, in that
+order); a TRUE row fails the check and a NULL row passes. A result validated
+on its own (`TemporalResult.validate(pinned_executor)`) counts every flag in
+one aggregate. In a compiled study the flags ride the window's join into the
+audit relation as `__terrine_check_*` columns, and the study's deferred
+checks form one ordered schedule: the anchor checks, then each result's
+checks in registration order (features, outcomes and eligibility, then the
+shape checks), then unresolved eligibility, then the row and byte budgets.
+Each maximal run of checks that reduce to one row (the audit's flag sums and
+the one-row aggregate checks of nonadditive metrics, first occurrences and
+shapes) is one gate statement, its parts cross-joined in schedule order; a
+check that must run in place (an as-of attribute or history check, whose
+join could duplicate candidate rows) is its own statement between runs, and
+a window registered before such a check keeps its flags on its own relation
+so its counts stay exact. Materialization runs every earlier run and
+in-place check, then one output statement cross-joined with the final run's
+gate row and the eligibility summary; the gate columns of the first batch
+are decoded before any row leaves, and an empty output runs that aggregate
+alone so a refusal on excluded candidates still fires. Composition for
+staging and the bounded preview run the same schedule with the final run as
+its own aggregate (the preview caps only its eligibility read), and a staged
+output statement carries the summary alone. The first flagged check in
+schedule order refuses with `failed_count` and its context before the
+summary is read. Checks and export must use the **same snapshot**. Neither
+builder opens a transaction nor executes a hidden probe. Refusals contain
+aggregate failed counts and identifiers only, never customer rows, keys, or
+values. `terrine.temporal.float64_precision` identifies `nonfinite_input` (a
+non-finite value at or before the end of a non-empty window) or
+`bound_overflow` (a result beyond binary64's range).
 
 ## Exact timestamp windows
 
@@ -540,12 +582,27 @@ The fallback carries the complete timestamp-order marker, then rejoins the
 original state once; it does not independently skip null fields or expand
 anchors across events. NULL requests match no state, including nonnumeric payloads.
 
-Native and fallback lookups share lossless structured ordering for mixed native
-microsecond/nanosecond axes, signed pre-epoch fractions and supported infinities.
-They do not narrow a nanosecond event or scale a wide microsecond cutoff into
-overflow. Unsupported native coarse timestamp representations raise
-`terrine.temporal.timestamp_order_unsupported`: normalize to a losslessly
-representable native microsecond/nanosecond timestamp before binding.
+The cutoff and state keys come from the engine's expression policy
+(`Dialect.lookup_keys`). On DuckDB a microsecond pair compares natively: two
+`TIMESTAMPTZ` instants are their own keys, and when one side is naive it is
+attached to UTC explicitly (`timezone('UTC', x)`, exact and independent of
+the session `TimeZone`, which the implicit cast of a mixed comparison would
+apply instead) and then cast to the cutoff's declared type so both lookup
+strategies bind one key type. A nanosecond side keeps the lossless
+structured order key on both sides, since `TIMESTAMPTZ` and `TIMESTAMP_NS`
+compare only through a narrowing or overflowing cast. PostgreSQL, BigQuery,
+Snowflake and the portable policy compare their order keys, which are the
+values themselves. Native and fallback lookups share lossless structured
+ordering for mixed native microsecond/nanosecond axes, signed pre-epoch
+fractions and supported infinities. They do not narrow a nanosecond event or
+scale a wide microsecond cutoff into overflow. Unsupported native coarse
+timestamp representations raise `terrine.temporal.timestamp_order_unsupported`:
+normalize to a losslessly representable native microsecond/nanosecond
+timestamp before binding. Row order is not part of the dataset contract on
+any backend: DuckDB rewrites an as-of join whose estimated cutoff side is
+below its loop-join threshold (64 rows) into a hash aggregate whose scan
+order is thread dependent, so a small study may come back out of anchor
+order; sort explicitly when an order is needed.
 
 `aggregate_window` consumes resolved measure-to-prefix mappings and returns a
 lazy `TemporalResult` for a named feature or outcome. It retains original

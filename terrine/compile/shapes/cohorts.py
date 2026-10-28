@@ -17,12 +17,11 @@ from terrine.backends.numeric import (
     guard_accumulation,
 )
 from terrine.compile.columns import CompiledStudy
-from terrine.data import ColumnMeta, Roles
+from terrine.data import ColumnMeta, Roles, RowCheck
 from terrine.errors import RefusalSpec
 from terrine.spec.trajectory import CohortGrouping
 from terrine.temporal.aggregate import (
     _Check,
-    _Failure,
     narrow_exact,
 )
 from terrine.temporal.prefix import FLOAT64_PRECISION
@@ -244,7 +243,7 @@ def _compile_cohorts(
             _Check(
                 failed.aggregate(ibis._.count().cast("string").name(failure_column)),
                 (
-                    _Failure(
+                    RowCheck(
                         failure_column,
                         EXACT_OVERFLOW,
                         {"source": "cohort", "measure": value_column, "output": "value"},
@@ -259,7 +258,7 @@ def _compile_cohorts(
             _Check(
                 failed.aggregate(ibis._.count().cast("string").name(failure_column)),
                 (
-                    _Failure(
+                    RowCheck(
                         failure_column,
                         EXACT_OVERFLOW,
                         {"source": "cohort", "measure": value_column, "output": "value"},
@@ -276,7 +275,7 @@ def _compile_cohorts(
             _Check(
                 result.filter(failed).aggregate(ibis._.count().cast("string").name(failure_column)),
                 (
-                    _Failure(
+                    RowCheck(
                         failure_column,
                         FLOAT64_PRECISION,
                         {

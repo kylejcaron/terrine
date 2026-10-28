@@ -7,6 +7,7 @@ import pytest
 
 from terrine.backends.dialect import current_dialect, dialect_scope
 from terrine.backends.timestamps import (
+    lookup_keys,
     lossless_scale,
     timestamp_parts,
     timestamp_text,
@@ -110,6 +111,35 @@ def test_timestamp_text_keeps_microsecond_distinct_instants_apart():
     ).to_pylist()
     assert len({row["naive"] for row in rows}) == 2
     assert [row["naive"] for row in rows] == [row["aware"] for row in rows]
+
+
+def test_duckdb_lookup_keys_are_native_for_microsecond_pairs_and_structs_for_nanoseconds(
+    connection,
+):
+    t = ibis.table({"aware": "timestamp('UTC')", "naive": "timestamp", "ns": "timestamp(9)"})
+    bound = connection.sql(
+        "SELECT TIMESTAMPTZ '2025-01-01 12:00:00+00' AS aware, "
+        "TIMESTAMP '2025-01-01 12:00:00' AS naive"
+    )
+    with dialect_scope("duckdb"):
+        point, state = lookup_keys(t.aware, t.aware)
+        assert point.equals(t.aware) and state.equals(t.aware)
+        point, state = lookup_keys(t.aware, t.naive)
+        assert state.type() == dt.Timestamp(timezone="UTC") and point.equals(t.aware)
+        point, state = lookup_keys(t.naive, t.aware)
+        assert point.type() == dt.Timestamp(timezone="UTC") and state.equals(t.aware)
+        point, state = lookup_keys(bound.aware, bound.naive)
+        assert point.type() == state.type() == dt.Timestamp(timezone="UTC", scale=6)
+        point, state = lookup_keys(t.aware, t.ns)
+        assert point.type().is_struct() and state.type().is_struct()
+        point, state = lookup_keys(t.ns, t.ns)
+        assert point.type().is_struct() and state.type().is_struct()
+        with pytest.raises(TerrineError) as caught:
+            lookup_keys(t.aware, t.aware.cast(dt.Timestamp(scale=3)))
+        assert caught.value.code == "terrine.temporal.timestamp_order_unsupported"
+    with dialect_scope("postgres"):
+        point, state = lookup_keys(t.aware, t.naive)
+        assert point.equals(t.aware) and state.equals(t.naive)
 
 
 @pytest.mark.parametrize(

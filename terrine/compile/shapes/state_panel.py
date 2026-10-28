@@ -149,10 +149,7 @@ def _union_state_periods(
     final = compile_columns(
         endpoint, model, include_membership=False, persisted_prefixes=persisted_prefixes
     )
-    left, right = compiled.table, final.table
-    table = left.union(right)
-    audit = compiled.audit_table.union(final.audit_table)
-    return table, audit, compiled, final
+    return compiled.table.union(final.table), compiled, final
 
 
 def _binned(
@@ -167,7 +164,7 @@ def _binned(
     assert isinstance(spec, BinnedMetricState)
     schedule = design.anchor
     assert isinstance(schedule, Schedule)
-    period_relation, _, period_compiled, endpoint_compiled = _union_state_periods(
+    period_relation, period_compiled, endpoint_compiled = _union_state_periods(
         design, model, spec.metric, persisted_prefixes=persisted_prefixes
     )
     state_meta = period_compiled.columns["_state_period"]

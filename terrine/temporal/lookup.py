@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, cast
@@ -13,7 +13,7 @@ import ibis.expr.types as ir
 
 from terrine.backends.joins import has_native_asof
 from terrine.backends.numeric import is_exact_type
-from terrine.backends.timestamps import timestamp_order_key
+from terrine.backends.timestamps import lookup_keys
 
 __all__ = ["PrefixLookup", "lookup_prefix"]
 
@@ -48,11 +48,14 @@ def lookup_prefix(
     unit_column: str,
     timestamp_column: str,
     strategy: Literal["native", "union_window"] = "native",
+    fields: Sequence[str] | None = None,
 ) -> PrefixLookup:
     """Attach the latest sparse state strictly before each point cutoff.
 
     Prefix keys are the canonical ``_unit`` and ``_timestamp`` fields. The
     producer must supply unique, non-null, timezone-compatible state keys.
+    ``fields`` names the state columns to carry; by default every non-key
+    column is carried.
     """
     if strategy not in {"native", "union_window"}:
         raise ValueError("strategy must be 'native' or 'union_window'")
@@ -64,10 +67,15 @@ def lookup_prefix(
     for column in ("_unit", "_timestamp"):
         if column not in prefix.columns:
             raise ValueError(f"prefix column {column!r} is missing")
+    state_fields = [name for name in prefix.columns if name not in {"_unit", "_timestamp"}]
+    if fields is not None:
+        for name in fields:
+            if name not in state_fields:
+                raise ValueError(f"prefix state field {name!r} is missing")
+        state_fields = list(fields)
 
     # Each cutoff needs a distinct relation, even when points already contain this prefix.
     prefix = prefix.view()
-    state_fields = [name for name in prefix.columns if name not in {"_unit", "_timestamp"}]
     used = {name.casefold() for name in (*points.columns, *prefix.columns)}
     point_unit = _allocate(used, "__terrine_point_unit")
     point_time = _allocate(used, "__terrine_point_time")
@@ -91,16 +99,14 @@ def lookup_prefix(
         for index, field in enumerate(state_fields)
     }
 
+    point_key, state_key = lookup_keys(points[timestamp_column], prefix._timestamp)
     left = points.select(
         **{name: points[name] for name in points.columns},
-        **{
-            point_unit: points[unit_column],
-            point_time: timestamp_order_key(points[timestamp_column]),
-        },
+        **{point_unit: points[unit_column], point_time: point_key},
         **{point_present: points[timestamp_column].notnull()},
     )
     right = prefix.select(
-        **{state_unit: prefix._unit, state_time: timestamp_order_key(prefix._timestamp)},
+        **{state_unit: prefix._unit, state_time: state_key},
         **{state_present: ibis.literal(True)},
         **{state_aliases[name]: prefix[name] for name in state_fields},
     )
@@ -143,8 +149,7 @@ def lookup_prefix(
         timeline = timeline.mutate(
             **{
                 marker_name: cast(
-                    ir.StructColumn,
-                    ibis.ifelse(timeline[kind_name] == 1, timeline[point_time], None),
+                    ir.Column, ibis.ifelse(timeline[kind_name] == 1, timeline[point_time], None)
                 )
                 .max()
                 .over(frame)

@@ -12,6 +12,7 @@ significands as wide integers and round once at output. PostgreSQL and
 BigQuery hold the shortest text unscaled in their exact types and divide there.
 The portable base policy quantizes a float's text once to ``DECIMAL(38, 9)``,
 keeps counts and coefficients in ``DECIMAL(38, 0)``, and divides in binary64.
+DuckDB counts 0/1 terms as ``BIGINT`` and accumulates them in ``HUGEINT``.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from terrine.errors import RefusalSpec
 __all__ = [
     "EXACT_OVERFLOW",
     "coefficient_bounds",
+    "count_literal",
     "decimal_coefficient",
     "exact_float",
     "exact_is_nonfinite",
@@ -66,7 +68,7 @@ def exact_type(*like: ir.Value) -> dt.DataType:
 def is_exact_type(dtype: dt.DataType) -> bool:
     """Whether ``dtype`` is an internal exact-state type on any policy."""
     policies = [dialect_for_name(name) for name in (*ENGINES, GENERIC.name)]
-    return any(dtype in {policy.exact_type(), policy.coefficient_type()} for policy in policies)
+    return any(dtype in policy.exact_types() for policy in policies)
 
 
 def has_scaled_float_state(*like: ir.Value) -> bool:
@@ -75,16 +77,22 @@ def has_scaled_float_state(*like: ir.Value) -> bool:
 
 
 def exact_literal(value: int, *like: ir.Value) -> ir.Scalar:
-    """An exact integer typed like the first exact ``like`` operand, else as a count.
+    """An exact integer typed like the first exact ``like`` operand, else as a coefficient.
 
-    Counts, thresholds and day divisors live in the coefficient domain. A
-    fill or comparison against float state passes that state operand so the
-    literal keeps its fixed-scale type instead of promoting the operand.
+    Thresholds and comparison zeros take the type of the state they meet: a
+    fill or comparison against float state keeps its fixed-scale type, one
+    against a native integer count keeps that integer type, instead of
+    promoting the operand.
     """
     dialect = current_dialect(*like)
-    exact = {dialect.exact_type(), dialect.coefficient_type()}
+    exact = dialect.exact_types()
     dtype = next((item.type() for item in like if item.type() in exact), None)
     return cast(ir.Scalar, ibis.literal(str(value)).cast(dtype or dialect.coefficient_type()))
+
+
+def count_literal(value: int, *like: ir.Value) -> ir.Scalar:
+    """A 0/1 count term or a row-count divisor in the policy's count type."""
+    return cast(ir.Scalar, ibis.literal(value).cast(current_dialect(*like).count_type()))
 
 
 def decimal_coefficient(value: ir.Value, scale: int) -> ir.Value:

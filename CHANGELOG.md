@@ -1,5 +1,53 @@
 # Changelog
 
+## Unreleased
+
+### Performance
+
+- Run a build's integrity checks, eligibility summary and output in one
+  statement. Window checks are boolean flag columns of the study's audit
+  relation instead of one statement per check that recomputed the metric
+  from the source tables; the deferred checks form one schedule in
+  registration order, folded into gate statements, and the final run's
+  counts and the eligibility summary ride on the output statement as a
+  one-row cross join that is decoded before the first batch leaves. Refusal
+  codes, their context (`failed_count` included) and the first refusal for a
+  given dataset are unchanged; an empty output still refuses a failing check
+  on an excluded candidate, and `Budget.max_rows` and `max_output_bytes`
+  count output rows and bytes only. On the repro (DuckDB 1.5.6; 10,000
+  units, 300,000 events, ten snapshots, three metrics; Apple M3 Pro, 12
+  cores) a warm build went from 14.0 s and eight statements over the source
+  tables to 0.8 s and one. Designs with as-of attributes or event-history
+  checks keep one statement per such check between gate statements.
+  Composition for runtime staging runs the schedule once and each staging
+  task reads its output with the summary alone;
+  `preview(..., bounded_count=N)` still runs every check unrestricted and
+  caps only its eligibility read.
+- Compare DuckDB lookup timestamps natively: a microsecond cutoff and state
+  are their own as-of keys, a naive side is attached to UTC explicitly so
+  the session `TimeZone` cannot shift it, and a nanosecond axis keeps the
+  structured order key. Hold counts in native integers there: `BIGINT` 0/1
+  terms accumulated in `HUGEINT` and narrowed by `TRY_CAST`, so a count
+  beyond `int64` refuses `terrine.temporal.exact_overflow` rather than
+  wrapping; integer, decimal and float sums keep their `BIGNUM`
+  coefficients. A window's state carries only the fields its measure reads,
+  and an unfiltered measure's state no longer holds the five constant
+  unknown-filter counters. PostgreSQL, BigQuery, Snowflake and the portable
+  policy keep their numeric and timestamp state; their compiled statements
+  change only in the gate shape, the pruned state columns and integer count
+  literals.
+
+### Breaking changes
+
+- Output row order on DuckDB may differ from anchor order for a small study
+  (DuckDB rewrites an as-of join with fewer than 64 estimated cutoffs into a
+  hash aggregate). Row order was never part of the dataset contract on any
+  backend; sort explicitly when an order is needed.
+- Persisted runtime prefix layers written by this version hold counts as
+  Arrow `decimal128(38, 0)` on DuckDB and cannot be read by earlier
+  versions; layers written by earlier versions still restore and compose
+  identically.
+
 ## 0.1.0.dev1
 
 ### Backend compatibility

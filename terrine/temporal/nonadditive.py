@@ -13,11 +13,11 @@ import ibis.expr.types as ir
 
 from terrine.backends.extrema import greatest, least
 from terrine.backends.timestamps import compare_timestamps
-from terrine.data import ColumnMeta
+from terrine.data import ColumnMeta, RowCheck
 from terrine.errors import RefusalSpec
 from terrine.semantic.models import BoundMeasure, BoundSource
 from terrine.semantic.rules import UNKNOWN_FILTER
-from terrine.temporal.aggregate import TemporalResult, _Check, _Failure
+from terrine.temporal.aggregate import TemporalResult, _Check
 from terrine.temporal.daily import _predicate
 from terrine.temporal.ranges import RangePlan, blocked_range_join
 from terrine.temporal.readiness import Readiness
@@ -392,7 +392,7 @@ def aggregate_nonadditive_window(
             _Check(
                 unknown_match.aggregate(failed_unknown_filter=failed_count),
                 (
-                    _Failure(
+                    RowCheck(
                         failure_column,
                         UNKNOWN_FILTER,
                         {"source": measure.source_name, "measure": measure.fact, "output": output},
