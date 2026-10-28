@@ -1,5 +1,8 @@
 # terrine
 
+> [!WARNING]
+> Terrine is an experimental idea for simplifying dataset curation. It is pre-alpha: the API will change without notice, and it is not ready for production use.
+
 **Build datasets directly from event logs.**
 
 You have event tables: orders, sessions, payments. You want a modeling table, for example one row per customer per snapshot date, with features computed from the past and labels from the future. Terrine builds that table in your warehouse (DuckDB, PostgreSQL, BigQuery, Snowflake, and more) from a few lines of Python.
