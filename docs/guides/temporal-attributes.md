@@ -19,7 +19,7 @@ was recorded or known.
 
 `enrich_events(events, source, dimension_relations)` applies event-time
 selection and retains event columns. It resolves each dimension's
-`source_entity` through `source.entities`, rather than assuming the analysis
+`unit` through `source.units`, rather than assuming the analysis
 unit key is the dimension key. Each dimension's property gets a deterministic
 value alias and match-flag alias from the internal
 `_enriched_property_columns(dimensions, raw_columns)` resolver. Callers that

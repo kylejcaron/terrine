@@ -1244,11 +1244,11 @@ def test_fitted_transform_refuses_same_typed_rebound_metric(model, kind):
 
     model.con.raw_sql("ALTER TABLE events ADD COLUMN other_amount BIGINT DEFAULT 7")
     definitions = model.catalog.model_dump(mode="python")
-    definitions["sources"]["events"]["facts"] = (
-        *definitions["sources"]["events"]["facts"],
+    definitions["sources"]["events"]["events"] = (
+        *definitions["sources"]["events"]["events"],
         "other_amount",
     )
-    definitions["facts"]["other_amount"] = {"source": "events", "column": "other_amount"}
+    definitions["events"]["other_amount"] = {"source": "events", "column": "other_amount"}
 
     def bind():
         return Model.from_catalog(
@@ -1270,7 +1270,7 @@ def test_fitted_transform_refuses_same_typed_rebound_metric(model, kind):
         split=TimeSplit(train_until="2025-01-06", validation_until="2025-01-07"),
     )
     fitted = frame.fit_winsorization("value", lower="0.25", upper="0.75")
-    definitions["measures"]["total"]["fact"] = "other_amount"
+    definitions["measures"]["total"]["event"] = "other_amount"
     rebound = study.snapshot(bind(), as_of="2025-01-08", features=("value",), eligibility={})
     assert rebound.expr.schema()["value"] == frame._active_compiled().table.schema()["value"]
     with pytest.raises(TerrineError) as error:
@@ -1304,13 +1304,13 @@ def test_frozen_limits_refuse_rebound_selector_dependencies(model, binding, nest
     definitions = model.catalog.model_dump(mode="python")
     definitions["sources"]["selection"] = {
         "relation": {"kind": "table", "name": "selection_events"},
-        "timestamp": "ts",
-        "entities": {"user": "user_id"},
-        "facts": ("selection",),
+        "time": "ts",
+        "units": {"user": "user_id"},
+        "events": ("selection",),
         "properties": ("selection_kind",),
         "dimensions": (),
     }
-    definitions["facts"]["selection"] = {"source": "selection", "column": "selected"}
+    definitions["events"]["selection"] = {"source": "selection", "column": "selected"}
     definitions["properties"]["selection_kind"] = {
         "source": "selection",
         "column": "kind",
@@ -1335,8 +1335,8 @@ def test_frozen_limits_refuse_rebound_selector_dependencies(model, binding, nest
         definitions["properties"]["selection_kind"]["dimension"] = "selection_history"
         definitions["dimensions"]["selection_history"] = {
             "relation": {"kind": "table", "name": "selection_history"},
-            "source_entity": "user",
-            "entity_column": "user_id",
+            "unit": "user",
+            "key": "user_id",
             "properties": ("selection_kind",),
             "validity": {"valid_from": "starts", "valid_to": "ends"},
         }
@@ -1379,7 +1379,7 @@ def test_frozen_limits_refuse_rebound_selector_dependencies(model, binding, nest
     if binding == "source":
         definitions["sources"]["selection"]["relation"]["name"] = "alternate_selection_events"
     elif binding == "fact":
-        definitions["facts"]["selection"]["column"] = "alternate"
+        definitions["events"]["selection"]["column"] = "alternate"
     elif binding == "property":
         definitions["properties"]["selection_kind"]["column"] = "other_kind"
     else:
@@ -1753,7 +1753,7 @@ def test_feature_definition_hash_tracks_source_timestamp_semantics(native_inputs
     readiness = {"events": Coverage("2025-01-01", "2025-01-31")}
     original = Model.from_catalog(catalog, con=con, units=units, readiness=readiness)
     changed = catalog.model_dump(mode="json")
-    changed["sources"]["events"]["timestamp"] = "earlier"
+    changed["sources"]["events"]["time"] = "earlier"
     corrected = Model.from_catalog(
         Catalog.model_validate(changed), con=con, units=units, readiness=readiness
     )

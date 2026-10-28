@@ -48,20 +48,20 @@ def native_model():
         ),
     )
     catalog = {
-        "schema_version": 1,
+        "schema_version": 2,
         "day_boundary": "UTC-05:00",
         "dialect": "duckdb",
         "sources": {
             "events": {
                 "relation": {"kind": "table", "name": "events"},
-                "timestamp": "ts",
-                "entities": {"user": "user_id"},
-                "facts": ["occurred"],
+                "time": "ts",
+                "units": {"user": "user_id"},
+                "events": ["occurred"],
                 "properties": [],
                 "dimensions": [],
             }
         },
-        "facts": {"occurred": {"source": "events", "column": "occurred"}},
+        "events": {"occurred": {"source": "events", "column": "occurred"}},
         "properties": {},
         "dimensions": {},
         "measures": {},
@@ -134,7 +134,7 @@ def test_candidate_unit_refusal_matches_static_validation(native_model, unit, an
 
 def test_event_anchor_requires_fact_declared_by_bound_source(native_model):
     definition = native_model.catalog.model_dump(mode="python")
-    definition["facts"]["ghost"] = {"source": "events", "column": "occurred"}
+    definition["events"]["ghost"] = {"source": "events", "column": "occurred"}
     model = Model.from_catalog(
         Catalog.model_validate(definition),
         con=native_model.con,
@@ -368,9 +368,9 @@ def test_event_tie_check_accepts_physical_column_named_n(native_model, column):
     definition = native_model.catalog.model_dump(mode="python")
     source = definition["sources"]["events"]
     if column == "user_id":
-        source["entities"]["user"] = "n"
+        source["units"]["user"] = "n"
     else:
-        source["timestamp"] = "n"
+        source["time"] = "n"
     model = Model.from_catalog(
         Catalog.model_validate(definition),
         con=native_model.con,
@@ -415,20 +415,20 @@ def _submicro_model(value: int):
     )
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["occurred"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["occurred"],
                     "properties": [],
                     "dimensions": [],
                 }
             },
-            "facts": {"occurred": {"source": "events", "column": None}},
+            "events": {"occurred": {"source": "events", "column": None}},
             "properties": {},
             "dimensions": {},
             "measures": {},

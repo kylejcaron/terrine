@@ -194,7 +194,7 @@ def _fixed_anchors(design: Design, model: Model) -> tuple[datetime, ...] | None:
 def _retention_window(expr: RetentionMetric, model: Model) -> Window:
     if expr.finite_horizon_seconds is not None:
         return Window(0, expr.finite_horizon_seconds)
-    coverage = model.readiness.for_fact(model.catalog.facts[expr.fact].source)
+    coverage = model.readiness.for_fact(model.catalog.events[expr.fact].source)
     span = coverage.end_exclusive - coverage.start
     return Window(0, span.days * 86_400 + span.seconds + bool(span.microseconds))
 
@@ -206,7 +206,7 @@ def _outcome_bounds(design: Design, model: Model) -> tuple[tuple[int, ...], tupl
     ):
         if isinstance(expression, RetentionMetric):
             if expression.finite_horizon_seconds is None:
-                fact = model.catalog.facts.get(expression.fact)
+                fact = model.catalog.events.get(expression.fact)
                 if fact is None:
                     raise _MISSING.error(kind="fact", name=expression.fact)
                 source = fact.source
@@ -268,11 +268,11 @@ def _resolve_property(
     source, prop, dimension = next(iter(unique.values()))
     _required(model, source.name, required)
     if dimension is None:
-        if design.unit not in source.entities:
+        if design.unit not in source.units:
             raise _UNIT.error(unit=design.unit, name=expr.attribute)
     else:
-        unit_key = source.entities.get(design.unit)
-        dimension_key = source.entities.get(dimension.source_entity)
+        unit_key = source.units.get(design.unit)
+        dimension_key = source.units.get(dimension.unit)
         if unit_key is None or dimension_key is None or unit_key != dimension_key:
             raise _UNIT.error(unit=design.unit, name=expr.attribute)
     temporal_property = (
@@ -404,17 +404,17 @@ def _expression(
         _resolve_property(expr, role, design, model, required, obligations)
         return
     if isinstance(expr, (EventTime, RetentionMetric)):
-        fact = model.catalog.facts.get(expr.fact)
+        fact = model.catalog.events.get(expr.fact)
         if fact is None:
             raise _MISSING.error(kind="fact", name=expr.fact)
         source = model.sources.get(fact.source)
-        if source is None or expr.fact not in source.facts:
+        if source is None or expr.fact not in source.events:
             raise _MISSING.error(kind="bound fact", name=expr.fact)
-        if design.unit not in source.entities:
+        if design.unit not in source.units:
             raise _UNIT.error(unit=design.unit, name=expr.fact)
         if isinstance(expr, RetentionMetric):
             _check_event_scalar(model, source.name, expr.label_property, expr.target_event)
-            if source.facts[expr.fact] is None and source.name not in model.event_ids:
+            if source.events[expr.fact] is None and source.name not in model.event_ids:
                 raise _RETENTION_IDENTITY.error(fact=expr.fact, source=source.name)
             if role != "outcome":
                 raise _GAP.error(role=role, gap=design.gap)
@@ -448,7 +448,7 @@ def _expression(
     if isinstance(expr, MetricAgg):
         _check_expression_timing(expr, role, design)
     metric = _metric(model, expr.metric)
-    if metric.entity != design.unit:
+    if metric.unit != design.unit:
         raise _UNIT.error(unit=design.unit, name=expr.metric)
     win = expr.window
     if not isinstance(win, Window) or win.start >= win.end:
@@ -548,13 +548,13 @@ def _validate_sequence_shape(design: Design, model: Model, required: set[str]) -
         raise _SEQUENCE_INVALID.error(reason="event sequences do not support treatment")
     if any(not isinstance(expr, EventTime) for expr in design.outcomes.values()):
         raise _SEQUENCE_INVALID.error(reason="event sequences only support EventTime outcomes")
-    fact = model.catalog.facts.get(sequence.fact)
+    fact = model.catalog.events.get(sequence.fact)
     if fact is None:
         raise _MISSING.error(kind="fact", name=sequence.fact)
     source = model.sources.get(fact.source)
-    if source is None or sequence.fact not in source.facts:
+    if source is None or sequence.fact not in source.events:
         raise _MISSING.error(kind="bound fact", name=sequence.fact)
-    if design.unit not in source.entities:
+    if design.unit not in source.units:
         raise _UNIT.error(unit=design.unit, name=sequence.fact)
     _required(model, source.name, required)
     requested_properties = [*sequence.properties]
@@ -593,14 +593,14 @@ def _validate_shape(
         source = model.sources.get(design.shape.treatment.source)
         if source is None:
             raise _MISSING.error(kind="treatment source", name=design.shape.treatment.source)
-        if design.unit not in source.entities:
+        if design.unit not in source.units:
             raise _UNIT.error(unit=design.unit, name=design.shape.treatment.property)
-        declared = set(source.properties) | set(source.facts)
+        declared = set(source.properties) | set(source.events)
         if design.shape.treatment.property not in declared:
             raise _MISSING.error(kind="treatment property", name=design.shape.treatment.property)
         if (
             isinstance(design.shape.treatment, PersistentAdoption)
-            and design.shape.treatment.property in source.facts
+            and design.shape.treatment.property in source.events
         ):
             raise _INVALID.error(
                 reason="PersistentAdoption requires a value-bearing property selector"
@@ -640,9 +640,9 @@ def _validate_shape(
         source = model.sources.get(design.shape.cohort.source)
         if source is None:
             raise _MISSING.error(kind="cohort source", name=design.shape.cohort.source)
-        if design.unit not in source.entities:
+        if design.unit not in source.units:
             raise _UNIT.error(unit=design.unit, name=design.shape.cohort.property)
-        declared = set(source.properties) | set(source.facts)
+        declared = set(source.properties) | set(source.events)
         if design.shape.cohort.property not in declared:
             raise _MISSING.error(kind="cohort property", name=design.shape.cohort.property)
         coverage = model.readiness.for_fact(source.name)
@@ -684,7 +684,7 @@ def _validate_shape(
         _required(model, source.name, required)
     elif isinstance(design.shape, CohortSpec):
         metric = _metric(model, design.shape.trajectory.metric)
-        if metric.entity != design.unit:
+        if metric.unit != design.unit:
             raise _UNIT.error(unit=design.unit, name=design.shape.trajectory.metric)
         if metric.kind != "mean" or len(metric.measures) != 1:
             raise _INVALID.error(reason="trajectory_metric_must_be_additive")
@@ -698,13 +698,13 @@ def _validate_shape(
         for name in (shape.event, shape.exit, shape.entry):
             if name is None:
                 continue
-            fact = model.catalog.facts.get(name)
+            fact = model.catalog.events.get(name)
             if fact is None:
                 raise _MISSING.error(kind="fact", name=name)
             source = model.sources.get(fact.source)
-            if source is None or name not in source.facts:
+            if source is None or name not in source.events:
                 raise _MISSING.error(kind="fact", name=name)
-            if design.unit not in source.entities:
+            if design.unit not in source.units:
                 raise _UNIT.error(unit=design.unit, name=name)
             _required(model, fact.source, required)
     elif design.shape != "cross_section":
@@ -717,17 +717,17 @@ def validate_design(design: Design, model: Model) -> ValidationReport:
     _validate_shape(design, model, required, obligations)
     anchor = design.anchor
     if isinstance(anchor, EventAnchor):
-        fact = model.catalog.facts.get(anchor.fact)
+        fact = model.catalog.events.get(anchor.fact)
         if fact is None:
             raise _MISSING.error(kind="fact", name=anchor.fact)
         source = model.sources.get(fact.source)
         if source is None:
             raise _MISSING.error(kind="event source", name=fact.source)
-        if anchor.fact not in source.facts:
+        if anchor.fact not in source.events:
             raise _MISSING.error(kind="bound fact", name=anchor.fact)
         if not supports_event_resolution(source.dialect):
             raise UNSUPPORTED_EVENT_RESOLUTION.error(dialect=source.dialect)
-        if design.unit not in source.entities:
+        if design.unit not in source.units:
             raise _UNIT.error(unit=design.unit, name=anchor.fact)
         _required(model, source.name, required)
         obligations.append("event_anchor_alignment")

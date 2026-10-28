@@ -17,18 +17,18 @@ from terrine.errors import TerrineError
 
 pytestmark = pytest.mark.postgres
 
-_CATALOG = """schema_version: 1
+_CATALOG = """schema_version: 2
 day_boundary: UTC
 dialect: {dialect}
 sources:
   orders:
     relation: {{kind: table, name: events}}
-    timestamp: occurred_at
-    entities: {{user: user_id}}
-    facts: [order, quantity, amount, weight, light]
+    time: occurred_at
+    units: {{user: user_id}}
+    events: [order, quantity, amount, weight, light]
     properties: [heaviness]
     dimensions: []
-facts:
+events:
   order: {{source: orders, column: null}}
   quantity: {{source: orders, column: qty}}
   amount: {{source: orders, column: amount}}
@@ -38,27 +38,27 @@ properties:
   heaviness: {{source: orders, column: weight, dtype: float, as_of: event_time}}
 dimensions: {{}}
 measures:
-  order_count: {{fact: order, aggregation: count}}
+  order_count: {{event: order, aggregation: count}}
   heavy_order_count:
-    fact: order
+    event: order
     aggregation: count
     filters: [{{property: heaviness, op: gte, values: [1.0]}}]
-  quantity_total: {{fact: quantity, aggregation: sum}}
-  amount_total: {{fact: amount, aggregation: sum}}
-  amount_average: {{fact: amount, aggregation: avg_event}}
-  weight_total: {{fact: weight, aggregation: sum}}
-  light_total: {{fact: light, aggregation: sum}}
+  quantity_total: {{event: quantity, aggregation: sum}}
+  amount_total: {{event: amount, aggregation: sum}}
+  amount_average: {{event: amount, aggregation: avg_event}}
+  weight_total: {{event: weight, aggregation: sum}}
+  light_total: {{event: light, aggregation: sum}}
 metrics:
-  orders: {{kind: mean, entity: user, measure: order_count}}
-  heavy_orders: {{kind: mean, entity: user, measure: heavy_order_count}}
-  quantity: {{kind: mean, entity: user, measure: quantity_total}}
-  spend: {{kind: mean, entity: user, measure: amount_total}}
-  average_spend: {{kind: mean, entity: user, measure: amount_average}}
-  weight: {{kind: mean, entity: user, measure: weight_total}}
-  light: {{kind: mean, entity: user, measure: light_total}}
-  spend_per_order: {{kind: ratio, entity: user, numerator: amount_total, denominator: order_count}}
+  orders: {{kind: mean, unit: user, measure: order_count}}
+  heavy_orders: {{kind: mean, unit: user, measure: heavy_order_count}}
+  quantity: {{kind: mean, unit: user, measure: quantity_total}}
+  spend: {{kind: mean, unit: user, measure: amount_total}}
+  average_spend: {{kind: mean, unit: user, measure: amount_average}}
+  weight: {{kind: mean, unit: user, measure: weight_total}}
+  light: {{kind: mean, unit: user, measure: light_total}}
+  spend_per_order: {{kind: ratio, unit: user, numerator: amount_total, denominator: order_count}}
   spend_per_weight:
-    {{kind: ratio, entity: user, numerator: amount_total, denominator: weight_total}}
+    {{kind: ratio, unit: user, numerator: amount_total, denominator: weight_total}}
 """
 
 # Boundary rows: exactly t0 - 1d (inside [-1d, 0)), exactly t0 (outcome, not

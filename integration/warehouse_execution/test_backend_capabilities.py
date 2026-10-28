@@ -385,18 +385,18 @@ def test_calendar_comparison_compiles_quantile_outcome_horizon(native_inputs):
     con.raw_sql("ALTER TABLE events ADD COLUMN metric_value INTEGER")
     con.raw_sql("UPDATE events SET metric_value = 1")
     definition = catalog.model_dump(mode="python")
-    definition["sources"]["events"]["facts"] += ("session_value",)
-    definition["facts"]["session_value"] = {
+    definition["sources"]["events"]["events"] += ("session_value",)
+    definition["events"]["session_value"] = {
         "source": "events",
         "column": "metric_value",
     }
     definition["measures"]["session_value_sum"] = {
-        "fact": "session_value",
+        "event": "session_value",
         "aggregation": "sum",
     }
     definition["metrics"]["session_value"] = {
         "kind": "mean",
-        "entity": "user",
+        "unit": "user",
         "measure": "session_value_sum",
     }
     catalog = Catalog.model_validate(definition)

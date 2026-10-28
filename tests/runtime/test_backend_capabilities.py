@@ -78,7 +78,7 @@ def test_unverified_scalar_semantics_refuse_declared_source_types(
     if operation == "exact_decimals":
         con.con.execute("ALTER TABLE events ADD COLUMN amount DECIMAL(20, 2)")
         definition = catalog.model_dump(mode="python")
-        definition["facts"]["session"]["column"] = "amount"
+        definition["events"]["session"]["column"] = "amount"
         from terrine.semantic.models import Catalog
 
         catalog = Catalog.model_validate(definition)

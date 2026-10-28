@@ -6,28 +6,28 @@ from terrine.spec import Design, Schedule, agg, asof
 def bind_model(con, *, label_end="2025-01-12", scoring=False):
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["amount"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["amount"],
                     "properties": ["category"],
                     "dimensions": [],
                 },
                 "labels": {
                     "relation": {"kind": "table", "name": "labels"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["label"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["label"],
                     "properties": [],
                     "dimensions": [],
                 },
             },
-            "facts": {
+            "events": {
                 "amount": {"source": "events", "column": "amount"},
                 "label": {"source": "labels", "column": None},
             },
@@ -41,12 +41,12 @@ def bind_model(con, *, label_end="2025-01-12", scoring=False):
             },
             "dimensions": {},
             "measures": {
-                "total": {"fact": "amount", "aggregation": "sum"},
-                "labels": {"fact": "label", "aggregation": "count"},
+                "total": {"event": "amount", "aggregation": "sum"},
+                "labels": {"event": "label", "aggregation": "count"},
             },
             "metrics": {
-                "total": {"kind": "mean", "entity": "user", "measure": "total"},
-                "labels": {"kind": "conversion", "entity": "user", "measure": "labels"},
+                "total": {"kind": "mean", "unit": "user", "measure": "total"},
+                "labels": {"kind": "conversion", "unit": "user", "measure": "labels"},
             },
         }
     )
@@ -58,7 +58,7 @@ def bind_model(con, *, label_end="2025-01-12", scoring=False):
         definitions = catalog.model_dump(mode="python")
         for section, name in (
             ("sources", "labels"),
-            ("facts", "label"),
+            ("events", "label"),
             ("measures", "labels"),
             ("metrics", "labels"),
         ):

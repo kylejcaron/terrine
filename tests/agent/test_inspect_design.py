@@ -92,7 +92,7 @@ def test_design_save_load_is_confined_to_owner_root(tools, tmp_path):
 @pytest.mark.parametrize("roster", [False, True])
 def test_design_example_handles_event_only_and_multiple_entity_models(tools, roster):
     source = tools.model.catalog.sources["events"]
-    source = source.model_copy(update={"entities": {"account": "user_id", "user": "user_id"}})
+    source = source.model_copy(update={"units": {"account": "user_id", "user": "user_id"}})
     catalog = tools.model.catalog.model_copy(update={"sources": {"events": source}})
     model = Model.from_catalog(
         catalog,

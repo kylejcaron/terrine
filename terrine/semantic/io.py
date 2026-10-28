@@ -1,5 +1,6 @@
 """Safe YAML loading for native semantic catalogs."""
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,12 @@ _HINTS = {
     "tuple_type": "Provide a sequence for this field.",
 }
 _DEFAULT_HINT = "Correct this field to match the declared Catalog schema."
+_SCHEMA_VERSION = 2
+_SCHEMA_VERSION_HINT = (
+    "Declare schema_version: 2 and use the current keys: sources carry time, units and "
+    "events; the root and each source list events; dimensions carry unit and key; "
+    "measures carry event; metrics carry unit."
+)
 
 
 def _catalog_issues(error: ValidationError) -> tuple[dict[str, Any], ...]:
@@ -94,6 +101,16 @@ _UniqueSafeLoader.add_constructor(BaseResolver.DEFAULT_MAPPING_TAG, _mapping)
 
 def validate_catalog(value: Any) -> Catalog:
     """Validate an in-memory Catalog definition with loader refusal semantics."""
+    declared = value.get("schema_version", _SCHEMA_VERSION) if isinstance(value, Mapping) else None
+    if isinstance(value, Mapping) and declared != _SCHEMA_VERSION:
+        issue = {
+            "location": ("schema_version",),
+            "kind": "unsupported_schema_version",
+            "hint": _SCHEMA_VERSION_HINT,
+        }
+        raise _INVALID_DEFINITION.error(
+            issues=(issue,), diagnostics=f"- schema_version: {_SCHEMA_VERSION_HINT}"
+        )
     try:
         return Catalog.model_validate(value)
     except ValidationError as exc:

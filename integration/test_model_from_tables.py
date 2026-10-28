@@ -26,32 +26,32 @@ def _fixture():
 
 def _native_model(con):
     catalog = Catalog.model_validate({
-        "schema_version": 1,
+        "schema_version": 2,
         "dialect": "duckdb",
         "day_boundary": "UTC",
         "sources": {
             "orders": {
                 "relation": {"kind": "table", "name": "orders"},
-                "timestamp": "ts",
-                "entities": {"user": "user_id"},
-                "facts": ["orders", "orders_amount"],
+                "time": "ts",
+                "units": {"user": "user_id"},
+                "events": ["orders", "orders_amount"],
                 "properties": [],
                 "dimensions": [],
             }
         },
-        "facts": {
+        "events": {
             "orders": {"source": "orders", "column": None},
             "orders_amount": {"source": "orders", "column": "amount"},
         },
         "properties": {},
         "dimensions": {},
         "measures": {
-            "orders_count": {"fact": "orders", "aggregation": "count"},
-            "orders_amount_sum": {"fact": "orders_amount", "aggregation": "sum"},
-            "orders_amount_mean": {"fact": "orders_amount", "aggregation": "avg_event"},
+            "orders_count": {"event": "orders", "aggregation": "count"},
+            "orders_amount_sum": {"event": "orders_amount", "aggregation": "sum"},
+            "orders_amount_mean": {"event": "orders_amount", "aggregation": "avg_event"},
         },
         "metrics": {
-            name: {"kind": "mean", "entity": "user", "measure": name}
+            name: {"kind": "mean", "unit": "user", "measure": name}
             for name in ("orders_count", "orders_amount_sum", "orders_amount_mean")
         },
     })
@@ -87,8 +87,8 @@ def test_from_tables_aggregates_match_native_catalog_and_preserve_availability()
         )
         native = _native_model(con)
         assert "orders" in generated.catalog.sources
-        assert "orders" in generated.catalog.facts
-        assert generated.catalog.facts["orders"].source == "orders"
+        assert "orders" in generated.catalog.events
+        assert generated.catalog.events["orders"].source == "orders"
         design = Design(
             "user",
             FixedDate("2025-01-03"),

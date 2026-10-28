@@ -25,25 +25,25 @@ def test_scratch_schema_is_isolated_and_round_trips_exact_values(postgres_scratc
     assert table["ts"][0].as_py().microsecond == 1
 
 
-_CATALOG = """schema_version: 1
+_CATALOG = """schema_version: 2
 day_boundary: UTC
 dialect: postgres
 sources:
   sessions:
     relation: {kind: table, name: events}
-    timestamp: occurred_at
-    entities: {user: user_id}
-    facts: [session]
+    time: occurred_at
+    units: {user: user_id}
+    events: [session]
     properties: []
     dimensions: []
-facts:
+events:
   session: {source: sessions, column: null}
 properties: {}
 dimensions: {}
 measures:
-  session_count: {fact: session, aggregation: count}
+  session_count: {event: session, aggregation: count}
 metrics:
-  sessions: {kind: mean, entity: user, measure: session_count}
+  sessions: {kind: mean, unit: user, measure: session_count}
 """
 
 

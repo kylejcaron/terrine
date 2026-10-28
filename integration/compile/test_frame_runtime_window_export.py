@@ -55,20 +55,20 @@ def test_many_window_columns_compile_and_export_together(native_inputs_fixture):
 # --- the first refusal follows the check schedule ---------------------------------
 
 _ORDERS_CATALOG = {
-    "schema_version": 1,
+    "schema_version": 2,
     "day_boundary": "UTC",
     "dialect": "duckdb",
     "sources": {
         "orders": {
             "relation": {"kind": "table", "name": "orders"},
-            "timestamp": "ts",
-            "entities": {"user": "user_id"},
-            "facts": ["amount", "qty"],
+            "time": "ts",
+            "units": {"user": "user_id"},
+            "events": ["amount", "qty"],
             "properties": ["channel"],
             "dimensions": [],
         }
     },
-    "facts": {
+    "events": {
         "amount": {"source": "orders", "column": "amount"},
         "qty": {"source": "orders", "column": "qty"},
     },
@@ -82,16 +82,16 @@ _ORDERS_CATALOG = {
     },
     "dimensions": {},
     "measures": {
-        "amount_sum": {"fact": "amount", "aggregation": "sum"},
+        "amount_sum": {"event": "amount", "aggregation": "sum"},
         "web_quantities": {
-            "fact": "qty",
+            "event": "qty",
             "aggregation": "count_distinct",
             "filters": [{"property": "channel", "op": "equals", "values": ["web"]}],
         },
     },
     "metrics": {
-        "spend": {"kind": "mean", "entity": "user", "measure": "amount_sum"},
-        "web_distinct": {"kind": "mean", "entity": "user", "measure": "web_quantities"},
+        "spend": {"kind": "mean", "unit": "user", "measure": "amount_sum"},
+        "web_distinct": {"kind": "mean", "unit": "user", "measure": "web_quantities"},
     },
 }
 _ORDER_SCHEMA = pa.schema(

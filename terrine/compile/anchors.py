@@ -322,21 +322,21 @@ def _roster_anchors(
 def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_AnchorCheck]]:
     anchor = design.anchor
     assert isinstance(anchor, EventAnchor)
-    fact = model.catalog.facts.get(anchor.fact)
+    fact = model.catalog.events.get(anchor.fact)
     if fact is None:
         raise _MISSING.error(kind="fact", name=anchor.fact)
     source = model.sources.get(fact.source)
     if source is None:
         raise _MISSING.error(kind="event source", name=fact.source)
-    if anchor.fact not in source.facts:
+    if anchor.fact not in source.events:
         raise _MISSING.error(kind="bound fact", name=anchor.fact)
-    physical_unit = source.entities.get(design.unit)
+    physical_unit = source.units.get(design.unit)
     if physical_unit is None:
         raise _UNIT.error(unit=design.unit, name=anchor.fact)
     events = _relation(model, source)
     event_id_column = model.event_ids.get(source.name)
 
-    identity_column = event_id_column or source.timestamp_column
+    identity_column = event_id_column or source.time_column
     identity_dtype = events.schema()[identity_column]
     identity_text = None
     if identity_dtype.is_timestamp():
@@ -352,10 +352,10 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
             instant = utc_wall_clock(instant)
         events = events.mutate(**{alias: timestamp_text(instant)})
         identity_text = events[alias]
-    raw_timestamp = events[source.timestamp_column]
+    raw_timestamp = events[source.time_column]
     checks: list[_AnchorCheck] = [
         _null_check(events, physical_unit, "null_event_unit"),
-        _null_check(events, source.timestamp_column, "null_event_timestamp"),
+        _null_check(events, source.time_column, "null_event_timestamp"),
     ]
 
     if event_id_column is not None:
@@ -366,7 +366,7 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
         type_tag = str(dtype)
     else:
         event_id = raw_timestamp
-        dtype = events.schema()[source.timestamp_column]
+        dtype = events.schema()[source.time_column]
         assert identity_text is not None
         text = identity_text
         type_tag = str(dtype)
@@ -406,7 +406,7 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
                 )
             )
     base = _range_filter_raw(model, base, "_raw_t0", design.anchor_range)
-    precision = _precision_check(model, base, "_raw_t0", source_column=source.timestamp_column)
+    precision = _precision_check(model, base, "_raw_t0", source_column=source.time_column)
     if precision is not None:
         checks.append(precision)
     base = _utc_column(model, base, "_raw_t0", "t0")

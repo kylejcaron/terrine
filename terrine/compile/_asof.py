@@ -68,18 +68,16 @@ def compile_asof(
     source, prop, dimension = resolve_attribute(model, attribute)
     if dimension is None:
         raw = model._relation(source.relation)
-        key = source.entities[unit]
+        key = source.units[unit]
         static = prop.as_of == "static"
-        fields = list(
-            dict.fromkeys([key, prop.column, *([] if static else [source.timestamp_column])])
-        )
+        fields = list(dict.fromkeys([key, prop.column, *([] if static else [source.time_column])]))
         history = raw.select(*fields).distinct()
         dimension = BoundDimension(
             name=f"{source.name}:{attribute}",
             relation=source.relation,
-            source_entity=unit,
-            entity_column=key,
-            validity=None if static else BoundValidity(None, None, source.timestamp_column),
+            unit=unit,
+            key=key,
+            validity=None if static else BoundValidity(None, None, source.time_column),
             properties=MappingProxyType({attribute: prop}),
         )
     else:

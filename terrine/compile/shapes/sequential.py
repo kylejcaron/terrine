@@ -118,9 +118,7 @@ def _persistent_contradictions(design: Design, model):
     selector = design.shape.treatment
     source = model.sources[selector.source]
     prop = source.properties[selector.property]
-    events = normalize_events(
-        model._relation(source.relation), source, source.entities[design.unit]
-    )
+    events = normalize_events(model._relation(source.relation), source, source.units[design.unit])
     end = cast(
         ir.TimestampScalar,
         ibis.literal(model.day_boundary(design.anchor.end).astimezone(UTC)),
@@ -167,10 +165,8 @@ def _treatment_rows(design: Design, model, anchors):
     assert isinstance(design.shape, SequentialSpec)
     selector = design.shape.treatment
     source = model.sources[selector.source]
-    events = normalize_events(
-        model._relation(source.relation), source, source.entities[design.unit]
-    )
-    if selector.property in source.facts:
+    events = normalize_events(model._relation(source.relation), source, source.units[design.unit])
+    if selector.property in source.events:
         observed = events._timestamp.notnull()
     else:
         prop = source.properties[selector.property]
@@ -204,10 +200,8 @@ def _later_initiations(design: Design, model, eligible_table, treatment_rows):
     assert isinstance(design.shape.treatment, Initiation)
     selector = design.shape.treatment
     source = model.sources[selector.source]
-    events = normalize_events(
-        model._relation(source.relation), source, source.entities[design.unit]
-    )
-    if selector.property in source.facts:
+    events = normalize_events(model._relation(source.relation), source, source.units[design.unit])
+    if selector.property in source.events:
         observed = events._timestamp.notnull()
     else:
         prop = source.properties[selector.property]

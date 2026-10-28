@@ -31,7 +31,7 @@ def _persisted_prefixes(design, model):
             continue
         source = model.sources[key.source]
         events = normalize_events(
-            model._relation(source.relation), source, source.entities[design.unit]
+            model._relation(source.relation), source, source.units[design.unit]
         )
         if key.measure is None or key.resolution not in {"day", "event"}:
             raise AssertionError("planned temporal layer has an invalid measure or resolution")
@@ -319,20 +319,20 @@ def test_runtime_and_frame_share_shape_budget_refusal():
 
 def test_same_fact_measures_keep_filter_and_aggregation_identity(column_model):
     changed = column_model.catalog.model_dump(mode="json")
-    changed["measures"]["count_amount"] = {"fact": "amount", "aggregation": "count"}
+    changed["measures"]["count_amount"] = {"event": "amount", "aggregation": "count"}
     changed["measures"]["new_amount"] = {
-        "fact": "amount",
+        "event": "amount",
         "aggregation": "sum",
         "filters": [{"property": "tier", "op": "equals", "values": ["new"]}],
     }
     changed["metrics"]["count_amount"] = {
         "kind": "mean",
-        "entity": "user",
+        "unit": "user",
         "measure": "count_amount",
     }
     changed["metrics"]["new_amount"] = {
         "kind": "mean",
-        "entity": "user",
+        "unit": "user",
         "measure": "new_amount",
     }
     model = Model.from_catalog(

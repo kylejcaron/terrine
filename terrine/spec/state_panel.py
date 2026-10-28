@@ -222,7 +222,7 @@ def validate_state_panel(
                     "dimension=None and as_of=event_time"
                 )
             )
-        if design.unit not in source.entities:
+        if design.unit not in source.units:
             raise _INVALID_SOURCE.error(reason="state source lacks the requested unit mapping")
         _required(model, source.name, required)
     else:

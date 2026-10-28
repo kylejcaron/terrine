@@ -29,28 +29,28 @@ from cryptography.hazmat.primitives import serialization
 
 import terrine as tr
 
-CATALOG = """schema_version: 1
+CATALOG = """schema_version: 2
 day_boundary: UTC
 dialect: snowflake
 sources:
   orders:
     relation: {kind: table, name: orders}
-    timestamp: ordered_at
-    entities: {customer: customer_id}
-    facts: [order, amount]
+    time: ordered_at
+    units: {customer: customer_id}
+    events: [order, amount]
     properties: []
     dimensions: []
-facts:
+events:
   order: {source: orders, column: null}
   amount: {source: orders, column: amount}
 properties: {}
 dimensions: {}
 measures:
-  order_count: {fact: order, aggregation: count}
-  amount_total: {fact: amount, aggregation: sum}
+  order_count: {event: order, aggregation: count}
+  amount_total: {event: amount, aggregation: sum}
 metrics:
-  orders: {kind: mean, entity: customer, measure: order_count}
-  spend: {kind: mean, entity: customer, measure: amount_total}
+  orders: {kind: mean, unit: customer, measure: order_count}
+  spend: {kind: mean, unit: customer, measure: amount_total}
 """
 _SETTINGS = ("ACCOUNT", "USER", "PRIVATE_KEY", "WAREHOUSE", "DATABASE")
 

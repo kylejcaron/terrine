@@ -42,28 +42,28 @@ def main() -> None:
         pa.table({"user_id": ["a"], "ts": [datetime(2025, 1, 1, tzinfo=UTC)]}),
     )
     catalog = {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "event_time",
-                    "entities": {"user": "user_id"},
-                    "facts": ["purchase"],
+                    "time": "event_time",
+                    "units": {"user": "user_id"},
+                    "events": ["purchase"],
                     "properties": [],
                     "dimensions": [],
                 },
                 "assignments": {
                     "relation": {"kind": "table", "name": "assignments"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["started"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["started"],
                     "properties": [],
                     "dimensions": [],
                 },
             },
-            "facts": {
+            "events": {
                 "purchase": {"source": "events", "column": None},
                 "started": {"source": "assignments", "column": None},
             },

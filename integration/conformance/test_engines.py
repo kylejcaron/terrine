@@ -323,8 +323,8 @@ def test_asof_at_t0_uses_previous_change(engine):
     dimension = BoundDimension(
         name="account_tier",
         relation=TableRef(kind="table", name="tier_history"),
-        source_entity="account",
-        entity_column="account_id",
+        unit="account",
+        key="account_id",
         validity=BoundValidity(None, None, "changed"),
         properties={
             "tier": PropertyBinding("tier", "tier_value", "string", "pre_exposure", "account_tier")

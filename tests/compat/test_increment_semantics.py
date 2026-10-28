@@ -62,10 +62,18 @@ def test_increment_and_native_catalogs_preserve_dataset_meaning():
             },
         ]
     )
-    assert catalog.sources["events"].entities == {
+    assert catalog.schema_version == 2
+    assert catalog.sources["events"].units == {
         "user_id": "user_id",
         "account_id": "account_id",
     }
+    assert catalog.sources["events"].events == ("spend", "purchase", "visit")
+    assert catalog.events["visit"].source == "events"
+    assert catalog.events["visit"].column is None
+    assert catalog.dimensions["region"].unit == "user_id"
+    assert catalog.dimensions["region"].key == "user_id"
+    assert catalog.measures["revenue"].event == "spend"
+    assert catalog.metrics["purchases"].unit == "account_id"
     assert catalog.properties["region"].source == "events"
     assert catalog.dimensions["lifecycle"].validity is None
     region_validity = catalog.dimensions["region"].validity

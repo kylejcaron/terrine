@@ -24,24 +24,24 @@ def semantic_con():
 def event_catalog():
     return Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id", "workspace": "workspace_id"},
-                    "facts": ["session"],
+                    "time": "ts",
+                    "units": {"user": "user_id", "workspace": "workspace_id"},
+                    "events": ["session"],
                     "properties": [],
                     "dimensions": [],
                 }
             },
-            "facts": {"session": {"source": "events", "column": None}},
+            "events": {"session": {"source": "events", "column": None}},
             "properties": {},
             "dimensions": {},
-            "measures": {"count": {"fact": "session", "aggregation": "count"}},
-            "metrics": {"sessions": {"kind": "mean", "entity": "user", "measure": "count"}},
+            "measures": {"count": {"event": "session", "aggregation": "count"}},
+            "metrics": {"sessions": {"kind": "mean", "unit": "user", "measure": "count"}},
         }
     )
 
@@ -49,11 +49,11 @@ def event_catalog():
 def test_selected_logical_entity_resolves_only_its_physical_key(event_catalog):
     catalog = event_catalog
     metric = bind_metric(catalog, "sessions")
-    assert metric.entity_columns == {"events": "user_id"}
+    assert metric.unit_columns == {"events": "user_id"}
     assert metric.measures[0].aggregation == "count"
 
     undeclared = catalog.model_dump(mode="python")
-    undeclared["sources"]["events"]["facts"] = []
+    undeclared["sources"]["events"]["events"] = []
     with pytest.raises(TerrineError) as error:
         bind_metric(Catalog.model_validate(undeclared), "sessions")
     assert error.value.code == "terrine.semantic.missing_reference"
@@ -62,28 +62,28 @@ def test_selected_logical_entity_resolves_only_its_physical_key(event_catalog):
 def test_ratio_binds_different_physical_keys_and_retains_filters():
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "numerator": {
                     "relation": {"kind": "table", "name": "n"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["click"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["click"],
                     "properties": ["kind"],
                     "dimensions": [],
                 },
                 "denominator": {
                     "relation": {"kind": "table", "name": "d"},
-                    "timestamp": "ts",
-                    "entities": {"user": "customer_id"},
-                    "facts": ["visit"],
+                    "time": "ts",
+                    "units": {"user": "customer_id"},
+                    "events": ["visit"],
                     "properties": [],
                     "dimensions": [],
                 },
             },
-            "facts": {
+            "events": {
                 "click": {"source": "numerator", "column": "click_id"},
                 "visit": {"source": "denominator", "column": None},
             },
@@ -98,16 +98,16 @@ def test_ratio_binds_different_physical_keys_and_retains_filters():
             "dimensions": {},
             "measures": {
                 "clicks": {
-                    "fact": "click",
+                    "event": "click",
                     "aggregation": "sum",
                     "filters": [{"property": "kind", "op": "equals", "value": "revenue"}],
                 },
-                "visits": {"fact": "visit", "aggregation": "count"},
+                "visits": {"event": "visit", "aggregation": "count"},
             },
             "metrics": {
                 "rate": {
                     "kind": "ratio",
-                    "entity": "user",
+                    "unit": "user",
                     "numerator": "clicks",
                     "denominator": "visits",
                     "winsorization": {"method": "fixed", "limit": 5},
@@ -116,7 +116,7 @@ def test_ratio_binds_different_physical_keys_and_retains_filters():
         }
     )
     metric = bind_metric(catalog, "rate")
-    assert metric.entity_columns == {"numerator": "user_id", "denominator": "customer_id"}
+    assert metric.unit_columns == {"numerator": "user_id", "denominator": "customer_id"}
     assert metric.measures[0].filters[0].values == ("revenue",)
     assert metric.measures[0].source_name == "numerator"
     transform = metric.transforms[0]
@@ -143,7 +143,7 @@ def test_normalized_events_keep_other_entity_keys(event_catalog, semantic_con):
         },
     )
     definition = event_catalog.model_dump(mode="python")
-    definition["facts"]["session"]["column"] = "sessions"
+    definition["events"]["session"]["column"] = "sessions"
     definition["sources"]["events"]["properties"] = ["birthday"]
     definition["properties"]["birthday"] = {
         "source": "events",
@@ -230,8 +230,8 @@ def test_dimension_filter_requires_dimension_property_membership(event_catalog, 
     }
     definition["dimensions"]["accounts"] = {
         "relation": {"kind": "table", "name": "accounts"},
-        "source_entity": "user",
-        "entity_column": "user_id",
+        "unit": "user",
+        "key": "user_id",
         "properties": [],
     }
     definition["measures"]["count"]["filters"] = [
@@ -253,7 +253,7 @@ def test_dimension_filter_requires_dimension_property_membership(event_catalog, 
 def test_shared_dimension_filter_binds_from_non_owner_source():
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
@@ -262,9 +262,9 @@ def test_shared_dimension_filter_binds_from_non_owner_source():
                         "kind": "sql",
                         "sql": "SELECT 1 AS user_id, TIMESTAMP '2025-03-01' AS ts",
                     },
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["event_a"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["event_a"],
                     "properties": [],
                     "dimensions": ["shared"],
                 },
@@ -273,14 +273,14 @@ def test_shared_dimension_filter_binds_from_non_owner_source():
                         "kind": "sql",
                         "sql": "SELECT 1 AS user_id, TIMESTAMP '2025-03-01' AS ts",
                     },
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["event_b"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["event_b"],
                     "properties": [],
                     "dimensions": ["shared"],
                 },
             },
-            "facts": {
+            "events": {
                 "event_a": {"source": "sourcea", "column": None},
                 "event_b": {"source": "sourceb", "column": None},
             },
@@ -299,14 +299,14 @@ def test_shared_dimension_filter_binds_from_non_owner_source():
                         "kind": "sql",
                         "sql": "SELECT 1 AS user_id, 'west' AS region",
                     },
-                    "source_entity": "user",
-                    "entity_column": "user_id",
+                    "unit": "user",
+                    "key": "user_id",
                     "properties": ["region"],
                 }
             },
             "measures": {
                 "events_b": {
-                    "fact": "event_b",
+                    "event": "event_b",
                     "aggregation": "count",
                     "filters": [{"property": "region", "op": "equals", "value": "west"}],
                 }
@@ -314,7 +314,7 @@ def test_shared_dimension_filter_binds_from_non_owner_source():
             "metrics": {
                 "metric_b": {
                     "kind": "conversion",
-                    "entity": "user",
+                    "unit": "user",
                     "measure": "events_b",
                 }
             },
@@ -365,8 +365,8 @@ def test_dimension_and_roster_temporal_columns_require_scalar_timestamps(
         definition["sources"]["events"]["dimensions"] = ["accounts"]
         definition["dimensions"]["accounts"] = {
             "relation": {"kind": "table", "name": "accounts"},
-            "source_entity": "user",
-            "entity_column": "user_id",
+            "unit": "user",
+            "key": "user_id",
             "properties": [],
             "validity": (
                 {"changed_at": "changed_at"}
@@ -412,24 +412,24 @@ def test_coverage_uses_catalog_fixed_boundary_and_readiness_is_per_source(
 ):
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": boundary,
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["session"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["session"],
                     "properties": [],
                     "dimensions": [],
                 }
             },
-            "facts": {"session": {"source": "events", "column": None}},
+            "events": {"session": {"source": "events", "column": None}},
             "properties": {},
             "dimensions": {},
-            "measures": {"count": {"fact": "session", "aggregation": "count"}},
-            "metrics": {"sessions": {"kind": "mean", "entity": "user", "measure": "count"}},
+            "measures": {"count": {"event": "session", "aggregation": "count"}},
+            "metrics": {"sessions": {"kind": "mean", "unit": "user", "measure": "count"}},
         }
     )
     table = ibis.memtable({"ts": [datetime(2025, 3, 1, tzinfo=UTC)], "user_id": ["u"]})

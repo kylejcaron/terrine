@@ -64,20 +64,20 @@ def main() -> None:
             ),
         )
         catalog = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "day_boundary": "UTC",
                 "dialect": "duckdb",
                 "sources": {
                     "events": {
                         "relation": {"kind": "table", "name": "events"},
-                        "timestamp": "ts",
-                        "entities": {"user": "user_id"},
-                        "facts": ["activity", "signup"],
+                        "time": "ts",
+                        "units": {"user": "user_id"},
+                        "events": ["activity", "signup"],
                         "properties": ["kind"],
                         "dimensions": [],
                     }
                 },
-                "facts": {
+                "events": {
                     "activity": {"source": "events", "column": "activity"},
                     "signup": {"source": "events", "column": "signup"},
                 },

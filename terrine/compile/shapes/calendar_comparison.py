@@ -139,13 +139,11 @@ def _cohort_units(design: Design, model: Model, anchors: AnchorTable):
     assert isinstance(spec, CalendarComparisonSpec)
     selector = spec.cohort
     source = model.sources[selector.source]
-    events = normalize_events(
-        model._relation(source.relation), source, source.entities[design.unit]
-    )
-    precision = _precision_check(model, events, "_timestamp", source_column=source.timestamp_column)
+    events = normalize_events(model._relation(source.relation), source, source.units[design.unit])
+    precision = _precision_check(model, events, "_timestamp", source_column=source.time_column)
     events = _utc_column(model, events, "_timestamp", "_timestamp_utc")
     timestamp = events._timestamp_utc
-    if selector.property in source.facts:
+    if selector.property in source.events:
         observed = timestamp.notnull()
     else:
         prop = source.properties[selector.property]

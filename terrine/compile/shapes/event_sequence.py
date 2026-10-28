@@ -142,9 +142,9 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
     anchors = base.table.select(
         *(name for name in base._anchors.table.columns if name in base.table.columns)
     )
-    fact = model.catalog.facts[sequence.fact]
+    fact = model.catalog.events[sequence.fact]
     source = model.sources[fact.source]
-    physical_unit = source.entities[design.unit]
+    physical_unit = source.units[design.unit]
     configured_id = model.event_ids.get(source.name)
     raw = model._relation(source.relation)
     identity_alias = "__terrine_sequence_event_id"
@@ -161,7 +161,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
     if fact.column is not None:
         normalized = normalized.filter(normalized[fact.column].notnull())
     timestamp_check = _precision_check(
-        model, normalized, "_timestamp", source_column=source.timestamp_column
+        model, normalized, "_timestamp", source_column=source.time_column
     )
     timestamp_alias = "_sequence_raw_timestamp"
     suffix = 0

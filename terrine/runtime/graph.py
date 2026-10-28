@@ -142,8 +142,8 @@ def _selector_nodes(
     from terrine.spec.expressions import EventTime
 
     catalog = getattr(model, "catalog", None)
-    facts = getattr(catalog, "facts", None)
-    if facts is None:
+    events = getattr(catalog, "events", None)
+    if events is None:
         return set(_model_sources(model))
 
     selectors: dict[str, EventTime] = {}
@@ -180,11 +180,11 @@ def _selector_nodes(
                 continue
             selectors.setdefault(reference, selectors[reference])
     for selector in selectors.values():
-        fact = facts.get(selector.fact)
-        if fact is None:
+        event = events.get(selector.fact)
+        if event is None:
             unknown_reference = True
         else:
-            sources.add(fact.source)
+            sources.add(event.source)
     if unknown_reference:
         return set(_model_sources(model))
     return sources

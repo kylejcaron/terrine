@@ -70,7 +70,7 @@ def test_nested_event_selector_dependencies_invalidate_frame_outside_window():
     model = SimpleNamespace(
         catalog=SimpleNamespace(
             sources={"events": object(), "statuses": object()},
-            facts={
+            events={
                 "amount": SimpleNamespace(source="events"),
                 "status_time": SimpleNamespace(source="statuses"),
             },

@@ -29,27 +29,27 @@ con.raw_sql("""
     ) t(user_id, occurred_at, kind, tier)
 """)
 catalog = {
-    "schema_version": 1, "dialect": "duckdb", "day_boundary": "UTC",
+    "schema_version": 2, "dialect": "duckdb", "day_boundary": "UTC",
     "sources": {"events": {
         "relation": {"kind": "table", "name": "events"},
-        "timestamp": "occurred_at", "entities": {"user": "user_id"},
-        "facts": ["activity"], "properties": ["kind", "tier"], "dimensions": [],
+        "time": "occurred_at", "units": {"user": "user_id"},
+        "events": ["activity"], "properties": ["kind", "tier"], "dimensions": [],
     }},
-    "facts": {"activity": {"source": "events", "column": None}},
+    "events": {"activity": {"source": "events", "column": None}},
     "properties": {
         name: {"source": "events", "column": name, "dtype": "string", "as_of": "event_time"}
         for name in ("kind", "tier")
     },
     "dimensions": {},
     "measures": {
-        "activity_count": {"fact": "activity", "aggregation": "count"},
+        "activity_count": {"event": "activity", "aggregation": "count"},
         "purchase_count": {
-            "fact": "activity", "aggregation": "count",
+            "event": "activity", "aggregation": "count",
             "filters": [{"property": "kind", "op": "equals", "values": ["purchase"]}],
         },
     },
     "metrics": {
-        name: {"kind": "mean", "entity": "user", "measure": name}
+        name: {"kind": "mean", "unit": "user", "measure": name}
         for name in ("activity_count", "purchase_count")
     },
 }

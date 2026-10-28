@@ -125,14 +125,14 @@ class DesignOutput(ValidationOutput):
 
 class SourceMetadata(Record):
     name: str
-    entities: tuple[str, ...]
-    facts: tuple[str, ...]
+    units: tuple[str, ...]
+    events: tuple[str, ...]
     properties: tuple[str, ...]
 
 
 class MetricMetadata(Record):
     name: str
-    entity: str
+    unit: str
     kind: str
     sources: tuple[str, ...]
 

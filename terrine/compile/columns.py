@@ -451,7 +451,7 @@ def compile_columns(
                 selector_identity_columns[source_name] = identity_alias
                 extra_columns = {identity_alias: configured_id}
             events = normalize_events(
-                raw, source, source.entities[design.unit], extra_columns=extra_columns
+                raw, source, source.units[design.unit], extra_columns=extra_columns
             )
             histories = {}
             for dimension in source.dimensions:
@@ -470,7 +470,7 @@ def compile_columns(
             source = model.sources[source_name]
             events = normalized_sources[source_name]
             precision = _precision_check(
-                model, events, "_timestamp", source_column=source.timestamp_column
+                model, events, "_timestamp", source_column=source.time_column
             )
             if precision is not None:
                 selector_identity_checks.append(precision)
@@ -495,10 +495,10 @@ def compile_columns(
         origin = source_anchors
         if selector.relative_to is not None:
             origin, _ = resolve_selector(selector.relative_to, source_anchors)
-        fact = model.catalog.facts[selector.fact]
+        fact = model.catalog.events[selector.fact]
         source = model.sources[fact.source]
         events = events_for(source.name, selector=True)
-        fact_column = source.facts[selector.fact]
+        fact_column = source.events[selector.fact]
         predicates = [
             origin.unit == events["_unit"],
             events["_timestamp"] >= origin.t0 + ibis.interval(seconds=selector.window.start),
@@ -856,7 +856,7 @@ def compile_columns(
             strategy = "strict_history"
             result_table = result.table
         elif isinstance(node, RetentionMetric):
-            source = model.sources[model.catalog.facts[node.fact].source]
+            source = model.sources[model.catalog.events[node.fact].source]
             result = compile_retention(
                 expression_anchors,
                 events_for(source.name),

@@ -38,7 +38,7 @@ def model(
     aggregation="count",
     properties=None,
     dimensions=None,
-    entities=None,
+    units=None,
     catalog_properties=None,
     boundary="UTC",
 ):
@@ -46,9 +46,9 @@ def model(
     zone = timezone(timedelta(hours=-5)) if boundary == "UTC-05:00" else UTC
     source = SimpleNamespace()
     source.name, source.dialect = "events", dialect
-    source.facts = {"session": None}
+    source.events = {"session": None}
     source.properties, source.dimensions = properties or {}, dimensions or []
-    source.entities = entities or {"user": "user_id", "workspace": "workspace_id"}
+    source.units = units or {"user": "user_id", "workspace": "workspace_id"}
     metric = BoundMetric(
         "sessions",
         "user",
@@ -78,7 +78,7 @@ def model(
                 (),
                 {
                     "day_boundary": boundary,
-                    "facts": {"session": type("Fact", (), {"source": "events"})()},
+                    "events": {"session": type("Event", (), {"source": "events"})()},
                     "properties": catalog_properties,
                 },
             )(),
@@ -124,7 +124,7 @@ def test_binned_state_metric_uses_ordinary_metric_admission():
 
     cases = (
         (
-            {"entities": {"user": "user_id", "workspace": "workspace_id"}},
+            {"units": {"user": "user_id", "workspace": "workspace_id"}},
             "terrine.design.incompatible_unit",
         ),
         ({"aggregation": "median"}, "terrine.metric.unsupported_aggregation"),
@@ -134,7 +134,7 @@ def test_binned_state_metric_uses_ordinary_metric_admission():
     for options, code in cases:
         bound = model(**options)
 
-        unit = "workspace" if "entities" in options else "user"
+        unit = "workspace" if "units" in options else "user"
         design = Design(
             unit,
             Schedule("1d", date(2025, 1, 1), date(2025, 1, 3)),
@@ -157,7 +157,7 @@ def test_panel_sources_refuse_missing_analysis_unit_mapping(shape_name):
     from terrine.spec.panels import CalendarComparisonSpec, Initiation, SequentialSpec
     from terrine.spec.validate import validate_design
 
-    source_model = model(entities={"workspace": "workspace_id"})
+    source_model = model(units={"workspace": "workspace_id"})
     selector = Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC))
     shape = (
         SequentialSpec(selector)
@@ -371,7 +371,7 @@ def test_window_extending_beyond_declared_coverage_is_runtime_incomplete_not_ref
 
 def test_event_anchor_fact_must_be_member_of_bound_source_facts():
     bound = model()
-    bound.catalog.facts["ghost"] = SimpleNamespace(source="events")
+    bound.catalog.events["ghost"] = SimpleNamespace(source="events")
     with pytest.raises(TerrineError) as error:
         Design("user", EventAnchor("ghost")).validate(bound)
     assert error.value.code == "terrine.design.missing_reference"
@@ -636,7 +636,7 @@ def test_named_dimension_ambiguity_refuses_and_does_not_conflate_entity_keys():
             (),
             {
                 "name": name,
-                "source_entity": "workspace",
+                "unit": "workspace",
                 "validity": None,
                 "properties": {"region": prop},
             },
@@ -653,9 +653,7 @@ def test_named_dimension_ambiguity_refuses_and_does_not_conflate_entity_keys():
         Design(
             "user", EventAnchor("session"), features={"region": asof("region", before="0d")}
         ).validate(
-            model(
-                dimensions=one_dimension, entities={"user": "user_id", "workspace": "workspace_id"}
-            )
+            model(dimensions=one_dimension, units={"user": "user_id", "workspace": "workspace_id"})
         )
     assert error.value.code == "terrine.design.incompatible_unit"
 
@@ -664,7 +662,7 @@ def test_dimension_property_inline_and_dimension_bindings_are_one_logical_proper
     prop = SimpleNamespace(dimension_name="account_dim", as_of="event_time")
     dimension = SimpleNamespace(
         name="account_dim",
-        source_entity="workspace",
+        unit="workspace",
         validity=None,
         properties={"region": prop},
     )
@@ -687,16 +685,16 @@ def test_shared_dimension_on_multiple_sources_uses_catalog_property_owner():
     prop = SimpleNamespace(dimension_name="account_dim", as_of="event_time")
     dimension = SimpleNamespace(
         name="account_dim",
-        source_entity="workspace",
+        unit="workspace",
         validity=None,
         properties={"region": prop},
     )
     bound = model(properties={"region": prop}, dimensions=[dimension])
     other = SimpleNamespace()
-    other.facts = {}
+    other.events = {}
     other.name, other.dialect = "other_events", "duckdb"
     other.properties, other.dimensions = {}, [dimension]
-    other.entities = {"workspace": "workspace_id"}
+    other.units = {"workspace": "workspace_id"}
     bound.sources["other_events"] = other
     from terrine.spec.validate import validate_design
 
@@ -716,7 +714,7 @@ def test_static_dimension_and_static_inline_properties_do_not_need_event_resolut
     dimension_property = SimpleNamespace(dimension_name="static_dim", as_of="event_time")
     static_dimension = SimpleNamespace(
         name="static_dim",
-        source_entity="workspace",
+        unit="workspace",
         validity=None,
         properties={"region": dimension_property},
     )
@@ -744,7 +742,7 @@ def test_versioned_cutoff_capability_uses_exact_anchor_clock_not_offset_sign(as_
     prop = SimpleNamespace(dimension_name="history_dim", as_of=as_of)
     dimension = SimpleNamespace(
         name="history_dim",
-        source_entity="workspace",
+        unit="workspace",
         validity=object(),
         properties={"region": prop},
     )
@@ -766,7 +764,7 @@ def test_extreme_asof_clock_classification_avoids_datetime_endpoint_arithmetic()
     prop = SimpleNamespace(dimension_name="history_dim", as_of="event_time")
     dimension = SimpleNamespace(
         name="history_dim",
-        source_entity="workspace",
+        unit="workspace",
         validity=object(),
         properties={"region": prop},
     )
@@ -854,11 +852,11 @@ source = SimpleNamespace(
     name="events",
     dialect="duckdb",
     properties={},
-    facts={},
-    entities={"user": "id"},
+    events={},
+    units={"user": "id"},
 )
 model = SimpleNamespace(
-    catalog=SimpleNamespace(day_boundary="UTC", facts={}),
+    catalog=SimpleNamespace(day_boundary="UTC", events={}),
     sources={"events": source},
     metrics={"m": metric},
     readiness=Readiness({"events": coverage}),

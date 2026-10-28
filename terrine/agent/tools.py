@@ -178,8 +178,8 @@ class DatasetTools:
                 sources=tuple(
                     SourceMetadata(
                         name=name,
-                        entities=tuple(sorted(source.entities)),
-                        facts=tuple(sorted(source.facts)),
+                        units=tuple(sorted(source.units)),
+                        events=tuple(sorted(source.events)),
                         properties=tuple(sorted(source.properties)),
                     )
                     for name, source in sorted(self.model.sources.items())
@@ -188,7 +188,7 @@ class DatasetTools:
                 metrics=tuple(
                     MetricMetadata(
                         name=name,
-                        entity=metric.entity,
+                        unit=metric.unit,
                         kind=metric.kind,
                         sources=metric.source_names,
                     )
@@ -208,7 +208,7 @@ class DatasetTools:
                             unit
                             for name, source in self.model.sources.items()
                             if name in allowed
-                            for unit in source.entities
+                            for unit in source.units
                         }
                     )
                 ),
@@ -269,22 +269,20 @@ class DatasetTools:
             sources = [
                 (name, source)
                 for name, source in sorted(self.model.sources.items())
-                if name in self.policy.allowed_sources and source.entities
+                if name in self.policy.allowed_sources and source.units
             ]
             for name, source in sources:
-                for unit in sorted(source.entities):
+                for unit in sorted(source.units):
                     if unit in self.model.units:
                         coverage = self.model.readiness.sources.get(name)
                         anchor = coverage.start.date() if coverage else date(2000, 1, 1)
                         return self._design_output(to_json(Design(unit, FixedDate(anchor))))
             for name, source in sources:
-                if source.facts and name in self.model.readiness.sources:
-                    design = Design(
-                        sorted(source.entities)[0], EventAnchor(sorted(source.facts)[0])
-                    )
+                if source.events and name in self.model.readiness.sources:
+                    design = Design(sorted(source.units)[0], EventAnchor(sorted(source.events)[0]))
                     return self._design_output(to_json(design))
             raise _INVALID.error(
-                route="Configure a unit roster or allow an event fact with declared coverage."
+                route="Configure a unit roster or allow an event with declared coverage."
             )
 
         return self._call("validate", example)

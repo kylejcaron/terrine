@@ -26,28 +26,28 @@ def _catalog():
 
     return Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "occurred_at",
-                    "entities": {"user": "user_id"},
-                    "facts": ["amount"],
+                    "time": "occurred_at",
+                    "units": {"user": "user_id"},
+                    "events": ["amount"],
                     "properties": ["tier"],
                     "dimensions": ["history"],
                 },
                 "statuses": {
                     "relation": {"kind": "table", "name": "statuses"},
-                    "timestamp": "occurred_at",
-                    "entities": {"user": "user_id"},
-                    "facts": ["score"],
+                    "time": "occurred_at",
+                    "units": {"user": "user_id"},
+                    "events": ["score"],
                     "properties": ["state"],
                     "dimensions": [],
                 },
             },
-            "facts": {
+            "events": {
                 "amount": {"source": "events", "column": "amount"},
                 "score": {"source": "statuses", "column": "score"},
             },
@@ -69,14 +69,14 @@ def _catalog():
             "dimensions": {
                 "history": {
                     "relation": {"kind": "table", "name": "user_tier"},
-                    "source_entity": "user",
-                    "entity_column": "user_id",
+                    "unit": "user",
+                    "key": "user_id",
                     "properties": ["tier"],
                     "validity": {"valid_from": "starts", "valid_to": "ends"},
                 }
             },
-            "measures": {"total": {"fact": "amount", "aggregation": "sum"}},
-            "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
+            "measures": {"total": {"event": "amount", "aggregation": "sum"}},
+            "metrics": {"total": {"kind": "mean", "unit": "user", "measure": "total"}},
         }
     )
 
@@ -506,7 +506,7 @@ def _same_snapshot_prefixes(design, model):
             continue
         source = model.sources[key.source]
         events = normalize_events(
-            model._relation(source.relation), source, source.entities[design.unit]
+            model._relation(source.relation), source, source.units[design.unit]
         )
         if key.measure is None:
             raise AssertionError("planned temporal layer has no measure identity")
@@ -643,8 +643,8 @@ def test_same_snapshot_incremental_matches_clean_after_correction(column_model, 
         definition["properties"]["tier"]["dimension"] = "history"
         definition["dimensions"]["history"] = {
             "relation": {"kind": "table", "name": "tier_history"},
-            "source_entity": "user",
-            "entity_column": "id",
+            "unit": "user",
+            "key": "id",
             "properties": ("tier",),
             "validity": {"valid_from": "starts", "valid_to": "ends"},
         }
@@ -743,41 +743,41 @@ def test_ratio_sources_change_independently_match_clean_compilation(column_model
     """)
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "numerator": {
                     "relation": {"kind": "table", "name": "n"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["click"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["click"],
                     "properties": [],
                     "dimensions": [],
                 },
                 "denominator": {
                     "relation": {"kind": "table", "name": "d"},
-                    "timestamp": "ts",
-                    "entities": {"user": "customer_id"},
-                    "facts": ["visit"],
+                    "time": "ts",
+                    "units": {"user": "customer_id"},
+                    "events": ["visit"],
                     "properties": [],
                     "dimensions": [],
                 },
             },
-            "facts": {
+            "events": {
                 "click": {"source": "numerator", "column": "amount"},
                 "visit": {"source": "denominator", "column": None},
             },
             "properties": {},
             "dimensions": {},
             "measures": {
-                "clicks": {"fact": "click", "aggregation": "sum"},
-                "visits": {"fact": "visit", "aggregation": "count"},
+                "clicks": {"event": "click", "aggregation": "sum"},
+                "visits": {"event": "visit", "aggregation": "count"},
             },
             "metrics": {
                 "rate": {
                     "kind": "ratio",
-                    "entity": "user",
+                    "unit": "user",
                     "numerator": "clicks",
                     "denominator": "visits",
                 }
@@ -893,13 +893,13 @@ def test_nested_selector_correction_outside_t0_window_matches_clean_frame(column
     definition = column_model.catalog.model_dump(mode="python")
     definition["sources"]["statuses"] = {
         "relation": {"kind": "table", "name": "statuses"},
-        "timestamp": "ts",
-        "entities": {"user": "user_id"},
-        "facts": ["score"],
+        "time": "ts",
+        "units": {"user": "user_id"},
+        "events": ["score"],
         "properties": [],
         "dimensions": [],
     }
-    definition["facts"]["score"] = {"source": "statuses", "column": "score"}
+    definition["events"]["score"] = {"source": "statuses", "column": "score"}
     model = Model.from_catalog(
         Catalog.model_validate(definition),
         con=con,

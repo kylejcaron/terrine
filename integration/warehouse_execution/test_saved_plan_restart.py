@@ -34,24 +34,24 @@ from tests.compile.test_persisted_layers import _persisted_prefixes
 def _catalog() -> Catalog:
     return Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["value"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["value"],
                     "properties": [],
                     "dimensions": [],
                 }
             },
-            "facts": {"value": {"source": "events", "column": "value"}},
+            "events": {"value": {"source": "events", "column": "value"}},
             "properties": {},
             "dimensions": {},
-            "measures": {"total": {"fact": "value", "aggregation": "sum"}},
-            "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
+            "measures": {"total": {"event": "value", "aggregation": "sum"}},
+            "metrics": {"total": {"kind": "mean", "unit": "user", "measure": "total"}},
         }
     )
 
@@ -603,9 +603,9 @@ def test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors(
         )
         definition["sources"]["statuses"] = {
             "relation": {"kind": "table", "name": "statuses"},
-            "timestamp": "ts",
-            "entities": {"user": "user_id"},
-            "facts": [],
+            "time": "ts",
+            "units": {"user": "user_id"},
+            "events": [],
             "properties": ["state"],
             "dimensions": [],
         }

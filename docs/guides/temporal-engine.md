@@ -127,25 +127,25 @@ results, and materializes cumulative event-origin values.
 ## Native Catalog declarations
 
 ```yaml
-schema_version: 1
+schema_version: 2
 day_boundary: UTC
 dialect: duckdb
 sources:
   sessions:
     relation: {kind: table, name: session_events}
-    timestamp: occurred_at
-    entities: {user: user_id}
-    facts: [session]
+    time: occurred_at
+    units: {user: user_id}
+    events: [session]
     properties: []
     dimensions: []
-facts:
+events:
   session: {source: sessions, column: null}
 properties: {}
 dimensions: {}
 measures:
-  session_count: {fact: session, aggregation: count, filters: []}
+  session_count: {event: session, aggregation: count, filters: []}
 metrics:
-  sessions: {kind: mean, entity: user, measure: session_count}
+  sessions: {kind: mean, unit: user, measure: session_count}
 ```
 
 Here `kind: mean` describes the downstream population summary; `aggregation:
@@ -192,11 +192,11 @@ using `day_boundary` (for example, a UTC−05:00 boundary binds March 1 midnight
 to 05:00 UTC). `Readiness` stores only these bound half-open intervals. A
 source's observed maximum timestamp never implies completeness.
 
-Logical entities map to physical source keys. A metric selecting `user` uses
-only that logical key as its canonical unit key; other entity columns remain
+Logical units map to physical source keys. A metric selecting `user` uses
+only that logical key as its canonical unit key; other unit columns remain
 available for explicit dimension joins and are not combined into an implicit
 composite identity. Ratio inputs may select different physical columns for the
-same logical entity.
+same logical unit.
 
 Relation declarations are tagged: `{kind: table, name: ...}` names a table and
 `{kind: sql, sql: ...}` declares SQL. SQL must parse as one read-only query for
@@ -225,7 +225,7 @@ half-open, and interpolation is Hyndman--Fan type 7 (`linear_type7`). The
 specification serializes through Design JSON/YAML and contributes to its
 canonical hash.
 The native DuckDB compiler executes exact type-7 order statistics over matched
-half-open event windows. Integer and Decimal facts retain exact decimal
+half-open event windows. Integer and Decimal event values retain exact decimal
 interpolation at a supported output scale; unsupported numeric types or
 precision refuse with a stable error before query execution. Results exclude
 null observations and preserve distinct reasons for no observations, all-null
@@ -616,8 +616,9 @@ Readiness intersects every metric source and the unit's optional observation
 interval. Incomplete coverage takes precedence over incomplete observation,
 then cell-level empty/all-null/zero-denominator meanings. Unavailable cells
 retain numeric NULL and their exact reason.
-Complete empty sums/counts are zero and conversion is false. Nonempty all-null
-facts still count as events and conversion is true, but sums/averages are NULL.
+Complete empty sums/counts are zero and conversion is false. A nonempty window
+whose event values are all null still counts events and conversion is true,
+but sums/averages are NULL.
 Unknown required filters in an available window refuse before output.
 
 Exact sums export as lossless decimal values with precision up to 38 and the

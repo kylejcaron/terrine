@@ -48,20 +48,20 @@ def _catalog(dialect: str) -> Catalog:
     }
     return Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": dialect,
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "event_time",
-                    "entities": {"user": "unit_id"},
-                    "facts": ["value", "event"],
+                    "time": "event_time",
+                    "units": {"user": "unit_id"},
+                    "events": ["value", "event"],
                     "properties": ["adopted", "event_name"],
                     "dimensions": [],
                 }
             },
-            "facts": {
+            "events": {
                 "value": {"source": "events", "column": "value"},
                 "event": {"source": "events", "column": None},
             },
@@ -76,11 +76,11 @@ def _catalog(dialect: str) -> Catalog:
             },
             "dimensions": {},
             "measures": {
-                name: {"fact": "value", "aggregation": aggregation}
+                name: {"event": "value", "aggregation": aggregation}
                 for name, aggregation in aggregations.items()
             },
             "metrics": {
-                name: {"kind": "mean", "entity": "user", "measure": measure}
+                name: {"kind": "mean", "unit": "user", "measure": measure}
                 for name, measure in (*((name, name) for name in aggregations), ("value", "total"))
             },
         }

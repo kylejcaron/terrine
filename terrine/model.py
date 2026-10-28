@@ -152,7 +152,7 @@ class Model:
             raise _INVALID.error(reason="readiness must map source names to Coverage")
         coverage = dict(readiness or {})
         sources: dict[str, Any] = {}
-        facts: dict[str, Any] = {}
+        catalog_events: dict[str, Any] = {}
         measures: dict[str, Any] = {}
         metrics: dict[str, Any] = {}
         generated: dict[str, str] = {}
@@ -170,28 +170,31 @@ class Model:
                 )
             if event.complete is None:
                 raise _MISSING_EVENT_COMPLETENESS.error(source=source)
-            source_facts = [(source, None)] + [
+            source_events = [(source, None)] + [
                 (f"{source}_{value}", value) for value in event.values
             ]
-            for fact, column in source_facts:
-                # The source and its event fact deliberately share one name.
-                _claim_generated_name(generated, fact, source, coverage)
-                facts[fact] = {"source": source, "column": column}
+            for event_name, column in source_events:
+                # The source and its event deliberately share one name.
+                _claim_generated_name(generated, event_name, source, coverage)
+                catalog_events[event_name] = {"source": source, "column": column}
             source_measures = [(f"{source}_count", source, "count")]
             for value in event.values:
-                fact = f"{source}_{value}"
+                event_name = f"{source}_{value}"
                 source_measures.extend(
-                    [(f"{fact}_sum", fact, "sum"), (f"{fact}_mean", fact, "avg_event")]
+                    [
+                        (f"{event_name}_sum", event_name, "sum"),
+                        (f"{event_name}_mean", event_name, "avg_event"),
+                    ]
                 )
-            for name, fact, aggregation in source_measures:
+            for name, event_name, aggregation in source_measures:
                 _claim_generated_name(generated, name, source, coverage)
-                measures[name] = {"fact": fact, "aggregation": aggregation}
-                metrics[name] = {"kind": "mean", "entity": unit, "measure": name}
+                measures[name] = {"event": event_name, "aggregation": aggregation}
+                metrics[name] = {"kind": "mean", "unit": unit, "measure": name}
             sources[source] = {
                 "relation": {"kind": "table", "name": event.table},
-                "timestamp": event.time,
-                "entities": dict(event.keys),
-                "facts": [fact for fact, _ in source_facts],
+                "time": event.time,
+                "units": dict(event.keys),
+                "events": [event_name for event_name, _ in source_events],
                 "properties": [],
                 "dimensions": [],
             }
@@ -202,11 +205,11 @@ class Model:
 
             dialect = backend_provider(con, engine=engine).dialect(con)
         catalog = {
-            "schema_version": 1,
+            "schema_version": 2,
             "dialect": dialect,
             "day_boundary": day_boundary,
             "sources": sources,
-            "facts": facts,
+            "events": catalog_events,
             "properties": {},
             "dimensions": {},
             "measures": measures,

@@ -41,7 +41,7 @@ def measure_identity(measure) -> str:
     """Stable identity for one bound measure, excluding schema-derived value type."""
     fields = (
         measure.source_name,
-        measure.fact,
+        measure.event,
         measure.aggregation,
         tuple((item.property_name, item.op, item.values) for item in measure.filters),
         measure.window_days,
@@ -125,7 +125,7 @@ def build_layer(design: Design, model, key: LayerKey, *, relation_resolver=None)
     source = model.sources[key.source]
     resolve = relation_resolver or model._relation
     raw = resolve(source.relation)
-    events = normalize_events(raw, source, source.entities[design.unit])
+    events = normalize_events(raw, source, source.units[design.unit])
     histories = {dimension.name: resolve(dimension.relation) for dimension in source.dimensions}
     events = enrich_events(events, source, histories)
     return build_measure_layer(

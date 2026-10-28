@@ -70,16 +70,16 @@ def _validate_nanosecond_axis(design: Design, timestamp_types) -> None:
 
 
 def _source(model: Model, unit: str, fact_name: str):
-    fact = model.catalog.facts[fact_name]
+    fact = model.catalog.events[fact_name]
     source = model.sources[fact.source]
-    return fact, source, source.entities.get(unit)
+    return fact, source, source.units.get(unit)
 
 
 def _events(model: Model, source, unit_column: str):
     raw = model._relation(source.relation)
     columns = {
         "unit": raw[unit_column],
-        "_timestamp": raw[source.timestamp_column],
+        "_timestamp": raw[source.time_column],
     }
     event_id = model.event_ids.get(source.name)
     if event_id is not None:
@@ -185,8 +185,8 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         *([shape.exit] if shape.exit else []),
     ]
     timestamp_types = [
-        model._relation(model.sources[model.catalog.facts[name].source].relation).schema()[
-            model.sources[model.catalog.facts[name].source].timestamp_column
+        model._relation(model.sources[model.catalog.events[name].source].relation).schema()[
+            model.sources[model.catalog.events[name].source].time_column
         ]
         for name in source_names
     ]

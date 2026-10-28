@@ -152,11 +152,11 @@ def _metric_definition(metric: object, model: Model) -> object:
 
 
 def _selector_definition(selector: EventTime, model: Model) -> object:
-    fact = model.catalog.facts[selector.fact]
+    event = model.catalog.events[selector.fact]
     return {
-        "fact": _definition_record(fact),
-        "source": _definition_record(model.sources[fact.source]),
-        "event_id": model.event_ids.get(fact.source),
+        "event": _definition_record(event),
+        "source": _definition_record(model.sources[event.source]),
+        "event_id": model.event_ids.get(event.source),
         "relative_to": None
         if selector.relative_to is None
         else _selector_definition(selector.relative_to, model),
@@ -206,7 +206,7 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
                                 "source": source_name,
                                 "relation": _definition_record(source.relation),
                                 "day_boundary": source.day_boundary,
-                                "timestamp_column": source.timestamp_column,
+                                "time_column": source.time_column,
                                 "binding": _definition_record(source.properties[state.property]),
                             }
                             for source_name, source in sorted(model.sources.items())
@@ -236,17 +236,17 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
                 resolved["attribute"] = {
                     "source": source.name,
                     "relation": _definition_record(source.relation),
-                    "entity_column": source.entities.get(design.unit),
+                    "unit_column": source.units.get(design.unit),
                     "day_boundary": source.day_boundary,
-                    "timestamp_column": source.timestamp_column,
+                    "time_column": source.time_column,
                     "binding": _definition_record(prop),
                     "dimension": None
                     if dimension is None
                     else {
                         "name": dimension.name,
                         "relation": _definition_record(dimension.relation),
-                        "source_entity": dimension.source_entity,
-                        "entity_column": dimension.entity_column,
+                        "unit": dimension.unit,
+                        "key": dimension.key,
                         "validity": _definition_record(dimension.validity),
                     },
                 }

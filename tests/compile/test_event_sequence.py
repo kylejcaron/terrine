@@ -33,20 +33,20 @@ def sequence_model():
     )
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["signup"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["signup"],
                     "properties": ["kind"],
                     "dimensions": [],
                 }
             },
-            "facts": {"signup": {"source": "events", "column": None}},
+            "events": {"signup": {"source": "events", "column": None}},
             "properties": {
                 "kind": {
                     "source": "events",
@@ -136,8 +136,8 @@ def test_event_sequence_composes_dimension_label_selector(sequence_model):
     }
     definition["dimensions"]["history"] = {
         "relation": {"kind": "table", "name": "tier_history"},
-        "source_entity": "user",
-        "entity_column": "user_id",
+        "unit": "user",
+        "key": "user_id",
         "validity": {"valid_from": "starts", "valid_to": "ends"},
         "properties": ("tier",),
     }
@@ -264,20 +264,20 @@ def test_sequence_excludes_rows_without_selected_fact_before_event_cap():
     )
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["signup", "activity"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["signup", "activity"],
                     "properties": [],
                     "dimensions": [],
                 }
             },
-            "facts": {
+            "events": {
                 "signup": {"source": "events", "column": "signup"},
                 "activity": {"source": "events", "column": "activity"},
             },
@@ -721,8 +721,8 @@ def test_sequence_compiler_projects_dimension_backed_property(sequence_model, ha
     dimension = Dimension.model_validate(
         {
             "relation": TableRef(kind="table", name="regions"),
-            "source_entity": "user",
-            "entity_column": "user_id",
+            "unit": "user",
+            "key": "user_id",
             "properties": ("region",),
         }
     )
@@ -799,8 +799,8 @@ def test_overlapping_dimension_history_refuses_before_event_identity_check(seque
     dimension = Dimension.model_validate(
         {
             "relation": TableRef(kind="table", name="overlapping_regions"),
-            "source_entity": "user",
-            "entity_column": "user_id",
+            "unit": "user",
+            "key": "user_id",
             "validity": {"valid_from": "starts", "valid_to": "ends"},
             "properties": ("region",),
         }
@@ -897,8 +897,8 @@ def test_funnel_dependency_preserves_entity_key_for_dimension_enrichment(sequenc
     dimension = Dimension.model_validate(
         {
             "relation": TableRef(kind="table", name="regions"),
-            "source_entity": "user",
-            "entity_column": "user_id",
+            "unit": "user",
+            "key": "user_id",
             "properties": ("region",),
             "validity": {"valid_from": "starts", "valid_to": "ends"},
         }

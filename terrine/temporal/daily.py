@@ -49,32 +49,34 @@ def resolve_measure(
     source: BoundSource,
     allow_nonadditive: bool = False,
 ) -> BoundMeasure:
-    """Resolve a fact's dtype, optionally admitting direct nonadditive windows."""
-    if measure.source_name != source.name or measure.fact not in source.facts:
-        raise _MISSING.error(reference=f"fact {measure.fact} on source {source.name}")
+    """Resolve an event's dtype, optionally admitting direct nonadditive windows."""
+    if measure.source_name != source.name or measure.event not in source.events:
+        raise _MISSING.error(reference=f"event {measure.event} on source {source.name}")
     supported_nonadditive = {"min", "max", "count_distinct"}
     if not supports_temporal_aggregation(measure.aggregation) and not (
         allow_nonadditive and measure.aggregation in supported_nonadditive
     ):
         raise UNSUPPORTED_TEMPORAL_AGGREGATION.error(aggregation=measure.aggregation)
-    column = source.facts[measure.fact]
+    column = source.events[measure.event]
     if column is None:
         if measure.aggregation != "count":
-            raise _SCHEMA.error(field=f"numeric fact {measure.fact}", column=measure.fact)
+            raise _SCHEMA.error(field=f"numeric event {measure.event}", column=measure.event)
         dtype = dt.int64
     else:
         if column not in events.columns:
-            raise _SCHEMA.error(field=f"fact {measure.fact}", column=column)
+            raise _SCHEMA.error(field=f"event {measure.event}", column=column)
         dtype = events[column].type()
         if measure.aggregation != "count" and not (
             dtype.is_integer() or dtype.is_decimal() or dtype.is_floating()
         ):
-            raise _SCHEMA.error(field=f"numeric fact {measure.fact}", column=column)
+            raise _SCHEMA.error(field=f"numeric event {measure.event}", column=column)
         if dtype.is_floating() and not (dtype.is_float32() or dtype.is_float64()):
-            raise _SCHEMA.error(field=f"binary64 fact {measure.fact}", column=column)
+            raise _SCHEMA.error(field=f"binary64 event {measure.event}", column=column)
     value_type = str(dtype)
     if measure.value_type is not None and dt.dtype(measure.value_type) != dtype:
-        raise _SCHEMA.error(field=f"fact {measure.fact} type drift", column=column or measure.fact)
+        raise _SCHEMA.error(
+            field=f"event {measure.event} type drift", column=column or measure.event
+        )
     return measure if measure.value_type is not None else replace(measure, value_type=value_type)
 
 
@@ -85,8 +87,8 @@ def _raw_columns(source: BoundSource) -> list[str]:
             [
                 "_timestamp",
                 "_unit",
-                *source.entities.values(),
-                *(column for column in source.facts.values() if column is not None),
+                *source.units.values(),
+                *(column for column in source.events.values() if column is not None),
                 *(
                     prop.column
                     for prop in source.properties.values()
@@ -335,7 +337,7 @@ def _sparse_group(
     into the selected analysis unit. No exposure is inferred from Property.as_of.
     """
     measure = resolve_measure(events, measure, source=source)
-    if unit_column not in source.entities.values() and unit_column != "_unit":
+    if unit_column not in source.units.values() and unit_column != "_unit":
         raise _MISSING.error(reference=f"selected unit column {unit_column}")
     if unit_column not in events.columns:
         raise _SCHEMA.error(field="selected unit", column=unit_column)
@@ -350,7 +352,7 @@ def _sparse_group(
     predicate, observed_null, missing, literal_null, nonfinite = _predicate(events, measure, source)
     selected = predicate.fill_null(False)
     unknown = predicate.isnull()
-    column = source.facts[measure.fact]
+    column = source.events[measure.event]
     value = ibis.literal(1) if column is None else events[column]
     nonnull = selected & value.notnull()
     one, zero = count_literal(1), count_literal(0)

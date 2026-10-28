@@ -480,7 +480,7 @@ def _design_root_names(
 
     def visit(value: Any) -> None:
         if isinstance(value, (EventAnchor, EventTime)):
-            fact = model.catalog.facts.get(value.fact)
+            fact = model.catalog.events.get(value.fact)
             if fact is not None:
                 sources.add(fact.source)
             if isinstance(value, EventTime):
@@ -489,7 +489,7 @@ def _design_root_names(
                 if value.relative_to is not None:
                     visit(value.relative_to)
         elif isinstance(value, RetentionMetric):
-            fact = model.catalog.facts.get(value.fact)
+            fact = model.catalog.events.get(value.fact)
             if fact is not None:
                 sources.add(fact.source)
             properties.add(value.label_property)
@@ -505,7 +505,7 @@ def _design_root_names(
                         continue
                     measure = model.catalog.measures.get(measure_name)
                     if measure is not None:
-                        fact = model.catalog.facts.get(measure.fact)
+                        fact = model.catalog.events.get(measure.event)
                         if fact is not None:
                             sources.add(fact.source)
             if isinstance(value, MetricAgg) and value.relative_to is not None:

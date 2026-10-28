@@ -27,20 +27,20 @@ from terrine.spec import Design, FixedDate, agg, asof
 
 def _catalog() -> dict:
     return {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "occurred_at",
-                    "entities": {"user": "user_id"},
-                    "facts": ["amount"],
+                    "time": "occurred_at",
+                    "units": {"user": "user_id"},
+                    "events": ["amount"],
                     "properties": ["tier"],
                     "dimensions": ["history"],
                 }
             },
-            "facts": {"amount": {"source": "events", "column": "amount"}},
+            "events": {"amount": {"source": "events", "column": "amount"}},
             "properties": {
                 "tier": {
                     "source": "events",
@@ -53,14 +53,14 @@ def _catalog() -> dict:
             "dimensions": {
                 "history": {
                     "relation": {"kind": "table", "name": "user_tier"},
-                    "source_entity": "user",
-                    "entity_column": "user_id",
+                    "unit": "user",
+                    "key": "user_id",
                     "properties": ["tier"],
                     "validity": {"valid_from": "starts", "valid_to": "ends"},
                 }
             },
-            "measures": {"total": {"fact": "amount", "aggregation": "sum"}},
-            "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
+            "measures": {"total": {"event": "amount", "aggregation": "sum"}},
+            "metrics": {"total": {"kind": "mean", "unit": "user", "measure": "total"}},
         }
 
 

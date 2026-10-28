@@ -69,7 +69,7 @@ def test_bounded_shape_matches_exact_path_and_independent_pandas(nonadditive_mod
     oracle = window_values(events, anchors, -2 * 86_400, 0)
     oracle_by_key = {(row["unit"], str(row["anchor_id"])): row for row in oracle}
     source = model.sources["events"]
-    normalized = normalize_events(model.con.table("events"), source, source.entities["user"])
+    normalized = normalize_events(model.con.table("events"), source, source.units["user"])
     for name, expression in _features().items():
         unresolved = model.metrics[expression.metric].measures[0]
         measure = resolve_measure(normalized, unresolved, source=source, allow_nonadditive=True)

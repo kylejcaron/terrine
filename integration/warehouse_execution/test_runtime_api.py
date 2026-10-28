@@ -49,32 +49,32 @@ def test_saved_plan_execution_reopens_retained_snapshot_for_each_task(tmp_path):
     con.raw_sql("INSERT INTO other_users VALUES (999)")
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["value"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["value"],
                     "properties": [],
                     "dimensions": [],
                 },
                 "unused": {
                     "relation": {"kind": "table", "name": "unused_events"},
-                    "timestamp": "ts",
-                    "entities": {"other": "other_id"},
-                    "facts": [],
+                    "time": "ts",
+                    "units": {"other": "other_id"},
+                    "events": [],
                     "properties": [],
                     "dimensions": [],
                 },
             },
-            "facts": {"value": {"source": "events", "column": "value"}},
+            "events": {"value": {"source": "events", "column": "value"}},
             "properties": {},
             "dimensions": {},
-            "measures": {"total": {"fact": "value", "aggregation": "sum"}},
-            "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
+            "measures": {"total": {"event": "value", "aggregation": "sum"}},
+            "metrics": {"total": {"kind": "mean", "unit": "user", "measure": "total"}},
         }
     )
     model = Model.from_catalog(
@@ -339,13 +339,13 @@ def test_rosterless_event_snapshot_executes_all_required_sources(tmp_path, expre
             if source != "events":
                 definition["sources"][source] = {
                     "relation": {"kind": "table", "name": source},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": [source],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": [source],
                     "properties": [],
                     "dimensions": [],
                 }
-                definition["facts"][source] = {"source": source, "column": "value"}
+                definition["events"][source] = {"source": source, "column": "value"}
         model = Model.from_catalog(
             Catalog.model_validate(definition),
             con=con,
@@ -428,7 +428,7 @@ def test_owner_planner_persists_same_snapshot_and_manifest_by_invocation(tmp_pat
     unused_source = base_model.catalog.sources["events"].model_copy(
         update={
             "relation": TableRef(kind="table", name="unused_events"),
-            "facts": (),
+            "events": (),
             "properties": (),
             "dimensions": (),
         }

@@ -143,7 +143,7 @@ def aggregate_nonadditive_window(
         raise ValueError("nonadditive aggregation requires a resolved measure")
     value_type = measure.value_type
     output_type = _exact_numeric_dtype(value_type, operation, probability)
-    value_column = source.facts[measure.fact]
+    value_column = source.events[measure.event]
     if value_column is None:
         raise _UNSUPPORTED_TYPE.error(operation=operation, value_type="event_count")
     if (
@@ -395,7 +395,7 @@ def aggregate_nonadditive_window(
                     RowCheck(
                         failure_column,
                         UNKNOWN_FILTER,
-                        {"source": measure.source_name, "measure": measure.fact, "output": output},
+                        {"source": measure.source_name, "measure": measure.event, "output": output},
                     ),
                 ),
             ),
@@ -423,7 +423,7 @@ def approximate_quantile_window_values(
     range_plan: RangePlan | None = None,
 ) -> ibis.Table:
     """Return canonical-ordered event values per anchor for sketch sidecar execution."""
-    value_column = source.facts[measure.fact]
+    value_column = source.events[measure.event]
     if value_column is None:
         raise _UNSUPPORTED_TYPE.error(operation="quantile", value_type="event_count")
     predicate, *_ = _predicate(events, measure, source)

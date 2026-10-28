@@ -36,7 +36,7 @@ def sqlite():
 def catalog():
     definitions = _catalog().model_dump()
     definitions["dialect"] = "sqlite"
-    definitions["facts"]["value"]["column"] = None
+    definitions["events"]["value"]["column"] = None
     definitions["measures"]["total"]["aggregation"] = "count"
     return type(_catalog()).model_validate(definitions)
 
@@ -242,8 +242,8 @@ def test_asof_admission_inspects_only_the_columns_it_reads(unregistered, monkeyp
     }
     definitions["dimensions"]["accounts"] = {
         "relation": {"kind": "table", "name": "tiers"},
-        "source_entity": "user",
-        "entity_column": "user_id",
+        "unit": "user",
+        "key": "user_id",
         "properties": ["tier"],
     }
     with pytest.warns(UnverifiedBackendWarning):

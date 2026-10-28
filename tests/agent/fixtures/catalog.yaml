@@ -1,19 +1,19 @@
-schema_version: 1
+schema_version: 2
 day_boundary: UTC
 dialect: duckdb
 sources:
   events:
     relation: {kind: table, name: events}
-    timestamp: ts
-    entities: {user: user_id}
-    facts: [value]
+    time: ts
+    units: {user: user_id}
+    events: [value]
     properties: []
     dimensions: []
-facts:
+events:
   value: {source: events, column: value}
 properties: {}
 dimensions: {}
 measures:
-  total: {fact: value, aggregation: sum}
+  total: {event: value, aggregation: sum}
 metrics:
-  total: {kind: mean, entity: user, measure: total}
+  total: {kind: mean, unit: user, measure: total}

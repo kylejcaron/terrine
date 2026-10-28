@@ -23,8 +23,8 @@ def _dimension(*, validity=None, key="account_id"):
     return BoundDimension(
         name="account_tier",
         relation=TableRef(kind="table", name="tier_history"),
-        source_entity="account",
-        entity_column=key,
+        unit="account",
+        key=key,
         validity=validity,
         properties={
             "tier": PropertyBinding("tier", "tier_value", "string", "pre_exposure", "account_tier")
@@ -36,9 +36,9 @@ def _source(dimension):
     return BoundSource(
         name="events",
         relation=TableRef(kind="table", name="events"),
-        timestamp_column="occurred_at",
-        entities={"user": "user_id", "account": "account_id_event"},
-        facts={},
+        time_column="occurred_at",
+        units={"user": "user_id", "account": "account_id_event"},
+        events={},
         properties={},
         dimensions=(dimension,),
         dialect="duckdb",

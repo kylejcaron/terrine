@@ -14,25 +14,25 @@ from integration.warehouse_execution.postgres_fixtures import (
 
 pytestmark = pytest.mark.postgres
 
-_CATALOG = """schema_version: 1
+_CATALOG = """schema_version: 2
 day_boundary: UTC
 dialect: {dialect}
 sources:
   orders:
     relation: {{kind: table, name: events}}
-    timestamp: occurred_at
-    entities: {{user: user_id}}
-    facts: [order, amount]
+    time: occurred_at
+    units: {{user: user_id}}
+    events: [order, amount]
     properties: [tier]
     dimensions: []
   states:
     relation: {{kind: table, name: states}}
-    timestamp: observed_at
-    entities: {{user: user_id}}
-    facts: []
+    time: observed_at
+    units: {{user: user_id}}
+    events: []
     properties: [state]
     dimensions: []
-facts:
+events:
   order: {{source: orders, column: null}}
   amount: {{source: orders, column: amount}}
 properties:
@@ -40,11 +40,11 @@ properties:
   state: {{source: states, column: state, dtype: string, as_of: event_time}}
 dimensions: {{}}
 measures:
-  order_count: {{fact: order, aggregation: count}}
-  amount_total: {{fact: amount, aggregation: sum}}
+  order_count: {{event: order, aggregation: count}}
+  amount_total: {{event: amount, aggregation: sum}}
 metrics:
-  orders: {{kind: mean, entity: user, measure: order_count}}
-  spend: {{kind: mean, entity: user, measure: amount_total}}
+  orders: {{kind: mean, unit: user, measure: order_count}}
+  spend: {{kind: mean, unit: user, measure: amount_total}}
 """
 
 # Units interleave in time so an as-of lookup must match within the unit, not

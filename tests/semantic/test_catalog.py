@@ -9,36 +9,36 @@ import pytest
 from terrine.data import Coverage, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
-from terrine.semantic.io import dump_catalog, load_catalog
+from terrine.semantic.io import dump_catalog, load_catalog, validate_catalog
 from terrine.semantic.models import Catalog
 
 CATALOG = {
-    "schema_version": 1,
+    "schema_version": 2,
     "day_boundary": "UTC",
     "dialect": "duckdb",
     "sources": {
         "events": {
             "relation": {"kind": "table", "name": "events"},
-            "timestamp": "ts",
-            "entities": {"user": "user_id", "workspace": "workspace_id"},
-            "facts": ["session"],
+            "time": "ts",
+            "units": {"user": "user_id", "workspace": "workspace_id"},
+            "events": ["session"],
             "properties": [],
             "dimensions": ["accounts"],
         }
     },
-    "facts": {"session": {"source": "events", "column": None}},
+    "events": {"session": {"source": "events", "column": None}},
     "properties": {},
     "dimensions": {
         "accounts": {
             "relation": {"kind": "table", "name": "accounts"},
-            "source_entity": "workspace",
-            "entity_column": "workspace_id",
+            "unit": "workspace",
+            "key": "workspace_id",
             "validity": {"changed_at": "changed_at"},
             "properties": [],
         }
     },
-    "measures": {"count": {"fact": "session", "aggregation": "count"}},
-    "metrics": {"sessions": {"kind": "mean", "entity": "user", "measure": "count"}},
+    "measures": {"count": {"event": "session", "aggregation": "count"}},
+    "metrics": {"sessions": {"kind": "mean", "unit": "user", "measure": "count"}},
 }
 
 
@@ -129,16 +129,16 @@ def test_from_tables_binds_generated_names_roster_and_options():
         assert model.catalog.day_boundary == "UTC+05:30"
         assert model.event_ids == {"orders": "event_id"}
         assert set(model.sources) == {"orders"}
-        assert model.sources["orders"].facts == {"orders": None, "orders_amount": "amount"}
-        assert model.sources["orders"].entities == {"customer": "customer_id"}
+        assert model.sources["orders"].events == {"orders": None, "orders_amount": "amount"}
+        assert model.sources["orders"].units == {"customer": "customer_id"}
         assert set(model.metrics) == {"orders_count", "orders_amount_sum", "orders_amount_mean"}
-        for metric, fact, aggregation in (
+        for metric, event, aggregation in (
             ("orders_count", "orders", "count"),
             ("orders_amount_sum", "orders_amount", "sum"),
             ("orders_amount_mean", "orders_amount", "avg_event"),
         ):
-            assert model.metrics[metric].entity == "customer"
-            assert model.metrics[metric].measures[0].fact == fact
+            assert model.metrics[metric].unit == "customer"
+            assert model.metrics[metric].measures[0].event == event
             assert model.metrics[metric].measures[0].aggregation == aggregation
         assert model.readiness.sources["orders"].start == datetime(2024, 12, 31, 18, 30, tzinfo=UTC)
         assert model.readiness.sources["orders"].end_exclusive == datetime(
@@ -288,9 +288,46 @@ def test_from_catalog_mapping_binds_same_model_as_catalog():
 
     with pytest.raises(TerrineError) as error:
         Model.from_catalog(
-            {**CATALOG, "schema_version": 2}, con=con, readiness=readiness
+            {**CATALOG, "schema_version": 3}, con=con, readiness=readiness
         )
     assert error.value.code == "terrine.catalog.invalid_definition"
+
+
+@pytest.mark.parametrize("version", [1, 3, "2", None])
+def test_unsupported_schema_version_refuses_before_field_diagnostics(version):
+    document = {**CATALOG, "schema_version": version, "surprise": True}
+    with pytest.raises(TerrineError) as error:
+        validate_catalog(document)
+    assert error.value.code == "terrine.catalog.invalid_definition"
+    issues = error.value.context["issues"]
+    assert len(issues) == 1
+    assert issues[0]["location"] == ("schema_version",)
+    assert issues[0]["kind"] == "unsupported_schema_version"
+    assert isinstance(issues[0]["hint"], str) and issues[0]["hint"]
+    for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
+        assert restored.code == error.value.code
+        assert restored.context == error.value.context
+
+
+def test_bound_descriptors_use_v2_names(native_inputs):
+    catalog, con = native_inputs
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        units={"user": UnitSource("users", "user_id")},
+        readiness={
+            "events": Coverage("2025-01-01", "2025-01-31"),
+            "labels": Coverage("2025-01-01", "2025-01-31"),
+        },
+    )
+    source = model.sources["events"]
+    assert source.time_column == "ts"
+    assert source.units == {"user": "user_id"}
+    assert source.events == {"session": None}
+    metric = model.metrics["sessions"]
+    assert metric.unit == "user"
+    assert metric.unit_columns == {"events": "user_id"}
+    assert metric.measures[0].event == "session"
 
 
 def test_safe_yaml_roundtrips_native_mapping(tmp_path: Path):
@@ -299,7 +336,7 @@ def test_safe_yaml_roundtrips_native_mapping(tmp_path: Path):
     path.write_text(dump_catalog(catalog))
     assert load_catalog(path) == catalog
     with pytest.raises(TypeError):
-        catalog.sources["events"].entities["user"] = "workspace_id"  # ty: ignore[invalid-assignment]
+        catalog.sources["events"].units["user"] = "workspace_id"  # ty: ignore[invalid-assignment]
     with pytest.raises(TypeError):
         catalog.sources["events"] = catalog.sources["events"]  # ty: ignore[invalid-assignment]
 
@@ -310,7 +347,7 @@ def test_catalog_rejects_untrusted_callbacks():
         "metrics": {
             "sessions": {
                 "kind": "mean",
-                "entity": "user",
+                "unit": "user",
                 "measure": "count",
                 "winsorization": lambda value: value,
             }
@@ -348,7 +385,7 @@ def test_catalog_rejects_untrusted_callbacks():
                 **CATALOG,
                 "measures": {
                     "count": {
-                        "fact": "session",
+                        "event": "session",
                         "aggregation": "count",
                         "filters": [{"property": "active", "op": "equals", "values": [1, 2]}],
                     }
@@ -362,7 +399,7 @@ def test_catalog_rejects_untrusted_callbacks():
                 **CATALOG,
                 "measures": {
                     "count": {
-                        "fact": "session",
+                        "event": "session",
                         "aggregation": "count",
                         "filters": [{"property": "active", "op": "in", "values": [[1]]}],
                     }
@@ -372,7 +409,7 @@ def test_catalog_rejects_untrusted_callbacks():
             "invalid_filter_values",
         ),
         (
-            {**CATALOG, "metrics": {"sessions": {"kind": "mean", "entity": "user"}}},
+            {**CATALOG, "metrics": {"sessions": {"kind": "mean", "unit": "user"}}},
             ("metrics", "sessions"),
             "invalid_metric_shape",
         ),
@@ -382,7 +419,7 @@ def test_catalog_rejects_untrusted_callbacks():
                 "metrics": {
                     "sessions": {
                         "kind": "mean",
-                        "entity": "user",
+                        "unit": "user",
                         "measure": "count",
                         "winsorization": {"not_json": {1}},
                     }
@@ -436,7 +473,7 @@ def test_catalog_rejects_unknown_fields_and_unsupported_versions():
     with pytest.raises(ValueError):
         Catalog.model_validate({**CATALOG, "surprise": True})
     with pytest.raises(ValueError):
-        Catalog.model_validate({**CATALOG, "schema_version": 2})
+        Catalog.model_validate({**CATALOG, "schema_version": 3})
 
 
 @pytest.mark.parametrize("validity", [{}, {"valid_from": "start", "changed_at": "change"}])
@@ -449,7 +486,7 @@ def test_history_validity_requires_one_unambiguous_time_axis(validity):
 
 def test_safe_yaml_rejects_duplicate_keys_and_python_tags(tmp_path: Path):
     for name, text in (
-        ("duplicate", "schema_version: 1\nschema_version: 1\n"),
+        ("duplicate", "schema_version: 2\nschema_version: 2\n"),
         ("tag", "!!python/object/apply:os.system ['echo unsafe']"),
     ):
         path = tmp_path / f"{name}.yaml"

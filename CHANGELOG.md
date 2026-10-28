@@ -39,6 +39,23 @@
 
 ### Breaking changes
 
+- Catalog documents are `schema_version: 2` and use unit, time and event
+  vocabulary: a source declares `time`, `units` and `events` (formerly
+  `timestamp`, `entities`, `facts`); the root `facts` mapping is `events`
+  and its record is `Event`; a dimension declares `unit` and `key` (formerly
+  `source_entity`, `entity_column`); a measure names its `event` (formerly
+  `fact`); a metric names its `unit` (formerly `entity`). A document that
+  declares any other `schema_version` refuses with
+  `terrine.catalog.invalid_definition` carrying one issue of kind
+  `unsupported_schema_version` at `("schema_version",)` before any other
+  field is checked. `Model.from_tables`, `Model.from_increment` and
+  `dump_catalog` emit version 2, the shipped simulation baseline is
+  version 2, and the agent's `SourceMetadata` and `MetricMetadata` carry
+  `units`, `events` and `unit`. Bound descriptors rename with their fields
+  (`BoundSource.time_column`, `.units`, `.events`; `BoundMetric.unit`,
+  `.unit_columns`; `BoundMeasure.event`; `BoundDimension.unit`, `.key`), as
+  do the definition-hash payload keys, so feature definition hashes and
+  `Model.model_hash` differ from earlier versions for the same study.
 - Output row order on DuckDB may differ from anchor order for a small study
   (DuckDB rewrites an as-of join with fewer than 64 estimated cutoffs into a
   hash aggregate). Row order was never part of the dataset contract on any

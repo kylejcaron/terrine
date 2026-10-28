@@ -98,12 +98,12 @@ def test_float_metric_bin_compares_the_rounded_value_at_a_near_boundary_cut(nati
         overwrite=True,
     )
     definition = catalog.model_dump(mode="python")
-    definition["sources"]["events"]["facts"] = ("session", "score")
-    definition["facts"]["score"] = {"source": "events", "column": "score"}
-    definition["measures"]["score_mean"] = {"fact": "score", "aggregation": "avg_event"}
+    definition["sources"]["events"]["events"] = ("session", "score")
+    definition["events"]["score"] = {"source": "events", "column": "score"}
+    definition["measures"]["score_mean"] = {"event": "score", "aggregation": "avg_event"}
     definition["metrics"]["score_avg"] = {
         "kind": "mean",
-        "entity": "user",
+        "unit": "user",
         "measure": "score_mean",
     }
     model = Model.from_catalog(

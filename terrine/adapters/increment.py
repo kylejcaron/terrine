@@ -15,7 +15,7 @@ from terrine.errors import RefusalSpec
 from terrine.semantic.models import (
     Catalog,
     Dimension,
-    Fact,
+    Event,
     Filter,
     Measure,
     Metric,
@@ -158,7 +158,7 @@ def _measure(
     names: dict[tuple[str, str, str], str],
 ) -> Measure:
     return Measure(
-        fact=fact,
+        event=fact,
         aggregation=aggregation,
         filters=_filter_records(filters, source=source, available_scopes=scopes, names=names),
         window_days=window_days,
@@ -221,12 +221,12 @@ def to_catalog(path_or_definitions: Any, *, dialect: str) -> Catalog:
         raise _PROPERTY_COLLISION.error(name=duplicate)
 
     sources: dict[str, Source] = {}
-    facts: dict[str, Fact] = {}
+    events: dict[str, Event] = {}
     properties: dict[str, Property] = {}
     for source in definitions.fact_sources:
         source_properties = []
         for source_fact in source.facts:
-            facts[source_fact.name] = Fact(source=source.name, column=source_fact.column)
+            events[source_fact.name] = Event(source=source.name, column=source_fact.column)
         for source_property in source.properties:
             name = property_names[("source", source.name, source_property.name)]
             source_properties.append(name)
@@ -238,9 +238,9 @@ def to_catalog(path_or_definitions: Any, *, dialect: str) -> Catalog:
             )
         sources[source.name] = Source(
             relation=SqlQuery(kind="sql", sql=source.sql),
-            timestamp=source.timestamp_column,
-            entities={column: column for column in source.entities},
-            facts=tuple(fact.name for fact in source.facts),
+            time=source.timestamp_column,
+            units={column: column for column in source.entities},
+            events=tuple(fact.name for fact in source.facts),
             properties=tuple(source_properties),
             dimensions=tuple(source.dims),
         )
@@ -274,8 +274,8 @@ def to_catalog(path_or_definitions: Any, *, dialect: str) -> Catalog:
         )
         dimensions[dimension.name] = Dimension(
             relation=SqlQuery(kind="sql", sql=dimension.sql),
-            source_entity=dimension.entity,
-            entity_column=dimension.entity,
+            unit=dimension.entity,
+            key=dimension.entity,
             validity=validity,
             properties=tuple(dimension_properties),
         )
@@ -315,7 +315,7 @@ def to_catalog(path_or_definitions: Any, *, dialect: str) -> Catalog:
                 )
             metrics[metric.name] = Metric(
                 kind=kind,
-                entity=metric.entity,
+                unit=metric.entity,
                 numerator=numerator_name,
                 denominator=denominator_name,
             )
@@ -347,7 +347,7 @@ def to_catalog(path_or_definitions: Any, *, dialect: str) -> Catalog:
                 else None
             )
             metrics[metric.name] = Metric(
-                kind=kind, entity=metric.entity, measure=name, winsorization=winsorization
+                kind=kind, unit=metric.entity, measure=name, winsorization=winsorization
             )
 
     catalog_dialect = definitions.dialect or dialect
@@ -358,11 +358,11 @@ def to_catalog(path_or_definitions: Any, *, dialect: str) -> Catalog:
             admit_read_query(dimension.sql, catalog_dialect, dialect)
 
     return Catalog(
-        schema_version=1,
+        schema_version=2,
         day_boundary=definitions.day_boundary,
         dialect=catalog_dialect,
         sources=sources,
-        facts=facts,
+        events=events,
         properties=properties,
         dimensions=dimensions,
         measures=measures,

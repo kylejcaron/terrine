@@ -46,9 +46,9 @@ def observed_panel_model(native_inputs):
     definition = catalog.model_dump(mode="python")
     definition["sources"]["states"] = {
         "relation": {"kind": "table", "name": "states"},
-        "timestamp": "ts",
-        "entities": {"user": "user_id"},
-        "facts": [],
+        "time": "ts",
+        "units": {"user": "user_id"},
+        "events": [],
         "properties": ["state"],
         "dimensions": [],
     }
@@ -132,9 +132,9 @@ def observed_model_factory(native_inputs):
     definition = catalog.model_dump(mode="python")
     definition["sources"]["states"] = {
         "relation": {"kind": "table", "name": "states"},
-        "timestamp": "ts",
-        "entities": {"user": "user_id"},
-        "facts": [],
+        "time": "ts",
+        "units": {"user": "user_id"},
+        "events": [],
         "properties": ["state"],
         "dimensions": [],
     }
@@ -555,12 +555,12 @@ def test_float_metric_refuses_decimal_cutpoints(native_inputs):
         overwrite=True,
     )
     definition = catalog.model_dump(mode="python")
-    definition["sources"]["events"]["facts"] = ("session", "score")
-    definition["facts"]["score"] = {"source": "events", "column": "score"}
-    definition["measures"]["score_mean"] = {"fact": "score", "aggregation": "avg_event"}
+    definition["sources"]["events"]["events"] = ("session", "score")
+    definition["events"]["score"] = {"source": "events", "column": "score"}
+    definition["measures"]["score_mean"] = {"event": "score", "aggregation": "avg_event"}
     definition["metrics"]["score_avg"] = {
         "kind": "mean",
-        "entity": "user",
+        "unit": "user",
         "measure": "score_mean",
     }
     model = Model.from_catalog(

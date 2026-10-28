@@ -83,44 +83,44 @@ def _model(
         con.create_table("users", anchors.filter(anchors.user_id == unit).select(id="user_id"))
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "anchors": {
                     "relation": {"kind": "table", "name": "anchors"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["signup"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["signup"],
                     "properties": ["treated"],
                     "dimensions": [],
                 },
                 "outcomes": {
                     "relation": {"kind": "table", "name": "outcomes"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["churn"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["churn"],
                     "properties": [],
                     "dimensions": [],
                 },
                 "entries": {
                     "relation": {"kind": "table", "name": "entries"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["enrolled"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["enrolled"],
                     "properties": [],
                     "dimensions": [],
                 },
                 "exits": {
                     "relation": {"kind": "table", "name": "exits"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["closed"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["closed"],
                     "properties": [],
                     "dimensions": [],
                 },
             },
-            "facts": {
+            "events": {
                 "signup": {"source": "anchors", "column": None},
                 "churn": {"source": "outcomes", "column": None},
                 "enrolled": {"source": "entries", "column": None},

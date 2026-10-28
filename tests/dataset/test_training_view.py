@@ -229,9 +229,7 @@ def test_training_rejects_non_tabular_shapes_before_execution(native_inputs, kin
     assert error.value.code == "terrine.dataset.unsupported_view"
 
 
-@pytest.mark.parametrize(
-    "field", ["relation", "source_entity", "entity_column", "validity", "property"]
-)
+@pytest.mark.parametrize("field", ["relation", "unit", "key", "validity", "property"])
 def test_asof_feature_hash_tracks_resolved_dimension_definition(native_inputs, field):
     from dataclasses import replace
 
@@ -285,8 +283,8 @@ def test_asof_feature_hash_tracks_resolved_dimension_definition(native_inputs, f
 
     changes = {
         "relation": TableRef(kind="table", name="corrected_tiers"),
-        "source_entity": "account",
-        "entity_column": "account_id",
+        "unit": "account",
+        "key": "account_id",
         "validity": BoundValidity(None, None, "changed_at"),
         "property": {"tier": replace(prop, column="corrected_tier")},
     }

@@ -20,21 +20,21 @@ from terrine.runtime.changes import Change, ChangeSet
 
 def catalog() -> dict[str, Any]:
     return {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 name: {
                     "relation": {"kind": "table", "name": name},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": [fact],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": [fact],
                     "properties": ["segment"] if name == "events" else [],
                     "dimensions": [],
                 }
                 for name, fact in (("events", "event_amount"), ("labels", "label_amount"))
             },
-            "facts": {
+            "events": {
                 "event_amount": {"source": "events", "column": "amount"},
                 "label_amount": {"source": "labels", "column": "amount"},
             },
@@ -48,11 +48,11 @@ def catalog() -> dict[str, Any]:
             },
             "dimensions": {},
             "measures": {
-                "event_total": {"fact": "event_amount", "aggregation": "sum"},
-                "label_total": {"fact": "label_amount", "aggregation": "sum"},
+                "event_total": {"event": "event_amount", "aggregation": "sum"},
+                "label_total": {"event": "label_amount", "aggregation": "sum"},
             },
             "metrics": {
-                name: {"kind": "mean", "entity": "user", "measure": name}
+                name: {"kind": "mean", "unit": "user", "measure": name}
                 for name in ("event_total", "label_total")
             },
     }

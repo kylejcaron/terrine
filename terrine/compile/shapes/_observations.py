@@ -84,8 +84,8 @@ def _points(design: Design, model: Model, state: StateObservations):
     ]
     source, prop = candidates[0]
     raw = model._relation(source.relation)
-    events = normalize_events(raw, source, source.entities[design.unit])
-    precision = _precision_check(model, events, "_timestamp", source_column=source.timestamp_column)
+    events = normalize_events(raw, source, source.units[design.unit])
+    precision = _precision_check(model, events, "_timestamp", source_column=source.time_column)
     observations = events.select(
         unit=events._unit,
         point_ts=events._timestamp,

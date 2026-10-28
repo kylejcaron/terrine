@@ -32,36 +32,36 @@ def _model():
         ) AS p(user_id, ts, region)
     """)
     catalog = {
-        "schema_version": 1,
+        "schema_version": 2,
         "day_boundary": "UTC",
         "dialect": "duckdb",
         "sources": {
             "events": {
                 "relation": {"kind": "table", "name": "events"},
-                "timestamp": "ts",
-                "entities": {"user": "user_id"},
-                "facts": ["purchase", "revenue"],
+                "time": "ts",
+                "units": {"user": "user_id"},
+                "events": ["purchase", "revenue"],
                 "properties": ["kind"],
                 "dimensions": [],
             },
             "churn_events": {
                 "relation": {"kind": "table", "name": "churn_events"},
-                "timestamp": "ts",
-                "entities": {"user": "user_id"},
-                "facts": ["churn"],
+                "time": "ts",
+                "units": {"user": "user_id"},
+                "events": ["churn"],
                 "properties": [],
                 "dimensions": [],
             },
             "profiles": {
                 "relation": {"kind": "table", "name": "profiles"},
-                "timestamp": "ts",
-                "entities": {"user": "user_id"},
-                "facts": [],
+                "time": "ts",
+                "units": {"user": "user_id"},
+                "events": [],
                 "properties": ["region"],
                 "dimensions": [],
             },
         },
-        "facts": {
+        "events": {
             "purchase": {"source": "events", "column": None},
             "revenue": {"source": "events", "column": "amount"},
             "churn": {"source": "churn_events", "column": None},
@@ -81,11 +81,11 @@ def _model():
             },
         },
         "dimensions": {},
-        "measures": {"net_revenue_sum": {"fact": "revenue", "aggregation": "sum"}},
+        "measures": {"net_revenue_sum": {"event": "revenue", "aggregation": "sum"}},
         "metrics": {
             "net_revenue": {
                 "kind": "mean",
-                "entity": "user",
+                "unit": "user",
                 "measure": "net_revenue_sum",
             }
         },

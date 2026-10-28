@@ -40,7 +40,7 @@ def main() -> None:
         )
         # Use Model.from_catalog for filters, ratios, static/as-of or SCD2
         # attributes, SQL relations, explicit names, and multi-unit sources.
-        assert set(model.catalog.facts) == {"orders", "orders_amount"}
+        assert set(model.catalog.events) == {"orders", "orders_amount"}
         assert set(model.catalog.metrics) == {
             "orders_count",
             "orders_amount_sum",
