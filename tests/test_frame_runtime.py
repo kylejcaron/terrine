@@ -75,6 +75,31 @@ def test_bounded_preview_only_reports_totals_when_complete(native_inputs):
     ) == (2, 0, 0, 2)
 
 
+def test_bounded_preview_caps_the_summary_read_but_not_the_checks(native_inputs, monkeypatch):
+    """The eligibility summary reads at most cap + 1 candidates; the integrity
+    checks still cover every candidate."""
+    import ibis
+
+    from terrine.execution.inputs import ExecutionContext
+
+    executed = []
+    original = ExecutionContext.execute
+
+    def execute(self, query):
+        executed.append(ibis.to_sql(query, dialect="duckdb"))
+        return original(self, query)
+
+    monkeypatch.setattr(ExecutionContext, "execute", execute)
+    model = _model(native_inputs)
+    design = _design(features={"sessions": tr.agg("sessions", window=("-1d", "0s"))})
+    report = tr.preview(design, model, bounded_count=1)
+    assert report.count_capped is True and report.counted_rows == 1
+    summaries = [sql for sql in executed if "__terrine_gate_candidate" in sql]
+    checks = [sql for sql in executed if "__terrine_gate_check_" in sql]
+    assert len(summaries) == 1 and "LIMIT 2" in summaries[0]
+    assert checks and all("LIMIT" not in sql for sql in checks)
+
+
 @pytest.mark.parametrize(
     ("budget", "code"),
     [

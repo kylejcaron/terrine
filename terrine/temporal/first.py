@@ -13,9 +13,9 @@ from terrine.backends.timestamps import (
     lossless_timestamp,
     timestamp_order_key,
 )
-from terrine.data import ColumnMeta
+from terrine.data import ColumnMeta, RowCheck
 from terrine.errors import RefusalSpec
-from terrine.temporal.aggregate import TemporalResult, _Check, _Failure
+from terrine.temporal.aggregate import TemporalResult, _Check
 
 __all__ = ["first_occurrence"]
 
@@ -139,7 +139,7 @@ def first_occurrence(
             .filter(ibis._._event_id.isnull() | (ibis._._count > 1))
             .aggregate(_duplicate_count=ibis._.count().cast("string"))
         )
-        checks = (_Check(duplicates, (_Failure("_duplicate_count", _DUPLICATE_EVENT_ID, {}),)),)
+        checks = (_Check(duplicates, (RowCheck("_duplicate_count", _DUPLICATE_EVENT_ID, {}),)),)
 
     events_view = events.view()
     event_columns = {event_unit: events_view[unit], event_time: events_view[timestamp]}

@@ -770,6 +770,33 @@ class EligibilitySummary:
 
 
 @dataclass(frozen=True, slots=True)
+class RowCheck:
+    """A column whose TRUE rows fail ``refusal``; NULL rows pass.
+
+    Inside a one-row aggregate check it names that aggregate's ``failed_N``
+    string count instead.
+    """
+
+    column: str
+    refusal: RefusalSpec
+    context: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "context", MappingProxyType(dict(self.context)))
+
+
+@dataclass(frozen=True, slots=True)
+class RowCheckGroup:
+    """Row checks and the relation whose rows they are counted over."""
+
+    table: Any
+    checks: tuple[RowCheck, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "checks", tuple(self.checks))
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionSnapshot:
     snapshot_id: str | None
     backend: str

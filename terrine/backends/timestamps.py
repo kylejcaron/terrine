@@ -1,7 +1,8 @@
 """Lossless timestamp ordering, exact elapsed-offset comparisons and UTC conversion.
 
 DuckDB keys finite instants by truncated seconds and a signed remainder taken from
-Ibis's exact microsecond/nanosecond ``delta``; PostgreSQL timestamps are exact at
+Ibis's exact microsecond/nanosecond ``delta``, and compares a microsecond point
+with a microsecond state natively; PostgreSQL timestamps are exact at
 microseconds and are their own key; BigQuery and Snowflake instants are finite
 within years 1 to 9999, their own key, and split into seconds and nanoseconds
 from an exact epoch delta.
@@ -25,6 +26,7 @@ __all__ = [
     "day_start",
     "has_submicrosecond",
     "local_day",
+    "lookup_keys",
     "lossless_scale",
     "lossless_timestamp",
     "timestamp_extremes",
@@ -190,6 +192,11 @@ def timestamp_parts(
 def timestamp_order_key(value: ir.TimestampValue) -> ir.Value:
     """Return a value whose ordering and equality are exactly the instants'."""
     return current_dialect(value).timestamp_order_key(value)
+
+
+def lookup_keys(point: ir.TimestampValue, state: ir.TimestampValue) -> tuple[ir.Value, ir.Value]:
+    """Keys whose order compares a point cutoff with a state instant exactly."""
+    return current_dialect(point, state).lookup_keys(point, state)
 
 
 def compare_timestamps(

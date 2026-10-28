@@ -38,10 +38,13 @@ from terrine.data import (
     ExpressionTiming,
     FeatureCutoff,
     Roles,
+    RowCheck,
+    RowCheckGroup,
     SequenceMeta,
     _ordered_columns,
 )
 from terrine.errors import RefusalSpec
+from terrine.execution.gates import fold, foldable, gate_totals, validate_schedule
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import BoundDimension
 from terrine.semantic.rules import calendar_average_alignment
@@ -67,7 +70,7 @@ from terrine.spec.expressions import (
 )
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE
 from terrine.spec.validate import _fixed_anchors
-from terrine.temporal.aggregate import aggregate_window
+from terrine.temporal.aggregate import TemporalResult, aggregate_window
 from terrine.temporal.attributes import (
     _enriched_property_columns,
     enrich_events,
@@ -191,7 +194,7 @@ class CompiledStudy:
     eligibility_cutoffs: Mapping[str, FeatureCutoff]
     strategy: Mapping[str, str]
     _anchors: AnchorTable
-    _checks: tuple[_DeferredCheck, ...]
+    _checks: tuple[_DeferredCheck | RowCheckGroup, ...]
     expression_timings: Mapping[str, ExpressionTiming] = field(default_factory=dict)
     sequence_meta: SequenceMeta | None = None
     sketches: tuple[SketchSidecar, ...] = ()
@@ -293,6 +296,7 @@ class CompiledStudy:
             )
 
     def __post_init__(self) -> None:
+        audit = self.audit_table
         self._publish()
         for name in (
             "columns",
@@ -303,26 +307,41 @@ class CompiledStudy:
             "range_plans",
         ):
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
-        object.__setattr__(self, "_checks", tuple(self._checks))
+        checks = []
+        for check in self._checks:
+            if isinstance(check, RowCheckGroup):
+                # Publication projects the audit; a group counted over it
+                # follows, so one aggregate still carries its sums.
+                if check.table.equals(audit):
+                    check = RowCheckGroup(self.audit_table, check.checks)
+                for row_check in check.checks:
+                    if row_check.column not in check.table.columns:
+                        raise ValueError(
+                            f"row check column {row_check.column!r} is not in its relation"
+                        )
+            checks.append(check)
+        object.__setattr__(self, "_checks", tuple(checks))
         object.__setattr__(self, "sketches", tuple(self.sketches))
 
     def reads(self) -> tuple[ibis.Table, ...]:
-        """Every relation materialization may execute: the output, its audit, each
-        deferred integrity check and each sketch sidecar, so admission can
-        inspect them before the first source row is read."""
-        return (
-            self.table,
-            self.audit_table,
-            *self._anchors.reads(),
-            *(relation for check in self._checks for relation in check.reads()),
-            *(sidecar.rows for sidecar in self.sketches),
-        )
+        """Every relation materialization may execute: the output, its audit, the
+        anchor checks, each gate statement of the check schedule, each check
+        that runs on its own and each sketch sidecar, so admission can inspect
+        them before the first source row is read."""
+        relations = [self.table, self.audit_table, *self._anchors.reads()]
+        *earlier, final = fold(self._checks)
+        for item in earlier:
+            if isinstance(item, list):
+                relations.append(gate_totals(None, item))
+            else:
+                relations.extend(item.reads())
+        relations.append(gate_totals(self.audit_table, final))
+        relations.extend(sidecar.rows for sidecar in self.sketches)
+        return tuple(relations)
 
     def validate(self, *, execute: Callable[[ibis.Table], pa.Table]) -> None:
         """Run every deferred integrity check before audit or output leaves its view."""
-        self._anchors.validate(execute=execute)
-        for check in self._checks:
-            check.validate(execute)
+        validate_schedule(self, execute)
 
 
 def resolve_sketch_sidecars(table: pa.Table, compiled: CompiledStudy, con) -> pa.Table:
@@ -391,6 +410,11 @@ def compile_columns(
     table = anchors.table
     values: dict[Expr, CompiledValue] = {}
     checks: list[_DeferredCheck] = []
+    # Row checks of every window result become flag columns of the candidate
+    # relation, numbered in schedule order, so the audit can count them in one
+    # gate statement where the schedule allows it (see the splice below).
+    check_columns: list[str] = []
+    lifted: dict[int, tuple[str, ...]] = {}
     normalized_sources, sources, selector_sources, source_histories, states = {}, {}, {}, {}, {}
     sketches: list[SketchSidecar] = []
     sketch_aliases: dict[str, list[str]] = {}
@@ -1149,11 +1173,20 @@ def compile_columns(
             and name != output
             and name not in renamed.values()
         }
+        row_checks = {}
+        if isinstance(result, TemporalResult) and result.row_checks:
+            row_checks = {
+                f"__terrine_check_{len(check_columns) + index}": result_table[check.column]
+                for index, check in enumerate(result.row_checks)
+            }
+            lifted[id(result)] = tuple(row_checks)
+            check_columns.extend(row_checks)
         right = result_table.select(
             **{f"{output}_key_{key}": result_table[key] for key in _ANCHOR_KEY},
             **{output: result_table[output]},
             **{name: result_table[getattr(meta, field)] for field, name in renamed.items()},
             **timing_support,
+            **row_checks,
         )
         assert cutoff is not None
         meta = replace(meta, **renamed)
@@ -1338,8 +1371,51 @@ def compile_columns(
                 support.append(name)
     projection = {name: table[name] for name in support}
     projection.update({name: table[value] for name, value in public.items()})
-    audit = table.select(**projection, __terrine_eligible=table.__terrine_eligible)
+    # A window result's row checks are counted over the audit only when nothing
+    # registered after it joins into the candidates under a check that runs
+    # later: an as-of lookup whose history conflicts duplicates candidate rows
+    # until its own refusal, which would inflate an earlier count. Such a
+    # result keeps its own relation, exactly as it validated itself.
+    audit_bound: dict[int, tuple[str, ...]] = {}
+    for index, check in enumerate(checks):
+        if (
+            isinstance(check, TemporalResult)
+            and check.row_checks
+            and not any(
+                not isinstance(later, TemporalResult) and not foldable(later)
+                for later in checks[index + 1 :]
+            )
+        ):
+            audit_bound[id(check)] = lifted[id(check)]
+    audit = table.select(
+        **projection,
+        __terrine_eligible=table.__terrine_eligible,
+        **{name: table[name] for names in audit_bound.values() for name in names},
+    )
     retained = table.filter(table.__terrine_eligible.fill_null(False)).select(**projection)
+    # A window result's one-row checks and its row checks take its place in the
+    # schedule, in the order its own validation ran them.
+    schedule: list[_DeferredCheck | RowCheckGroup] = []
+    for check in checks:
+        if not isinstance(check, TemporalResult):
+            schedule.append(check)
+            continue
+        schedule.extend(check._checks)
+        if not check.row_checks:
+            continue
+        names = audit_bound.get(id(check))
+        if names is None:
+            schedule.append(RowCheckGroup(check.table, check.row_checks))
+            continue
+        schedule.append(
+            RowCheckGroup(
+                audit,
+                tuple(
+                    RowCheck(name, row_check.refusal, row_check.context)
+                    for name, row_check in zip(names, check.row_checks, strict=True)
+                ),
+            )
+        )
     if selector_identity_checks:
         anchors = AnchorTable(anchors.table, (*anchors._checks, *selector_identity_checks))
     return CompiledStudy(
@@ -1358,7 +1434,7 @@ def compile_columns(
         eligibility_cutoffs,
         {name: strategies[name] for name in public},
         anchors,
-        tuple(checks),
+        tuple(schedule),
         expression_timings,
         sketches=tuple(
             replace(sidecar, outputs=tuple(sketch_aliases.get(sidecar_output, ())))

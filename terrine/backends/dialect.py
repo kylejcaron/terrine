@@ -154,6 +154,18 @@ class Dialect:
         """
         return _WIDE
 
+    def count_type(self) -> dt.DataType:
+        """The exact type of a 0/1 count term and of a row-count literal.
+
+        The portable policy counts in the coefficient domain; an engine whose
+        exact sums accumulate native integers may count in one.
+        """
+        return self.coefficient_type()
+
+    def exact_types(self) -> frozenset[dt.DataType]:
+        """Every type an exact-state operand may carry under this policy."""
+        return frozenset({self.exact_type(), self.coefficient_type(), self.count_type()})
+
     def decimal_coefficient(self, value: ir.Value, scale: int) -> ir.Value:
         text = value.cast("string")
         return (text.replace(".", "") if scale else text).cast(self.coefficient_type())
@@ -568,6 +580,12 @@ class Dialect:
         if not isinstance(dtype, dt.Timestamp) or dtype.scale not in (None, 6, 9):
             raise _UNSUPPORTED.error(dtype=str(dtype))
         return value
+
+    def lookup_keys(
+        self, point: ir.TimestampValue, state: ir.TimestampValue
+    ) -> tuple[ir.Value, ir.Value]:
+        """Keys comparing a point cutoff with a state instant: the order keys."""
+        return self.timestamp_order_key(point), self.timestamp_order_key(state)
 
     def reverse_time_key(self, value: ir.TimestampValue) -> ir.Value:
         # One exact scalar: finite instants' nanoseconds stay far below 10**38.

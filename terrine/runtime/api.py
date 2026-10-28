@@ -393,19 +393,29 @@ def _preflight_design_partitions(plan: RefreshPlan) -> None:
 _EXACT_LAYER_COLUMNS_KEY = b"terrine.runtime.exact_layer_columns"
 
 
-def _persistable_layer(relation: Any, execute: Any):
+def _duckdb_type(name: str):
+    from ibis.expr import datatypes as dt
+    from sqlglot import exp as sge
 
-    exact_columns = tuple(
-        name
-        for name, dtype in relation.schema().items()
-        if dtype.is_unknown() and str(dtype.raw_type).upper() == "BIGNUM"
-    )
-    serializable = (
-        relation.mutate(**{name: relation[name].cast("string") for name in exact_columns})
-        if exact_columns
-        else relation
-    )
-    result = execute(serializable)
+    return dt.Unknown(raw_type=sge.DataType.build(name, dialect="duckdb"))
+
+
+def _persistable_layer(relation: Any, execute: Any):
+    """The layer in Arrow types that read back as the same exact state.
+
+    BIGNUM has no Arrow type: those columns travel as text and are restored
+    by name. A HUGEINT count travels as ``decimal128(38, 0)``, DuckDB's own
+    Arrow type for it, and reads back as ``decimal(38, 0)``, which the DuckDB
+    policy accepts as count state; a count is at most the source row count,
+    below ``2**63``, so its 19 digits fit the 38 exactly.
+    """
+    bignum, hugeint = _duckdb_type("BIGNUM"), _duckdb_type("HUGEINT")
+    schema = relation.schema()
+    exact_columns = tuple(name for name, dtype in schema.items() if dtype == bignum)
+    counts = tuple(name for name, dtype in schema.items() if dtype == hugeint)
+    casts = {name: relation[name].cast("string") for name in exact_columns}
+    casts.update({name: relation[name].cast("decimal(38, 0)") for name in counts})
+    result = execute(relation.mutate(**casts) if casts else relation)
     if exact_columns:
         import pyarrow as pa
 
@@ -420,13 +430,9 @@ def _persistable_layer(relation: Any, execute: Any):
 
 
 def _restore_persisted_layer(context: Any, arrow: Any, name: str):
-    from ibis.expr import datatypes as dt
-    from sqlglot import exp as sge
-
-    exact_dtype = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
-
     from terrine.runtime.arrow import ArrowOutput
 
+    exact_dtype = _duckdb_type("BIGNUM")
     metadata = arrow.schema.metadata or {}
     if isinstance(arrow, ArrowOutput):
         with arrow.open() as reader:
@@ -558,7 +564,7 @@ class DesignExecutor:
             import terrine.compile.provenance as _provenance
             from terrine.compile.columns import expression_policy
             from terrine.data import SamplingMeta
-            from terrine.execution.gates import _eligibility_summary
+            from terrine.execution.gates import GatedStream, gate_totals, gated_output
             from terrine.spec.anchors import FixedDate
             from terrine.spec.sequence import EventSequence
             from terrine.spec.state_panel import StatePanel
@@ -573,8 +579,17 @@ class DesignExecutor:
                         compiled, self._frame._training_view, context.execute
                     )
             compiled = self._frame._active_compiled(compiled)
-            summary = _eligibility_summary(compiled.audit_table, context.execute)
-            reader = context.to_arrow_batches(compiled.table, chunk_size=65_536)
+            # Composition ran the whole check schedule; the output statement carries
+            # only the eligibility summary, read before any row leaves.
+            reader = GatedStream(
+                context.to_arrow_batches(
+                    gated_output(compiled.table, compiled.audit_table, []), chunk_size=65_536
+                ),
+                [],
+                compiled.table.columns,
+                lambda: context.execute(gate_totals(compiled.audit_table, [])),
+            )
+            summary = reader.resolve()
             from terrine.runtime.arrow import ArrowOutput
 
             table = self._frame._normalize_output(pa.Table.from_batches([], schema=reader.schema))

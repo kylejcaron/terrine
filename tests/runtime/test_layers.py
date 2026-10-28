@@ -1,10 +1,13 @@
 # ruff: noqa: F811
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import duckdb
+import ibis.expr.datatypes as dt
 import pyarrow as pa
 import pytest
+import sqlglot.expressions as sge
 
 from terrine.compile.layers import plan_layers
 from terrine.runtime.backends.duckdb import DuckDBBackend, StagedGeneration
@@ -13,6 +16,8 @@ from terrine.runtime.leases import LeaseStore
 from terrine.runtime.state import DefinitionVersion, GenerationRef, RuntimeStore, SourceSnapshot
 from terrine.spec import Design, FixedDate, agg
 from tests.compile.test_columns import column_model  # noqa: F401,F811
+
+_BIGNUM = dt.Unknown(raw_type=sge.DataType.build("BIGNUM", dialect="duckdb"))
 
 
 def _lease(con):
@@ -93,26 +98,54 @@ def test_build_layer_composition_matches_direct_compilation(column_model):
     assert actual.expression_timings == expected.expression_timings
 
 
-def test_exact_prefix_layers_roundtrip_through_arrow_storage(column_model):
-    import json
+def _text_layer(relation, execute):
+    """A layer as earlier runtimes wrote it: every exact column as text, all named."""
+    columns = tuple(name for name, dtype in relation.schema().items() if dtype.is_unknown())
+    arrow = execute(relation.mutate(**{name: relation[name].cast("string") for name in columns}))
+    return arrow.replace_schema_metadata(
+        {b"terrine.runtime.exact_layer_columns": json.dumps(columns).encode()}
+    )
+
+
+@pytest.mark.parametrize("persist", ["current", "text"])
+def test_exact_prefix_layers_roundtrip_through_arrow_storage(column_model, persist):
     from types import SimpleNamespace
 
+    from terrine.compile.columns import compile_columns
     from terrine.compile.layers import build_layer
+    from terrine.compile.materialize import compose_materialized_frame
     from terrine.runtime.api import _persistable_layer, _restore_persisted_layer
 
     design = _design()
-    key = next(key for key in plan_layers(design, column_model).keys if key.layer == "prefix")
-    relation = build_layer(design, column_model, key)
-
-    arrow = _persistable_layer(relation, column_model.con.to_pyarrow)
-
+    writer = _persistable_layer if persist == "current" else _text_layer
+    keys = plan_layers(design, column_model).keys
+    layers = {
+        key: writer(build_layer(design, column_model, key), column_model.con.to_pyarrow)
+        for key in keys
+    }
+    prefix = next(key for key in keys if key.layer == "prefix")
+    arrow = layers[prefix]
     exact_columns = set(json.loads(arrow.schema.metadata[b"terrine.runtime.exact_layer_columns"]))
-    assert {"event_count", "sum_value"} <= exact_columns
+    assert "sum_value" in exact_columns
     assert arrow.schema.field("sum_value").type == pa.string()
-    restored = _restore_persisted_layer(
-        SimpleNamespace(con=column_model.con), arrow, "exact_prefix"
+    if persist == "current":
+        # Counts travel as DuckDB's Arrow type for HUGEINT, not as text.
+        assert "event_count" not in exact_columns
+        assert arrow.schema.field("event_count").type == pa.decimal128(38, 0)
+    restored = {
+        replace(key, snapshot_id="snapshot"): _restore_persisted_layer(
+            SimpleNamespace(con=column_model.con), layer, f"{persist}_{index}"
+        )
+        for index, (key, layer) in enumerate(layers.items())
+    }
+    schema = restored[replace(prefix, snapshot_id="snapshot")].schema()
+    assert schema["sum_value"].is_unknown()
+    assert schema["event_count"] == (dt.Decimal(38, 0) if persist == "current" else _BIGNUM)
+    actual = compose_materialized_frame(design, column_model, persisted=restored)
+    expected = compile_columns(design, column_model)
+    assert column_model.con.to_pyarrow(actual.table.order_by("unit")).equals(
+        column_model.con.to_pyarrow(expected.table.order_by("unit"))
     )
-    assert restored.schema()["sum_value"].is_unknown()
 
 
 def test_build_anchor_layer_accepts_snapshot_relation_resolver(column_model):

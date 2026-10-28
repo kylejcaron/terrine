@@ -13,14 +13,14 @@ from terrine.backends.extrema import greatest
 from terrine.backends.timestamps import compare_timestamps
 from terrine.compile.anchors import AnchorTable, _precision_check, _utc_column
 from terrine.compile.columns import CompiledStudy, _validate_names, compile_columns
-from terrine.data import ColumnMeta, Roles
+from terrine.data import ColumnMeta, Roles, RowCheck
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
 from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
 from terrine.spec.panels import CalendarComparisonSpec
 from terrine.spec.validate import _outcome_bounds
-from terrine.temporal.aggregate import _Check, _Failure
+from terrine.temporal.aggregate import _Check
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -43,7 +43,7 @@ def _deferred_refusal(query):
     return _Check(
         query.aggregate(failed_0=query.count().cast("string")),
         (
-            _Failure(
+            RowCheck(
                 "failed_0",
                 _UNSUPPORTED,
                 {"reason": "requested comparison period is outside the schedule"},
@@ -114,7 +114,7 @@ def _history_check(
     query = participants.filter(missing).select("unit").distinct()
     return _Check(
         query.aggregate(failed_0=query.count().cast("string")),
-        (_Failure("failed_0", _INCOMPLETE_HISTORY, {}),),
+        (RowCheck("failed_0", _INCOMPLETE_HISTORY, {}),),
     )
 
 

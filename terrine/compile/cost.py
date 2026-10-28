@@ -12,7 +12,7 @@ from terrine.data import (
     Preview,
 )
 from terrine.errors import RefusalSpec
-from terrine.execution.gates import _eligibility_summary
+from terrine.execution.gates import audit_summary, validate_schedule
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -91,8 +91,10 @@ def preview(
             # Admit every relation the count will run, integrity checks included,
             # so an unsupported primitive refuses before the first source read.
             context.admit(*compiled.reads())
-            compiled.validate(execute=context.execute)
-            summary = _eligibility_summary(compiled.audit_table, context.execute, cap=bounded_count)
+            validate_schedule(compiled, context.execute)
+            summary = audit_summary(
+                compiled.audit_table.limit(min(bounded_count + 1, 2**63 - 1)), context.execute
+            )
         capped = summary.candidate > bounded_count
         counts = {"counted_rows": min(summary.candidate, bounded_count), "count_capped": capped}
         if not capped:

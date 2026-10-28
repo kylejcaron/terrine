@@ -18,6 +18,7 @@ import ibis.expr.types as ir
 from terrine.backends.dialect import current_dialect
 from terrine.backends.numeric import (
     coefficient_bounds,
+    count_literal,
     decimal_coefficient,
     exact_float,
     exact_literal,
@@ -36,17 +37,9 @@ from terrine.semantic.rules import (
 )
 from terrine.semantic.time import boundary_timezone
 from terrine.temporal.attributes import _enriched_property_columns
-from terrine.temporal.prefix import _require_backend
+from terrine.temporal.prefix import _UNKNOWN_FIELDS, _require_backend
 
 __all__ = ["sparse_daily"]
-
-_UNKNOWN_FIELDS = (
-    "unknown_filter_count",
-    "unknown_filter_null_count",
-    "unknown_filter_missing_count",
-    "unknown_filter_literal_count",
-    "unknown_filter_nonfinite_count",
-)
 
 
 def resolve_measure(
@@ -360,20 +353,21 @@ def _sparse_group(
     column = source.facts[measure.fact]
     value = ibis.literal(1) if column is None else events[column]
     nonnull = selected & value.notnull()
+    one, zero = count_literal(1), count_literal(0)
     fields = {
-        "event_count": selected.ifelse(exact_literal(1), exact_literal(0)),
-        "nonnull_count": nonnull.ifelse(exact_literal(1), exact_literal(0)),
+        "event_count": selected.ifelse(one, zero),
+        "nonnull_count": nonnull.ifelse(one, zero),
     }
     if measure.filters:
         fields.update(
             zip(
                 _UNKNOWN_FIELDS,
                 (
-                    unknown.ifelse(exact_literal(1), exact_literal(0)),
-                    (unknown & observed_null).ifelse(exact_literal(1), exact_literal(0)),
-                    (unknown & missing).ifelse(exact_literal(1), exact_literal(0)),
-                    (unknown & literal_null).ifelse(exact_literal(1), exact_literal(0)),
-                    (unknown & nonfinite).ifelse(exact_literal(1), exact_literal(0)),
+                    unknown.ifelse(one, zero),
+                    (unknown & observed_null).ifelse(one, zero),
+                    (unknown & missing).ifelse(one, zero),
+                    (unknown & literal_null).ifelse(one, zero),
+                    (unknown & nonfinite).ifelse(one, zero),
                 ),
                 strict=True,
             )
@@ -406,10 +400,10 @@ def _sparse_group(
             aggregates.update(
                 exact_scale=leaf.__terrine_scale.max(),
                 float64_nonfinite_count=exact_sum(
-                    (selected_value & nonfinite_value).ifelse(exact_literal(1), exact_literal(0))
+                    (selected_value & nonfinite_value).ifelse(one, zero)
                 ),
                 float64_unrepresentable_count=exact_sum(
-                    (selected_value & unrepresentable).ifelse(exact_literal(1), exact_literal(0))
+                    (selected_value & unrepresentable).ifelse(one, zero)
                 ),
             )
         else:
@@ -426,21 +420,16 @@ def _sparse_group(
         aggregates["sum_value"] = exact_sum(coefficient, admitted=admitted is not None)
         if admitted is not None:
             aggregates["sum_bound"] = current_dialect(coefficient).magnitude(coefficient).sum()
-            aggregates["sum_withheld"] = exact_sum(
-                (~admitted).ifelse(exact_literal(1), exact_literal(0))
-            )
+            aggregates["sum_withheld"] = exact_sum((~admitted).ifelse(one, zero))
     grouped = leaf.group_by("_unit", *keys).aggregate(**aggregates)
-    constants = {
-        "value_type": ibis.literal(measure.value_type),
-        "value_scale": ibis.literal(
+    return grouped.mutate(
+        value_type=ibis.literal(measure.value_type),
+        value_scale=ibis.literal(
             dtype.scale if isinstance(dtype, dt.Decimal) and measure.aggregation != "count" else 0
         ),
-        "numeric_policy": ibis.literal("exact"),
-        "observed_null_count": exact_subtract(grouped.event_count, grouped.nonnull_count),
-    }
-    if not measure.filters:
-        constants.update({name: exact_literal(0) for name in _UNKNOWN_FIELDS})
-    return grouped.mutate(**constants)
+        numeric_policy=ibis.literal("exact"),
+        observed_null_count=exact_subtract(grouped.event_count, grouped.nonnull_count),
+    )
 
 
 def sparse_daily(

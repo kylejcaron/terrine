@@ -24,7 +24,6 @@ from terrine.backends.numeric import (
     exact_literal,
     exact_ratio,
     exact_subtract,
-    exact_sum,
     exact_to_float,
     exact_type,
     has_scaled_float_state,
@@ -33,7 +32,7 @@ from terrine.backends.numeric import (
     rounded_normalized,
 )
 from terrine.backends.timestamps import day_start
-from terrine.data import ColumnMeta
+from terrine.data import ColumnMeta, RowCheck
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import _SCHEMA
 from terrine.semantic.models import BoundMeasure, BoundMetric
@@ -47,9 +46,13 @@ from terrine.semantic.rules import (
     supports_temporal_aggregation,
 )
 from terrine.semantic.time import boundary_timezone
-from terrine.temporal.daily import _UNKNOWN_FIELDS
 from terrine.temporal.lookup import lookup_prefix
-from terrine.temporal.prefix import FLOAT64_PRECISION, Float64Failure
+from terrine.temporal.prefix import (
+    _EXACT_FLOAT_COUNTS,
+    _UNKNOWN_FIELDS,
+    FLOAT64_PRECISION,
+    Float64Failure,
+)
 from terrine.temporal.readiness import Readiness
 from terrine.windows import Window
 
@@ -62,32 +65,27 @@ _DAY_ALIGNMENT = RefusalSpec(
 )
 
 
-@dataclass(frozen=True, slots=True)
-class _Failure:
-    column: str
-    refusal: RefusalSpec
-    context: Mapping[str, Any]
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "context", MappingProxyType(dict(self.context)))
+def _counts_row(result: Any, expected: list[str]) -> pa.Table:
+    """One executed row holding exactly the named failed counts, fully validated."""
+    if not isinstance(result, pa.Table):
+        raise TypeError("The supplied temporal executor must return a PyArrow table.")
+    if result.num_rows != 1 or result.column_names != expected:
+        raise ValueError("Temporal validation requires one row of named failed counts.")
+    result.validate(full=True)
+    return result
 
 
 @dataclass(frozen=True, slots=True)
 class _Check:
     table: ibis.Table
-    failures: tuple[_Failure, ...]
+    failures: tuple[RowCheck, ...]
 
     def reads(self) -> tuple[ibis.Table, ...]:
         return (self.table,)
 
     def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None:
-        result = execute(self.table)
         expected = [failure.column for failure in self.failures]
-        if not isinstance(result, pa.Table):
-            raise TypeError("The supplied temporal executor must return a PyArrow table.")
-        if result.num_rows != 1 or result.column_names != expected:
-            raise ValueError("Temporal validation requires one row of named failed counts.")
-        result.validate(full=True)
+        result = _counts_row(execute(self.table), expected)
         counts = []
         for name in expected:
             column = result[name]
@@ -104,23 +102,64 @@ class _Check:
 
 @dataclass(frozen=True, slots=True)
 class TemporalResult:
-    """A lazy result whose checks must precede export under the caller's snapshot."""
+    """A lazy result whose checks must precede export under the caller's snapshot.
+
+    ``row_checks`` name boolean columns of ``table``: a TRUE row fails that
+    check, a NULL row passes. ``validate`` counts them all in one aggregate.
+    """
 
     table: ibis.Table
     columns: Mapping[str, ColumnMeta]
     _checks: tuple[_Check, ...] = field(default=(), repr=False)
+    row_checks: tuple[RowCheck, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "columns", MappingProxyType(dict(self.columns)))
         object.__setattr__(self, "_checks", tuple(self._checks))
+        object.__setattr__(self, "row_checks", tuple(self.row_checks))
+        for check in self.row_checks:
+            if check.column not in self.table.columns:
+                raise ValueError(f"row check column {check.column!r} is not in its relation")
+
+    def _row_check_counts(self) -> ibis.Table:
+        """The failed-row count of every row check, as one row of ``int64`` sums."""
+        return self.table.aggregate(
+            **{
+                f"failed_{index}": self.table[check.column]
+                .ifelse(1, 0)
+                .sum()
+                .fill_null(0)
+                .cast("int64")
+                for index, check in enumerate(self.row_checks)
+            }
+        )
 
     def reads(self) -> tuple[ibis.Table, ...]:
-        return tuple(check.table for check in self._checks)
+        relations = [check.table for check in self._checks]
+        if self.row_checks:
+            relations.append(self._row_check_counts())
+        return tuple(relations)
 
     def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None:
         """Run bounded scalar checks using the same pinned executor as final export."""
         for check in self._checks:
             check.validate(execute)
+        if not self.row_checks:
+            return
+        expected = [f"failed_{index}" for index in range(len(self.row_checks))]
+        result = _counts_row(execute(self._row_check_counts()), expected)
+        counts = []
+        for name in expected:
+            column = result[name]
+            if not pa.types.is_integer(column.type):
+                raise TypeError("Temporal validation counts must be integers.")
+            value = column[0].as_py()
+            if not isinstance(value, int) or value < 0:
+                raise ValueError("Temporal validation received a malformed failed count.")
+            counts.append(value)
+        for check, count in zip(self.row_checks, counts, strict=True):
+            if count:
+                raise check.refusal.error(**check.context, failed_count=count)
 
 
 class _Builder:
@@ -178,17 +217,20 @@ class _Builder:
         name = self.put(failure, expression)
         self.numeric.append((name, FLOAT64_PRECISION, {**context, "failure": failure}))
 
-    def check(self, flags, *, active=None) -> _Check:
-        values, failures = [], []
-        for index, (name, refusal, context) in enumerate(flags):
+    def check(self, flags, *, active=None) -> tuple[RowCheck, ...]:
+        """Stage one boolean column per flag: TRUE where the row fails its refusal.
+
+        A NULL flag fails closed; ``active`` restricts the check to rows it
+        holds for. Nothing is aggregated here: the result counts every check
+        in one pass over its relation.
+        """
+        checks = []
+        for name, refusal, context in flags:
             predicate = self.col(name).fill_null(True)
             if active is not None:
                 predicate = active & predicate
-            column = f"failed_{index}"
-            count = exact_sum(predicate.ifelse(exact_literal(1), exact_literal(0)))
-            values.append(count.fill_null(exact_literal(0)).cast("string").name(column))
-            failures.append(_Failure(column, refusal, context))
-        return _Check(self.table.aggregate(values), tuple(failures))
+            checks.append(RowCheck(self.put("check", predicate), refusal, context))
+        return tuple(checks)
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,6 +339,32 @@ def _quotient(
     return _Quantity(value, reason, known_zero, binary64=True)
 
 
+def _state_fields(
+    measure: BoundMeasure, state: ibis.Table, *, counting: bool, scaled: bool
+) -> tuple[str, ...]:
+    """The state columns a window reads for ``measure``.
+
+    A count or conversion reads the event count alone; a sum or average adds
+    the nonnull count and the sum, a float fact its exact-state counts and,
+    where the state holds coefficients at a per-unit scale, that scale; a
+    fixed-precision state adds its withheld count. Only a filtered measure
+    carries the unknown-filter counts.
+    """
+    fields = ["event_count"]
+    if not counting:
+        fields += ["nonnull_count", "sum_value"]
+        assert measure.value_type is not None  # callers pass resolved measures
+        if dt.dtype(measure.value_type).is_floating():
+            if scaled:
+                fields.append("exact_scale")
+            fields += _EXACT_FLOAT_COUNTS
+        if "sum_withheld" in state.columns:
+            fields.append("sum_withheld")
+    if measure.filters:
+        fields += _UNKNOWN_FIELDS
+    return tuple(fields)
+
+
 def _component(
     builder: _Builder,
     measure: BoundMeasure,
@@ -305,26 +373,30 @@ def _component(
     *,
     days: int,
     conversion: bool,
+    scaled: bool,
     context,
 ) -> _Quantity:
-    zero = exact_literal(0)
     event_count = builder.put(
         "events", exact_subtract(builder.col(end["event_count"]), builder.col(start["event_count"]))
     )
+    zero = exact_literal(0, builder.col(event_count))
+    empty = builder.put("empty", builder.col(event_count) == zero)
+    no_reason = ibis.null().cast("string")
+    if conversion:
+        value = builder.put("converted", builder.col(event_count) > zero)
+        return _Quantity(value, builder.put("reason", no_reason), empty)
+    if measure.aggregation == "count":
+        return _Quantity(event_count, builder.put("reason", no_reason), empty, count=True)
     nonnull_count = builder.put(
         "nonnull",
         exact_subtract(builder.col(end["nonnull_count"]), builder.col(start["nonnull_count"])),
     )
-    empty = builder.put("empty", builder.col(event_count) == zero)
     all_null = builder.put(
         "all_null", (builder.col(event_count) > zero) & (builder.col(nonnull_count) == zero)
     )
-    no_reason = ibis.null().cast("string")
     reason = builder.put(
         "reason",
-        no_reason
-        if conversion or measure.aggregation == "count"
-        else builder.col(all_null).ifelse(
+        builder.col(all_null).ifelse(
             "all_values_null",
             (
                 builder.col(empty).ifelse("no_observations", no_reason)
@@ -333,18 +405,16 @@ def _component(
             ),
         ),
     )
-    if conversion:
-        value = builder.put("converted", builder.col(event_count) > zero)
-        return _Quantity(value, reason, empty)
-    if measure.aggregation == "count":
-        return _Quantity(event_count, reason, empty, count=True)
     sums = []
     for endpoint in (start, end):
         # A matched all-null prefix has the mathematical sum zero, not a missing state.
         count = builder.col(endpoint["nonnull_count"])
         state = builder.col(endpoint["sum_value"])
         sums.append(
-            builder.put("endpoint_sum", (count == zero).ifelse(exact_literal(0, state), state))
+            builder.put(
+                "endpoint_sum",
+                (count == exact_literal(0, count)).ifelse(exact_literal(0, state), state),
+            )
         )
     assert measure.value_type is not None  # callers pass resolved measures
     dtype = dt.dtype(measure.value_type)
@@ -376,7 +446,10 @@ def _component(
             ("float64_nonfinite_count", "nonfinite_input"),
             ("float64_unrepresentable_count", "bound_overflow"),
         ):
-            flag = ~builder.col(empty) & (builder.col(end[name]).fill_null(zero) > zero)
+            held = builder.col(end[name])
+            flag = ~builder.col(empty) & (
+                held.fill_null(exact_literal(0, held)) > exact_literal(0, held)
+            )
             builder.flag(flag, failure, context)
             invalid = invalid | flag
         # BigQuery's SAFE_SUBTRACT returns NULL on overflow.
@@ -392,7 +465,7 @@ def _component(
         known_zero = builder.put("sum_zero", (builder.col(value) == state_zero) & ~invalid)
         # DuckDB and Snowflake hold the unit's coefficients at the state's scale;
         # the exact types of PostgreSQL and BigQuery hold the shortest text unscaled.
-        scale = end["exact_scale"] if has_scaled_float_state(builder.table.t0) else 0
+        scale = end["exact_scale"] if scaled else 0
         quantity = _Quantity(value, reason, known_zero, scale=scale, binary64=True)
     else:
         value = builder.put("sum", difference)
@@ -406,7 +479,7 @@ def _component(
         divisor = (
             nonnull_count
             if measure.aggregation == "avg_event"
-            else builder.put("days", exact_literal(days))
+            else builder.put("days", exact_literal(days, builder.col(event_count)))
         )
         divisor_zero = builder.put("divisor_zero", builder.col(divisor) == zero)
         denominator = _Quantity(divisor, reason, divisor_zero, count=True)
@@ -486,7 +559,7 @@ def aggregate_window(
     builder = _Builder(anchors, output)
     start = builder.put("start", anchors.t0 + ibis.interval(seconds=window.start))
     end = builder.put("end", builder.table.t0 + ibis.interval(seconds=window.end))
-    checks: list[_Check] = []
+    row_checks: list[RowCheck] = []
     if calendars or resolution == "day":
         invalid = builder.put(
             "unaligned",
@@ -495,7 +568,7 @@ def aggregate_window(
         )
         refusal = UNALIGNED_CALENDAR_AVERAGE if calendars else _DAY_ALIGNMENT
         context = {**domain_context, "measure": calendars[0].fact} if calendars else domain_context
-        checks.append(builder.check([(invalid, refusal, context)]))
+        row_checks.extend(builder.check([(invalid, refusal, context)]))
     coverages = [readiness.for_fact(measure.source_name) for measure in metric.measures]
     source_start = max(coverage.start for coverage in coverages)
     source_end = min(coverage.end_exclusive for coverage in coverages)
@@ -531,34 +604,50 @@ def aggregate_window(
     )
     quantities = []
     unknown_flags = []
+    conversion = metric.kind == "conversion"
+    scaled = has_scaled_float_state(anchors.t0)
     for measure in metric.measures:
         context = {"source": measure.source_name, "measure": measure.fact, "output": output}
+        state = measure_states[measure]
+        fields = _state_fields(
+            measure,
+            state,
+            counting=conversion or measure.aggregation == "count",
+            scaled=scaled,
+        )
         first = lookup_prefix(
             builder.table,
-            measure_states[measure],
+            state,
             unit_column=unit_column,
             timestamp_column=start,
             strategy=strategy,
+            fields=fields,
         )
         second = lookup_prefix(
             first.table,
-            measure_states[measure],
+            state,
             unit_column=unit_column,
             timestamp_column=end,
             strategy=strategy,
+            fields=fields,
         )
         builder.table = second.table
         builder.used.update(name.casefold() for name in builder.table.columns)
-        for field_name in _UNKNOWN_FIELDS:
-            difference = builder.put(
-                field_name,
-                exact_subtract(
-                    builder.col(second.columns[field_name]), builder.col(first.columns[field_name])
-                ),
-            )
-            if field_name == "unknown_filter_count":
-                flag = builder.put("unknown_filter", builder.col(difference) > exact_literal(0))
-                unknown_flags.append((flag, UNKNOWN_FILTER, context))
+        if measure.filters:
+            for field_name in _UNKNOWN_FIELDS:
+                difference = builder.put(
+                    field_name,
+                    exact_subtract(
+                        builder.col(second.columns[field_name]),
+                        builder.col(first.columns[field_name]),
+                    ),
+                )
+                if field_name == "unknown_filter_count":
+                    flag = builder.put(
+                        "unknown_filter",
+                        builder.col(difference) > exact_literal(0, builder.col(difference)),
+                    )
+                    unknown_flags.append((flag, UNKNOWN_FILTER, context))
         quantities.append(
             _component(
                 builder,
@@ -566,7 +655,8 @@ def aggregate_window(
                 first.columns,
                 second.columns,
                 days=(window.end - window.start) // 86400,
-                conversion=metric.kind == "conversion",
+                conversion=conversion,
+                scaled=scaled,
                 context=context,
             )
         )
@@ -607,7 +697,7 @@ def aggregate_window(
     )
     evaluated = builder.put("evaluated", builder.col(final_reason).isnull())
     if unknown_flags:
-        checks.append(builder.check(unknown_flags, active=builder.col(available)))
+        row_checks.extend(builder.check(unknown_flags, active=builder.col(available)))
     numeric_context = {
         "source": ",".join(m.source_name for m in metric.measures),
         "measure": ",".join(m.fact for m in metric.measures),
@@ -621,16 +711,17 @@ def aggregate_window(
             "exact_output",
             narrow_exact(builder.col(quantity.value), quantity.scale, target),
         )
+        exact_value = builder.col(quantity.value)
         overflow = builder.put(
             "exact_overflow",
             builder.col(value).isnull()
             | (
-                (builder.col(quantity.value) < exact_literal(0))
+                (exact_value < exact_literal(0, exact_value))
                 if quantity.count
                 else ibis.literal(False)
             ),
         )
-        checks.append(
+        row_checks.extend(
             builder.check(
                 [
                     (
@@ -661,7 +752,7 @@ def aggregate_window(
     else:
         value = quantity.value
     if builder.numeric:
-        checks.append(builder.check(builder.numeric, active=builder.col(evaluated)))
+        row_checks.extend(builder.check(builder.numeric, active=builder.col(evaluated)))
     public_value = builder.col(evaluated).ifelse(
         builder.col(value), ibis.null().cast(builder.col(value).type())
     )
@@ -672,6 +763,7 @@ def aggregate_window(
         observed_until,
         available,
         final_reason,
+        *(check.column for check in row_checks),
     )
     meta = ColumnMeta(
         window=window,
@@ -682,4 +774,4 @@ def aggregate_window(
         reason_column=final_reason,
         numeric_policy=None if metric.kind == "conversion" or quantity.binary64 else "exact",
     )
-    return TemporalResult(result, {output: meta}, tuple(checks))
+    return TemporalResult(result, {output: meta}, row_checks=tuple(row_checks))

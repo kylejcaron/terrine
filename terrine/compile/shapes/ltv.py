@@ -16,12 +16,12 @@ from terrine.backends.numeric import (
     guard_accumulation,
 )
 from terrine.compile.columns import CompiledStudy, compile_columns
-from terrine.data import ColumnMeta, Roles
+from terrine.data import ColumnMeta, Roles, RowCheck
 from terrine.errors import RefusalSpec
 from terrine.spec.design import Design
 from terrine.spec.expressions import MetricAgg
 from terrine.spec.trajectory import CohortSpec
-from terrine.temporal.aggregate import _Check, _Failure, narrow_exact
+from terrine.temporal.aggregate import _Check, narrow_exact
 from terrine.temporal.prefix import FLOAT64_PRECISION
 from terrine.windows import Window
 
@@ -226,7 +226,7 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
                 _Check(
                     check_table,
                     (
-                        _Failure(
+                        RowCheck(
                             failure_column,
                             EXACT_OVERFLOW,
                             {"output": "cumulative_value"},
@@ -249,7 +249,7 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
                 _Check(
                     check_table,
                     (
-                        _Failure(
+                        RowCheck(
                             failure_column,
                             FLOAT64_PRECISION,
                             {"failure": "bound_overflow", "output": "cumulative_value"},
