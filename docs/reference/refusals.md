@@ -121,6 +121,7 @@ Install the conversion extra; retain Arrow metadata.
 | `terrine.convert.missing_dependency` | <code>Conversion requires the optional {extra!r} dependency; install terrine[{extra}].</code> | `extra` | [terrine/export/diff_diff.py](../../terrine/export/diff_diff.py) |
 | `terrine.convert.missing_dependency` | <code>Conversion requires the optional {extra!r} dependency; install terrine[{extra}].</code> | `extra` | [terrine/export/lifelines.py](../../terrine/export/lifelines.py) |
 | `terrine.convert.missing_dependency` | <code>Conversion requires the optional {extra!r} dependency; install terrine[{extra}].</code> | `extra` | [terrine/frame.py](../../terrine/frame.py) |
+| `terrine.convert.missing_dependency` | <code>In-memory tables run on the optional {extra!r} dependency; {route}, or bind the tables by name on a connection.</code> | `extra`, `route` | [terrine/model.py](../../terrine/model.py) |
 
 ## dataset
 
@@ -303,7 +304,7 @@ Correct source, roster and coverage bindings; rebind the Model.
 | `terrine.model.ambiguous_unit` | <code>{owner} does not say which unit its rows belong to and the model declares {choices}; pass {parameter}= with one of them.</code> | `choices`, `owner`, `parameter` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.model.invalid_binding` | <code>Column {column!r} of {source!r} has type {dtype}, which cannot be a label or history value; supported types are {supported}.</code> | `column`, `dtype`, `source`, `supported` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.model.invalid_binding` | <code>History {table!r} needs exactly one time axis: valid_from, optionally with valid_to, or changed_at alone.</code> | `table` | [terrine/data.py](../../terrine/data.py) |
-| `terrine.model.invalid_binding` | <code>In-memory tables are registered under their mapping keys and {name!r} is used by {owners}; give the unit or the event table its own name.</code> | `name`, `owners` | [terrine/model.py](../../terrine/model.py) |
+| `terrine.model.invalid_binding` | <code>In-memory tables are registered under their mapping keys, which DuckDB matches without regard to ASCII case, and {name!r} is used by {owners}; give the unit or the event table its own name.</code> | `name`, `owners` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.model.invalid_binding` | <code>Metric argument {field!r} is unusable: name a column or metric, pass per=&#x27;event&#x27; or per=&#x27;day&#x27;, and give where= as a mapping keyed by label.</code> | `field` | [terrine/metrics.py](../../terrine/metrics.py) |
 | `terrine.model.invalid_binding` | <code>Model binding input is invalid: {reason}.</code> | `reason` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.model.invalid_binding` | <code>where= key {key!r} is not a label name or &lt;label&gt;__&lt;op&gt; with a usable value; the operators are ne, in, not_in, gt, gte, lt, lte and between, comparisons take one scalar, in and not_in a non-empty list, and between a (low, high) pair.</code> | `key` | [terrine/metrics.py](../../terrine/metrics.py) |

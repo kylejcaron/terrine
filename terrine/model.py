@@ -7,6 +7,7 @@ import json
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
+from importlib import import_module
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -17,6 +18,7 @@ from terrine.backends.registry import Engine, resolve_engine
 from terrine.data import BoundCoverage, Coverage, EventMetric, Events, History, Ratio, UnitSource
 from terrine.errors import RefusalSpec
 from terrine.execution._metadata import metadata_operation
+from terrine.execution._native import _ascii_key
 from terrine.semantic.bind import _SCHEMA, _relation, bind_metric, normalize_source
 from terrine.semantic.io import dump_catalog, load_catalog, validate_catalog
 from terrine.semantic.models import BoundMetric, BoundSource, Catalog, RelationSpec, TableRef
@@ -65,8 +67,14 @@ _CONNECTION_REQUIRED = RefusalSpec(
 )
 _TABLE_NAME_COLLISION = RefusalSpec(
     "terrine.model.invalid_binding",
-    "In-memory tables are registered under their mapping keys and {name!r} is used by "
-    "{owners}; give the unit or the event table its own name.",
+    "In-memory tables are registered under their mapping keys, which DuckDB matches "
+    "without regard to ASCII case, and {name!r} is used by {owners}; give the unit or "
+    "the event table its own name.",
+)
+_MISSING_DEPENDENCY = RefusalSpec(
+    "terrine.convert.missing_dependency",
+    "In-memory tables run on the optional {extra!r} dependency; {route}, or bind the "
+    "tables by name on a connection.",
 )
 _LABEL_DTYPES = ("string", "int", "float", "bool", "date")
 
@@ -205,7 +213,7 @@ def _in_memory_tables(
         raise _CONNECTION_REQUIRED.error(reason="connection_required", tables=named)
     owners: dict[str, str] = {}
     for owner, name, _ in in_memory:
-        prior = owners.setdefault(name, owner)
+        prior = owners.setdefault(_ascii_key(name), owner)
         if prior != owner:
             raise _TABLE_NAME_COLLISION.error(
                 reason="name_collision",
@@ -218,6 +226,10 @@ def _in_memory_tables(
 
 def _private_connection(tables: Mapping[str, pa.Table]) -> Any:
     """An in-process DuckDB holding ``tables``; nothing leaves the machine."""
+    try:
+        import_module("duckdb")
+    except ImportError as exc:
+        raise _MISSING_DEPENDENCY.error(extra="duckdb", route="install terrine[duckdb]") from exc
     import ibis
 
     con = ibis.duckdb.connect()

@@ -564,6 +564,14 @@ def test_aware_timestamp_column_matches_naive_utc():
             ),
             {"kind": "table", "name": "orders", "owners": ("events:orders", "units:orders")},
         ),
+        (
+            "name_collision",
+            lambda con: Model.from_tables(
+                units={"Orders": UnitSource(readme_tables()["customers"], "customer_id")},
+                events=_readme_events(readme_tables()["orders"]),
+            ),
+            {"kind": "table", "owners": ("events:orders", "units:Orders")},
+        ),
     ],
 )
 def test_in_memory_refusals(reason, build, context, readme_con):
@@ -575,3 +583,80 @@ def test_in_memory_refusals(reason, build, context, readme_con):
         assert error.value.context[key] == value
     for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
         assert restored.context == error.value.context
+
+
+def test_missing_duckdb_extra_refuses_before_any_connection(monkeypatch):
+    import terrine.model as model_module
+
+    original = model_module.import_module
+
+    def unavailable(name):
+        if name == "duckdb":
+            raise ImportError("optional backend unavailable")
+        return original(name)
+
+    def connected(*args, **kwargs):
+        raise AssertionError("a connection was opened")
+
+    monkeypatch.setattr(model_module, "import_module", unavailable)
+    monkeypatch.setattr(ibis.duckdb, "connect", connected)
+    with pytest.raises(TerrineError) as error:
+        readme_model()
+    assert error.value.code == "terrine.convert.missing_dependency"
+    assert error.value.context["extra"] == "duckdb"
+    assert "route" in error.value.context
+
+
+def test_pandas_nullable_and_categorical_columns_survive_conversion():
+    pd = pytest.importorskip("pandas")
+    customers = pd.DataFrame({"customer_id": pd.Series(["alice", "bob"], dtype="string")})
+    orders = pd.DataFrame(
+        {
+            "customer_id": ["alice", "alice", "bob", "bob"],
+            "ordered_at": pd.to_datetime(["2025-01-03", "2025-01-04", "2025-01-05", "2025-01-06"]),
+            "qty": pd.Series([1, None, 3, 4], dtype="Int64"),
+            "status": pd.Categorical(["paid", "refunded", "paid", "paid"]),
+            "flag": pd.Series([True, None, False, True], dtype="boolean"),
+        }
+    )
+    model = Model.from_tables(
+        units={"customer": UnitSource(customers, "customer_id")},
+        events={
+            "orders": Events(
+                orders,
+                time="ordered_at",
+                key="customer_id",
+                labels=("status", "flag", "qty"),
+                metrics={
+                    "n": tr.count(),
+                    "qty": tr.sum("qty"),
+                    "paid": tr.count(where={"status": "paid"}),
+                },
+                complete=COMPLETE,
+            )
+        },
+    )
+    assert {name: prop.dtype for name, prop in model.catalog.properties.items()} == {
+        "status": "string",
+        "flag": "bool",
+        "qty": "int",
+    }
+    rows = _snapshot(
+        model,
+        "2025-01-10",
+        features={
+            "n": agg("n", window=("-9d", "0s")),
+            "qty": agg("qty", window=("-9d", "0s")),
+            "paid": agg("paid", window=("-9d", "0s")),
+            "last_status": asof("status", before="0s"),
+            "last_flag": asof("flag", before="0s"),
+            "last_qty": asof("qty", before="0s"),
+        },
+    )
+    assert rows["n"] == {"alice": 2, "bob": 2}
+    assert rows["qty"] == {"alice": 1, "bob": 7}
+    assert rows["paid"] == {"alice": 1, "bob": 2}
+    assert rows["last_status"] == {"alice": "refunded", "bob": "paid"}
+    assert rows["last_flag"] == {"alice": None, "bob": True}
+    assert rows["last_flag__reason"] == {"alice": "all_values_null", "bob": None}
+    assert rows["last_qty"] == {"alice": None, "bob": 4}
