@@ -49,8 +49,12 @@ Edit the discovered version-one tagged Design serialization and pass it to
 `propose_design(serialized, base=previous)` for canonical content, a stable hash
 and sorted JSON-pointer diff paths. `validate_design` uses the existing static
 validator and reports required sources and deferred runtime obligations without
-reading rows. JSON and safe YAML use the same existing Design codec. Arbitrary
-SQL, Python expressions, callbacks and extra payload fields are not accepted.
+reading rows. Both outputs include `summary`, the same plain-language rows,
+windows, shapes and completeness description as
+[`Design.describe(model)`](design-validation.md#describing-a-design), returned
+only after source authorization. JSON and safe YAML use the same existing Design
+codec. Arbitrary SQL, Python expressions, callbacks and extra payload fields are
+not accepted.
 
 `save_design(name, serialized)` and `load_design(name)` require an owner-configured
 `design_root`; names are simple identifiers. Atomic writes and no-follow reads

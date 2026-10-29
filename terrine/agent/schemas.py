@@ -116,6 +116,7 @@ class ValidationOutput(Record):
     spec_hash: str
     required_sources: tuple[str, ...]
     runtime_obligations: tuple[str, ...]
+    summary: str
 
 
 class DesignOutput(ValidationOutput):

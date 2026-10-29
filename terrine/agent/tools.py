@@ -60,6 +60,7 @@ from terrine.runtime.saved_plan import (
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.anchors import EventAnchor, FixedDate
 from terrine.spec.dataset import INVALID_DEFINITION, DatasetDefinition
+from terrine.spec.describe import describe_design
 from terrine.spec.design import Design
 from terrine.spec.io import from_json, from_yaml, to_json
 from terrine.spec.validate import ensure_runtime_shape_supported, resolve_unit, validate_design
@@ -160,6 +161,7 @@ class DatasetTools:
             spec_hash=design.spec_hash,
             required_sources=report.required_sources,
             runtime_obligations=report.runtime_obligations,
+            summary=describe_design(design, self.model),
         )
 
     def _design_output(self, serialized: str, base: str | None = None) -> DesignOutput:

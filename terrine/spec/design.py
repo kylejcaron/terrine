@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     )
 
 from terrine.errors import RefusalSpec
+from terrine.execution._metadata import metadata_operation
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.expressions import (
     And,
@@ -279,6 +280,19 @@ class Design:
         from terrine.spec.validate import validate_design
 
         validate_design(self, model)
+
+    @metadata_operation()
+    def describe(self, model: Model) -> str:
+        """Plain-language summary of the rows, snapshots, columns and completeness to be produced.
+
+        The text is read from the design and the bound model metadata after
+        validation; no query is compiled or run.
+
+        Example: print(design.describe(model))
+        """
+        from terrine.spec.describe import describe_design
+
+        return describe_design(self, model)
 
     def build(self, model: Model) -> Frame:
         """Compile a lazy study frame without reading source rows."""

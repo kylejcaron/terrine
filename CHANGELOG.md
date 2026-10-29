@@ -135,6 +135,12 @@
   (`reason="values_only_excludes_observation_metadata"`) before any query
   runs. `to_pyarrow()` and `MaterializedFrame.to_arrow()` stay lossless and
   gain no flag.
+- `Design.describe(model)` returns a validated, plain-language summary of the
+  rows, anchors, named expressions, treatment, shape, declared completeness and
+  output columns, using bound metadata without compiling or querying sources.
+  Long schedules show their first twelve dates and the remaining count.
+  `DatasetTools.validate_design` and `propose_design` include the same text in
+  the required `ValidationOutput.summary` field after source authorization.
 
 ### Breaking changes
 

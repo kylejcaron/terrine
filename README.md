@@ -64,11 +64,16 @@ design = tr.recipes.time_series(
     outcomes={"spend_next_30d": tr.agg("spend", window=("0s", "30d"))},
 )
 
+print(design.describe(model))
 data = design.build(model).to_pandas()
 columns = ["unit", "t0", "orders_30d", "spend_30d", "spend_next_30d", "spend_next_30d__reason"]
 print(data[columns].assign(t0=data["t0"].dt.date).sort_values(["t0", "unit"]).to_string(index=False))
 ```
 <!-- --8<-- [end:first-dataset] -->
+
+`describe` explains the rows, windows and declared completeness without querying
+the source tables ([sample summary](docs/guides/design-validation.md#describing-a-design)).
+The selected data columns are:
 
 ```text
  unit         t0  orders_30d  spend_30d  spend_next_30d spend_next_30d__reason

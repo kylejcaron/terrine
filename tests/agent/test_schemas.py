@@ -24,7 +24,10 @@ def test_tool_schemas_are_versioned_strict_and_round_trip():
         status="ok",
         context={"details": [{"count": 2}]},
         output=ValidationOutput(
-            spec_hash="hash", required_sources=("events",), runtime_obligations=()
+            spec_hash="hash",
+            required_sources=("events",),
+            runtime_obligations=(),
+            summary="One row per user at 2025-01-01.",
         ),
     )
     with pytest.raises(TypeError):

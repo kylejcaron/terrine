@@ -14,6 +14,51 @@ value is annotated `static`: a constant value does not remove version boundaries
 
 The internal `validate_design` helper returns a row-free `ValidationReport` containing sorted required source names and runtime obligations. It is an internal summary, not user-authored compiler input.
 
+## Describing a design
+
+Before building the [first dataset](first-dataset.md), print the same design's
+summary:
+
+```python
+print(design.describe(model))
+```
+
+For the README's in-memory customer and orders tables, this prints:
+
+```text
+One row per customer (table customer, key customer_id) at each snapshot.
+Snapshots: every 1 month from 2025-02-01 through 2025-03-01 (2 dates: 2025-02-01, 2025-03-01), at
+  00:00 UTC.
+Features (before t0):
+  orders_30d: count of orders in [t0 - 30d, t0)
+  spend_30d: sum of orders.amount in [t0 - 30d, t0)
+Outcomes (after t0):
+  spend_next_30d: sum of orders.amount in [t0, t0 + 30d)
+Completeness: orders is declared complete for 2025-01-01 through 2025-03-20 (UTC days).
+  A value whose window reaches outside those days is null with reason incomplete_coverage.
+  A customer with no events in a complete window gets 0 for counts and sums, and null for means,
+    minima, maxima and quantiles.
+Columns: unit, anchor_id, t0, orders_30d, orders_30d__complete, orders_30d__reason, spend_30d,
+  spend_30d__complete, spend_30d__reason, spend_next_30d, spend_next_30d__complete,
+  spend_next_30d__reason.
+```
+
+The table name is `customer` because in-memory inputs are registered under their
+mapping keys. A connection-backed roster bound to `"customers"` instead reports
+that table name.
+
+`describe` resolves an inferred unit and validates the design before reading its
+bound metadata. It neither compiles a query nor reads source rows, and invalid
+references raise the same coded refusals as `validate`. Coverage comes only from
+the required sources' declarations, not observed data. Long schedules list their
+first twelve dates and the remaining count. Shape summaries include their own
+events, periods, state levels or sequence limits; non-cross-sectional structural
+columns are described by reference to the roles available after building.
+
+The [dataset agent tools](dataset-agent-tools.md) return the same text as
+`summary` in both design validation and proposal outputs, after source
+authorization.
+
 ## Building and exporting
 
 `Design.build(model)` adds output-namespace and compilation checks without reading

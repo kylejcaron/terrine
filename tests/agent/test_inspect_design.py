@@ -49,6 +49,22 @@ def test_propose_design_from_discovered_schema(tools):
     )
 
 
+def test_validate_design_returns_a_summary(tools):
+    example = json.loads(tools.design_example().output.serialized)
+    example["design"]["features"] = {
+        "recent_total": {
+            "type": "MetricAgg",
+            "metric": "total",
+            "window": {"type": "Window", "start": -86400, "end": 0},
+        }
+    }
+    serialized = json.dumps(example)
+    validated = tools.validate_design(serialized).output
+    assert validated.spec_hash and "events" in validated.summary
+    assert "recent_total" in validated.summary
+    assert tools.propose_design(serialized).output.summary == validated.summary
+
+
 def test_validation_uses_existing_metadata_contracts(tools, monkeypatch):
     def no_rows(*args, **kwargs):
         raise AssertionError("metadata tools read source rows")
