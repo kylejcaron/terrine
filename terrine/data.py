@@ -1472,6 +1472,16 @@ def _bookkeeping_columns(
     return tuple(name for name in names if name in bookkeeping)
 
 
+def _support_columns(names: Sequence[str], columns: Mapping[str, ColumnMeta]) -> tuple[str, ...]:
+    support = {
+        name
+        for meta in columns.values()
+        for name in (meta.complete_column, meta.reason_column)
+        if name is not None and name not in columns
+    }
+    return tuple(name for name in names if name in support)
+
+
 def _ordered_columns(
     names: Sequence[str],
     roles: Roles,
@@ -1479,12 +1489,7 @@ def _ordered_columns(
     timings: Mapping[str, ExpressionTiming],
 ) -> tuple[str, ...]:
     bookkeeping = _bookkeeping_columns(names, roles, columns, timings)
-    support = {
-        name
-        for meta in columns.values()
-        for name in (meta.complete_column, meta.reason_column)
-        if name is not None and name not in columns
-    }
+    support = _support_columns(names, columns)
     ordered = []
     for name in (roles.unit, roles.anchor, roles.t0, *names):
         if name not in names or name in ordered or name in bookkeeping or name in support:
@@ -1550,6 +1555,9 @@ class MaterializedFrame:
         return _bookkeeping_columns(
             self.table.column_names, self.roles, self.columns, self.provenance.expression_timings
         )
+
+    def _support_columns(self) -> tuple[str, ...]:
+        return _support_columns(self.table.column_names, self.columns)
 
     @classmethod
     def from_arrow(cls, table: pa.Table) -> MaterializedFrame:

@@ -51,7 +51,10 @@ window extends past the declared completeness end are null with reason
 `incomplete_coverage`. The compact `to_pandas()` view keeps each value immediately followed
 by `<name>__complete` and `<name>__reason`, while omitting observation bounds,
 resolved-time bookkeeping and anchor provenance. Pass
-`include_observation_metadata=True` to keep those columns. Arrow is always
+`include_observation_metadata=True` to keep those columns, or `values_only=True`
+to keep only identity, role and value columns, where an incomplete value is null
+without its reason; `training_set(label=...).to_pandas(values_only=True)` is
+the in-memory feature and label table with incomplete-label rows dropped. Arrow is always
 lossless; filtering and sorting keep observation evidence aligned with rows.
 Pandas uses nullable Arrow-backed types; pandas and Polars need their respective
 extras. See [library interoperability](common-stack-interop.md).

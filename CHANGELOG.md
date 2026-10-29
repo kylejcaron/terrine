@@ -122,6 +122,19 @@
   inferred unit give the same staged `design_hash`, definition digest and
   scoring `view_hash`. The README and the guides omit the unit on single-unit
   models.
+- `Frame.to_pandas` and `Frame.to_polars` take `values_only: bool = False`.
+  `values_only=True` drops every `<name>__complete` and `<name>__reason`
+  column as well as the bookkeeping columns, keeping identity, role and
+  value columns (`unit`, `anchor_id`, `t0`, treatment, trial, weight and
+  structural shape columns such as `age` and `cumulative_value`); an
+  incomplete value stays null and is never imputed. The default view is
+  unchanged. `training_set(...).to_pandas(values_only=True)` is the in-memory
+  feature and label table. Combining `values_only=True` with
+  `include_observation_metadata=True` refuses with
+  `terrine.dataset.invalid_view`
+  (`reason="values_only_excludes_observation_metadata"`) before any query
+  runs. `to_pyarrow()` and `MaterializedFrame.to_arrow()` stay lossless and
+  gain no flag.
 
 ### Breaking changes
 

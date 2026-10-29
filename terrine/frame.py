@@ -993,26 +993,51 @@ class Frame:
         """Execute once and return lossless Arrow with portable study metadata."""
         return self.materialize(budget).to_arrow()
 
-    def to_pandas(
-        self, *, budget: Budget | None = None, include_observation_metadata: bool = False
-    ):
-        """Return a compact, lossy dataframe unless observation columns are requested."""
-        pandas = _optional_dependency("pandas")
+    def _dataframe_table(
+        self,
+        library: str,
+        budget: Budget | None,
+        include_observation_metadata: bool,
+        values_only: bool,
+    ) -> tuple[Any, pa.Table]:
+        """Refuse an invalid column selection, import ``library``, then materialize once."""
+        if values_only and include_observation_metadata:
+            from terrine.spec.dataset import INVALID_VIEW
+
+            raise INVALID_VIEW.error(reason="values_only_excludes_observation_metadata")
+        module = _optional_dependency(library)
         materialized = self.materialize(budget)
-        table = materialized.table
-        if not include_observation_metadata:
-            table = table.drop(materialized._bookkeeping_columns())
+        if include_observation_metadata:
+            return module, materialized.table
+        dropped = materialized._bookkeeping_columns()
+        if values_only:
+            dropped += materialized._support_columns()
+        return module, materialized.table.drop(dropped)
+
+    def to_pandas(
+        self,
+        *,
+        budget: Budget | None = None,
+        include_observation_metadata: bool = False,
+        values_only: bool = False,
+    ):
+        """Return a compact, lossy dataframe; ``values_only`` also drops support columns."""
+        pandas, table = self._dataframe_table(
+            "pandas", budget, include_observation_metadata, values_only
+        )
         return table.to_pandas(types_mapper=pandas.ArrowDtype)
 
     def to_polars(
-        self, *, budget: Budget | None = None, include_observation_metadata: bool = False
+        self,
+        *,
+        budget: Budget | None = None,
+        include_observation_metadata: bool = False,
+        values_only: bool = False,
     ):
-        """Return a compact, lossy dataframe unless observation columns are requested."""
-        polars = _optional_dependency("polars")
-        materialized = self.materialize(budget)
-        table = materialized.table
-        if not include_observation_metadata:
-            table = table.drop(materialized._bookkeeping_columns())
+        """Return a compact, lossy dataframe; ``values_only`` also drops support columns."""
+        polars, table = self._dataframe_table(
+            "polars", budget, include_observation_metadata, values_only
+        )
         return polars.from_arrow(table)
 
     def cohorts(self, *, grouping: CohortGrouping, value_column: str) -> CohortTable:

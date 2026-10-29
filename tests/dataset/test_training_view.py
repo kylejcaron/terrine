@@ -4,6 +4,7 @@ from terrine.data import Coverage, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.spec import Design, EventAnchor, agg
+from tests.fixtures.readme import readme_design, readme_model
 
 
 def _frame(native_inputs, *, label_coverage_end="2025-01-31", missing_label=False):
@@ -59,6 +60,22 @@ def test_training_set_incomplete_label_policy_is_explicit(native_inputs):
     assert dropped._training_view.incomplete_labels == "drop"
     with pytest.raises(ValueError):
         frame.training_set(label="churn", incomplete_labels="impute")
+
+
+def test_training_set_values_only_is_the_xy_table(readme_con):
+    frame = readme_design().build(readme_model(readme_con)).training_set(label="spend_next_30d")
+    data = frame.to_pandas(values_only=True)
+    assert list(data.columns) == [
+        "unit",
+        "anchor_id",
+        "t0",
+        "orders_30d",
+        "spend_30d",
+        "spend_next_30d",
+    ]
+    assert len(data) == 3
+    assert data["t0"].dt.month.eq(2).all()
+    assert data["spend_next_30d"].notna().all()
 
 
 def test_boolean_feature_hash_includes_each_operand_definition(native_inputs):

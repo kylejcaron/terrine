@@ -31,6 +31,8 @@ export = dataset.export_parquet(
 )
 ```
 
+`training.to_pandas(values_only=True)` (or `to_polars`) is the in-memory feature and label table: the selected features and labels beside `unit`, `anchor_id` and `t0`, with the `__complete`/`__reason` support columns and bookkeeping dropped and the incomplete-label rows already excluded by the policy above. Staged datasets keep the support columns so a generation stays reconstructible.
+
 Pass a `TimeSplit` or `GroupSplit` from `terrine.dataset.splits` to `training_set(split=...)` to append `__terrine_split` and `__terrine_split_reason`. Calendar-date cutoffs resolve at the Catalog-local day boundary and persist as absolute instants. Time splits use the complete selected-label support, not merely the anchor: half-open interval labels may end at a cutoff, while observed point labels must precede it. Overlaps, embargoes, unavailable labels, and combined time/group mismatches remain `unassigned`; they are never reassigned to test. Group keys select unit or cluster-unit identity and use the versioned typed deterministic codec. Fit downstream preprocessing only on rows explicitly assigned to `train`.
 
 Relative labels also retain the selector origin as point support and the compiler's conservative selector-search intervals. A label window ending before a cutoff is insufficient when the event used to select that window depends on later observations. Group-only assignment tests label completeness independently of temporal endpoints. Version-1 manifests that predate optional frame metadata remain reopenable without changing their persisted encoding.

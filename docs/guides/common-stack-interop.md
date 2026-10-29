@@ -71,7 +71,12 @@ same observation evidence.
 
 Default `to_pandas()` and `to_polars()` calls return compact, lossy views without
 bookkeeping columns. Use `include_observation_metadata=True` on those dataframe
-conversions to keep them. A compact view is not a reconstructable MaterializedFrame.
+conversions to keep them. `values_only=True` also drops every `name__complete`
+and `name__reason` column, keeping identity, role and value columns with an
+incomplete value left null rather than imputed; it cannot be combined with
+`include_observation_metadata=True` (`terrine.dataset.invalid_view`,
+`reason="values_only_excludes_observation_metadata"`). A compact view is not a
+reconstructable MaterializedFrame.
 `MaterializedFrame.from_arrow()` refuses missing required observation columns with
 `terrine.metadata.missing_columns` rather than guessing or reattaching rows.
 
