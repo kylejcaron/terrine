@@ -46,6 +46,9 @@
   endpoints are included. Refusal codes and existing context fields are retained.
   Timing refusals also identify the output, normalized start/end seconds, offending
   bound and allowed limit; reversed-window refusals include both bounds.
+  History lookup conflicts identify the reserved input columns to rename or remove;
+  exact quantiles require integer or Decimal event values, while min, max and
+  count-distinct metrics also accept floating-point values.
 - `Events(table, *, time, key, unit=None, metrics=None, labels=(), complete=None)`
   declares user-named metrics with the constructors `tr.count`, `tr.sum`,
   `tr.mean` (per event, or `per="day"`), `tr.min`, `tr.max`,

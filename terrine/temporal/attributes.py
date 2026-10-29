@@ -19,8 +19,9 @@ __all__ = ["attribute_asof", "enrich_events", "history_checks", "validate_histor
 
 _ALIAS_COLLISION = RefusalSpec(
     "terrine.temporal.alias_collision",
-    "A history label name conflicts with an existing output column. "
-    "Give the history label a different output name.",
+    "The table of unit and cutoff times already has columns {columns!r}, which are "
+    "reserved for history lookup results. "
+    "Rename or remove those columns before looking up history.",
 )
 _MISSING_KEY = RefusalSpec(
     "terrine.temporal.missing_join_key",
@@ -146,9 +147,13 @@ def _as_ranges(
 
 
 def _point_output_aliases(points: ibis.Table) -> None:
-    existing = {column.casefold() for column in points.columns}
-    if "__terrine_attribute_value" in existing or "__terrine_attribute_found" in existing:
-        raise _ALIAS_COLLISION.error()
+    conflicts = tuple(
+        column
+        for column in points.columns
+        if column.casefold() in ("__terrine_attribute_value", "__terrine_attribute_found")
+    )
+    if conflicts:
+        raise _ALIAS_COLLISION.error(columns=conflicts)
 
 
 def attribute_asof(

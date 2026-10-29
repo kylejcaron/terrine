@@ -32,8 +32,19 @@ _EXACT_PRECISION = RefusalSpec(
 )
 _UNSUPPORTED_TYPE = RefusalSpec(
     "terrine.metric.nonadditive_type_unsupported",
-    "Exact {operation} cannot order event values of type {value_type!r}. "
-    "Use event values with a supported ordered numeric type.",
+    "Exact {operation} cannot use event values of type {value_type!r}. "
+    "Use a metric over integer, Decimal or floating-point event values.",
+)
+_QUANTILE_TYPE = RefusalSpec(
+    "terrine.metric.nonadditive_type_unsupported",
+    "Exact {operation} cannot use event values of type {value_type!r}. "
+    "Use a metric over integer or Decimal event values; floating-point values are "
+    "not supported for exact quantiles.",
+)
+_VALUE_REQUIRED = RefusalSpec(
+    "terrine.metric.nonadditive_type_unsupported",
+    "The {operation} metric has no event value column ({value_type!r}). "
+    "Declare the metric over an event value column.",
 )
 
 
@@ -93,7 +104,7 @@ def _exact_numeric_dtype(value_type: str, operation: str, probability: Decimal |
     if operation == "approx_count_distinct":
         return dt.int64
     if not (dtype.is_integer() or isinstance(dtype, dt.Decimal)):
-        raise _UNSUPPORTED_TYPE.error(operation=operation, value_type=value_type)
+        raise _QUANTILE_TYPE.error(operation=operation, value_type=value_type)
     probability_scale = (
         max(0, -int(probability.as_tuple().exponent)) if probability is not None else 0
     )
@@ -146,7 +157,7 @@ def aggregate_nonadditive_window(
     output_type = _exact_numeric_dtype(value_type, operation, probability)
     value_column = source.events[measure.event]
     if value_column is None:
-        raise _UNSUPPORTED_TYPE.error(operation=operation, value_type="event_count")
+        raise _VALUE_REQUIRED.error(operation=operation, value_type="event_count")
     if (
         unit_column not in anchors.columns
         or "_unit" not in events.columns
@@ -426,7 +437,7 @@ def approximate_quantile_window_values(
     """Return canonical-ordered event values per anchor for sketch sidecar execution."""
     value_column = source.events[measure.event]
     if value_column is None:
-        raise _UNSUPPORTED_TYPE.error(operation="quantile", value_type="event_count")
+        raise _VALUE_REQUIRED.error(operation="quantile", value_type="event_count")
     predicate, *_ = _predicate(events, measure, source)
     selected = events.filter(predicate.fill_null(False)).select(
         __sketch_unit=events._unit,
