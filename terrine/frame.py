@@ -639,7 +639,17 @@ class Frame:
     def stage(self, table: str, *, budget: Budget | None = None):
         """Publish a pinned dataset generation on a file-backed DuckDB connection.
 
-        Example: frame.stage("customer_spend")
+        Copy the README tables to a file-backed connection before binding the model:
+
+        >>> import ibis
+        >>> con = ibis.duckdb.connect("shop.duckdb")
+        >>> for name in ("customer", "orders"):
+        ...     _ = con.create_table(name, model.con.table(name).to_pyarrow())
+        >>> staged_model = tr.Model.from_catalog(
+        ...     model.catalog, con=con, units=model.units, readiness=model.readiness)
+        >>> staged_frame = design.build(staged_model)
+
+        Example: staged_frame.stage("customer_spend")
         """
         stage_frame = import_module("terrine.dataset.reference").stage_frame
         return stage_frame(self, table, budget=budget)

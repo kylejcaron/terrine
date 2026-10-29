@@ -136,7 +136,17 @@ def _require_runtime_reader(con: Any) -> None:
 class Dataset:
     """Reference one immutable published dataset generation.
 
-    Example: frame.stage("customer_spend")
+    Copy the README tables to a file-backed connection before binding the model:
+
+    >>> import ibis
+    >>> con = ibis.duckdb.connect("shop.duckdb")
+    >>> for name in ("customer", "orders"):
+    ...     _ = con.create_table(name, model.con.table(name).to_pyarrow())
+    >>> staged_model = tr.Model.from_catalog(
+    ...     model.catalog, con=con, units=model.units, readiness=model.readiness)
+    >>> staged_frame = design.build(staged_model)
+
+    Example: staged_frame.stage("customer_spend")
     """
 
     __slots__ = ("_con", "_raw", "_namespace", "_manifest", "_receipt")
