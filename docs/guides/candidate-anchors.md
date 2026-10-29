@@ -2,16 +2,17 @@
 
 Use `design.build(model)` to compile a lazy Frame; materialization and staging run the required integrity checks through the owned execution path. Its candidate rows retain `unit`, `anchor_id`, exact `t0`, observation bounds and anchor provenance. Building does not execute source-data queries. Anchor integrity refusals expose stable `check_key` values such as `null_roster_key`, `duplicate_roster_key`, `null_event_id`, `duplicate_event_id`, `null_event_unit`, `null_event_timestamp`, `tied_event_timestamps` and `ambiguous_event_identity`. Correct the named source contract instead of silently deduplicating candidates.
 
-`FixedDate` and `Schedule` use the explicitly declared `UnitSource` roster for the design's logical unit. Roster entry/exit bounds are membership bounds evaluated as `[entered_at, exited_at)` at each candidate `t0`. Observation bounds are copied independently; a missing bound remains null and roster exit is not used as censoring. Fixed-date calendar bounds resolve through the Catalog's declared day boundary. Schedules advance by elapsed seconds from start and exclude their end.
+`FixedDate` and `Schedule` use the explicitly declared `UnitSource` roster for the design's logical unit. Roster entry/exit bounds are membership bounds evaluated as `[entered_at, exited_at)` at each candidate `t0`. Observation bounds are copied independently; a missing bound remains null and roster exit is not used as censoring. Fixed-date calendar bounds resolve through the Catalog's declared day boundary. Schedules advance by elapsed seconds from the start day through the end day, which is included: the anchors are every `t0 = day(start) + k * every` before `day(end + 1 day)`.
 
-`EventAnchor` reads the declared fact's bound source and physical entity mapping. Fact values are not used as event-presence predicates: a row is an event even when its fact column is null. The source's `Model.event_ids` column is retained from raw relation rows for stable tie ordering and identity. Aware timestamp components of fallback or configured event identities are rendered after explicit UTC normalization, independent of the session timezone. `first` and `nth` are selected over full source history before `Design.anchor_range` filtering; `each` retains every event. A range is half-open; calendar-date endpoints resolve through Catalog day-boundary semantics and aware datetime endpoints remain exact UTC instants.
+`EventAnchor` reads the named event's bound source and physical unit mapping. Event values are not used as event-presence predicates: a row is an event even when its event column is null. The source's `Model.event_ids` column is retained from raw relation rows for stable tie ordering and identity. Aware timestamp components of fallback or configured event identities are rendered after explicit UTC normalization, independent of the session timezone. `first` and `nth` are selected over full source history before `Design.anchor_range` filtering; `each` retains every event. A range starts at its `start` bound; a calendar-date `end` keeps the whole of that local day, resolved through Catalog day-boundary semantics, while an aware datetime `end` remains an exact exclusive UTC instant.
 
 ## Landmark event anchors
 
 `EventAnchor("purchase", offset="1d")` sets `t0` to the selected purchase
 instant plus one elapsed day. Offsets default to zero and accept non-negative
 integral seconds or `s`/`m`/`h`/`d`/`w` durations. Negative offsets refuse at
-construction with `terrine.design.invalid`. Selection and `anchor_range` use
+construction with `terrine.design.invalid` (`reason="negative"`,
+`field="offset"`). Selection and `anchor_range` use
 the **original event time**, not the landmark; the shift happens afterward.
 Roster membership and all feature/outcome windows use the resulting `t0`.
 
@@ -43,7 +44,7 @@ Frame materialization or a full rebuild instead.
 ## Source integrity
 
 
-An event anchor must name a fact declared by its bound source, not merely
+An event anchor must name an event declared by its bound source, not merely
 present elsewhere in the Catalog; missing references use the same refusal
 as `Design.validate`. Unrelated source columns cannot change generated
 identities, including columns whose names differ only by case from a

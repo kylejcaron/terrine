@@ -41,24 +41,24 @@ def main() -> None:
                     CAST(9007199254740993.01 AS DECIMAL(20, 2)) AS amount
             """)
             catalog = {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "day_boundary": "UTC",
                     "dialect": "duckdb",
                     "sources": {
                         "events": {
                             "relation": {"kind": "table", "name": "events"},
-                            "timestamp": "ts",
-                            "entities": {"user": "user_id"},
-                            "facts": ["amount"],
+                            "time": "ts",
+                            "units": {"user": "user_id"},
+                            "events": ["amount"],
                             "properties": [],
                             "dimensions": [],
                         }
                     },
-                    "facts": {"amount": {"source": "events", "column": "amount"}},
+                    "events": {"amount": {"source": "events", "column": "amount"}},
                     "properties": {},
                     "dimensions": {},
-                    "measures": {"total": {"fact": "amount", "aggregation": "sum"}},
-                    "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
+                    "measures": {"total": {"event": "amount", "aggregation": "sum"}},
+                    "metrics": {"total": {"kind": "mean", "unit": "user", "measure": "total"}},
                 }
             model = Model.from_catalog(
                 catalog,

@@ -21,7 +21,7 @@ __all__ = ["sparse_prefix"]
 FLOAT64_PRECISION = RefusalSpec(
     "terrine.temporal.float64_precision",
     "Float64 result unavailable ({failure}). Use finite inputs whose result fits "
-    "binary64, or correctly declared integer/decimal facts.",
+    "binary64, or correctly declared integer/decimal event values.",
 )
 _EXACT_UNSUPPORTED = RefusalSpec(
     "terrine.temporal.exact_unsupported",

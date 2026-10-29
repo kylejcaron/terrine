@@ -77,7 +77,7 @@ def owner_tools(tmp_path):
 
 def _definition(window="-1d"):
     return DatasetDefinition(
-        schema_version=1,
+        schema_version=2,
         base_design=Design(
             "user",
             FixedDate("2025-01-02"),
@@ -112,7 +112,7 @@ def test_restricted_runtime_evaluations(case, owner_tools):
         )
     elif operation == "unsupported_shape":
         definition = DatasetDefinition(
-            schema_version=1,
+            schema_version=2,
             view=None,
             base_design=Design(
                 "user",
@@ -376,7 +376,7 @@ def test_cancellation_during_task_prevents_publication_and_stays_terminal(owner_
 
 def _prepare_materialization(tools, invocation="stage"):
     definition = DatasetDefinition(
-        schema_version=1, base_design=from_json(tools.design_example().output.serialized), view=None
+        schema_version=2, base_design=from_json(tools.design_example().output.serialized), view=None
     )
     return tools.prepare_dataset(
         definition,
@@ -469,7 +469,7 @@ def test_typed_dataset_views_survive_preparation_and_staging(owner_tools, kind):
             "as_of": "2025-01-01T00:00:00+00:00",
             "parent_design_hash": original.spec_hash,
         }
-    definition = DatasetDefinition(schema_version=1, base_design=design, view=view)
+    definition = DatasetDefinition(schema_version=2, base_design=design, view=view)
     prepared = owner_tools.prepare_dataset(
         definition,
         destination=next(iter(owner_tools.policy.allowed_destinations)),
@@ -564,7 +564,7 @@ def test_refresh_preparation_replays_before_live_inputs_or_current_base_checks(
 
 def definition_for(tools):
     return DatasetDefinition(
-        schema_version=1, base_design=from_json(tools.design_example().output.serialized), view=None
+        schema_version=2, base_design=from_json(tools.design_example().output.serialized), view=None
     )
 
 
@@ -609,7 +609,7 @@ def test_receipt_binds_dataset_definition_change_evidence_and_base_generation(ow
         outcomes={"label": agg(metric, window=("0s", "1d"))},
     )
     definition = DatasetDefinition(
-        schema_version=1,
+        schema_version=2,
         base_design=design,
         view={
             "kind": "training",
@@ -800,7 +800,7 @@ def test_dataset_preview_resolves_persisted_destination_before_reading(owner_too
     private = DestinationRef(destination.database, destination.schema, "private")
     owner_tools.policy = replace(owner_tools.policy, allowed_destinations=allowed | {private})
     definition = DatasetDefinition(
-        schema_version=1,
+        schema_version=2,
         base_design=from_json(owner_tools.design_example().output.serialized),
         view=None,
     )

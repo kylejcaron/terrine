@@ -127,6 +127,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         raise TypeError("design shape must be EventSequence")
     _validate_sequence_column_names(design, sequence)
     design.validate(model)
+    assert design.unit is not None  # every entry point resolves the design first
     # Column expressions remain anchor-grain values; event payloads are joined to them
     # only after sequence selection, using the same compiled anchor relation.
     base_design = Design(
@@ -142,9 +143,9 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
     anchors = base.table.select(
         *(name for name in base._anchors.table.columns if name in base.table.columns)
     )
-    fact = model.catalog.facts[sequence.fact]
-    source = model.sources[fact.source]
-    physical_unit = source.entities[design.unit]
+    event = model.catalog.events[sequence.event]
+    source = model.sources[event.source]
+    physical_unit = source.units[design.unit]
     configured_id = model.event_ids.get(source.name)
     raw = model._relation(source.relation)
     identity_alias = "__terrine_sequence_event_id"
@@ -158,10 +159,10 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         physical_unit,
         extra_columns={identity_alias: configured_id} if configured_id is not None else None,
     )
-    if fact.column is not None:
-        normalized = normalized.filter(normalized[fact.column].notnull())
+    if event.column is not None:
+        normalized = normalized.filter(normalized[event.column].notnull())
     timestamp_check = _precision_check(
-        model, normalized, "_timestamp", source_column=source.timestamp_column
+        model, normalized, "_timestamp", source_column=source.time_column
     )
     timestamp_alias = "_sequence_raw_timestamp"
     suffix = 0
@@ -401,7 +402,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         tuple(checks),
         base.expression_timings,
         sequence_meta=SequenceMeta(
-            fact=sequence.fact,
+            event=sequence.event,
             window=sequence.window,
             max_events=sequence.max_events,
             representation=sequence.representation,

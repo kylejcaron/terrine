@@ -39,14 +39,125 @@
 
 ### Breaking changes
 
-- Output row order on DuckDB may differ from anchor order for a small study
-  (DuckDB rewrites an as-of join with fewer than 64 estimated cutoffs into a
-  hash aggregate). Row order was never part of the dataset contract on any
-  backend; sort explicitly when an order is needed.
-- Persisted runtime prefix layers written by this version hold counts as
-  Arrow `decimal128(38, 0)` on DuckDB and cannot be read by earlier
-  versions; layers written by earlier versions still restore and compose
-  identically.
+- Catalog documents are `schema_version: 2`. Sources use `time`, `units` and
+  `events`; the root event mapping is `events`; dimensions use `unit` and `key`,
+  measures use `event`, and metrics use `unit`. Version 1 catalogs refuse with
+  `terrine.catalog.invalid_definition` before other field diagnostics.
+- Design and `DatasetDefinition` documents are version 2. Older saved designs,
+  definitions, and manifests or saved plans embedding them refuse; reconstruct
+  and save the design again. Manifest and saved-plan envelope versions stay 1.
+- `Events(table, *, time, key, unit=None, metrics=None, labels=(), complete=None)`
+  replaces `keys=` and `values=` with one unit key and user-named metrics.
+  Generated metric names are removed; without `metrics=`, only the event is
+  declared. Labels, histories and events share a namespace, `__` is reserved
+  in labels, and `<source>_<column>` value-event names are reserved against
+  event, label and history declarations.
+- `Model.from_tables` drops `readiness=` and takes completeness from each
+  `Events.complete` and `History.complete`; `con` is optional for in-memory
+  tables. `Model.from_catalog` retains `readiness=`.
+- Event selectors and returned sequence metadata use `event`, not `fact`.
+  `Initiation` and `PersistentAdoption` take an event or label name without
+  `source`; its declaring source is resolved from the model.
+- Calendar-date `Schedule.end` and `AnchorRange.end` are inclusive, so the same
+  literal bounds can produce additional anchors. Aware datetime ends remain
+  exact exclusive instants; relative windows and `TimeSplit` are unchanged.
+- `Schedule.every` is `int | None`; calendar schedules set `months` instead.
+  Serialized schedules carry both fields with exactly one non-null value.
+- Every recipe and `Design` can omit `unit` for a single-unit model.
+  `life_table(group_by={name: expression})` replaces `features=`.
+  `state_panel(periods=None)` derives whole periods from the schedule; an
+  explicit period count is a cap, not permission to truncate.
+- Bound descriptors use `time_column`, `units`, `events`, `unit`,
+  `unit_columns`, `event` and `key`. Definition-hash payloads use the same
+  vocabulary, changing feature definition hashes and `Model.model_hash`.
+- The refusal codes `terrine.model.generated_metric_collision` and
+  `terrine.model.multiple_event_units` are removed.
+- Invalid constructor inputs now raise coded `TerrineError` (still a
+  `ValueError`) rather than bare `ValueError`, `TypeError`, `RuntimeError` or
+  `FileExistsError`. Context names the caller's parameter in `field` and uses
+  stable `reason` tokens; document decoders preserve a reconstructed record's
+  refusal. Pydantic records retain `ValidationError`. Agent tools expose the
+  same design and split refusal codes as direct callers.
+- DuckDB output order may differ from anchor order for small studies; row
+  order is not a dataset contract. Sort explicitly when needed.
+- New DuckDB runtime prefix layers store counts as Arrow `decimal128(38, 0)`
+  and cannot be read by older versions; older layers still restore and compose.
+
+### Public API
+
+- Declare metrics with `tr.count`, `tr.sum`, `tr.mean` (per event or
+  `per="day"`), `tr.min`, `tr.max`, `tr.count_distinct` and `tr.ratio`.
+  Their `where=` mappings accept declared labels, scalar equality, list
+  membership, and `__ne`, `__in`, `__not_in`, `__gt`, `__gte`, `__lt`,
+  `__lte` and `__between`; multiple keys are a conjunction.
+- `Events(labels=...)` binds typed event-time properties for filters,
+  `event_time`, `asof` and treatment. `History` binds as-of attributes through
+  range validity (`valid_from`, optional `valid_to`) or a change log
+  (`changed_at`) in `Model.from_tables(history=...)`.
+- `UnitSource`, `Events` and `History` accept pandas/Polars DataFrames and
+  Arrow tables. Without a connection, `Model.from_tables` registers them in a
+  private in-process DuckDB under their mapping names; nothing is uploaded.
+  These models materialize only. Durable staging, reopening and refresh need
+  a file-backed DuckDB; refusals provide that route.
+  DataFrame detection accepts classes exposed from the public package module
+  as well as submodules, including pandas 3.1.
+- `Model.to_catalog()` writes equivalent version-2 YAML for reuse with
+  `Model.from_catalog`.
+- Unit inference applies wherever a Design meets a Model, including validation,
+  preview, build, snapshot, planning, staging and agent tools. Multiple units
+  require an explicit choice; inferred and explicit units share resolved dataset
+  identity.
+- `Schedule`, `time_series` and `trial_panel` accept `"1mo"`, `"3mo"` and
+  `"1y"` calendar steps. Anchors advance from the original start and clamp to
+  month-end without cumulative drift. `count`, `instant` and `instants` expose
+  this arithmetic. Windows and other elapsed fields still require seconds,
+  minutes, hours, days or weeks; state and calendar-comparison panels require
+  a fixed elapsed cadence.
+  Normalized calendar steps must fit in 19 decimal digits, so accepted year
+  steps remain readable from their serialized month representation.
+- `Frame.to_pandas(values_only=True)` and `to_polars(values_only=True)` retain
+  identity, role and structural value columns while dropping completeness,
+  reason and bookkeeping columns. Incomplete values remain null.
+  `training_set(...).to_pandas(values_only=True)` yields the in-memory feature
+  and label table. Observation metadata cannot be requested with this flag;
+  Arrow conversions remain lossless.
+- `Design.describe(model)` validates and summarizes rows, anchors, expressions,
+  shape, treatment, completeness and output columns without querying source
+  rows. Agent design validation/proposal responses include the same summary.
+- Unknown-name refusals include sorted `available` declarations, including
+  `model.metrics` for unknown metrics. Refusal messages identify the user's
+  input and a route forward; temporal errors identify the output and offending
+  bounds. New codes are `terrine.model.ambiguous_unit`,
+  `terrine.dataset.invalid_split`, `terrine.budget.invalid_limit`,
+  `terrine.runtime.invalid_configuration`, `terrine.export.invalid_input` and
+  `terrine.simulate.invalid_config`.
+- Public constructors, recipes and conversion methods include concise
+  docstrings ending in an executable one-line example.
+- Warehouse exports retain scoring rows when there are no outcome windows.
+
+### Documentation
+
+- The README builds a customer spend forecasting table directly from DataFrames,
+  with user-named metrics, inclusive monthly snapshots, `describe` and executed
+  printed output; in-memory materialization and file-backed staging are distinct.
+- The library hand-off guide builds a catalog-backed treatment/outcome grid of
+  trial panels for DoubleML, preserving repeated-unit clusters and distinct
+  nullable event labels; DoWhy's one-row-per-unit and weight restrictions remain
+  explicit. Terrine makes no causal claims.
+- Guides cover `History`, metric constructors, catalog export, unit inference,
+  inclusive date bounds, calendar schedules, values-only views, training sets
+  and coded refusals.
+
+### Tests
+
+- Catalog/design round trips, date-bound and calendar arithmetic oracles,
+  DataFrame/timezone parity, metric/filter/history contracts, inferred-unit
+  identity, values-only columns, metadata-only summaries, coded constructor
+  refusals and public docstring examples cover the API.
+- Acceptance tests execute the README and file-backed staging tutorial and all
+  four causal-grid pairs, check distinct treated populations and outcome values,
+  and construct clustered `DoubleMLData` when the extra is installed.
+- Refresh unit and integration duration records for balanced CI groups.
 
 ## 0.1.0.dev1
 

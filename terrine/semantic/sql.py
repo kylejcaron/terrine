@@ -13,7 +13,8 @@ __all__ = ["admit_read_query"]
 
 DIALECT_MISMATCH = RefusalSpec(
     "terrine.semantic.dialect_mismatch",
-    "Catalog dialect {declared!r} does not match connection dialect {execution!r}.",
+    "The model uses SQL dialect {declared!r}, but the connection uses {execution!r}. "
+    "Set the model dialect to match the connection and use SQL for that dialect.",
 )
 _INVALID = RefusalSpec(
     "terrine.sql.invalid_read_query", "SQL relation is not an admitted read-only query: {reason}."

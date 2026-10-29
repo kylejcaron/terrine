@@ -125,44 +125,44 @@ def test_exact_overflow_is_a_coded_refusal_and_the_boundary_succeeds(snowflake_s
     assert error.value.code == "terrine.temporal.exact_overflow"
 
 
-_SIZE_CATALOG = """schema_version: 1
+_SIZE_CATALOG = """schema_version: 2
 day_boundary: UTC
 dialect: snowflake
 sources:
   orders:
     relation: {kind: table, name: events}
-    timestamp: occurred_at
-    entities: {user: user_id}
-    facts: [order]
+    time: occurred_at
+    units: {user: user_id}
+    events: [order]
     properties: [size]
     dimensions: []
-facts:
+events:
   order: {source: orders, column: null}
 properties:
   size: {source: orders, column: qty, dtype: int, as_of: event_time}
 dimensions: {}
 measures:
   above_1e19:
-    fact: order
+    event: order
     aggregation: count
     filters: [{property: size, op: gt, values: [10000000000000000000]}]
   from_1e19:
-    fact: order
+    event: order
     aggregation: count
     filters: [{property: size, op: gte, values: [10000000000000000000]}]
   above_1e20:
-    fact: order
+    event: order
     aggregation: count
     filters: [{property: size, op: gt, values: [100000000000000000000]}]
   below_1e40:
-    fact: order
+    event: order
     aggregation: count
     filters: [{property: size, op: lt, values: ["1e40"]}]
 metrics:
-  above_1e19: {kind: mean, entity: user, measure: above_1e19}
-  from_1e19: {kind: mean, entity: user, measure: from_1e19}
-  above_1e20: {kind: mean, entity: user, measure: above_1e20}
-  below_1e40: {kind: mean, entity: user, measure: below_1e40}
+  above_1e19: {kind: mean, unit: user, measure: above_1e19}
+  from_1e19: {kind: mean, unit: user, measure: from_1e19}
+  above_1e20: {kind: mean, unit: user, measure: above_1e20}
+  below_1e40: {kind: mean, unit: user, measure: below_1e40}
 """
 
 

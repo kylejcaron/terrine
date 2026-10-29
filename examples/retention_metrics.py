@@ -32,20 +32,20 @@ def main() -> None:
             ),
         )
         catalog = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "day_boundary": "UTC",
                 "dialect": "duckdb",
                 "sources": {
                     "events": {
                         "relation": {"kind": "table", "name": "events"},
-                        "timestamp": "occurred_at",
-                        "entities": {"user": "user_id"},
-                        "facts": ["purchase_occurrence"],
+                        "time": "occurred_at",
+                        "units": {"user": "user_id"},
+                        "events": ["purchase_occurrence"],
                         "properties": ["event_name"],
                         "dimensions": [],
                     }
                 },
-                "facts": {"purchase_occurrence": {"source": "events", "column": "occurrence_id"}},
+                "events": {"purchase_occurrence": {"source": "events", "column": "occurrence_id"}},
                 "properties": {
                     "event_name": {
                         "source": "events",

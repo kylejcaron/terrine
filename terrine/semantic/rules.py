@@ -22,29 +22,33 @@ __all__ = [
 
 UNALIGNED_CALENDAR_AVERAGE = RefusalSpec(
     "terrine.metric.unaligned_calendar_average",
-    "avg_calendar_day requires a positive whole number of local days with both endpoints "
-    "at local midnight; use sum or avg_event for arbitrary instants, or choose genuinely "
-    "aligned anchors and endpoints.",
+    "A per-day mean needs a window of whole local days with both window bounds "
+    "at local midnight. Choose matching times, or use an event sum or per-event mean "
+    "for other window bounds.",
 )
 UNSUPPORTED_TEMPORAL_KIND = RefusalSpec(
     "terrine.metric.unsupported_temporal_kind",
-    "Metric kind {kind!r} is not supported by the temporal engine.",
+    "Metric kind {kind!r} cannot be calculated over a time window. "
+    "Use a mean, count, sum or ratio metric over the window.",
 )
 UNSUPPORTED_TRANSFORM = RefusalSpec(
     "terrine.metric.unsupported_transform",
-    "Metric transform {transform!r} is declared but cannot be compiled by the temporal engine.",
+    "Metric transform {transform!r} cannot be applied over a time window. "
+    "Use the metric without this transform.",
 )
 
 UNKNOWN_FILTER = RefusalSpec(
     "terrine.filter.unknown",
-    "Required metric filters are unknown for {failed_count} requested rows. "
-    "Resolve source/dimension history and filter-null semantics before exporting.",
+    "Metric filters are unknown for {failed_count} requested rows. "
+    "Provide the missing label history and resolve null or non-finite label values "
+    "and filter values before exporting.",
 )
 
 SUPPORTED_TEMPORAL_AGGREGATIONS = frozenset({"sum", "count", "avg_event", "avg_calendar_day"})
 UNSUPPORTED_TEMPORAL_AGGREGATION = RefusalSpec(
     "terrine.metric.unsupported_aggregation",
-    "Aggregation {aggregation!r} is unsupported by the temporal engine.",
+    "Metric aggregation {aggregation!r} cannot be calculated over a time window. "
+    "Use count, sum, a per-event mean or a per-day mean.",
 )
 
 
@@ -55,8 +59,8 @@ def supports_temporal_aggregation(aggregation: str) -> bool:
 
 UNSUPPORTED_EVENT_RESOLUTION = RefusalSpec(
     "terrine.temporal.unsupported_event_resolution",
-    "Event-time resolution is unsupported for dialect {dialect!r}; use aligned "
-    "anchors or a supported DuckDB source.",
+    "Exact event-time windows are unavailable for {dialect!r}. "
+    "Use local-midnight t0 and window bounds, or use DuckDB.",
 )
 
 

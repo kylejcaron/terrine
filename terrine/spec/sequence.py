@@ -10,7 +10,8 @@ from terrine.windows import Window, seconds
 
 _UNSUPPORTED_SHAPE = RefusalSpec(
     "terrine.sequence.unsupported_shape",
-    "Event-time expression is unsupported by the selected compiler.",
+    "The design cannot calculate this event-time request. "
+    "Use a declared event and label, and a supported occurrence and time window.",
 )
 _INVALID = RefusalSpec("terrine.sequence.invalid_spec", "Invalid event sequence request: {reason}.")
 _MAX = 2**63 - 1
@@ -24,13 +25,15 @@ def _name(value: object, field: str) -> str:
 
 @dataclass(frozen=True, slots=True, init=False)
 class SessionSpec:
+    """Group a unit's consecutive events into sessions separated by more than ``gap``.
+
+    Example: tr.SessionSpec(gap="30m")
+    """
+
     gap_seconds: int
 
     def __init__(self, gap: str | int) -> None:
-        try:
-            normalized = seconds(gap)
-        except (TypeError, ValueError) as exc:
-            raise _INVALID.error(reason="session gap must be integral elapsed seconds") from exc
+        normalized = seconds(gap, field="session_gap")
         if normalized < 0:
             raise _INVALID.error(reason="session gap must be non-negative")
         object.__setattr__(self, "gap_seconds", normalized)
@@ -38,6 +41,11 @@ class SessionSpec:
 
 @dataclass(frozen=True, slots=True, init=False)
 class FunnelSpec:
+    """Describe ordered event-label steps with an optional time limit.
+
+    Example: tr.FunnelSpec("status", ("placed", "paid"), within="7d")
+    """
+
     event_property: str
     steps: tuple[str, ...]
     within_seconds: int | None
@@ -53,17 +61,9 @@ class FunnelSpec:
             raise _INVALID.error(reason="funnel steps must contain distinct non-empty strings")
         if len(set(normalized)) != len(normalized):
             raise _INVALID.error(reason="funnel steps must be distinct")
-        if within is None:
-            within_seconds = None
-        else:
-            try:
-                within_seconds = seconds(within)
-            except (TypeError, ValueError) as exc:
-                raise _INVALID.error(
-                    reason="funnel within must be integral elapsed seconds"
-                ) from exc
-            if within_seconds <= 0:
-                raise _INVALID.error(reason="funnel within must be positive")
+        within_seconds = None if within is None else seconds(within, field="within")
+        if within_seconds is not None and within_seconds <= 0:
+            raise _INVALID.error(reason="funnel within must be positive")
         object.__setattr__(self, "event_property", event_property)
         object.__setattr__(self, "steps", normalized)
         object.__setattr__(self, "within_seconds", within_seconds)
@@ -71,7 +71,12 @@ class FunnelSpec:
 
 @dataclass(frozen=True, slots=True, init=False)
 class EventSequence:
-    fact: str
+    """Describe a bounded sequence of a unit's events within a window.
+
+    Example: tr.EventSequence("orders", tr.Window("0s", "30d"), max_events=10)
+    """
+
+    event: str
     window: Window
     max_events: int
     representation: Literal["positions", "arrays"]
@@ -82,7 +87,7 @@ class EventSequence:
 
     def __init__(
         self,
-        fact: str,
+        event: str,
         window: Window,
         *,
         max_events: int,
@@ -92,14 +97,14 @@ class EventSequence:
         sessions: SessionSpec | None = None,
         funnel: FunnelSpec | None = None,
     ) -> None:
-        fact = _name(fact, "sequence fact")
+        event = _name(event, "sequence event")
         if not isinstance(window, Window):
             raise _INVALID.error(reason="sequence window must be a Window")
         if isinstance(max_events, bool) or not isinstance(max_events, int):
             raise _INVALID.error(reason="max_events must be a positive signed-Int64")
         if not 0 < max_events <= _MAX:
             raise _INVALID.error(reason="max_events must be a positive signed-Int64")
-        if representation not in {"positions", "arrays"}:
+        if representation not in ("positions", "arrays"):
             raise _INVALID.error(reason="unsupported sequence representation")
         if not isinstance(properties, (tuple, list)):
             raise _INVALID.error(reason="properties must be an ordered sequence")
@@ -155,7 +160,7 @@ class EventSequence:
             raise _INVALID.error(reason="sessions must be SessionSpec or None")
         if funnel is not None and not isinstance(funnel, FunnelSpec):
             raise _INVALID.error(reason="funnel must be FunnelSpec or None")
-        object.__setattr__(self, "fact", fact)
+        object.__setattr__(self, "event", event)
         object.__setattr__(self, "window", window)
         object.__setattr__(self, "max_events", max_events)
         object.__setattr__(self, "representation", representation)

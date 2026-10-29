@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 import ibis
 import pyarrow as pa
 
-from terrine import Design, Events, FixedDate, Model, TerrineError, UnitSource, agg
+from terrine import Design, Events, FixedDate, Model, TerrineError, UnitSource, agg, count
 from terrine.data import MaterializedFrame
 
 
@@ -50,9 +50,9 @@ def main() -> None:
             "events": {
                 "orders": Events(
                     "orders",
-                    "occurred_at",
-                    {"customer": "customer_id"},
-                    values=("amount",),
+                    time="occurred_at",
+                    key="customer_id",
+                    metrics={"orders": count()},
                     complete=("2025-01-01", "2025-01-31"),
                 )
             },
@@ -87,7 +87,7 @@ def main() -> None:
         counts = Design(
             "customer",
             FixedDate("2025-01-05"),
-            features={"orders_before": agg("orders_count", window=("-7d", "0d"))},
+            features={"orders_before": agg("orders", window=("-7d", "0d"))},
         )
         try:
             counted = counts.build(model).materialize()

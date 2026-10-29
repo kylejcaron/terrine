@@ -43,7 +43,7 @@ __all__ = [
     "SqlQuery",
     "RelationSpec",
     "Source",
-    "Fact",
+    "Event",
     "Property",
     "Validity",
     "Dimension",
@@ -112,14 +112,14 @@ RelationSpec = Annotated[TableRef | SqlQuery, Field(discriminator="kind")]
 
 class Source(_Record):
     relation: RelationSpec
-    timestamp: StrictStr
-    entities: Mapping[StrictStr, StrictStr]
-    facts: tuple[StrictStr, ...]
+    time: StrictStr
+    units: Mapping[StrictStr, StrictStr]
+    events: tuple[StrictStr, ...]
     properties: tuple[StrictStr, ...]
     dimensions: tuple[StrictStr, ...]
 
 
-class Fact(_Record):
+class Event(_Record):
     source: StrictStr
     column: StrictStr | None
 
@@ -150,8 +150,8 @@ class Validity(_Record):
 
 class Dimension(_Record):
     relation: RelationSpec
-    source_entity: StrictStr
-    entity_column: StrictStr
+    unit: StrictStr
+    key: StrictStr
     validity: Validity | None = None
     properties: tuple[StrictStr, ...]
 
@@ -192,7 +192,7 @@ class Filter(_Record):
 
 
 class Measure(_Record):
-    fact: StrictStr
+    event: StrictStr
     aggregation: Literal[
         "sum", "count", "avg_event", "avg_calendar_day", "min", "max", "count_distinct"
     ]
@@ -202,7 +202,7 @@ class Measure(_Record):
 
 class Metric(_Record):
     kind: Literal["mean", "conversion", "ratio"] | StrictStr
-    entity: StrictStr
+    unit: StrictStr
     measure: StrictStr | None = None
     numerator: StrictStr | None = None
     denominator: StrictStr | None = None
@@ -229,11 +229,11 @@ class Metric(_Record):
 
 
 class Catalog(_Record):
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     day_boundary: StrictStr
     dialect: StrictStr
     sources: Mapping[StrictStr, Source]
-    facts: Mapping[StrictStr, Fact]
+    events: Mapping[StrictStr, Event]
     properties: Mapping[StrictStr, Property]
     dimensions: Mapping[StrictStr, Dimension]
     measures: Mapping[StrictStr, Measure]
@@ -300,15 +300,15 @@ class BoundValidity:
 class BoundDimension:
     name: str
     relation: RelationSpec
-    source_entity: str
-    entity_column: str
+    unit: str
+    key: str
     validity: BoundValidity | None
     properties: Mapping[str, PropertyBinding]
 
 
 @dataclass(frozen=True, slots=True)
 class BoundMeasure:
-    fact: str
+    event: str
     source_name: str
     aggregation: Literal[
         "sum", "count", "avg_event", "avg_calendar_day", "min", "max", "count_distinct"
@@ -322,9 +322,9 @@ class BoundMeasure:
 class BoundSource:
     name: str
     relation: RelationSpec
-    timestamp_column: str
-    entities: Mapping[str, str]
-    facts: Mapping[str, str | None]
+    time_column: str
+    units: Mapping[str, str]
+    events: Mapping[str, str | None]
     properties: Mapping[str, PropertyBinding]
     dimensions: tuple[BoundDimension, ...]
     dialect: str
@@ -334,8 +334,8 @@ class BoundSource:
 @dataclass(frozen=True, slots=True)
 class BoundMetric:
     name: str
-    entity: str
-    entity_columns: Mapping[str, str]
+    unit: str
+    unit_columns: Mapping[str, str]
     kind: Literal["mean", "conversion", "ratio"]
     measures: tuple[BoundMeasure, ...]
     source_names: tuple[str, ...]

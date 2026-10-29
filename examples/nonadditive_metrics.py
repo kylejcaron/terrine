@@ -28,35 +28,35 @@ def main() -> None:
     )
     con.create_table("users", pa.table({"id": ["u-1", "u-2", "u-3"]}))
     catalog = {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "occurred_at",
-                    "entities": {"user": "user_id"},
-                    "facts": ["amount"],
+                    "time": "occurred_at",
+                    "units": {"user": "user_id"},
+                    "events": ["amount"],
                     "properties": [],
                     "dimensions": [],
                 }
             },
-            "facts": {"amount": {"source": "events", "column": "amount"}},
+            "events": {"amount": {"source": "events", "column": "amount"}},
             "properties": {},
             "dimensions": {},
             "measures": {
-                "amount_sum": {"fact": "amount", "aggregation": "sum"},
-                "amount_min": {"fact": "amount", "aggregation": "min"},
-                "amount_max": {"fact": "amount", "aggregation": "max"},
-                "amount_distinct": {"fact": "amount", "aggregation": "count_distinct"},
+                "amount_sum": {"event": "amount", "aggregation": "sum"},
+                "amount_min": {"event": "amount", "aggregation": "min"},
+                "amount_max": {"event": "amount", "aggregation": "max"},
+                "amount_distinct": {"event": "amount", "aggregation": "count_distinct"},
             },
             "metrics": {
-                "amount": {"kind": "mean", "entity": "user", "measure": "amount_sum"},
-                "minimum": {"kind": "mean", "entity": "user", "measure": "amount_min"},
-                "maximum": {"kind": "mean", "entity": "user", "measure": "amount_max"},
+                "amount": {"kind": "mean", "unit": "user", "measure": "amount_sum"},
+                "minimum": {"kind": "mean", "unit": "user", "measure": "amount_min"},
+                "maximum": {"kind": "mean", "unit": "user", "measure": "amount_max"},
                 "distinct": {
                     "kind": "mean",
-                    "entity": "user",
+                    "unit": "user",
                     "measure": "amount_distinct",
                 },
             },

@@ -96,9 +96,16 @@ def _model(con, events):
         events={
             "events": tr.Events(
                 events_name,
-                keys={"user": "user_id"},
                 time="ts",
-                values=tuple(name for name in ("amount", "weight") if name in events.column_names),
+                key="user_id",
+                metrics={
+                    "events": tr.count(),
+                    **{
+                        name: tr.sum(name)
+                        for name in ("amount", "weight")
+                        if name in events.column_names
+                    },
+                },
                 complete=("2024-12-01", "2025-01-31"),
             )
         },
@@ -160,7 +167,7 @@ def test_forced_generic_selection_reaches_nested_literals(engine, request):
 def test_schedule_whole_days_advance_by_every(engine):
     """Catch whole-day intervals zeroed by EXTRACT(SECOND) during interval multiplication."""
     model = _model(engine, _events([_ORIGIN], ["event"]))
-    rows = _rows(model, tr.Design("user", tr.Schedule("2d", "2025-01-01", "2025-01-07")))
+    rows = _rows(model, tr.Design("user", tr.Schedule("2d", "2025-01-01", "2025-01-06")))
     assert sorted(row["t0"] for row in rows) == [_ORIGIN + timedelta(days=day) for day in (0, 2, 4)]
 
 
@@ -208,8 +215,8 @@ def test_window_sums_preserve_small_values_after_large_history(engine):
         "user",
         tr.FixedDate("2025-01-02"),
         features={
-            "weight": tr.agg("events_weight_sum", window=("-1d", "0s")),
-            "amount": tr.agg("events_amount_sum", window=("-1d", "0s")),
+            "weight": tr.agg("weight", window=("-1d", "0s")),
+            "amount": tr.agg("amount", window=("-1d", "0s")),
         },
     )
     (row,) = _rows(model, design)
@@ -266,8 +273,8 @@ def test_naive_day_start_ignores_session_time_zone(engine):
     design = tr.Design(
         "user",
         tr.FixedDate("2025-01-01"),
-        features={"before": tr.agg("events_count", window=("-1d", "0s"))},
-        outcomes={"after": tr.agg("events_count", window=("0s", "1d"))},
+        features={"before": tr.agg("events", window=("-1d", "0s"))},
+        outcomes={"after": tr.agg("events", window=("0s", "1d"))},
     )
     (row,) = _rows(model, design)
     assert (row["before"], row["after"]) == (1, 2)
@@ -323,8 +330,8 @@ def test_asof_at_t0_uses_previous_change(engine):
     dimension = BoundDimension(
         name="account_tier",
         relation=TableRef(kind="table", name="tier_history"),
-        source_entity="account",
-        entity_column="account_id",
+        unit="account",
+        key="account_id",
         validity=BoundValidity(None, None, "changed"),
         properties={
             "tier": PropertyBinding("tier", "tier_value", "string", "pre_exposure", "account_tier")

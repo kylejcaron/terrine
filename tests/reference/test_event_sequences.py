@@ -31,20 +31,20 @@ def test_overlapping_event_anchors_match_independent_pandas_oracle():
         con.create_table("events", events)
         catalog = Catalog.model_validate(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "day_boundary": "UTC",
                 "dialect": "duckdb",
                 "sources": {
                     "events": {
                         "relation": {"kind": "table", "name": "events"},
-                        "timestamp": "ts",
-                        "entities": {"user": "user_id"},
-                        "facts": ["activity"],
+                        "time": "ts",
+                        "units": {"user": "user_id"},
+                        "events": ["activity"],
                         "properties": ["kind"],
                         "dimensions": [],
                     }
                 },
-                "facts": {"activity": {"source": "events", "column": "activity"}},
+                "events": {"activity": {"source": "events", "column": "activity"}},
                 "properties": {
                     "kind": {
                         "source": "events",

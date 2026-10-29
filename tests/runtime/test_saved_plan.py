@@ -29,24 +29,24 @@ from terrine.spec.dataset import DatasetDefinition
 def _model(con):
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["value"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["value"],
                     "properties": [],
                     "dimensions": [],
                 }
             },
-            "facts": {"value": {"source": "events", "column": "value"}},
+            "events": {"value": {"source": "events", "column": "value"}},
             "properties": {},
             "dimensions": {},
-            "measures": {"total": {"fact": "value", "aggregation": "sum"}},
-            "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
+            "measures": {"total": {"event": "value", "aggregation": "sum"}},
+            "metrics": {"total": {"kind": "mean", "unit": "user", "measure": "total"}},
         }
     )
     return Model.from_catalog(
@@ -81,7 +81,7 @@ def test_saved_plan_reconstructs_design_and_verifies_owner_model_in_fresh_resolv
             ),
         )
         dataset_definition = DatasetDefinition(
-            schema_version=1,
+            schema_version=2,
             base_design=design,
             view={
                 "kind": "training",
@@ -380,7 +380,7 @@ def test_saved_plan_round_trips_typed_dataset_view():
                 "parent_design_hash": design.spec_hash,
             },
         ):
-            typed = DatasetDefinition(schema_version=1, base_design=design, view=view)
+            typed = DatasetDefinition(schema_version=2, base_design=design, view=view)
             saved = SavedPlan.create(
                 plan_json=plan.serialize(),
                 design=design,

@@ -18,7 +18,7 @@ def test_retention_composes_with_bounded_repeated_shapes(retention_model, shape)
     )
     if shape == "schedule":
         design = Design(
-            "user", Schedule("1d", "2025-01-02", "2025-01-04"), outcomes={"retained": expression}
+            "user", Schedule("1d", "2025-01-02", "2025-01-03"), outcomes={"retained": expression}
         )
     else:
         design = EventPanel(

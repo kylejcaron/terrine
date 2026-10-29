@@ -1,9 +1,12 @@
+from typing import Any, cast
+
 import pytest
 
 from terrine.data import Coverage, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.spec import Design, EventAnchor, agg
+from tests.fixtures.readme import readme_design, readme_model
 
 
 def _frame(native_inputs, *, label_coverage_end="2025-01-31", missing_label=False):
@@ -43,12 +46,35 @@ def test_training_set_selects_named_features_and_derives_label_support(native_in
     assert training.columns["churn"].reason_column
 
 
-def test_training_set_rejects_unknown_or_duplicate_selections(native_inputs):
+def test_training_set_rejects_unknown_or_duplicate_selections_and_untyped_splits(native_inputs):
     frame = _frame(native_inputs)
-    with pytest.raises(TerrineError):
-        frame.training_set(label="missing")
-    with pytest.raises(ValueError):
-        frame.training_set(label=("churn", "churn"))
+    for request, code, context in (
+        ({"label": "missing"}, "terrine.dataset.invalid_selection", {"names": ("missing",)}),
+        (
+            {"label": ("churn", "churn")},
+            "terrine.dataset.invalid_selection",
+            {"reason": "duplicate_names", "field": "label"},
+        ),
+        (
+            {"label": "churn", "features": ("past_sessions", "past_sessions")},
+            "terrine.dataset.invalid_selection",
+            {"reason": "duplicate_names", "field": "features"},
+        ),
+        (
+            {"label": "churn", "split": object()},
+            "terrine.dataset.invalid_split",
+            {"reason": "wrong_type", "field": "split"},
+        ),
+        (
+            {"label": 5},
+            "terrine.dataset.invalid_selection",
+            {"reason": "wrong_type", "field": "label"},
+        ),
+    ):
+        with pytest.raises(TerrineError) as error:
+            frame.training_set(**request)
+        assert error.value.code == code
+        assert error.value.context == context
 
 
 def test_training_set_incomplete_label_policy_is_explicit(native_inputs):
@@ -57,8 +83,27 @@ def test_training_set_incomplete_label_policy_is_explicit(native_inputs):
     dropped = frame.training_set(label="churn", incomplete_labels="drop")
     assert kept._training_view.incomplete_labels == "keep"
     assert dropped._training_view.incomplete_labels == "drop"
-    with pytest.raises(ValueError):
-        frame.training_set(label="churn", incomplete_labels="impute")
+    with pytest.raises(TerrineError) as error:
+        frame.training_set(label="churn", incomplete_labels=cast(Any, "impute"))
+    assert error.value.code == "terrine.dataset.invalid_view"
+    assert error.value.context["reason"] == "unsupported_value"
+    assert error.value.context["choices"] == ("drop", "keep")
+
+
+def test_training_set_values_only_is_the_xy_table(readme_con):
+    frame = readme_design().build(readme_model(readme_con)).training_set(label="spend_next_30d")
+    data = frame.to_pandas(values_only=True)
+    assert list(data.columns) == [
+        "unit",
+        "anchor_id",
+        "t0",
+        "orders_30d",
+        "spend_30d",
+        "spend_next_30d",
+    ]
+    assert len(data) == 3
+    assert data["t0"].dt.month.eq(2).all()
+    assert data["spend_next_30d"].notna().all()
 
 
 def test_boolean_feature_hash_includes_each_operand_definition(native_inputs):
@@ -114,7 +159,7 @@ def test_state_panel_feature_hash_includes_state_definition(native_inputs):
     model = frame._model
     state = BinnedMetricState("sessions", (0,), ("none", "some"))
     design = Design(
-        "user", Schedule("1d", "2025-01-03", "2025-01-05"), shape=StatePanel(state, max_periods=2)
+        "user", Schedule("1d", "2025-01-03", "2025-01-04"), shape=StatePanel(state, max_periods=2)
     )
     altered_metrics = dict(model.metrics)
     altered_metrics["sessions"] = replace(model.metrics["sessions"], kind="conversion")
@@ -143,7 +188,7 @@ def test_state_panel_feature_hash_distinguishes_baseline_evaluation(native_input
     frame = _frame(native_inputs)
     model = frame._model
     expression = agg("sessions", window=("-1d", "0d"))
-    schedule = Schedule("1d", "2025-01-03", "2025-01-05")
+    schedule = Schedule("1d", "2025-01-03", "2025-01-04")
     row_design = Design(
         "user",
         schedule,
@@ -229,9 +274,7 @@ def test_training_rejects_non_tabular_shapes_before_execution(native_inputs, kin
     assert error.value.code == "terrine.dataset.unsupported_view"
 
 
-@pytest.mark.parametrize(
-    "field", ["relation", "source_entity", "entity_column", "validity", "property"]
-)
+@pytest.mark.parametrize("field", ["relation", "unit", "key", "validity", "property"])
 def test_asof_feature_hash_tracks_resolved_dimension_definition(native_inputs, field):
     from dataclasses import replace
 
@@ -285,8 +328,8 @@ def test_asof_feature_hash_tracks_resolved_dimension_definition(native_inputs, f
 
     changes = {
         "relation": TableRef(kind="table", name="corrected_tiers"),
-        "source_entity": "account",
-        "entity_column": "account_id",
+        "unit": "account",
+        "key": "account_id",
         "validity": BoundValidity(None, None, "changed_at"),
         "property": {"tier": replace(prop, column="corrected_tier")},
     }

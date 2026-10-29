@@ -1,7 +1,7 @@
 import subprocess
 import sys
 
-_NATIVE_CATALOG = """schema_version: 1
+_NATIVE_CATALOG = """schema_version: 2
 day_boundary: UTC
 dialect: duckdb
 sources:
@@ -11,19 +11,19 @@ sources:
       sql: >-
         SELECT 1 AS user_id, TIMESTAMP '2025-01-01' AS occurred_at,
         1 AS event
-    timestamp: occurred_at
-    entities: {user_id: user_id}
-    facts: [event]
+    time: occurred_at
+    units: {user_id: user_id}
+    events: [event]
     properties: []
     dimensions: []
-facts:
+events:
   event: {source: events, column: event}
 properties: {}
 dimensions: {}
 measures:
-  event_count: {fact: event, aggregation: count}
+  event_count: {event: event, aggregation: count}
 metrics:
-  events: {kind: conversion, entity: user_id, measure: event_count}
+  events: {kind: conversion, unit: user_id, measure: event_count}
 """
 
 _BLOCK_INCREMENT = """

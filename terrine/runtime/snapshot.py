@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from terrine.data import Budget, UnitSource
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.execution._metadata import metadata_operation
 from terrine.execution.inputs import (
     ExecutionContext,
@@ -45,6 +45,10 @@ __all__ = ["ReopenableSnapshot", "SnapshotAuthority"]
 _INVALID = RefusalSpec(
     "terrine.runtime.snapshot_invalid",
     "Runtime snapshot receipt is invalid: {reason}.",
+)
+_INVALID_CONFIGURATION = RefusalSpec(
+    "terrine.runtime.invalid_configuration",
+    "Owner runtime configuration {field} is invalid: {reason}.",
 )
 
 _BUDGET_UNKNOWN = RefusalSpec(
@@ -144,7 +148,7 @@ class SnapshotAuthority:
 
     def __init__(self, owner: RuntimeOwner) -> None:
         if not isinstance(owner, RuntimeOwner):
-            raise TypeError("owner must be RuntimeOwner")
+            raise _INVALID_CONFIGURATION.error(reason="wrong_type", field="owner")
         self.owner = owner
 
     def find_retained(self, snapshot_id: str, *, namespace: str) -> ReopenableSnapshot:
@@ -401,6 +405,8 @@ class SnapshotAuthority:
                 isinstance(key, str) and isinstance(value, str) for key, value in event_ids.items()
             ):
                 raise ValueError("event ID declarations are malformed")
+        except TerrineError:
+            raise
         except (ValueError, TypeError, KeyError) as exc:
             raise _INVALID.error(reason="source declarations cannot be reconstructed") from exc
         if (
@@ -469,8 +475,9 @@ class _SnapshotContext(ExecutionContext):
 def _design_root_names(
     model: Model, design: Design
 ) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
-    from terrine.spec.validate import validate_design
+    from terrine.spec.validate import resolve_unit, validate_design
 
+    design = resolve_unit(design, model)
     sources: set[str] = (
         set(validate_design(design, model).required_sources)
         if design.unit in model.units
@@ -480,18 +487,18 @@ def _design_root_names(
 
     def visit(value: Any) -> None:
         if isinstance(value, (EventAnchor, EventTime)):
-            fact = model.catalog.facts.get(value.fact)
-            if fact is not None:
-                sources.add(fact.source)
+            event = model.catalog.events.get(value.event)
+            if event is not None:
+                sources.add(event.source)
             if isinstance(value, EventTime):
                 if value.label_property is not None:
                     properties.add(value.label_property)
                 if value.relative_to is not None:
                     visit(value.relative_to)
         elif isinstance(value, RetentionMetric):
-            fact = model.catalog.facts.get(value.fact)
-            if fact is not None:
-                sources.add(fact.source)
+            event = model.catalog.events.get(value.event)
+            if event is not None:
+                sources.add(event.source)
             properties.add(value.label_property)
         elif isinstance(value, AttributeAsOf):
             properties.add(value.attribute)
@@ -505,9 +512,9 @@ def _design_root_names(
                         continue
                     measure = model.catalog.measures.get(measure_name)
                     if measure is not None:
-                        fact = model.catalog.facts.get(measure.fact)
-                        if fact is not None:
-                            sources.add(fact.source)
+                        event = model.catalog.events.get(measure.event)
+                        if event is not None:
+                            sources.add(event.source)
             if isinstance(value, MetricAgg) and value.relative_to is not None:
                 visit(value.relative_to)
         elif isinstance(value, Mapping):

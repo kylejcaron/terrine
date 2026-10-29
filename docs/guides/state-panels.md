@@ -6,9 +6,16 @@ states remain labels, and persistence or occupancy summaries are choices for
 downstream analysis. The builder does not fit a MOST estimator, infer causal
 identification, or produce expected future engaged periods.
 
-Required arguments are `unit`, `state_source` (`StateObservations` or
-`BinnedMetricState`), `every`, `start`, exclusive `end`, and positive `periods`.
-The schedule defines candidate origins; `periods` bounds transitions. Dates are
+Required arguments are `state_source` (`StateObservations` or
+`BinnedMetricState`), `every`, `start` and `end`; `unit` is the model's only
+unit unless named (see [unit inference](design-specs.md#unit-inference)). The schedule defines candidate
+origins; `end` is the last scheduled calendar day, included, and the span from
+`start` through `end` must be a whole number of periods (`schedule_not_whole_periods`
+refuses otherwise). `every` is an elapsed duration: a transition's period is a
+fixed width, so a calendar step such as `"1mo"` refuses with
+`terrine.state_panel.invalid_schedule` (`reason="calendar_months_unsupported"`,
+`route="4w"`). `periods` defaults to that count; an explicit value is an
+upper bound, and a longer schedule refuses rather than truncating. Dates are
 calendar dates or ISO date strings, never timestamps. Supported options are
 `features`, `eligibility`, `anchor_range`, and `gap="0d"`; other optional inputs
 default to `None`. Arbitrary `outcomes`, treatment, and administrative cutoffs
@@ -37,8 +44,8 @@ state = BinnedMetricState(
 )
 features = {"past_sessions": agg("weekly_sessions", window=("-4w", "0d"))}
 design = recipes.state_panel(
-    "user", state_source=state, every="1w", start="2025-01-06",
-    end="2025-03-31", periods=12, features=features,
+    state_source=state, every="1w", start="2025-01-06", end="2025-03-30",
+    features=features,
 )
 materialized = design.build(model).materialize(
     tr.Budget(max_rows=100_000, max_output_bytes=128_000_000)
@@ -51,7 +58,7 @@ materialized = design.build(model).materialize(
 from terrine.spec import Design, Schedule, StatePanel
 
 equivalent = Design(
-    "user", Schedule("1w", "2025-01-06", "2025-03-31"),
+    None, Schedule("1w", "2025-01-06", "2025-03-30"),
     features=features, shape=StatePanel(state, max_periods=12),
 )
 assert design == equivalent
@@ -76,8 +83,7 @@ from terrine import StateObservations, recipes
 
 status = StateObservations("status", levels=("active", "closed"), absorbing=("closed",))
 status_panel = recipes.state_panel(
-    "user", state_source=status, every="1w", start="2025-01-06",
-    end="2025-03-31", periods=12,
+    state_source=status, every="1w", start="2025-01-06", end="2025-03-30",
 )
 ```
 
@@ -85,7 +91,7 @@ status_panel = recipes.state_panel(
 
 ```python
 equivalent_status = Design(
-    "user", Schedule("1w", "2025-01-06", "2025-03-31"),
+    None, Schedule("1w", "2025-01-06", "2025-03-30"),
     shape=StatePanel(status, max_periods=12),
 )
 assert status_panel == equivalent_status

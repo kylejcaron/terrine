@@ -76,6 +76,7 @@ def test_event_time_last_round_trips_through_json_yaml_and_spec_hash():
         assert restored == design
         assert restored.spec_hash == design.spec_hash
 
+
 def test_occurrence_selector_needs_no_label_filter():
     assert EventTime("purchase", Window("0s", "1d")).label_property is None
 
@@ -84,8 +85,10 @@ def test_unknown_sequence_fields_refuse():
     shape = EventSequence("purchase", Window("-1d", "0d"), max_events=2)
     payload = json.loads(to_json(Design("user", EventAnchor("signup"), shape=shape)))
     payload["design"]["shape"]["unexpected"] = 3
-    with pytest.raises(ValueError):
+    with pytest.raises(TerrineError) as error:
         from_json(json.dumps(payload))
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "malformed_document"
 
 
 def test_funnel_steps_require_distinct_declared_string_values():

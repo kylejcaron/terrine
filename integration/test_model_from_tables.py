@@ -1,177 +1,123 @@
 from __future__ import annotations
 
 import ibis
+import yaml
 
 from terrine import recipes
-from terrine.data import Coverage, Events, UnitSource
 from terrine.model import Model
-from terrine.semantic.models import Catalog
-from terrine.spec import CohortSpec, Design, EventAnchor, FixedDate, agg
+from terrine.spec import (
+    CohortSpec,
+    Design,
+    EventAnchor,
+    FixedDate,
+    Treatment,
+    agg,
+    asof,
+    event_time,
+)
 from terrine.spec.trajectory import Trajectory
+from tests.semantic.test_from_tables import WINDOW, create_tables, rich_model
 
 
-def _fixture():
-    con = ibis.duckdb.connect()
-    con.raw_sql("""
-        CREATE TABLE users AS SELECT * FROM (VALUES ('u1'), ('u2')) AS u(id)
-    """)
-    con.raw_sql("""
-        CREATE TABLE orders AS SELECT * FROM (VALUES
-            ('u1', TIMESTAMPTZ '2025-01-02 00:00:00+00', 7::BIGINT),
-            ('u1', TIMESTAMPTZ '2025-01-04 00:00:00+00', 13::BIGINT)
-        ) AS o(user_id, ts, amount)
-    """)
-    return con
-
-
-def _native_model(con):
-    catalog = Catalog.model_validate({
-        "schema_version": 1,
-        "dialect": "duckdb",
-        "day_boundary": "UTC",
-        "sources": {
-            "orders": {
-                "relation": {"kind": "table", "name": "orders"},
-                "timestamp": "ts",
-                "entities": {"user": "user_id"},
-                "facts": ["orders", "orders_amount"],
-                "properties": [],
-                "dimensions": [],
-            }
-        },
-        "facts": {
-            "orders": {"source": "orders", "column": None},
-            "orders_amount": {"source": "orders", "column": "amount"},
-        },
-        "properties": {},
-        "dimensions": {},
-        "measures": {
-            "orders_count": {"fact": "orders", "aggregation": "count"},
-            "orders_amount_sum": {"fact": "orders_amount", "aggregation": "sum"},
-            "orders_amount_mean": {"fact": "orders_amount", "aggregation": "avg_event"},
-        },
-        "metrics": {
-            name: {"kind": "mean", "entity": "user", "measure": name}
-            for name in ("orders_count", "orders_amount_sum", "orders_amount_mean")
-        },
-    })
+def _rebound(model: Model) -> Model:
     return Model.from_catalog(
-        catalog,
-        con=con,
-        units={"user": UnitSource("users", "id")},
-        readiness={"orders": Coverage("2025-01-01", "2025-02-28")},
+        yaml.safe_load(model.to_catalog()),
+        con=model.con,
+        units=model.units,
+        readiness=model.readiness,
+        event_ids=model.event_ids,
     )
 
 
-def _collect(model, design):
+def _table(model, design):
     frame = design.build(model)
-    sort_columns = ("unit", "age") if "age" in frame.expr.columns else ("unit",)
-    return frame, model.con.to_pyarrow(frame.expr.order_by(*sort_columns)).to_pylist()
+    return model.con.to_pyarrow(frame.expr.order_by("unit"))
 
 
-def test_from_tables_aggregates_match_native_catalog_and_preserve_availability():
-    con = _fixture()
+def test_to_catalog_round_trip_builds_equal_dataset():
+    con = ibis.duckdb.connect()
     try:
-        generated = Model.from_tables(
-            con,
-            units={"user": UnitSource("users", "id")},
-            events={
-                "orders": Events(
-                    "orders",
-                    "ts",
-                    {"user": "user_id"},
-                    ("amount",),
-                    ("2025-01-01", "2025-02-28"),
-                )
-            },
-        )
-        native = _native_model(con)
-        assert "orders" in generated.catalog.sources
-        assert "orders" in generated.catalog.facts
-        assert generated.catalog.facts["orders"].source == "orders"
+        create_tables(con)
+        model = rich_model(con)
+        rebound = _rebound(model)
         design = Design(
-            "user",
-            FixedDate("2025-01-03"),
-            outcomes={
-                "orders_count": agg("orders_count", window=("0d", "2d")),
-                "orders_amount_sum": agg("orders_amount_sum", window=("0d", "2d")),
-                "orders_amount_mean": agg("orders_amount_mean", window=("0d", "2d")),
+            "customer",
+            FixedDate("2025-02-01"),
+            features={
+                "refunds": agg("refunds", window=WINDOW),
+                "large_paid": agg("large_paid", window=WINDOW),
+                "refund_rate": agg("refund_rate", window=WINDOW),
+                "first_refund": event_time(
+                    "orders", window=WINDOW, label_property="status", equals="refunded"
+                ),
+                "plan_at_t0": asof("plan", before="0s"),
+                "plan_change_at_t0": asof("plan_change", before="0s"),
             },
+            treatment=Treatment("plan_change"),
         )
-        generated_frame, generated_rows = _collect(generated, design)
-        _, native_rows = _collect(native, design)
-        assert generated_rows == native_rows
-        by_unit = {row["unit"]: row for row in generated_rows}
-        assert by_unit["u1"]["orders_count"] == 1
-        assert by_unit["u1"]["orders_amount_sum"] == 13
-        assert by_unit["u1"]["orders_amount_mean"] == 13
-        assert by_unit["u2"]["orders_count"] == 0
-        assert by_unit["u2"]["orders_amount_sum"] == 0
-        assert by_unit["u2"]["orders_amount_mean"] is None
-        mean_reason = generated_frame.columns["orders_amount_mean"].reason_column
-        assert by_unit["u2"][mean_reason] == "no_observations"
+        table = _table(model, design)
+        assert table.equals(_table(rebound, design))
+        rows = {row["unit"]: row for row in table.to_pylist()}
+        assert (rows["alice"]["refunds"], rows["bob"]["refunds"]) == (1, 1)
+        assert (rows["alice"]["large_paid"], rows["bob"]["large_paid"]) == (1, 1)
+        assert rows["alice"]["refund_rate"] == rows["bob"]["refund_rate"] == 1 / 3
+        assert (rows["alice"]["plan_at_t0"], rows["alice"]["plan_change_at_t0"]) == (
+            "basic",
+            "basic",
+        )
+        assert rows["alice"]["treatment"] == "pro"
+        assert rows["bob"]["plan_at_t0__reason"] == "missing_history"
+        assert rows["bob"]["plan_at_t0__complete"] is False
 
-        incomplete = Design(
-            "user",
-            FixedDate("2025-02-28"),
-            outcomes={
-                name: agg(name, window=("0d", "2d"))
-                for name in ("orders_count", "orders_amount_sum", "orders_amount_mean")
+        early = Design(
+            "customer",
+            FixedDate("2023-12-15"),
+            features={
+                "plan_at_t0": asof("plan", before="0s"),
+                "plan_change_at_t0": asof("plan_change", before="0s"),
             },
         )
-        incomplete_frame, incomplete_rows_raw = _collect(generated, incomplete)
-        _, native_incomplete_rows = _collect(native, incomplete)
-        assert incomplete_rows_raw == native_incomplete_rows
-        incomplete_rows = {row["unit"]: row for row in incomplete_rows_raw}
-        for name in ("orders_count", "orders_amount_sum", "orders_amount_mean"):
-            assert incomplete_rows["u1"][name] is None
-            assert incomplete_rows["u2"][name] is None
-            reason_column = incomplete_frame.columns[name].reason_column
-            assert incomplete_rows["u1"][reason_column] == "incomplete_coverage"
-            assert incomplete_rows["u2"][reason_column] == "incomplete_coverage"
+        early_table = _table(model, early)
+        assert early_table.equals(_table(rebound, early))
+        assert set(early_table.column("plan_at_t0__reason").to_pylist()) == {"incomplete_coverage"}
+        assert set(early_table.column("plan_change_at_t0__reason").to_pylist()) == {
+            "incomplete_coverage"
+        }
     finally:
         con.disconnect()
 
 
 def test_from_tables_ltv_cumulative_age_zero_includes_origin_event():
-    con = _fixture()
+    con = ibis.duckdb.connect()
     try:
-        generated = Model.from_tables(
-            con,
-            units={"user": UnitSource("users", "id")},
-            events={
-                "orders": Events(
-                    "orders",
-                    "ts",
-                    {"user": "user_id"},
-                    ("amount",),
-                    ("2025-01-01", "2025-02-28"),
-                )
-            },
-        )
-        native = _native_model(con)
+        create_tables(con)
+        model = rich_model(con)
         low_level = Design(
-            "user",
+            "customer",
             EventAnchor("orders", which="first"),
-            shape=CohortSpec(
-                "orders",
-                Trajectory("orders_amount_sum", "30d", periods=2, cumulative=True),
-            ),
+            shape=CohortSpec("orders", Trajectory("spend", "7d", periods=2, cumulative=True)),
         )
         design = recipes.ltv(
-            "user",
-            start_event="orders",
-            metric="orders_amount_sum",
-            period="30d",
-            periods=2,
+            "customer", start_event="orders", metric="spend", period="7d", periods=2
         )
         assert design == low_level
         assert design.spec_hash == low_level.spec_hash
-        generated_frame, generated_rows = _collect(generated, design)
-        _, native_rows = _collect(native, low_level)
-        assert generated_rows == native_rows
-        u1 = [row for row in generated_rows if row["unit"] == "u1"]
-        age_zero = next(row for row in u1 if row["age"] == 0)
-        assert age_zero["cumulative_value"] == 20
+        rows = model.con.to_pyarrow(design.build(model).expr.order_by("unit", "age")).to_pylist()
+        rebound = _rebound(model)
+        assert (
+            rows
+            == model.con.to_pyarrow(
+                low_level.build(rebound).expr.order_by("unit", "age")
+            ).to_pylist()
+        )
+        by_unit_age = {(row["unit"], row["age"]): row["cumulative_value"] for row in rows}
+        # alice: Jan 5 (30) origin; Jan 10 (60) in age 0; Jan 15 (15) in age 1.
+        # bob: Jan 6 (80) origin; Jan 12 (45) in age 0; Jan 20 (10) beyond age 1.
+        assert by_unit_age == {
+            ("alice", 0): 90.0,
+            ("alice", 1): 105.0,
+            ("bob", 0): 125.0,
+            ("bob", 1): 125.0,
+        }
     finally:
         con.disconnect()

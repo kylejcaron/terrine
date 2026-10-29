@@ -55,7 +55,7 @@ def test_baseline_is_computed_for_delayed_entry_at_panel_start(native_inputs):
     )
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
+        Schedule("1d", "2025-01-03", "2025-01-04"),
         features={"origin": agg("sessions", window=("-1d", "0d"))},
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
@@ -98,12 +98,12 @@ def test_float_metric_bin_compares_the_rounded_value_at_a_near_boundary_cut(nati
         overwrite=True,
     )
     definition = catalog.model_dump(mode="python")
-    definition["sources"]["events"]["facts"] = ("session", "score")
-    definition["facts"]["score"] = {"source": "events", "column": "score"}
-    definition["measures"]["score_mean"] = {"fact": "score", "aggregation": "avg_event"}
+    definition["sources"]["events"]["events"] = ("session", "score")
+    definition["events"]["score"] = {"source": "events", "column": "score"}
+    definition["measures"]["score_mean"] = {"event": "score", "aggregation": "avg_event"}
     definition["metrics"]["score_avg"] = {
         "kind": "mean",
-        "entity": "user",
+        "unit": "user",
         "measure": "score_mean",
     }
     model = Model.from_catalog(
@@ -114,7 +114,7 @@ def test_float_metric_bin_compares_the_rounded_value_at_a_near_boundary_cut(nati
     )
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-04"),
+        Schedule("1d", "2025-01-03", "2025-01-03"),
         shape=StatePanel(
             BinnedMetricState("score_avg", cutpoints=(cut,), levels=("low", "high")),
             max_periods=1,
@@ -136,7 +136,7 @@ def test_binned_panel_retains_named_eligibility_column(panel_model):
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
+        Schedule("1d", "2025-01-03", "2025-01-04"),
         eligibility={"has_history": gt(agg("sessions", window=("-1d", "0d")), 0)},
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
@@ -163,7 +163,7 @@ def test_observed_panel_retains_named_eligibility_column(observed_model_factory)
     )
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
+        Schedule("1d", "2025-01-03", "2025-01-04"),
         eligibility={"has_history": gt(agg("sessions", window=("-1d", "0d")), 0)},
         shape=StatePanel(
             StateObservations("state", ("active", "closed")),
@@ -183,7 +183,7 @@ def test_observed_panel_retains_named_eligibility_column(observed_model_factory)
 def test_state_panel_enforces_output_row_and_byte_budgets(panel_model, budget, code):
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
+        Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
             max_periods=2,
@@ -197,7 +197,7 @@ def test_state_panel_enforces_output_row_and_byte_budgets(panel_model, budget, c
 def test_adjacent_binned_state_relation_pairs_response_with_successor_prior(panel_model):
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
+        Schedule("1d", "2025-01-03", "2025-01-04"),
         features={"past_sessions": agg("sessions", window=("-1d", "0d"))},
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
@@ -246,7 +246,7 @@ def test_binned_response_remains_complete_at_membership_exit(native_inputs):
     )
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-04"),
+        Schedule("1d", "2025-01-03", "2025-01-03"),
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
             max_periods=1,
@@ -295,7 +295,7 @@ def test_binned_missing_period_sides_and_unit_end_exclusivity(native_inputs):
     )
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-04"),
+        Schedule("1d", "2025-01-03", "2025-01-03"),
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
             max_periods=1,
@@ -320,7 +320,7 @@ def test_binned_missing_period_sides_and_unit_end_exclusivity(native_inputs):
 def test_state_panel_enforces_output_byte_budget(panel_model, budget, code):
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
+        Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
             max_periods=2,
@@ -342,7 +342,7 @@ def test_terminal_detection_precedes_output_eligibility_filter(observed_model_fa
     )
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
+        Schedule("1d", "2025-01-03", "2025-01-04"),
         eligibility={"history": gt(agg("sessions", window=("-1d", "0d")), 0)},
         shape=StatePanel(
             StateObservations("state", ("active", "closed"), absorbing=("closed",)),

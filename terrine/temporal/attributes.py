@@ -19,26 +19,34 @@ __all__ = ["attribute_asof", "enrich_events", "history_checks", "validate_histor
 
 _ALIAS_COLLISION = RefusalSpec(
     "terrine.temporal.alias_collision",
-    "Temporal output alias conflicts with an existing point column.",
+    "The table of unit and cutoff times already has columns {columns!r}, which are "
+    "reserved for history lookup results. "
+    "Rename or remove those columns before looking up history.",
 )
 _MISSING_KEY = RefusalSpec(
     "terrine.temporal.missing_join_key",
-    "Dimension {dimension!r} cannot resolve its declared event-side entity key.",
+    "History {dimension!r} has no matching unit key on its event table. "
+    "Use the same unit key for the history and its events.",
 )
 _INVALID_HISTORY = RefusalSpec(
     "terrine.temporal.malformed_history",
-    "Dimension history contains null keys, null starts, or malformed validity intervals.",
+    "History has missing unit keys or start times, or an end time at or before its start. "
+    "Fill the missing keys and times, and make each end later than its start.",
 )
 _DUPLICATE_HISTORY = RefusalSpec(
-    "terrine.temporal.duplicate_history", "Dimension history contains duplicate entity/start keys."
+    "terrine.temporal.duplicate_history",
+    "History repeats a start time for the same unit. "
+    "Keep one history value per unit and start time.",
 )
 _OVERLAPPING_HISTORY = RefusalSpec(
     "terrine.temporal.overlapping_history",
-    "Dimension history contains overlapping validity intervals.",
+    "History has overlapping time ranges for the same unit. "
+    "Make the ranges non-overlapping so each unit has at most one value at any time.",
 )
 _STATIC_MULTIPLICITY = RefusalSpec(
     "terrine.temporal.static_key_multiplicity",
-    "Static dimension has multiple rows for an entity key.",
+    "A label declared static has more than one row for the same unit. "
+    "Keep one row per unit, or declare time-varying values as history.",
 )
 
 
@@ -130,7 +138,7 @@ def _as_ranges(
             normalized_end: history[changed]
             .lead()
             .over(
-                group_by=[history[dimension.entity_column]],
+                group_by=[history[dimension.key]],
                 order_by=[timestamp_order_key(history[changed])],
             ),
         }
@@ -139,9 +147,13 @@ def _as_ranges(
 
 
 def _point_output_aliases(points: ibis.Table) -> None:
-    existing = {column.casefold() for column in points.columns}
-    if "__terrine_attribute_value" in existing or "__terrine_attribute_found" in existing:
-        raise _ALIAS_COLLISION.error()
+    conflicts = tuple(
+        column
+        for column in points.columns
+        if column.casefold() in ("__terrine_attribute_value", "__terrine_attribute_found")
+    )
+    if conflicts:
+        raise _ALIAS_COLLISION.error(columns=conflicts)
 
 
 def attribute_asof(
@@ -165,16 +177,14 @@ def attribute_asof(
     _check_columns(
         history,
         (
-            dimension.entity_column,
+            dimension.key,
             prop.column,
             *((start,) if start else ()),
             *((end,) if end else ()),
         ),
         field="dimension",
     )
-    _check_matching_types(
-        points, unit_column, history, dimension.entity_column, field="dimension entity"
-    )
+    _check_matching_types(points, unit_column, history, dimension.key, field="dimension entity")
     if start:
         _check_matching_types(points, cutoff_column, history, start, field="dimension validity")
     if end:
@@ -185,7 +195,7 @@ def attribute_asof(
     right_key = _fresh_alias(f"__terrine_join_{suffix}_key", reserved)
     right_value = _fresh_alias(f"__terrine_join_{suffix}_value", reserved)
     right_found = _fresh_alias(f"__terrine_join_{suffix}_found", reserved)
-    right_fields = [normalized[dimension.entity_column].name(right_key)]
+    right_fields = [normalized[dimension.key].name(right_key)]
     right_start = right_end = None
     if start_column:
         right_start = _fresh_alias(f"__terrine_join_{suffix}_from", reserved)
@@ -235,19 +245,17 @@ def enrich_events(
     aliases = _enriched_property_columns(dimensions, events.columns)
     result = events
     for dimension in dimensions:
-        event_key = source.entities.get(dimension.source_entity)
+        event_key = source.units.get(dimension.unit)
         if event_key is None or event_key not in result.columns:
             raise _MISSING_KEY.error(dimension=dimension.name)
         history = dimension_relations[dimension.name]
-        _check_columns(history, (dimension.entity_column,), field=f"dimension {dimension.name}")
+        _check_columns(history, (dimension.key,), field=f"dimension {dimension.name}")
         _check_columns(
             history,
             (prop.column for prop in dimension.properties.values()),
             field=f"dimension {dimension.name}",
         )
-        _check_matching_types(
-            result, event_key, history, dimension.entity_column, field="dimension entity"
-        )
+        _check_matching_types(result, event_key, history, dimension.key, field="dimension entity")
         if dimension.validity is not None:
             for time_column in (
                 dimension.validity.valid_from,
@@ -265,7 +273,7 @@ def enrich_events(
         key_alias = _fresh_alias(f"__terrine_event_{suffix}_key", reserved)
         start_alias = _fresh_alias(f"__terrine_event_{suffix}_from", reserved)
         end_alias = _fresh_alias(f"__terrine_event_{suffix}_to", reserved)
-        right_fields = [normalized[dimension.entity_column].name(key_alias)]
+        right_fields = [normalized[dimension.key].name(key_alias)]
         if start:
             right_fields.append(normalized[start].name(start_alias))
         if end:
@@ -306,9 +314,9 @@ def history_checks(
     validity = dimension.validity
     start = None if validity is None else (validity.changed_at or validity.valid_from)
     end = None if validity is None or validity.changed_at else validity.valid_to
-    columns = [dimension.entity_column, *([start] if start else []), *([end] if end else [])]
+    columns = [dimension.key, *([start] if start else []), *([end] if end else [])]
     _check_columns(history, columns, field=f"dimension {dimension.name}")
-    key = history[dimension.entity_column]
+    key = history[dimension.key]
 
     def fresh(prefix: str, taken: set[str] | None = None) -> str:
         # Each alias is reserved against the history's own columns, as before.
@@ -319,9 +327,7 @@ def history_checks(
 
     if validity is None:
         count_alias = fresh("__terrine_n")
-        repeated = history.group_by(dimension.entity_column).aggregate(
-            **{count_alias: history.count()}
-        )
+        repeated = history.group_by(dimension.key).aggregate(**{count_alias: history.count()})
         return (
             (count(history.filter(key.isnull())), _INVALID_HISTORY),
             (count(repeated.filter(repeated[count_alias] > 1)), _STATIC_MULTIPLICITY),
@@ -334,9 +340,7 @@ def history_checks(
         finished = history[end]
         malformed = malformed | (finished.notnull() & compare_timestamps(finished, began, "le"))
     count_alias = fresh("__terrine_n")
-    grouped = history.group_by(dimension.entity_column, start).aggregate(
-        **{count_alias: history.count()}
-    )
+    grouped = history.group_by(dimension.key, start).aggregate(**{count_alias: history.count()})
     checks = [
         (count(history.filter(malformed)), _INVALID_HISTORY),
         (count(grouped.filter(grouped[count_alias] > 1)), _DUPLICATE_HISTORY),
@@ -348,9 +352,9 @@ def history_checks(
         # Only the key and validity columns take part; project them so the window
         # carries no unrelated column into the query. A validity declared with one
         # column for both ends names it once.
-        ranges = history.select(*dict.fromkeys((dimension.entity_column, start, end)))
+        ranges = history.select(*dict.fromkeys((dimension.key, start, end)))
         prior_window = ibis.window(
-            group_by=[ranges[dimension.entity_column]],
+            group_by=[ranges[dimension.key]],
             order_by=[timestamp_order_key(ranges[start])],
             rows=(None, -1),
         )
@@ -369,7 +373,7 @@ def history_checks(
         checks.append((count(overlaps), _OVERLAPPING_HISTORY))
     elif validity.changed_at is None:
         entity_count_alias = fresh("__terrine_n")
-        multiple_ranges = history.group_by(dimension.entity_column).aggregate(
+        multiple_ranges = history.group_by(dimension.key).aggregate(
             **{entity_count_alias: history.count()}
         )
         checks.append(

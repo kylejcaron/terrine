@@ -32,12 +32,17 @@ from terrine.runtime.saved_plan import (
 )
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
-from terrine.spec.dataset import DatasetDefinition
+from terrine.spec.dataset import SCHEMA_VERSION, DatasetDefinition
 
 __all__ = ["Dataset", "stage_frame", "dataset_from_run"]
 
 _INVALID_DESTINATION = RefusalSpec(
     "terrine.dataset.invalid_destination", "Dataset destination is invalid: {reason}."
+)
+_FILE_BACKED_CONNECTION_REQUIRED = RefusalSpec(
+    "terrine.dataset.invalid_destination",
+    "Staging, refreshing and reopening a dataset need a file-backed DuckDB connection; "
+    "an in-memory model materializes only. Bind the same tables with {route}.",
 )
 _INVALID_BATCH = RefusalSpec(
     "terrine.dataset.invalid_batch_size", "Arrow batch size must be a positive integer."
@@ -50,14 +55,21 @@ _STALE_BASE = RefusalSpec(
     "terrine.dataset.stale_generation",
     "Refresh requires the pinned generation to remain the current publication.",
 )
+_INVALID_MANIFEST = RefusalSpec(
+    "terrine.dataset.invalid_manifest", "Dataset manifest input {field} is invalid: {reason}."
+)
+_INVALID_REQUEST = RefusalSpec(
+    "terrine.runtime.plan_request_invalid", "Owner plan request input {field} is invalid: {reason}."
+)
 
 
 def _owner_for(con: Any) -> RuntimeOwner:
     try:
         return RuntimeOwner.from_connection(con)
     except Exception as error:
-        raise _INVALID_DESTINATION.error(
-            reason="staging requires a file-backed DuckDB connection"
+        raise _FILE_BACKED_CONNECTION_REQUIRED.error(
+            reason="file_backed_connection_required",
+            route="Model.from_tables(ibis.duckdb.connect('<file>.duckdb'), ...)",
         ) from error
 
 
@@ -96,7 +108,7 @@ def _definition_for(frame: Any, *, include_transforms: bool = True) -> DatasetDe
             "parent_design_hash": scoring.parent_design_hash,
         }
     return DatasetDefinition(
-        schema_version=1,
+        schema_version=SCHEMA_VERSION,
         base_design=frame._design,
         view=view,
         transforms=frame._winsorizations if include_transforms else (),
@@ -122,13 +134,26 @@ def _require_runtime_reader(con: Any) -> None:
 
 
 class Dataset:
-    """An immutable reference to one committed output generation."""
+    """Reference one immutable published dataset generation.
+
+    Copy the README tables to a file-backed connection before binding the model:
+
+    >>> import ibis
+    >>> con = ibis.duckdb.connect("shop.duckdb")
+    >>> for name in ("customer", "orders"):
+    ...     _ = con.create_table(name, model.con.table(name).to_pyarrow())
+    >>> staged_model = tr.Model.from_catalog(
+    ...     model.catalog, con=con, units=model.units, readiness=model.readiness)
+    >>> staged_frame = design.build(staged_model)
+
+    Example: staged_frame.stage("customer_spend")
+    """
 
     __slots__ = ("_con", "_raw", "_namespace", "_manifest", "_receipt")
 
     def __init__(self, manifest: DatasetManifest, *, con: Any, namespace: str) -> None:
         if not isinstance(manifest, DatasetManifest):
-            raise TypeError("manifest must be a DatasetManifest")
+            raise _INVALID_MANIFEST.error(reason="wrong_type", field="manifest")
         _require_runtime_reader(con)
         self._con, self._raw = con, con.con
         self._namespace, self._manifest = namespace, manifest
@@ -288,7 +313,7 @@ class Dataset:
         if _owner_for(model.con).reference != self.manifest.source_snapshots["owner"]:
             raise _GENERATION_INVALID.error()
         if changes is not None and not isinstance(changes, ChangeSet):
-            raise TypeError("changes must be ChangeSet or None")
+            raise _INVALID_REQUEST.error(reason="wrong_type", field="changes")
         if model.model_hash != self.manifest.model_hash:
             changes = ChangeSet((), "conservative_rebuild")
         frame = self.manifest.definition.build(model)

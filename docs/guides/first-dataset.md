@@ -20,11 +20,23 @@ uv run python examples/first_dataset.py
 ## Four objects
 
 1. **Model** binds event tables with `Model.from_tables`, an authoritative unit
-   roster and explicit completeness. Use `Model.from_catalog` for richer source
-   semantics, including labels, filtered measures and as-of attributes.
+   roster and explicit completeness. Tables are pandas, Polars or Arrow objects,
+   queried in a private in-process DuckDB as in the tutorial, or names in an
+   Ibis connection passed first (`Model.from_tables(con, ...)`); the two are not
+   mixed, and nothing is uploaded. Name the metrics you will reference
+   (`tr.count()`, `tr.sum("amount")`, `tr.mean("amount")`, `tr.min("amount")`,
+   `tr.max("amount")`, `tr.count_distinct("amount")`, `tr.ratio("spend", "orders")`),
+   declare `labels=` for columns you filter or look up, and bind as-of attribute
+   tables with `tr.History` in `history={...}`. `model.to_catalog()` writes the
+   equivalent catalog YAML. Use `Model.from_catalog` for SQL relations,
+   multi-unit sources and explicit catalog names.
 2. **Design** describes anchors, features, outcomes and eligibility. Start with a
    constructor in `tr.recipes`; it returns an ordinary Design, not a wrapper.
    Names become output columns, with temporal validation on the same expressions.
+   `design.describe(model)` explains rows, windows, completeness and output
+   columns before any source rows are read. Schedules accept calendar steps such
+   as `"1mo"` and include their end date; relative windows remain elapsed and
+   end-exclusive.
 3. **Frame** is a lazy compiled dataset. `Design.build(model)` does not materialize
    source rows. `frame.materialize()` collects a result with roles, column
    completeness, null reasons and provenance; an explicit budget bounds output.
@@ -46,7 +58,10 @@ window extends past the declared completeness end are null with reason
 `incomplete_coverage`. The compact `to_pandas()` view keeps each value immediately followed
 by `<name>__complete` and `<name>__reason`, while omitting observation bounds,
 resolved-time bookkeeping and anchor provenance. Pass
-`include_observation_metadata=True` to keep those columns. Arrow is always
+`include_observation_metadata=True` to keep those columns, or `values_only=True`
+to keep only identity, role and value columns, where an incomplete value is null
+without its reason; `training_set(label=...).to_pandas(values_only=True)` is
+the in-memory feature and label table with incomplete-label rows dropped. Arrow is always
 lossless; filtering and sorting keep observation evidence aligned with rows.
 Pandas uses nullable Arrow-backed types; pandas and Polars need their respective
 extras. See [library interoperability](common-stack-interop.md).
@@ -84,10 +99,16 @@ totals, and integrity checks can still scan upstream data. See
 ## Keep a pinned dataset
 
 Staging is a separate, optional durable lifecycle that needs a file-backed DuckDB
-database. Bind the same tables there and stage the same Design:
+database. A model built from DataFrames lives in a private in-memory DuckDB and
+materializes only: `frame.stage(...)` on it refuses with
+`terrine.dataset.invalid_destination` (`reason="file_backed_connection_required"`)
+and a `route` naming `Model.from_tables(ibis.duckdb.connect("<file>.duckdb"), ...)`.
+Bind the same tables there by name and stage the same Design:
 
 ```python
 from tempfile import TemporaryDirectory
+
+import ibis
 
 with TemporaryDirectory(prefix="terrine-first-") as directory:
     local = ibis.duckdb.connect(f"{directory}/shop.duckdb")
@@ -97,8 +118,9 @@ with TemporaryDirectory(prefix="terrine-first-") as directory:
         local,
         units={"customer": tr.UnitSource("customers", "customer_id")},
         events={"orders": tr.Events(
-            "orders", "ordered_at", {"customer": "customer_id"},
-            values=("amount",), complete=("2025-01-01", "2025-03-20"),
+            "orders", time="ordered_at", key="customer_id",
+            metrics={"orders": tr.count(), "spend": tr.sum("amount")},
+            complete=("2025-01-01", "2025-03-20"),
         )},
     )
     dataset = design.build(local_model).stage("spend_forecast", budget=budget)

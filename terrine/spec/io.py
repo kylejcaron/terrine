@@ -12,6 +12,7 @@ import yaml
 from yaml.resolver import BaseResolver
 
 from terrine._time import utc_instant
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import (
@@ -49,7 +50,10 @@ from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent, Trajecto
 from terrine.windows import Window
 
 __all__ = ["SCHEMA_VERSION", "canonical_json", "to_json", "from_json", "to_yaml", "from_yaml"]
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+_INVALID = RefusalSpec("terrine.design.invalid", "Design document is invalid: {reason}.")
+_INVALID_INPUT = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
 
 
 class _UniqueSafeLoader(yaml.SafeLoader):
@@ -105,7 +109,7 @@ def _encode(value: Any) -> Any:
     if isinstance(value, FixedDate):
         return {"type": "FixedDate", "date": _date_value(value.date)}
     if isinstance(value, EventAnchor):
-        node = {"type": "EventAnchor", "fact": value.fact, "which": value.which}
+        node = {"type": "EventAnchor", "event": value.event, "which": value.which}
         if value.n is not None:
             node["n"] = value.n
         if value.offset:
@@ -115,6 +119,7 @@ def _encode(value: Any) -> Any:
         return {
             "type": "Schedule",
             "every": value.every,
+            "months": value.months,
             "start": _date_value(value.start),
             "end": _date_value(value.end),
         }
@@ -142,7 +147,7 @@ def _encode(value: Any) -> Any:
     if isinstance(value, EventSequence):
         return {
             "type": "EventSequence",
-            "fact": value.fact,
+            "event": value.event,
             "window": _encode(value.window),
             "max_events": value.max_events,
             "representation": value.representation,
@@ -172,16 +177,14 @@ def _encode(value: Any) -> Any:
     if isinstance(value, Initiation):
         return {
             "type": "Initiation",
-            "source": value.source,
-            "property": value.property,
+            "event": value.event,
             "history_start": value.history_start.isoformat(),
             "knowledge": value.knowledge,
         }
     if isinstance(value, PersistentAdoption):
         return {
             "type": "PersistentAdoption",
-            "source": value.source,
-            "property": value.property,
+            "event": value.event,
             "adopted_value": value.adopted_value,
             "history_start": value.history_start.isoformat(),
             "persistence": value.persistence,
@@ -278,7 +281,7 @@ def _encode(value: Any) -> Any:
     if isinstance(value, RetentionMetric):
         return {
             "type": "RetentionMetric",
-            "fact": value.fact,
+            "event": value.event,
             "label_property": value.label_property,
             "target_event": value.target_event,
             "count_thresholds": list(value.count_thresholds),
@@ -304,7 +307,7 @@ def _encode(value: Any) -> Any:
     if isinstance(value, EventTime):
         node = {
             "type": "EventTime",
-            "fact": value.fact,
+            "event": value.event,
             "window": _encode(value.window),
             "label_property": value.label_property,
             "equals": value.equals,
@@ -355,7 +358,7 @@ def _sort(value: Any) -> Any:
 
 def canonical_json(design: Design) -> bytes:
     if not isinstance(design, Design):
-        raise TypeError("expected a Design")
+        raise _INVALID_INPUT.error(reason="wrong_type", field="design")
     payload = {"schema_version": SCHEMA_VERSION, "design": _encode(design)}
     return json.dumps(
         _sort(payload), ensure_ascii=False, allow_nan=False, separators=(",", ":")
@@ -363,10 +366,18 @@ def canonical_json(design: Design) -> bytes:
 
 
 def to_json(design: Design) -> str:
+    """Return a design's versioned JSON document.
+
+    Example: spec.to_json(design)
+    """
     return canonical_json(design).decode("utf-8")
 
 
 def to_yaml(design: Design) -> str:
+    """Return a design's versioned YAML document.
+
+    Example: tr.to_yaml(design)
+    """
     payload = json.loads(canonical_json(design))
     return yaml.safe_dump(payload, allow_unicode=True, sort_keys=True, default_flow_style=False)
 
@@ -414,7 +425,7 @@ def _node(value: Any) -> Any:
             value,
             {
                 "type",
-                "fact",
+                "event",
                 "window",
                 "max_events",
                 "representation",
@@ -425,7 +436,7 @@ def _node(value: Any) -> Any:
             },
         )
         return EventSequence(
-            item["fact"],
+            item["event"],
             _node(item["window"]),
             max_events=item["max_events"],
             representation=item["representation"],
@@ -441,14 +452,21 @@ def _node(value: Any) -> Any:
         item = _object(value, {"type", "event_property", "steps", "within_seconds"})
         return FunnelSpec(item["event_property"], tuple(item["steps"]), item["within_seconds"])
     if tag == "EventAnchor":
-        item = _object(value, {"type", "fact", "which", "n", "offset"}, {"type", "fact", "which"})
-        return EventAnchor(item["fact"], item["which"], item.get("n"), item.get("offset", 0))
+        item = _object(value, {"type", "event", "which", "n", "offset"}, {"type", "event", "which"})
+        return EventAnchor(item["event"], item["which"], item.get("n"), item.get("offset", 0))
     if tag == "Schedule":
-        item = _object(value, {"type", "every", "start", "end"})
+        item = _object(value, {"type", "every", "months", "start", "end"})
         start, end = _read_date(item["start"]), _read_date(item["end"])
         if isinstance(start, datetime) or isinstance(end, datetime):
             raise ValueError("Schedule bounds require dates")
-        return Schedule(item["every"], start, end)
+        every, months = item["every"], item["months"]
+        if (every is None) == (months is None):
+            raise ValueError("Schedule requires exactly one of every and months")
+        if months is not None:
+            if type(months) is not int or months <= 0:
+                raise ValueError("Schedule months must be a positive integer")
+            return Schedule(f"{months}mo", start, end)
+        return Schedule(every, start, end)
     if tag == "AnchorRange":
         item = _object(value, {"type", "start", "end"})
         start = None if item["start"] is None else _read_date(item["start"])
@@ -483,33 +501,23 @@ def _node(value: Any) -> Any:
             _node(item["state"]), max_periods=item["max_periods"], baseline_features=baseline
         )
     if tag == "Initiation":
-        item = _object(value, {"type", "source", "property", "history_start", "knowledge"})
+        item = _object(value, {"type", "event", "history_start", "knowledge"})
         return Initiation(
-            item["source"],
-            item["property"],
-            datetime.fromisoformat(item["history_start"]),
-            item["knowledge"],
+            item["event"],
+            history_start=datetime.fromisoformat(item["history_start"]),
+            knowledge=item["knowledge"],
         )
     if tag == "PersistentAdoption":
         item = _object(
             value,
-            {
-                "type",
-                "source",
-                "property",
-                "adopted_value",
-                "history_start",
-                "persistence",
-                "knowledge",
-            },
+            {"type", "event", "adopted_value", "history_start", "persistence", "knowledge"},
         )
         return PersistentAdoption(
-            item["source"],
-            item["property"],
-            item["adopted_value"],
-            datetime.fromisoformat(item["history_start"]),
-            item["persistence"],
-            item["knowledge"],
+            item["event"],
+            adopted_value=item["adopted_value"],
+            history_start=datetime.fromisoformat(item["history_start"]),
+            persistence=item["persistence"],
+            knowledge=item["knowledge"],
         )
     if tag == "MatchedT0Sample":
         item = _object(value, {"type", "strata", "controls_per_treated", "seed"})
@@ -611,7 +619,7 @@ def _node(value: Any) -> Any:
             value,
             {
                 "type",
-                "fact",
+                "event",
                 "label_property",
                 "target_event",
                 "count_thresholds",
@@ -619,7 +627,7 @@ def _node(value: Any) -> Any:
             },
         )
         return RetentionMetric(
-            item["fact"],
+            item["event"],
             item["label_property"],
             item["target_event"],
             tuple(item["count_thresholds"]),
@@ -652,7 +660,7 @@ def _node(value: Any) -> Any:
             value,
             {
                 "type",
-                "fact",
+                "event",
                 "window",
                 "label_property",
                 "equals",
@@ -660,10 +668,10 @@ def _node(value: Any) -> Any:
                 "n",
                 "relative_to",
             },
-            {"type", "fact", "window", "label_property", "equals", "occurrence", "n"},
+            {"type", "event", "window", "label_property", "equals", "occurrence", "n"},
         )
         return EventTime(
-            item["fact"],
+            item["event"],
             _node(item["window"]),
             item["label_property"],
             item["equals"],
@@ -748,8 +756,8 @@ def _design(value: Any) -> Design:
     if anchor_range is not None and not isinstance(anchor_range, AnchorRange):
         raise ValueError("anchor_range has invalid node type")
     unit = item["unit"]
-    if not isinstance(unit, str):
-        raise TypeError("unit must be a string")
+    if unit is not None and not isinstance(unit, str):
+        raise TypeError("unit must be a string or null")
     return Design(
         unit,
         anchor,
@@ -796,10 +804,24 @@ def _design(value: Any) -> Design:
 
 
 def _load(payload: Any) -> Design:
-    root = _object(payload, {"schema_version", "design"})
-    if type(root["schema_version"]) is not int or root["schema_version"] != SCHEMA_VERSION:
-        raise ValueError("unsupported schema version")
-    return _design(root["design"])
+    """Decode a parsed document; anything that is not a valid design refuses with a code.
+
+    A constructor's own refusal is kept; a structural error (a missing or extra field, an
+    unknown node, a value of the wrong JSON type) is ``malformed_document``.
+    """
+    try:
+        root = _object(payload, {"schema_version", "design"})
+        if type(root["schema_version"]) is not int or root["schema_version"] != SCHEMA_VERSION:
+            raise _INVALID.error(
+                reason="unsupported_schema_version",
+                field="schema_version",
+                expected=SCHEMA_VERSION,
+            )
+        return _design(root["design"])
+    except TerrineError:
+        raise
+    except (TypeError, ValueError, ArithmeticError) as error:
+        raise _INVALID.error(reason="malformed_document") from error
 
 
 def _pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -811,21 +833,29 @@ def _pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def _reject_constant(item: str) -> Any:
+    raise ValueError(item)
+
+
 def from_json(value: str | bytes) -> Design:
+    """Read a design from a supported versioned JSON document.
+
+    Example: spec.from_json(spec.to_json(design))
+    """
     try:
-        payload = json.loads(
-            value,
-            object_pairs_hook=_pairs,
-            parse_constant=lambda item: (_ for _ in ()).throw(ValueError(item)),
-        )
-    except (TypeError, json.JSONDecodeError) as error:
-        raise ValueError("invalid JSON specification") from error
+        payload = json.loads(value, object_pairs_hook=_pairs, parse_constant=_reject_constant)
+    except (TypeError, ValueError) as error:
+        raise _INVALID.error(reason="malformed_document") from error
     return _load(payload)
 
 
 def from_yaml(value: str | bytes) -> Design:
+    """Read a design from a supported versioned YAML document.
+
+    Example: tr.from_yaml(tr.to_yaml(design))
+    """
     try:
         payload = yaml.load(value, Loader=_UniqueSafeLoader)
-    except yaml.YAMLError as error:
-        raise ValueError("invalid YAML specification") from error
+    except (yaml.YAMLError, ValueError) as error:
+        raise _INVALID.error(reason="malformed_document") from error
     return _load(payload)

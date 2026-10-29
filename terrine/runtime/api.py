@@ -52,6 +52,9 @@ _EXECUTOR_UNAVAILABLE = RefusalSpec(
     "terrine.runtime.executor_unavailable",
     "No owner execution callbacks are configured for this runtime.",
 )
+_INVALID_REQUEST = RefusalSpec(
+    "terrine.runtime.plan_request_invalid", "Owner plan request input {field} is invalid: {reason}."
+)
 
 
 class Executor(Protocol):
@@ -274,9 +277,9 @@ def find_run_by_request_key(
     namespace: str,
 ) -> RunReceipt | None:
     if not isinstance(request_key, str) or not request_key.strip() or len(request_key) > 256:
-        raise ValueError("request_key must be a non-empty string of at most 256 characters")
+        raise _INVALID_REQUEST.error(reason="invalid_request_key", field="request_key")
     if not isinstance(destination, DestinationRef):
-        raise TypeError("destination must be DestinationRef")
+        raise _INVALID_REQUEST.error(reason="wrong_type", field="destination")
     store = RuntimeStore(con, namespace=namespace)
     store.initialize()
     schema = store._schema
@@ -470,9 +473,10 @@ class DesignExecutor:
         from threading import RLock
 
         from terrine.runtime.backends.duckdb import DuckDBBackend
+        from terrine.spec.validate import resolve_unit
 
         self._model = model
-        self.design = design
+        self.design = resolve_unit(design, model)
         self._plan = plan
         self._keys: tuple[Any, ...] | None = None
         self._backend = DuckDBBackend(con, namespace=namespace)
@@ -617,12 +621,13 @@ class DesignExecutor:
                     budget=self._plan.budget,
                 )
                 reader = spooled.open()
-            panel = _provenance.panel_metadata(self.design)
+            panel = _provenance.panel_metadata(self.design, self._model)
+            calendar_comparison = _provenance.calendar_comparison_metadata(self.design, self._model)
             if isinstance(self.design.shape, StatePanel):
                 shape = "state_panel"
             elif isinstance(self.design.shape, EventSequence):
                 shape = "event_sequence"
-            elif _provenance.calendar_comparison_metadata(self.design) is not None:
+            elif calendar_comparison is not None:
                 shape = "calendar_comparison"
             elif panel is not None:
                 shape = panel.shape
@@ -681,7 +686,7 @@ class DesignExecutor:
                         if self.design.sample is not None
                         else None
                     ),
-                    calendar_comparison=_provenance.calendar_comparison_metadata(self.design),
+                    calendar_comparison=calendar_comparison,
                     administrative_cutoff=self.design.administrative_cutoff,
                 ),
             )

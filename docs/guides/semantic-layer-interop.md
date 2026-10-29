@@ -6,7 +6,7 @@ SQL compilation or a familiar file extension does not prove that mapping.
 
 | Input | Status | Contract and evidence |
 | --- | --- | --- |
-| Native Catalog schema version 1 | Verified on local DuckDB | Explicit sources, facts, properties, dimensions and measures; [native execution without increment](../../tests/compat/test_semantic_interop.py) |
+| Native Catalog schema version 2 | Verified on local DuckDB | Explicit sources, events, properties, dimensions and measures; [native execution without increment](../../tests/compat/test_semantic_interop.py) |
 | `increment==0.1.0a2` | Verified for the documented dataset projection | [Versioned mapping and limits](increment-compatibility.md); [executed mapping/refusal tests](../../tests/compat/test_increment_semantics.py) |
 | Other increment versions | Unverified | Use the tested optional release or provide a native Catalog |
 | MetricFlow/LookML and arbitrary semantic YAML | Unsupported mapping | No versioned lossless adapter exists; foreign fields fail native Catalog validation rather than becoming guessed metrics |

@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping
+from dataclasses import KW_ONLY, dataclass
 from datetime import datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
 from terrine._time import utc_instant
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, parameter_names
 from terrine.spec.anchors import EventAnchor
 from terrine.spec.design import Design
 from terrine.spec.state_panel import StatePanel
@@ -36,7 +36,8 @@ __all__ = [
 ]
 
 _INVALID_HISTORY = RefusalSpec(
-    "terrine.design.invalid_treatment_history", "Treatment history is invalid: {reason}."
+    "terrine.design.invalid_treatment_history",
+    "Treatment history input {field} is invalid: {reason}.",
 )
 _CONFLICT = RefusalSpec(
     "terrine.design.conflicting_treatment", "Sequential treatment conflicts with Design.treatment."
@@ -48,63 +49,83 @@ _INVALID_COMPARISON = RefusalSpec(
     "terrine.design.invalid_calendar_comparison",
     "Calendar comparison specification is invalid: {reason}.",
 )
+_INVALID = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
+_CHOICE = RefusalSpec("terrine.design.invalid", "Design input {field} must be one of {choices}.")
+_KNOWLEDGE = ("recorded_at", "retrospective_effective_time")
 
 
-def _selector(source: str, property: str) -> None:
-    if (
-        not isinstance(source, str)
-        or not source.strip()
-        or not isinstance(property, str)
-        or not property.strip()
-    ):
-        raise ValueError("source and property must be non-empty strings")
+def _event_name(value: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise _INVALID.error(reason="empty_name", field="event")
+
+
+def _knowledge(value: str) -> None:
+    if value not in _KNOWLEDGE:
+        raise _CHOICE.error(reason="unsupported_value", field="knowledge", choices=_KNOWLEDGE)
 
 
 def _history(value: datetime) -> datetime:
     if not isinstance(value, datetime):
-        raise _INVALID_HISTORY.error(reason="history_start must be timezone-aware")
+        raise _INVALID_HISTORY.error(reason="wrong_type", field="history_start")
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise _INVALID_HISTORY.error(reason="naive_datetime", field="history_start")
     try:
         return utc_instant(value)
-    except ValueError as error:
-        raise _INVALID_HISTORY.error(reason="history_start must be timezone-aware") from error
+    except (ValueError, OverflowError) as error:
+        raise _INVALID_HISTORY.error(reason="invalid_instant", field="history_start") from error
 
 
 @dataclass(frozen=True, slots=True)
 class Initiation:
-    source: str
-    property: str
+    """Declare that treatment starts when a unit's named event or label is observed by t0.
+
+    Example: spec.Initiation("orders", history_start=datetime(2025, 1, 1, tzinfo=UTC))
+    """
+
+    event: str
+    _: KW_ONLY
     history_start: datetime
     knowledge: Literal["recorded_at", "retrospective_effective_time"] = "recorded_at"
 
     def __post_init__(self) -> None:
-        _selector(self.source, self.property)
+        _event_name(self.event)
         object.__setattr__(self, "history_start", _history(self.history_start))
-        if self.knowledge not in ("recorded_at", "retrospective_effective_time"):
-            raise ValueError("unsupported treatment knowledge policy")
+        _knowledge(self.knowledge)
 
 
 @dataclass(frozen=True, slots=True)
 class PersistentAdoption:
-    source: str
-    property: str
+    """Declare an absorbing treatment state when a unit's label equals ``adopted_value``.
+
+    Example: spec.PersistentAdoption("status", adopted_value="paid", history_start=history_start)
+    """
+
+    event: str
+    _: KW_ONLY
     adopted_value: str
     history_start: datetime
-    persistence: Literal["absorbing"]
+    persistence: Literal["absorbing"] = "absorbing"
     knowledge: Literal["recorded_at", "retrospective_effective_time"] = "recorded_at"
 
     def __post_init__(self) -> None:
-        _selector(self.source, self.property)
+        _event_name(self.event)
         if not isinstance(self.adopted_value, str) or not self.adopted_value:
-            raise ValueError("adopted_value must be a non-empty string")
+            raise _INVALID.error(reason="empty_name", field="adopted_value")
         object.__setattr__(self, "history_start", _history(self.history_start))
         if self.persistence != "absorbing":
-            raise ValueError("persistence must be 'absorbing'")
-        if self.knowledge not in ("recorded_at", "retrospective_effective_time"):
-            raise ValueError("unsupported treatment knowledge policy")
+            raise _CHOICE.error(
+                reason="unsupported_value", field="persistence", choices=("absorbing",)
+            )
+        _knowledge(self.knowledge)
 
 
 @dataclass(frozen=True, slots=True, init=False)
 class TrialWeight:
+    """Assign equal trial weights or normalize explicitly named positive trial weights.
+
+    Example: spec.TrialWeight("equal_trial")
+    """
+
     kind: Literal["equal_trial", "explicit"]
     values: Mapping[str, float] | None
 
@@ -112,13 +133,15 @@ class TrialWeight:
         self, kind: Literal["equal_trial", "explicit"], values: Mapping[str, float] | None = None
     ):
         if kind not in ("equal_trial", "explicit"):
-            raise ValueError("kind must be equal_trial or explicit")
+            raise _CHOICE.error(
+                reason="unsupported_value", field="kind", choices=("equal_trial", "explicit")
+            )
         if kind == "explicit":
             if not isinstance(values, Mapping) or not values:
-                raise ValueError("explicit trial weights require values")
+                raise _INVALID.error(reason="empty", field="values")
             copied = dict(values)
             if any(not isinstance(key, str) or not key for key in copied):
-                raise ValueError("trial weight keys must be non-empty strings")
+                raise _INVALID.error(reason="empty_name", field="values")
             if any(
                 isinstance(value, bool)
                 or not isinstance(value, (int, float))
@@ -126,7 +149,7 @@ class TrialWeight:
                 or value <= 0
                 for value in copied.values()
             ):
-                raise ValueError("trial weights must be finite positive numbers")
+                raise _INVALID.error(reason="not_positive", field="values")
             maximum = max(copied.values())
             if maximum <= 1 and math.isclose(
                 math.fsum(copied.values()), 1.0, rel_tol=1e-15, abs_tol=1e-15
@@ -137,41 +160,51 @@ class TrialWeight:
                 total = math.fsum(scaled.values())
                 normalized = {key: value / total for key, value in scaled.items()}
             if any(not math.isfinite(value) or value <= 0 for value in normalized.values()):
-                raise ValueError("normalized trial weights must remain finite and positive")
+                raise _INVALID.error(reason="not_positive", field="values")
             values = MappingProxyType(normalized)
         elif values is not None:
-            raise ValueError("equal_trial does not accept values")
+            raise _INVALID.error(reason="unexpected_values", field="values")
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "values", values)
 
 
 @dataclass(frozen=True, slots=True)
 class MatchedT0Sample:
-    """Canonical matched-t0 sampling policy, retained on its Design."""
+    """Describe reproducible sampling of controls for treated units within t0 strata.
+
+    Example: spec.MatchedT0Sample(strata=(), controls_per_treated=2, seed=0)
+    """
 
     strata: tuple[str, ...]
     controls_per_treated: int
     seed: int
 
     def __post_init__(self) -> None:
+        if not isinstance(self.strata, Iterable):
+            raise _INVALID.error(reason="wrong_type", field="strata")
         strata = tuple(self.strata)
         if any(not isinstance(name, str) or not name.strip() for name in strata):
-            raise ValueError("strata must contain non-empty names")
+            raise _INVALID.error(reason="empty_name", field="strata")
         if len(set(strata)) != len(strata):
-            raise ValueError("strata must be unique")
+            raise _INVALID.error(reason="duplicate_names", field="strata")
         if (
             isinstance(self.controls_per_treated, bool)
             or not isinstance(self.controls_per_treated, int)
             or self.controls_per_treated <= 0
         ):
-            raise ValueError("controls_per_treated must be a positive integer")
+            raise _INVALID.error(reason="not_positive_integer", field="controls_per_treated")
         if isinstance(self.seed, bool) or not isinstance(self.seed, int) or self.seed < 0:
-            raise ValueError("seed must be a nonnegative integer")
+            raise _INVALID.error(reason="not_nonnegative_integer", field="seed")
         object.__setattr__(self, "strata", strata)
 
 
 @dataclass(frozen=True, slots=True)
 class SequentialSpec:
+    """Describe repeated trials with treatment history and elapsed reference times.
+
+    Example: spec.SequentialSpec(initiation)
+    """
+
     treatment: Initiation | PersistentAdoption
     trial_weight: TrialWeight | None = None
     anticipation_seconds: int = 0
@@ -179,40 +212,56 @@ class SequentialSpec:
 
     def __post_init__(self) -> None:
         if not isinstance(self.treatment, (Initiation, PersistentAdoption)):
-            raise TypeError("treatment must be Initiation or PersistentAdoption")
+            raise _INVALID.error(reason="wrong_type", field="treatment")
         if self.trial_weight is not None and not isinstance(self.trial_weight, TrialWeight):
-            raise TypeError("trial_weight must be TrialWeight or None")
-        if isinstance(self.anticipation_seconds, bool) or self.anticipation_seconds < 0:
-            raise ValueError("anticipation_seconds must be nonnegative")
+            raise _INVALID.error(reason="wrong_type", field="trial_weight")
+        if (
+            isinstance(self.anticipation_seconds, bool)
+            or not isinstance(self.anticipation_seconds, int)
+            or self.anticipation_seconds < 0
+        ):
+            raise _INVALID.error(reason="negative", field="anticipation_seconds")
 
 
 @dataclass(frozen=True, slots=True)
 class EventPanelSpec:
+    """Describe elapsed periods around an event, including a named reference period.
+
+    Example: spec.EventPanelSpec(periods=(-1, 0, 1), period_seconds=86400, reference_period=-1)
+    """
+
     periods: tuple[int, ...]
     period_seconds: int
     reference_period: int
 
     def __post_init__(self) -> None:
+        if not isinstance(self.periods, Iterable):
+            raise _INVALID.error(reason="wrong_type", field="periods")
         periods = tuple(self.periods)
-        if not periods or any(
-            isinstance(period, bool) or not isinstance(period, int) for period in periods
-        ):
-            raise ValueError("periods must be a non-empty tuple of integers")
+        if not periods:
+            raise _INVALID.error(reason="empty", field="periods")
+        if any(isinstance(period, bool) or not isinstance(period, int) for period in periods):
+            raise _INVALID.error(reason="wrong_type", field="periods")
         if len(set(periods)) != len(periods):
-            raise ValueError("periods must be unique")
+            raise _INVALID.error(reason="duplicate_names", field="periods")
         if (
             isinstance(self.period_seconds, bool)
             or not isinstance(self.period_seconds, int)
             or self.period_seconds <= 0
         ):
-            raise ValueError("period_seconds must be a positive integer")
+            raise _INVALID.error(reason="not_positive_integer", field="period_seconds")
         if self.reference_period not in periods:
-            raise ValueError("reference_period must be declared")
+            raise _INVALID.error(reason="undeclared_name", field="reference_period")
         object.__setattr__(self, "periods", periods)
 
 
 @dataclass(frozen=True, slots=True)
 class CalendarComparisonSpec:
+    """Describe calendar-period comparisons by initiation time and control history.
+
+    Example: spec.CalendarComparisonSpec(initiation, **comparison)
+    """
+
     cohort: Initiation
     control: Literal["never_treated", "not_yet_treated"]
     reference_period: int
@@ -221,12 +270,22 @@ class CalendarComparisonSpec:
 
     def __post_init__(self) -> None:
         if not isinstance(self.cohort, Initiation):
-            raise TypeError("cohort must be Initiation")
+            raise _INVALID.error(reason="wrong_type", field="cohort")
         if self.control not in ("never_treated", "not_yet_treated"):
-            raise ValueError("control must be never_treated or not_yet_treated")
-        values = (self.reference_period, *self.comparison_periods, *self.anticipation_periods)
-        if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
-            raise TypeError("calendar periods must be integers")
+            raise _CHOICE.error(
+                reason="unsupported_value",
+                field="control",
+                choices=("never_treated", "not_yet_treated"),
+            )
+        for field, values in (
+            ("reference_period", (self.reference_period,)),
+            ("comparison_periods", self.comparison_periods),
+            ("anticipation_periods", self.anticipation_periods),
+        ):
+            if not isinstance(values, Iterable) or any(
+                isinstance(value, bool) or not isinstance(value, int) for value in tuple(values)
+            ):
+                raise _INVALID.error(reason="wrong_type", field=field)
         comparisons = tuple(self.comparison_periods)
         anticipations = tuple(self.anticipation_periods)
         if not comparisons:
@@ -281,19 +340,31 @@ def Sequential(
     anticipation: str = "0d",
     reference_period: str = "-1d",
 ) -> Design:
+    """Add repeated-trial treatment history to a scheduled design.
+
+    Example: spec.Sequential(design, treatment=initiation)
+    """
     if not isinstance(base, Design):
-        raise TypeError("base must be Design")
+        raise _INVALID.error(reason="wrong_type", field="base")
     if base.treatment is not None:
         raise _CONFLICT.error()
-    return _copy_design(
-        base,
-        SequentialSpec(treatment, trial_weight, seconds(anticipation), seconds(reference_period)),
-    )
+    with parameter_names(anticipation_seconds="anticipation"):
+        spec = SequentialSpec(
+            treatment,
+            trial_weight,
+            seconds(anticipation, field="anticipation"),
+            seconds(reference_period, field="reference_period"),
+        )
+    return _copy_design(base, spec)
 
 
 def CalendarPanel(sequential: Design) -> Design:
+    """Return a repeated-trial design with its calendar schedule and treatment history.
+
+    Example: spec.CalendarPanel(trial_design)
+    """
     if not isinstance(sequential, Design) or not isinstance(sequential.shape, SequentialSpec):
-        raise TypeError("CalendarPanel requires a Sequential Design")
+        raise _INVALID.error(reason="requires_sequential", field="sequential")
     return sequential
 
 
@@ -307,9 +378,12 @@ def CalendarComparisonPanel(
     comparison_periods: tuple[int, ...],
     anticipation_periods: tuple[int, ...] = (),
 ) -> Frame:
-    """Build a canonical roster-backed calendar comparison Frame."""
+    """Build unit rows for calendar-period comparisons using observed initiation history.
+
+    Example: spec.CalendarComparisonPanel(daily_design, model, cohort=initiation, **comparison)
+    """
     if not isinstance(base, Design):
-        raise TypeError("base must be Design")
+        raise _INVALID.error(reason="wrong_type", field="base")
     if base.sample is not None:
         raise _INVALID_SAMPLE.error(reason="calendar comparisons refuse sampled populations")
     spec = CalendarComparisonSpec(
@@ -327,10 +401,14 @@ def EventPanel(
     period_seconds: int,
     reference_period: int = -1,
 ) -> Design:
+    """Add elapsed event-relative periods to an event-anchored design.
+
+    Example: spec.EventPanel(event_design, periods=(-1, 0, 1), period_seconds=86400)
+    """
     if not isinstance(base, Design):
-        raise TypeError("base must be Design")
+        raise _INVALID.error(reason="wrong_type", field="base")
     if not isinstance(base.anchor, EventAnchor):
-        raise TypeError("EventPanel requires an EventAnchor Design")
+        raise _INVALID.error(reason="requires_event_anchor", field="base")
     if base.treatment is not None:
         raise _CONFLICT.error()
     spec = EventPanelSpec(periods, period_seconds, reference_period)
@@ -338,11 +416,14 @@ def EventPanel(
 
 
 def matched_t0(base: Design, model: Model, *, sample: MatchedT0Sample) -> Frame:
-    """Build a sampled sequential Frame with its policy serialized on the Design."""
+    """Build a repeated-trial frame with reproducible matched-t0 control sampling.
+
+    Example: spec.matched_t0(trial_design, model, sample=sample)
+    """
     if not isinstance(base, Design) or not isinstance(base.shape, SequentialSpec):
-        raise TypeError("matched_t0 requires a Sequential Design")
+        raise _INVALID.error(reason="requires_sequential", field="base")
     if not isinstance(sample, MatchedT0Sample):
-        raise TypeError("sample must be MatchedT0Sample")
+        raise _INVALID.error(reason="wrong_type", field="sample")
     if base.sample is not None:
         raise _INVALID_SAMPLE.error(reason="the base design already declares a sample policy")
     sampled = Design(

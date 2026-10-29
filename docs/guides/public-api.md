@@ -30,28 +30,45 @@ low-level construction under **Under the hood**.
 | `event_sequence` | One selected event anchor with bounded ordered events | [Event sequences](temporal-engine.md#bounded-event-sequences-and-event-time-origins) |
 
 For `ltv`, the required `metric` must be an untransformed native metric with
-exactly one SUM measure. Use `<source>_<value>_sum` from `Model.from_tables`;
-the generated count and mean metrics are not accepted by this shape.
+exactly one SUM measure, such as a `tr.sum(column)` metric declared on
+`Events`; counts, means and ratios are not accepted by this shape.
 
-All constructors require `unit`. The guides list row-defining arguments and
-supported options; unsupported keywords raise Python's `TypeError` rather than
-being silently ignored. Shared defaults are `features=None`, `eligibility=None`,
-`anchor_range=None`, and `gap="0d"`. Where accepted, `outcomes`, `treatment`,
+Every constructor takes `unit` first, positional or keyword, and defaults it to
+`None`: the model's only unit, resolved when the design meets a model (see
+[unit inference](design-specs.md#unit-inference)). The guides list row-defining
+arguments and supported options; unsupported keywords raise Python's `TypeError`
+rather than being silently ignored. Shared defaults are `eligibility=None`,
+`anchor_range=None`, and `gap="0d"`. Where accepted, `features`, `outcomes`, `treatment`,
 and `administrative_cutoff` default to `None`. Event occurrence defaults to
 `"first"`; `occurrence="nth"` requires a positive one-based `n`, while `n` is
 omitted for `"first"` or `"each"`.
 
+An argument value a constructor cannot accept refuses at construction with a
+`TerrineError`, before a model or any row is read. Its context carries `field`,
+the parameter name, and `reason`, a stable token such as `empty_name`,
+`wrong_type`, `not_positive` or `unsupported_value` (then with `choices`). Design
+specifications, recipes and expressions use `terrine.design.invalid`; state sources
+and `StatePanel` use `terrine.state_panel.invalid_state_source`; `TimeSplit`,
+`GroupSplit` and `training_set(split=...)` use `terrine.dataset.invalid_split`;
+`Budget` uses `terrine.budget.invalid_limit`; and `Coverage`, `UnitSource`,
+`Events` and `History` use `terrine.model.invalid_binding`. Owner runtime,
+manifest, export, orchestration and agent-policy inputs refuse the same way
+under their own family's code (for example `terrine.dataset.invalid_destination`
+for a runtime namespace, `terrine.runtime.invalid_configuration` for
+orchestration and control settings). `TerrineError` subclasses `ValueError`.
+
 Where a constructor accepts `features` or `outcomes`, each named value may be an
 expression or a Boolean predicate, just as in `Design`. Eligibility remains a
-mapping of predicates. Shape-specific restrictions still apply: life-table
-features must exactly match `group_by`, and shapes with derived outcomes do not
-accept arbitrary outcome mappings.
+mapping of predicates. Shape-specific restrictions still apply: `life_table`
+declares its features through `group_by={name: expr}`, and shapes with derived
+outcomes do not accept arbitrary outcome mappings.
 
 ## Top-level constructors
 
 | Workflow | `terrine` names | Example or guide |
 | --- | --- | --- |
-| Bind and build | `Model`, `Design`, `Frame`, `Dataset`, `Events`, `Coverage`, `UnitSource`, `Budget`, `preview` | First dataset; [event tables and catalogs](temporal-engine.md) |
+| Bind and build | `Model`, `Design`, `Frame`, `Dataset`, `Events`, `History`, `Coverage`, `UnitSource`, `Budget`, `preview` | First dataset; [event tables and catalogs](temporal-engine.md) |
+| Metrics on `Events` | `count`, `sum`, `mean`, `min`, `max`, `count_distinct`, `ratio` | [Binding event tables](temporal-engine.md#binding-event-tables) |
 | Exact anchors and windows | `FixedDate`, `EventAnchor`, `AnchorRange`, `Schedule`, `Window` | [Anchors](candidate-anchors.md) |
 | Named feature/outcome expressions | `agg`, `asof`, `event_time`, `EventTime`, `retention`, `quantile`, `approx_distinct`, `approx_quantile`, `SketchRequest` | [Temporal semantics](temporal-engine.md) |
 | Eligibility and descriptive treatment | `eq`, `gt`, `is_null`, `all_of`, `Treatment` | [Design specifications](design-specs.md) |
@@ -60,12 +77,34 @@ accept arbitrary outcome mappings.
 | Ordered event datasets | `EventSequence`, `SessionSpec`, `FunnelSpec` | [Sequences](temporal-engine.md#bounded-event-sequences-and-event-time-origins) |
 | Save a description or handle a refusal | `DatasetDefinition`, `from_yaml`, `to_yaml`, `TerrineError` | [ML staging](ml-staging.md), [refusal reference](../reference/refusals.md) |
 
-`Events` belongs at the top level because `Model.from_tables` is the starting
-binding path for simple event tables: it combines explicit event completeness
-with an authoritative `UnitSource` roster. Each descriptor names exactly one
-unit. Its immutable typed descriptor is defined in `terrine.data`. Use
-`Model.from_catalog` for static/as-of attributes, filters, ratios, SCD2 dimension
-histories, SQL relations, multi-unit sources, or explicit Catalog names.
+`Events` and `History` belong at the top level because `Model.from_tables` is
+the starting binding path for simple tables: it combines explicit completeness
+with an authoritative `UnitSource` roster, user-named metrics built with the
+`count`, `sum`, `mean`, `min`, `max`, `count_distinct` and `ratio`
+constructors, labels for filtered counts and lookups, and history tables for
+as-of attributes. Each descriptor names exactly one unit key. The immutable
+typed descriptors are defined in `terrine.data` and the constructors in
+`terrine.metrics`; `Model.to_catalog()` writes the equivalent catalog. Use
+`Model.from_catalog` for SQL relations, multi-unit sources or explicit Catalog
+names.
+
+`Model.from_tables(units=..., events=..., history=...)` accepts pandas, Polars
+and Arrow tables directly when `con` is omitted, querying them in a private
+in-process DuckDB. Such a model **materializes only**: staging refuses with
+`terrine.dataset.invalid_destination` and
+`reason="file_backed_connection_required"`. For a durable Dataset, load tables
+into a file-backed DuckDB and pass its connection and table names instead.
+
+Call `design.describe(model)` to inspect the rows, schedule, windows and declared
+completeness using metadata only. `Schedule`, `time_series` and `trial_panel`
+accept `"1mo"`/`"1y"` calendar steps and include a calendar-date end; relative
+windows still use elapsed durations with an exclusive end.
+`frame.to_pandas(values_only=True)` and `frame.to_polars(values_only=True)` keep
+identity, role and value columns without completeness/reason columns; incomplete
+values remain null. `frame.training_set(label=...).to_pandas(values_only=True)`
+also drops incomplete-label rows. Leave the flag unset or use Arrow to retain
+observation evidence, and do not combine `values_only=True` with
+`include_observation_metadata=True`.
 
 All three Model binding constructors accept keyword-only
 `allow_unverified: bool = False`. A genuine unregistered Ibis backend refuses

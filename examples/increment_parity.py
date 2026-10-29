@@ -42,35 +42,35 @@ def _catalog() -> dict:
     sources = {
         "events": {
             "relation": {"kind": "table", "name": "events"},
-            "timestamp": "event_ts",
-            "entities": {"user": "unit_id"},
-            "facts": ["amount"],
+            "time": "event_ts",
+            "units": {"user": "unit_id"},
+            "events": ["amount"],
             "properties": [],
             "dimensions": [],
         },
         "orders": {
             "relation": {"kind": "table", "name": "orders"},
-            "timestamp": "order_ts",
-            "entities": {"user": "unit_id"},
-            "facts": ["items"],
+            "time": "order_ts",
+            "units": {"user": "unit_id"},
+            "events": ["items"],
             "properties": [],
             "dimensions": [],
         },
     }
     measures = {
-        "pre_revenue": {"fact": "amount", "aggregation": "sum"},
-        "post_revenue": {"fact": "amount", "aggregation": "sum"},
-        "long_revenue": {"fact": "amount", "aggregation": "sum"},
-        "post_items": {"fact": "items", "aggregation": "sum"},
-        "post_orders": {"fact": "items", "aggregation": "count"},
+        "pre_revenue": {"event": "amount", "aggregation": "sum"},
+        "post_revenue": {"event": "amount", "aggregation": "sum"},
+        "long_revenue": {"event": "amount", "aggregation": "sum"},
+        "post_items": {"event": "items", "aggregation": "sum"},
+        "post_orders": {"event": "items", "aggregation": "count"},
     }
-    metrics = {name: {"kind": "mean", "entity": "user", "measure": name} for name in measures}
+    metrics = {name: {"kind": "mean", "unit": "user", "measure": name} for name in measures}
     return {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": sources,
-            "facts": {
+            "events": {
                 "amount": {"source": "events", "column": "amount"},
                 "items": {"source": "orders", "column": "items"},
             },

@@ -60,8 +60,8 @@ __all__ = ["TemporalResult", "aggregate_window"]
 
 _DAY_ALIGNMENT = RefusalSpec(
     "terrine.temporal.unaligned_day_resolution",
-    "Day prefixes require both endpoints at local midnight; use event prefixes "
-    "for arbitrary instants.",
+    "Per-day windows need both time bounds at local midnight. "
+    "Choose matching t0 and window bounds, or use event-time windows for other times.",
 )
 
 
@@ -555,7 +555,7 @@ def aggregate_window(
     }
     for measure in calendars:
         if calendar_average_alignment(window, anchor=None, day_boundary=boundary) == "unaligned":
-            raise UNALIGNED_CALENDAR_AVERAGE.error(measure=measure.fact, **domain_context)
+            raise UNALIGNED_CALENDAR_AVERAGE.error(measure=measure.event, **domain_context)
     builder = _Builder(anchors, output)
     start = builder.put("start", anchors.t0 + ibis.interval(seconds=window.start))
     end = builder.put("end", builder.table.t0 + ibis.interval(seconds=window.end))
@@ -567,7 +567,7 @@ def aggregate_window(
             & ~(_aligned(builder.col(start), minutes) & _aligned(builder.col(end), minutes)),
         )
         refusal = UNALIGNED_CALENDAR_AVERAGE if calendars else _DAY_ALIGNMENT
-        context = {**domain_context, "measure": calendars[0].fact} if calendars else domain_context
+        context = {**domain_context, "measure": calendars[0].event} if calendars else domain_context
         row_checks.extend(builder.check([(invalid, refusal, context)]))
     coverages = [readiness.for_fact(measure.source_name) for measure in metric.measures]
     source_start = max(coverage.start for coverage in coverages)
@@ -607,7 +607,7 @@ def aggregate_window(
     conversion = metric.kind == "conversion"
     scaled = has_scaled_float_state(anchors.t0)
     for measure in metric.measures:
-        context = {"source": measure.source_name, "measure": measure.fact, "output": output}
+        context = {"source": measure.source_name, "measure": measure.event, "output": output}
         state = measure_states[measure]
         fields = _state_fields(
             measure,
@@ -685,7 +685,7 @@ def aggregate_window(
             reason,
             {
                 "source": ",".join(m.source_name for m in metric.measures),
-                "measure": ",".join(m.fact for m in metric.measures),
+                "measure": ",".join(m.event for m in metric.measures),
                 "output": output,
             },
         )
@@ -700,7 +700,7 @@ def aggregate_window(
         row_checks.extend(builder.check(unknown_flags, active=builder.col(available)))
     numeric_context = {
         "source": ",".join(m.source_name for m in metric.measures),
-        "measure": ",".join(m.fact for m in metric.measures),
+        "measure": ",".join(m.event for m in metric.measures),
         "output": output,
     }
     exact_output = metric.kind != "conversion" and not quantity.binary64
@@ -729,7 +729,7 @@ def aggregate_window(
                         _EXACT_OVERFLOW,
                         {
                             "source": metric.measures[0].source_name,
-                            "measure": metric.measures[0].fact,
+                            "measure": metric.measures[0].event,
                             "output": output,
                         },
                     )

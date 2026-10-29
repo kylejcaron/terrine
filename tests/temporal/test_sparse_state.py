@@ -415,7 +415,7 @@ def test_numeric_looking_strings_on_string_properties_remain_strings(connection)
 def test_state_metadata_cannot_merge_distinct_physical_units(connection, unit_column):
     raw = _events(connection, [1, 2], dtype="int64", units=["a", "b"])
     raw = raw.rename({unit_column: "user_id"})
-    source = replace(_source(), entities={"user": unit_column, "account": "account_id"})
+    source = replace(_source(), units={"user": unit_column, "account": "account_id"})
     events = normalize_events(raw, source, unit_column)
     measure = resolve_measure(events, _measure(), source=source)
     daily = sparse_daily(events, measure, "UTC", unit_column, source=source)

@@ -60,9 +60,10 @@ from terrine.runtime.saved_plan import (
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.anchors import EventAnchor, FixedDate
 from terrine.spec.dataset import INVALID_DEFINITION, DatasetDefinition
+from terrine.spec.describe import describe_design
 from terrine.spec.design import Design
 from terrine.spec.io import from_json, from_yaml, to_json
-from terrine.spec.validate import ensure_runtime_shape_supported, validate_design
+from terrine.spec.validate import ensure_runtime_shape_supported, resolve_unit, validate_design
 
 __all__ = ["DatasetTools"]
 
@@ -74,6 +75,13 @@ _RUN = RefusalSpec(
 )
 _OWNER = RefusalSpec(
     "terrine.agent.owner_configuration", "Owner execution configuration is unavailable."
+)
+_OWNER_INPUT = RefusalSpec(
+    "terrine.agent.owner_configuration", "Owner tool configuration {field} is invalid: {reason}."
+)
+_INVALID_NAMESPACE = RefusalSpec(
+    "terrine.dataset.invalid_destination",
+    "Runtime {field} is invalid: {reason}; use a simple SQL identifier.",
 )
 _RECEIPT = RefusalSpec(
     "terrine.agent.receipt_unavailable", "Use an unchanged owner-prepared receipt."
@@ -100,12 +108,14 @@ class DatasetTools:
     def __init__(
         self, model: Model, policy: AgentPolicy, *, namespace: str, executor: Executor | None = None
     ) -> None:
-        if not isinstance(model, Model) or not isinstance(policy, AgentPolicy):
-            raise TypeError("model and policy must be owner-created typed values")
+        if not isinstance(model, Model):
+            raise _OWNER_INPUT.error(reason="wrong_type", field="model")
+        if not isinstance(policy, AgentPolicy):
+            raise _OWNER_INPUT.error(reason="wrong_type", field="policy")
         if not isinstance(namespace, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", namespace):
-            raise ValueError("namespace must be a simple identifier")
+            raise _INVALID_NAMESPACE.error(reason="invalid_namespace", field="namespace")
         if executor is not None and executor is not policy.executor:
-            raise TypeError("executor must be the owner policy executor")
+            raise _OWNER_INPUT.error(reason="not_policy_executor", field="executor")
         self.model = model
         self.policy = policy
         self.namespace = namespace
@@ -139,7 +149,7 @@ class DatasetTools:
     def _parse(self, serialized: str) -> Design:
         try:
             DesignRequest(serialized=serialized)
-            return (
+            design = (
                 from_json(serialized)
                 if serialized.lstrip().startswith("{")
                 else from_yaml(serialized)
@@ -150,14 +160,17 @@ class DatasetTools:
             raise _INVALID.error(
                 route="Use get_design_schema and design_example to construct a Design."
             ) from error
+        return resolve_unit(design, self.model)
 
     def _validated(self, design: Design) -> ValidationOutput:
+        design = resolve_unit(design, self.model)
         report = validate_design(design, self.model)
         self.policy.authorize("validate", sources=report.required_sources)
         return ValidationOutput(
             spec_hash=design.spec_hash,
             required_sources=report.required_sources,
             runtime_obligations=report.runtime_obligations,
+            summary=describe_design(design, self.model),
         )
 
     def _design_output(self, serialized: str, base: str | None = None) -> DesignOutput:
@@ -178,8 +191,8 @@ class DatasetTools:
                 sources=tuple(
                     SourceMetadata(
                         name=name,
-                        entities=tuple(sorted(source.entities)),
-                        facts=tuple(sorted(source.facts)),
+                        units=tuple(sorted(source.units)),
+                        events=tuple(sorted(source.events)),
                         properties=tuple(sorted(source.properties)),
                     )
                     for name, source in sorted(self.model.sources.items())
@@ -188,7 +201,7 @@ class DatasetTools:
                 metrics=tuple(
                     MetricMetadata(
                         name=name,
-                        entity=metric.entity,
+                        unit=metric.unit,
                         kind=metric.kind,
                         sources=metric.source_names,
                     )
@@ -208,7 +221,7 @@ class DatasetTools:
                             unit
                             for name, source in self.model.sources.items()
                             if name in allowed
-                            for unit in source.entities
+                            for unit in source.units
                         }
                     )
                 ),
@@ -269,22 +282,20 @@ class DatasetTools:
             sources = [
                 (name, source)
                 for name, source in sorted(self.model.sources.items())
-                if name in self.policy.allowed_sources and source.entities
+                if name in self.policy.allowed_sources and source.units
             ]
             for name, source in sources:
-                for unit in sorted(source.entities):
+                for unit in sorted(source.units):
                     if unit in self.model.units:
                         coverage = self.model.readiness.sources.get(name)
                         anchor = coverage.start.date() if coverage else date(2000, 1, 1)
                         return self._design_output(to_json(Design(unit, FixedDate(anchor))))
             for name, source in sources:
-                if source.facts and name in self.model.readiness.sources:
-                    design = Design(
-                        sorted(source.entities)[0], EventAnchor(sorted(source.facts)[0])
-                    )
+                if source.events and name in self.model.readiness.sources:
+                    design = Design(sorted(source.units)[0], EventAnchor(sorted(source.events)[0]))
                     return self._design_output(to_json(design))
             raise _INVALID.error(
-                route="Configure a unit roster or allow an event fact with declared coverage."
+                route="Configure a unit roster or allow an event with declared coverage."
             )
 
         return self._call("validate", example)
@@ -645,6 +656,8 @@ class DatasetTools:
                 expected_base_manifest=expected_base_manifest,
                 bind_base_manifest=bind_base_manifest,
             )
+        except TerrineError:
+            raise
         except (TypeError, ValueError) as error:
             raise _INVALID.error(
                 route="Use a safe invocation ID and typed change evidence."

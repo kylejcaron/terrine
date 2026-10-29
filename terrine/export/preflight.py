@@ -50,11 +50,20 @@ _SNAPSHOT_REQUIRED = RefusalSpec(
     "Warehouse export needs its own DuckDB snapshot transaction; "
     "use a DuckDB relation outside an existing transaction and fit inside the context.",
 )
+_INVALID_INPUT = RefusalSpec(
+    "terrine.export.invalid_input", "Export input {field} is invalid: {reason}."
+)
+_CHOICE = RefusalSpec(
+    "terrine.export.invalid_input", "Export input {field} must be one of {choices}."
+)
 
 
 @dataclass(frozen=True, slots=True)
 class ExportPreflight:
-    """Filtered export rows and counts of excluded rows per exact reason."""
+    """Return checked export rows and exclusion counts by reason.
+
+    Example: exports.preflight_export(scoring_frame.materialize())
+    """
 
     table: pa.Table
     excluded_counts: Mapping[str, int]
@@ -65,7 +74,10 @@ class ExportPreflight:
 
 @dataclass(frozen=True, slots=True)
 class WarehousePreflight:
-    """Snapshot-bound relation, usable only inside its preflight context."""
+    """Hold checked rows and exclusions inside a DuckDB export context.
+
+    Example: with exports.preflight_warehouse(relation, **metadata) as rows: rows.table.execute()
+    """
 
     table: ir.Table
     excluded_counts: Mapping[str, int]
@@ -147,15 +159,16 @@ def preflight_export(
     drop_incomplete: bool = False,
     consumer: Literal["dowhy"] | None = None,
 ) -> ExportPreflight:
-    """Refuse shared hazards before applying consumer-specific limitations.
+    """Check eligibility, unit identity and outcome completeness before export.
 
-    Exclusions count each row once per exact reason, even when outcomes share
-    completeness evidence. A row with two distinct reasons counts under both.
+    Exclusion counts include each row once per reason; ``drop_incomplete`` permits their removal.
+
+    Example: exports.preflight_export(scoring_frame.materialize())
     """
     if not isinstance(data, MaterializedFrame):
-        raise TypeError("data must be a MaterializedFrame")
+        raise _INVALID_INPUT.error(reason="wrong_type", field="data")
     if consumer not in (None, "dowhy"):
-        raise ValueError("consumer must be None or 'dowhy'")
+        raise _CHOICE.error(reason="unsupported_value", field="consumer", choices=(None, "dowhy"))
     _check_metadata(data.provenance)
     roles, table = data.roles, data.table
     units = table[roles.unit].to_pylist() if roles.unit in table.column_names else []
@@ -181,13 +194,12 @@ def preflight_warehouse(
     provenance: Provenance,
     drop_incomplete: bool = False,
 ) -> Generator[WarehousePreflight]:
-    """Check aggregate evidence and consume a relation in one DuckDB snapshot.
+    """Check export hazards for a verified dataset relation inside one DuckDB transaction.
 
-    Only aggregate counts/reasons are collected. Create the downstream view and
-    call the consumer inside the context, using the same Ibis connection. Exit
-    rolls back temporary views as well as any other writes inside the context.
-    This checks export hazards, not source integrity: use a verified materialized
-    frame table and its matching roles, column metadata and provenance.
+    Use matching roles, columns and provenance and consume rows inside the context;
+    exiting rolls back temporary views and all other writes in that transaction.
+
+    Example: with exports.preflight_warehouse(relation, **metadata) as rows: rows.table.execute()
     """
     import ibis
 
@@ -239,6 +251,6 @@ def preflight_warehouse(
             counts = evidence.group_by("reason").aggregate(n=ibis._.count()).to_pyarrow()
             excluded = {row["reason"]: row["n"] for row in counts.to_pylist()}
         _check_exclusions(excluded, drop=drop_incomplete)
-        yield WarehousePreflight(table.filter(keep), excluded)
+        yield WarehousePreflight(table.filter(keep) if keep else table, excluded)
     finally:
         con.raw_sql("ROLLBACK")

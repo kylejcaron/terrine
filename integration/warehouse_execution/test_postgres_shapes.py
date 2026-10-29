@@ -14,25 +14,25 @@ from integration.warehouse_execution.postgres_fixtures import (
 
 pytestmark = pytest.mark.postgres
 
-_CATALOG = """schema_version: 1
+_CATALOG = """schema_version: 2
 day_boundary: UTC
 dialect: {dialect}
 sources:
   orders:
     relation: {{kind: table, name: events}}
-    timestamp: occurred_at
-    entities: {{user: user_id}}
-    facts: [order, amount]
+    time: occurred_at
+    units: {{user: user_id}}
+    events: [order, amount]
     properties: [tier]
     dimensions: []
   states:
     relation: {{kind: table, name: states}}
-    timestamp: observed_at
-    entities: {{user: user_id}}
-    facts: []
+    time: observed_at
+    units: {{user: user_id}}
+    events: []
     properties: [state]
     dimensions: []
-facts:
+events:
   order: {{source: orders, column: null}}
   amount: {{source: orders, column: amount}}
 properties:
@@ -40,11 +40,11 @@ properties:
   state: {{source: states, column: state, dtype: string, as_of: event_time}}
 dimensions: {{}}
 measures:
-  order_count: {{fact: order, aggregation: count}}
-  amount_total: {{fact: amount, aggregation: sum}}
+  order_count: {{event: order, aggregation: count}}
+  amount_total: {{event: amount, aggregation: sum}}
 metrics:
-  orders: {{kind: mean, entity: user, measure: order_count}}
-  spend: {{kind: mean, entity: user, measure: amount_total}}
+  orders: {{kind: mean, unit: user, measure: order_count}}
+  spend: {{kind: mean, unit: user, measure: amount_total}}
 """
 
 # Units interleave in time so an as-of lookup must match within the unit, not
@@ -132,7 +132,7 @@ _DESIGNS = {
     ),
     "schedule": tr.Design(
         "user",
-        tr.Schedule("1d", "2025-01-01", "2025-01-05"),
+        tr.Schedule("1d", "2025-01-01", "2025-01-04"),
         features={"orders_before": tr.agg("orders", window=("-1d", "0s"))},
         outcomes={"spend_after": tr.agg("spend", window=("0s", "1d"))},
     ),
@@ -160,7 +160,7 @@ _DESIGNS = {
     ),
     "observed_state_panel": tr.Design(
         "user",
-        tr.Schedule("1d", "2025-01-02", "2025-01-05"),
+        tr.Schedule("1d", "2025-01-02", "2025-01-04"),
         shape=tr.StatePanel(
             tr.StateObservations("state", ("active", "closed"), absorbing=("closed",)),
             max_periods=3,
@@ -214,7 +214,7 @@ def test_landmark_nth_anchor_matches_original_time_oracle(postgres_scratch, tmp_
     design = tr.Design(
         "user",
         tr.EventAnchor("order", which="nth", n=2, offset="1d"),
-        anchor_range=tr.AnchorRange("2025-01-02", "2025-01-03"),
+        anchor_range=tr.AnchorRange("2025-01-02", "2025-01-02"),
         features={"day_one_orders": tr.agg("orders", window=("-1d", "0s"))},
     )
     expected = _rows(duckdb, design)

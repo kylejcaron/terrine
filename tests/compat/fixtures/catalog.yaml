@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 day_boundary: UTC+05:30
 dialect: duckdb
 sources:
@@ -10,9 +10,9 @@ sources:
         (1, 101, TIMESTAMP '2025-01-01', 4.0, 'mobile'),
         (2, 202, TIMESTAMP '2025-01-02', 8.0, 'web')
         ) AS t(user_id, account_id, occurred_at, amount, platform)
-    timestamp: occurred_at
-    entities: {user_id: user_id, account_id: account_id}
-    facts: [spend, purchase, visit]
+    time: occurred_at
+    units: {user_id: user_id, account_id: account_id}
+    events: [spend, purchase, visit]
     properties: [events.platform]
     dimensions: [region]
   other_events:
@@ -22,12 +22,12 @@ sources:
         SELECT * FROM (VALUES
         (3, TIMESTAMP '2025-01-03', 2.0, 'paid')
         ) AS t(user_id, occurred_at, amount, channel)
-    timestamp: occurred_at
-    entities: {user_id: user_id}
-    facts: [other_spend]
+    time: occurred_at
+    units: {user_id: user_id}
+    events: [other_spend]
     properties: [other_events.platform]
     dimensions: [region, lifecycle, changes]
-facts:
+events:
   spend: {source: events, column: amount}
   purchase: {source: events, column: amount}
   visit: {source: events, column: null}
@@ -47,48 +47,48 @@ dimensions:
         (1, TIMESTAMP '2024-01-01', TIMESTAMP '2026-01-01', 'west'),
         (2, TIMESTAMP '2024-01-01', TIMESTAMP '2026-01-01', 'east')
         ) AS t(user_id, valid_from, valid_to, region)
-    source_entity: user_id
-    entity_column: user_id
+    unit: user_id
+    key: user_id
     validity: {valid_from: valid_from, valid_to: valid_to}
     properties: [region]
   lifecycle:
     relation:
       kind: sql
       sql: SELECT * FROM (VALUES (3, 'active')) AS t(user_id, status)
-    source_entity: user_id
-    entity_column: user_id
+    unit: user_id
+    key: user_id
     validity: null
     properties: [status]
   changes:
     relation:
       kind: sql
       sql: SELECT * FROM (VALUES (3, TIMESTAMP '2025-01-01', 'gold')) AS t(user_id, changed_at, level)
-    source_entity: user_id
-    entity_column: user_id
+    unit: user_id
+    key: user_id
     validity: {changed_at: changed_at}
     properties: [level]
 measures:
   revenue:
-    fact: spend
+    event: spend
     aggregation: sum
     filters: [{property: region, op: equals, values: [west]}]
     window_days: 30
   purchases:
-    fact: purchase
+    event: purchase
     aggregation: count
     filters: [{property: region, op: in, values: [west, east]}]
     window_days: 7
   ratio.numerator:
-    fact: spend
+    event: spend
     aggregation: sum
     filters: [{property: region, op: equals, values: [west]}]
     window_days: 30
   ratio.denominator:
-    fact: purchase
+    event: purchase
     aggregation: count
     window_days: 30
   other_revenue:
-    fact: other_spend
+    event: other_spend
     aggregation: avg_event
     filters:
       - {property: other_events.platform, op: equals, values: [paid]}
@@ -97,7 +97,7 @@ measures:
       - {property: region, op: equals, values: [west]}
     window_days: 30
 metrics:
-  revenue: {kind: mean, entity: user_id, measure: revenue, winsorization: {lower_value: 0.0, upper_percentile: 0.99}}
-  purchases: {kind: conversion, entity: account_id, measure: purchases}
-  ratio: {kind: ratio, entity: user_id, numerator: ratio.numerator, denominator: ratio.denominator}
-  other_revenue: {kind: mean, entity: user_id, measure: other_revenue}
+  revenue: {kind: mean, unit: user_id, measure: revenue, winsorization: {lower_value: 0.0, upper_percentile: 0.99}}
+  purchases: {kind: conversion, unit: account_id, measure: purchases}
+  ratio: {kind: ratio, unit: user_id, numerator: ratio.numerator, denominator: ratio.denominator}
+  other_revenue: {kind: mean, unit: user_id, measure: other_revenue}

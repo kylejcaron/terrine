@@ -1,272 +1,44 @@
 import copy
 import pickle
-from dataclasses import FrozenInstanceError
-from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 from terrine.data import Coverage, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
-from terrine.semantic.io import dump_catalog, load_catalog
+from terrine.semantic.io import dump_catalog, load_catalog, validate_catalog
 from terrine.semantic.models import Catalog
 
 CATALOG = {
-    "schema_version": 1,
+    "schema_version": 2,
     "day_boundary": "UTC",
     "dialect": "duckdb",
     "sources": {
         "events": {
             "relation": {"kind": "table", "name": "events"},
-            "timestamp": "ts",
-            "entities": {"user": "user_id", "workspace": "workspace_id"},
-            "facts": ["session"],
+            "time": "ts",
+            "units": {"user": "user_id", "workspace": "workspace_id"},
+            "events": ["session"],
             "properties": [],
             "dimensions": ["accounts"],
         }
     },
-    "facts": {"session": {"source": "events", "column": None}},
+    "events": {"session": {"source": "events", "column": None}},
     "properties": {},
     "dimensions": {
         "accounts": {
             "relation": {"kind": "table", "name": "accounts"},
-            "source_entity": "workspace",
-            "entity_column": "workspace_id",
+            "unit": "workspace",
+            "key": "workspace_id",
             "validity": {"changed_at": "changed_at"},
             "properties": [],
         }
     },
-    "measures": {"count": {"fact": "session", "aggregation": "count"}},
-    "metrics": {"sessions": {"kind": "mean", "entity": "user", "measure": "count"}},
+    "measures": {"count": {"event": "session", "aggregation": "count"}},
+    "metrics": {"sessions": {"kind": "mean", "unit": "user", "measure": "count"}},
 }
-
-
-def test_events_descriptor_preserves_declarations_and_detaches_mutable_inputs():
-    from terrine.data import Events
-
-    keys = {"customer": "customer_id"}
-    values = ["amount"]
-    complete = ["2025-01-01", "2025-01-31"]
-    events = Events("orders", "occurred_at", keys, values, complete)  # ty: ignore[invalid-argument-type]
-    keys["customer"] = "changed"
-    values.append("changed")
-    complete[0] = "2024-01-01"
-    assert events.table == "orders"
-    assert events.time == "occurred_at"
-    assert events.keys == {"customer": "customer_id"}
-    assert events.values == ("amount",)
-    assert events.complete == ("2025-01-01", "2025-01-31")
-    with pytest.raises(TypeError):
-        events.keys["customer"] = "changed"  # ty: ignore[invalid-assignment]
-    with pytest.raises(FrozenInstanceError):
-        events.table = "changed"  # ty: ignore[invalid-assignment]
-
-
-@pytest.mark.parametrize(
-    "changes",
-    [
-        {"table": ""},
-        {"time": ""},
-        {"keys": {"customer": ""}},
-        {"keys": {1: "customer_id"}},
-        {"values": ("",)},
-        {"values": "amount"},
-        {"complete": ("2025-01-31", "2025-01-01")},
-        {"complete": ("2025-01-01",)},
-        {"complete": (datetime(2025, 1, 1), date(2025, 1, 31))},
-    ],
-)
-def test_events_descriptor_rejects_invalid_fields(changes):
-    from terrine.data import Events
-
-    arguments = {"table": "orders", "time": "occurred_at", "keys": {"customer": "customer_id"}}
-    with pytest.raises((TypeError, ValueError)):
-        Events(**(arguments | changes))
-
-
-def test_from_tables_binds_generated_names_roster_and_options():
-    import ibis
-
-    import terrine as tr
-
-    con = ibis.duckdb.connect()
-    try:
-        con.create_table("customers", schema=ibis.schema({"id": "int64"}))
-        con.create_table(
-            "order_events",
-            schema=ibis.schema(
-                {
-                    "occurred_at": "timestamp",
-                    "customer_id": "int64",
-                    "amount": "float64",
-                    "event_id": "string",
-                }
-            ),
-        )
-        roster = {"customer": UnitSource("customers", "id")}
-        model = Model.from_tables(
-            con,
-            units=roster,
-            events={
-                "orders": tr.Events(
-                    "order_events",
-                    "occurred_at",
-                    {"customer": "customer_id"},
-                    ("amount",),
-                    ("2025-01-01", "2025-01-31"),
-                )
-            },
-            day_boundary="UTC+05:30",
-            readiness={
-                "orders": Coverage("2024-01-01", "2026-01-01"),
-                "other": Coverage("2025-01-01", "2025-01-31"),
-            },
-            event_ids={"orders": "event_id"},
-        )
-        assert model.units == roster
-        assert model.catalog.dialect == "duckdb"
-        assert model.catalog.day_boundary == "UTC+05:30"
-        assert model.event_ids == {"orders": "event_id"}
-        assert set(model.sources) == {"orders"}
-        assert model.sources["orders"].facts == {"orders": None, "orders_amount": "amount"}
-        assert model.sources["orders"].entities == {"customer": "customer_id"}
-        assert set(model.metrics) == {"orders_count", "orders_amount_sum", "orders_amount_mean"}
-        for metric, fact, aggregation in (
-            ("orders_count", "orders", "count"),
-            ("orders_amount_sum", "orders_amount", "sum"),
-            ("orders_amount_mean", "orders_amount", "avg_event"),
-        ):
-            assert model.metrics[metric].entity == "customer"
-            assert model.metrics[metric].measures[0].fact == fact
-            assert model.metrics[metric].measures[0].aggregation == aggregation
-        assert model.readiness.sources["orders"].start == datetime(2024, 12, 31, 18, 30, tzinfo=UTC)
-        assert model.readiness.sources["orders"].end_exclusive == datetime(
-            2025, 1, 31, 18, 30, tzinfo=UTC
-        )
-        assert "other" in model.readiness.sources
-    finally:
-        con.disconnect()
-
-
-@pytest.mark.parametrize(
-    ("changes", "code", "context"),
-    [
-        (
-            {"complete": None},
-            "terrine.model.missing_event_completeness",
-            {"source": "orders"},
-        ),
-        (
-            {"keys": {"customer": "customer_id", "shop": "shop_id"}},
-            "terrine.model.multiple_event_units",
-            {"source": "orders", "units": ("customer", "shop")},
-        ),
-        (
-            {"keys": {}},
-            "terrine.model.invalid_binding",
-            {},
-        ),
-        (
-            {"keys": {"shop": "shop_id"}},
-            "terrine.model.invalid_binding",
-            {},
-        ),
-    ],
-)
-def test_from_tables_refuses_incomplete_or_undeclared_event_units(changes, code, context):
-    from terrine.data import Events
-
-    arguments = {
-        "table": "orders",
-        "time": "occurred_at",
-        "keys": {"customer": "customer_id"},
-        "complete": ("2025-01-01", "2025-01-31"),
-    }
-    with pytest.raises(TerrineError) as caught:
-        Model.from_tables(
-            object(),
-            units={"customer": UnitSource("customers", "id")},
-            events={"orders": Events(**(arguments | changes))},
-        )
-    error = caught.value
-    assert error.code == code
-    for key, value in context.items():
-        assert error.context[key] == value
-    with pytest.raises(TypeError):
-        error.context["source"] = "changed"  # ty: ignore[invalid-assignment]
-    for restored in (copy.deepcopy(error), pickle.loads(pickle.dumps(error))):
-        assert restored.code == error.code
-        assert restored.context == error.context
-
-
-@pytest.mark.parametrize(
-    ("declarations", "readiness", "name", "sources"),
-    [
-        (
-            {"orders": ("amount",), "orders_amount": ()},
-            {},
-            "orders_amount",
-            ("orders", "orders_amount"),
-        ),
-        (
-            {"orders": ("amount",), "orders_count": ()},
-            {},
-            "orders_count",
-            ("orders", "orders_count"),
-        ),
-        (
-            {"orders": ("amount",), "orders_amount_sum": ()},
-            {},
-            "orders_amount_sum",
-            ("orders", "orders_amount_sum"),
-        ),
-        ({"orders": ("count",)}, {}, "orders_count", ("orders",)),
-        ({"orders": ("amount", "amount_sum")}, {}, "orders_amount_sum", ("orders",)),
-        ({"orders": ("amount", "amount")}, {}, "orders_amount", ("orders",)),
-        (
-            {"orders": ("amount",)},
-            {"orders_amount_sum": Coverage("2025-01-01", "2025-01-31")},
-            "orders_amount_sum",
-            ("orders",),
-        ),
-        (
-            {"orders": ("amount",)},
-            {"orders_amount": Coverage("2025-01-01", "2025-01-31")},
-            "orders_amount",
-            ("orders",),
-        ),
-    ],
-)
-def test_from_tables_refuses_generated_name_collisions(declarations, readiness, name, sources):
-    from terrine.data import Events
-
-    events = {
-        source: Events(
-            "orders",
-            "occurred_at",
-            {"customer": "customer_id"},
-            values,
-            ("2025-01-01", "2025-01-31"),
-        )
-        for source, values in declarations.items()
-    }
-    with pytest.raises(TerrineError) as caught:
-        Model.from_tables(
-            object(),
-            units={"customer": UnitSource("customers", "id")},
-            events=events,
-            readiness=readiness,
-        )
-    error = caught.value
-    assert error.code == "terrine.model.generated_metric_collision"
-    assert error.context["name"] == name
-    assert error.context["sources"] == sources
-    with pytest.raises(TypeError):
-        error.context["name"] = "changed"  # ty: ignore[invalid-assignment]
-    for restored in (copy.deepcopy(error), pickle.loads(pickle.dumps(error))):
-        assert restored.code == error.code
-        assert restored.context == error.context
 
 
 def test_from_catalog_mapping_binds_same_model_as_catalog():
@@ -287,10 +59,56 @@ def test_from_catalog_mapping_binds_same_model_as_catalog():
     assert from_mapping.catalog == from_catalog.catalog
 
     with pytest.raises(TerrineError) as error:
-        Model.from_catalog(
-            {**CATALOG, "schema_version": 2}, con=con, readiness=readiness
-        )
+        Model.from_catalog({**CATALOG, "schema_version": 3}, con=con, readiness=readiness)
     assert error.value.code == "terrine.catalog.invalid_definition"
+
+    with pytest.raises(TerrineError) as error:
+        Model.from_catalog(
+            CATALOG,
+            con=con,
+            readiness=readiness,
+            units=cast(Any, {"user": None}),
+            event_ids=cast(Any, 5),
+        )
+    assert error.value.code == "terrine.model.invalid_binding"
+    assert error.value.context == {"reason": "wrong_type", "field": "event_ids"}
+
+
+@pytest.mark.parametrize("version", [1, 3, "2", None])
+def test_unsupported_schema_version_refuses_before_field_diagnostics(version):
+    document = {**CATALOG, "schema_version": version, "surprise": True}
+    with pytest.raises(TerrineError) as error:
+        validate_catalog(document)
+    assert error.value.code == "terrine.catalog.invalid_definition"
+    issues = error.value.context["issues"]
+    assert len(issues) == 1
+    assert issues[0]["location"] == ("schema_version",)
+    assert issues[0]["kind"] == "unsupported_schema_version"
+    assert isinstance(issues[0]["hint"], str) and issues[0]["hint"]
+    for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
+        assert restored.code == error.value.code
+        assert restored.context == error.value.context
+
+
+def test_bound_descriptors_use_v2_names(native_inputs):
+    catalog, con = native_inputs
+    model = Model.from_catalog(
+        catalog,
+        con=con,
+        units={"user": UnitSource("users", "user_id")},
+        readiness={
+            "events": Coverage("2025-01-01", "2025-01-31"),
+            "labels": Coverage("2025-01-01", "2025-01-31"),
+        },
+    )
+    source = model.sources["events"]
+    assert source.time_column == "ts"
+    assert source.units == {"user": "user_id"}
+    assert source.events == {"session": None}
+    metric = model.metrics["sessions"]
+    assert metric.unit == "user"
+    assert metric.unit_columns == {"events": "user_id"}
+    assert metric.measures[0].event == "session"
 
 
 def test_safe_yaml_roundtrips_native_mapping(tmp_path: Path):
@@ -298,8 +116,12 @@ def test_safe_yaml_roundtrips_native_mapping(tmp_path: Path):
     path = tmp_path / "catalog.yaml"
     path.write_text(dump_catalog(catalog))
     assert load_catalog(path) == catalog
+    with pytest.raises(TerrineError) as error:
+        dump_catalog(cast(Any, CATALOG))
+    assert error.value.code == "terrine.catalog.invalid_definition"
+    assert error.value.context == {"reason": "wrong_type", "field": "catalog"}
     with pytest.raises(TypeError):
-        catalog.sources["events"].entities["user"] = "workspace_id"  # ty: ignore[invalid-assignment]
+        catalog.sources["events"].units["user"] = "workspace_id"  # ty: ignore[invalid-assignment]
     with pytest.raises(TypeError):
         catalog.sources["events"] = catalog.sources["events"]  # ty: ignore[invalid-assignment]
 
@@ -310,7 +132,7 @@ def test_catalog_rejects_untrusted_callbacks():
         "metrics": {
             "sessions": {
                 "kind": "mean",
-                "entity": "user",
+                "unit": "user",
                 "measure": "count",
                 "winsorization": lambda value: value,
             }
@@ -348,7 +170,7 @@ def test_catalog_rejects_untrusted_callbacks():
                 **CATALOG,
                 "measures": {
                     "count": {
-                        "fact": "session",
+                        "event": "session",
                         "aggregation": "count",
                         "filters": [{"property": "active", "op": "equals", "values": [1, 2]}],
                     }
@@ -362,7 +184,7 @@ def test_catalog_rejects_untrusted_callbacks():
                 **CATALOG,
                 "measures": {
                     "count": {
-                        "fact": "session",
+                        "event": "session",
                         "aggregation": "count",
                         "filters": [{"property": "active", "op": "in", "values": [[1]]}],
                     }
@@ -372,7 +194,7 @@ def test_catalog_rejects_untrusted_callbacks():
             "invalid_filter_values",
         ),
         (
-            {**CATALOG, "metrics": {"sessions": {"kind": "mean", "entity": "user"}}},
+            {**CATALOG, "metrics": {"sessions": {"kind": "mean", "unit": "user"}}},
             ("metrics", "sessions"),
             "invalid_metric_shape",
         ),
@@ -382,7 +204,7 @@ def test_catalog_rejects_untrusted_callbacks():
                 "metrics": {
                     "sessions": {
                         "kind": "mean",
-                        "entity": "user",
+                        "unit": "user",
                         "measure": "count",
                         "winsorization": {"not_json": {1}},
                     }
@@ -436,7 +258,7 @@ def test_catalog_rejects_unknown_fields_and_unsupported_versions():
     with pytest.raises(ValueError):
         Catalog.model_validate({**CATALOG, "surprise": True})
     with pytest.raises(ValueError):
-        Catalog.model_validate({**CATALOG, "schema_version": 2})
+        Catalog.model_validate({**CATALOG, "schema_version": 3})
 
 
 @pytest.mark.parametrize("validity", [{}, {"valid_from": "start", "changed_at": "change"}])
@@ -449,7 +271,7 @@ def test_history_validity_requires_one_unambiguous_time_axis(validity):
 
 def test_safe_yaml_rejects_duplicate_keys_and_python_tags(tmp_path: Path):
     for name, text in (
-        ("duplicate", "schema_version: 1\nschema_version: 1\n"),
+        ("duplicate", "schema_version: 2\nschema_version: 2\n"),
         ("tag", "!!python/object/apply:os.system ['echo unsafe']"),
     ):
         path = tmp_path / f"{name}.yaml"

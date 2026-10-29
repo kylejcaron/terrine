@@ -17,24 +17,24 @@ def test_capture_keeps_client_buffers_bounded_as_source_rows_increase(tmp_path, 
     con = ibis.duckdb.connect(str(path))
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["value"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["value"],
                     "properties": [],
                     "dimensions": [],
                 }
             },
-            "facts": {"value": {"source": "events", "column": "value"}},
+            "events": {"value": {"source": "events", "column": "value"}},
             "properties": {},
             "dimensions": {},
-            "measures": {"total": {"fact": "value", "aggregation": "sum"}},
-            "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
+            "measures": {"total": {"event": "value", "aggregation": "sum"}},
+            "metrics": {"total": {"kind": "mean", "unit": "user", "measure": "total"}},
         }
     )
     authority = SnapshotAuthority(

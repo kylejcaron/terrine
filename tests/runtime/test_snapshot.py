@@ -20,24 +20,24 @@ from terrine.spec import Design, FixedDate, agg
 def _catalog() -> Catalog:
     return Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["value"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["value"],
                     "properties": [],
                     "dimensions": [],
                 }
             },
-            "facts": {"value": {"source": "events", "column": "value"}},
+            "events": {"value": {"source": "events", "column": "value"}},
             "properties": {},
             "dimensions": {},
-            "measures": {"total": {"fact": "value", "aggregation": "sum"}},
-            "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
+            "measures": {"total": {"event": "value", "aggregation": "sum"}},
+            "metrics": {"total": {"kind": "mean", "unit": "user", "measure": "total"}},
         }
     )
 
@@ -280,9 +280,9 @@ def test_snapshot_captures_only_sources_in_design_dependency_closure(tmp_path):
     definition = _catalog().model_dump(mode="python")
     definition["sources"]["labels"] = {
         "relation": {"kind": "table", "name": "labels"},
-        "timestamp": "ts",
-        "entities": {"user": "user_id"},
-        "facts": [],
+        "time": "ts",
+        "units": {"user": "user_id"},
+        "events": [],
         "properties": ["label"],
         "dimensions": [],
     }

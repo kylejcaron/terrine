@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from terrine.data import Budget
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.runtime.changes import ChangeSet
 from terrine.runtime.cost import ScanEvidence, estimate_task_cost, evaluate_costs
 from terrine.runtime.graph import DependencyGraph
@@ -23,6 +24,11 @@ __all__ = [
     "TaskSpec",
     "plan_refresh",
 ]
+
+_UNVERIFIABLE = RefusalSpec(
+    "terrine.runtime.saved_plan_mismatch",
+    "Saved plan reconstruction failed verification ({reason}).",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,7 +177,7 @@ class RefreshPlan:
                 or schema_version != 2
                 or not isinstance(raw_tasks, list)
             ):
-                raise ValueError("unsupported serialized plan")
+                raise _UNVERIFIABLE.error(reason="unsupported_plan_version")
             tasks = tuple(
                 TaskSpec(
                     item["task_id"],
@@ -191,7 +197,7 @@ class RefreshPlan:
             )
             bodies = tuple(task.to_dict() for task in tasks)
             if bodies != tuple(raw_tasks):
-                raise ValueError("serialized plan task fields are not canonical")
+                raise _UNVERIFIABLE.error(reason="noncanonical_tasks")
             budget = Budget(**budget_record) if budget_record is not None else None
             payload = {
                 "schema_version": schema_version,
@@ -207,22 +213,24 @@ class RefreshPlan:
             }
             if reconstruction_hash is not None:
                 if not isinstance(reconstruction_hash, str) or len(reconstruction_hash) != 64:
-                    raise ValueError("serialized reconstruction binding is invalid")
+                    raise _UNVERIFIABLE.error(reason="invalid_reconstruction_binding")
                 payload["reconstruction_hash"] = reconstruction_hash
             expected = hashlib.sha256(
                 json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
             if not isinstance(fingerprint, str) or fingerprint != expected:
-                raise ValueError("serialized plan fingerprint does not match")
+                raise _UNVERIFIABLE.error(reason="fingerprint_mismatch")
+        except TerrineError:
+            raise
         except (ValueError, TypeError, KeyError) as exc:
-            raise ValueError("serialized plan is malformed or unverifiable") from exc
+            raise _UNVERIFIABLE.error(reason="malformed_plan") from exc
         scan_bytes, warnings = evaluate_costs(
             tasks, budget, definition_hash=definition_hash, snapshot_id=snapshot_id
         )
         if not isinstance(expected_base_manifest_bound, bool) or (
             expected_base_manifest is not None and not isinstance(expected_base_manifest, str)
         ):
-            raise ValueError("serialized base-manifest binding is invalid")
+            raise _UNVERIFIABLE.error(reason="invalid_base_manifest_binding")
         plan_definition = PlanDefinition(
             schema_version,
             namespace,

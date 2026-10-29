@@ -20,16 +20,18 @@ from terrine.semantic.bind import normalize_events
 from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
 from terrine.spec.panels import Initiation, PersistentAdoption, SequentialSpec
-from terrine.spec.validate import _outcome_bounds
+from terrine.spec.validate import _outcome_bounds, resolve_selector_source
 from terrine.temporal.aggregate import _Check
 
 _INVALID_TRIAL_WEIGHT = RefusalSpec(
     "terrine.design.invalid_trial_weight",
-    "Trial weights must name every scheduled trial exactly once.",
+    "Trial weights do not name every scheduled trial exactly once. "
+    "Provide one weight for each trial in the schedule.",
 )
 _CONTRADICTORY_ADOPTION = RefusalSpec(
     "terrine.compile.contradictory_persistent_adoption_history",
-    "Persistent adoption history contradicts absorbing state.",
+    "Treatment history changes after a unit has adopted, but adoption must be permanent. "
+    "Correct the history or use a design that allows treatment changes.",
 )
 
 
@@ -41,21 +43,21 @@ def _followup_at(design: Design, model, timestamp):
     if cutoffs:
         ends.append(ibis.literal(max(cutoffs)))
     end = (
-        greatest(timestamp, *ends) if ends else ibis.literal(model.day_boundary(design.anchor.end))
+        greatest(timestamp, *ends)
+        if ends
+        else ibis.literal(model.day_boundary(design.anchor.end_exclusive))
     )
     return cast(ir.TimestampValue, end) + ibis.interval(seconds=design.shape.anticipation_seconds)
 
 
-def _trial_columns(table, design: Design):
+def _trial_columns(table, design: Design, model):
     assert isinstance(design.shape, SequentialSpec)
     assert isinstance(design.anchor, Schedule)
     table = table.mutate(trial_id=table.anchor_id.cast("string"))
     weight = design.shape.trial_weight
     if weight is None:
         return table
-    schedule = design.anchor
-    span = (schedule.end - schedule.start).days * 86_400
-    count = (span - 1) // schedule.every + 1
+    count = design.anchor.count(model.day_boundary)
     trial_ids = tuple(f"schedule:{index}" for index in range(count))
     if weight.kind == "equal_trial":
         values = {trial: 1.0 / count for trial in trial_ids}
@@ -70,12 +72,14 @@ def _trial_columns(table, design: Design):
 
 _LATER_INITIATION = RefusalSpec(
     "terrine.compile.later_control_initiation",
-    "Control initiates during the sustained no-initiation follow-up.",
+    "A control unit starts treatment during a follow-up that requires no treatment. "
+    "Use a design whose control rule matches that treatment history.",
 )
 
 _INCOMPLETE_UNIT_HISTORY = RefusalSpec(
     "terrine.design.incomplete_unit_treatment_history",
-    "Roster observation bounds do not cover a scheduled treatment history.",
+    "The time observed for some units does not cover the scheduled treatment history. "
+    "Use a schedule within the observed time, or supply the missing unit history.",
 )
 
 
@@ -101,7 +105,7 @@ def _unit_history_gaps(design: Design, model, anchors, eligible_table):
     end = (
         _followup_at(design, model, table.t0)
         if isinstance(selector, Initiation)
-        else ibis.literal(model.day_boundary(design.anchor.end))
+        else ibis.literal(model.day_boundary(design.anchor.end_exclusive))
     )
     missing = ibis.literal(False)
     if "_observed_from" in source.columns:
@@ -116,14 +120,12 @@ def _persistent_contradictions(design: Design, model):
     assert isinstance(design.shape.treatment, PersistentAdoption)
     assert isinstance(design.anchor, Schedule)
     selector = design.shape.treatment
-    source = model.sources[selector.source]
-    prop = source.properties[selector.property]
-    events = normalize_events(
-        model._relation(source.relation), source, source.entities[design.unit]
-    )
+    source = model.sources[resolve_selector_source(model, selector.event)]
+    prop = source.properties[selector.event]
+    events = normalize_events(model._relation(source.relation), source, source.units[design.unit])
     end = cast(
         ir.TimestampScalar,
-        ibis.literal(model.day_boundary(design.anchor.end).astimezone(UTC)),
+        ibis.literal(model.day_boundary(design.anchor.end_exclusive).astimezone(UTC)),
     )
     value = events[prop.column]
     adopted = events.filter(
@@ -166,14 +168,12 @@ def _deferred_refusal(query, refusal: RefusalSpec) -> _Check:
 def _treatment_rows(design: Design, model, anchors):
     assert isinstance(design.shape, SequentialSpec)
     selector = design.shape.treatment
-    source = model.sources[selector.source]
-    events = normalize_events(
-        model._relation(source.relation), source, source.entities[design.unit]
-    )
-    if selector.property in source.facts:
+    source = model.sources[resolve_selector_source(model, selector.event)]
+    events = normalize_events(model._relation(source.relation), source, source.units[design.unit])
+    if selector.event in source.events:
         observed = events._timestamp.notnull()
     else:
-        prop = source.properties[selector.property]
+        prop = source.properties[selector.event]
         if prop.dimension_name is not None:
             raise ValueError("sequential treatment selectors cannot bind dimension properties")
         value = events[prop.column]
@@ -203,14 +203,12 @@ def _later_initiations(design: Design, model, eligible_table, treatment_rows):
     assert isinstance(design.shape, SequentialSpec)
     assert isinstance(design.shape.treatment, Initiation)
     selector = design.shape.treatment
-    source = model.sources[selector.source]
-    events = normalize_events(
-        model._relation(source.relation), source, source.entities[design.unit]
-    )
-    if selector.property in source.facts:
+    source = model.sources[resolve_selector_source(model, selector.event)]
+    events = normalize_events(model._relation(source.relation), source, source.units[design.unit])
+    if selector.event in source.events:
         observed = events._timestamp.notnull()
     else:
-        prop = source.properties[selector.property]
+        prop = source.properties[selector.event]
         observed = events[prop.column].notnull()
     control = eligible_table.join(
         treatment_rows,
@@ -267,7 +265,7 @@ def compile_sequential(
     )
     values = _treatment_rows(design, model, compiled._anchors)
     sample = design.sample
-    table = _trial_columns(_attach_treatment(compiled.table, values), design)
+    table = _trial_columns(_attach_treatment(compiled.table, values), design, model)
     checks = list(compiled._checks)
     checks.append(
         _deferred_refusal(

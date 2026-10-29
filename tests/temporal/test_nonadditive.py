@@ -39,11 +39,11 @@ def test_quantile_probability_is_canonical_decimal_and_in_range():
     node = quantile("revenue", Decimal("0.2500"), window=("-7d", "0d"))
     assert isinstance(node, MetricQuantile)
     assert node.probability == Decimal("0.25")
-    for probability in (Decimal("-0.01"), Decimal("1.01")):
-        with pytest.raises(ValueError):
+    for probability in (Decimal("-0.01"), Decimal("1.01"), Decimal("NaN")):
+        with pytest.raises(TerrineError) as error:
             quantile("revenue", probability, window=("-7d", "0d"))
-    with pytest.raises(TypeError):
-        quantile("revenue", 0.25, window=("-7d", "0d"))  # ty: ignore[invalid-argument-type]
+        assert error.value.code == "terrine.design.invalid"
+        assert error.value.context == {"reason": "out_of_range", "field": "probability"}
 
 
 def test_empty_and_all_null_quantiles_are_unavailable():

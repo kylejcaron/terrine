@@ -1,15 +1,15 @@
-schema_version: 1
+schema_version: 2
 day_boundary: '+00:00'
 dialect: duckdb
 sources:
   world_events:
     relation: {kind: table, name: world_events}
-    timestamp: ts
-    entities: {user: unit_id}
-    facts: [engagement, revenue]
+    time: ts
+    units: {user: unit_id}
+    events: [engagement, revenue]
     properties: [kind, engagement_score, plan_tier, baseline_enabled]
     dimensions: [world_attributes]
-facts:
+events:
   engagement: {source: world_events, column: null}
   revenue: {source: world_events, column: value}
 properties:
@@ -39,19 +39,19 @@ properties:
 dimensions:
   world_attributes:
     relation: {kind: table, name: world_attributes}
-    source_entity: user
-    entity_column: unit_id
+    unit: user
+    key: unit_id
     validity: {valid_from: valid_from, valid_to: valid_to}
     properties: [engagement_score, plan_tier, baseline_enabled]
 measures:
   engagement_count:
-    fact: engagement
+    event: engagement
     aggregation: count
     filters: [{property: kind, op: equals, value: engagement}]
   revenue_sum:
-    fact: revenue
+    event: revenue
     aggregation: sum
     filters: [{property: kind, op: equals, value: revenue}]
 metrics:
-  sessions: {kind: mean, entity: user, measure: engagement_count}
-  net_revenue: {kind: mean, entity: user, measure: revenue_sum}
+  sessions: {kind: mean, unit: user, measure: engagement_count}
+  net_revenue: {kind: mean, unit: user, measure: revenue_sum}

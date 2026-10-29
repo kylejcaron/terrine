@@ -32,31 +32,31 @@ def _inputs():
     """)
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "id"},
-                    "facts": ["order", "item"],
+                    "time": "ts",
+                    "units": {"user": "id"},
+                    "events": ["order", "item"],
                     "properties": [],
                     "dimensions": [],
                 }
             },
-            "facts": {
+            "events": {
                 "order": {"source": "events", "column": None},
                 "item": {"source": "events", "column": "item"},
             },
             "properties": {},
             "dimensions": {},
             "measures": {
-                "orders": {"fact": "order", "aggregation": "count"},
-                "items": {"fact": "item", "aggregation": "count_distinct"},
+                "orders": {"event": "order", "aggregation": "count"},
+                "items": {"event": "item", "aggregation": "count_distinct"},
             },
             "metrics": {
-                name: {"kind": "mean", "entity": "user", "measure": name}
+                name: {"kind": "mean", "unit": "user", "measure": name}
                 for name in ("orders", "items")
             },
         }

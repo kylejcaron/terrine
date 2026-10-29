@@ -42,28 +42,28 @@ def main() -> None:
         pa.table({"user_id": ["a"], "ts": [datetime(2025, 1, 1, tzinfo=UTC)]}),
     )
     catalog = {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "event_time",
-                    "entities": {"user": "user_id"},
-                    "facts": ["purchase"],
+                    "time": "event_time",
+                    "units": {"user": "user_id"},
+                    "events": ["purchase"],
                     "properties": [],
                     "dimensions": [],
                 },
                 "assignments": {
                     "relation": {"kind": "table", "name": "assignments"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["started"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["started"],
                     "properties": [],
                     "dimensions": [],
                 },
             },
-            "facts": {
+            "events": {
                 "purchase": {"source": "events", "column": None},
                 "started": {"source": "assignments", "column": None},
             },
@@ -83,18 +83,16 @@ def main() -> None:
         event_ids={"events": "event_id"},
     )
     try:
-        treatment = Initiation(
-            "assignments", "started", history_start=datetime(2025, 1, 1, tzinfo=UTC)
-        )
+        treatment = Initiation("started", history_start=datetime(2025, 1, 1, tzinfo=UTC))
         sequential = recipes.trial_panel(
-            "user", every="14d", start="2025-01-01", end="2025-02-01",
+            "user", every="14d", start="2025-01-01", end="2025-01-29",
             treatment=treatment,
         )
         events = recipes.event_panel(
             "user", event="purchase", periods=(-1, 0, 1), period="1d",
         )
         assert sequential == Sequential(
-            Design("user", Schedule("14d", "2025-01-01", "2025-02-01")),
+            Design("user", Schedule("14d", "2025-01-01", "2025-01-29")),
             treatment=treatment,
         )
         assert events == EventPanel(

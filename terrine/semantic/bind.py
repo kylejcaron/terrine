@@ -27,14 +27,19 @@ __all__ = ["normalize_source", "bind_metric", "normalize_events"]
 
 _SCHEMA = RefusalSpec(
     "terrine.semantic.schema_mismatch",
-    "Declared {field} column {column!r} is absent or has an incompatible type.",
+    "The {field!r} column {column!r} is missing or has the wrong type. "
+    "Choose an existing column with the required type, or correct the table before "
+    "adding it to the model.",
 )
 _MISSING = RefusalSpec(
-    "terrine.semantic.missing_reference", "Catalog reference {reference!r} is not declared."
+    "terrine.semantic.missing_reference",
+    "The model does not declare {reference!r}. "
+    "Add the missing declaration or use a name already declared in the model.",
 )
 _AMBIGUOUS = RefusalSpec(
     "terrine.semantic.ambiguous_column",
-    "Normalized event aliases conflict with declared physical column {column!r}.",
+    "Event table column {column!r} conflicts with a name Terrine needs in its output. "
+    "Rename the column before adding the table to the model.",
 )
 _DECIMAL_SCALE = RefusalSpec(
     "terrine.semantic.decimal_scale_required",
@@ -124,25 +129,23 @@ def normalize_source(
     )
     schema = relation.schema()
     columns = dict(schema.items())
-    if source.timestamp not in columns or not columns[source.timestamp].is_timestamp():
-        raise _SCHEMA.error(field="timestamp", column=source.timestamp)
-    _require_exact_type(
-        provider, execution_dialect, columns[source.timestamp], source.timestamp, engine
-    )
-    for name, column in source.entities.items():
+    if source.time not in columns or not columns[source.time].is_timestamp():
+        raise _SCHEMA.error(field="time", column=source.time)
+    _require_exact_type(provider, execution_dialect, columns[source.time], source.time, engine)
+    for name, column in source.units.items():
         if column not in columns:
-            raise _SCHEMA.error(field=f"entity {name}", column=column)
-    facts = {}
-    for name in source.facts:
-        fact = _reference(catalog.facts, name, "fact")
-        if fact.source != source_name:
-            raise _MISSING.error(reference=f"fact {name} owned by {fact.source}")
-        facts[name] = fact.column
-        if fact.column is not None and fact.column not in columns:
-            raise _SCHEMA.error(field=f"fact {name}", column=fact.column)
-        if fact.column is not None:
+            raise _SCHEMA.error(field=f"unit {name}", column=column)
+    events = {}
+    for name in source.events:
+        event = _reference(catalog.events, name, "event")
+        if event.source != source_name:
+            raise _MISSING.error(reference=f"event {name} owned by {event.source}")
+        events[name] = event.column
+        if event.column is not None and event.column not in columns:
+            raise _SCHEMA.error(field=f"event {name}", column=event.column)
+        if event.column is not None:
             _require_exact_type(
-                provider, execution_dialect, columns[fact.column], fact.column, engine
+                provider, execution_dialect, columns[event.column], event.column, engine
             )
     properties = {}
     for name in source.properties:
@@ -166,16 +169,16 @@ def normalize_source(
     dimensions = []
     for name in source.dimensions:
         dim = _reference(catalog.dimensions, name, "dimension")
-        if dim.source_entity not in source.entities:
-            raise _MISSING.error(reference=f"dimension {name} source entity {dim.source_entity}")
+        if dim.unit not in source.units:
+            raise _MISSING.error(reference=f"dimension {name} unit {dim.unit}")
         dimension_relation = (
             resolver(dim.relation)
             if resolver is not None
             else _relation(con, dim.relation, catalog.dialect, engine=engine)
         )
         dimension_columns = dict(dimension_relation.schema().items())
-        if dim.entity_column not in dimension_columns:
-            raise _SCHEMA.error(field=f"dimension {name} entity", column=dim.entity_column)
+        if dim.key not in dimension_columns:
+            raise _SCHEMA.error(field=f"dimension {name} key", column=dim.key)
         validity = None
         if dim.validity is not None:
             validity = BoundValidity(
@@ -209,8 +212,8 @@ def normalize_source(
             BoundDimension(
                 name,
                 dim.relation,
-                dim.source_entity,
-                dim.entity_column,
+                dim.unit,
+                dim.key,
                 validity,
                 MappingProxyType(dimension_properties),
             )
@@ -218,9 +221,9 @@ def normalize_source(
     return BoundSource(
         source_name,
         source.relation,
-        source.timestamp,
-        MappingProxyType(dict(source.entities)),
-        MappingProxyType(facts),
+        source.time,
+        MappingProxyType(dict(source.units)),
+        MappingProxyType(events),
         MappingProxyType(properties),
         tuple(dimensions),
         expression_dialect(engine),
@@ -236,22 +239,22 @@ def bind_metric(catalog: Catalog, metric_name: str) -> BoundMetric:
     names = (metric.numerator, metric.denominator) if metric.kind == "ratio" else (metric.measure,)
     bound_measures = []
     source_names = []
-    entity_columns = {}
+    unit_columns = {}
     for measure_name in names:
         measure = _reference(catalog.measures, measure_name, "measure")
-        fact = _reference(catalog.facts, measure.fact, "fact")
-        source = _reference(catalog.sources, fact.source, "source")
-        if measure.fact not in source.facts:
-            raise _MISSING.error(reference=f"fact {measure.fact} on source {fact.source}")
-        if metric.entity not in source.entities:
-            raise _MISSING.error(reference=f"entity {metric.entity} on source {fact.source}")
-        source_names.append(fact.source)
-        entity_columns[fact.source] = source.entities[metric.entity]
+        event = _reference(catalog.events, measure.event, "event")
+        source = _reference(catalog.sources, event.source, "source")
+        if measure.event not in source.events:
+            raise _MISSING.error(reference=f"event {measure.event} on source {event.source}")
+        if metric.unit not in source.units:
+            raise _MISSING.error(reference=f"unit {metric.unit} on source {event.source}")
+        source_names.append(event.source)
+        unit_columns[event.source] = source.units[metric.unit]
         filters = []
         for filt in measure.filters:
             prop = _reference(catalog.properties, filt.property, "property")
             if prop.dimension is None:
-                declared = filt.property in source.properties and prop.source == fact.source
+                declared = filt.property in source.properties and prop.source == event.source
             else:
                 # The property keeps one canonical owner; any source declaring the
                 # shared dimension may filter through that same dimension property.
@@ -264,13 +267,13 @@ def bind_metric(catalog: Catalog, metric_name: str) -> BoundMetric:
                 )
             if not declared:
                 raise _MISSING.error(
-                    reference=f"filter property {filt.property} on source {fact.source}"
+                    reference=f"filter property {filt.property} on source {event.source}"
                 )
             filters.append(BoundFilter(filt.property, filt.op, tuple(filt.values)))
         bound_measures.append(
             BoundMeasure(
-                measure.fact,
-                fact.source,
+                measure.event,
+                event.source,
                 measure.aggregation,
                 tuple(filters),
                 measure.window_days,
@@ -280,8 +283,8 @@ def bind_metric(catalog: Catalog, metric_name: str) -> BoundMetric:
     transform = (freeze(metric.winsorization),) if metric.winsorization is not None else ()
     return BoundMetric(
         metric_name,
-        metric.entity,
-        MappingProxyType(entity_columns),
+        metric.unit,
+        MappingProxyType(unit_columns),
         metric.kind,
         tuple(bound_measures),
         tuple(dict.fromkeys(source_names)),
@@ -297,10 +300,10 @@ def normalize_events(
     extra_columns: Mapping[str, str] | None = None,
 ):
     """Project normalized timestamps, units, declared columns and requested identities."""
-    if unit_column not in source.entities.values():
-        raise _MISSING.error(reference=f"physical entity column:{unit_column}")
-    physical = list(source.entities.values())
-    physical.extend(column for column in source.facts.values() if column is not None)
+    if unit_column not in source.units.values():
+        raise _MISSING.error(reference=f"physical unit column:{unit_column}")
+    physical = list(source.units.values())
+    physical.extend(column for column in source.events.values() if column is not None)
     physical.extend(
         prop.column
         for prop in source.properties.values()
@@ -308,10 +311,10 @@ def normalize_events(
     )
     physical = list(dict.fromkeys(physical))
     if ("_unit" in physical and unit_column != "_unit") or (
-        "_timestamp" in physical and source.timestamp_column != "_timestamp"
+        "_timestamp" in physical and source.time_column != "_timestamp"
     ):
         raise _AMBIGUOUS.error(column="_unit" if "_unit" in physical else "_timestamp")
-    columns = {"_timestamp": source.timestamp_column, "_unit": unit_column}
+    columns = {"_timestamp": source.time_column, "_unit": unit_column}
     columns.update((column, column) for column in physical)
     if extra_columns:
         for alias, column in extra_columns.items():

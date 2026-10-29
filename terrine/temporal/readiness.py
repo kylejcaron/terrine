@@ -10,7 +10,13 @@ __all__ = ["Readiness"]
 
 _MISSING = RefusalSpec(
     "terrine.readiness.missing_source",
-    "No completeness coverage was declared for fact source {source!r}.",
+    "Event or history table {source!r} has no declared complete time range. "
+    "Pass complete=(first_day, last_day) with the inclusive days fully loaded for that table.",
+)
+_INVALID_BINDING = RefusalSpec(
+    "terrine.model.invalid_binding",
+    "Model input {field!r} is invalid ({reason}). "
+    "Provide the declared complete time range for each event and history table.",
 )
 
 
@@ -24,7 +30,7 @@ class Readiness:
             not isinstance(name, str) or not name or not isinstance(value, BoundCoverage)
             for name, value in sources.items()
         ):
-            raise TypeError("sources must map names to BoundCoverage")
+            raise _INVALID_BINDING.error(reason="wrong_type", field="sources")
         self._sources = MappingProxyType(dict(sources))
 
     @property

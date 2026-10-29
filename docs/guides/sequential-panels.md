@@ -7,12 +7,16 @@ for both constructors with calendar-date and relative-period assertions.
 
 ## Scheduled trial panels
 
-`recipes.trial_panel` requires `unit`, `every`, `start`, exclusive `end`, and a
-`treatment` history declaration (`Initiation` or `PersistentAdoption`). Its rows
+`recipes.trial_panel` requires `every`, `start`, `end`, and a `treatment`
+history declaration (`Initiation` or `PersistentAdoption`); `unit` is the
+model's only unit unless named (see [unit inference](design-specs.md#unit-inference)). Its rows
 are eligible units at scheduled trial time zero; schedule dates, not a redundant
 period count, define the trials. Dates are calendar dates or ISO date strings,
-never timestamps. For example, the following schedule has Jan 1, Jan 15, and
-Jan 29 anchors, not Feb 1.
+never timestamps, and the `end` day is included. `every` is an elapsed duration
+or a calendar step (`"1mo"`, `"1y"`), as for `time_series`: monthly trials from
+`2025-01-31` fall on Jan 31, Feb 28 and Mar 31, and `trial_id` stays
+`schedule:<k>`. For example, the following schedule has Jan 1, Jan 15, and
+Jan 29 anchors.
 
 Supported options are `trial_weight=None`, `anticipation="0d"`,
 `reference_period="-1d"`, `features`, `outcomes`, `eligibility`, `anchor_range`,
@@ -24,11 +28,9 @@ from datetime import UTC, datetime
 from terrine import recipes
 from terrine.spec import Initiation, from_json, to_json
 
-treatment_history = Initiation(
-    "assignments", "started", history_start=datetime(2024, 1, 1, tzinfo=UTC)
-)
+treatment_history = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
 trials = recipes.trial_panel(
-    "user", every="14d", start="2025-01-01", end="2025-02-01",
+    every="14d", start="2025-01-01", end="2025-01-29",
     treatment=treatment_history,
 )
 assert from_json(to_json(trials)) == trials
@@ -39,7 +41,7 @@ assert from_json(to_json(trials)) == trials
 ```python
 from terrine.spec import Design, Schedule, Sequential
 
-base = Design("user", Schedule("14d", "2025-01-01", "2025-02-01"))
+base = Design(None, Schedule("14d", "2025-01-01", "2025-01-29"))
 equivalent_trials = Sequential(base, treatment=treatment_history)
 assert trials == equivalent_trials
 ```
@@ -47,16 +49,18 @@ assert trials == equivalent_trials
 `Sequential` is a public transform that lowers a base Design to the canonical
 sequential shape. It does not infer exposure from an event anchor.
 `CalendarPanel` accepts that canonical sequential design unchanged.
-`Initiation` describes treatment onset, its declared source/property, the
-earliest complete history needed for classification, and the information policy
-(`recorded_at` or `retrospective_effective_time`). `PersistentAdoption` is a
-separate declaration and requires explicit absorbing semantics; it is not
-inferred from initiation. A source maximum timestamp does not establish history
-completeness.
+`Initiation` names the event or label whose first observation starts treatment,
+the earliest complete history needed for classification, and the information
+policy (`recorded_at` or `retrospective_effective_time`). The owning source is
+the one that declares that name; a name declared as an event on one source and
+a label on another refuses with `terrine.design.invalid`
+(`reason="ambiguous_reference"`). `PersistentAdoption` is a separate declaration
+and requires explicit absorbing semantics; it is not inferred from initiation.
+A source maximum timestamp does not establish history completeness.
 
 ## Event panels
 
-`recipes.event_panel` requires `unit`, `event`, an explicit tuple of relative
+`recipes.event_panel` requires `event`, an explicit tuple of relative
 `periods`, and elapsed `period` width. A row is one selected parent event at one
 declared relative period. `occurrence` defaults to `"first"` and accepts
 `"each"` or `"nth"`; only `"nth"` takes a positive one-based `n`. Supported
@@ -68,7 +72,7 @@ from terrine import agg, recipes
 
 outcomes = {"next_week": agg("orders", window=("1d", "8d"))}
 event_rows = recipes.event_panel(
-    "user", event="checkout", periods=(-2, -1, 0, 1), period="1d",
+    event="checkout", periods=(-2, -1, 0, 1), period="1d",
     outcomes=outcomes,
 )
 ```
@@ -79,7 +83,7 @@ event_rows = recipes.event_panel(
 from terrine.spec import Design, EventAnchor, EventPanel
 
 equivalent_events = EventPanel(
-    Design("user", EventAnchor("checkout"), outcomes=outcomes),
+    Design(None, EventAnchor("checkout"), outcomes=outcomes),
     periods=(-2, -1, 0, 1), period_seconds=86_400, reference_period=-1,
 )
 assert event_rows == equivalent_events
@@ -98,7 +102,7 @@ assert treatment or exposure.
 
 ## Treatment history and matched t0
 
-Sequential treatment is classified at each schedule's exact `t0` from the declared source history. The source must declare complete coverage from `history_start` through the final trial boundary; a latest observed event timestamp is not a completeness guarantee. `Initiation` means that the selected fact/property has been observed by t0. `PersistentAdoption` is a distinct state selector with an explicit adopted value and absorbing-history declaration.
+Sequential treatment is classified at each schedule's exact `t0` from the declared source history. The source must declare complete coverage from `history_start` through the final trial boundary; a latest observed event timestamp is not a completeness guarantee. `Initiation` means that the named event or label has been observed by t0. `PersistentAdoption` is a distinct state selector with an explicit adopted value and absorbing-history declaration.
 
 The sequential `anticipation` interval extends the control no-initiation risk
 horizon and the corresponding treatment-source and roster-history coverage

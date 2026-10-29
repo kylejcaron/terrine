@@ -27,7 +27,7 @@ def test_approximate_quantile_stage_refuses_before_capture(
     try:
         con.raw_sql("ALTER TABLE events ADD COLUMN value INTEGER DEFAULT 1")
         definition = frame._model.catalog.model_dump(mode="python")
-        definition["facts"]["session"]["column"] = "value"
+        definition["events"]["session"]["column"] = "value"
         definition["measures"]["sessions_count"]["aggregation"] = "sum"
         model = Model.from_catalog(
             Catalog.model_validate(definition),

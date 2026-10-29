@@ -87,7 +87,15 @@ class ExportManifest:
 
     @classmethod
     def from_json(cls, content: bytes | str) -> ExportManifest:
-        payload = json.loads(content)
+        try:
+            return cls._from_payload(json.loads(content))
+        except (KeyError, TypeError, ValueError) as error:
+            if getattr(error, "code", None) == _INVALID.code:
+                raise
+            raise _INVALID.error(reason="malformed_export_manifest") from error
+
+    @classmethod
+    def _from_payload(cls, payload: Any) -> ExportManifest:
         expected = {
             "schema_version",
             "dataset_id",
@@ -104,7 +112,7 @@ class ExportManifest:
             or set(payload) != expected
             or payload["schema_version"] != 2
         ):
-            raise ValueError("invalid export manifest")
+            raise _INVALID.error(reason="unsupported_export_manifest")
         return cls(
             payload["dataset_id"],
             payload["generation_id"],

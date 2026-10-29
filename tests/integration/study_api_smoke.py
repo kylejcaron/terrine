@@ -32,7 +32,7 @@ from terrine.execution.inputs import ExecutionContext  # noqa: E402
 
 def _definitions():
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "day_boundary": "UTC",
         "dialect": "duckdb",
         "sources": {
@@ -41,14 +41,14 @@ def _definitions():
                     "kind": "sql",
                     "sql": "SELECT user_id, ts, value FROM events WHERE value >= 0",
                 },
-                "timestamp": "ts",
-                "entities": {"user": "user_id"},
-                "facts": ["session"],
+                "time": "ts",
+                "units": {"user": "user_id"},
+                "events": ["session"],
                 "properties": ["plan", "adopted"],
                 "dimensions": ["plans"],
             }
         },
-        "facts": {"session": {"source": "events", "column": None}},
+        "events": {"session": {"source": "events", "column": None}},
         "properties": {
             name: {
                 "source": "events",
@@ -62,14 +62,14 @@ def _definitions():
         "dimensions": {
             "plans": {
                 "relation": {"kind": "table", "name": "plans"},
-                "source_entity": "user",
-                "entity_column": "user_id",
+                "unit": "user",
+                "key": "user_id",
                 "validity": {"valid_from": "valid_from", "valid_to": "valid_to"},
                 "properties": ["plan", "adopted"],
             }
         },
-        "measures": {"count": {"fact": "session", "aggregation": "count"}},
-        "metrics": {"sessions": {"kind": "mean", "entity": "user", "measure": "count"}},
+        "measures": {"count": {"event": "session", "aggregation": "count"}},
+        "metrics": {"sessions": {"kind": "mean", "unit": "user", "measure": "count"}},
     }
 
 

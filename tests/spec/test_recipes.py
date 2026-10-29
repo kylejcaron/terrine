@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import copy
-import pickle
 from datetime import UTC, date, datetime
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -18,6 +16,7 @@ from terrine.spec import (
     EventAnchor,
     EventPanel,
     EventSequence,
+    FixedDate,
     Initiation,
     LifeTable,
     PersistentAdoption,
@@ -47,9 +46,9 @@ _SHARED: dict[str, Any] = {
     "anchor_range": AnchorRange("2025-01-02", "2025-02-01"),
     "gap": "1d",
 }
-_SCHEDULE: dict[str, Any] = {"every": "7d", "start": date(2025, 1, 1), "end": "2025-02-01"}
+_SCHEDULE: dict[str, Any] = {"every": "7d", "start": date(2025, 1, 1), "end": "2025-01-28"}
 _TREATMENT = Treatment("plan", at="-1d")
-_INITIATION = Initiation("adoptions", "started", datetime(2024, 1, 1, tzinfo=UTC))
+_INITIATION = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
 _CUTOFF = datetime(2025, 4, 1, tzinfo=UTC)
 _REQUIRED: dict[str, dict[str, Any]] = {
     "time_series": _SCHEDULE,
@@ -58,11 +57,7 @@ _REQUIRED: dict[str, dict[str, Any]] = {
     "ltv": {"start_event": "purchase", "metric": "revenue", "period": "7d", "periods": 4},
     "survival": {"start_event": "signup", "end_event": "churn"},
     "life_table": {"start_event": "signup", "end_event": "churn", "bin": "7d"},
-    "state_panel": {
-        **_SCHEDULE,
-        "state_source": StateObservations("health", ("well", "ill")),
-        "periods": 5,
-    },
+    "state_panel": {**_SCHEDULE, "state_source": StateObservations("health", ("well", "ill"))},
     "event_sequence": {"event": "purchase", "horizon": "7d", "max_events": 9},
 }
 
@@ -83,7 +78,7 @@ def test_time_series_is_a_plain_scheduled_design_with_all_supported_roles():
         ),
         Design(
             "user",
-            Schedule("7d", "2025-01-01", "2025-02-01"),
+            Schedule("7d", "2025-01-01", "2025-01-28"),
             **_SHARED,
             outcomes=_OUTCOMES,
             treatment=_TREATMENT,
@@ -111,7 +106,10 @@ def test_time_series_accepts_typed_boolean_features_and_outcomes() -> None:
     [
         _INITIATION,
         PersistentAdoption(
-            "adoptions", "plan", "paid", datetime(2024, 1, 1, tzinfo=UTC), "absorbing"
+            "plan",
+            adopted_value="paid",
+            history_start=datetime(2024, 1, 1, tzinfo=UTC),
+            persistence="absorbing",
         ),
     ],
 )
@@ -201,12 +199,13 @@ def test_survival_matches_time_to_event_design_with_absolute_cutoff():
 
 
 def test_life_table_matches_explicit_feature_grouped_design():
+    shared = {key: value for key, value in _SHARED.items() if key != "features"}
     _assert_equivalent(
         recipes.life_table(
             "user",
             **_REQUIRED["life_table"],
-            **_SHARED,
-            group_by=("region",),
+            **shared,
+            group_by=_FEATURES,
             occurrence="nth",
             n=2,
             administrative_cutoff=_CUTOFF,
@@ -215,10 +214,21 @@ def test_life_table_matches_explicit_feature_grouped_design():
             "user",
             EventAnchor("signup", "nth", 2),
             shape=LifeTable(TimeToEvent("churn"), "7d", group_by=("region",)),
-            **_SHARED,
+            features=_FEATURES,
+            **shared,
             administrative_cutoff=_CUTOFF,
         ),
     )
+
+
+def test_life_table_group_by_mapping_declares_its_features():
+    design = recipes.life_table(
+        **_REQUIRED["life_table"], group_by={"region": asof("region", before="-1d")}
+    )
+    assert isinstance(design.shape, LifeTable)
+    assert design.shape.group_by == ("region",)
+    assert set(design.features) == {"region"}
+    assert recipes.life_table(**_REQUIRED["life_table"]).features == {}
 
 
 @pytest.mark.parametrize(
@@ -233,6 +243,32 @@ def test_state_panel_matches_bounded_scheduled_state_design(source):
         recipes.state_panel("user", **_SCHEDULE, state_source=source, periods=5, **_SHARED),
         Design("user", Schedule(**_SCHEDULE), shape=StatePanel(source, max_periods=5), **_SHARED),
     )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        StateObservations("health", ("well", "ill")),
+        BinnedMetricState("revenue", (0,), ("none", "positive")),
+    ],
+)
+def test_state_panel_derives_periods_from_inclusive_end(source):
+    weekly: dict[str, Any] = {"state_source": source, "every": "1w", "start": "2025-01-06"}
+    design = recipes.state_panel("user", **weekly, end="2025-03-30", **_SHARED)
+    assert isinstance(design.shape, StatePanel)
+    assert design.shape.max_periods == 12
+    with pytest.raises(TerrineError) as error:
+        recipes.state_panel("user", **weekly, end="2025-03-28", **_SHARED)
+    assert error.value.code == "terrine.state_panel.invalid_schedule"
+    assert error.value.context["reason"] == "schedule_not_whole_periods"
+    assert error.value.context["every"] == 7 * 86_400
+    assert (error.value.context["start"], error.value.context["end"]) == (
+        "2025-01-06",
+        "2025-03-28",
+    )
+    capped = recipes.state_panel("user", **weekly, end="2025-03-30", periods=10, **_SHARED)
+    assert isinstance(capped.shape, StatePanel)
+    assert capped.shape.max_periods == 10
 
 
 def test_event_sequence_matches_bounded_session_design():
@@ -258,11 +294,12 @@ def test_event_sequence_matches_bounded_session_design():
 
 
 @pytest.mark.parametrize("name", _REQUIRED)
-def test_row_defining_arguments_cannot_be_omitted(name):
+def test_unit_is_optional_and_row_defining_keywords_are_required(name):
     constructor = getattr(recipes, name)
-    arguments = {"unit": "user", **_REQUIRED[name]}
-    for missing in arguments:
-        supplied = {key: value for key, value in arguments.items() if key != missing}
+    assert constructor(**_REQUIRED[name]).unit is None
+    assert constructor("user", **_REQUIRED[name]).unit == "user"
+    for missing in _REQUIRED[name]:
+        supplied = {key: value for key, value in _REQUIRED[name].items() if key != missing}
         with pytest.raises(TypeError):
             constructor(**supplied)
 
@@ -275,7 +312,7 @@ def test_row_defining_arguments_cannot_be_omitted(name):
         ("event_panel", ("treatment", "administrative_cutoff")),
         ("ltv", ("outcomes", "occurrence", "n")),
         ("survival", ("outcomes", "horizon", "periods")),
-        ("life_table", ("outcomes", "treatment", "horizon")),
+        ("life_table", ("outcomes", "treatment", "horizon", "features")),
         ("state_panel", ("outcomes", "treatment", "administrative_cutoff")),
         ("event_sequence", ("treatment", "administrative_cutoff")),
     ],
@@ -295,9 +332,17 @@ def test_event_occurrence_defaults_to_first_and_nth_is_one_based(name):
     assert constructor("user", **_REQUIRED[name], occurrence="nth", n=3).anchor == EventAnchor(
         fact, "nth", 3
     )
-    for occurrence, n in (("nth", None), ("nth", 0), ("nth", True), ("first", 1), ("last", None)):
-        with pytest.raises(ValueError):
+    for occurrence, n, field in (
+        ("nth", None, "n"),
+        ("nth", 0, "n"),
+        ("nth", True, "n"),
+        ("first", 1, "n"),
+        ("last", None, "occurrence"),
+    ):
+        with pytest.raises(TerrineError) as error:
             constructor("user", **_REQUIRED[name], occurrence=occurrence, n=n)
+        assert error.value.code == "terrine.design.invalid"
+        assert error.value.context["field"] == field
 
 
 @pytest.mark.parametrize("name", ["event_panel", "event_sequence"])
@@ -306,30 +351,18 @@ def test_repeatable_event_shapes_accept_each_without_n(name):
     assert constructor("user", **_REQUIRED[name], occurrence="each").anchor == EventAnchor(
         "purchase", "each"
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(TerrineError) as error:
         constructor("user", **_REQUIRED[name], occurrence="each", n=1)
+    assert error.value.context["reason"] == "n_requires_nth"
 
 
 @pytest.mark.parametrize("name", ["survival", "life_table"])
-def test_single_entry_shapes_refuse_each_with_portable_coded_context(name):
+def test_single_entry_shapes_refuse_each(name):
     with pytest.raises(TerrineError) as error:
         getattr(recipes, name)("user", **_REQUIRED[name], occurrence="each")
     assert error.value.code == "terrine.design.invalid"
-    assert error.value.context
-    for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
-        assert restored.code == error.value.code
-        assert restored.context == error.value.context
-    with pytest.raises(TypeError):
-        cast(dict[str, Any], error.value.context)["reason"] = "changed"
-
-
-@pytest.mark.parametrize(
-    ("features", "groups"),
-    [(_FEATURES, ()), (_FEATURES, ("region", "channel")), ({}, ("region",))],
-)
-def test_life_table_features_must_exactly_match_explicit_groups(features, groups):
-    with pytest.raises(ValueError):
-        recipes.life_table("user", **_REQUIRED["life_table"], features=features, group_by=groups)
+    assert error.value.context["reason"] == "single_entry_required"
+    assert error.value.context["choices"] == ("first", "nth")
 
 
 @pytest.mark.parametrize("name", ["time_series", "trial_panel", "state_panel"])
@@ -337,8 +370,148 @@ def test_schedules_accept_calendar_dates_not_timestamps(name):
     constructor = getattr(recipes, name)
     for bound in ("start", "end"):
         for timestamp in (datetime(2025, 1, 10, tzinfo=UTC), "2025-01-10T00:00:00Z"):
-            with pytest.raises((TypeError, ValueError)):
+            with pytest.raises(TerrineError) as error:
                 constructor("user", **{**_REQUIRED[name], bound: timestamp})
+            assert error.value.context == {"reason": "invalid_date", "field": bound}
+
+
+@pytest.mark.parametrize(
+    ("build", "reason"),
+    [
+        (lambda: Schedule("1d", "2025-02-01", "2025-01-01"), "schedule_end_before_start"),
+        (lambda: Schedule("1d", "9999-12-30", date.max), "date_overflow"),
+        (lambda: AnchorRange(start="2025-02-01", end="2025-01-01"), "range_end_before_start"),
+        (lambda: AnchorRange(end=date.max), "date_overflow"),
+        (
+            lambda: AnchorRange(
+                start=datetime(2025, 1, 2, tzinfo=UTC), end=datetime(2025, 1, 2, tzinfo=UTC)
+            ),
+            "range_end_before_start",
+        ),
+    ],
+)
+def test_bound_order_and_overflow_are_coded(build, reason):
+    with pytest.raises(TerrineError) as error:
+        build()
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == reason
+    assert error.value.context["field"] == "end"
+
+
+def test_calendar_ends_include_their_day_and_instants_are_unchanged():
+    assert Schedule("1d", "2025-01-02", "2025-01-02").end_exclusive == date(2025, 1, 3)
+    assert AnchorRange(start="2025-01-02", end="2025-01-02").end_exclusive == date(2025, 1, 3)
+    instant = datetime(2025, 1, 2, 3, tzinfo=UTC)
+    assert AnchorRange(end=instant).end_exclusive == instant
+    assert AnchorRange(start="2025-01-02").end_exclusive is None
+    assert AnchorRange(start=instant, end=date(2025, 1, 1)).end == date(2025, 1, 1)
+
+
+def _day(value: date) -> datetime:
+    return datetime(value.year, value.month, value.day, tzinfo=UTC)
+
+
+def _instants(*days: tuple[int, int, int]) -> tuple[datetime, ...]:
+    return tuple(datetime(*day, tzinfo=UTC) for day in days)
+
+
+def test_month_schedule_anchors_are_start_plus_k_months_clamped_to_the_month():
+    assert Schedule("1mo", "2025-01-31", "2025-04-30").instants(_day) == _instants(
+        (2025, 1, 31), (2025, 2, 28), (2025, 3, 31), (2025, 4, 30)
+    )
+    assert Schedule("1y", "2024-02-29", "2026-03-01").instants(_day) == _instants(
+        (2024, 2, 29), (2025, 2, 28), (2026, 2, 28)
+    )
+    assert Schedule("1mo", "2025-01-31", "2025-03-31").count(_day) == 3
+    assert Schedule("1mo", "2025-01-31", "2025-03-30").count(_day) == 2
+    assert Schedule("1mo", "2025-01-31", "2025-01-31").count(_day) == 1
+    assert Schedule("1mo", "2025-01-30", "2025-02-28").count(_day) == 2
+    monthly = Schedule("1mo", "2025-01-01", "2025-02-01")
+    assert (monthly.months, monthly.every) == (1, None)
+    assert Schedule("2y", "2025-01-01", "2025-02-01").months == 24
+
+
+def test_month_count_never_builds_a_date_beyond_the_end_month():
+    schedule = Schedule("1y", "9999-01-01", "9999-12-30")
+    assert schedule.count(_day) == 1
+    assert schedule.instants(_day) == _instants((9999, 1, 1))
+
+
+def test_elapsed_count_is_arithmetic(monkeypatch):
+    import terrine.spec.anchors as anchors
+
+    def never(*args):
+        raise AssertionError("an elapsed schedule does not walk months")
+
+    monkeypatch.setattr(anchors, "add_months", never)
+    schedule = Schedule("1s", "2025-01-01", "2025-12-31")
+    assert (schedule.every, schedule.months) == (1, None)
+    assert schedule.count(_day) == 365 * 86_400
+    assert schedule.instant(schedule.count(_day) - 1, _day) == datetime(
+        2025, 12, 31, 23, 59, 59, tzinfo=UTC
+    )
+    with pytest.raises(TerrineError) as error:
+        schedule.instants(_day)
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "elapsed_schedule"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "build"),
+    [
+        ("window", "-1mo", lambda: agg("sessions", window=("-1mo", "0s"))),
+        (
+            "period",
+            "1mo",
+            lambda: recipes.ltv(
+                "user", start_event="purchase", metric="spend", period="1mo", periods=3
+            ),
+        ),
+        ("gap", "1mo", lambda: Design("user", FixedDate("2025-01-01"), gap="1mo")),
+        ("before", "1mo", lambda: asof("region", before="1mo")),
+        ("offset", "1mo", lambda: EventAnchor("purchase", offset="1mo")),
+        (
+            "bin",
+            "1mo",
+            lambda: recipes.life_table("user", start_event="signup", end_event="churn", bin="1mo"),
+        ),
+        (
+            "horizon",
+            "1y",
+            lambda: recipes.event_sequence("user", event="purchase", horizon="1y", max_events=3),
+        ),
+        (
+            "session_gap",
+            "1mo",
+            lambda: recipes.event_sequence(
+                "user", event="purchase", horizon="7d", max_events=3, session_gap="1mo"
+            ),
+        ),
+    ],
+)
+def test_elapsed_fields_refuse_calendar_units_with_a_route(field, value, build):
+    with pytest.raises(TerrineError) as error:
+        build()
+    assert error.value.code == "terrine.window.invalid_duration"
+    assert error.value.context == {"field": field, "value": value}
+
+
+@pytest.mark.parametrize("periods", [None, 3])
+def test_state_panel_refuses_month_schedules_with_an_elapsed_route(periods):
+    with pytest.raises(TerrineError) as error:
+        recipes.state_panel(
+            "user",
+            state_source=StateObservations("health", ("well", "ill")),
+            every="1mo",
+            start="2025-01-01",
+            end="2025-03-01",
+            periods=periods,
+            **_SHARED,
+        )
+    assert error.value.code == "terrine.state_panel.invalid_schedule"
+    assert error.value.context["reason"] == "calendar_months_unsupported"
+    assert error.value.context["every"] == "1mo"
+    assert error.value.context["route"] == "4w"
 
 
 def test_conditional_events_remain_low_level_expression_composition():

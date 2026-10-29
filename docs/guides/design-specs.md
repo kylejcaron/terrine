@@ -24,26 +24,30 @@ assert loaded == spec
 print(spec.spec_hash)
 ```
 
-`FixedDate`, `EventAnchor`, and `Schedule` are the supported anchor variants. Schedules use a positive elapsed `every` duration and an exclusive end date. `AnchorRange` is half-open, needs at least one bound, and accepts calendar dates or aware timestamps; timestamps are normalized to UTC, while dates remain tagged dates. A naive timestamp is refused. A date is a calendar-day bound, not a midnight instant: its eventual interpretation uses the model Catalog's declared day boundary.
+`FixedDate`, `EventAnchor`, and `Schedule` are the supported anchor variants. Schedules use a positive `every` step and calendar `start` and `end` dates; the `end` day is included, `start == end` is one anchor, and `start > end` refuses with `terrine.design.invalid` (`reason="schedule_end_before_start"`). The step is an elapsed duration (`"7d"`, `"4w"`, integral seconds; stored as `every` seconds with `months` null) or a calendar step (`"1mo"`, `"3mo"`, `"1y"` = twelve months; stored as `months` with `every` null). A calendar anchor is `start` advanced by `k` whole months and clamped to that month's last day, never chained from the previous anchor: `"1mo"` from `2025-01-31` is Jan 31, Feb 28, Mar 31, Apr 30. Calendar units are a `Schedule` feature only; every elapsed field (`window=`, `before=`, `gap=`, `offset=`, `period=`, `bin=`, `horizon=`, `session_gap=`) refuses them with `terrine.window.invalid_duration` (context `field`, `value`). `AnchorRange` needs at least one bound and accepts calendar dates or aware timestamps; timestamps are normalized to UTC and remain exact exclusive instants, while dates remain tagged dates and a date `end` keeps anchors through that whole local day. A naive timestamp is refused. A date is a calendar-day bound, not a midnight instant: its eventual interpretation uses the model Catalog's declared day boundary. Both carry a read-only `end_exclusive` (the day after a calendar `end`; an instant unchanged); `date.max` cannot be widened and refuses with `reason="date_overflow"`.
 
 `FixedDate("2025-03-01T12:34:56.123456Z")` preserves an intraday instant rather than reducing it to a calendar day. Portable instant definitions use exact microsecond precision: equivalent offsets and trailing-zero fractional precision canonicalize identically; nonzero submicroseconds are refused rather than truncated, including timestamp subclasses supplied by dataframe libraries. `Schedule` remains calendar-date-only.
 
-`EventAnchor(fact, which="first", n=None, offset=0)` can shift the selected
+`EventAnchor(event, which="first", n=None, offset=0)` can shift the selected
 event by a non-negative elapsed duration. For example,
 `EventAnchor("purchase", offset="1d")` starts analysis one elapsed day after
 purchase. First/nth selection and `anchor_range` still operate on original
 event times. Nonzero offsets are serialized as integral seconds and change
 anchor identity, provenance and `spec_hash`; zero is omitted, preserving
-existing saved Designs and hashes. See the low-level
+saved Designs and hashes. See the low-level
 [landmark survival example](trajectories-survival.md#landmark-survival).
 
 Mixed date/timestamp bounds are ordered only after catalog binding resolves the calendar-day boundary.
 
 `agg(metric, window=(start, end))` stores a half-open interval as signed integral seconds using the shared `s`/`m`/`h`/`d`/`w` duration parser. Thus equivalent elapsed forms have identical specs and hashes, e.g. `60m` and `1h`. `asof(attribute, before=...)` stores an exact signed-second strict cutoff, including zero. Predicate constructors `gt`, `eq`, `is_null`, and `all_of` form typed true/false rules accepted in `features`, `outcomes`, and `eligibility`. Comparands are finite JSON scalars only; Python functions and other runtime objects are never serialized.
 
-`to_yaml` and `to_json` return portable text. `from_yaml` and `from_json` accept text or bytes and only construct the known data types. They reject duplicate keys, unknown schema versions, unknown node tags, extra fields, unsafe YAML tags, and invalid node data. Canonical JSON recursively sorts mapping keys, uses compact UTF-8 JSON, and is the basis of `Design.spec_hash`; map insertion order does not affect a design hash.
+`to_yaml` and `to_json` return portable text with `schema_version: 2`. `from_yaml` and `from_json` accept text or bytes and only construct the known data types. Text that does not parse refuses with `terrine.design.invalid` (`reason="malformed_document"`); a document from an earlier version refuses with the same code and `reason="unsupported_schema_version"`, and there is no migration: construct the design again and save it. Duplicate keys, unknown node tags, extra fields, unsafe YAML tags, and values of the wrong type refuse with the same code and `reason="malformed_document"`; a node whose value its constructor refuses keeps that constructor's refusal. Canonical JSON recursively sorts mapping keys, uses compact UTF-8 JSON, and is the basis of `Design.spec_hash`; map insertion order does not affect a design hash.
 
 Treatment is explicit and descriptive: `Treatment(attribute, at="0d", known_at_t0=False)` records a treatment attribute, its signed elapsed cutoff, and whether the design declares it known at time zero. An event anchor does not imply treatment assignment. Design construction and serialization are data-only; model validation, compilation, and frame execution belong to later APIs.
+
+## Unit inference
+
+`unit` names the roster unit each row is about. `Design(None, ...)`, which is what every `recipes` constructor builds when its `unit` is omitted, means the model's only unit: the design is resolved wherever it meets a model (`validate`, `build`, `snapshot`, `preview`, the agent tools and staging). With exactly one `UnitSource` the design is read as if that name had been typed; with several it refuses with `terrine.model.ambiguous_unit` (context `owner="design"`, sorted `choices`, `parameter="unit"`); with none it refuses with `terrine.design.invalid` (`reason="no_unit_source"`). `to_yaml` and `to_json` write `unit: null` and read it back, and `spec_hash` of such a design hashes that document. The identity recorded by staging, saved definitions and scoring views is the resolved design's, so a typed and an inferred unit give the same staged `design_hash`, definition digest and scoring `view_hash`, and a winsorization fitted on one is admitted by the other.
 
 ## Boolean features and outcomes
 

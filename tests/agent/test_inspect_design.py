@@ -5,6 +5,7 @@ import pytest
 
 from terrine.agent.tools import DatasetTools
 from terrine.data import Coverage, UnitSource
+from terrine.dataset.splits import GroupSplit
 from terrine.model import Model
 from terrine.runtime.saved_plan import ModelReference
 from terrine.spec.io import from_json
@@ -49,6 +50,22 @@ def test_propose_design_from_discovered_schema(tools):
     )
 
 
+def test_validate_design_returns_a_summary(tools):
+    example = json.loads(tools.design_example().output.serialized)
+    example["design"]["features"] = {
+        "recent_total": {
+            "type": "MetricAgg",
+            "metric": "total",
+            "window": {"type": "Window", "start": -86400, "end": 0},
+        }
+    }
+    serialized = json.dumps(example)
+    validated = tools.validate_design(serialized).output
+    assert validated.spec_hash and "events" in validated.summary
+    assert "recent_total" in validated.summary
+    assert tools.propose_design(serialized).output.summary == validated.summary
+
+
 def test_validation_uses_existing_metadata_contracts(tools, monkeypatch):
     def no_rows(*args, **kwargs):
         raise AssertionError("metadata tools read source rows")
@@ -69,7 +86,9 @@ def test_validation_uses_existing_metadata_contracts(tools, monkeypatch):
     payload["design"]["features"]["bad"]["window"]["start"] = 10
     assert tools.validate_design(json.dumps(payload)).status == "refused"
     payload["design"]["sql"] = "SELECT secret"
-    assert tools.propose_design(json.dumps(payload)).code == "terrine.agent.invalid_request"
+    smuggled = tools.propose_design(json.dumps(payload))
+    assert smuggled.code == "terrine.design.invalid"
+    assert smuggled.suggested_route
 
 
 def test_design_save_load_is_confined_to_owner_root(tools, tmp_path):
@@ -92,7 +111,7 @@ def test_design_save_load_is_confined_to_owner_root(tools, tmp_path):
 @pytest.mark.parametrize("roster", [False, True])
 def test_design_example_handles_event_only_and_multiple_entity_models(tools, roster):
     source = tools.model.catalog.sources["events"]
-    source = source.model_copy(update={"entities": {"account": "user_id", "user": "user_id"}})
+    source = source.model_copy(update={"units": {"account": "user_id", "user": "user_id"}})
     catalog = tools.model.catalog.model_copy(update={"sources": {"events": source}})
     model = Model.from_catalog(
         catalog,
@@ -106,11 +125,24 @@ def test_design_example_handles_event_only_and_multiple_entity_models(tools, ros
         model_reference=reference,
         allowed_catalogs=frozenset({reference.catalog_hash}),
     )
-    result = DatasetTools(model, policy, namespace="agent").design_example()
+    agent = DatasetTools(model, policy, namespace="agent")
+    result = agent.design_example()
     assert result.status == "ok"
     assert result.output is not None
     design = from_json(result.output.serialized)
     assert design.unit == ("user" if roster else "account")
+    document = json.loads(result.output.serialized)
+    document["design"]["unit"] = None
+    proposed = agent.propose_design(json.dumps(document), base=result.output.serialized)
+    if roster:
+        assert proposed.status == "ok"
+        assert proposed.output is not None
+        assert from_json(proposed.output.serialized) == design
+        assert proposed.output.spec_hash == design.spec_hash
+        assert proposed.output.changed_paths == ()
+    else:
+        assert proposed.code == "terrine.design.invalid"
+        assert agent.validate_design(json.dumps(document)).code == "terrine.design.invalid"
 
 
 def test_propose_design_and_definition_from_discovered_schema(tools, monkeypatch):
@@ -138,7 +170,7 @@ def test_propose_design_and_definition_from_discovered_schema(tools, monkeypatch
         }
     }
     definition = {
-        "schema_version": 1,
+        "schema_version": 2,
         "base_design": document,
         "view": {
             "kind": "training",
@@ -189,7 +221,7 @@ def _scoring_record(tools):
         }
     }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "base_design": document,
         "view": {
             "kind": "scoring",
@@ -215,7 +247,7 @@ def test_scoring_definition_refuses_inconsistent_reconstruction(tools, mutation)
     else:
         definition["base_design"]["anchor"] = {
             "type": "EventAnchor",
-            "fact": "event",
+            "event": "event",
             "which": "first",
         }
     result = tools.propose_definition(json.dumps(definition))
@@ -233,29 +265,37 @@ def test_scoring_definition_canonicalizes_eligibility_defaults(tools):
     assert tools.propose_definition(json.dumps(definition)).status == "ok"
 
 
-def test_definition_split_overflow_is_a_coded_refusal(tools):
-    definition = _scoring_record(tools)
-    definition["view"] = {
-        "kind": "training",
-        "features": ["history"],
-        "labels": ["future"],
-        "incomplete_labels": "keep",
-        "split": {
+@pytest.mark.parametrize(
+    "split",
+    [
+        {
             "kind": "time",
             "train_until": "2025-01-15",
             "validation_until": None,
             "embargo_microseconds": 10**30,
             "groups": None,
         },
+        {**GroupSplit().to_record(), "train_fraction": "1.5"},
+    ],
+    ids=["embargo_overflow", "train_fraction_out_of_range"],
+)
+def test_definition_split_refusal_keeps_its_split_code(tools, split):
+    definition = _scoring_record(tools)
+    definition["view"] = {
+        "kind": "training",
+        "features": ["history"],
+        "labels": ["future"],
+        "incomplete_labels": "keep",
+        "split": split,
     }
     for operation in (
         tools.propose_definition,
         tools.validate_definition,
-        lambda value: tools.save_design("overflow", value),
+        lambda value: tools.save_design("split", value),
     ):
         result = operation(json.dumps(definition))
         assert result.status == "refused"
-        assert result.code == "terrine.dataset.invalid_definition"
+        assert result.code == "terrine.dataset.invalid_split"
 
 
 def test_scoring_definition_malformed_eligibility_is_a_coded_refusal(tools):
@@ -268,4 +308,4 @@ def test_scoring_definition_malformed_eligibility_is_a_coded_refusal(tools):
     ):
         result = operation(json.dumps(definition))
         assert result.status == "refused"
-        assert result.code == "terrine.dataset.invalid_definition"
+        assert result.code == "terrine.design.invalid"

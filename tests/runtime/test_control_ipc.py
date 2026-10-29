@@ -39,12 +39,10 @@ def test_control_server_refuses_non_socket_endpoint_without_deleting_it(tmp_path
     target.write_bytes(b"keep")
     server = ControlServer(store, namespace="owner", endpoint=ControlEndpoint(target))
 
-    try:
+    with pytest.raises(TerrineError) as error:
         server.start()
-    except FileExistsError:
-        pass
-    else:
-        raise AssertionError("non-socket control endpoint was accepted")
+    assert error.value.code == "terrine.runtime.invalid_configuration"
+    assert error.value.context["reason"] == "endpoint_not_socket"
     assert target.read_bytes() == b"keep"
 
 

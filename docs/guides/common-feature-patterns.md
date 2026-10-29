@@ -1,9 +1,10 @@
 # Common feature patterns
 
 Start with the [first dataset](first-dataset.md) for `Model.from_tables` and
-`tr.recipes`. These examples use `Model.from_catalog` because event labels,
-filtered measures and as-of attributes need explicit source semantics. Each
-snippet below runs in order after this local setup; no warehouse is required.
+`tr.recipes`. Labels, filtered counts and as-of lookups are declared on the
+same `Events`; see [binding event tables](temporal-engine.md#binding-event-tables)
+for the `where=` grammar and `History`. Each snippet below runs in order after
+this local setup; no warehouse is required.
 
 ## Local setup
 
@@ -28,34 +29,18 @@ con.raw_sql("""
         ('b', TIMESTAMP '2025-01-25 12:00:00', 'visit', 'silver')
     ) t(user_id, occurred_at, kind, tier)
 """)
-catalog = {
-    "schema_version": 1, "dialect": "duckdb", "day_boundary": "UTC",
-    "sources": {"events": {
-        "relation": {"kind": "table", "name": "events"},
-        "timestamp": "occurred_at", "entities": {"user": "user_id"},
-        "facts": ["activity"], "properties": ["kind", "tier"], "dimensions": [],
-    }},
-    "facts": {"activity": {"source": "events", "column": None}},
-    "properties": {
-        name: {"source": "events", "column": name, "dtype": "string", "as_of": "event_time"}
-        for name in ("kind", "tier")
-    },
-    "dimensions": {},
-    "measures": {
-        "activity_count": {"fact": "activity", "aggregation": "count"},
-        "purchase_count": {
-            "fact": "activity", "aggregation": "count",
-            "filters": [{"property": "kind", "op": "equals", "values": ["purchase"]}],
+model = tr.Model.from_tables(
+    con,
+    units={"user": tr.UnitSource("users", "user_id")},
+    events={"activity": tr.Events(
+        "events", time="occurred_at", key="user_id",
+        labels=("kind", "tier"),
+        metrics={
+            "activity_count": tr.count(),
+            "purchase_count": tr.count(where={"kind": "purchase"}),
         },
-    },
-    "metrics": {
-        name: {"kind": "mean", "entity": "user", "measure": name}
-        for name in ("activity_count", "purchase_count")
-    },
-}
-model = tr.Model.from_catalog(
-    catalog, con=con, units={"user": tr.UnitSource("users", "user_id")},
-    readiness={"events": tr.Coverage("2025-01-01", "2025-03-31")},
+        complete=("2025-01-01", "2025-03-31"),
+    )},
 )
 ```
 
@@ -76,7 +61,7 @@ rolling = {
     for days in (7, 14, 30)
 }
 rolling_rows = tr.recipes.time_series(
-    "user", every="1d", start="2025-02-01", end="2025-02-02", features=rolling,
+    every="1d", start="2025-02-01", end="2025-02-01", features=rolling,
 ).build(model).to_pandas()
 ```
 
@@ -92,7 +77,7 @@ purchase = tr.event_time(
     "activity", window=("0s", "7d"), label_property="kind", equals="purchase",
 )
 conditional_rows = tr.recipes.time_series(
-    "user", every="1d", start="2025-02-01", end="2025-02-02",
+    every="1d", start="2025-02-01", end="2025-02-01",
     outcomes={"activity_after_purchase": tr.agg(
         "activity_count", window=("0s", "1h"), relative_to=purchase,
     )},
@@ -109,7 +94,7 @@ eligibility refuses export rather than being treated as false.
 
 ```python
 eligible_rows = tr.recipes.time_series(
-    "user", every="1d", start="2025-02-01", end="2025-02-02",
+    every="1d", start="2025-02-01", end="2025-02-01",
     features=rolling,
     eligibility={"active_before": tr.gt(tr.agg("activity_count", window=("-30d", "0s")), 0)},
 ).build(model).to_pandas()
@@ -118,14 +103,14 @@ eligible_rows = tr.recipes.time_series(
 ## Attributes at t0
 
 `asof(..., before="0s")` selects the last known attribute strictly before t0,
-not an arbitrary current value. The setup explicitly declares `tier` as an
-event-time property through `Model.from_catalog`; `Model.from_tables` does not
-infer attribute meaning. For authoritative validity intervals, declare
-[SCD2 dimension history](temporal-attributes.md) in the Catalog instead.
+not an arbitrary current value. The setup declares `tier` as a label, so its
+value is carried from the event log: the last event before t0 supplies it. For
+authoritative validity intervals, bind a history table with `tr.History`
+([effective-time semantics](temporal-attributes.md)).
 
 ```python
 attribute_rows = tr.recipes.time_series(
-    "user", every="1d", start="2025-02-01", end="2025-02-02",
+    every="1d", start="2025-02-01", end="2025-02-01",
     features={"tier_at_t0": tr.asof("tier", before="0s")},
 ).build(model).to_pandas()
 ```
@@ -139,7 +124,7 @@ This derived pandas column is not a new Terrine expression or saved definition.
 
 ```python
 recency_rows = tr.recipes.time_series(
-    "user", every="1d", start="2025-02-01", end="2025-02-02",
+    every="1d", start="2025-02-01", end="2025-02-01",
     features={"last_seen": tr.event_time(
         "activity", window=("-30d", "0s"), occurrence="last",
     )},
@@ -156,7 +141,7 @@ Incomplete follow-up remains null with its completeness reason, not false.
 
 ```python
 label_rows = tr.recipes.time_series(
-    "user", every="1d", start="2025-02-01", end="2025-02-02",
+    every="1d", start="2025-02-01", end="2025-02-01",
     outcomes={
         "converted_7d": tr.gt(tr.agg("purchase_count", window=("0s", "7d")), 0),
         "churned_30d": tr.eq(tr.agg("activity_count", window=("0s", "30d")), 0),

@@ -52,10 +52,11 @@ def test_bounded_shape_matches_exact_path_and_independent_pandas(nonadditive_mod
             period_seconds=86_400,
         )
     else:
-        design = Design("user", Schedule("1d", "2025-01-02", "2025-01-05"), features=_features())
+        design = Design("user", Schedule("1d", "2025-01-02", "2025-01-04"), features=_features())
         if shape == "sequential":
             design = Sequential(
-                design, treatment=Initiation("events", "value", datetime(2025, 1, 1, tzinfo=UTC))
+                design,
+                treatment=Initiation("value", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             )
     compiled = compile_design(design, model)
     assert set(compiled.range_plans) == set(_features())
@@ -69,7 +70,7 @@ def test_bounded_shape_matches_exact_path_and_independent_pandas(nonadditive_mod
     oracle = window_values(events, anchors, -2 * 86_400, 0)
     oracle_by_key = {(row["unit"], str(row["anchor_id"])): row for row in oracle}
     source = model.sources["events"]
-    normalized = normalize_events(model.con.table("events"), source, source.entities["user"])
+    normalized = normalize_events(model.con.table("events"), source, source.units["user"])
     for name, expression in _features().items():
         unresolved = model.metrics[expression.metric].measures[0]
         measure = resolve_measure(normalized, unresolved, source=source, allow_nonadditive=True)
@@ -111,10 +112,10 @@ def test_range_bound_refuses_before_source_execution(nonadditive_model, monkeypa
         anchor = EventAnchor("value", "each")
         feature = agg("amount_min", window=("-2d", "0d"))
     elif kind == "dense":
-        anchor = Schedule("1s", "2025-01-02", "2025-01-03")
+        anchor = Schedule("1s", "2025-01-02", "2025-01-02")
         feature = agg("amount_min", window=("-1d", "0d"))
     else:
-        anchor = Schedule("1h", "2025-01-01", "2025-01-31")
+        anchor = Schedule("1h", "2025-01-01", "2025-01-30")
         feature = agg(
             "amount_min",
             window=("-1s", "0s"),
@@ -135,7 +136,7 @@ def test_range_bound_refuses_before_source_execution(nonadditive_model, monkeypa
 def test_additive_prefix_does_not_inherit_nonadditive_overlap_limit(nonadditive_model):
     design = Design(
         "user",
-        Schedule("1s", "2025-01-02", "2025-01-03"),
+        Schedule("1s", "2025-01-02", "2025-01-02"),
         features={"total": agg("amount", window=("-1d", "0d"))},
     )
     compiled = compile_design(design, nonadditive_model)
@@ -146,7 +147,7 @@ def test_additive_prefix_does_not_inherit_nonadditive_overlap_limit(nonadditive_
 def test_nonadditive_layer_plan_does_not_request_subtractable_prefixes(nonadditive_model):
     from terrine.compile.layers import plan_layers
 
-    design = Design("user", Schedule("1d", "2025-01-02", "2025-01-04"), features=_features())
+    design = Design("user", Schedule("1d", "2025-01-02", "2025-01-03"), features=_features())
     assert {key.layer for key in plan_layers(design, nonadditive_model).keys} == {"anchor"}
 
 
@@ -181,10 +182,10 @@ def test_shape_outputs_preserve_range_bound_metadata(nonadditive_model, shape):
     if shape == "calendar":
         design = Design(
             "user",
-            Schedule("1d", "2025-01-01", "2025-01-05"),
+            Schedule("1d", "2025-01-01", "2025-01-04"),
             features={"q": q},
             shape=CalendarComparisonSpec(
-                Initiation("events", "value", datetime(2025, 1, 1, tzinfo=UTC)),
+                Initiation("value", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
                 "never_treated",
                 -1,
                 (0,),
@@ -205,7 +206,7 @@ def test_shape_outputs_preserve_range_bound_metadata(nonadditive_model, shape):
         )
         design = Design(
             "user",
-            Schedule("1d", "2025-01-02", "2025-01-04"),
+            Schedule("1d", "2025-01-02", "2025-01-03"),
             features={"q": q},
             shape=StatePanel(
                 state,

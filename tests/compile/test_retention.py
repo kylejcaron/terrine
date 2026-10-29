@@ -51,20 +51,20 @@ def retention_model():
     )
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["occurrence"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["occurrence"],
                     "properties": ["event_name"],
                     "dimensions": [],
                 }
             },
-            "facts": {"occurrence": {"source": "events", "column": "id"}},
+            "events": {"occurrence": {"source": "events", "column": "id"}},
             "properties": {
                 "event_name": {
                     "source": "events",
@@ -137,7 +137,7 @@ def test_open_retention_sets_independent_treatment_followup_bound(retention_mode
     record = original.catalog.model_dump(mode="json")
     record["sources"]["treatments"] = {
         **record["sources"]["events"],
-        "facts": [],
+        "events": [],
         "properties": ["adopted_name"],
     }
     record["properties"]["adopted_name"] = {
@@ -164,10 +164,13 @@ def test_open_retention_sets_independent_treatment_followup_bound(retention_mode
     )
     design = Sequential(
         Design(
-            "user", Schedule("1d", "2025-01-02", "2025-01-04"), outcomes={"retained": expression}
+            "user", Schedule("1d", "2025-01-02", "2025-01-03"), outcomes={"retained": expression}
         ),
         treatment=PersistentAdoption(
-            "treatments", "adopted_name", "never", datetime(2025, 1, 1, tzinfo=UTC), "absorbing"
+            "adopted_name",
+            adopted_value="never",
+            history_start=datetime(2025, 1, 1, tzinfo=UTC),
+            persistence="absorbing",
         ),
     )
     with pytest.raises(TerrineError) as error:
@@ -207,7 +210,7 @@ def test_calendar_open_retention_history_includes_anticipation(
     record = original.catalog.model_dump(mode="json")
     record["sources"]["treatments"] = {
         **record["sources"]["events"],
-        "facts": [],
+        "events": [],
         "properties": ["cohort_name"],
         "relation": {"kind": "table", "name": "treatment_events"},
     }
@@ -242,10 +245,10 @@ def test_calendar_open_retention_history_includes_anticipation(
     )
     design = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-04"),
+        Schedule("1d", "2025-01-01", "2025-01-03"),
         outcomes={"retained": expression},
         shape=CalendarComparisonSpec(
-            Initiation("treatments", "cohort_name", datetime(2025, 1, 1, tzinfo=UTC)),
+            Initiation("cohort_name", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             "not_yet_treated",
             -2,
             (0,),

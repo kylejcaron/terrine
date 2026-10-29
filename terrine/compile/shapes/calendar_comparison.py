@@ -19,7 +19,7 @@ from terrine.semantic.bind import normalize_events
 from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
 from terrine.spec.panels import CalendarComparisonSpec
-from terrine.spec.validate import _outcome_bounds
+from terrine.spec.validate import _outcome_bounds, resolve_selector_source
 from terrine.temporal.aggregate import _Check
 
 if TYPE_CHECKING:
@@ -35,7 +35,8 @@ _UNSUPPORTED = RefusalSpec(
 
 _INCOMPLETE_HISTORY = RefusalSpec(
     "terrine.design.incomplete_unit_treatment_history",
-    "Roster observation bounds do not cover the required calendar treatment history.",
+    "The time observed for some units does not cover the required calendar treatment history. "
+    "Use a schedule within the observed time, or supply the missing unit history.",
 )
 
 
@@ -76,7 +77,7 @@ def _history_check(
     spec = design.shape
     assert isinstance(spec, CalendarComparisonSpec)
     anchor = design.anchor
-    assert isinstance(anchor, Schedule)
+    assert isinstance(anchor, Schedule) and anchor.every is not None
     selector = spec.cohort
     participants = rows
     if "__terrine_eligible" in rows.columns:
@@ -90,7 +91,7 @@ def _history_check(
         outcome_cutoff=outcome_cutoff,
         anticipation_seconds=anticipation * anchor.every,
     )
-    schedule_end = ibis.literal(model.day_boundary(anchor.end))
+    schedule_end = ibis.literal(model.day_boundary(anchor.end_exclusive))
     never_control = participants.control_eligible & ~participants.treatment
     missing = cast(ir.BooleanValue, ibis.literal(False))
     if "_observed_from" in participants.columns:
@@ -137,18 +138,17 @@ def _period_check(cohorts, anchors, periods, every):
 def _cohort_units(design: Design, model: Model, anchors: AnchorTable):
     spec = design.shape
     assert isinstance(spec, CalendarComparisonSpec)
+    assert design.unit is not None  # every entry point resolves the design first
     selector = spec.cohort
-    source = model.sources[selector.source]
-    events = normalize_events(
-        model._relation(source.relation), source, source.entities[design.unit]
-    )
-    precision = _precision_check(model, events, "_timestamp", source_column=source.timestamp_column)
+    source = model.sources[resolve_selector_source(model, selector.event)]
+    events = normalize_events(model._relation(source.relation), source, source.units[design.unit])
+    precision = _precision_check(model, events, "_timestamp", source_column=source.time_column)
     events = _utc_column(model, events, "_timestamp", "_timestamp_utc")
     timestamp = events._timestamp_utc
-    if selector.property in source.facts:
+    if selector.event in source.events:
         observed = timestamp.notnull()
     else:
-        prop = source.properties[selector.property]
+        prop = source.properties[selector.event]
         if prop.dimension_name is not None:
             raise _UNSUPPORTED.error(reason="cohort properties bound to dimensions are unsupported")
         observed = events[prop.column].notnull()
@@ -289,9 +289,10 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
         raise _UNSUPPORTED.error(reason="sampled analysis populations are not admissible")
     _validate_names(design)
     design.validate(model)
-    if not isinstance(design.anchor, Schedule):
-        raise _UNSUPPORTED.error(reason="calendar comparisons require a schedule anchor")
     schedule = design.anchor
+    if not isinstance(schedule, Schedule) or schedule.every is None:
+        raise _UNSUPPORTED.error(reason="calendar comparisons require an elapsed schedule anchor")
+    every = schedule.every
     base = Design(
         design.unit,
         design.anchor,
@@ -317,7 +318,7 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
             cohorts=cohort_units,
             initiations=initiation_times,
             spec=spec,
-            every=schedule.every,
+            every=every,
             outcome_window_end=outcome_window_end,
             outcome_cutoff=outcome_cutoff,
         )
@@ -362,7 +363,7 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
                 cohort_units,
                 anchors,
                 (spec.reference_period, *spec.comparison_periods, *spec.anticipation_periods),
-                schedule.every,
+                every,
             ),
         ),
         expression_timings=compiled.expression_timings,

@@ -40,7 +40,7 @@ def main() -> None:
             )
             design = Design(
                 "user",
-                Schedule("1d", "2025-01-03", "2025-01-08"),
+                Schedule("1d", "2025-01-03", "2025-01-07"),
                 features={"past_amount": agg("event_total", window=("-1d", "0s"))},
                 outcomes={"label": agg("label_total", window=("0s", "1h"))},
             )

@@ -14,12 +14,33 @@ if TYPE_CHECKING:
     from terrine.spec.design import Design
     from terrine.spec.expressions import Expr
 from terrine.errors import RefusalSpec
+from terrine.spec.anchors import Schedule
 
 _INVALID_SCHEDULE = RefusalSpec(
-    "terrine.state_panel.invalid_schedule", "State panel schedule is invalid: {reason}."
+    "terrine.state_panel.invalid_schedule",
+    "The state panel needs a finite schedule ({reason}). "
+    "Choose start and end days and an elapsed every= duration.",
+)
+_CALENDAR_SCHEDULE = RefusalSpec(
+    "terrine.state_panel.invalid_schedule",
+    "State panels need equal elapsed periods, but every={every!r} uses calendar months. "
+    "Use every={route!r} for fixed-width periods.",
+)
+_PARTIAL_PERIOD = RefusalSpec(
+    "terrine.state_panel.invalid_schedule",
+    "Schedule days {start!r} through {end!r}, inclusive, do not contain whole "
+    "{every}-second periods. Adjust the end day or every= so all periods fit exactly.",
+)
+_TOO_MANY_PERIODS = RefusalSpec(
+    "terrine.state_panel.invalid_schedule",
+    "The schedule has {periods} periods, more than the {max_periods} allowed. "
+    "Shorten the schedule or set periods= to include the full schedule.",
 )
 _INVALID_SOURCE = RefusalSpec(
     "terrine.state_panel.invalid_state_source", "State source is invalid: {reason}."
+)
+_INVALID_INPUT = RefusalSpec(
+    "terrine.state_panel.invalid_state_source", "State source input {field} is invalid: {reason}."
 )
 _INVALID_OBSERVATIONS = RefusalSpec(
     "terrine.state_panel.invalid_observations", "State observations are invalid: {reason}."
@@ -33,19 +54,23 @@ __all__ = ["StateObservations", "BinnedMetricState", "StatePanel"]
 
 
 def _levels(levels: tuple[str, ...]) -> tuple[str, ...]:
-    if (
-        not isinstance(levels, tuple)
-        or len(levels) < 2
-        or any(not isinstance(level, str) or not level for level in levels)
-        or len(set(levels)) != len(levels)
-    ):
-        raise ValueError("levels must contain at least two unique non-empty strings")
+    if not isinstance(levels, tuple):
+        raise _INVALID_INPUT.error(reason="wrong_type", field="levels")
+    if len(levels) < 2:
+        raise _INVALID_INPUT.error(reason="too_few_levels", field="levels")
+    if any(not isinstance(level, str) or not level for level in levels):
+        raise _INVALID_INPUT.error(reason="empty_name", field="levels")
+    if len(set(levels)) != len(levels):
+        raise _INVALID_INPUT.error(reason="duplicate_names", field="levels")
     return levels
 
 
 @dataclass(frozen=True, slots=True)
 class StateObservations:
-    """Interpret a source property as point observations, never carried state."""
+    """Describe an event label's observed states without carrying a state between events.
+
+    Example: tr.StateObservations("status", levels=("placed", "paid"))
+    """
 
     property: str
     levels: tuple[str, ...]
@@ -54,20 +79,25 @@ class StateObservations:
 
     def __post_init__(self) -> None:
         if not isinstance(self.property, str) or not self.property.strip():
-            raise ValueError("property must be a non-empty string")
+            raise _INVALID_INPUT.error(reason="empty_name", field="property")
         object.__setattr__(self, "levels", _levels(self.levels))
         if not isinstance(self.ordered, bool):
-            raise TypeError("ordered must be bool")
-        if not isinstance(self.absorbing, tuple) or len(set(self.absorbing)) != len(self.absorbing):
-            raise ValueError("absorbing must be a duplicate-free tuple")
+            raise _INVALID_INPUT.error(reason="wrong_type", field="ordered")
+        if not isinstance(self.absorbing, tuple):
+            raise _INVALID_INPUT.error(reason="wrong_type", field="absorbing")
+        if len(set(self.absorbing)) != len(self.absorbing):
+            raise _INVALID_INPUT.error(reason="duplicate_names", field="absorbing")
         if any(value not in self.levels for value in self.absorbing):
-            raise ValueError("absorbing states must be declared levels")
+            raise _INVALID_INPUT.error(reason="undeclared_name", field="absorbing")
         object.__setattr__(self, "absorbing", tuple(v for v in self.levels if v in self.absorbing))
 
 
 @dataclass(frozen=True, slots=True)
 class BinnedMetricState:
-    """Map an exact metric result to right-closed ordered state intervals."""
+    """Map a metric's period value to ordered states with right-closed intervals.
+
+    Example: tr.BinnedMetricState("spend", cutpoints=(50,), levels=("low", "high"))
+    """
 
     metric: str
     cutpoints: tuple[int | float | Decimal, ...]
@@ -75,28 +105,28 @@ class BinnedMetricState:
 
     def __post_init__(self) -> None:
         if not isinstance(self.metric, str) or not self.metric.strip():
-            raise ValueError("metric must be a non-empty string")
+            raise _INVALID_INPUT.error(reason="empty_name", field="metric")
         object.__setattr__(self, "levels", _levels(self.levels))
-        if not isinstance(self.cutpoints, tuple) or not self.cutpoints:
-            raise ValueError("at least one cutpoint is required")
+        if not isinstance(self.cutpoints, tuple):
+            raise _INVALID_INPUT.error(reason="wrong_type", field="cutpoints")
+        if not self.cutpoints:
+            raise _INVALID_INPUT.error(reason="empty", field="cutpoints")
         if len(self.levels) != len(self.cutpoints) + 1:
-            raise ValueError("levels must contain exactly one more value than cutpoints")
+            raise _INVALID_INPUT.error(reason="levels_cutpoints_mismatch", field="levels")
         previous = None
         for point in self.cutpoints:
-            if isinstance(point, bool) or not isinstance(point, (int, float, Decimal)):
-                raise TypeError("cutpoints must be integer, float, or Decimal scalars")
-            if isinstance(point, float) and not math.isfinite(point):
-                raise ValueError("cutpoints must be finite")
-            if isinstance(point, Decimal) and not point.is_finite():
-                raise ValueError("cutpoints must be finite")
+            _finite_cutpoint(point)
             if previous is not None and not previous < point:
-                raise ValueError("cutpoints must be numerically strictly increasing")
+                raise _INVALID_INPUT.error(reason="not_increasing", field="cutpoints")
             previous = point
 
 
 @dataclass(frozen=True, slots=True, init=False)
 class StatePanel:
-    """Bounded repeated state rows over a finite schedule."""
+    """Describe bounded repeated state rows for each unit over a finite schedule.
+
+    Example: tr.StatePanel(tr.BinnedMetricState("spend", (50,), ("low", "high")), max_periods=28)
+    """
 
     state: StateObservations | BinnedMetricState
     max_periods: int
@@ -115,24 +145,30 @@ class StatePanel:
         from terrine.spec.expressions import AttributeAsOf, MetricAgg
 
         if not isinstance(state, (StateObservations, BinnedMetricState)):
-            raise TypeError("state must be StateObservations or BinnedMetricState")
+            raise _INVALID_INPUT.error(reason="wrong_type", field="state")
         if isinstance(max_periods, bool) or not isinstance(max_periods, int) or max_periods <= 0:
-            raise ValueError("max_periods must be a positive integer")
+            raise _INVALID_INPUT.error(reason="not_positive_integer", field="max_periods")
         nodes = _named_nodes(baseline_features, (MetricAgg, AttributeAsOf), "baseline_features")
         object.__setattr__(self, "state", state)
         object.__setattr__(self, "max_periods", max_periods)
         object.__setattr__(self, "baseline_features", MappingProxyType(dict(nodes)))
 
 
+def _finite_cutpoint(value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+        raise _INVALID_INPUT.error(reason="wrong_type", field="cutpoints")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise _INVALID_INPUT.error(reason="not_finite", field="cutpoints")
+    if isinstance(value, Decimal) and not value.is_finite():
+        raise _INVALID_INPUT.error(reason="not_finite", field="cutpoints")
+
+
 def encode_cutpoint(value: int | float | Decimal) -> dict[str, object]:
     """Encode a cutpoint without losing its declared numeric representation."""
-    if isinstance(value, bool):
-        raise TypeError("boolean cutpoints are unsupported")
+    _finite_cutpoint(value)
     if isinstance(value, int):
         return {"type": "int", "value": str(value)}
     if isinstance(value, Decimal):
-        if not value.is_finite():
-            raise ValueError("cutpoints must be finite")
         item = value.as_tuple()
         return {
             "type": "decimal",
@@ -140,9 +176,7 @@ def encode_cutpoint(value: int | float | Decimal) -> dict[str, object]:
             "digits": list(item.digits),
             "exponent": item.exponent,
         }
-    if isinstance(value, float) and math.isfinite(value):
-        return {"type": "float64", "value": value.hex()}
-    raise ValueError("cutpoints must be finite supported numeric scalars")
+    return {"type": "float64", "value": value.hex()}
 
 
 def decode_cutpoint(value: object) -> int | float | Decimal:
@@ -177,13 +211,33 @@ def decode_cutpoint(value: object) -> int | float | Decimal:
     raise ValueError("unknown or malformed cutpoint encoding")
 
 
+def schedule_periods(schedule: Schedule) -> int:
+    """Number of whole ``every`` periods from ``start`` through ``end`` under a fixed day boundary.
+
+    A state transition's period is a fixed elapsed width, so a calendar-month schedule
+    refuses with a route to an elapsed step. The day boundary is a fixed offset, so the
+    span is exact day arithmetic; a span that is not a whole number of periods refuses
+    rather than truncating.
+    """
+    if schedule.every is None:
+        raise _CALENDAR_SCHEDULE.error(
+            reason="calendar_months_unsupported", every=f"{schedule.months}mo", route="4w"
+        )
+    elapsed = (schedule.end_exclusive - schedule.start).days * 86_400
+    if elapsed % schedule.every:
+        raise _PARTIAL_PERIOD.error(
+            reason="schedule_not_whole_periods",
+            every=schedule.every,
+            start=schedule.start.isoformat(),
+            end=schedule.end.isoformat(),
+        )
+    return elapsed // schedule.every
+
+
 def validate_state_panel(
     design: Design, model: Model, required: set[str], obligations: list[str]
 ) -> None:
     """Validate schedule shape and state-source references without reading rows."""
-    from datetime import UTC
-
-    from terrine.spec.anchors import Schedule
     from terrine.spec.expressions import MetricAgg
     from terrine.spec.validate import _expression, _required
     from terrine.windows import Window
@@ -193,15 +247,11 @@ def validate_state_panel(
     schedule = design.anchor
     if not isinstance(schedule, Schedule):
         raise _INVALID_SCHEDULE.error(reason="a finite Schedule anchor is required")
-    start = model.day_boundary(schedule.start).astimezone(UTC)
-    end = model.day_boundary(schedule.end).astimezone(UTC)
-    elapsed = int((end - start).total_seconds())
-    if elapsed <= 0 or elapsed % schedule.every:
-        raise _INVALID_SCHEDULE.error(
-            reason="schedule end must be an exact whole number of periods after start"
+    periods = schedule_periods(schedule)
+    if periods > panel.max_periods:
+        raise _TOO_MANY_PERIODS.error(
+            reason="schedule_exceeds_max_periods", periods=periods, max_periods=panel.max_periods
         )
-    if elapsed // schedule.every > panel.max_periods:
-        raise _INVALID_SCHEDULE.error(reason="schedule exceeds max_periods")
     if design.outcomes or design.treatment is not None:
         raise _UNSUPPORTED.error(
             reason="state-panel responses are to_state; treatment and outcomes are unsupported"
@@ -222,10 +272,11 @@ def validate_state_panel(
                     "dimension=None and as_of=event_time"
                 )
             )
-        if design.unit not in source.entities:
+        if design.unit not in source.units:
             raise _INVALID_SOURCE.error(reason="state source lacks the requested unit mapping")
         _required(model, source.name, required)
     else:
+        assert schedule.every is not None
         _expression(
             MetricAgg(panel.state.metric, Window(-schedule.every, 0)),
             "state",
@@ -233,6 +284,7 @@ def validate_state_panel(
             model,
             required,
             obligations,
+            name=panel.state.metric,
         )
         metric = model.metrics.get(panel.state.metric)
         if metric is None:

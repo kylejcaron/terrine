@@ -36,20 +36,20 @@ def interop_frame(con, *, empty=False, full=True):
         con.raw_sql("DELETE FROM users")
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["amount", "score"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["amount", "score"],
                     "properties": ["amount_value", "note", "tier"],
                     "dimensions": ["accounts"],
                 }
             },
-            "facts": {name: {"source": "events", "column": name} for name in ("amount", "score")},
+            "events": {name: {"source": "events", "column": name} for name in ("amount", "score")},
             "properties": {
                 "amount_value": {
                     "source": "events",
@@ -74,17 +74,17 @@ def interop_frame(con, *, empty=False, full=True):
             "dimensions": {
                 "accounts": {
                     "relation": {"kind": "table", "name": "accounts"},
-                    "source_entity": "user",
-                    "entity_column": "user_id",
+                    "unit": "user",
+                    "key": "user_id",
                     "properties": ["tier"],
                     "validity": {"valid_from": "starts", "valid_to": "ends"},
                 }
             },
             "measures": {
-                name: {"fact": name, "aggregation": "sum"} for name in ("amount", "score")
+                name: {"event": name, "aggregation": "sum"} for name in ("amount", "score")
             },
             "metrics": {
-                name: {"kind": "mean", "entity": "user", "measure": name}
+                name: {"kind": "mean", "unit": "user", "measure": name}
                 for name in ("amount", "score")
             },
         }

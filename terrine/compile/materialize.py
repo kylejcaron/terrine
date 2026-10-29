@@ -20,7 +20,8 @@ _STRICT_SCAN_UNKNOWN = RefusalSpec(
 
 _ANCHOR_LAYER_INVALID = RefusalSpec(
     "terrine.compile.persisted_anchor_invalid",
-    "Persisted anchor layer identity does not match compiler requirements.",
+    "The saved unit and t0 rows do not match this design. "
+    "Rebuild the design instead of reusing these saved rows.",
 )
 
 

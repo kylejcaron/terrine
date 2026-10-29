@@ -69,6 +69,134 @@ are not consumed by `DoubleMLData`; choosing an appropriately weighted downstrea
 method is a separate analyst decision, not a reason to silently discard the role.
 The executable example checks repeated units and cluster identity.
 
+## Catalog → a grid of trial panels → DoubleML
+
+Reuse one catalog to build a dataset for each treatment/outcome pair. The pairs
+and covariates are the analyst's choices, not causal relationships inferred by
+Terrine. This example assumes `warehouse.duckdb` contains an authoritative
+`customers(customer_id)` roster, `orders(customer_id, ordered_at, amount)`,
+`sessions(customer_id, started_at)` and
+`account_events(customer_id, occurred_at, upgrade, referral)`.
+
+The account-event columns are **nullable labels**: set the corresponding label
+to a non-null value when that event occurs and leave it null otherwise.
+`Initiation` tests whether a label has ever been non-null, not whether a Boolean
+is true; `False` is also non-null. Separate labels are essential: declaring two
+row events with `column: null` on the same source would make both names select
+every account-event row and produce identical treatments.
+
+Save this as `semantic.yaml`:
+
+```yaml
+schema_version: 2
+day_boundary: UTC
+dialect: duckdb
+sources:
+  orders:
+    relation: {kind: table, name: orders}
+    time: ordered_at
+    units: {customer: customer_id}
+    events: [order, order_amount]
+    properties: []
+    dimensions: []
+  sessions:
+    relation: {kind: table, name: sessions}
+    time: started_at
+    units: {customer: customer_id}
+    events: [session]
+    properties: []
+    dimensions: []
+  account_events:
+    relation: {kind: table, name: account_events}
+    time: occurred_at
+    units: {customer: customer_id}
+    events: []
+    properties: [upgrade, referral]
+    dimensions: []
+events:
+  order: {source: orders, column: null}
+  order_amount: {source: orders, column: amount}
+  session: {source: sessions, column: null}
+properties:
+  upgrade: {source: account_events, column: upgrade, dtype: bool, as_of: event_time}
+  referral: {source: account_events, column: referral, dtype: bool, as_of: event_time}
+dimensions: {}
+measures:
+  order_count: {event: order, aggregation: count}
+  net_revenue: {event: order_amount, aggregation: sum}
+  session_count: {event: session, aggregation: count}
+metrics:
+  order_count: {kind: mean, unit: customer, measure: order_count}
+  net_revenue: {kind: mean, unit: customer, measure: net_revenue}
+  session_count: {kind: mean, unit: customer, measure: session_count}
+```
+
+Declare completeness from your loading guarantees, not the observed first/last
+event. The single customer unit is inferred. The end date is inclusive, so the
+weekly schedule includes March 31; covariates use the preceding 90 elapsed days
+and each outcome the next 28 elapsed days.
+
+```python
+from datetime import UTC, datetime
+
+import ibis
+import terrine as tr
+from doubleml import DoubleMLData
+from terrine.export import preflight_export
+from terrine.spec import Initiation
+
+con = ibis.duckdb.connect("warehouse.duckdb")
+try:
+    model = tr.Model.from_catalog(
+        "semantic.yaml", con=con,
+        units={"customer": tr.UnitSource("customers", "customer_id")},
+        readiness={name: tr.Coverage("2024-01-01", "2025-06-30")
+                   for name in ("orders", "sessions", "account_events")},
+    )
+    covariates = {
+        "orders_90d": tr.agg("order_count", window=("-90d", "0s")),
+        "sessions_90d": tr.agg("session_count", window=("-90d", "0s")),
+    }
+    history_start = datetime(2024, 1, 1, tzinfo=UTC)
+    grid = [
+        ("upgrade", "net_revenue"), ("upgrade", "session_count"),
+        ("referral", "net_revenue"), ("referral", "session_count"),
+    ]
+    budget = tr.Budget(max_rows=2_000_000, max_output_bytes=2_000_000_000)
+    datasets = {}
+    materialized_frames = {}
+    for event, metric in grid:
+        design = tr.recipes.trial_panel(
+            every="7d", start="2025-01-06", end="2025-03-31",
+            treatment=Initiation(event, history_start=history_start),
+            features=covariates,
+            outcomes={"y": tr.agg(metric, window=("0s", "28d"))},
+        )
+        materialized = design.build(model).materialize(budget)
+        checked = preflight_export(materialized)
+        r = materialized.roles
+        materialized_frames[event, metric] = materialized
+        datasets[event, metric] = DoubleMLData(
+            checked.table.to_pandas(), y_col="y", d_cols=r.treatment,
+            x_cols=list(r.features), cluster_cols=r.cluster_unit,
+        )
+finally:
+    con.disconnect()
+```
+
+Choose event history and eligibility that leave both treated and control units
+in the analysis population. A panel repeats units across trials, so
+`cluster_cols` is the independent customer identity, not `trial_id`.
+The executable counterpart,
+`integration/handoffs/test_causal_grid.py`, builds all four pairs on tiny tables
+and checks distinct treated populations, complete outcomes and cluster identity.
+The loop is ordinary Python, not a Terrine helper: change the pairs to match
+your study. DoWhy's preflight refuses repeated units even with a cluster role,
+and every weight role; use a one-row-per-unit unweighted design for that library.
+The `dowhy` extra is Python 3.13 only; `doubleml` has no Python 3.14 cap.
+Neither preflight nor constructing `DoubleMLData` establishes identification or
+valid inference, and `x_cols`/`common_causes` remain modeling choices.
+
 ## DoWhy: one row per unit, unweighted only
 
 ```python

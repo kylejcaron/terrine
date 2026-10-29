@@ -9,10 +9,11 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 from terrine._time import utc_instant
 from terrine.agent.design_schema import design_schema
 from terrine.dataset.splits import policy_from_record
-from terrine.errors import thaw
+from terrine.errors import TerrineError, parameter_names, thaw
 from terrine.model import Model
 from terrine.spec.anchors import FixedDate
-from terrine.spec.dataset import INVALID_DEFINITION, DatasetDefinition
+from terrine.spec.dataset import INVALID_DEFINITION, SCHEMA_VERSION, DatasetDefinition
+from terrine.spec.io import SCHEMA_VERSION as DESIGN_SCHEMA_VERSION
 from terrine.spec.io import from_json
 
 
@@ -76,12 +77,15 @@ _VIEW = TypeAdapter(Annotated[TrainingView | ScoringView, Field(discriminator="k
 
 
 def parse_definition(serialized: str, model: Model) -> DatasetDefinition:
-    definition = DatasetDefinition.from_json(serialized)
+    definition = DatasetDefinition.from_json(serialized).resolve_unit(model)
     if definition.view is not None:
         try:
             _VIEW.validate_json(json.dumps(thaw(definition.view)))
             if definition.view["kind"] == "training" and definition.view["split"] is not None:
-                policy_from_record(thaw(definition.view["split"]))
+                with parameter_names(record="split"):
+                    policy_from_record(thaw(definition.view["split"]))
+        except TerrineError:
+            raise
         except (ValueError, OverflowError) as error:
             raise INVALID_DEFINITION.error(
                 reason="use the discovered typed training or scoring view"
@@ -109,8 +113,10 @@ def parse_definition(serialized: str, model: Model) -> DatasetDefinition:
             document["eligibility"] = thaw(definition.view["eligibility"])
             try:
                 eligibility_design = from_json(
-                    json.dumps({"schema_version": 1, "design": document})
+                    json.dumps({"schema_version": DESIGN_SCHEMA_VERSION, "design": document})
                 )
+            except TerrineError:
+                raise
             except (KeyError, TypeError, ValueError, OverflowError) as error:
                 raise INVALID_DEFINITION.error(
                     reason="scoring eligibility must use typed predicates"
@@ -136,7 +142,7 @@ def definition_schema() -> dict[str, Any]:
         "additionalProperties": False,
         "required": ["schema_version", "base_design", "view"],
         "properties": {
-            "schema_version": {"const": 1},
+            "schema_version": {"const": SCHEMA_VERSION},
             "base_design": {"$ref": "#/$defs/Design"},
             "view": {"anyOf": [view, {"type": "null"}]},
         },

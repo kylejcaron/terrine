@@ -1,5 +1,6 @@
 """Safe YAML loading for native semantic catalogs."""
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -12,14 +13,24 @@ from terrine.semantic.models import Catalog
 
 __all__ = ["load_catalog", "dump_catalog"]
 
-_DUPLICATE = RefusalSpec("terrine.catalog.duplicate_yaml_key", "Catalog YAML repeats key {key!r}.")
+_DUPLICATE = RefusalSpec(
+    "terrine.catalog.duplicate_yaml_key",
+    "The model YAML repeats key {key!r}. Keep one declaration for each key.",
+)
 _INVALID_YAML = RefusalSpec(
-    "terrine.catalog.invalid_yaml", "Catalog YAML is not safe valid YAML: {reason}."
+    "terrine.catalog.invalid_yaml",
+    "The model YAML cannot be read safely ({reason}). "
+    "Correct the YAML and use plain values without custom tags.",
 )
 
 _INVALID_DEFINITION = RefusalSpec(
     "terrine.catalog.invalid_definition",
-    "Catalog definition is invalid:\n{diagnostics}",
+    "The model document is invalid. Correct the listed inputs:\n{diagnostics}",
+)
+_INVALID_INPUT = RefusalSpec(
+    "terrine.catalog.invalid_definition",
+    "Model document input {field!r} is invalid ({reason}). "
+    "Use a model YAML document with the supported schema version and declared names.",
 )
 _HINTS = {
     "missing": "Provide this required Catalog field.",
@@ -47,6 +58,12 @@ _HINTS = {
     "tuple_type": "Provide a sequence for this field.",
 }
 _DEFAULT_HINT = "Correct this field to match the declared Catalog schema."
+_SCHEMA_VERSION = 2
+_SCHEMA_VERSION_HINT = (
+    "Declare schema_version: 2 and use the current keys: sources carry time, units and "
+    "events; the root and each source list events; dimensions carry unit and key; "
+    "measures carry event; metrics carry unit."
+)
 
 
 def _catalog_issues(error: ValidationError) -> tuple[dict[str, Any], ...]:
@@ -94,6 +111,16 @@ _UniqueSafeLoader.add_constructor(BaseResolver.DEFAULT_MAPPING_TAG, _mapping)
 
 def validate_catalog(value: Any) -> Catalog:
     """Validate an in-memory Catalog definition with loader refusal semantics."""
+    declared = value.get("schema_version", _SCHEMA_VERSION) if isinstance(value, Mapping) else None
+    if isinstance(value, Mapping) and declared != _SCHEMA_VERSION:
+        issue = {
+            "location": ("schema_version",),
+            "kind": "unsupported_schema_version",
+            "hint": _SCHEMA_VERSION_HINT,
+        }
+        raise _INVALID_DEFINITION.error(
+            issues=(issue,), diagnostics=f"- schema_version: {_SCHEMA_VERSION_HINT}"
+        )
     try:
         return Catalog.model_validate(value)
     except ValidationError as exc:
@@ -113,5 +140,5 @@ def load_catalog(path: str | Path) -> Catalog:
 def dump_catalog(catalog: Catalog) -> str:
     """Serialize a native Catalog using ordinary safe YAML values."""
     if not isinstance(catalog, Catalog):
-        raise TypeError("catalog must be a Catalog")
+        raise _INVALID_INPUT.error(reason="wrong_type", field="catalog")
     return yaml.safe_dump(catalog.model_dump(mode="json"), sort_keys=False)

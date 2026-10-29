@@ -13,18 +13,16 @@ from terrine.spec.panels import (
     Initiation,
     MatchedT0Sample,
 )
+from tests.spec.test_validate import model as static_model
 
 
 def base_design():
-    return Design("unit_id", Schedule("30d", date(2025, 1, 1), date(2025, 3, 1)))
+    return Design("unit_id", Schedule("30d", date(2025, 1, 1), date(2025, 2, 28)))
 
 
 def test_comparison_control_modes_round_trip_with_distinct_hashes():
     cohort = Initiation(
-        "treatment",
-        "started",
-        history_start=datetime(2024, 1, 1, tzinfo=UTC),
-        knowledge="recorded_at",
+        "started", history_start=datetime(2024, 1, 1, tzinfo=UTC), knowledge="recorded_at"
     )
     never = Design(
         "unit_id",
@@ -44,21 +42,15 @@ def test_comparison_control_modes_round_trip_with_distinct_hashes():
 
 def test_comparison_reference_conflict_refuses_without_shifting():
     cohort = Initiation(
-        "treatment",
-        "started",
-        history_start=datetime(2024, 1, 1, tzinfo=UTC),
-        knowledge="recorded_at",
+        "started", history_start=datetime(2024, 1, 1, tzinfo=UTC), knowledge="recorded_at"
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(TerrineError) as error:
         CalendarComparisonSpec(cohort, "never_treated", -1, (0,), (-1,))
+    assert error.value.code == "terrine.design.invalid_calendar_comparison"
 
 
 def test_pre_treatment_comparisons_must_precede_anticipation():
-    cohort = Initiation(
-        "treatment",
-        "started",
-        history_start=datetime(2024, 1, 1, tzinfo=UTC),
-    )
+    cohort = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
     spec = CalendarComparisonSpec(cohort, "never_treated", -2, (-3, 0), (-1,))
     assert spec.comparison_periods == (-3, 0)
     with pytest.raises(TerrineError):
@@ -67,10 +59,7 @@ def test_pre_treatment_comparisons_must_precede_anticipation():
 
 def test_calendar_comparison_producer_refuses_sampled_population():
     cohort = Initiation(
-        "treatment",
-        "started",
-        history_start=datetime(2024, 1, 1, tzinfo=UTC),
-        knowledge="recorded_at",
+        "started", history_start=datetime(2024, 1, 1, tzinfo=UTC), knowledge="recorded_at"
     )
     base = Design(
         "unit_id",
@@ -86,3 +75,19 @@ def test_calendar_comparison_producer_refuses_sampled_population():
             reference_period=-2,
             comparison_periods=(0,),
         )
+
+
+def test_calendar_comparison_refuses_month_schedules_before_reading_sources():
+    cohort = Initiation("session", history_start=datetime(2024, 1, 1, tzinfo=UTC))
+    design = Design(
+        "user",
+        Schedule("1mo", date(2025, 1, 1), date(2025, 3, 1)),
+        shape=CalendarComparisonSpec(cohort, "never_treated", -2, (0,)),
+    )
+    model = static_model()
+    with pytest.raises(TerrineError) as error:
+        design.validate(model)
+    assert error.value.code == "terrine.design.invalid_calendar_comparison"
+    assert error.value.context["reason"] == "calendar_months_unsupported"
+    assert (error.value.context["every"], error.value.context["route"]) == ("1mo", "4w")
+    assert model.con.calls == []

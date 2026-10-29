@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, parameter_names
 from terrine.windows import Window, seconds
 
 __all__ = [
@@ -43,17 +43,19 @@ _SKETCH_UNAVAILABLE = RefusalSpec(
     "Sketch {algorithm!r} version {version!r} is unavailable; install terrine[sketches] "
     "or use the exact form.",
 )
+_INVALID = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
+_CHOICE = RefusalSpec("terrine.design.invalid", "Design input {field} must be one of {choices}.")
 
 
-def _probability(value: Decimal | str) -> Decimal:
+def _probability(value: Decimal | str, field: str) -> Decimal:
     if isinstance(value, bool) or isinstance(value, float) or not isinstance(value, (Decimal, str)):
-        raise TypeError("probability must be a Decimal or decimal string, never a float")
+        raise _INVALID.error(reason="wrong_type", field=field)
     try:
         result = value if isinstance(value, Decimal) else Decimal(value)
     except InvalidOperation as exc:
-        raise ValueError("probability must be a finite decimal") from exc
+        raise _INVALID.error(reason="not_decimal", field=field) from exc
     if not result.is_finite() or result < 0 or result > 1:
-        raise ValueError("probability must be finite and in [0, 1]")
+        raise _INVALID.error(reason="out_of_range", field=field)
     if not result:
         return Decimal(0)
     sign, digits, exponent = result.as_tuple()
@@ -66,6 +68,16 @@ def _probability(value: Decimal | str) -> Decimal:
     return Decimal((sign, tuple(canonical), exponent))
 
 
+def _window(value: object) -> None:
+    if not isinstance(value, Window):
+        raise _INVALID.error(reason="wrong_type", field="window")
+
+
+def _relative_to(value: object) -> None:
+    if value is not None and not isinstance(value, EventTime):
+        raise _INVALID.error(reason="wrong_type", field="relative_to")
+
+
 @dataclass(frozen=True, slots=True)
 class MetricQuantile:
     metric: str
@@ -75,15 +87,21 @@ class MetricQuantile:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "metric", _name(self.metric, "metric"))
-        object.__setattr__(self, "probability", _probability(self.probability))
-        if not isinstance(self.window, Window):
-            raise TypeError("window must be a Window")
+        object.__setattr__(self, "probability", _probability(self.probability, "probability"))
+        _window(self.window)
         if self.interpolation != "linear_type7":
-            raise ValueError("only linear_type7 interpolation is supported")
+            raise _CHOICE.error(
+                reason="unsupported_value", field="interpolation", choices=("linear_type7",)
+            )
 
 
 @dataclass(frozen=True, slots=True)
 class SketchRequest:
+    """Request a versioned quantile sketch with an explicit rank-error limit.
+
+    Example: tr.SketchRequest("tdigest", version("datasketches"), Decimal("0.01"))
+    """
+
     algorithm: str
     version: str
     rank_error: Decimal
@@ -91,9 +109,9 @@ class SketchRequest:
     def __post_init__(self) -> None:
         object.__setattr__(self, "algorithm", _name(self.algorithm, "algorithm"))
         object.__setattr__(self, "version", _name(self.version, "version"))
-        error = _probability(self.rank_error)
+        error = _probability(self.rank_error, "rank_error")
         if error == 0:
-            raise ValueError("rank_error must be positive")
+            raise _INVALID.error(reason="not_positive", field="rank_error")
         object.__setattr__(self, "rank_error", error)
 
 
@@ -106,9 +124,10 @@ class ApproxMetricQuantile:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "metric", _name(self.metric, "metric"))
-        object.__setattr__(self, "probability", _probability(self.probability))
-        if not isinstance(self.window, Window) or not isinstance(self.sketch, SketchRequest):
-            raise TypeError("window and sketch must be typed specifications")
+        object.__setattr__(self, "probability", _probability(self.probability, "probability"))
+        _window(self.window)
+        if not isinstance(self.sketch, SketchRequest):
+            raise _INVALID.error(reason="wrong_type", field="sketch")
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,34 +137,35 @@ class ApproxMetricDistinct:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "metric", _name(self.metric, "metric"))
-        if not isinstance(self.window, Window):
-            raise TypeError("window must be a Window")
+        _window(self.window)
 
 
 @dataclass(frozen=True, slots=True)
 class RetentionMetric:
     """Ordinal bands of distinct occurrence identities in a declared follow-up horizon."""
 
-    fact: str
+    event: str
     label_property: str
     target_event: str
     count_thresholds: tuple[int, ...]
     finite_horizon_seconds: int | None
 
     def __post_init__(self) -> None:
-        for field in ("fact", "label_property", "target_event"):
+        for field in ("event", "label_property", "target_event"):
             object.__setattr__(self, field, _name(getattr(self, field), field))
+        if not isinstance(self.count_thresholds, Iterable):
+            raise _INVALID.error(reason="wrong_type", field="count_thresholds")
         thresholds = tuple(self.count_thresholds)
-        if (
-            not thresholds
-            or any(type(value) is not int or not 0 < value < 2**63 for value in thresholds)
-            or tuple(sorted(set(thresholds))) != thresholds
-        ):
-            raise ValueError("thresholds must be strictly increasing positive Int64 counts")
+        if not thresholds:
+            raise _INVALID.error(reason="empty", field="count_thresholds")
+        if any(type(value) is not int or not 0 < value < 2**63 for value in thresholds):
+            raise _INVALID.error(reason="not_positive_integer", field="count_thresholds")
+        if tuple(sorted(set(thresholds))) != thresholds:
+            raise _INVALID.error(reason="not_increasing", field="count_thresholds")
         object.__setattr__(self, "count_thresholds", thresholds)
         horizon = self.finite_horizon_seconds
         if horizon is not None and (type(horizon) is not int or not 0 < horizon < 2**63):
-            raise ValueError("finite horizon must be positive Int64 elapsed seconds")
+            raise _INVALID.error(reason="not_positive", field="finite_horizon_seconds")
 
 
 type JsonScalar = None | bool | int | float | str
@@ -153,16 +173,16 @@ type JsonScalar = None | bool | int | float | str
 
 def _name(value: str, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{field} must be a non-empty string")
+        raise _INVALID.error(reason="empty_name", field=field)
     return value
 
 
-def _scalar(value: object) -> JsonScalar:
+def _scalar(value: object, field: str) -> JsonScalar:
     if value is None or isinstance(value, (str, bool, int)):
         return value
     if isinstance(value, float) and math.isfinite(value):
         return value
-    raise TypeError("predicate values must be finite JSON scalars")
+    raise _INVALID.error(reason="not_json_scalar", field=field)
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,10 +193,8 @@ class MetricAgg:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "metric", _name(self.metric, "metric"))
-        if not isinstance(self.window, Window):
-            raise TypeError("window must be a Window")
-        if self.relative_to is not None and not isinstance(self.relative_to, EventTime):
-            raise TypeError("relative_to must be EventTime or None")
+        _window(self.window)
+        _relative_to(self.relative_to)
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,14 +205,18 @@ class AttributeAsOf:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "attribute", _name(self.attribute, "attribute"))
-        object.__setattr__(self, "before", seconds(self.before))
-        if self.relative_to is not None and not isinstance(self.relative_to, EventTime):
-            raise TypeError("relative_to must be EventTime or None")
+        object.__setattr__(self, "before", seconds(self.before, field="before"))
+        _relative_to(self.relative_to)
 
 
 @dataclass(frozen=True, slots=True)
 class EventTime:
-    fact: str
+    """Select an event time within a window relative to t0 or another event time.
+
+    Example: tr.EventTime("orders", tr.Window("-30d", "0s"))
+    """
+
+    event: str
     window: Window
     label_property: str | None = None
     equals: JsonScalar = None
@@ -203,24 +225,24 @@ class EventTime:
     relative_to: EventTime | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "fact", _name(self.fact, "fact"))
-        if not isinstance(self.window, Window):
-            raise TypeError("window must be a Window")
+        object.__setattr__(self, "event", _name(self.event, "event"))
+        _window(self.window)
         if (self.label_property is None) != (self.equals is None):
-            raise ValueError("label_property and equals must be supplied together")
+            raise _INVALID.error(reason="unpaired_label_filter", field="label_property")
         if self.label_property is not None:
             object.__setattr__(self, "label_property", _name(self.label_property, "label_property"))
-            object.__setattr__(self, "equals", _scalar(self.equals))
-        if self.occurrence not in {"first", "last", "nth"}:
-            raise ValueError("occurrence must be 'first', 'last', or 'nth'")
-        if self.occurrence in {"first", "last"} and self.n is not None:
-            raise ValueError("n is only valid for nth occurrence")
+            object.__setattr__(self, "equals", _scalar(self.equals, "equals"))
+        if self.occurrence not in ("first", "last", "nth"):
+            raise _CHOICE.error(
+                reason="unsupported_value", field="occurrence", choices=("first", "last", "nth")
+            )
+        if self.occurrence in ("first", "last") and self.n is not None:
+            raise _INVALID.error(reason="n_requires_nth", field="n")
         if self.occurrence == "nth" and (
             isinstance(self.n, bool) or not isinstance(self.n, int) or self.n < 1
         ):
-            raise ValueError("nth occurrence requires positive n")
-        if self.relative_to is not None and not isinstance(self.relative_to, EventTime):
-            raise TypeError("relative_to must be EventTime or None")
+            raise _INVALID.error(reason="not_positive_integer", field="n")
+        _relative_to(self.relative_to)
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,8 +251,8 @@ class Gt:
     value: JsonScalar
 
     def __post_init__(self) -> None:
-        _require_expr(self.expr)
-        object.__setattr__(self, "value", _scalar(self.value))
+        _require_expr(self.expr, "expr")
+        object.__setattr__(self, "value", _scalar(self.value, "value"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,8 +261,8 @@ class Eq:
     value: JsonScalar
 
     def __post_init__(self) -> None:
-        _require_expr(self.left)
-        object.__setattr__(self, "value", _scalar(self.value))
+        _require_expr(self.left, "left")
+        object.__setattr__(self, "value", _scalar(self.value, "value"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,9 +271,9 @@ class IsNull:
     negate: bool = False
 
     def __post_init__(self) -> None:
-        _require_expr(self.expr)
+        _require_expr(self.expr, "expr")
         if not isinstance(self.negate, bool):
-            raise TypeError("negate must be a boolean")
+            raise _INVALID.error(reason="wrong_type", field="negate")
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,9 +281,13 @@ class And:
     terms: tuple[Predicate, ...]
 
     def __post_init__(self) -> None:
+        if not isinstance(self.terms, Iterable):
+            raise _INVALID.error(reason="wrong_type", field="terms")
         terms = tuple(self.terms)
-        if not terms or any(not isinstance(term, (Gt, Eq, IsNull, And)) for term in terms):
-            raise ValueError("And requires one or more predicates")
+        if not terms:
+            raise _INVALID.error(reason="empty", field="terms")
+        if any(not isinstance(term, (Gt, Eq, IsNull, And)) for term in terms):
+            raise _INVALID.error(reason="wrong_type", field="terms")
         object.__setattr__(self, "terms", terms)
 
 
@@ -317,7 +343,7 @@ def _expression_support_seconds(expression: Expr) -> tuple[int, int]:
     raise TypeError("expected a supported expression node")
 
 
-def _require_expr(value: object) -> None:
+def _require_expr(value: object, field: str) -> None:
     if not isinstance(
         value,
         (
@@ -330,7 +356,13 @@ def _require_expr(value: object) -> None:
             EventTime,
         ),
     ):
-        raise TypeError("expected a supported expression node")
+        raise _INVALID.error(reason="wrong_type", field=field)
+
+
+def _window_pair(value: object) -> tuple[str | int, str | int]:
+    if not isinstance(value, (tuple, list)) or len(value) != 2:
+        raise _INVALID.error(reason="not_a_pair", field="window")
+    return value[0], value[1]
 
 
 def agg(
@@ -339,31 +371,36 @@ def agg(
     window: tuple[str | int, str | int],
     relative_to: EventTime | None = None,
 ) -> MetricAgg:
-    if not isinstance(window, (tuple, list)) or len(window) != 2:
-        raise ValueError("window must contain a start and exclusive end")
-    return MetricAgg(metric, Window(window[0], window[1]), relative_to)
+    """Aggregate a named metric over a half-open window relative to t0 or an event time.
+
+    Example: tr.agg("spend", window=("-30d", "0s"))
+    """
+    start, end = _window_pair(window)
+    return MetricAgg(metric, Window(start, end), relative_to)
 
 
 def retention(
-    fact: str,
+    event: str,
     *,
     label_property: str,
     target_event: str,
     thresholds: tuple[int, ...],
     horizon: str | int,
 ) -> RetentionMetric:
-    """Count distinct fact identities, then return the highest reached threshold band.
+    """Return the highest threshold band reached by distinct target events.
 
-    A finite duration measures [t0, t0+horizon); ``open_ended`` ends at the
-    source's declared complete-through endpoint. Unknown follow-up stays null.
+    Follow-up ends at the horizon or, for ``"open_ended"``, the last complete event time.
+
+    Example: tr.retention("orders", label_property="customer_id", **followup)
     """
-    return RetentionMetric(
-        fact,
-        label_property,
-        target_event,
-        thresholds,
-        None if horizon == "open_ended" else seconds(horizon),
-    )
+    with parameter_names(count_thresholds="thresholds", finite_horizon_seconds="horizon"):
+        return RetentionMetric(
+            event,
+            label_property,
+            target_event,
+            thresholds,
+            None if horizon == "open_ended" else seconds(horizon, field="horizon"),
+        )
 
 
 def quantile(
@@ -373,9 +410,14 @@ def quantile(
     window: tuple[str | int, str | int],
     interpolation: str = "linear_type7",
 ) -> MetricQuantile:
-    if not isinstance(window, (tuple, list)) or len(window) != 2:
-        raise ValueError("window must contain a start and exclusive end")
-    return MetricQuantile(metric, _probability(probability), Window(*window), interpolation)
+    """Request an exact quantile over a window of a metric's integer or Decimal event values.
+
+    Example: tr.quantile("spend", "0.5", window=("-30d", "0s"))
+    """
+    start, end = _window_pair(window)
+    return MetricQuantile(
+        metric, _probability(probability, "probability"), Window(start, end), interpolation
+    )
 
 
 def approx_quantile(
@@ -385,17 +427,26 @@ def approx_quantile(
     window: tuple[str | int, str | int],
     sketch: SketchRequest,
 ) -> ApproxMetricQuantile:
-    if not isinstance(window, (tuple, list)) or len(window) != 2:
-        raise ValueError("window must contain a start and exclusive end")
+    """Request an approximate event-value quantile over a window with a declared sketch.
+
+    Example: tr.approx_quantile("spend", "0.5", window=("-30d", "0s"), sketch=sketch)
+    """
+    start, end = _window_pair(window)
     return ApproxMetricQuantile(
-        _name(metric, "metric"), _probability(probability), Window(*window), sketch
+        _name(metric, "metric"),
+        _probability(probability, "probability"),
+        Window(start, end),
+        sketch,
     )
 
 
 def approx_distinct(metric: str, *, window: tuple[str | int, str | int]) -> ApproxMetricDistinct:
-    if not isinstance(window, (tuple, list)) or len(window) != 2:
-        raise ValueError("window must contain a start and exclusive end")
-    return ApproxMetricDistinct(_name(metric, "metric"), Window(*window))
+    """Request an approximate distinct-value count for a metric over a window.
+
+    Example: tr.approx_distinct("spend", window=("-30d", "0s"))
+    """
+    start, end = _window_pair(window)
+    return ApproxMetricDistinct(_name(metric, "metric"), Window(start, end))
 
 
 def asof(
@@ -404,11 +455,15 @@ def asof(
     before: str | int,
     relative_to: EventTime | None = None,
 ) -> AttributeAsOf:
-    return AttributeAsOf(attribute, seconds(before), relative_to)
+    """Read an attribute's history strictly before a time relative to t0 or an event.
+
+    Example: tr.asof("plan", before="0s")
+    """
+    return AttributeAsOf(attribute, seconds(before, field="before"), relative_to)
 
 
 def event_time(
-    fact: str,
+    event: str,
     *,
     window: tuple[str | int, str | int],
     label_property: str | None = None,
@@ -417,24 +472,41 @@ def event_time(
     n: int | None = None,
     relative_to: EventTime | None = None,
 ) -> EventTime:
-    if not isinstance(window, (tuple, list)) or len(window) != 2:
-        raise ValueError("window must contain a start and exclusive end")
-    return EventTime(
-        fact, Window(window[0], window[1]), label_property, equals, occurrence, n, relative_to
-    )
+    """Select the first, last or nth event time in a window, optionally matching a label.
+
+    Example: tr.event_time("orders", window=("-30d", "0s"))
+    """
+    start, end = _window_pair(window)
+    return EventTime(event, Window(start, end), label_property, equals, occurrence, n, relative_to)
 
 
 def gt(expr: Expr, value: JsonScalar) -> Gt:
+    """Require an expression's value to be greater than a literal.
+
+    Example: tr.gt(tr.agg("orders", window=("-30d", "0s")), 0)
+    """
     return Gt(expr, value)
 
 
 def eq(left: Expr, value: JsonScalar) -> Eq:
+    """Require an expression's value to equal a literal.
+
+    Example: tr.eq(tr.agg("orders", window=("-30d", "0s")), 1)
+    """
     return Eq(left, value)
 
 
 def is_null(expr: Expr, *, negate: bool = False) -> IsNull:
+    """Test whether an expression is null, or non-null when ``negate=True``.
+
+    Example: tr.is_null(tr.event_time("orders", window=("-30d", "0s")))
+    """
     return IsNull(expr, negate)
 
 
 def all_of(*terms: Predicate) -> And:
+    """Require every supplied eligibility predicate to hold.
+
+    Example: tr.all_of(tr.gt(tr.agg("orders", window=("-30d", "0s")), 0))
+    """
     return And(tuple(terms))

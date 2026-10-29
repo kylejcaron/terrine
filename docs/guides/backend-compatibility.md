@@ -205,7 +205,7 @@ precision and refuses rather than narrows.
   magnitude sum (`γₖ = k · u / (1 − k · u)`), so a partition is admitted iff
   `B < limit · (1 − e)`. Otherwise its values are withheld before the backend
   adds them and every consumer of that state refuses: sums, averages and
-  ratios with `float64_precision` (`bound_overflow`) for float facts or
+  ratios with `float64_precision` (`bound_overflow`) for float event values or
   `terrine.temporal.exact_overflow` for coefficients, cohort totals and means
   and cumulative trajectories with their existing overflow reasons. This
   bound is deliberately conservative: opposite-sign history whose magnitudes

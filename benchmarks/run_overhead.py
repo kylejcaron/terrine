@@ -79,20 +79,20 @@ WORKLOADS: tuple[Workload, ...] = (
 def _catalog() -> Catalog:
     return Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "purchases": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "occurred_at",
-                    "entities": {"user": "user_id"},
-                    "facts": ["purchase", "amount", "price"],
+                    "time": "occurred_at",
+                    "units": {"user": "user_id"},
+                    "events": ["purchase", "amount", "price"],
                     "properties": [],
                     "dimensions": [],
                 }
             },
-            "facts": {
+            "events": {
                 "purchase": {"source": "purchases", "column": None},
                 "amount": {"source": "purchases", "column": "amount"},
                 "price": {"source": "purchases", "column": "price"},
@@ -100,17 +100,17 @@ def _catalog() -> Catalog:
             "properties": {},
             "dimensions": {},
             "measures": {
-                "purchase_count": {"fact": "purchase", "aggregation": "count"},
-                "amount_total": {"fact": "amount", "aggregation": "sum"},
-                "price_avg": {"fact": "price", "aggregation": "avg_event"},
+                "purchase_count": {"event": "purchase", "aggregation": "count"},
+                "amount_total": {"event": "amount", "aggregation": "sum"},
+                "price_avg": {"event": "price", "aggregation": "avg_event"},
             },
             "metrics": {
-                "purchases": {"kind": "mean", "entity": "user", "measure": "purchase_count"},
-                "spend": {"kind": "mean", "entity": "user", "measure": "amount_total"},
-                "avg_price": {"kind": "mean", "entity": "user", "measure": "price_avg"},
+                "purchases": {"kind": "mean", "unit": "user", "measure": "purchase_count"},
+                "spend": {"kind": "mean", "unit": "user", "measure": "amount_total"},
+                "avg_price": {"kind": "mean", "unit": "user", "measure": "price_avg"},
                 "spend_per_purchase": {
                     "kind": "ratio",
-                    "entity": "user",
+                    "unit": "user",
                     "numerator": "amount_total",
                     "denominator": "purchase_count",
                 },

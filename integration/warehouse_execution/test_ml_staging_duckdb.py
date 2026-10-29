@@ -850,7 +850,7 @@ def test_state_panel_stage_matches_ordinary_normalization_and_support(events_wor
     frame = (
         Design(
             "user",
-            Schedule("1d", "2025-01-03", "2025-01-05"),
+            Schedule("1d", "2025-01-03", "2025-01-04"),
             shape=StatePanel(
                 BinnedMetricState("sessions", (0,), ("none", "some")),
                 max_periods=2,
@@ -1204,6 +1204,45 @@ def test_fitted_transform_refuses_different_feature_definition(model):
     assert error.value.code == "terrine.transform.winsorization_identity_mismatch"
 
 
+def test_inferred_unit_snapshot_shares_identity_with_the_explicit_design(model):
+    fitted = training(model).fit_winsorization("value", lower="0.25", upper="0.75")
+    explicit, inferred = design(), replace(design(), unit=None)
+    assert inferred.spec_hash != explicit.spec_hash
+    kwargs = dict(as_of="2025-01-08", features=("value",), eligibility={})
+    explicit_scored = explicit.snapshot(model, **kwargs).winsorize(fitted).materialize()
+    inferred_scored = inferred.snapshot(model, **kwargs).winsorize(fitted).materialize()
+    explicit_view = explicit_scored.provenance.dataset_view
+    inferred_view = inferred_scored.provenance.dataset_view
+    assert inferred_view is not None and explicit_view is not None
+    assert inferred_view.view_hash == explicit_view.view_hash
+    assert inferred_scored.table.equals(explicit_scored.table)
+    definition = _definition_for(inferred.snapshot(model, **kwargs))
+    assert definition.view["parent_design_hash"] == explicit.spec_hash
+    assert definition.digest == _definition_for(explicit.snapshot(model, **kwargs)).digest
+
+
+def test_staged_definition_records_the_resolved_unit(events_world, tmp_path):
+    from terrine import recipes
+
+    bound = _worlds.bind_model(events_world, tmp_path)
+    features = {"sessions": agg("sessions", window=("-7d", "0s"))}
+    explicit = recipes.time_series(
+        "user", every="1d", start="2025-01-02", end="2025-01-03", features=features
+    )
+    inferred = recipes.time_series(
+        every="1d", start="2025-01-02", end="2025-01-03", features=features
+    )
+    dataset = inferred.build(bound).stage("inferred", budget=Budget(strict_scan=False))
+    try:
+        definition = dataset.manifest.definition
+        assert definition.base_design.unit == "user"
+        assert definition.base_design == explicit
+        assert definition.digest == _definition_for(explicit.build(bound)).digest
+        assert dataset.manifest.design_hash == explicit.spec_hash
+    finally:
+        bound.con.disconnect()
+
+
 def test_independently_fitted_features_compose_and_reopen(model):
     from dataclasses import replace
 
@@ -1244,11 +1283,11 @@ def test_fitted_transform_refuses_same_typed_rebound_metric(model, kind):
 
     model.con.raw_sql("ALTER TABLE events ADD COLUMN other_amount BIGINT DEFAULT 7")
     definitions = model.catalog.model_dump(mode="python")
-    definitions["sources"]["events"]["facts"] = (
-        *definitions["sources"]["events"]["facts"],
+    definitions["sources"]["events"]["events"] = (
+        *definitions["sources"]["events"]["events"],
         "other_amount",
     )
-    definitions["facts"]["other_amount"] = {"source": "events", "column": "other_amount"}
+    definitions["events"]["other_amount"] = {"source": "events", "column": "other_amount"}
 
     def bind():
         return Model.from_catalog(
@@ -1270,7 +1309,7 @@ def test_fitted_transform_refuses_same_typed_rebound_metric(model, kind):
         split=TimeSplit(train_until="2025-01-06", validation_until="2025-01-07"),
     )
     fitted = frame.fit_winsorization("value", lower="0.25", upper="0.75")
-    definitions["measures"]["total"]["fact"] = "other_amount"
+    definitions["measures"]["total"]["event"] = "other_amount"
     rebound = study.snapshot(bind(), as_of="2025-01-08", features=("value",), eligibility={})
     assert rebound.expr.schema()["value"] == frame._active_compiled().table.schema()["value"]
     with pytest.raises(TerrineError) as error:
@@ -1282,7 +1321,7 @@ def test_fitted_transform_refuses_same_typed_rebound_metric(model, kind):
     ("binding", "nested", "feature_kind"),
     (
         ("source", False, "aggregate"),
-        ("fact", True, "aggregate"),
+        ("event", True, "aggregate"),
         ("property", True, "attribute"),
         ("dimension", True, "aggregate"),
     ),
@@ -1304,13 +1343,13 @@ def test_frozen_limits_refuse_rebound_selector_dependencies(model, binding, nest
     definitions = model.catalog.model_dump(mode="python")
     definitions["sources"]["selection"] = {
         "relation": {"kind": "table", "name": "selection_events"},
-        "timestamp": "ts",
-        "entities": {"user": "user_id"},
-        "facts": ("selection",),
+        "time": "ts",
+        "units": {"user": "user_id"},
+        "events": ("selection",),
         "properties": ("selection_kind",),
         "dimensions": (),
     }
-    definitions["facts"]["selection"] = {"source": "selection", "column": "selected"}
+    definitions["events"]["selection"] = {"source": "selection", "column": "selected"}
     definitions["properties"]["selection_kind"] = {
         "source": "selection",
         "column": "kind",
@@ -1335,8 +1374,8 @@ def test_frozen_limits_refuse_rebound_selector_dependencies(model, binding, nest
         definitions["properties"]["selection_kind"]["dimension"] = "selection_history"
         definitions["dimensions"]["selection_history"] = {
             "relation": {"kind": "table", "name": "selection_history"},
-            "source_entity": "user",
-            "entity_column": "user_id",
+            "unit": "user",
+            "key": "user_id",
             "properties": ("selection_kind",),
             "validity": {"valid_from": "starts", "valid_to": "ends"},
         }
@@ -1362,7 +1401,7 @@ def test_frozen_limits_refuse_rebound_selector_dependencies(model, binding, nest
         else asof("amount_value", before="0s", relative_to=selector)
     )
     study = replace(
-        design(), anchor=Schedule("1d", "2025-01-05", "2025-01-08"), features={"value": expression}
+        design(), anchor=Schedule("1d", "2025-01-05", "2025-01-07"), features={"value": expression}
     )
     split = TimeSplit(train_until="2025-01-07", validation_until="2025-01-08")
     original = bind()
@@ -1378,8 +1417,8 @@ def test_frozen_limits_refuse_rebound_selector_dependencies(model, binding, nest
     )
     if binding == "source":
         definitions["sources"]["selection"]["relation"]["name"] = "alternate_selection_events"
-    elif binding == "fact":
-        definitions["facts"]["selection"]["column"] = "alternate"
+    elif binding == "event":
+        definitions["events"]["selection"]["column"] = "alternate"
     elif binding == "property":
         definitions["properties"]["selection_kind"]["column"] = "other_kind"
     else:
@@ -1466,7 +1505,7 @@ def test_staged_batches_preserve_frame_metadata_and_verify_definition_ownership(
 def frame_definition(frame):
     from terrine.spec.dataset import DatasetDefinition
 
-    return DatasetDefinition(schema_version=1, base_design=frame._design)
+    return DatasetDefinition(schema_version=2, base_design=frame._design)
 
 
 def test_stage_renews_lease_during_snapshot_tasks(events_world, tmp_path, monkeypatch):
@@ -1719,7 +1758,7 @@ def test_state_panel_training_view_hashes_baseline_and_prior_state(native_inputs
     )
     frame = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
+        Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             BinnedMetricState("sessions", (Decimal("0"),), ("none", "some")),
             max_periods=2,
@@ -1753,7 +1792,7 @@ def test_feature_definition_hash_tracks_source_timestamp_semantics(native_inputs
     readiness = {"events": Coverage("2025-01-01", "2025-01-31")}
     original = Model.from_catalog(catalog, con=con, units=units, readiness=readiness)
     changed = catalog.model_dump(mode="json")
-    changed["sources"]["events"]["timestamp"] = "earlier"
+    changed["sources"]["events"]["time"] = "earlier"
     corrected = Model.from_catalog(
         Catalog.model_validate(changed), con=con, units=units, readiness=readiness
     )
@@ -1879,9 +1918,7 @@ def test_pre_rename_owner_database_refuses_old_generation_and_stages_new(events_
     fixtures = files("tests.fixtures")
     serialized = fixtures.joinpath("pre_rename_manifest.json").read_text()
     saved = fixtures.joinpath("pre_rename_saved_plan.json").read_text()
-    definition = DatasetDefinition.from_json(
-        fixtures.joinpath("pre_rename_definition.json").read_bytes()
-    )
+    definition = DatasetDefinition.from_json(fixtures.joinpath("definition_v2.json").read_bytes())
     namespace = "terrine_runtime"
     try:
         raw = con.con

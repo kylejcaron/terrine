@@ -51,28 +51,28 @@ def main() -> None:
         con.create_table("events", events)
         con.create_table("assessments", statuses)
         catalog = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "day_boundary": "UTC",
                 "dialect": "duckdb",
                 "sources": {
                     "product_events": {
                         "relation": {"kind": "table", "name": "events"},
-                        "timestamp": "ts",
-                        "entities": {"user": "user_id"},
-                        "facts": ["session"],
+                        "time": "ts",
+                        "units": {"user": "user_id"},
+                        "events": ["session"],
                         "properties": [],
                         "dimensions": [],
                     },
                     "assessments": {
                         "relation": {"kind": "table", "name": "assessments"},
-                        "timestamp": "ts",
-                        "entities": {"user": "user_id"},
-                        "facts": [],
+                        "time": "ts",
+                        "units": {"user": "user_id"},
+                        "events": [],
                         "properties": ["status"],
                         "dimensions": [],
                     },
                 },
-                "facts": {"session": {"source": "product_events", "column": "event_id"}},
+                "events": {"session": {"source": "product_events", "column": "event_id"}},
                 "properties": {
                     "status": {
                         "source": "assessments",
@@ -82,11 +82,11 @@ def main() -> None:
                     }
                 },
                 "dimensions": {},
-                "measures": {"session_count": {"fact": "session", "aggregation": "count"}},
+                "measures": {"session_count": {"event": "session", "aggregation": "count"}},
                 "metrics": {
                     "weekly_sessions": {
                         "kind": "mean",
-                        "entity": "user",
+                        "unit": "user",
                         "measure": "session_count",
                     }
                 },
@@ -109,8 +109,7 @@ def main() -> None:
             ),
             every="1w",
             start="2025-01-06",
-            end="2025-03-31",
-            periods=12,
+            end="2025-03-30",
             features={"sessions_before": agg("weekly_sessions", window=("-4w", "0d"))},
         )
         materialized = design.build(model).materialize(
@@ -136,8 +135,7 @@ def main() -> None:
             ),
             every="1w",
             start="2025-01-06",
-            end="2025-03-31",
-            periods=12,
+            end="2025-03-30",
         )
         status_frame = status_design.build(model).materialize(
             tr.Budget(max_rows=10_000, max_output_bytes=8_000_000)

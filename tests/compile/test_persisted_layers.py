@@ -31,7 +31,7 @@ def _persisted_prefixes(design, model):
             continue
         source = model.sources[key.source]
         events = normalize_events(
-            model._relation(source.relation), source, source.entities[design.unit]
+            model._relation(source.relation), source, source.units[design.unit]
         )
         if key.measure is None or key.resolution not in {"day", "event"}:
             raise AssertionError("planned temporal layer has an invalid measure or resolution")
@@ -176,7 +176,7 @@ def test_runtime_layer_composition_matches_direct_state_audit(column_model):
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-02", "2025-01-03"),
+        Schedule("1d", "2025-01-02", "2025-01-02"),
         shape=StatePanel(
             BinnedMetricState("total", cutpoints=(0,), levels=("none", "some")),
             max_periods=1,
@@ -262,7 +262,7 @@ def test_unsupported_runtime_shape_refusal_names_shape_and_route(column_model, s
     )
     from terrine.windows import Window
 
-    initiation = Initiation("events", "tier", datetime(2025, 1, 1, tzinfo=UTC))
+    initiation = Initiation("tier", history_start=datetime(2025, 1, 1, tzinfo=UTC))
     shapes = {
         "EventSequence": EventSequence("amount", Window("-1d", "0d"), max_events=3),
         "SequentialSpec": SequentialSpec(initiation),
@@ -297,7 +297,7 @@ def test_runtime_and_frame_share_shape_budget_refusal():
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-02", "2025-01-03"),
+        Schedule("1d", "2025-01-02", "2025-01-02"),
         shape=DerivedStatePanel(
             BinnedMetricState("total", cutpoints=(0,), levels=("none", "some")),
             max_periods=2,
@@ -319,20 +319,20 @@ def test_runtime_and_frame_share_shape_budget_refusal():
 
 def test_same_fact_measures_keep_filter_and_aggregation_identity(column_model):
     changed = column_model.catalog.model_dump(mode="json")
-    changed["measures"]["count_amount"] = {"fact": "amount", "aggregation": "count"}
+    changed["measures"]["count_amount"] = {"event": "amount", "aggregation": "count"}
     changed["measures"]["new_amount"] = {
-        "fact": "amount",
+        "event": "amount",
         "aggregation": "sum",
         "filters": [{"property": "tier", "op": "equals", "values": ["new"]}],
     }
     changed["metrics"]["count_amount"] = {
         "kind": "mean",
-        "entity": "user",
+        "unit": "user",
         "measure": "count_amount",
     }
     changed["metrics"]["new_amount"] = {
         "kind": "mean",
-        "entity": "user",
+        "unit": "user",
         "measure": "new_amount",
     }
     model = Model.from_catalog(

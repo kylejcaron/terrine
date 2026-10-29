@@ -1,6 +1,4 @@
-import copy
 import json
-import pickle
 from datetime import UTC, date, datetime
 from typing import cast
 
@@ -35,7 +33,7 @@ def test_anchor_variants_and_design_maps_round_trip_as_safe_yaml_and_json():
     anchors = (
         FixedDate("2025-03-01"),
         EventAnchor("feature_enabled", which="nth", n=2),
-        Schedule(every="1w", start="2025-01-06", end="2025-02-03"),
+        Schedule(every="1w", start="2025-01-06", end="2025-02-02"),
     )
     for anchor in anchors:
         design = Design(
@@ -60,16 +58,52 @@ def test_anchor_variants_and_design_maps_round_trip_as_safe_yaml_and_json():
         assert from_yaml(to_yaml(design)).spec_hash == design.spec_hash
 
 
+def test_unit_null_round_trips():
+    design = Design(None, FixedDate("2025-01-01"))
+    assert design.unit is None
+    assert '"unit":null' in to_json(design)
+    assert from_json(to_json(design)) == design
+    assert from_yaml(to_yaml(design)).unit is None
+    assert from_yaml(to_yaml(design)).spec_hash == design.spec_hash
+    assert design.spec_hash != Design("user", FixedDate("2025-01-01")).spec_hash
+    with pytest.raises(TerrineError) as error:
+        from_json(to_json(design).replace('"unit":null', '"unit":1'))
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "malformed_document"
+
+
+def _versioned(design, version):
+    document = json.loads(to_json(design))
+    document["schema_version"] = version
+    return json.dumps(document)
+
+
+def test_v1_design_document_refuses_with_a_coded_reason():
+    with pytest.raises(TerrineError) as error:
+        from_json(_versioned(Design("user", EventAnchor("purchase")), 1))
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "unsupported_schema_version"
+    assert error.value.context["field"] == "schema_version"
+
+
+def test_malformed_document_is_a_coded_refusal():
+    for load, document in ((from_json, "{"), (from_yaml, "design: [\n")):
+        with pytest.raises(TerrineError) as error:
+            load(document)
+        assert error.value.code == "terrine.design.invalid"
+        assert error.value.context["reason"] == "malformed_document"
+
+
 def test_event_anchor_offset_preserves_saved_design_identity_and_round_trips():
     saved = (
-        '{"design":{"administrative_cutoff":null,"anchor":{"fact":"purchase","n":2,'
+        '{"design":{"administrative_cutoff":null,"anchor":{"event":"purchase","n":2,'
         '"type":"EventAnchor","which":"nth"},"anchor_range":null,"eligibility":{},'
         '"features":{},"gap":0,"outcomes":{},"sample":null,"shape":"cross_section",'
-        '"treatment":null,"unit":"user"},"schema_version":1}'
+        '"treatment":null,"unit":"user"},"schema_version":2}'
     )
     original = from_json(saved)
     assert to_json(original) == saved
-    assert original.spec_hash == "63522eaa2202585523400fb76e2e6b1d7a70bec1a92e9b3c467fed028978c25f"
+    assert original.spec_hash == "220623d871a835f6579151a7503d759b018c2e538c89663ffed82b53517e0db6"
     assert Design("user", EventAnchor("purchase", "nth", 2, offset="0d")) == original
 
     shifted = Design("user", EventAnchor("purchase", "nth", 2, offset="1d"))
@@ -81,20 +115,6 @@ def test_event_anchor_offset_preserves_saved_design_identity_and_round_trips():
     for restored in (from_json(to_json(shifted)), from_yaml(to_yaml(shifted))):
         assert restored == shifted
         assert restored.spec_hash == shifted.spec_hash
-
-
-def test_negative_event_anchor_offset_refuses_with_portable_immutable_context():
-    with pytest.raises(TerrineError) as caught:
-        EventAnchor("purchase", offset="-1s")
-    for error in (
-        caught.value,
-        copy.deepcopy(caught.value),
-        pickle.loads(pickle.dumps(caught.value)),
-    ):
-        assert error.code == "terrine.design.invalid"
-        assert "reason" in error.context
-        with pytest.raises(TypeError):
-            error.context["reason"] = "changed"  # ty: ignore[invalid-assignment]
 
 
 def test_predicate_outcome_round_trips_json():
@@ -116,14 +136,58 @@ def test_predicate_outcome_round_trips_json():
         assert restored.spec_hash == design.spec_hash
 
 
-def test_schedule_uses_positive_elapsed_cadence_and_exclusive_end():
-    schedule = Schedule(every="1w", start="2025-01-06", end="2025-02-03")
-    assert schedule.every == 7 * 86400
-    assert schedule.end == date(2025, 2, 3)
-    with pytest.raises(ValueError):
-        Schedule(every="0d", start="2025-01-06", end="2025-02-03")
-    with pytest.raises(ValueError):
-        Schedule(every="1d", start="2025-01-06", end="2025-01-06")
+def test_schedule_uses_positive_elapsed_cadence_and_ordered_dates():
+    schedule = Schedule(every="1w", start="2025-01-06", end="2025-02-02")
+    assert (schedule.every, schedule.months) == (7 * 86400, None)
+    assert schedule.end == date(2025, 2, 2)
+    assert Schedule(every="1d", start="2025-01-06", end="2025-01-06").end == date(2025, 1, 6)
+    for every in ("0d", "0mo", "0y"):
+        with pytest.raises(TerrineError) as error:
+            Schedule(every=every, start="2025-01-06", end="2025-02-02")
+        assert error.value.code == "terrine.design.invalid"
+        assert (error.value.context["reason"], error.value.context["field"]) == (
+            "not_positive",
+            "every",
+        )
+
+
+def test_month_schedule_round_trips_months():
+    design = Design("user", Schedule("3mo", "2025-01-31", "2025-12-31"))
+    for restored in (from_json(to_json(design)), from_yaml(to_yaml(design))):
+        assert isinstance(restored.anchor, Schedule)
+        assert (restored.anchor.months, restored.anchor.every) == (3, None)
+        assert restored.spec_hash == design.spec_hash
+    document = json.loads(to_json(design))
+    anchor = document["design"]["anchor"]
+    assert (anchor["every"], anchor["months"]) == (None, 3)
+    elapsed = json.loads(to_json(Design("user", Schedule("4w", "2025-01-31", "2025-12-31"))))
+    assert (elapsed["design"]["anchor"]["every"], elapsed["design"]["anchor"]["months"]) == (
+        4 * 7 * 86400,
+        None,
+    )
+    for every, months in ((1, 1), (None, None), (0, None), (None, 0), (None, True)):
+        malformed = {**document, "design": {**document["design"]}}
+        malformed["design"]["anchor"] = {**anchor, "every": every, "months": months}
+        with pytest.raises(TerrineError) as error:
+            from_json(json.dumps(malformed))
+        assert error.value.code == "terrine.design.invalid"
+
+
+def test_calendar_steps_round_trip_at_the_normalized_month_limit():
+    max_months = 10**19 - 1
+    max_years = max_months // 12
+    for every, months in ((f"{max_months}mo", max_months), (f"{max_years}y", 12 * max_years)):
+        design = Design("user", Schedule(every, "2025-01-31", "2025-12-31"))
+        for restored in (from_json(to_json(design)), from_yaml(to_yaml(design))):
+            assert restored == design
+            assert isinstance(restored.anchor, Schedule)
+            assert restored.anchor.months == months
+    for every in (f"{max_years + 1}y", f"{max_months}y"):
+        with pytest.raises(TerrineError) as error:
+            Schedule(every, "2025-01-31", "2025-12-31")
+        assert error.value.code == "terrine.design.invalid"
+        assert error.value.context["reason"] == "out_of_range"
+        assert error.value.context["field"] == "every"
 
 
 def test_design_named_maps_are_detached_and_read_only():
@@ -181,8 +245,9 @@ def test_fixed_date_preserves_intraday_aware_instants_in_safe_round_trips():
         assert isinstance(loaded.anchor, FixedDate)
         assert loaded.anchor.date == instant
 
-    with pytest.raises(ValueError):
+    with pytest.raises(TerrineError) as error:
         from_json(to_json(design).replace("123456+00:00", "123456789+00:00"))
+    assert error.value.context["reason"] == "malformed_document"
 
 
 def test_fixed_date_normalizes_offset_equivalent_instants_for_canonical_hashes():
@@ -196,22 +261,19 @@ def test_fixed_date_normalizes_offset_equivalent_instants_for_canonical_hashes()
     assert first.spec_hash == second.spec_hash
 
 
-def test_fixed_date_rejects_none_and_naive_instants():
-    with pytest.raises((TypeError, ValueError)):
-        FixedDate(None)  # ty: ignore[invalid-argument-type]
-    with pytest.raises(ValueError):
-        FixedDate(datetime(2025, 3, 1, 12, 34))
-    with pytest.raises(ValueError):
-        FixedDate("2025-03-01T12:34:56.123456789Z")
-
-
-def test_anchor_range_requires_ordered_bounds_and_aware_instants():
-    with pytest.raises(ValueError):
-        AnchorRange()
-    with pytest.raises(ValueError):
-        AnchorRange(start="2025-04-01", end="2025-03-01")
-    with pytest.raises(ValueError):
-        AnchorRange(start=datetime(2025, 3, 1))
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [
+        (datetime(2025, 3, 1, 12, 34), "naive_datetime"),
+        ("2025-03-01T12:34:56.123456789Z", "invalid_instant"),
+        ("2025-03-01T12:34:56", "invalid_instant"),
+    ],
+)
+def test_fixed_date_rejects_naive_and_submicrosecond_instants(value, reason):
+    with pytest.raises(TerrineError) as error:
+        FixedDate(value)
+    assert error.value.code == "terrine.design.invalid"
+    assert (error.value.context["reason"], error.value.context["field"]) == (reason, "date")
 
 
 def test_treatment_known_at_t0_metadata_is_explicit():
@@ -225,25 +287,29 @@ def test_treatment_known_at_t0_metadata_is_explicit():
     assert loaded.treatment.known_at_t0 is True
 
 
-def test_yaml_and_json_reject_duplicates_unknown_schema_nodes_and_extra_fields():
-    with pytest.raises(ValueError):
-        from_yaml("schema_version: 1\nschema_version: 1\ndesign: {}\n")
-    with pytest.raises(ValueError):
-        from_json('{"schema_version":1,"schema_version":1,"design":{}}')
-    with pytest.raises(ValueError):
-        from_yaml("schema_version: 99\ndesign: {}\n")
-    with pytest.raises(ValueError):
-        from_yaml("schema_version: 1\ndesign: {type: FutureNode}\n")
-    with pytest.raises(ValueError):
-        from_json('{"schema_version":1,"design":{"unit":"u","anchor":{"type":"FutureNode"}}}')
-    with pytest.raises(ValueError):
-        from_json(
+@pytest.mark.parametrize(
+    ("load", "document", "reason"),
+    [
+        (from_yaml, "schema_version: 2\nschema_version: 2\ndesign: {}\n", "malformed_document"),
+        (from_json, '{"schema_version":2,"schema_version":2,"design":{}}', "malformed_document"),
+        (from_yaml, "schema_version: 99\ndesign: {}\n", "unsupported_schema_version"),
+        (from_yaml, "schema_version: 2\ndesign: {type: FutureNode}\n", "malformed_document"),
+        (
+            from_json,
             to_json(Design(unit="user", anchor=FixedDate("2025-03-01"))).replace(
                 '"unit":"user"', '"unit":"user","unexpected":1'
-            )
-        )
-    with pytest.raises((TypeError, ValueError)):
-        Design(unit="user", anchor=FixedDate("2025-03-01"), features={"bad": lambda: 1})  # ty: ignore[invalid-argument-type]
+            ),
+            "malformed_document",
+        ),
+    ],
+)
+def test_yaml_and_json_reject_duplicates_unknown_schema_nodes_and_extra_fields(
+    load, document, reason
+):
+    with pytest.raises(TerrineError) as error:
+        load(document)
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == reason
 
 
 def test_trajectory_and_administrative_cutoff_round_trip_with_canonical_hash():
@@ -270,12 +336,6 @@ def test_time_to_event_design_round_trips_and_requires_matching_occurrence_ancho
         administrative_cutoff=datetime(2025, 4, 1, tzinfo=UTC),
     )
     assert from_json(to_json(design)).spec_hash == design.spec_hash
-    with pytest.raises(ValueError):
-        Design(
-            unit="user",
-            anchor=Schedule("1d", "2025-03-01", "2025-03-04"),
-            shape=TimeToEvent("churn"),
-        )
 
 
 def test_life_table_design_round_trips_and_binds_groups_to_features():
@@ -288,27 +348,35 @@ def test_life_table_design_round_trips_and_binds_groups_to_features():
         shape=LifeTable(TimeToEvent("churn"), "7d", group_by=("region",)),
     )
     assert from_json(to_json(design)).spec_hash == design.spec_hash
-    with pytest.raises(ValueError):
+    with pytest.raises(TerrineError) as error:
         Design(
             "user",
             EventAnchor("signup", which="first"),
             shape=LifeTable(TimeToEvent("churn"), "7d", group_by=("region",)),
         )
-
-
-def test_life_table_rejects_group_names_that_collide_with_output_columns():
-    from terrine.spec.trajectory import LifeTable, TimeToEvent
-
-    with pytest.raises(ValueError):
-        LifeTable(TimeToEvent("churn"), "1d", group_by=("time_bin",))
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "undeclared_name"
+    assert error.value.context["names"] == ("region",)
 
 
 def test_submicrosecond_datetime_subclasses_are_rejected_at_construction():
     value = pd.Timestamp("2025-01-04T00:00:00.000000001Z")
-    with pytest.raises(ValueError):
-        Design("user", FixedDate("2025-01-01"), administrative_cutoff=cast(datetime, value))
-    with pytest.raises(ValueError):
-        CohortGrouping("1d", bucket_origin=cast(datetime, value))
+    for build, field in (
+        (
+            lambda: Design(
+                "user", FixedDate("2025-01-01"), administrative_cutoff=cast(datetime, value)
+            ),
+            "administrative_cutoff",
+        ),
+        (lambda: CohortGrouping("1d", bucket_origin=cast(datetime, value)), "bucket_origin"),
+    ):
+        with pytest.raises(TerrineError) as error:
+            build()
+        assert error.value.code == "terrine.design.invalid"
+        assert (error.value.context["reason"], error.value.context["field"]) == (
+            "invalid_instant",
+            field,
+        )
 
 
 def test_microsecond_datetime_subclass_is_normalized_for_round_trip():

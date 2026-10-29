@@ -33,7 +33,7 @@ def compile_retention(
     identity_column: str | None,
     property_columns: dict[tuple[str, str], tuple[str, str]],
 ) -> TemporalResult:
-    identity = source.facts[expression.fact] or identity_column
+    identity = source.events[expression.event] or identity_column
     assert identity is not None
     binding = source.properties.get(expression.label_property)
     if binding is None:

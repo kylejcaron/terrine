@@ -269,7 +269,7 @@ def test_plan_request_round_trip_preserves_dataset_definition_view():
             "parent_design_hash": request.design.spec_hash,
         },
     ):
-        saved_plan = DatasetDefinition(schema_version=1, base_design=request.design, view=view)
+        saved_plan = DatasetDefinition(schema_version=2, base_design=request.design, view=view)
         typed = replace(request, dataset_definition=saved_plan)
         restored = PlanRequest.from_dict(json.loads(json.dumps(typed.to_dict())))
         assert restored.dataset_definition is not None

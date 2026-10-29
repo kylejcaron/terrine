@@ -41,10 +41,10 @@ def _validated(design, model):
 
 def test_sequential_schedule_emits_one_row_per_unit_trial(native_inputs):
     model = _event_model(native_inputs)
-    base = Design("user", Schedule("1d", "2025-01-03", "2025-01-05"))
+    base = Design("user", Schedule("1d", "2025-01-03", "2025-01-04"))
     sequential = Sequential(
         base,
-        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
     )
     calendar = CalendarPanel(sequential)
     results = [
@@ -79,8 +79,8 @@ def test_initiation_is_classified_from_information_available_at_exact_t0(native_
         "UPDATE events SET ts = TIMESTAMPTZ '2025-01-04 00:00:00+00' WHERE user_id = 'b'"
     )
     design = Sequential(
-        Design("user", Schedule("1d", "2025-01-03", "2025-01-05")),
-        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        Design("user", Schedule("1d", "2025-01-03", "2025-01-04")),
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
     )
 
     rows = design.build(model)._compiled.table.to_pyarrow().to_pylist()
@@ -105,14 +105,14 @@ def test_sequential_later_initiation_uses_reanchored_outcome_support(native_inpu
     design = Sequential(
         Design(
             "user",
-            Schedule("1d", "2025-01-03", "2025-01-04"),
+            Schedule("1d", "2025-01-03", "2025-01-03"),
             outcomes={
                 "sessions_after_selector": agg(
                     "sessions", window=("0d", "1d"), relative_to=selector
                 )
             },
         ),
-        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
     )
 
     with pytest.raises(TerrineError) as error:
@@ -143,10 +143,10 @@ def test_sequential_followup_includes_outcome_selector_dependencies(native_input
     design = Sequential(
         Design(
             "user",
-            Schedule("1d", "2025-01-03", "2025-01-04"),
+            Schedule("1d", "2025-01-03", "2025-01-03"),
             outcomes={"label": gt(value, 0) if wrapped else value},
         ),
-        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
     )
     assert model.con.execute(
         _followup_at(design, model, ibis.literal(datetime(2025, 1, 3, tzinfo=UTC)))
@@ -175,12 +175,10 @@ def test_sequential_followup_covers_predicate_outcome_horizon(native_inputs):
         design = Sequential(
             Design(
                 "user",
-                Schedule("1d", "2025-01-03", "2025-01-04"),
+                Schedule("1d", "2025-01-03", "2025-01-03"),
                 outcomes={"label": value},
             ),
-            treatment=Initiation(
-                "events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)
-            ),
+            treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
         )
         ends.append(
             model.con.execute(
@@ -199,8 +197,8 @@ def test_later_control_initiation_refuses_sustained_no_initiation_strategy(nativ
         "UPDATE events SET ts = TIMESTAMPTZ '2025-01-04 00:00:00+00' WHERE user_id = 'b'"
     )
     design = Sequential(
-        Design("user", Schedule("1d", "2025-01-03", "2025-01-05")),
-        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        Design("user", Schedule("1d", "2025-01-03", "2025-01-04")),
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
     )
 
     with pytest.raises(TerrineError) as error:
@@ -306,8 +304,8 @@ def test_sequential_requires_complete_source_history_from_declared_start(native_
 
     model = _event_model(native_inputs)
     design = Sequential(
-        Design("user", Schedule("1d", "2025-01-03", "2025-01-05")),
-        treatment=Initiation("events", "session", history_start=datetime(2024, 1, 1, tzinfo=UTC)),
+        Design("user", Schedule("1d", "2025-01-03", "2025-01-04")),
+        treatment=Initiation("session", history_start=datetime(2024, 1, 1, tzinfo=UTC)),
     )
 
     with pytest.raises(TerrineError) as error:
@@ -321,8 +319,8 @@ def test_sequential_requires_source_history_through_last_trial_t0(native_inputs)
 
     model = _event_model(native_inputs, Coverage("2025-01-01", "2025-01-03"))
     design = Sequential(
-        Design("user", Schedule("1d", "2025-01-03", "2025-01-05")),
-        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        Design("user", Schedule("1d", "2025-01-03", "2025-01-04")),
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
     )
 
     with pytest.raises(TerrineError) as error:
@@ -336,8 +334,8 @@ def test_sequential_exposes_trial_identity_and_normalized_aggregation_weights(na
 
     model = _event_model(native_inputs)
     design = Sequential(
-        Design("user", Schedule("1d", "2025-01-03", "2025-01-05")),
-        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        Design("user", Schedule("1d", "2025-01-03", "2025-01-04")),
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
         trial_weight=TrialWeight("equal_trial"),
     )
 
@@ -354,8 +352,8 @@ def test_sequential_explicit_trial_weights_are_normalized_on_output(native_input
 
     model = _event_model(native_inputs)
     design = Sequential(
-        Design("user", Schedule("1d", "2025-01-03", "2025-01-05")),
-        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        Design("user", Schedule("1d", "2025-01-03", "2025-01-04")),
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
         trial_weight=TrialWeight("explicit", {"schedule:0": 2, "schedule:1": 6}),
     )
 
@@ -365,6 +363,48 @@ def test_sequential_explicit_trial_weights_are_normalized_on_output(native_input
         ("schedule:0", 0.25),
         ("schedule:1", 0.75),
     }
+
+
+def test_month_schedule_trials_are_the_schedule_count(native_inputs):
+    from terrine import recipes
+    from terrine.spec import TrialWeight
+
+    model = _event_model(native_inputs, Coverage("2025-01-01", "2025-04-30"))
+    design = recipes.trial_panel(
+        "user",
+        every="1mo",
+        start="2025-01-31",
+        end="2025-03-31",
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        trial_weight=TrialWeight("equal_trial"),
+    )
+    assert isinstance(design.anchor, Schedule)
+    count = design.anchor.count(model.day_boundary)
+    assert count == 3
+
+    rows = design.build(model)._compiled.table.to_pyarrow().to_pylist()
+
+    assert {row["trial_id"] for row in rows} == {f"schedule:{k}" for k in range(count)}
+    assert {row["t0"] for row in rows} == set(design.anchor.instants(model.day_boundary))
+    assert {row["trial_weight"] for row in rows} == {1 / count}
+
+
+def test_calendar_comparison_panel_refuses_month_schedules(native_inputs):
+    from terrine.errors import TerrineError
+    from terrine.spec import CalendarComparisonPanel
+
+    model = _event_model(native_inputs)
+    with pytest.raises(TerrineError) as error:
+        CalendarComparisonPanel(
+            Design("user", Schedule("1mo", "2025-01-03", "2025-01-03")),
+            model,
+            cohort=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+            control="never_treated",
+            reference_period=-2,
+            comparison_periods=(0,),
+        )
+    assert error.value.code == "terrine.design.invalid_calendar_comparison"
+    assert error.value.context["reason"] == "calendar_months_unsupported"
 
 
 def test_persistent_adoption_refuses_contradictory_history(native_inputs):
@@ -396,13 +436,9 @@ def test_persistent_adoption_refuses_contradictory_history(native_inputs):
         event_ids={"events": "event_id"},
     )
     design = Sequential(
-        Design("user", Schedule("1d", "2025-01-03", "2025-01-05")),
+        Design("user", Schedule("1d", "2025-01-03", "2025-01-04")),
         treatment=PersistentAdoption(
-            "events",
-            "status",
-            "adopted",
-            datetime(2025, 1, 1, tzinfo=UTC),
-            persistence="absorbing",
+            "status", adopted_value="adopted", history_start=datetime(2025, 1, 1, tzinfo=UTC)
         ),
     )
 
@@ -417,10 +453,10 @@ def test_sequential_names_explicit_target_weight_column(native_inputs):
     design = Sequential(
         Design(
             "user",
-            Schedule("1d", "2025-01-03", "2025-01-04"),
+            Schedule("1d", "2025-01-03", "2025-01-03"),
             features={"target_weight": agg("sessions", window=("-1d", "0d"))},
         ),
-        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
     )
 
     frame = design.build(model)
@@ -437,10 +473,10 @@ def test_later_initiation_at_trial_specific_exclusive_horizon_is_not_refused(nat
     design = Sequential(
         Design(
             "user",
-            Schedule("1d", "2025-01-03", "2025-01-04"),
+            Schedule("1d", "2025-01-03", "2025-01-03"),
             outcomes={"sessions_after_t0": agg("sessions", window=("0d", "7d"))},
         ),
-        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
     )
 
     _validated(design, model)
@@ -468,10 +504,10 @@ def test_sequential_roster_history_uses_exclusive_trial_horizon(
     design = Sequential(
         Design(
             "user",
-            Schedule("1d", "2025-01-03", "2025-01-04"),
+            Schedule("1d", "2025-01-03", "2025-01-03"),
             outcomes={"sessions_after_t0": agg("sessions", window=("0d", "7d"))},
         ),
-        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
     )
 
     if raises:
@@ -503,10 +539,10 @@ def test_sequential_roster_history_ignores_ineligible_anchor_rows(native_inputs)
     design = Sequential(
         Design(
             "user",
-            Schedule("1d", "2025-01-03", "2025-01-04"),
+            Schedule("1d", "2025-01-03", "2025-01-03"),
             eligibility={"prior_session": gt(agg("sessions", window=("-1d", "0d")), 0)},
         ),
-        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
     )
 
     rows = model.con.to_pyarrow(_validated(design, model).table).to_pylist()
@@ -521,10 +557,10 @@ def test_sequential_anticipation_requires_source_coverage_through_buffer(native_
     design = Sequential(
         Design(
             "user",
-            Schedule("1d", "2025-01-03", "2025-01-04"),
+            Schedule("1d", "2025-01-03", "2025-01-03"),
             outcomes={"sessions_after_t0": agg("sessions", window=("0d", "7d"))},
         ),
-        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
         anticipation="2d",
     )
 
@@ -541,8 +577,8 @@ def test_sequential_anticipation_preserves_schedule_fallback_without_outcomes(na
         "UPDATE events SET ts = TIMESTAMPTZ '2025-01-06 00:00:00+00' WHERE user_id = 'b'"
     )
     design = Sequential(
-        Design("user", Schedule("7d", "2025-01-03", "2025-01-10")),
-        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        Design("user", Schedule("7d", "2025-01-03", "2025-01-09")),
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
         anticipation="2d",
     )
 

@@ -5,18 +5,22 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
+from importlib import import_module
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+import pyarrow as pa
+
 from terrine.backends.registry import Engine, resolve_engine
-from terrine.data import BoundCoverage, Coverage, Events, UnitSource
+from terrine.data import BoundCoverage, Coverage, EventMetric, Events, History, Ratio, UnitSource
 from terrine.errors import RefusalSpec
 from terrine.execution._metadata import metadata_operation
-from terrine.semantic.bind import _SCHEMA, bind_metric, normalize_source
-from terrine.semantic.io import load_catalog, validate_catalog
+from terrine.execution._native import _ascii_key
+from terrine.semantic.bind import _SCHEMA, _relation, bind_metric, normalize_source
+from terrine.semantic.io import dump_catalog, load_catalog, validate_catalog
 from terrine.semantic.models import BoundMetric, BoundSource, Catalog, RelationSpec, TableRef
 from terrine.semantic.time import boundary_timezone
 from terrine.temporal.readiness import Readiness
@@ -25,34 +29,219 @@ if TYPE_CHECKING:
     from terrine.execution.inputs import ExecutionContext, VerifiedInputBinding
 __all__ = ["Model"]
 
-_INVALID = RefusalSpec("terrine.model.invalid_binding", "Model binding input is invalid: {reason}.")
+_INVALID = RefusalSpec(
+    "terrine.model.invalid_binding",
+    "The model cannot use this input ({reason}). "
+    "Check the unit, event and history declarations passed to the model.",
+)
 _MISSING_EVENT_COMPLETENESS = RefusalSpec(
     "terrine.model.missing_event_completeness",
-    "Event source {source!r} requires complete=(start, end); declare authoritative "
-    "inclusive local calendar days, not observed event maxima.",
+    "{source!r} has no complete=(first_day, last_day). Declare the inclusive calendar "
+    "days that its event or history table is fully loaded for, not the first and last "
+    "event times you happen to have.",
 )
-_MULTIPLE_EVENT_UNITS = RefusalSpec(
-    "terrine.model.multiple_event_units",
-    "Event source {source!r} declares multiple units {units}; use Model.from_catalog "
-    "for multi-unit source semantics.",
+_AMBIGUOUS_UNIT = RefusalSpec(
+    "terrine.model.ambiguous_unit",
+    "{owner} does not say which unit its rows belong to and the model declares "
+    "{choices}; pass {parameter}= with one of them.",
 )
-_GENERATED_METRIC_COLLISION = RefusalSpec(
-    "terrine.model.generated_metric_collision",
-    "Generated name {name!r} conflicts for event sources {sources}; rename the source "
-    "or value declaration, or use Model.from_catalog for explicit names.",
+_NAME_COLLISION = RefusalSpec(
+    "terrine.model.invalid_binding",
+    "{kind} name {name!r} is declared by {owners}; event, label and history names are "
+    "shared by every Events and History of a model, so give each its own name.",
 )
+_UNSUPPORTED_COLUMN_TYPE = RefusalSpec(
+    "terrine.model.invalid_binding",
+    "Column {column!r} of {source!r} has type {dtype}, which cannot be a label or history "
+    "value; supported types are {supported}.",
+)
+_MISSING_REFERENCE = RefusalSpec(
+    "terrine.semantic.missing_reference",
+    "{owner!r} uses {kind} {name!r}, which is not declared; available names are {available!r}. "
+    "Use one of these names or add the missing {kind} to the model.",
+)
+_IN_MEMORY_WITH_CONNECTION = RefusalSpec(
+    "terrine.model.invalid_binding",
+    "{inputs} are in-memory tables but a connection was given; Terrine never uploads "
+    "data, so load them into the warehouse yourself or omit con to build on a private "
+    "in-process DuckDB.",
+)
+_CONNECTION_REQUIRED = RefusalSpec(
+    "terrine.model.invalid_binding",
+    "{tables} are table names but no connection was given; pass the connection that "
+    "holds them, or pass the tables themselves.",
+)
+_TABLE_NAME_COLLISION = RefusalSpec(
+    "terrine.model.invalid_binding",
+    "In-memory tables are registered under their mapping keys, which DuckDB matches "
+    "without regard to ASCII case, and {name!r} is used by {owners}; give the unit or "
+    "the event table its own name.",
+)
+_MISSING_DEPENDENCY = RefusalSpec(
+    "terrine.convert.missing_dependency",
+    "In-memory tables run on the optional {extra!r} dependency; {route}, or bind the "
+    "tables by name on a connection.",
+)
+_LABEL_DTYPES = ("string", "int", "float", "bool", "date")
 
 
-def _claim_generated_name(
-    generated: dict[str, str], name: str, source: str, readiness: Mapping[str, Coverage]
-) -> None:
-    if name in generated:
-        raise _GENERATED_METRIC_COLLISION.error(
-            name=name, sources=tuple(dict.fromkeys((generated[name], source)))
+def _label_dtype(dtype: Any, *, source: str, column: str) -> str:
+    """The catalog dtype a bound column type reads back as; the inverse of binding."""
+    if dtype.is_string():
+        return "string"
+    if dtype.is_boolean():
+        return "bool"
+    if dtype.is_integer() or (dtype.is_decimal() and dtype.scale == 0):
+        return "int"
+    if dtype.is_floating() or dtype.is_decimal():
+        return "float"
+    if dtype.is_date():
+        return "date"
+    raise _UNSUPPORTED_COLUMN_TYPE.error(
+        reason="unsupported_column_type",
+        source=source,
+        column=column,
+        dtype=str(dtype),
+        supported=_LABEL_DTYPES,
+    )
+
+
+def _claim_name(owners: dict[str, str], kind: str, name: str, owner: str) -> None:
+    prior = owners.setdefault(name, owner)
+    if prior != owner:
+        raise _NAME_COLLISION.error(
+            reason="name_collision", kind=kind, name=name, owners=tuple(sorted((prior, owner)))
         )
-    if name in readiness and name != source:
-        raise _GENERATED_METRIC_COLLISION.error(name=name, sources=(source,), readiness_key=name)
-    generated[name] = source
+
+
+def _value_columns(event: Events) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            metric.column
+            for metric in event.metrics.values()
+            if isinstance(metric, EventMetric) and metric.column is not None
+        )
+    )
+
+
+def _check_names(events: Mapping[str, Events], history: Mapping[str, History]) -> None:
+    """Refuse shared event, label, history and metric names before any schema read.
+
+    Events, history attributes and labels share one namespace because
+    ``Initiation(name)`` resolves across events and labels; the value events
+    ``<source>_<column>`` live in it too. Metrics are a separate namespace.
+    """
+    owners: dict[str, str] = {}
+    for name in events:
+        _claim_name(owners, "event", name, f"events:{name}")
+    for name in history:
+        _claim_name(owners, "event", name, f"history:{name}")
+    for name, event in events.items():
+        for label in event.labels:
+            _claim_name(owners, "label", label, f"labels:{name}")
+    for name, event in events.items():
+        for column in _value_columns(event):
+            _claim_name(owners, "event", f"{name}_{column}", f"events:{name}.{column}")
+    metric_owners: dict[str, str] = {}
+    for name, event in events.items():
+        for metric in event.metrics:
+            _claim_name(metric_owners, "metric", metric, f"events:{name}")
+
+
+def _check_references(name: str, event: Events) -> None:
+    owner = f"events:{name}"
+    labels = tuple(sorted(event.labels))
+    plain = tuple(
+        sorted(
+            metric
+            for metric, declared in event.metrics.items()
+            if isinstance(declared, EventMetric)
+        )
+    )
+    for metric in event.metrics.values():
+        if isinstance(metric, Ratio):
+            for operand in (metric.numerator, metric.denominator):
+                if operand not in plain:
+                    raise _MISSING_REFERENCE.error(
+                        kind="metric", name=operand, owner=owner, available=plain
+                    )
+        else:
+            for filt in metric.filters:
+                if filt.property not in event.labels:
+                    raise _MISSING_REFERENCE.error(
+                        kind="label", name=filt.property, owner=owner, available=labels
+                    )
+
+
+def _resolve_unit(owner: str, declared: str | None, units: Mapping[str, UnitSource]) -> str:
+    if declared is not None:
+        if declared not in units:
+            raise _MISSING_REFERENCE.error(
+                kind="unit", name=declared, owner=owner, available=tuple(sorted(units))
+            )
+        return declared
+    if len(units) == 1:
+        return next(iter(units))
+    if not units:
+        raise _INVALID.error(reason="no_unit_source")
+    raise _AMBIGUOUS_UNIT.error(owner=owner, choices=tuple(sorted(units)), parameter="unit")
+
+
+def _in_memory_tables(
+    con: Any | None,
+    units: Mapping[str, UnitSource],
+    events: Mapping[str, Events],
+    history: Mapping[str, History],
+) -> dict[str, pa.Table] | None:
+    """The tables to register on a private DuckDB, keyed by their mapping keys.
+
+    ``None`` when every table is a name in ``con``. A connection beside an
+    in-memory table, or a table name beside no connection, refuses: nothing is
+    uploaded, and a name needs the connection that holds it.
+    """
+    declared = [
+        (f"{kind}:{name}", name, item.table)
+        for kind, mapping in (("units", units), ("events", events), ("history", history))
+        for name, item in mapping.items()
+    ]
+    named = tuple(sorted(owner for owner, _, table in declared if isinstance(table, str)))
+    in_memory = [
+        (owner, name, table) for owner, name, table in declared if not isinstance(table, str)
+    ]
+    if con is not None:
+        if in_memory:
+            raise _IN_MEMORY_WITH_CONNECTION.error(
+                reason="in_memory_input_with_connection",
+                inputs=tuple(sorted(owner for owner, _, _ in in_memory)),
+            )
+        return None
+    if named:
+        raise _CONNECTION_REQUIRED.error(reason="connection_required", tables=named)
+    owners: dict[str, str] = {}
+    for owner, name, _ in in_memory:
+        prior = owners.setdefault(_ascii_key(name), owner)
+        if prior != owner:
+            raise _TABLE_NAME_COLLISION.error(
+                reason="name_collision",
+                kind="table",
+                name=name,
+                owners=tuple(sorted((prior, owner))),
+            )
+    return {name: table for _, name, table in in_memory}
+
+
+def _private_connection(tables: Mapping[str, pa.Table]) -> Any:
+    """An in-process DuckDB holding ``tables``; nothing leaves the machine."""
+    try:
+        import_module("duckdb")
+    except ImportError as exc:
+        raise _MISSING_DEPENDENCY.error(extra="duckdb", route="install terrine[duckdb]") from exc
+    import ibis
+
+    con = ibis.duckdb.connect()
+    for name, table in tables.items():
+        con.create_table(name, table)
+    return con
 
 
 def _boundary_function(boundary: str):
@@ -68,7 +257,10 @@ def _boundary_function(boundary: str):
 
 @dataclass(frozen=True, slots=True, init=False, repr=False, eq=False)
 class Model:
-    """Bound semantic metadata and a connection, without executing source data queries."""
+    """Bind units, events, metrics and history to a connection without reading event rows.
+
+    Example: tr.Model.from_tables(units=units, events=events)
+    """
 
     catalog: Catalog
     con: Any
@@ -123,92 +315,158 @@ class Model:
     @classmethod
     def from_tables(
         cls,
-        con: Any,
+        con: Any | None = None,
         *,
         units: Mapping[str, UnitSource],
         events: Mapping[str, Events],
+        history: Mapping[str, History] | None = None,
         dialect: str | None = None,
         day_boundary: str = "UTC",
-        readiness: Mapping[str, Coverage] | None = None,
         event_ids: Mapping[str, str] | None = None,
         allow_unverified: bool = False,
     ) -> Model:
-        """Bind event tables with explicit rosters, completeness and generated metrics.
+        """Bind unit, event and history tables with explicit complete days.
 
-        With ``allow_unverified=True``, Ibis schema inspection may end an open
-        transaction on ``con``. Use a connection with no pending writes or a
-        dedicated read connection.
+        In-memory tables need no connection and materialize only; table names need ``con``,
+        and unverified connections must have no pending writes during schema inspection.
+
+        Example: tr.Model.from_tables(units=units, events=events)
         """
         if not isinstance(allow_unverified, bool):
-            raise _INVALID.error(reason="allow_unverified must be a bool")
-        if not isinstance(units, Mapping):
-            raise _INVALID.error(reason="units must map names to UnitSource")
+            raise _INVALID.error(reason="wrong_type", field="allow_unverified")
+        if not isinstance(units, Mapping) or any(
+            not isinstance(name, str) or not name or not isinstance(unit, UnitSource)
+            for name, unit in units.items()
+        ):
+            raise _INVALID.error(reason="wrong_type", field="units")
         if not isinstance(events, Mapping) or any(
             not isinstance(name, str) or not name or not isinstance(event, Events)
             for name, event in events.items()
         ):
-            raise _INVALID.error(reason="events must map nonempty source names to Events")
-        if readiness is not None and not isinstance(readiness, Mapping):
-            raise _INVALID.error(reason="readiness must map source names to Coverage")
-        coverage = dict(readiness or {})
-        sources: dict[str, Any] = {}
-        facts: dict[str, Any] = {}
-        measures: dict[str, Any] = {}
-        metrics: dict[str, Any] = {}
-        generated: dict[str, str] = {}
-        for source, event in events.items():
-            if len(event.keys) > 1:
-                raise _MULTIPLE_EVENT_UNITS.error(source=source, units=tuple(event.keys))
-            if not event.keys:
-                raise _INVALID.error(
-                    reason=f"event source {source!r} requires exactly one unit key"
-                )
-            unit = next(iter(event.keys))
-            if unit not in units:
-                raise _INVALID.error(
-                    reason=f"event source {source!r} unit {unit!r} requires a declared UnitSource"
-                )
-            if event.complete is None:
-                raise _MISSING_EVENT_COMPLETENESS.error(source=source)
-            source_facts = [(source, None)] + [
-                (f"{source}_{value}", value) for value in event.values
-            ]
-            for fact, column in source_facts:
-                # The source and its event fact deliberately share one name.
-                _claim_generated_name(generated, fact, source, coverage)
-                facts[fact] = {"source": source, "column": column}
-            source_measures = [(f"{source}_count", source, "count")]
-            for value in event.values:
-                fact = f"{source}_{value}"
-                source_measures.extend(
-                    [(f"{fact}_sum", fact, "sum"), (f"{fact}_mean", fact, "avg_event")]
-                )
-            for name, fact, aggregation in source_measures:
-                _claim_generated_name(generated, name, source, coverage)
-                measures[name] = {"fact": fact, "aggregation": aggregation}
-                metrics[name] = {"kind": "mean", "entity": unit, "measure": name}
-            sources[source] = {
-                "relation": {"kind": "table", "name": event.table},
-                "timestamp": event.time,
-                "entities": dict(event.keys),
-                "facts": [fact for fact, _ in source_facts],
-                "properties": [],
-                "dimensions": [],
-            }
-            coverage[source] = Coverage(*event.complete)
+            raise _INVALID.error(reason="wrong_type", field="events")
+        attributes = {} if history is None else history
+        if not isinstance(attributes, Mapping) or any(
+            not isinstance(name, str) or not name or not isinstance(item, History)
+            for name, item in attributes.items()
+        ):
+            raise _INVALID.error(reason="wrong_type", field="history")
+        _check_names(events, attributes)
+        in_memory = _in_memory_tables(con, units, events, attributes)
+        event_units = {
+            name: _resolve_unit(f"events:{name}", event.unit, units)
+            for name, event in events.items()
+        }
+        history_units = {
+            name: _resolve_unit(f"history:{name}", item.unit, units)
+            for name, item in attributes.items()
+        }
+        coverage: dict[str, Coverage] = {}
+        for name, declared in (*events.items(), *attributes.items()):
+            if declared.complete is None:
+                raise _MISSING_EVENT_COMPLETENESS.error(source=name)
+            coverage[name] = Coverage(*declared.complete)
+        for name, event in events.items():
+            _check_references(name, event)
+        if in_memory is not None:
+            con = _private_connection(in_memory)
+            units = {name: replace(unit, table=name) for name, unit in units.items()}
+            events = {name: replace(event, table=name) for name, event in events.items()}
+            attributes = {name: replace(item, table=name) for name, item in attributes.items()}
         engine = resolve_engine(con, allow_unverified=allow_unverified)
         if dialect is None:
             from terrine.execution.backend import backend_provider
 
             dialect = backend_provider(con, engine=engine).dialect(con)
+
+        def schema(table: str):
+            return _relation(
+                con, TableRef(kind="table", name=table), dialect, engine=engine
+            ).schema()
+
+        sources: dict[str, Any] = {}
+        catalog_events: dict[str, Any] = {}
+        properties: dict[str, Any] = {}
+        dimensions: dict[str, Any] = {}
+        measures: dict[str, Any] = {}
+        metrics: dict[str, Any] = {}
+        for name, event in events.items():
+            unit = event_units[name]
+            value_events = {column: f"{name}_{column}" for column in _value_columns(event)}
+            catalog_events[name] = {"source": name, "column": None}
+            for column, value_event in value_events.items():
+                catalog_events[value_event] = {"source": name, "column": column}
+            if event.labels:
+                columns = schema(event.table)
+                for label in event.labels:
+                    if label not in columns.names:
+                        raise _SCHEMA.error(field=f"label {label}", column=label)
+                    properties[label] = {
+                        "source": name,
+                        "column": label,
+                        "dtype": _label_dtype(columns[label], source=name, column=label),
+                        "as_of": "event_time",
+                    }
+            for metric_name, metric in event.metrics.items():
+                if isinstance(metric, Ratio):
+                    metrics[metric_name] = {
+                        "kind": "ratio",
+                        "unit": unit,
+                        "numerator": metric.numerator,
+                        "denominator": metric.denominator,
+                    }
+                    continue
+                measures[metric_name] = {
+                    "event": name if metric.column is None else value_events[metric.column],
+                    "aggregation": metric.aggregation,
+                    "filters": metric.filters,
+                }
+                metrics[metric_name] = {"kind": "mean", "unit": unit, "measure": metric_name}
+            sources[name] = {
+                "relation": {"kind": "table", "name": event.table},
+                "time": event.time,
+                "units": {unit: event.key},
+                "events": [name, *value_events.values()],
+                "properties": list(event.labels),
+                "dimensions": [],
+            }
+        for name, item in attributes.items():
+            unit = history_units[name]
+            columns = schema(item.table)
+            if item.column not in columns.names:
+                raise _SCHEMA.error(field=f"history {name}", column=item.column)
+            relation = {"kind": "table", "name": item.table}
+            ranged = item.valid_from is not None
+            sources[name] = {
+                "relation": relation,
+                "time": item.valid_from if ranged else item.changed_at,
+                "units": {unit: item.key},
+                "events": [],
+                "properties": [name],
+                "dimensions": [name] if ranged else [],
+            }
+            properties[name] = {
+                "source": name,
+                "column": item.column,
+                "dtype": _label_dtype(columns[item.column], source=name, column=item.column),
+                "as_of": "event_time",
+                "dimension": name if ranged else None,
+            }
+            if ranged:
+                dimensions[name] = {
+                    "relation": relation,
+                    "unit": unit,
+                    "key": item.key,
+                    "validity": {"valid_from": item.valid_from, "valid_to": item.valid_to},
+                    "properties": [name],
+                }
         catalog = {
-            "schema_version": 1,
+            "schema_version": 2,
             "dialect": dialect,
             "day_boundary": day_boundary,
             "sources": sources,
-            "facts": facts,
-            "properties": {},
-            "dimensions": {},
+            "events": catalog_events,
+            "properties": properties,
+            "dimensions": dimensions,
             "measures": measures,
             "metrics": metrics,
         }
@@ -220,6 +478,13 @@ class Model:
             event_ids=event_ids,
             engine=engine,
         )
+
+    def to_catalog(self) -> str:
+        """Return this model's event, metric and history definitions as catalog YAML.
+
+        Example: model.to_catalog()
+        """
+        return dump_catalog(self.catalog)
 
     @classmethod
     @metadata_operation()
@@ -234,14 +499,14 @@ class Model:
         input_binding: VerifiedInputBinding | None = None,
         allow_unverified: bool = False,
     ) -> Model:
-        """Bind definitions; explicitly opt in to unverified, statement-scoped reads.
+        """Bind catalog definitions to a connection, unit tables and complete event times.
 
-        With ``allow_unverified=True``, Ibis schema inspection may end an open
-        transaction on ``con``. Use a connection with no pending writes or a
-        dedicated read connection.
+        Unverified connections must have no pending writes during schema inspection.
+
+        Example: tr.Model.from_catalog(model.catalog, con=model.con, **bindings)
         """
         if not isinstance(allow_unverified, bool):
-            raise _INVALID.error(reason="allow_unverified must be a bool")
+            raise _INVALID.error(reason="wrong_type", field="allow_unverified")
         catalog = (
             path_or_catalog
             if isinstance(path_or_catalog, Catalog)
@@ -284,24 +549,37 @@ class Model:
                 elif isinstance(coverage, BoundCoverage):
                     bound[name] = coverage
                 else:
-                    raise _INVALID.error(
-                        reason=f"readiness for {name!r} must be Coverage or BoundCoverage"
-                    )
+                    raise _INVALID.error(reason="wrong_type", field="readiness", name=str(name))
             bound_readiness = Readiness(bound)
         else:
-            raise _INVALID.error(reason="readiness must be a Readiness or source mapping")
+            raise _INVALID.error(reason="wrong_type", field="readiness")
+        if units is not None and not isinstance(units, Mapping):
+            raise _INVALID.error(reason="wrong_type", field="units")
         unit_map = dict(units or {})
+        if event_ids is not None and not isinstance(event_ids, Mapping):
+            raise _INVALID.error(reason="wrong_type", field="event_ids")
         event_map = dict(event_ids or {})
         if any(
             not isinstance(key, str) or not isinstance(value, UnitSource)
             for key, value in unit_map.items()
         ):
-            raise _INVALID.error(reason="units must map names to UnitSource")
+            raise _INVALID.error(reason="wrong_type", field="units")
+        in_memory = tuple(
+            sorted(
+                f"units:{name}"
+                for name, unit in unit_map.items()
+                if not isinstance(unit.table, str)
+            )
+        )
+        if in_memory:
+            raise _IN_MEMORY_WITH_CONNECTION.error(
+                reason="in_memory_input_with_connection", inputs=in_memory
+            )
         if any(
             not isinstance(key, str) or not isinstance(value, str) or not value
             for key, value in event_map.items()
         ):
-            raise _INVALID.error(reason="event_ids must map source names to column names")
+            raise _INVALID.error(reason="wrong_type", field="event_ids")
         from terrine.execution.inputs import bind_resolver
 
         resolver = bind_resolver(
@@ -365,9 +643,9 @@ class Model:
         for source_name, column in event_ids.items():
             source = sources.get(source_name)
             if source is None:
-                raise _INVALID.error(reason=f"event ID source {source_name!r} is not declared")
+                raise _INVALID.error(reason="undeclared_name", field="event_ids", name=source_name)
             if column not in resolver(source.relation).schema().names:
-                raise _INVALID.error(reason=f"event ID column {column!r} is not declared")
+                raise _INVALID.error(reason="undeclared_name", field="event_ids", name=column)
         return cls(
             catalog=catalog,
             con=con,
@@ -441,14 +719,14 @@ class Model:
         input_binding: VerifiedInputBinding | None = None,
         allow_unverified: bool = False,
     ) -> Model:
-        """Adapt optional published semantics through the native Catalog workflow.
+        """Bind published Increment definitions as a model with units and complete event times.
 
-        With ``allow_unverified=True``, Ibis schema inspection may end an open
-        transaction on ``con``. Use a connection with no pending writes or a
-        dedicated read connection.
+        Unverified connections must have no pending writes during schema inspection.
+
+        Example: tr.Model.from_increment("semantics.yaml", con=model.con, **bindings)
         """
         if not isinstance(allow_unverified, bool):
-            raise _INVALID.error(reason="allow_unverified must be a bool")
+            raise _INVALID.error(reason="wrong_type", field="allow_unverified")
         from terrine.adapters.increment import _load_semantics, to_catalog
         from terrine.execution.backend import backend_provider
 

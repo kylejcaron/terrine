@@ -91,7 +91,8 @@ __all__ = ["CompiledStudy", "compile_columns", "resolve_sketch_sidecars"]
 
 _NAME_CONFLICT = RefusalSpec(
     "terrine.spec.output_name_conflict",
-    "Study output name {name!r} conflicts with {other!r}.",
+    "Design output name {name!r} conflicts with {other!r}. "
+    "Give the feature or outcome a different name.",
 )
 _RESERVED = {"unit", "anchor_id", "t0", "treatment", "_observed_from", "_observed_until"}
 
@@ -403,6 +404,8 @@ def compile_columns(
     """Compile candidates and distinct expressions once without reading source rows."""
     _validate_names(design)
     design.validate(model)
+    unit_name = design.unit
+    assert unit_name is not None  # every entry point resolves the design first
     range_plans = plan_ranges(design, model)
     anchors = _anchor_table or compile_anchors(
         design, model, include_membership=include_membership, persisted=persisted_anchors
@@ -451,7 +454,7 @@ def compile_columns(
                 selector_identity_columns[source_name] = identity_alias
                 extra_columns = {identity_alias: configured_id}
             events = normalize_events(
-                raw, source, source.entities[design.unit], extra_columns=extra_columns
+                raw, source, source.units[unit_name], extra_columns=extra_columns
             )
             histories = {}
             for dimension in source.dimensions:
@@ -470,7 +473,7 @@ def compile_columns(
             source = model.sources[source_name]
             events = normalized_sources[source_name]
             precision = _precision_check(
-                model, events, "_timestamp", source_column=source.timestamp_column
+                model, events, "_timestamp", source_column=source.time_column
             )
             if precision is not None:
                 selector_identity_checks.append(precision)
@@ -495,17 +498,17 @@ def compile_columns(
         origin = source_anchors
         if selector.relative_to is not None:
             origin, _ = resolve_selector(selector.relative_to, source_anchors)
-        fact = model.catalog.facts[selector.fact]
-        source = model.sources[fact.source]
+        event = model.catalog.events[selector.event]
+        source = model.sources[event.source]
         events = events_for(source.name, selector=True)
-        fact_column = source.facts[selector.fact]
+        event_column = source.events[selector.event]
         predicates = [
             origin.unit == events["_unit"],
             events["_timestamp"] >= origin.t0 + ibis.interval(seconds=selector.window.start),
             events["_timestamp"] < origin.t0 + ibis.interval(seconds=selector.window.end),
         ]
-        if fact_column is not None:
-            predicates.append(events[fact_column].notnull())
+        if event_column is not None:
+            predicates.append(events[event_column].notnull())
         identity = selector_identity_columns.get(source.name)
         if source.name not in checked_selector_sources:
             checked_selector_sources.add(source.name)
@@ -639,8 +642,8 @@ def compile_columns(
                 events["_timestamp"] < end_bound,
                 ~events[property_found],
             ]
-            if fact_column is not None:
-                unknown_predicates.append(events[fact_column].notnull())
+            if event_column is not None:
+                unknown_predicates.append(events[event_column].notnull())
             unknown_events = origin.join(events, predicates=unknown_predicates).select(
                 _unknown_unit=origin.unit,
                 _unknown_anchor=origin.anchor_id,
@@ -839,7 +842,7 @@ def compile_columns(
             result = compile_asof(
                 expression_anchors,
                 model,
-                unit=design.unit,
+                unit=unit_name,
                 attribute=node.attribute,
                 offset=node.before,
                 strict=True,
@@ -856,7 +859,7 @@ def compile_columns(
             strategy = "strict_history"
             result_table = result.table
         elif isinstance(node, RetentionMetric):
-            source = model.sources[model.catalog.facts[node.fact].source]
+            source = model.sources[model.catalog.events[node.event].source]
             result = compile_retention(
                 expression_anchors,
                 events_for(source.name),
@@ -879,7 +882,8 @@ def compile_columns(
             if len(metric.measures) != 1:
                 raise RefusalSpec(
                     "terrine.metric.quantile_requires_single_measure",
-                    "Exact quantile requires metric {metric!r} to have exactly one measure.",
+                    "Metric {metric!r} combines values that cannot define one exact quantile. "
+                    "Use a metric over a single event value instead of a ratio.",
                 ).error(metric=node.metric)
             unresolved = metric.measures[0]
             source = model.sources[unresolved.source_name]
@@ -907,7 +911,9 @@ def compile_columns(
             if len(metric.measures) != 1:
                 raise RefusalSpec(
                     "terrine.metric.quantile_requires_single_measure",
-                    "Approximate quantile requires metric {metric!r} to have exactly one measure.",
+                    "Metric {metric!r} combines values that cannot define one "
+                    "approximate quantile. "
+                    "Use a metric over a single event value instead of a ratio.",
                 ).error(metric=node.metric)
             unresolved = metric.measures[0]
             source = model.sources[unresolved.source_name]
@@ -963,7 +969,8 @@ def compile_columns(
             if len(metric.measures) != 1:
                 raise RefusalSpec(
                     "terrine.metric.approx_distinct_requires_single_measure",
-                    "Approximate distinct requires metric {metric!r} to have exactly one measure.",
+                    "Metric {metric!r} combines values that cannot define one distinct count. "
+                    "Use a metric over a single event value instead of a ratio.",
                 ).error(metric=node.metric)
             unresolved = metric.measures[0]
             source = model.sources[unresolved.source_name]
@@ -1335,7 +1342,7 @@ def compile_columns(
         result = compile_asof(
             table,
             model,
-            unit=design.unit,
+            unit=unit_name,
             attribute=treatment.attribute,
             offset=treatment.at,
             strict=False,

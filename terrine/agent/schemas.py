@@ -116,6 +116,7 @@ class ValidationOutput(Record):
     spec_hash: str
     required_sources: tuple[str, ...]
     runtime_obligations: tuple[str, ...]
+    summary: str
 
 
 class DesignOutput(ValidationOutput):
@@ -125,14 +126,14 @@ class DesignOutput(ValidationOutput):
 
 class SourceMetadata(Record):
     name: str
-    entities: tuple[str, ...]
-    facts: tuple[str, ...]
+    units: tuple[str, ...]
+    events: tuple[str, ...]
     properties: tuple[str, ...]
 
 
 class MetricMetadata(Record):
     name: str
-    entity: str
+    unit: str
     kind: str
     sources: tuple[str, ...]
 
@@ -199,6 +200,7 @@ class Response[T](Record):
 
 _CONTEXT_FIELDS = frozenset({"operation", "kind", "name", "role", "gap", "shape", "limit", "route"})
 _ROUTES = {
+    "terrine.design.invalid": "Use get_design_schema and design_example to construct a Design.",
     "terrine.design.missing_reference": "Choose a name from inspect_catalog.",
     "terrine.design.invalid_window": "Choose a window with start before end.",
     "terrine.design.gap_violation": (

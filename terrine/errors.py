@@ -1,7 +1,8 @@
 """Stable coded refusals with immutable, portable structured context."""
 
 import math
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
@@ -12,7 +13,10 @@ type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, J
 
 
 class UnverifiedBackendWarning(UserWarning):
-    """An explicitly admitted backend has no verified read or consistency guarantees."""
+    """Warn that an admitted connection has no verified read or consistency guarantees.
+
+    Example: tr.UnverifiedBackendWarning("This connection has unverified read guarantees.")
+    """
 
 
 class FrozenMap(Mapping[str, Any]):
@@ -68,12 +72,16 @@ def thaw(value: Any) -> Any:
 
 
 class TerrineError(ValueError):
-    """Refusal identified by a stable code rather than message wording."""
+    """Report a refused request with a stable code and immutable structured context.
+
+    Example: tr.TerrineError("Invalid design.", code="terrine.design.invalid", context={})
+    """
 
     def __init__(self, message: str, *, code: str, context: Mapping[str, Any]) -> None:
         super().__init__(message)
         self._code = code
         self._context = freeze(context)
+        self._spec: RefusalSpec | None = None
 
     @property
     def code(self) -> str:
@@ -99,4 +107,22 @@ class RefusalSpec:
     template: str
 
     def error(self, **context: Any) -> TerrineError:
-        return TerrineError(self.template.format(**context), code=self.code, context=context)
+        error = TerrineError(self.template.format(**context), code=self.code, context=context)
+        error._spec = self
+        return error
+
+
+@contextmanager
+def parameter_names(**names: str) -> Generator[None]:
+    """Report a refusal raised inside the block under the caller's own parameter names.
+
+    A refusal whose ``field`` is a key of ``names`` is raised again from the same
+    declaration with that field renamed; every other refusal passes through unchanged.
+    """
+    try:
+        yield
+    except TerrineError as error:
+        field = error.context.get("field")
+        if error._spec is None or not isinstance(field, str) or field not in names:
+            raise
+        raise error._spec.error(**{**thaw(error.context), "field": names[field]}) from error

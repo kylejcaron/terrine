@@ -357,10 +357,10 @@ def test_sequential_anticipation_extends_control_risk_horizon(native_inputs):
     design = Sequential(
         Design(
             "user",
-            Schedule("1d", "2025-01-03", "2025-01-04"),
+            Schedule("1d", "2025-01-03", "2025-01-03"),
             outcomes={"sessions_after_t0": agg("sessions", window=("0d", "7d"))},
         ),
-        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
         anticipation="2d",
     )
 
@@ -385,18 +385,18 @@ def test_calendar_comparison_compiles_quantile_outcome_horizon(native_inputs):
     con.raw_sql("ALTER TABLE events ADD COLUMN metric_value INTEGER")
     con.raw_sql("UPDATE events SET metric_value = 1")
     definition = catalog.model_dump(mode="python")
-    definition["sources"]["events"]["facts"] += ("session_value",)
-    definition["facts"]["session_value"] = {
+    definition["sources"]["events"]["events"] += ("session_value",)
+    definition["events"]["session_value"] = {
         "source": "events",
         "column": "metric_value",
     }
     definition["measures"]["session_value_sum"] = {
-        "fact": "session_value",
+        "event": "session_value",
         "aggregation": "sum",
     }
     definition["metrics"]["session_value"] = {
         "kind": "mean",
-        "entity": "user",
+        "unit": "user",
         "measure": "session_value_sum",
     }
     catalog = Catalog.model_validate(definition)
@@ -409,13 +409,13 @@ def test_calendar_comparison_compiles_quantile_outcome_horizon(native_inputs):
     )
     base = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-12"),
+        Schedule("1d", "2025-01-01", "2025-01-11"),
         outcomes={"p50": quantile("session_value", "0.5", window=("0d", "1d"))},
     )
     frame = CalendarComparisonPanel(
         base,
         model,
-        cohort=Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+        cohort=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
         control="never_treated",
         reference_period=-1,
         comparison_periods=(0,),
@@ -434,9 +434,9 @@ def test_all_shapes_build_materialize_and_arrow_round_trip(native_inputs):
         units={"user": UnitSource("users", "user_id")},
         event_ids={"events": "event_id"},
     )
-    treatment = Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC))
+    treatment = Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC))
     sequential = Sequential(
-        Design("user", Schedule("1d", "2025-01-03", "2025-01-05")),
+        Design("user", Schedule("1d", "2025-01-03", "2025-01-04")),
         treatment=treatment,
     )
     event_panel = EventPanel(

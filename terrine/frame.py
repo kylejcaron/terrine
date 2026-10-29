@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import warnings
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
@@ -51,6 +52,18 @@ __all__ = ["Frame", "CohortTable"]
 _MISSING_DEPENDENCY = RefusalSpec(
     "terrine.convert.missing_dependency",
     "Conversion requires the optional {extra!r} dependency; install terrine[{extra}].",
+)
+_INVALID_SPLIT = RefusalSpec(
+    "terrine.dataset.invalid_split", "Split input {field} is invalid: {reason}."
+)
+_INVALID_SELECTION = RefusalSpec(
+    "terrine.dataset.invalid_selection", "Training {field} selection is invalid: {reason}."
+)
+_INVALID_COHORTS = RefusalSpec(
+    "terrine.cohort.invalid_operation", "Cohort input {field} is invalid: {reason}."
+)
+_COHORT_CHOICE = RefusalSpec(
+    "terrine.cohort.invalid_operation", "Cohort input {field} must be one of {choices}."
 )
 
 
@@ -152,11 +165,11 @@ def _metric_definition(metric: object, model: Model) -> object:
 
 
 def _selector_definition(selector: EventTime, model: Model) -> object:
-    fact = model.catalog.facts[selector.fact]
+    event = model.catalog.events[selector.event]
     return {
-        "fact": _definition_record(fact),
-        "source": _definition_record(model.sources[fact.source]),
-        "event_id": model.event_ids.get(fact.source),
+        "event": _definition_record(event),
+        "source": _definition_record(model.sources[event.source]),
+        "event_id": model.event_ids.get(event.source),
         "relative_to": None
         if selector.relative_to is None
         else _selector_definition(selector.relative_to, model),
@@ -206,7 +219,7 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
                                 "source": source_name,
                                 "relation": _definition_record(source.relation),
                                 "day_boundary": source.day_boundary,
-                                "timestamp_column": source.timestamp_column,
+                                "time_column": source.time_column,
                                 "binding": _definition_record(source.properties[state.property]),
                             }
                             for source_name, source in sorted(model.sources.items())
@@ -236,17 +249,17 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
                 resolved["attribute"] = {
                     "source": source.name,
                     "relation": _definition_record(source.relation),
-                    "entity_column": source.entities.get(design.unit),
+                    "unit_column": source.units.get(design.unit),
                     "day_boundary": source.day_boundary,
-                    "timestamp_column": source.timestamp_column,
+                    "time_column": source.time_column,
                     "binding": _definition_record(prop),
                     "dimension": None
                     if dimension is None
                     else {
                         "name": dimension.name,
                         "relation": _definition_record(dimension.relation),
-                        "source_entity": dimension.source_entity,
-                        "entity_column": dimension.entity_column,
+                        "unit": dimension.unit,
+                        "key": dimension.key,
                         "validity": _definition_record(dimension.validity),
                     },
                 }
@@ -371,11 +384,12 @@ def _excluded_label_counts(compiled: CompiledStudy, view: _TrainingView, execute
 
 @dataclass(frozen=True, slots=True, init=False, repr=False, eq=False)
 class Frame:
-    """A compiled study, not executed data.
+    """Represent a dataset design compiled against a model, before reading event rows.
 
-    ``expr`` is an unsafe Ibis escape hatch. Only materialization/conversion
-    methods hold execution authority and enforce integrity and output budgets.
-    Output limits do not bound upstream scan, query work or peak memory.
+    Materialization and conversion enforce integrity and output limits; direct ``expr``
+    execution bypasses them, and output limits do not bound scans or peak memory.
+
+    Example: design.build(model)
     """
 
     _design: Design
@@ -387,7 +401,9 @@ class Frame:
 
     def __init__(self, design: Design, model: Model) -> None:
         from terrine.compile.dispatch import compile_design
+        from terrine.spec.validate import resolve_unit
 
+        design = resolve_unit(design, model)
         object.__setattr__(self, "_design", design)
         object.__setattr__(self, "_model", model)
         object.__setattr__(self, "_compiled", compile_design(design, model))
@@ -447,7 +463,10 @@ class Frame:
         incomplete_labels: Literal["drop", "keep"] = "drop",
         split: object | None = None,
     ) -> Frame:
-        """Return a lazy feature/label projection with explicit label completeness."""
+        """Select features and labels lazily, dropping incomplete labels unless asked to keep them.
+
+        Example: frame.training_set(label="spend_next_30d")
+        """
         if self._training_view is not None or self._scoring_view is not None:
             from terrine.spec.dataset import INVALID_VIEW
 
@@ -466,7 +485,7 @@ class Frame:
 
             policies = import_module("terrine.dataset.splits")
             if not isinstance(split, (policies.TimeSplit, policies.GroupSplit)):
-                raise TypeError("split must be TimeSplit, GroupSplit, or None")
+                raise _INVALID_SPLIT.error(reason="wrong_type", field="split")
             if isinstance(split, policies.TimeSplit):
                 split = split.bind(boundary_timezone(self._model.catalog.day_boundary))
                 groups = split.groups
@@ -476,26 +495,40 @@ class Frame:
                 self.roles.unit,
                 self.roles.cluster_unit,
             ):
-                raise ValueError("split groups must select the unit or cluster-unit identity")
+                raise _INVALID_SPLIT.error(
+                    reason="unsupported_group",
+                    field="group",
+                    choices=tuple(
+                        name
+                        for name in (self.roles.unit, self.roles.cluster_unit)
+                        if name is not None
+                    ),
+                )
             if {"__terrine_split", "__terrine_split_reason"} & set(self._compiled.table.columns):
-                raise ValueError("split output names collide with Design columns")
+                raise _INVALID_SPLIT.error(reason="reserved_name", field="split")
 
+        if not isinstance(label, (str, Iterable)):
+            raise _INVALID_SELECTION.error(reason="wrong_type", field="label")
         labels = (label,) if isinstance(label, str) else tuple(label)
         if not labels or any(not isinstance(name, str) or not name for name in labels):
-            raise ValueError("label must select one or more non-empty outcome names")
+            raise _INVALID_SELECTION.error(reason="empty_name", field="label")
         if len(set(labels)) != len(labels):
-            raise ValueError("label names must be unique")
+            raise _INVALID_SELECTION.error(reason="duplicate_names", field="label")
         unknown = set(labels) - set(self.roles.outcomes)
         if unknown:
             raise RefusalSpec(
                 "terrine.dataset.invalid_selection",
                 "Unknown training label selection: {names}",
             ).error(names=tuple(sorted(unknown)))
+        if features is not None and (
+            isinstance(features, str) or not isinstance(features, Iterable)
+        ):
+            raise _INVALID_SELECTION.error(reason="wrong_type", field="features")
         selected_features = self.roles.features if features is None else tuple(features)
         if any(not isinstance(name, str) or not name for name in selected_features):
-            raise ValueError("features must contain non-empty column names")
+            raise _INVALID_SELECTION.error(reason="empty_name", field="features")
         if len(set(selected_features)) != len(selected_features):
-            raise ValueError("feature names must be unique")
+            raise _INVALID_SELECTION.error(reason="duplicate_names", field="features")
         available_features = set(self.roles.features)
         if self.roles.prior_state is not None:
             available_features.add(self.roles.prior_state)
@@ -506,7 +539,11 @@ class Frame:
                 "Unknown training feature selection: {names}",
             ).error(names=tuple(sorted(unknown)))
         if incomplete_labels not in ("drop", "keep"):
-            raise ValueError("incomplete_labels must be 'drop' or 'keep'")
+            from terrine.spec.dataset import INVALID_VIEW
+
+            raise INVALID_VIEW.error(
+                reason="unsupported_value", field="incomplete_labels", choices=("drop", "keep")
+            )
         for name in labels:
             metadata = self.columns[name]
             if metadata.complete_column is None or metadata.reason_column is None:
@@ -600,11 +637,28 @@ class Frame:
         return result
 
     def stage(self, table: str, *, budget: Budget | None = None):
-        """Publish this Frame as a pinned, bounded-stream Dataset generation."""
+        """Publish a pinned dataset generation on a file-backed DuckDB connection.
+
+        Copy the README tables to a file-backed connection before binding the model:
+
+        >>> import ibis
+        >>> con = ibis.duckdb.connect("shop.duckdb")
+        >>> for name in ("customer", "orders"):
+        ...     _ = con.create_table(name, model.con.table(name).to_pyarrow())
+        >>> staged_model = tr.Model.from_catalog(
+        ...     model.catalog, con=con, units=model.units, readiness=model.readiness)
+        >>> staged_frame = design.build(staged_model)
+
+        Example: staged_frame.stage("customer_spend")
+        """
         stage_frame = import_module("terrine.dataset.reference").stage_frame
         return stage_frame(self, table, budget=budget)
 
     def materialize(self, budget: Budget | None = None) -> MaterializedFrame:
+        """Read dataset rows with integrity checks and retain their metadata and completeness.
+
+        Example: frame.materialize()
+        """
         return self._materialize(budget)
 
     def _materialize(
@@ -805,8 +859,8 @@ class Frame:
                 and treatment.known_at_t0
                 and pa.types.is_boolean(table.schema.field(treatment_column).type)
             )
-            calendar_comparison = _provenance.calendar_comparison_metadata(self._design)
-            panel = _provenance.panel_metadata(self._design)
+            calendar_comparison = _provenance.calendar_comparison_metadata(self._design, model)
+            panel = _provenance.panel_metadata(self._design, model)
 
             if isinstance(self._design.shape, StatePanel):
                 shape_name = "state_panel"
@@ -988,43 +1042,89 @@ class Frame:
         return table
 
     def to_pyarrow(self, *, budget: Budget | None = None) -> pa.Table:
-        """Execute once and return lossless Arrow with portable study metadata."""
+        """Read dataset rows as Arrow with lossless time, completeness and model metadata.
+
+        Example: frame.to_pyarrow()
+        """
         return self.materialize(budget).to_arrow()
 
-    def to_pandas(
-        self, *, budget: Budget | None = None, include_observation_metadata: bool = False
-    ):
-        """Return a compact, lossy dataframe unless observation columns are requested."""
-        pandas = _optional_dependency("pandas")
+    def _dataframe_table(
+        self,
+        library: str,
+        budget: Budget | None,
+        include_observation_metadata: bool,
+        values_only: bool,
+    ) -> tuple[Any, pa.Table]:
+        """Refuse an invalid column selection, import ``library``, then materialize once."""
+        if values_only and include_observation_metadata:
+            from terrine.spec.dataset import INVALID_VIEW
+
+            raise INVALID_VIEW.error(reason="values_only_excludes_observation_metadata")
+        module = _optional_dependency(library)
         materialized = self.materialize(budget)
-        table = materialized.table
-        if not include_observation_metadata:
-            table = table.drop(materialized._bookkeeping_columns())
+        if include_observation_metadata:
+            return module, materialized.table
+        dropped = materialized._bookkeeping_columns()
+        if values_only:
+            dropped += materialized._support_columns()
+        return module, materialized.table.drop(dropped)
+
+    def to_pandas(
+        self,
+        *,
+        budget: Budget | None = None,
+        include_observation_metadata: bool = False,
+        values_only: bool = False,
+    ):
+        """Return a pandas dataframe without observation metadata by default.
+
+        ``values_only=True`` also drops completeness and reason columns.
+
+        Example: frame.to_pandas(values_only=True)
+        """
+        pandas, table = self._dataframe_table(
+            "pandas", budget, include_observation_metadata, values_only
+        )
         return table.to_pandas(types_mapper=pandas.ArrowDtype)
 
     def to_polars(
-        self, *, budget: Budget | None = None, include_observation_metadata: bool = False
+        self,
+        *,
+        budget: Budget | None = None,
+        include_observation_metadata: bool = False,
+        values_only: bool = False,
     ):
-        """Return a compact, lossy dataframe unless observation columns are requested."""
-        polars = _optional_dependency("polars")
-        materialized = self.materialize(budget)
-        table = materialized.table
-        if not include_observation_metadata:
-            table = table.drop(materialized._bookkeeping_columns())
+        """Return a Polars dataframe without observation metadata by default.
+
+        ``values_only=True`` also drops completeness and reason columns.
+
+        Example: frame.to_polars(values_only=True)
+        """
+        polars, table = self._dataframe_table(
+            "polars", budget, include_observation_metadata, values_only
+        )
         return polars.from_arrow(table)
 
     def cohorts(self, *, grouping: CohortGrouping, value_column: str) -> CohortTable:
+        """Group a trajectory frame's values by units' origin-time buckets.
+
+        Example: ltv_frame.cohorts(grouping=grouping, value_column="cumulative_value")
+        """
         if not isinstance(self._design.shape, CohortSpec):
-            raise TypeError("cohorts requires a trajectory Frame")
+            raise _INVALID_COHORTS.error(reason="requires_trajectory", field="frame")
         if not isinstance(grouping, CohortGrouping):
-            raise TypeError("grouping must be CohortGrouping")
+            raise _INVALID_COHORTS.error(reason="wrong_type", field="grouping")
         if not isinstance(value_column, str) or value_column not in {
             "period_value",
             "cumulative_value",
         }:
-            raise ValueError("value_column must name a trajectory value")
+            raise _COHORT_CHOICE.error(
+                reason="unsupported_value",
+                field="value_column",
+                choices=("period_value", "cumulative_value"),
+            )
         if value_column == "cumulative_value" and not self._design.shape.trajectory.cumulative:
-            raise ValueError("the trajectory did not request cumulative values")
+            raise _INVALID_COHORTS.error(reason="not_cumulative", field="value_column")
         return CohortTable(self, grouping, value_column)
 
 

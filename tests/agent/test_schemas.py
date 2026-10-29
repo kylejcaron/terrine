@@ -24,7 +24,10 @@ def test_tool_schemas_are_versioned_strict_and_round_trip():
         status="ok",
         context={"details": [{"count": 2}]},
         output=ValidationOutput(
-            spec_hash="hash", required_sources=("events",), runtime_obligations=()
+            spec_hash="hash",
+            required_sources=("events",),
+            runtime_obligations=(),
+            summary="One row per user at 2025-01-01.",
         ),
     )
     with pytest.raises(TypeError):
@@ -68,7 +71,7 @@ def test_discovery_schema_accepts_canonical_temporal_nodes():
 
     validator = Draft202012Validator(design_schema())
     for anchor, shape in (
-        (Schedule("1d", "2025-01-01", "2025-01-05"), "cross_section"),
+        (Schedule("1d", "2025-01-01", "2025-01-04"), "cross_section"),
         (EventAnchor("start"), CohortSpec("start", Trajectory("total", "1d", 2))),
         (FixedDate("2025-01-01"), LifeTable(TimeToEvent("end"), "1d")),
         (EventAnchor("start", offset="1d"), TimeToEvent("end")),
@@ -119,7 +122,7 @@ def test_discovery_schema_matches_existing_tagged_codec(variant):
     if variant == "binned":
         design = Design(
             "user",
-            Schedule("1d", "2025-01-01", "2025-01-05"),
+            Schedule("1d", "2025-01-01", "2025-01-04"),
             shape=StatePanel(
                 BinnedMetricState("total", (1, Decimal("1.25"), 2.5), ("a", "b", "c", "d")),
                 max_periods=4,
@@ -128,9 +131,9 @@ def test_discovery_schema_matches_existing_tagged_codec(variant):
     elif variant == "calendar":
         design = Design(
             "user",
-            Schedule("1d", "2025-01-01", "2025-01-05"),
+            Schedule("1d", "2025-01-01", "2025-01-04"),
             shape=CalendarComparisonSpec(
-                Initiation("events", "active", datetime(2024, 1, 1, tzinfo=UTC)),
+                Initiation("active", history_start=datetime(2024, 1, 1, tzinfo=UTC)),
                 "never_treated",
                 -2,
                 (0, 1),

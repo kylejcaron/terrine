@@ -6,17 +6,20 @@ import hashlib
 import json
 import os
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from terrine.errors import RefusalSpec, freeze, thaw
+from terrine.errors import RefusalSpec, freeze, parameter_names, thaw
 from terrine.spec.design import Design
+from terrine.spec.io import SCHEMA_VERSION as DESIGN_SCHEMA_VERSION
 from terrine.spec.io import canonical_json as design_json
 from terrine.spec.io import from_json as design_from_json
 from terrine.spec.transforms import Winsorization
 
 __all__ = [
+    "SCHEMA_VERSION",
     "DatasetDefinition",
     "DatasetDefinitionReference",
     "DatasetDefinitionStore",
@@ -25,8 +28,13 @@ __all__ = [
     "UNSUPPORTED_VIEW",
 ]
 
+SCHEMA_VERSION = 2
+
 INVALID_DEFINITION = RefusalSpec(
     "terrine.dataset.invalid_definition", "Invalid dataset definition: {reason}"
+)
+_INVALID_INPUT = RefusalSpec(
+    "terrine.dataset.invalid_definition", "Dataset definition input {field} is invalid: {reason}."
 )
 INVALID_VIEW = RefusalSpec("terrine.dataset.invalid_view", "Invalid dataset view: {reason}.")
 UNSUPPORTED_VIEW = RefusalSpec(
@@ -43,6 +51,11 @@ def _canonical(value: Any) -> bytes:
 
 @dataclass(frozen=True, slots=True, init=False)
 class DatasetDefinition:
+    """Save a versioned design with its selected view and fixed transforms.
+
+    Example: tr.DatasetDefinition(schema_version=2, base_design=design)
+    """
+
     schema_version: int
     base_design: Design
     view: Any
@@ -56,10 +69,10 @@ class DatasetDefinition:
         view: Any = None,
         transforms: tuple[Winsorization, ...] = (),
     ) -> None:
-        if schema_version != 1 or isinstance(schema_version, bool):
+        if schema_version != SCHEMA_VERSION or isinstance(schema_version, bool):
             raise INVALID_DEFINITION.error(reason="unsupported schema version")
         if not isinstance(base_design, Design):
-            raise TypeError("base_design must be Design")
+            raise _INVALID_INPUT.error(reason="wrong_type", field="base_design")
         if view is not None:
             if not isinstance(view, dict) or not isinstance(view.get("kind"), str):
                 raise INVALID_DEFINITION.error(reason="view must be a tagged data mapping")
@@ -74,6 +87,10 @@ class DatasetDefinition:
                 view = freeze(view)
             except (TypeError, ValueError) as error:
                 raise INVALID_DEFINITION.error(reason="view contains a runtime value") from error
+        if not isinstance(transforms, Iterable):
+            raise INVALID_DEFINITION.error(
+                reason="transforms must be typed frozen winsorization records"
+            )
         transforms = tuple(transforms)
         if any(
             not isinstance(item, Winsorization) or item.source_type is None for item in transforms
@@ -83,14 +100,14 @@ class DatasetDefinition:
             )
         if len({item.column for item in transforms}) != len(transforms):
             raise INVALID_DEFINITION.error(reason="duplicate transformed columns")
-        object.__setattr__(self, "schema_version", 1)
+        object.__setattr__(self, "schema_version", SCHEMA_VERSION)
         object.__setattr__(self, "base_design", base_design)
         object.__setattr__(self, "view", view)
         object.__setattr__(self, "transforms", transforms)
 
     def canonical_json(self) -> bytes:
         payload = {
-            "schema_version": 1,
+            "schema_version": SCHEMA_VERSION,
             "base_design": json.loads(design_json(self.base_design))["design"],
             "view": thaw(self.view),
         }
@@ -102,6 +119,20 @@ class DatasetDefinition:
     def digest(self) -> str:
         return hashlib.sha256(self.canonical_json()).hexdigest()
 
+    def resolve_unit(self, model: Any) -> DatasetDefinition:
+        """Return this definition on its base design with the unit resolved against ``model``."""
+        from terrine.spec.validate import resolve_unit
+
+        design = resolve_unit(self.base_design, model)
+        if design is self.base_design:
+            return self
+        return DatasetDefinition(
+            schema_version=SCHEMA_VERSION,
+            base_design=design,
+            view=thaw(self.view),
+            transforms=self.transforms,
+        )
+
     def build(self, model: Any):
         """Reconstruct the recorded view and frozen transforms without refitting."""
         frame = self.base_design.build(model)
@@ -111,7 +142,8 @@ class DatasetDefinition:
             if split is not None:
                 from importlib import import_module
 
-                split = import_module("terrine.dataset.splits").policy_from_record(split)
+                with parameter_names(record="split"):
+                    split = import_module("terrine.dataset.splits").policy_from_record(split)
             frame = frame.training_set(
                 label=tuple(view["labels"]),
                 features=tuple(view["features"]),
@@ -148,13 +180,16 @@ class DatasetDefinition:
                 "view",
             }:
                 raise ValueError("unknown definition fields")
-            if payload["schema_version"] != 1 or isinstance(payload["schema_version"], bool):
+            version = payload["schema_version"]
+            if version != SCHEMA_VERSION or isinstance(version, bool):
                 raise ValueError("unsupported definition version")
             design = design_from_json(
-                _canonical({"schema_version": 1, "design": payload["base_design"]})
+                _canonical(
+                    {"schema_version": DESIGN_SCHEMA_VERSION, "design": payload["base_design"]}
+                )
             )
             return cls(
-                schema_version=1,
+                schema_version=SCHEMA_VERSION,
                 base_design=design,
                 view=payload["view"],
                 transforms=tuple(
@@ -169,7 +204,10 @@ class DatasetDefinition:
 
 @dataclass(frozen=True, slots=True)
 class DatasetDefinitionReference:
-    """Content-addressed definition identity scoped to a configured owner."""
+    """Identify an immutable dataset definition by owner and content digest.
+
+    Example: spec.DatasetDefinitionReference("analytics", definition.digest)
+    """
 
     owner: str
     digest: str
@@ -187,7 +225,10 @@ class DatasetDefinitionReference:
 
 @dataclass(frozen=True, slots=True)
 class DatasetDefinitionStore:
-    """Immutable local definition storage configured for one data owner."""
+    """Store immutable dataset definitions locally for one data owner.
+
+    Example: spec.DatasetDefinitionStore(Path("definitions"), owner="analytics")
+    """
 
     root: Path
     owner: str
@@ -195,11 +236,11 @@ class DatasetDefinitionStore:
     def __post_init__(self) -> None:
         object.__setattr__(self, "root", Path(self.root).expanduser().resolve())
         if not isinstance(self.owner, str) or not self.owner:
-            raise ValueError("owner must be a non-empty string")
+            raise _INVALID_INPUT.error(reason="empty_name", field="owner")
 
     def put(self, definition: DatasetDefinition) -> DatasetDefinitionReference:
         if not isinstance(definition, DatasetDefinition):
-            raise TypeError("definition must be DatasetDefinition")
+            raise _INVALID_INPUT.error(reason="wrong_type", field="definition")
         content = definition.canonical_json()
         path = self.root / f"{definition.digest}.json"
         self.root.mkdir(parents=True, exist_ok=True)

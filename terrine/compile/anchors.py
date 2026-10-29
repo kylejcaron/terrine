@@ -25,25 +25,36 @@ from terrine.model import Model
 from terrine.semantic.models import TableRef
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
-from terrine.spec.validate import _MISSING, _UNIT, ensure_runtime_shape_supported
+from terrine.spec.validate import (
+    _UNIT,
+    _UNKNOWN_UNIT,
+    ensure_runtime_shape_supported,
+    missing_reference,
+)
 
 __all__ = ["AnchorTable", "compile_anchors"]
 
-_INVALID = RefusalSpec("terrine.compile.invalid_anchor", "Anchor compilation is invalid: {reason}.")
+_INVALID = RefusalSpec(
+    "terrine.compile.invalid_anchor",
+    "The design cannot choose t0 ({reason}). "
+    "Use a fixed time, an event time or a supported schedule.",
+)
 _INTEGRITY = RefusalSpec(
     "terrine.compile.anchor_integrity",
-    "Candidate anchor integrity check failed ({check_key}).",
+    "Unit and t0 rows failed check {check_key!r}. "
+    "Correct missing or ambiguous unit keys, event IDs and event times before building the design.",
 )
 _TIMESTAMP_PRECISION = RefusalSpec(
     "terrine.compile.anchor_timestamp_precision",
-    "Anchor timestamp column {column!r} contains submicrosecond values that cannot be "
-    "represented exactly as UTC; normalize those values to microseconds.",
+    "Time column {column!r} contains values finer than microseconds that cannot be "
+    "represented exactly as UTC. Convert those values to exact microsecond times.",
 )
 
 
 _UTC_CONVERSION_UNSUPPORTED = RefusalSpec(
     "terrine.compile.anchor_utc_conversion_unsupported",
-    "Exact conversion of naive timestamps to UTC is unsupported for backend {backend!r}.",
+    "Event times without a timezone cannot be converted exactly to UTC on {backend!r}. "
+    "Convert the times to timezone-aware UTC before adding the table to the model.",
 )
 
 
@@ -157,7 +168,7 @@ def _range_filter_raw(
     naive = dtype.timezone is None
     if naive and not engine_supports(expression_dialect(model._engine), "naive_anchor_utc"):
         raise _UTC_CONVERSION_UNSUPPORTED.error(backend=model.catalog.dialect)
-    start, end = _bound(model, anchor_range.start), _bound(model, anchor_range.end)
+    start, end = _bound(model, anchor_range.start), _bound(model, anchor_range.end_exclusive)
     for bound, lower in ((start, True), (end, False)):
         if bound is None:
             continue
@@ -193,7 +204,7 @@ def _constant_table(t0: datetime, anchor_id: str, provenance: str) -> Any:
 def _range_filter(table: Any, anchor_range: AnchorRange | None, model: Model) -> Any:
     if anchor_range is None:
         return table
-    start, end = _bound(model, anchor_range.start), _bound(model, anchor_range.end)
+    start, end = _bound(model, anchor_range.start), _bound(model, anchor_range.end_exclusive)
     if start is not None:
         table = table.filter(table.t0 >= ibis.literal(start))
     if end is not None:
@@ -282,7 +293,7 @@ def _roster_anchors(
 ) -> tuple[ibis.Table, list[_AnchorCheck]]:
     unit_source = model.units.get(design.unit)
     if unit_source is None:
-        raise _UNIT.error(unit=design.unit, name="roster")
+        raise _UNKNOWN_UNIT.error(unit=design.unit, name="roster")
     if isinstance(design.anchor, FixedDate):
         instant = _bound(model, design.anchor.date)
         assert instant is not None
@@ -290,17 +301,24 @@ def _roster_anchors(
     else:
         schedule = design.anchor
         assert isinstance(schedule, Schedule)
-        start = model.day_boundary(schedule.start).astimezone(UTC)
-        end = model.day_boundary(schedule.end).astimezone(UTC)
-        elapsed_seconds = int((end - start).total_seconds())
-        if elapsed_seconds <= 0:
-            raise _INVALID.error(reason="schedule interval has no elapsed time")
-        stop = (elapsed_seconds + schedule.every - 1) // schedule.every
-        sequence = integer_sequence(stop, "ordinal", dialect=expression_dialect(model._engine))
+        end = model.day_boundary(schedule.end_exclusive).astimezone(UTC)
+        count = schedule.count(model.day_boundary)
+        sequence = integer_sequence(count, "ordinal", dialect=expression_dialect(model._engine))
         ordinal = sequence.ordinal
-        # An integer-seconds interval: Ibis lowers `interval * column` on BigQuery
-        # through EXTRACT(SECOND ...), which normalizes 86400 s to zero.
-        t0 = ibis.literal(start) + (ordinal * schedule.every).as_interval("s")
+        if schedule.every is not None:
+            start = model.day_boundary(schedule.start).astimezone(UTC)
+            # An integer-seconds interval: Ibis lowers `interval * column` on BigQuery
+            # through EXTRACT(SECOND ...), which normalizes 86400 s to zero.
+            t0 = ibis.literal(start) + (ordinal * schedule.every).as_interval("s")
+        else:
+            # Month arithmetic clamps differently across engines, so each anchor's
+            # instant is computed here and the ordinal selects it.
+            t0 = ibis.cases(
+                *(
+                    (ordinal == k, ibis.literal(instant.astimezone(UTC)))
+                    for k, instant in enumerate(schedule.instants(model.day_boundary))
+                )
+            )
         base = sequence.select(
             unit=ibis.literal(None, type="string"),
             anchor_id=cast(ir.StringValue, ibis.literal("schedule:")).concat(
@@ -322,21 +340,22 @@ def _roster_anchors(
 def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_AnchorCheck]]:
     anchor = design.anchor
     assert isinstance(anchor, EventAnchor)
-    fact = model.catalog.facts.get(anchor.fact)
-    if fact is None:
-        raise _MISSING.error(kind="fact", name=anchor.fact)
-    source = model.sources.get(fact.source)
+    assert design.unit is not None  # every entry point resolves the design first
+    event = model.catalog.events.get(anchor.event)
+    if event is None:
+        raise missing_reference("event", anchor.event, model.catalog.events)
+    source = model.sources.get(event.source)
     if source is None:
-        raise _MISSING.error(kind="event source", name=fact.source)
-    if anchor.fact not in source.facts:
-        raise _MISSING.error(kind="bound fact", name=anchor.fact)
-    physical_unit = source.entities.get(design.unit)
+        raise missing_reference("event source", event.source, model.sources)
+    if anchor.event not in source.events:
+        raise missing_reference("bound event", anchor.event, source.events)
+    physical_unit = source.units.get(design.unit)
     if physical_unit is None:
-        raise _UNIT.error(unit=design.unit, name=anchor.fact)
+        raise _UNIT.error(unit=design.unit, name=anchor.event)
     events = _relation(model, source)
     event_id_column = model.event_ids.get(source.name)
 
-    identity_column = event_id_column or source.timestamp_column
+    identity_column = event_id_column or source.time_column
     identity_dtype = events.schema()[identity_column]
     identity_text = None
     if identity_dtype.is_timestamp():
@@ -352,10 +371,10 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
             instant = utc_wall_clock(instant)
         events = events.mutate(**{alias: timestamp_text(instant)})
         identity_text = events[alias]
-    raw_timestamp = events[source.timestamp_column]
+    raw_timestamp = events[source.time_column]
     checks: list[_AnchorCheck] = [
         _null_check(events, physical_unit, "null_event_unit"),
-        _null_check(events, source.timestamp_column, "null_event_timestamp"),
+        _null_check(events, source.time_column, "null_event_timestamp"),
     ]
 
     if event_id_column is not None:
@@ -366,7 +385,7 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
         type_tag = str(dtype)
     else:
         event_id = raw_timestamp
-        dtype = events.schema()[source.timestamp_column]
+        dtype = events.schema()[source.time_column]
         assert identity_text is not None
         text = identity_text
         type_tag = str(dtype)
@@ -378,7 +397,7 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
         anchor_id=identity,
         _raw_t0=raw_timestamp,
         _event_id=event_id,
-        anchor_provenance=ibis.literal(f"event:{anchor.fact}:{anchor.which}"),
+        anchor_provenance=ibis.literal(f"event:{anchor.event}:{anchor.which}"),
     )
     if anchor.which in ("first", "nth"):
         rank = (
@@ -406,7 +425,7 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
                 )
             )
     base = _range_filter_raw(model, base, "_raw_t0", design.anchor_range)
-    precision = _precision_check(model, base, "_raw_t0", source_column=source.timestamp_column)
+    precision = _precision_check(model, base, "_raw_t0", source_column=source.time_column)
     if precision is not None:
         checks.append(precision)
     base = _utc_column(model, base, "_raw_t0", "t0")

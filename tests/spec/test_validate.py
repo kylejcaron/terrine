@@ -38,7 +38,7 @@ def model(
     aggregation="count",
     properties=None,
     dimensions=None,
-    entities=None,
+    units=None,
     catalog_properties=None,
     boundary="UTC",
 ):
@@ -46,9 +46,9 @@ def model(
     zone = timezone(timedelta(hours=-5)) if boundary == "UTC-05:00" else UTC
     source = SimpleNamespace()
     source.name, source.dialect = "events", dialect
-    source.facts = {"session": None}
+    source.events = {"session": None}
     source.properties, source.dimensions = properties or {}, dimensions or []
-    source.entities = entities or {"user": "user_id", "workspace": "workspace_id"}
+    source.units = units or {"user": "user_id", "workspace": "workspace_id"}
     metric = BoundMetric(
         "sessions",
         "user",
@@ -78,7 +78,7 @@ def model(
                 (),
                 {
                     "day_boundary": boundary,
-                    "facts": {"session": type("Fact", (), {"source": "events"})()},
+                    "events": {"session": type("Event", (), {"source": "events"})()},
                     "properties": catalog_properties,
                 },
             )(),
@@ -115,6 +115,13 @@ def test_predicate_outputs_validate_each_leaf_for_its_role(role, window):
     with pytest.raises(TerrineError) as error:
         design.validate(model())
     assert error.value.code == "terrine.design.gap_violation"
+    assert error.value.context["name"] == "label"
+    assert error.value.context["role"] == role.removesuffix("s")
+    assert error.value.context["gap"] == 0
+    assert error.value.context["start"] == (0 if role == "features" else -604800)
+    assert error.value.context["end"] == (604800 if role == "features" else 0)
+    assert error.value.context["bound"] == ("end" if role == "features" else "start")
+    assert error.value.context["limit"] == 0
 
 
 def test_binned_state_metric_uses_ordinary_metric_admission():
@@ -124,7 +131,7 @@ def test_binned_state_metric_uses_ordinary_metric_admission():
 
     cases = (
         (
-            {"entities": {"user": "user_id", "workspace": "workspace_id"}},
+            {"units": {"user": "user_id", "workspace": "workspace_id"}},
             "terrine.design.incompatible_unit",
         ),
         ({"aggregation": "median"}, "terrine.metric.unsupported_aggregation"),
@@ -134,10 +141,10 @@ def test_binned_state_metric_uses_ordinary_metric_admission():
     for options, code in cases:
         bound = model(**options)
 
-        unit = "workspace" if "entities" in options else "user"
+        unit = "workspace" if "units" in options else "user"
         design = Design(
             unit,
-            Schedule("1d", date(2025, 1, 1), date(2025, 1, 3)),
+            Schedule("1d", date(2025, 1, 1), date(2025, 1, 2)),
             shape=StatePanel(
                 BinnedMetricState("sessions", (0,), ("none", "some")),
                 max_periods=2,
@@ -157,14 +164,14 @@ def test_panel_sources_refuse_missing_analysis_unit_mapping(shape_name):
     from terrine.spec.panels import CalendarComparisonSpec, Initiation, SequentialSpec
     from terrine.spec.validate import validate_design
 
-    source_model = model(entities={"workspace": "workspace_id"})
-    selector = Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC))
+    source_model = model(units={"workspace": "workspace_id"})
+    selector = Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC))
     shape = (
         SequentialSpec(selector)
         if shape_name == "sequential_treatment"
         else CalendarComparisonSpec(selector, "never_treated", -1, (0,))
     )
-    design = Design("user", Schedule("1d", "2025-01-01", "2025-01-04"), shape=shape)
+    design = Design("user", Schedule("1d", "2025-01-01", "2025-01-03"), shape=shape)
 
     with pytest.raises(TerrineError) as error:
         validate_design(design, source_model)
@@ -173,15 +180,56 @@ def test_panel_sources_refuse_missing_analysis_unit_mapping(shape_name):
     assert error.value.context == {"unit": "user", "name": "session"}
 
 
+def _initiation_design(name):
+    from terrine.spec.panels import Initiation, SequentialSpec
+
+    return Design(
+        "user",
+        Schedule("1d", "2025-01-01", "2025-01-02"),
+        shape=SequentialSpec(Initiation(name, history_start=datetime(2025, 1, 1, tzinfo=UTC))),
+    )
+
+
+@pytest.mark.parametrize("name", ["session", "tier"])
+def test_initiation_resolves_its_source_from_a_unique_event_or_label(name):
+    from terrine.spec.validate import validate_design
+
+    bound = model(properties={"tier": SimpleNamespace(dtype="string", dimension_name=None)})
+    assert validate_design(_initiation_design(name), bound).required_sources == ("events",)
+
+
+def test_initiation_name_declared_by_two_sources_refuses_ambiguous_reference():
+    from terrine.spec.validate import validate_design
+
+    bound = model(catalog_properties={"session": SimpleNamespace(source="labels", dimension=None)})
+    with pytest.raises(TerrineError) as error:
+        validate_design(_initiation_design("session"), bound)
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "ambiguous_reference"
+    assert error.value.context["name"] == "session"
+    assert error.value.context["owners"] == ("events", "labels")
+
+
+def test_initiation_unknown_name_refuses_missing_reference():
+    from terrine.spec.validate import validate_design
+
+    with pytest.raises(TerrineError) as error:
+        validate_design(_initiation_design("upgrade"), model())
+    assert error.value.code == "terrine.design.missing_reference"
+    assert error.value.context == {"kind": "event", "name": "upgrade", "available": ("session",)}
+
+
 def test_calendar_comparison_requires_coverage_through_comparison_horizon():
     from terrine.spec.panels import CalendarComparisonSpec, Initiation
     from terrine.spec.validate import validate_design
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-04"),
+        Schedule("1d", "2025-01-01", "2025-01-03"),
         shape=CalendarComparisonSpec(
-            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC), "recorded_at"),
+            Initiation(
+                "session", history_start=datetime(2025, 1, 1, tzinfo=UTC), knowledge="recorded_at"
+            ),
             "never_treated",
             -1,
             (0, 2),
@@ -199,9 +247,11 @@ def test_calendar_comparison_rejects_exclusive_coverage_equal_to_horizon():
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-04"),
+        Schedule("1d", "2025-01-01", "2025-01-03"),
         shape=CalendarComparisonSpec(
-            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC), "recorded_at"),
+            Initiation(
+                "session", history_start=datetime(2025, 1, 1, tzinfo=UTC), knowledge="recorded_at"
+            ),
             "not_yet_treated",
             -1,
             (0, 2),
@@ -226,10 +276,10 @@ def test_never_treated_negative_comparisons_still_require_full_schedule_history(
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-04"),
+        Schedule("1d", "2025-01-01", "2025-01-03"),
         outcomes={"y": agg("sessions", window=("0d", "1d"))},
         shape=CalendarComparisonSpec(
-            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             "never_treated",
             -1,
             (-2,),
@@ -254,9 +304,9 @@ def test_never_treated_coverage_rejects_equality_at_anticipation_cutoff():
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-10"),
+        Schedule("1d", "2025-01-01", "2025-01-09"),
         shape=CalendarComparisonSpec(
-            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             "never_treated",
             -2,
             (0,),
@@ -282,9 +332,9 @@ def test_never_treated_schedule_boundary_coverage_is_admissible():
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-10"),
+        Schedule("1d", "2025-01-01", "2025-01-09"),
         shape=CalendarComparisonSpec(
-            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             "never_treated",
             -1,
             (0,),
@@ -307,9 +357,9 @@ def test_never_treated_schedule_history_refusal_reports_schedule_boundary():
 
     design = Design(
         "user",
-        Schedule("7d", "2025-01-01", "2025-01-10"),
+        Schedule("7d", "2025-01-01", "2025-01-09"),
         shape=CalendarComparisonSpec(
-            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             "never_treated",
             -1,
             (0,),
@@ -334,9 +384,9 @@ def test_not_yet_treated_refusal_reports_comparison_horizon_only():
 
     design = Design(
         "user",
-        Schedule("7d", "2025-01-01", "2025-01-10"),
+        Schedule("7d", "2025-01-01", "2025-01-09"),
         shape=CalendarComparisonSpec(
-            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             "not_yet_treated",
             -1,
             (0,),
@@ -371,18 +421,12 @@ def test_window_extending_beyond_declared_coverage_is_runtime_incomplete_not_ref
 
 def test_event_anchor_fact_must_be_member_of_bound_source_facts():
     bound = model()
-    bound.catalog.facts["ghost"] = SimpleNamespace(source="events")
+    bound.catalog.events["ghost"] = SimpleNamespace(source="events")
     with pytest.raises(TerrineError) as error:
         Design("user", EventAnchor("ghost")).validate(bound)
     assert error.value.code == "terrine.design.missing_reference"
-
-
-def test_unknown_metric_refuses_with_stable_code():
-    with pytest.raises(TerrineError) as error:
-        Design(
-            "user", EventAnchor("session"), features={"x": agg("missing", window=("-1d", "0d"))}
-        ).validate(model())
-    assert error.value.code == "terrine.design.missing_reference"
+    assert error.value.context["kind"] == "bound event"
+    assert error.value.context["available"] == ("session",)
 
 
 def test_exact_quantile_is_admitted_without_query():
@@ -466,6 +510,8 @@ def test_future_selector_dependency_refuses_safe_looking_preanchor_metric():
     with pytest.raises(TerrineError) as error:
         validate_design(design, bound)
     assert error.value.code == "terrine.sequence.reanchor_leak"
+    assert error.value.context["name"] == "x"
+    assert error.value.context["end"] == 86400
     assert bound.con.calls == []
 
 
@@ -484,6 +530,8 @@ def test_asof_before_offsets_relative_support_for_feature_cutoff():
     with pytest.raises(TerrineError) as error:
         validate_design(design, bound)
     assert error.value.code == "terrine.sequence.reanchor_leak"
+    assert error.value.context["name"] == "status"
+    assert error.value.context["end"] == 86400
     assert bound.con.calls == []
 
 
@@ -510,22 +558,34 @@ def test_event_sequence_validation_accepts_dimension_backed_event_property():
     assert bound.con.calls == []
 
 
-def test_feature_and_eligibility_windows_must_end_by_minus_gap():
+@pytest.mark.parametrize(
+    ("role", "name", "window", "gap", "expected_start", "expected_end", "limit"),
+    [
+        ("features", "x", ("-2d", "0d"), "1d", -172800, 0, -86400),
+        ("eligibility", "eligible", ("-2d", "0d"), "1d", -172800, 0, -86400),
+        ("features", "spend_30d", ("-30d", "1d"), "0s", -2592000, 86400, 0),
+    ],
+)
+def test_feature_and_eligibility_windows_must_end_by_minus_gap(
+    role, name, window, gap, expected_start, expected_end, limit
+):
+    expression = agg("sessions", window=window)
     with pytest.raises(TerrineError) as error:
         Design(
             "user",
             EventAnchor("session"),
-            gap="1d",
-            features={"x": agg("sessions", window=("-2d", "0d"))},
+            gap=gap,
+            features={name: expression} if role == "features" else None,
+            eligibility={name: gt(expression, 0)} if role == "eligibility" else None,
         ).validate(model())
     assert error.value.code == "terrine.design.gap_violation"
-    with pytest.raises(TerrineError):
-        Design(
-            "user",
-            EventAnchor("session"),
-            gap="1d",
-            eligibility={"eligible": gt(agg("sessions", window=("-2d", "0d")), 0)},
-        ).validate(model())
+    assert error.value.context["role"] == role.removesuffix("s")
+    assert error.value.context["gap"] == -limit
+    assert error.value.context["name"] == name
+    assert error.value.context["start"] == expected_start
+    assert error.value.context["end"] == expected_end
+    assert error.value.context["bound"] == "end"
+    assert error.value.context["limit"] == limit
     Design(
         "user",
         EventAnchor("session"),
@@ -540,6 +600,11 @@ def test_outcomes_start_at_or_after_zero():
             "user", EventAnchor("session"), outcomes={"y": agg("sessions", window=("-1s", "1d"))}
         ).validate(model())
     assert error.value.code == "terrine.design.gap_violation"
+    assert error.value.context["name"] == "y"
+    assert error.value.context["start"] == -1
+    assert error.value.context["end"] == 86400
+    assert error.value.context["bound"] == "start"
+    assert error.value.context["limit"] == 0
     Design(
         "user", EventAnchor("session"), outcomes={"y": agg("sessions", window=("0d", "1d"))}
     ).validate(model())
@@ -548,10 +613,15 @@ def test_outcomes_start_at_or_after_zero():
 def test_asof_cutoff_obeys_strict_gap_but_baseline_treatment_at_zero_is_descriptive():
     prop = SimpleNamespace(dimension_name=None, as_of="static")
     properties = {"baseline": prop}
-    with pytest.raises(TerrineError):
+    with pytest.raises(TerrineError) as error:
         Design(
             "user", EventAnchor("session"), gap="1d", features={"x": asof("baseline", before="0d")}
         ).validate(model(properties=properties))
+    assert error.value.context["name"] == "x"
+    assert error.value.context["start"] == 0
+    assert error.value.context["end"] == 0
+    assert error.value.context["bound"] == "before"
+    assert error.value.context["limit"] == -86400
     Design(
         "user",
         EventAnchor("session"),
@@ -612,7 +682,7 @@ def test_subday_schedule_calendar_average_refuses_known_intraday_anchor():
     with pytest.raises(TerrineError) as error:
         Design(
             "user",
-            Schedule("12h", date(2025, 3, 1), date(2025, 3, 3)),
+            Schedule("12h", date(2025, 3, 1), date(2025, 3, 2)),
             features={"x": agg("sessions", window=("-1d", "0d"))},
         ).validate(model(aggregation="avg_calendar_day"))
     assert error.value.code == "terrine.metric.unaligned_calendar_average"
@@ -636,7 +706,7 @@ def test_named_dimension_ambiguity_refuses_and_does_not_conflate_entity_keys():
             (),
             {
                 "name": name,
-                "source_entity": "workspace",
+                "unit": "workspace",
                 "validity": None,
                 "properties": {"region": prop},
             },
@@ -653,9 +723,7 @@ def test_named_dimension_ambiguity_refuses_and_does_not_conflate_entity_keys():
         Design(
             "user", EventAnchor("session"), features={"region": asof("region", before="0d")}
         ).validate(
-            model(
-                dimensions=one_dimension, entities={"user": "user_id", "workspace": "workspace_id"}
-            )
+            model(dimensions=one_dimension, units={"user": "user_id", "workspace": "workspace_id"})
         )
     assert error.value.code == "terrine.design.incompatible_unit"
 
@@ -664,7 +732,7 @@ def test_dimension_property_inline_and_dimension_bindings_are_one_logical_proper
     prop = SimpleNamespace(dimension_name="account_dim", as_of="event_time")
     dimension = SimpleNamespace(
         name="account_dim",
-        source_entity="workspace",
+        unit="workspace",
         validity=None,
         properties={"region": prop},
     )
@@ -687,16 +755,16 @@ def test_shared_dimension_on_multiple_sources_uses_catalog_property_owner():
     prop = SimpleNamespace(dimension_name="account_dim", as_of="event_time")
     dimension = SimpleNamespace(
         name="account_dim",
-        source_entity="workspace",
+        unit="workspace",
         validity=None,
         properties={"region": prop},
     )
     bound = model(properties={"region": prop}, dimensions=[dimension])
     other = SimpleNamespace()
-    other.facts = {}
+    other.events = {}
     other.name, other.dialect = "other_events", "duckdb"
     other.properties, other.dimensions = {}, [dimension]
-    other.entities = {"workspace": "workspace_id"}
+    other.units = {"workspace": "workspace_id"}
     bound.sources["other_events"] = other
     from terrine.spec.validate import validate_design
 
@@ -716,7 +784,7 @@ def test_static_dimension_and_static_inline_properties_do_not_need_event_resolut
     dimension_property = SimpleNamespace(dimension_name="static_dim", as_of="event_time")
     static_dimension = SimpleNamespace(
         name="static_dim",
-        source_entity="workspace",
+        unit="workspace",
         validity=None,
         properties={"region": dimension_property},
     )
@@ -744,7 +812,7 @@ def test_versioned_cutoff_capability_uses_exact_anchor_clock_not_offset_sign(as_
     prop = SimpleNamespace(dimension_name="history_dim", as_of=as_of)
     dimension = SimpleNamespace(
         name="history_dim",
-        source_entity="workspace",
+        unit="workspace",
         validity=object(),
         properties={"region": prop},
     )
@@ -766,7 +834,7 @@ def test_extreme_asof_clock_classification_avoids_datetime_endpoint_arithmetic()
     prop = SimpleNamespace(dimension_name="history_dim", as_of="event_time")
     dimension = SimpleNamespace(
         name="history_dim",
-        source_entity="workspace",
+        unit="workspace",
         validity=object(),
         properties={"region": prop},
     )
@@ -818,19 +886,23 @@ def test_unsupported_kind_transform_and_event_profile_refuse():
 
 
 def test_fixed_anchor_and_mixed_date_datetime_range_use_model_day_boundary():
-    Design(
-        "user",
-        FixedDate(date(2025, 3, 1)),
-        anchor_range=AnchorRange(start=datetime(2025, 3, 1, 1, tzinfo=UTC), end=date(2025, 3, 1)),
-    ).validate(model(boundary="UTC-05:00"))
-    with pytest.raises(TerrineError):
-        Design(
+    def design(start):
+        return Design(
             "user",
             FixedDate(date(2025, 3, 1)),
-            anchor_range=AnchorRange(
-                start=datetime(2025, 3, 1, 1, tzinfo=UTC), end=date(2025, 3, 1)
-            ),
-        ).validate(model())
+            anchor_range=AnchorRange(start=start, end=date(2025, 3, 1)),
+        )
+
+    design(datetime(2025, 3, 1, 1, tzinfo=UTC)).validate(model())
+    # Local Mar 1 under UTC-05:00 runs through Mar 2 05:00Z, so a Mar 2 01:00Z start is inside it;
+    # under UTC it is past the end.
+    past_midnight = datetime(2025, 3, 2, 1, tzinfo=UTC)
+    design(past_midnight).validate(model(boundary="UTC-05:00"))
+    with pytest.raises(TerrineError) as error:
+        design(past_midnight).validate(model())
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "range_end_before_start"
+    assert error.value.context["field"] == "end"
     code = r"""
 import builtins
 from datetime import UTC, date, datetime
@@ -854,11 +926,11 @@ source = SimpleNamespace(
     name="events",
     dialect="duckdb",
     properties={},
-    facts={},
-    entities={"user": "id"},
+    events={},
+    units={"user": "id"},
 )
 model = SimpleNamespace(
-    catalog=SimpleNamespace(day_boundary="UTC", facts={}),
+    catalog=SimpleNamespace(day_boundary="UTC", events={}),
     sources={"events": source},
     metrics={"m": metric},
     readiness=Readiness({"events": coverage}),
@@ -913,7 +985,7 @@ def test_panel_history_validation_covers_reanchored_outcome_support(shape_name):
     from terrine.spec.panels import CalendarComparisonSpec, Initiation, SequentialSpec
 
     selector = event_time("session", window=("2d", "3d"))
-    treatment = Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC))
+    treatment = Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC))
     shape = (
         SequentialSpec(treatment)
         if shape_name == "sequential"
@@ -921,7 +993,7 @@ def test_panel_history_validation_covers_reanchored_outcome_support(shape_name):
     )
     design = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-02"),
+        Schedule("1d", "2025-01-01", "2025-01-01"),
         outcomes={"y": agg("sessions", window=("0d", "1d"), relative_to=selector)},
         shape=shape,
     )
@@ -936,7 +1008,7 @@ def test_panel_history_validation_covers_reanchored_outcome_support(shape_name):
 def test_panel_history_validation_covers_exact_quantile_outcome(shape_name):
     from terrine.spec.panels import CalendarComparisonSpec, Initiation, SequentialSpec
 
-    initiation = Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC))
+    initiation = Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC))
     shape = (
         SequentialSpec(initiation)
         if shape_name == "sequential"
@@ -944,7 +1016,7 @@ def test_panel_history_validation_covers_exact_quantile_outcome(shape_name):
     )
     design = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-02"),
+        Schedule("1d", "2025-01-01", "2025-01-01"),
         outcomes={"y": quantile("sessions", "0.5", window=("0d", "7d"))},
         shape=shape,
     )
@@ -958,7 +1030,7 @@ def test_approximate_distinct_outcome_contributes_to_panel_followup_horizon(shap
     from terrine.spec.expressions import approx_distinct
     from terrine.spec.panels import CalendarComparisonSpec, Initiation, SequentialSpec
 
-    initiation = Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC))
+    initiation = Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC))
     shape = (
         SequentialSpec(initiation)
         if shape_name == "sequential"
@@ -966,7 +1038,7 @@ def test_approximate_distinct_outcome_contributes_to_panel_followup_horizon(shap
     )
     design = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-02"),
+        Schedule("1d", "2025-01-01", "2025-01-01"),
         outcomes={"distinct": approx_distinct("sessions", window=("0d", "7d"))},
         shape=shape,
     )
@@ -980,3 +1052,53 @@ def test_unknown_string_shape_is_rejected():
     with pytest.raises(TerrineError) as error:
         design.validate(model())
     assert error.value.code == "terrine.design.invalid"
+
+
+def _bound_units(native_inputs, units):
+    from terrine.data import Coverage, UnitSource
+    from terrine.model import Model
+
+    catalog, con = native_inputs
+    return Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={name: Coverage("2025-01-01", "2025-01-31") for name in catalog.sources},
+        units={name: UnitSource("users", column) for name, column in units.items()},
+    )
+
+
+def test_resolve_unit_fills_the_only_unit_and_refuses_otherwise(native_inputs):
+    from dataclasses import replace
+
+    from terrine import recipes
+    from terrine.spec.validate import resolve_unit, validate_design
+
+    design = recipes.time_series(
+        every="1d",
+        start="2025-01-02",
+        end="2025-01-03",
+        features={"past": agg("sessions", window=("-1d", "0d"))},
+    )
+    one = _bound_units(native_inputs, {"user": "user_id"})
+    resolved = resolve_unit(design, one)
+    assert resolved.unit == "user"
+    assert resolved.spec_hash == replace(design, unit="user").spec_hash
+    assert resolve_unit(resolved, one) is resolved
+    assert validate_design(design, one) == validate_design(resolved, one)
+    two = _bound_units(native_inputs, {"user": "user_id", "account": "alt_id"})
+    with pytest.raises(TerrineError) as error:
+        resolve_unit(design, two)
+    assert error.value.code == "terrine.model.ambiguous_unit"
+    assert error.value.context == {
+        "owner": "design",
+        "choices": ("account", "user"),
+        "parameter": "unit",
+    }
+    assert resolve_unit(replace(design, unit="account"), two).unit == "account"
+    with pytest.raises(TerrineError) as error:
+        resolve_unit(design, _bound_units(native_inputs, {}))
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "no_unit_source"
+    with pytest.raises(TerrineError) as error:
+        design.validate(two)
+    assert error.value.code == "terrine.model.ambiguous_unit"

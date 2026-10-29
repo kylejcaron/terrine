@@ -36,7 +36,7 @@ def sqlite():
 def catalog():
     definitions = _catalog().model_dump()
     definitions["dialect"] = "sqlite"
-    definitions["facts"]["value"]["column"] = None
+    definitions["events"]["value"]["column"] = None
     definitions["measures"]["total"]["aggregation"] = "count"
     return type(_catalog()).model_validate(definitions)
 
@@ -140,7 +140,7 @@ def test_frame_admission_precedes_every_source_read(sqlite, monkeypatch, entry):
             ),
             namespace="agent",
         )
-        definition = DatasetDefinition(schema_version=1, base_design=design, view=None)
+        definition = DatasetDefinition(schema_version=2, base_design=design, view=None)
         response = tools.preview_dataset(definition, bounded_count=1)
         if response.status != "ok":
             assert response.code is not None
@@ -242,8 +242,8 @@ def test_asof_admission_inspects_only_the_columns_it_reads(unregistered, monkeyp
     }
     definitions["dimensions"]["accounts"] = {
         "relation": {"kind": "table", "name": "tiers"},
-        "source_entity": "user",
-        "entity_column": "user_id",
+        "unit": "user",
+        "key": "user_id",
         "properties": ["tier"],
     }
     with pytest.warns(UnverifiedBackendWarning):

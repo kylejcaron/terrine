@@ -5,7 +5,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from terrine.errors import RefusalSpec
+
 __all__ = ["Lease", "LeaseStore"]
+
+_INVALID_NAMESPACE = RefusalSpec(
+    "terrine.dataset.invalid_destination",
+    "Runtime {field} is invalid: {reason}; use a simple SQL identifier.",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,8 +27,8 @@ class LeaseStore:
     """DuckDB-backed, monotonically fenced resource leases."""
 
     def __init__(self, con: Any, *, namespace: str) -> None:
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", namespace):
-            raise ValueError("namespace must be a simple SQL identifier")
+        if not isinstance(namespace, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", namespace):
+            raise _INVALID_NAMESPACE.error(reason="invalid_namespace", field="namespace")
         self.con = con
         self.namespace = namespace
         self._schema = f'"{namespace}"'

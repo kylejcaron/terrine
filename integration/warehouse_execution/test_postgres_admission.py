@@ -18,26 +18,26 @@ from terrine.semantic.models import SqlQuery, TableRef
 
 pytestmark = pytest.mark.postgres
 
-_CATALOG = """schema_version: 1
+_CATALOG = """schema_version: 2
 day_boundary: UTC
 dialect: postgres
 sources:
   sessions:
     relation: {relation}
-    timestamp: occurred_at
-    entities: {{user: user_id}}
-    facts: [session, spend]
+    time: occurred_at
+    units: {{user: user_id}}
+    events: [session, spend]
     properties: []
     dimensions: []
-facts:
+events:
   session: {{source: sessions, column: null}}
   spend: {{source: sessions, column: amount}}
 properties: {{}}
 dimensions: {{}}
 measures:
-  session_count: {{fact: session, aggregation: count}}
+  session_count: {{event: session, aggregation: count}}
 metrics:
-  sessions: {{kind: mean, entity: user, measure: session_count}}
+  sessions: {{kind: mean, unit: user, measure: session_count}}
 """
 
 

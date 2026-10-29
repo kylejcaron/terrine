@@ -23,8 +23,8 @@ def _dimension(*, validity=None, key="account_id"):
     return BoundDimension(
         name="account_tier",
         relation=TableRef(kind="table", name="tier_history"),
-        source_entity="account",
-        entity_column=key,
+        unit="account",
+        key=key,
         validity=validity,
         properties={
             "tier": PropertyBinding("tier", "tier_value", "string", "pre_exposure", "account_tier")
@@ -36,9 +36,9 @@ def _source(dimension):
     return BoundSource(
         name="events",
         relation=TableRef(kind="table", name="events"),
-        timestamp_column="occurred_at",
-        entities={"user": "user_id", "account": "account_id_event"},
-        facts={},
+        time_column="occurred_at",
+        units={"user": "user_id", "account": "account_id_event"},
+        events={},
         properties={},
         dimensions=(dimension,),
         dialect="duckdb",
@@ -278,12 +278,19 @@ def test_enrichment_aliases_are_deterministic_and_avoid_casefold_collisions():
     assert value.casefold() != "id" and found.casefold() != "id"
 
 
-def test_asof_refuses_fixed_output_alias_collision():
+@pytest.mark.parametrize(
+    "columns",
+    [
+        ("__terrine_attribute_found",),
+        ("__TERRINE_ATTRIBUTE_VALUE", "__terrine_attribute_found"),
+    ],
+)
+def test_asof_refuses_fixed_output_alias_collision(columns):
     points = ibis.memtable(
         {
             "account": ["a"],
             "cutoff": [datetime(2025, 3, 1, tzinfo=UTC)],
-            "__terrine_attribute_found": [True],
+            **{column: [True] for column in columns},
         }
     )
     history = ibis.memtable({"account_id": ["a"], "tier_value": ["gold"]})
@@ -292,6 +299,7 @@ def test_asof_refuses_fixed_output_alias_collision():
             points, history, _dimension(), "tier", unit_column="account", cutoff_column="cutoff"
         )
     assert error.value.code == "terrine.temporal.alias_collision"
+    assert error.value.context["columns"] == columns
 
 
 def test_missing_validity_column_has_shared_schema_refusal():

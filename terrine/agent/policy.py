@@ -1,6 +1,8 @@
 """Owner-only grants and resource limits for dataset operations."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from os import PathLike
 from pathlib import Path
 from typing import Literal
 
@@ -19,14 +21,20 @@ type Permission = Literal[
 _DENIED = RefusalSpec("terrine.agent.permission_denied", "Owner policy denies this operation.")
 _SCOPE = RefusalSpec("terrine.agent.scope_denied", "Requested resources are outside owner policy.")
 _LIMIT = RefusalSpec("terrine.agent.request_limit", "Owner tool request limit has been reached.")
+_OWNER_INPUT = RefusalSpec(
+    "terrine.agent.owner_configuration", "Owner policy input {field} is invalid: {reason}."
+)
+_REQUEST_INPUT = RefusalSpec(
+    "terrine.agent.invalid_request", "Tool request input {field} is invalid: {reason}."
+)
 
 
 def effective_budget(owner: Budget, requested: Budget | None) -> Budget:
     """Intersect optional nonnegative limits; None denotes no numeric bound."""
-    if not isinstance(owner, Budget) or (
-        requested is not None and not isinstance(requested, Budget)
-    ):
-        raise TypeError("budgets must be Budget values")
+    if not isinstance(owner, Budget):
+        raise _OWNER_INPUT.error(reason="wrong_type", field="budget")
+    if requested is not None and not isinstance(requested, Budget):
+        raise _REQUEST_INPUT.error(reason="wrong_type", field="budget")
     if requested is None:
         return owner
     values = {}
@@ -36,6 +44,12 @@ def effective_budget(owner: Budget, requested: Budget | None) -> Budget:
         ]
         values[name] = min(limits) if limits else None
     return Budget(**values, strict_scan=owner.strict_scan or requested.strict_scan)
+
+
+def _collection(value: object, field: str) -> frozenset:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Iterable):
+        raise _OWNER_INPUT.error(reason="wrong_type", field=field)
+    return frozenset(value)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -85,7 +99,7 @@ class AgentPolicy:
             "cancel",
         ):
             if not isinstance(getattr(self, name), bool):
-                raise TypeError(f"{name} must be bool")
+                raise _OWNER_INPUT.error(reason="wrong_type", field=name)
         for name in (
             "max_run_seconds",
             "max_concurrency",
@@ -96,21 +110,29 @@ class AgentPolicy:
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-                raise ValueError(f"{name} must be a positive integer")
+                raise _OWNER_INPUT.error(reason="not_positive_integer", field=name)
         for name in ("allowed_sources", "allowed_catalogs", "preview_columns", "redacted_columns"):
-            value = frozenset(getattr(self, name))
+            value = _collection(getattr(self, name), name)
             if any(not isinstance(item, str) or not item for item in value):
-                raise TypeError(f"{name} must contain nonempty strings")
+                raise _OWNER_INPUT.error(reason="empty_name", field=name)
             object.__setattr__(self, name, value)
-        destinations = frozenset(self.allowed_destinations)
+        destinations = _collection(self.allowed_destinations, "allowed_destinations")
         if any(not isinstance(item, DestinationRef) for item in destinations):
-            raise TypeError("allowed_destinations must contain DestinationRef values")
+            raise _OWNER_INPUT.error(reason="wrong_type", field="allowed_destinations")
         object.__setattr__(self, "allowed_destinations", destinations)
-        exports = frozenset(Path(path).expanduser().resolve() for path in self.allowed_exports)
-        object.__setattr__(self, "allowed_exports", exports)
+        exports = _collection(self.allowed_exports, "allowed_exports")
+        if any(not isinstance(path, (str, PathLike)) for path in exports):
+            raise _OWNER_INPUT.error(reason="wrong_type", field="allowed_exports")
+        object.__setattr__(
+            self,
+            "allowed_exports",
+            frozenset(Path(path).expanduser().resolve() for path in exports),
+        )
         if not isinstance(self.budget, Budget):
-            raise TypeError("budget must be Budget")
+            raise _OWNER_INPUT.error(reason="wrong_type", field="budget")
         if self.design_root is not None:
+            if not isinstance(self.design_root, (str, PathLike)):
+                raise _OWNER_INPUT.error(reason="wrong_type", field="design_root")
             object.__setattr__(self, "design_root", Path(self.design_root).resolve())
 
     def authorize(

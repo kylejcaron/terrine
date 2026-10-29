@@ -237,24 +237,24 @@ def test_identical_opaque_roots_share_one_publication_capture(tmp_path):
 def _catalog(*, table: str = "events") -> Catalog:
     return Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": table},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["value"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["value"],
                     "properties": [],
                     "dimensions": [],
                 }
             },
-            "facts": {"value": {"source": "events", "column": "value"}},
+            "events": {"value": {"source": "events", "column": "value"}},
             "properties": {},
             "dimensions": {},
-            "measures": {"total": {"fact": "value", "aggregation": "sum"}},
-            "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
+            "measures": {"total": {"event": "value", "aggregation": "sum"}},
+            "metrics": {"total": {"kind": "mean", "unit": "user", "measure": "total"}},
         }
     )
 
@@ -347,8 +347,8 @@ def test_required_relations_covers_dimension_and_supplied_roster_roots():
         definition["dimensions"] = {
             "accounts": {
                 "relation": {"kind": "table", "name": "accounts"},
-                "source_entity": "user",
-                "entity_column": "user_id",
+                "unit": "user",
+                "key": "user_id",
                 "validity": {"changed_at": "ts"},
                 "properties": [],
             }

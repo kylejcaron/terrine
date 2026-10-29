@@ -18,8 +18,8 @@ from terrine.semantic.models import Catalog
 from terrine.semantic.rules import calendar_average_alignment, supports_event_resolution
 from terrine.windows import Window
 catalog = Catalog.model_validate(dict(
-    schema_version=1, day_boundary='UTC-05:00', dialect='duckdb',
-    sources={}, facts={}, properties={}, dimensions={}, measures={}, metrics={},
+    schema_version=2, day_boundary='UTC-05:00', dialect='duckdb',
+    sources={}, events={}, properties={}, dimensions={}, measures={}, metrics={},
 ))
 assert calendar_average_alignment(
     Window('-1d', '0s'), anchor=datetime(2025, 3, 1, 5, tzinfo=UTC),

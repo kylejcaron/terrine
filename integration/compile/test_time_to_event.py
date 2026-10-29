@@ -20,15 +20,13 @@ def test_life_table_grouping_features_retain_conservative_surrogate_timing():
     try:
         life = (
             recipes.life_table(
-                "user",
                 start_event="purchase",
                 end_event="churn",
                 bin="7d",
-                features={
+                group_by={
                     "region": asof("region", before="-1d"),
                     "north": eq(asof("region", before="-1d"), "north"),
                 },
-                group_by=("region", "north"),
                 administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
             )
             .build(model)
@@ -131,14 +129,16 @@ def test_landmark_features_and_survival_followup_use_shifted_entry(shape):
         con.disconnect()
 
 
-def test_unobserved_initial_history_is_explained_and_excluded():
+def test_unobserved_initial_history_is_explained_and_retained():
     con, model = _model(outcome_start="2025-01-02")
     try:
         design = Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
+        summary = design.describe(model)
         result = _collect(design, model)
         rows = {row["unit"]: row for row in result.to_pylist()}
         assert rows["u1"]["duration__complete"] is False
         assert rows["u1"]["duration__reason"] == "incomplete_initial_history"
+        assert rows["u1"]["duration__reason"] in summary
     finally:
         con.disconnect()
 

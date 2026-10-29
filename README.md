@@ -30,7 +30,6 @@ pip install --pre "terrine[duckdb,pandas]"
 
 <!-- --8<-- [start:first-dataset] -->
 ```python
-import ibis
 import pandas as pd
 import terrine as tr
 
@@ -43,32 +42,28 @@ orders = pd.DataFrame({
     "amount": [30.0, 45.0, 25.0, 60.0, 80.0],
 })
 
-con = ibis.duckdb.connect()  # or your warehouse: ibis.bigquery.connect(...), ...
-con.create_table("customers", customers)
-con.create_table("orders", orders)
-
-# Tell Terrine who the rows are about and which dates the orders table covers.
+# Who the rows are about, which table holds the events, what to measure,
+# and which calendar days (inclusive) the orders table is fully loaded for.
 model = tr.Model.from_tables(
-    con,
-    units={"customer": tr.UnitSource("customers", "customer_id")},
+    units={"customer": tr.UnitSource(customers, "customer_id")},
     events={"orders": tr.Events(
-        "orders", "ordered_at", {"customer": "customer_id"},
-        values=("amount",), complete=("2025-01-01", "2025-03-20"),
+        orders, time="ordered_at", key="customer_id",
+        metrics={"orders": tr.count(), "spend": tr.sum("amount")},
+        complete=("2025-01-01", "2025-03-20"),
     )},
 )
 
-# One row per customer every 28 days: the last 30 days as features,
-# spend in the next 30 days as the target.
+# One row per customer on the first of each month, February through March:
+# the last 30 days as features, spend in the next 30 days as the target.
 design = tr.recipes.time_series(
-    "customer", every="28d", start="2025-02-01", end="2025-03-02",
+    every="1mo", start="2025-02-01", end="2025-03-01",
     features={
-        "orders_30d": tr.agg("orders_count", window=("-30d", "0s")),
-        "spend_30d": tr.agg("orders_amount_sum", window=("-30d", "0s")),
+        "orders_30d": tr.agg("orders", window=("-30d", "0s")),
+        "spend_30d": tr.agg("spend", window=("-30d", "0s")),
     },
-    outcomes={
-        "spend_next_30d": tr.agg("orders_amount_sum", window=("0s", "30d")),
-    },
+    outcomes={"spend_next_30d": tr.agg("spend", window=("0s", "30d"))},
 )
+print(design.describe(model))
 
 data = design.build(model).to_pandas()
 columns = ["unit", "t0", "orders_30d", "spend_30d", "spend_next_30d", "spend_next_30d__reason"]
@@ -76,7 +71,29 @@ print(data[columns].assign(t0=data["t0"].dt.date).sort_values(["t0", "unit"]).to
 ```
 <!-- --8<-- [end:first-dataset] -->
 
+`describe` explains the rows, windows and declared completeness without querying
+the source tables ([sample summary](https://github.com/kylejcaron/terrine/blob/main/docs/guides/design-validation.md#describing-a-design)).
+Running the example prints:
+
 ```text
+One row per customer (table customer, key customer_id) at each snapshot.
+Snapshots: every 1 month from 2025-02-01 through 2025-03-01 (2 dates: 2025-02-01, 2025-03-01), at
+  00:00 UTC.
+Features (before t0):
+  orders_30d: count of orders in [t0 - 30d, t0)
+  spend_30d: sum of orders.amount in [t0 - 30d, t0)
+Outcomes (after t0):
+  spend_next_30d: sum of orders.amount in [t0, t0 + 30d)
+Completeness: orders is declared complete for 2025-01-01 through 2025-03-20 (UTC days).
+  A metric window outside declared source coverage is null with reason incomplete_coverage; unit
+    observation bounds use incomplete_observation.
+Empty complete metric windows (no matching events):
+  orders_30d: 0 (no reason)
+  spend_30d: 0 (no reason)
+  spend_next_30d: 0 (no reason)
+Columns: unit, anchor_id, t0, orders_30d, orders_30d__complete, orders_30d__reason, spend_30d,
+  spend_30d__complete, spend_30d__reason, spend_next_30d, spend_next_30d__complete,
+  spend_next_30d__reason.
  unit         t0  orders_30d  spend_30d  spend_next_30d spend_next_30d__reason
 alice 2025-02-01           2       75.0            25.0                   <NA>
   bob 2025-02-01           1       80.0             0.0                   <NA>
@@ -94,15 +111,15 @@ Reading the output:
 - **Alice's February 10 order** is in her February 1 target and her March 1 features. The same order is the future for one row and the past for the next.
 - **The March targets are unknown.** Their 30-day window runs past March 20, where the orders data ends. Drop them, keep them for scoring, or handle them however suits your model.
 
-Terrine names metrics after your table and columns: `orders_count`, `orders_amount_sum` and `orders_amount_mean`. Every value has a `<name>__complete` flag and a `<name>__reason` column, so you can filter or impute deliberately.
+You name the metrics: `tr.count()` counts events, `tr.sum("amount")` adds a column, and `tr.count(where={"status": "refunded"})` counts only matching events once `status` is declared in `labels=`. Every value has a `<name>__complete` flag and a `<name>__reason` column, so you can filter or impute deliberately.
 
 ## The four ideas
 
 | Idea | In the example |
 | --- | --- |
 | **Unit:** who each row is about, read from a table so nobody silently drops out | `customers.customer_id` |
-| **t0:** the snapshot time of each row | every 28 days from 2025-02-01 |
-| **Windows:** relative to t0, start included, end excluded. Features must end at or before t0; outcomes must start at or after t0 | `("-30d", "0s")` is the 30 days before t0; `("0s", "30d")` is the 30 days after |
+| **t0:** the snapshot time of each row. `every` is an elapsed duration (`"7d"`, `"4w"`) or a calendar step (`"1mo"`, `"3mo"`, `"1y"`); a monthly schedule from the 31st lands on Jan 31, Feb 28, Mar 31 | `every="1mo"`: the first of each month from 2025-02-01 through 2025-03-01, both days included |
+| **Windows:** relative to t0, start included, end excluded. Features must end at or before t0; outcomes must start at or after t0. Windows are elapsed time: `"-1mo"` is refused, use `"-30d"` or `"-4w"` | `("-30d", "0s")` is the 30 days before t0; `("0s", "30d")` is the 30 days after |
 | **Completeness:** the calendar days, inclusive, that you declare fully loaded for each event table (not just the first and last event you happen to have). Windows outside them are unknown, not zero | `complete=("2025-01-01", "2025-03-20")` |
 
 ## Other datasets
@@ -123,7 +140,7 @@ More feature recipes are in [common feature patterns](https://github.com/kylejca
 
 ## Where it runs
 
-Queries run where your data lives; nothing is uploaded. Results come back as pandas, Polars or Arrow.
+Queries run where your data lives; nothing is uploaded. DataFrames and Arrow tables, as above, are queried in a private in-process DuckDB. For a warehouse, pass its Ibis connection first and name the tables: `tr.Model.from_tables(con, units={"customer": tr.UnitSource("customers", "customer_id")}, events={"orders": tr.Events("orders", ...)})`. Results come back as pandas, Polars or Arrow.
 
 | Backend | Status |
 | --- | --- |

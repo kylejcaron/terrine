@@ -236,3 +236,27 @@ def test_airflow_cancel_transport_failure_does_not_claim_runtime_stopped(monkeyp
     assert cast(Any, task)._invocation is not None
     status = Client(None, namespace="owner").get_run("still-running")
     assert status.durable_state == "running"
+
+
+@pytest.mark.parametrize(
+    ("options", "code", "field"),
+    [
+        ({"max_attempts": 0}, "terrine.runtime.invalid_configuration", "max_attempts"),
+        ({"endpoint": None}, "terrine.runtime.invalid_configuration", "endpoint"),
+        ({"namespace": ""}, "terrine.dataset.invalid_destination", "namespace"),
+        ({"pool": ""}, "terrine.runtime.invalid_configuration", "pool"),
+    ],
+)
+def test_airflow_group_configuration_refuses_with_codes(tmp_path, options, code, field):
+    from terrine.errors import TerrineError
+
+    arguments: dict[str, Any] = {
+        "plan_request_provider": lambda context: _plan_request(),
+        "endpoint": ControlEndpoint(tmp_path / "owner.sock"),
+        "namespace": "owner",
+        **options,
+    }
+    with pytest.raises(TerrineError) as error:
+        build_materialization_group(**arguments)
+    assert error.value.code == code
+    assert error.value.context["field"] == field

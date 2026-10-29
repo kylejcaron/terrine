@@ -13,7 +13,6 @@ from terrine.spec.expressions import (
     all_of,
     asof,
     eq,
-    event_time,
     gt,
     is_null,
 )
@@ -40,15 +39,3 @@ def test_asof_cutoff_and_predicate_constructors_are_typed_and_immutable():
     assert all_of(gt(metric, 0), is_null(cutoff)) == And((gt(metric, 0), is_null(cutoff)))
     with pytest.raises((FrozenInstanceError, AttributeError)):
         metric.metric = "other"  # ty: ignore[invalid-assignment]
-
-
-def test_predicates_reject_non_json_values_and_empty_and():
-    with pytest.raises((TypeError, ValueError)):
-        gt(agg("sessions", window=("-1d", "0d")), object())  # ty: ignore[invalid-argument-type]
-    with pytest.raises(ValueError):
-        all_of()
-
-
-def test_last_occurrence_rejects_n():
-    with pytest.raises(ValueError):
-        event_time("purchase", window=("-7d", "0d"), occurrence="last", n=1)

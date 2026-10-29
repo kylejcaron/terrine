@@ -2,7 +2,7 @@ source_roots = ["."]
 
 [[modules]]
 path = "terrine"
-depends_on = ["terrine.errors", "terrine.windows", "terrine.spec", "terrine.data", "terrine.model", "terrine.frame", "terrine.compile.cost", "terrine.dataset", "terrine.recipes"]
+depends_on = ["terrine.errors", "terrine.windows", "terrine.spec", "terrine.data", "terrine.metrics", "terrine.model", "terrine.frame", "terrine.compile.cost", "terrine.dataset", "terrine.recipes"]
 
 [[modules]]
 path = "terrine.recipes"
@@ -24,10 +24,14 @@ depends_on = []
 path = "terrine.data"
 depends_on = ["terrine.backends", "terrine.errors", "terrine.windows"]
 
+[[modules]]
+path = "terrine.metrics"
+depends_on = ["terrine.data", "terrine.errors", "terrine.semantic"]
+
 
 [[modules]]
 path = "terrine.spec"
-depends_on = ["terrine.backends", "terrine._time", "terrine.errors", "terrine.semantic", "terrine.windows", "terrine.frame"]
+depends_on = ["terrine.backends", "terrine._time", "terrine.errors", "terrine.semantic", "terrine.windows", "terrine.frame", "terrine.execution"]
 
 [[modules]]
 path = "terrine.semantic"
@@ -94,7 +98,7 @@ depends_on = ["terrine.backends", "terrine.compile", "terrine.compile.cost", "te
 
 [[modules]]
 path = "terrine.orchestration"
-depends_on = ["terrine.runtime"]
+depends_on = ["terrine.errors", "terrine.runtime"]
 
 [[modules]]
 path = "terrine.export"

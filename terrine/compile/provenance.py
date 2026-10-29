@@ -41,13 +41,14 @@ def state_panel_metadata(design: Design, model: Model) -> StatePanelMeta | None:
         }
         levels, ordered, absorbing = state.levels, state.ordered, state.absorbing
         timing = "at_origin"
+    assert schedule.every is not None
     return StatePanelMeta(
         state_source=source,
         levels=levels,
         ordered=ordered,
         absorbing=absorbing,
         panel_start=model.day_boundary(schedule.start).astimezone(UTC),
-        administrative_end=model.day_boundary(schedule.end).astimezone(UTC),
+        administrative_end=model.day_boundary(schedule.end_exclusive).astimezone(UTC),
         period_seconds=schedule.every,
         baseline_features=tuple(design.shape.baseline_features),
         time_varying_features=tuple(design.features),
@@ -61,16 +62,17 @@ def state_panel_metadata(design: Design, model: Model) -> StatePanelMeta | None:
     )
 
 
-def panel_metadata(design: Design) -> PanelMeta | None:
+def panel_metadata(design: Design, model: Model) -> PanelMeta | None:
     from terrine.spec.anchors import Schedule
     from terrine.spec.panels import EventPanelSpec, Initiation, PersistentAdoption, SequentialSpec
+    from terrine.spec.validate import resolve_selector_source
 
     if isinstance(design.shape, SequentialSpec):
         treatment = design.shape.treatment
         history = TreatmentHistoryMeta(
             "initiation" if isinstance(treatment, Initiation) else "persistent_adoption",
-            treatment.source,
-            treatment.property,
+            resolve_selector_source(model, treatment.event),
+            treatment.event,
             treatment.history_start,
             treatment.knowledge,
             treatment.adopted_value if isinstance(treatment, PersistentAdoption) else None,
@@ -79,8 +81,7 @@ def panel_metadata(design: Design) -> PanelMeta | None:
         assert isinstance(design.anchor, Schedule)
         weight = design.shape.trial_weight
         trial_weight = None if weight is None else TrialWeightMeta(weight.kind, weight.values)
-        span = (design.anchor.end - design.anchor.start).days * 86_400
-        count = (span - 1) // design.anchor.every + 1
+        count = design.anchor.count(model.day_boundary)
         trials = tuple(f"schedule:{index}" for index in range(count))
         return PanelMeta(
             "sequential",
@@ -99,18 +100,20 @@ def panel_metadata(design: Design) -> PanelMeta | None:
     return None
 
 
-def calendar_comparison_metadata(design: Design) -> CalendarComparisonMeta | None:
+def calendar_comparison_metadata(design: Design, model: Model) -> CalendarComparisonMeta | None:
     from terrine.spec.anchors import Schedule
     from terrine.spec.panels import CalendarComparisonSpec
+    from terrine.spec.validate import resolve_selector_source
 
     if not isinstance(design.shape, CalendarComparisonSpec):
         return None
     assert isinstance(design.anchor, Schedule)
+    assert design.anchor.every is not None
     cohort = design.shape.cohort
     return CalendarComparisonMeta(
         design.shape.control,
-        cohort.source,
-        cohort.property,
+        resolve_selector_source(model, cohort.event),
+        cohort.event,
         cohort.history_start,
         cohort.knowledge,
         design.shape.reference_period,

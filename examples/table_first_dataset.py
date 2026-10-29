@@ -1,10 +1,11 @@
-"""Bind simple event tables and materialize scheduled and cumulative datasets."""
+"""Bind event tables by name on a connection; materialize scheduled and cumulative datasets."""
 
 from datetime import UTC, datetime
 
 import ibis
 import pyarrow as pa
 
+import terrine as tr
 from terrine import Budget, Events, Model, UnitSource, agg, recipes
 
 
@@ -31,33 +32,33 @@ def main() -> None:
             events={
                 "orders": Events(
                     "orders",
-                    "occurred_at",
-                    {"customer": "customer_id"},
-                    values=("amount",),
+                    time="occurred_at",
+                    key="customer_id",
+                    metrics={
+                        "orders": tr.count(),
+                        "spend": tr.sum("amount"),
+                        "order_value": tr.mean("amount"),
+                    },
                     complete=("2025-01-01", "2025-01-31"),
                 )
             },
         )
-        # Use Model.from_catalog for filters, ratios, static/as-of or SCD2
-        # attributes, SQL relations, explicit names, and multi-unit sources.
-        assert set(model.catalog.facts) == {"orders", "orders_amount"}
-        assert set(model.catalog.metrics) == {
-            "orders_count",
-            "orders_amount_sum",
-            "orders_amount_mean",
-        }
+        # Use Model.from_catalog for SQL relations, explicit catalog names and
+        # multi-unit sources; labels, filters, ratios and history tables bind here.
+        assert set(model.catalog.events) == {"orders", "orders_amount"}
+        assert set(model.catalog.metrics) == {"orders", "spend", "order_value"}
         budget = Budget(max_rows=100, max_output_bytes=1_000_000)
         outcomes = {
-            "count": agg("orders_count", window=("0d", "7d")),
-            "amount": agg("orders_amount_sum", window=("0d", "7d")),
-            "mean": agg("orders_amount_mean", window=("0d", "7d")),
+            "count": agg("orders", window=("0d", "7d")),
+            "amount": agg("spend", window=("0d", "7d")),
+            "mean": agg("order_value", window=("0d", "7d")),
         }
         scheduled = (
             recipes.time_series(
                 "customer",
                 every="7d",
                 start="2025-01-01",
-                end="2025-01-08",
+                end="2025-01-07",
                 outcomes=outcomes,
             )
             .build(model)
@@ -80,7 +81,7 @@ def main() -> None:
                 "customer",
                 every="7d",
                 start="2025-01-29",
-                end="2025-01-30",
+                end="2025-01-29",
                 outcomes=outcomes,
             )
             .build(model)
@@ -98,7 +99,7 @@ def main() -> None:
             recipes.ltv(
                 "customer",
                 start_event="orders",
-                metric="orders_amount_sum",
+                metric="spend",
                 period="7d",
                 periods=2,
             )

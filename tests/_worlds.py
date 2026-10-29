@@ -37,33 +37,33 @@ def events_world() -> WorldInputs:
     )
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 name: {
                     "relation": {"kind": "table", "name": name},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": [fact],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": [fact],
                     "properties": [],
                     "dimensions": [],
                 }
                 for name, fact in (("events", "session"), ("labels", "churn"))
             },
-            "facts": {
+            "events": {
                 "session": {"source": "events", "column": None},
                 "churn": {"source": "labels", "column": None},
             },
             "properties": {},
             "dimensions": {},
             "measures": {
-                "sessions_count": {"fact": "session", "aggregation": "count"},
-                "churn_count": {"fact": "churn", "aggregation": "count"},
+                "sessions_count": {"event": "session", "aggregation": "count"},
+                "churn_count": {"event": "churn", "aggregation": "count"},
             },
             "metrics": {
-                "sessions": {"kind": "mean", "entity": "user", "measure": "sessions_count"},
-                "churned": {"kind": "conversion", "entity": "user", "measure": "churn_count"},
+                "sessions": {"kind": "mean", "unit": "user", "measure": "sessions_count"},
+                "churned": {"kind": "conversion", "unit": "user", "measure": "churn_count"},
             },
         }
     )

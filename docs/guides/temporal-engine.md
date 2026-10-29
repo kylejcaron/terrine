@@ -19,80 +19,147 @@ Pydantic's `ValidationError`.
 
 ## Binding event tables
 
-Use `Model.from_tables` for table-backed events with one declared unit per
-source. `UnitSource` is the authoritative roster, including units without
-matching events; Terrine never derives that roster from event rows.
+Use `Model.from_tables` for table-backed events with one unit key per table.
+`UnitSource` is the authoritative roster, including units without matching
+events; Terrine never derives that roster from event rows.
 
 ```python
-from terrine import Events, Model, UnitSource
+import terrine as tr
+from terrine import Events, History, Model, UnitSource
 
-# con already contains customers(id) and orders(customer_id, occurred_at, amount).
+# con already contains customers(id), orders(customer_id, occurred_at, amount, status)
+# and plans(customer_id, plan, starts, ends).
 model = Model.from_tables(
     con,
     units={"customer": UnitSource("customers", "id")},
     events={
         "orders": Events(
             "orders",
-            "occurred_at",
-            {"customer": "customer_id"},
-            values=("amount",),
+            time="occurred_at",
+            key="customer_id",
+            labels=("status",),
+            metrics={
+                "orders": tr.count(),
+                "refunds": tr.count(where={"status": "refunded"}),
+                "refund_rate": tr.ratio("refunds", "orders"),
+                "spend": tr.sum("amount"),
+                "order_value": tr.mean("amount"),
+            },
             complete=("2025-01-01", "2025-01-31"),
+        )
+    },
+    history={
+        "plan": History(
+            "plans", key="customer_id", column="plan",
+            valid_from="starts", valid_to="ends",
+            complete=("2024-01-01", "2025-01-31"),
         )
     },
 )
 ```
 
-The event source and event fact are both named `orders`. The value fact is
-`orders_amount`; generated metrics are `orders_count`, `orders_amount_sum`,
-and `orders_amount_mean`. Consume these with ordinary `agg` expressions.
-The mean metric uses the native `avg_event` aggregation, not a calendar-day
-average. Binding builds a native Catalog and resolves only schema metadata.
-Use `dialect=` to declare a dialect explicitly; by default it is the admitted
-connection's dialect. `day_boundary` defaults to `UTC`.
+`table` is the only positional argument; `time` names the event timestamp and
+`key` the unit key column. `unit` is inferred from a single `UnitSource` and
+required when the model declares several (omitting it refuses with
+`terrine.model.ambiguous_unit`, context `owner`, `choices`, `parameter`).
+An `Events` with no `metrics` declares the event alone: anchors, `event_time`,
+survival and sequences still work, and nothing is named for you.
 
-Every `Events.complete` declares an inclusive pair of complete local calendar
-days, interpreted in `day_boundary`. Missing completeness refuses with
-`terrine.model.missing_event_completeness` and context `source`; supply an
-authoritative pair, never an observed maximum event timestamp. Optional
-`readiness` adds other coverage declarations; an event's own `complete` pair
-remains authoritative. `event_ids` declares stable identity columns as with
-`Model.from_catalog`.
+Metrics are named by you and built with `tr.count()`, `tr.sum(column)`,
+`tr.mean(column)` (per event; `per="day"` divides by the window's calendar
+days), `tr.min`, `tr.max`, `tr.count_distinct(column)` and
+`tr.ratio(numerator, denominator)` over two metrics of the same `Events`.
+Metric names are unique across the model; a metric may share its event's name.
+Consume them with ordinary `agg` expressions.
 
-Each descriptor's `keys` must name exactly one declared unit. Multiple keys
-refuse with `terrine.model.multiple_event_units` and context `source` and
-`units`; use `Model.from_catalog` to describe multi-unit semantics. A generated
-source, fact or metric name may not collide with another generated name or a
-distinct explicit readiness key. The sole permitted overlap is an event
-source with its own event fact and readiness key. Conflicts refuse with
-`terrine.model.generated_metric_collision`: context `name` identifies the
-conflict and `sources` identifies its event sources. A readiness conflict also
-includes `readiness_key`. Rename the source/value declaration or use
-`Model.from_catalog` for explicit naming.
+`labels=` names event columns that become event-time properties with the same
+name, usable in `where=`, in `event_time(..., label_property=, equals=)`, in
+`asof(label, before=)` (the last value strictly before the cutoff, carried from
+the event log) and in `Treatment(label)`. The dtype is read from the bound
+column: string, integer (or scale-zero decimal), float (or decimal), boolean
+and date; any other type, timestamps included, refuses with
+`terrine.model.invalid_binding` (`reason="unsupported_column_type"`, context
+`source`, `column`, `dtype`, `supported`).
 
-Choose `Model.from_catalog` for static/as-of attributes, filters, ratios, SCD2
-dimension histories, SQL relations, multi-unit sources, or explicit Catalog
-names. These are richer source declarations, not options inferred from tables.
+`where=` is a mapping keyed by `<label>` or `<label>__<op>`; several keys are a
+conjunction. A scalar value means equality and a list, tuple or set means
+membership; `__ne`, `__in`, `__not_in`, `__gt`, `__gte`, `__lt`, `__lte` and
+`__between` are the other operators. `__between` takes an ordered `(low, high)`
+list or tuple, both ends included; a set, or two numbers with `low > high`, is
+refused rather than matching nothing, while text bounds such as `("2", "10")`
+are exact literals ordered by the label's type when the filter compiles.
+`__` is reserved for that split: a label name containing it refuses at
+`Events(...)` with `reason="reserved_name"`, and a key with an unknown
+operator, a second `__`, the wrong number of values or a non-scalar refuses
+at the constructor with `reason="invalid_filter"` and the `key`. A `where=`
+label the `Events` does not declare, or a ratio operand that is not another
+non-ratio metric of
+the same `Events`, refuses at `from_tables` with
+`terrine.semantic.missing_reference` (context `kind`, `name`, `owner`,
+`available`). Comparing with `None` compiles a null literal whose comparison
+is unknown for every row, so a build refuses with `terrine.filter.unknown`
+rather than returning zeros.
+
+`history=` binds one attribute per `History`: the mapping key names the
+attribute, `column` its value column, and exactly one time axis is declared,
+either `valid_from` (optionally with `valid_to`) or `changed_at` alone (a
+`changed_at` row is effective until the next change); anything else refuses
+with `reason="history_time_axis"`. A table with several attribute columns is
+declared once per column. The attribute works in `asof` and `Treatment` as a
+label does, with [effective-time semantics](temporal-attributes.md).
+
+Every `Events.complete` and `History.complete` declares an inclusive pair of
+complete local calendar days, interpreted in `day_boundary`. Missing
+completeness refuses with `terrine.model.missing_event_completeness` and
+context `source`; supply an authoritative pair, never an observed maximum
+event timestamp. `event_ids` declares stable identity columns as with
+`Model.from_catalog`. Use `dialect=` to declare a dialect explicitly; by
+default it is the admitted connection's dialect. `day_boundary` defaults to
+`UTC`.
+
+Names are checked before any schema is read. Event names (the `events=` keys),
+history names and labels share one namespace because `Initiation(name)` resolves
+across events and labels; metric names are unique across every `Events`; and
+each metric column reserves a value event named `<events name>_<column>`
+(`orders_amount` above) against every event, label and history name. A clash
+refuses with `terrine.model.invalid_binding` (`reason="name_collision"`,
+context `kind` of `metric`, `label` or `event`, `name`, and the sorted
+`owners`, such as `("events:orders.amount", "labels:orders")`).
+
+`model.to_catalog()` writes the equivalent schema-version-2 catalog as YAML.
+`Model.from_catalog(path, con=con, units=model.units, readiness=model.readiness,
+event_ids=model.event_ids)` binds the same model with an equal `model_hash`.
+Choose `Model.from_catalog` directly for SQL relations, multi-unit sources or
+explicit catalog names; those are richer source declarations, not options
+inferred from tables.
 
 ### Scheduled time series
 
 Start with `recipes.time_series`: one row per roster unit and scheduled calendar
-anchor. Required arguments are `unit`, `every`, `start`, and exclusive `end`;
-dates may be calendar dates or ISO date strings, never timestamps. The schedule
-defines the anchors, without a separate period count. Supported options are
-`features`, `outcomes`, `eligibility`, `treatment`, `anchor_range`, and `gap`
-(default `"0d"`); optional roles and filters default to `None`.
+anchor. Required arguments are `every`, `start`, and `end`; `unit` is the model's
+only unit unless named (see [unit inference](design-specs.md#unit-inference)). Dates may
+be calendar dates or ISO date strings, never timestamps. The schedule defines
+the anchors, without a separate period count: `t0` runs from `start` in steps
+of `every` through the `end` day, which is included, so `start == end` is a
+single anchor. `every` is an elapsed duration (`"7d"`, `"4w"`, integral
+seconds) or a calendar step: `"1mo"`, `"3mo"` or `"1y"` (twelve months).
+Calendar anchors are `start` plus `k` months, each clamped to its own month's
+last day and never chained from the previous anchor, so `every="1mo"` from
+`2025-01-31` through `2025-04-30` gives Jan 31, Feb 28, Mar 31 and Apr 30, and
+`every="1y"` from `2024-02-29` gives Feb 28 in 2025 and 2026. Supported
+options are `features`, `outcomes`, `eligibility`, `treatment`, `anchor_range`,
+and `gap` (default `"0d"`); optional roles and filters default to `None`.
 
 ```python
 from terrine import Budget, agg, recipes
 
 outcomes = {
-    "count": agg("orders_count", window=("0d", "7d")),
-    "amount": agg("orders_amount_sum", window=("0d", "7d")),
-    "mean": agg("orders_amount_mean", window=("0d", "7d")),
+    "count": agg("orders", window=("0d", "7d")),
+    "amount": agg("spend", window=("0d", "7d")),
+    "mean": agg("order_value", window=("0d", "7d")),
 }
 design = recipes.time_series(
-    "customer", every="7d", start="2025-01-01", end="2025-01-08",
-    outcomes=outcomes,
+    every="7d", start="2025-01-01", end="2025-01-07", outcomes=outcomes,
 )
 result = design.build(model).materialize(
     Budget(max_rows=1_000, max_output_bytes=1_000_000)
@@ -104,22 +171,38 @@ its count and sum are `0`, and its mean is null with reason `no_observations`.
 An incomplete window is null with its completeness reason, including for a
 zero-activity customer; unknown is not zero.
 
+A monthly series is the same call with a calendar step:
+
+```python
+monthly = recipes.time_series(
+    every="1mo", start="2025-01-31", end="2025-03-31", outcomes=outcomes,
+)
+```
+
+Its anchors are the local midnights of Jan 31, Feb 28 and Mar 31. Only a
+`Schedule` accepts calendar units: windows, `asof(before=)`, `gap=`,
+`EventAnchor(offset=)`, `ltv(period=)`, `life_table(bin=)` and
+`event_sequence(horizon=)` are elapsed time and refuse `"1mo"` with
+`terrine.window.invalid_duration` (context `field`, `value`); use `"30d"` or
+`"4w"`. `state_panel(every="1mo")` refuses with
+`terrine.state_panel.invalid_schedule` (`reason="calendar_months_unsupported"`,
+`route="4w"`) because a state transition's period is a fixed width.
+
 #### Under the hood
 
 ```python
 from terrine import Design, Schedule
 
 equivalent = Design(
-    "customer", Schedule("7d", "2025-01-01", "2025-01-08"), outcomes=outcomes,
+    None, Schedule("7d", "2025-01-01", "2025-01-07"), outcomes=outcomes,
 )
 assert design == equivalent
 ```
 
-The generated event fact `orders` also works as `start_event="orders"` in
+The event `orders` also works as `start_event="orders"` in
 [`recipes.ltv`](trajectories-survival.md#cumulative-ltv). Its required `metric`
-must be an untransformed native metric with exactly one SUM measure: use
-`<source>_<value>_sum`, such as `orders_amount_sum`. Generated count and mean
-metrics are not accepted by this shape. Run
+must be an untransformed metric with exactly one SUM measure, such as
+`spend` above; counts, means and ratios are not accepted by this shape. Run
 `uv run python examples/table_first_dataset.py` for a complete local example
 that creates the roster and orders, checks zero-activity and incomplete-window
 results, and materializes cumulative event-origin values.
@@ -127,25 +210,25 @@ results, and materializes cumulative event-origin values.
 ## Native Catalog declarations
 
 ```yaml
-schema_version: 1
+schema_version: 2
 day_boundary: UTC
 dialect: duckdb
 sources:
   sessions:
     relation: {kind: table, name: session_events}
-    timestamp: occurred_at
-    entities: {user: user_id}
-    facts: [session]
+    time: occurred_at
+    units: {user: user_id}
+    events: [session]
     properties: []
     dimensions: []
-facts:
+events:
   session: {source: sessions, column: null}
 properties: {}
 dimensions: {}
 measures:
-  session_count: {fact: session, aggregation: count, filters: []}
+  session_count: {event: session, aggregation: count, filters: []}
 metrics:
-  sessions: {kind: mean, entity: user, measure: session_count}
+  sessions: {kind: mean, unit: user, measure: session_count}
 ```
 
 Here `kind: mean` describes the downstream population summary; `aggregation:
@@ -192,11 +275,11 @@ using `day_boundary` (for example, a UTC−05:00 boundary binds March 1 midnight
 to 05:00 UTC). `Readiness` stores only these bound half-open intervals. A
 source's observed maximum timestamp never implies completeness.
 
-Logical entities map to physical source keys. A metric selecting `user` uses
-only that logical key as its canonical unit key; other entity columns remain
+Logical units map to physical source keys. A metric selecting `user` uses
+only that logical key as its canonical unit key; other unit columns remain
 available for explicit dimension joins and are not combined into an implicit
 composite identity. Ratio inputs may select different physical columns for the
-same logical entity.
+same logical unit.
 
 Relation declarations are tagged: `{kind: table, name: ...}` names a table and
 `{kind: sql, sql: ...}` declares SQL. SQL must parse as one read-only query for
@@ -225,7 +308,7 @@ half-open, and interpolation is Hyndman--Fan type 7 (`linear_type7`). The
 specification serializes through Design JSON/YAML and contributes to its
 canonical hash.
 The native DuckDB compiler executes exact type-7 order statistics over matched
-half-open event windows. Integer and Decimal facts retain exact decimal
+half-open event windows. Integer and Decimal event values retain exact decimal
 interpolation at a supported output scale; unsupported numeric types or
 precision refuse with a stable error before query execution. Results exclude
 null observations and preserve distinct reasons for no observations, all-null
@@ -321,10 +404,10 @@ design = Design(
 dataset = design.build(model).materialize()
 ```
 
-The fact's column supplies independent occurrence IDs, scoped by analysis unit.
-If the fact is a row marker without a column, declare `Model.event_ids` for its
+The event's column supplies independent occurrence IDs, scoped by analysis unit.
+If the event is a row marker without a column, declare `Model.event_ids` for its
 source. Repeated evidence for one identity is counted once across the entire
-horizon; unrelated labels and null fact identities do not count. The output is
+horizon; unrelated labels and null event identities do not count. The output is
 the ordinal band `sum(count >= threshold)` over strictly increasing positive
 Int64 thresholds, with exact integer comparison and no statistical approximation.
 
@@ -616,8 +699,9 @@ Readiness intersects every metric source and the unit's optional observation
 interval. Incomplete coverage takes precedence over incomplete observation,
 then cell-level empty/all-null/zero-denominator meanings. Unavailable cells
 retain numeric NULL and their exact reason.
-Complete empty sums/counts are zero and conversion is false. Nonempty all-null
-facts still count as events and conversion is true, but sums/averages are NULL.
+Complete empty sums/counts are zero and conversion is false. A nonempty window
+whose event values are all null still counts events and conversion is true,
+but sums/averages are NULL.
 Unknown required filters in an available window refuse before output.
 
 Exact sums export as lossless decimal values with precision up to 38 and the
@@ -657,7 +741,7 @@ run in the integration tier with `uv run pytest integration/temporal`.
 ## Bounded event sequences and event-time origins
 
 Start a bounded ordered dataset with `recipes.event_sequence`. Required
-arguments are `unit`, `event`, `horizon`, and positive `max_events`. It selects
+arguments are `event`, `horizon`, and positive `max_events`. It selects
 the first event as anchor by default and includes matching events in
 `[anchor, anchor + horizon)`. `occurrence` accepts `"first"`, `"each"`, or
 `"nth"`; only `"nth"` takes a positive one-based `n`. Supported options are
@@ -668,7 +752,7 @@ the first event as anchor by default and includes matching events in
 from terrine import recipes
 
 sequence = recipes.event_sequence(
-    "user", event="activity", horizon="2h", max_events=4, session_gap="1h",
+    event="activity", horizon="2h", max_events=4, session_gap="1h",
 )
 ```
 
@@ -678,7 +762,7 @@ sequence = recipes.event_sequence(
 from terrine import Design, EventAnchor, EventSequence, SessionSpec, Window
 
 equivalent = Design(
-    "user", EventAnchor("activity"),
+    None, EventAnchor("activity"),
     shape=EventSequence(
         "activity", Window(0, "2h"), max_events=4, sessions=SessionSpec("1h"),
     ),
@@ -686,7 +770,7 @@ equivalent = Design(
 assert sequence == equivalent
 ```
 
-Use the low-level shape when the selected events differ from the anchor fact,
+Use the low-level shape when the selected events differ from the anchor event,
 or when specifying properties, funnels, or the array representation.
 
 
@@ -708,7 +792,7 @@ configured gap. Funnels retain bounded attempts from each first-step event and
 carry progress/status when a selected observation window ends before a
 deadline.
 
-`EventTime(fact, window)` selects the first matching fact occurrence in its
+`EventTime(event, window)` selects the first matching event occurrence in its
 strict half-open window; `occurrence="last"` selects the last matching event,
 and `occurrence="nth"` selects the corresponding one-based occurrence. Both
 endpoints follow `(timestamp, configured event ID)` order, so tied events choose

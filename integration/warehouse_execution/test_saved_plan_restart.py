@@ -34,24 +34,24 @@ from tests.compile.test_persisted_layers import _persisted_prefixes
 def _catalog() -> Catalog:
     return Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["value"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["value"],
                     "properties": [],
                     "dimensions": [],
                 }
             },
-            "facts": {"value": {"source": "events", "column": "value"}},
+            "events": {"value": {"source": "events", "column": "value"}},
             "properties": {},
             "dimensions": {},
-            "measures": {"total": {"fact": "value", "aggregation": "sum"}},
-            "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
+            "measures": {"total": {"event": "value", "aggregation": "sum"}},
+            "metrics": {"total": {"kind": "mean", "unit": "user", "measure": "total"}},
         }
     )
 
@@ -345,7 +345,7 @@ def test_state_panel_composition_matches_full_rebuild(column_model):
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-02", "2025-01-03"),
+        Schedule("1d", "2025-01-02", "2025-01-02"),
         shape=StatePanel(
             BinnedMetricState("total", cutpoints=(0,), levels=("none", "some")), max_periods=2
         ),
@@ -396,10 +396,10 @@ def test_saved_panel_publication_preserves_ordinary_provenance(column_model, tmp
             design = Sequential(
                 Design(
                     "user",
-                    Schedule("1d", "2025-01-03", "2025-01-05"),
+                    Schedule("1d", "2025-01-03", "2025-01-04"),
                     features={"total": agg("total", window=("-1d", "0s"))},
                 ),
-                treatment=Initiation("events", "amount", datetime(2025, 1, 1, tzinfo=UTC)),
+                treatment=Initiation("amount", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             )
         else:
             design = EventPanel(
@@ -531,10 +531,10 @@ def test_persisted_shape_matrix_preserves_panel_rows_and_metadata(column_model, 
         design = Sequential(
             Design(
                 "user",
-                Schedule("12h", "2025-01-03", "2025-01-05"),
+                Schedule("12h", "2025-01-03", "2025-01-04"),
                 features={"total": agg("total", window=("-1d", "0s"))},
             ),
-            treatment=Initiation("events", "amount", datetime(2025, 1, 1, tzinfo=UTC)),
+            treatment=Initiation("amount", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
         )
     else:
         design = EventPanel(
@@ -603,9 +603,9 @@ def test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors(
         )
         definition["sources"]["statuses"] = {
             "relation": {"kind": "table", "name": "statuses"},
-            "timestamp": "ts",
-            "entities": {"user": "user_id"},
-            "facts": [],
+            "time": "ts",
+            "units": {"user": "user_id"},
+            "events": [],
             "properties": ["state"],
             "dimensions": [],
         }
@@ -625,7 +625,7 @@ def test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors(
     )
     design = Design(
         "user",
-        Schedule(every, "2025-01-02", "2025-01-04"),
+        Schedule(every, "2025-01-02", "2025-01-03"),
         features={"total": agg("total", window=("-1d", "0s"))},
         shape=StatePanel(
             state,

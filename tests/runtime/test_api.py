@@ -77,24 +77,24 @@ def test_custom_saved_plan_executor_is_not_limited_by_builtin_shape_preflight(tm
     con.raw_sql("INSERT INTO events VALUES ('2025-01-01', 1, 3)")
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["value"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["value"],
                     "properties": [],
                     "dimensions": [],
                 }
             },
-            "facts": {"value": {"source": "events", "column": "value"}},
+            "events": {"value": {"source": "events", "column": "value"}},
             "properties": {},
             "dimensions": {},
-            "measures": {"total": {"fact": "value", "aggregation": "sum"}},
-            "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
+            "measures": {"total": {"event": "value", "aggregation": "sum"}},
+            "metrics": {"total": {"kind": "mean", "unit": "user", "measure": "total"}},
         }
     )
     model = Model.from_catalog(
@@ -474,7 +474,7 @@ def test_custom_saved_plan_executor_keeps_state_panel_budget_refusal():
     model = _model(con)
     design = Design(
         "user",
-        Schedule("1d", "2025-01-02", "2025-01-04"),
+        Schedule("1d", "2025-01-02", "2025-01-03"),
         shape=StatePanel(StateObservations("status", ("new", "old")), max_periods=3),
     )
     plan = plan_refresh(

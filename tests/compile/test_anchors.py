@@ -48,20 +48,20 @@ def native_model():
         ),
     )
     catalog = {
-        "schema_version": 1,
+        "schema_version": 2,
         "day_boundary": "UTC-05:00",
         "dialect": "duckdb",
         "sources": {
             "events": {
                 "relation": {"kind": "table", "name": "events"},
-                "timestamp": "ts",
-                "entities": {"user": "user_id"},
-                "facts": ["occurred"],
+                "time": "ts",
+                "units": {"user": "user_id"},
+                "events": ["occurred"],
                 "properties": [],
                 "dimensions": [],
             }
         },
-        "facts": {"occurred": {"source": "events", "column": "occurred"}},
+        "events": {"occurred": {"source": "events", "column": "occurred"}},
         "properties": {},
         "dimensions": {},
         "measures": {},
@@ -111,7 +111,7 @@ def test_fixed_date_keeps_exact_aware_time_zero(native_model):
     ("unit", "anchor", "reference"),
     [
         ("user", FixedDate(date(2025, 1, 3)), "roster"),
-        ("user", Schedule("1d", "2025-01-02", "2025-01-04"), "roster"),
+        ("user", Schedule("1d", "2025-01-02", "2025-01-03"), "roster"),
         ("account", EventAnchor("occurred"), "occurred"),
     ],
 )
@@ -132,9 +132,9 @@ def test_candidate_unit_refusal_matches_static_validation(native_model, unit, an
         assert error.context["name"] == reference
 
 
-def test_event_anchor_requires_fact_declared_by_bound_source(native_model):
+def test_event_anchor_requires_event_declared_by_bound_source(native_model):
     definition = native_model.catalog.model_dump(mode="python")
-    definition["facts"]["ghost"] = {"source": "events", "column": "occurred"}
+    definition["events"]["ghost"] = {"source": "events", "column": "occurred"}
     model = Model.from_catalog(
         Catalog.model_validate(definition),
         con=native_model.con,
@@ -146,7 +146,7 @@ def test_event_anchor_requires_fact_declared_by_bound_source(native_model):
     with pytest.raises(TerrineError) as compile_error:
         compile_anchors(design, model)
     assert static_error.value.code == compile_error.value.code == "terrine.design.missing_reference"
-    assert compile_error.value.context["kind"] == "bound fact"
+    assert compile_error.value.context["kind"] == "bound event"
 
 
 def test_roster_observation_bounds_are_independent_of_exit(native_model):
@@ -156,17 +156,48 @@ def test_roster_observation_bounds_are_independent_of_exit(native_model):
     assert user_b["_observed_until"] is None
 
 
-def test_schedule_end_exclusive_and_roster_lifetime_half_open(native_model):
-    design = Design(unit="user", anchor=Schedule("1d", "2025-01-02", "2025-01-04"))
+def test_schedule_end_is_the_last_scheduled_day_and_roster_lifetime_half_open(native_model):
+    # The model's day boundary is UTC-05:00, so local midnight is 05:00Z.
+    design = Design(unit="user", anchor=Schedule("1d", "2025-01-02", "2025-01-03"))
     result = candidate_rows(design, native_model)
     assert {(row["unit"], row["t0"]) for row in result} == {
-        ("a", datetime(2025, 1, 2, 5, tzinfo=UTC)),
-        ("a", datetime(2025, 1, 3, 5, tzinfo=UTC)),
-        ("b", datetime(2025, 1, 2, 5, tzinfo=UTC)),
-        ("b", datetime(2025, 1, 3, 5, tzinfo=UTC)),
-        ("c", datetime(2025, 1, 2, 5, tzinfo=UTC)),
-        ("c", datetime(2025, 1, 3, 5, tzinfo=UTC)),
+        (unit, datetime(2025, 1, day, 5, tzinfo=UTC)) for unit in "abc" for day in (2, 3)
     }
+    single = candidate_rows(
+        Design(unit="user", anchor=Schedule("1d", "2025-01-02", "2025-01-02")), native_model
+    )
+    assert {row["t0"] for row in single} == {datetime(2025, 1, 2, 5, tzinfo=UTC)}
+
+
+def test_month_schedule_candidate_rows_match_python_instants(native_model):
+    schedule = Schedule("1mo", "2025-01-31", "2025-03-31")
+    result = candidate_rows(Design(unit="user", anchor=schedule), native_model)
+    expected = schedule.instants(native_model.day_boundary)
+    assert expected == tuple(
+        datetime(2025, month, day, 5, tzinfo=UTC) for month, day in ((1, 31), (2, 28), (3, 31))
+    )
+    assert sorted({row["t0"] for row in result}) == sorted(expected)
+    assert {row["anchor_id"] for row in result} == {f"schedule:{k}" for k in range(len(expected))}
+    assert {(row["anchor_id"], row["t0"]) for row in result} == {
+        (f"schedule:{k}", instant) for k, instant in enumerate(expected)
+    }
+
+
+def test_date_anchor_range_end_includes_that_whole_local_day(native_model):
+    def anchors(anchor_range):
+        design = Design(
+            unit="user", anchor=EventAnchor("occurred", "each"), anchor_range=anchor_range
+        )
+        return [(row["unit"], row["t0"]) for row in candidate_rows(design, native_model)]
+
+    # Local Jan 3 is [Jan 3 05:00Z, Jan 4 05:00Z): a's 12:00Z event stays and b's Jan 4
+    # 00:00Z event falls at b's exit, outside b's half-open roster lifetime.
+    assert anchors(AnchorRange(start=date(2025, 1, 3), end=date(2025, 1, 3))) == [
+        ("a", datetime(2025, 1, 3, 12, tzinfo=UTC))
+    ]
+    assert (
+        anchors(AnchorRange(end=date(2025, 1, 2))) == [("a", datetime(2025, 1, 2, tzinfo=UTC))] * 2
+    )
 
 
 def test_event_first_uses_exact_t0_and_stable_id_for_ties(native_model):
@@ -368,9 +399,9 @@ def test_event_tie_check_accepts_physical_column_named_n(native_model, column):
     definition = native_model.catalog.model_dump(mode="python")
     source = definition["sources"]["events"]
     if column == "user_id":
-        source["entities"]["user"] = "n"
+        source["units"]["user"] = "n"
     else:
-        source["timestamp"] = "n"
+        source["time"] = "n"
     model = Model.from_catalog(
         Catalog.model_validate(definition),
         con=native_model.con,
@@ -415,20 +446,20 @@ def _submicro_model(value: int):
     )
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["occurred"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["occurred"],
                     "properties": [],
                     "dimensions": [],
                 }
             },
-            "facts": {"occurred": {"source": "events", "column": None}},
+            "events": {"occurred": {"source": "events", "column": None}},
             "properties": {},
             "dimensions": {},
             "measures": {},

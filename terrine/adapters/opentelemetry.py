@@ -4,7 +4,14 @@ import queue
 import threading
 from typing import Any
 
+from terrine.errors import RefusalSpec
+
 __all__ = ["OpenTelemetryAdapter"]
+
+_INVALID_CONFIGURATION = RefusalSpec(
+    "terrine.runtime.invalid_configuration",
+    "Owner runtime configuration {field} is invalid: {reason}.",
+)
 
 _STATES = frozenset({"queued", "running", "cancel_requested", "succeeded", "failed", "cancelled"})
 
@@ -13,8 +20,8 @@ class OpenTelemetryAdapter:
     """Project safe lifecycle states to application-configured OpenTelemetry instruments."""
 
     def __init__(self, tracer: Any, meter: Any, *, queue_size: int = 128) -> None:
-        if isinstance(queue_size, bool) or queue_size < 1:
-            raise ValueError("queue_size must be positive")
+        if isinstance(queue_size, bool) or not isinstance(queue_size, int) or queue_size < 1:
+            raise _INVALID_CONFIGURATION.error(reason="not_positive_integer", field="queue_size")
         self._tracer = tracer
         self._events: queue.Queue[str] = queue.Queue(maxsize=queue_size)
         try:

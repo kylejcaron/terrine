@@ -5,18 +5,26 @@ from __future__ import annotations
 import json
 import math
 from base64 import b64decode, b64encode
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, date, datetime, timedelta
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
 from terrine.backends.registry import get_engine
-from terrine.errors import RefusalSpec, freeze, thaw
+from terrine.errors import RefusalSpec, freeze, parameter_names, thaw
 from terrine.windows import Window, seconds
+
+if TYPE_CHECKING:
+    import pandas
+    import polars
+
+    from terrine.semantic.models import Filter
+
+type DataFrameLike = pa.Table | pandas.DataFrame | polars.DataFrame
 
 __all__ = [
     "ApproximationMeta",
@@ -33,6 +41,7 @@ __all__ = [
     "ExecutionSnapshot",
     "ExpressionTiming",
     "FeatureCutoff",
+    "History",
     "MaterializedFrame",
     "Preview",
     "Provenance",
@@ -57,15 +66,18 @@ _INVALID_ELIGIBILITY = RefusalSpec(
 )
 _COVERAGE_DAY_OVERFLOW = RefusalSpec(
     "terrine.metadata.unrepresentable_coverage",
-    "Coverage requires a following calendar day; use through before date.max",
+    "Complete end day {through!r} leaves no following day to include the whole end day. "
+    "Choose an earlier last complete day.",
 )
 _COVERAGE_BOUND_OVERFLOW = RefusalSpec(
     "terrine.metadata.unrepresentable_coverage",
-    "Coverage boundary exceeds datetime's range; use interior calendar dates",
+    "Complete days {start!r} through {through!r} cannot be represented in the model's "
+    "local time. Choose days farther from the calendar limits.",
 )
 _COVERAGE_UTC_OVERFLOW = RefusalSpec(
     "terrine.metadata.unrepresentable_coverage",
-    "Coverage exceeds UTC datetime's range; use interior instants",
+    "Complete times {start!r} through {end_exclusive!r} cannot be represented in UTC. "
+    "Choose times farther from the calendar limits.",
 )
 _MISSING_COLUMNS = RefusalSpec(
     "terrine.metadata.missing_columns",
@@ -86,10 +98,76 @@ _ENGINE_STAMP_FIELDS = ("dialect", "engine_name", "engine_status")
 _ARROW_METADATA_KEY = b"terrine.materialized_frame.v2"
 _LEGACY_ARROW_METADATA_KEY = b"terrine.materialized_frame.v1"
 
+_RESERVED_NAME = RefusalSpec(
+    "terrine.model.invalid_binding",
+    "{kind} name {name!r} contains '__', which separates a label from its where= operator; "
+    "rename the {kind}.",
+)
+_HISTORY_TIME_AXIS = RefusalSpec(
+    "terrine.model.invalid_binding",
+    "History {table!r} needs exactly one time axis: valid_from, optionally with valid_to, "
+    "or changed_at alone.",
+)
+_UNSUPPORTED_TABLE_INPUT = RefusalSpec(
+    "terrine.model.invalid_binding",
+    "{field} must be a table name or an in-memory pyarrow, pandas or polars table, not {type}.",
+)
+_INVALID_BINDING = RefusalSpec(
+    "terrine.model.invalid_binding",
+    "Model input {field!r} is invalid ({reason}). "
+    "Use a declared name, the expected input type and an ordered complete time range.",
+)
+_INVALID_LIMIT = RefusalSpec(
+    "terrine.budget.invalid_limit",
+    "Budget {field} is invalid: {reason}; limits are nonnegative integers or None.",
+)
+
 
 def _nonempty(value: str, field: str) -> None:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{field} must be a non-empty string")
+
+
+def _binding_name(value: object, field: str) -> None:
+    if not isinstance(value, str) or not value:
+        raise _INVALID_BINDING.error(reason="empty_name", field=field)
+
+
+def _is_dataframe(value: object, library: str) -> bool:
+    """Whether ``value`` is ``library``'s DataFrame, without importing the library."""
+    return any(
+        (cls.__module__ == library or cls.__module__.startswith(f"{library}."))
+        and cls.__name__ == "DataFrame"
+        for cls in type(value).__mro__
+    )
+
+
+def _table_input(value: str | DataFrameLike, field: str) -> str | pa.Table:
+    """A non-empty table name, or the Arrow form of an in-memory table.
+
+    pandas converts with its index dropped and polars through Arrow; neither
+    library is imported. Any other object (an Ibis table, a path, a mapping)
+    refuses with ``terrine.model.invalid_binding`` before a connection is touched.
+    """
+    if isinstance(value, str):
+        _binding_name(value, field)
+        return value
+    if isinstance(value, pa.Table):
+        table = value
+    elif _is_dataframe(value, "pandas"):
+        table = pa.Table.from_pandas(value, preserve_index=False)
+    elif _is_dataframe(value, "polars"):
+        table = value.to_arrow()
+    else:
+        kind = type(value)
+        raise _UNSUPPORTED_TABLE_INPUT.error(
+            reason="unsupported_table_input",
+            field=field,
+            type=f"{kind.__module__}.{kind.__qualname__}",
+        )
+    if not table.schema:
+        raise _INVALID_BINDING.error(reason="empty_table", field=field)
+    return table
 
 
 def _count(value: int | None, field: str) -> None:
@@ -118,33 +196,25 @@ def _typed_mapping(value: Mapping[str, Any], name: str, value_type: type) -> Map
 
 @dataclass(frozen=True, slots=True, init=False)
 class Coverage:
-    """Inclusive complete local calendar-day declaration; binding owns timezone."""
+    """Declare the inclusive local calendar days for which events or history are complete.
+
+    Example: tr.Coverage("2025-01-01", "2025-03-20")
+    """
 
     start: date
     through: date
 
     def __init__(self, start: date | str, through: date | str) -> None:
-        object.__setattr__(
-            self, "start", date.fromisoformat(start) if isinstance(start, str) else start
-        )
-        object.__setattr__(
-            self, "through", date.fromisoformat(through) if isinstance(through, str) else through
-        )
-        if (
-            not isinstance(self.start, date)
-            or isinstance(self.start, datetime)
-            or not isinstance(self.through, date)
-            or isinstance(self.through, datetime)
-        ):
-            raise TypeError("coverage endpoints must be date values")
+        object.__setattr__(self, "start", _calendar_day(start, "start"))
+        object.__setattr__(self, "through", _calendar_day(through, "through"))
         if self.start > self.through:
-            raise ValueError("coverage start must not follow through")
+            raise _INVALID_BINDING.error(reason="through_before_start", field="through")
         if self.through == date.max:
             raise _COVERAGE_DAY_OVERFLOW.error(through=self.through.isoformat())
 
     def bind(self, day_boundary: Callable[[date], datetime]) -> BoundCoverage:
         if not callable(day_boundary):
-            raise TypeError("day_boundary must be callable")
+            raise _INVALID_BINDING.error(reason="wrong_type", field="day_boundary")
         try:
             start = day_boundary(self.start)
             end = day_boundary(self.through + timedelta(days=1))
@@ -163,8 +233,12 @@ class BoundCoverage:
     end_exclusive: datetime
 
     def __post_init__(self) -> None:
-        _aware(self.start, "start")
-        _aware(self.end_exclusive, "end_exclusive")
+        for name in ("start", "end_exclusive"):
+            value = getattr(self, name)
+            if not isinstance(value, datetime):
+                raise _INVALID_BINDING.error(reason="wrong_type", field=name)
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise _INVALID_BINDING.error(reason="naive_datetime", field=name)
         try:
             start = self.start.astimezone(UTC)
             end = self.end_exclusive.astimezone(UTC)
@@ -173,59 +247,201 @@ class BoundCoverage:
                 start=self.start.isoformat(), end_exclusive=self.end_exclusive.isoformat()
             ) from exc
         if start >= end:
-            raise ValueError("bound coverage start must precede end_exclusive")
+            raise _INVALID_BINDING.error(reason="end_not_after_start", field="end_exclusive")
         object.__setattr__(self, "start", start)
         object.__setattr__(self, "end_exclusive", end)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class UnitSource:
-    table: str
-    key: str
-    entered_at: str | None = None
-    exited_at: str | None = None
-    observed_from: str | None = None
-    observed_until: str | None = None
+    """Declare a unit's table and key, using a table name or an in-memory table.
 
-    def __post_init__(self) -> None:
-        _nonempty(self.table, "table")
-        _nonempty(self.key, "key")
-        for name in ("entered_at", "exited_at", "observed_from", "observed_until"):
-            value = getattr(self, name)
+    Example: tr.UnitSource(customers, "customer_id")
+    """
+
+    table: str | pa.Table
+    key: str
+    entered_at: str | None
+    exited_at: str | None
+    observed_from: str | None
+    observed_until: str | None
+
+    def __init__(
+        self,
+        table: str | DataFrameLike,
+        key: str,
+        entered_at: str | None = None,
+        exited_at: str | None = None,
+        observed_from: str | None = None,
+        observed_until: str | None = None,
+    ) -> None:
+        bound = _table_input(table, "table")
+        _binding_name(key, "key")
+        optional = {
+            "entered_at": entered_at,
+            "exited_at": exited_at,
+            "observed_from": observed_from,
+            "observed_until": observed_until,
+        }
+        for name, value in optional.items():
             if value is not None:
-                _nonempty(value, name)
+                _binding_name(value, name)
+        object.__setattr__(self, "table", bound)
+        object.__setattr__(self, "key", key)
+        for name, value in optional.items():
+            object.__setattr__(self, name, value)
+
+
+def _calendar_day(value: object, field: str) -> date:
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value)
+        except ValueError as error:
+            raise _INVALID_BINDING.error(reason="invalid_date", field=field) from error
+    if not isinstance(value, date) or isinstance(value, datetime):
+        raise _INVALID_BINDING.error(reason="invalid_date", field=field)
+    return value
+
+
+def _complete(value: tuple[date | str, date | str] | None) -> tuple[date, date] | None:
+    if value is None:
+        return None
+    if isinstance(value, str) or not isinstance(value, Sequence) or len(value) != 2:
+        raise _INVALID_BINDING.error(reason="not_a_pair", field="complete")
+    with parameter_names(start="complete", through="complete"):
+        coverage = Coverage(*value)
+    return (coverage.start, coverage.through)
 
 
 @dataclass(frozen=True, slots=True)
+class EventMetric:
+    """One aggregation over an event table, optionally restricted by label filters."""
+
+    aggregation: Literal[
+        "count", "sum", "avg_event", "avg_calendar_day", "min", "max", "count_distinct"
+    ]
+    column: str | None
+    filters: tuple[Filter, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Ratio:
+    """Two metric names declared on the same ``Events``, neither of them a ratio."""
+
+    numerator: str
+    denominator: str
+
+
+@dataclass(frozen=True, slots=True, init=False)
 class Events:
-    """Table-backed event declarations with explicit inclusive completeness days."""
+    """Declare an event table's time, unit key, named metrics, labels and complete days.
 
-    table: str
+    Example: tr.Events(orders, time="ordered_at", key="customer_id", complete=complete)
+    """
+
+    table: str | pa.Table
     time: str
-    keys: Mapping[str, str]
-    values: tuple[str, ...] = ()
-    complete: tuple[date | str, date | str] | None = None
+    key: str
+    unit: str | None
+    metrics: Mapping[str, EventMetric | Ratio]
+    labels: tuple[str, ...]
+    complete: tuple[date, date] | None
 
-    def __post_init__(self) -> None:
-        _nonempty(self.table, "table")
-        _nonempty(self.time, "time")
-        keys = _mapping(self.keys, "keys")
-        for unit, column in keys.items():
-            _nonempty(unit, "unit name")
-            _nonempty(column, "key column")
-        if isinstance(self.values, str):
-            raise TypeError("values must be a sequence of column names")
-        values = tuple(self.values)
-        for value in values:
-            _nonempty(value, "value column")
-        object.__setattr__(self, "keys", keys)
-        object.__setattr__(self, "values", values)
-        if self.complete is not None:
-            if len(self.complete) != 2:
-                raise ValueError("complete must be a pair of inclusive calendar days")
-            complete = (self.complete[0], self.complete[1])
-            Coverage(*complete)
-            object.__setattr__(self, "complete", complete)
+    def __init__(
+        self,
+        table: str | DataFrameLike,
+        *,
+        time: str,
+        key: str,
+        unit: str | None = None,
+        metrics: Mapping[str, EventMetric | Ratio] | None = None,
+        labels: Sequence[str] = (),
+        complete: tuple[date | str, date | str] | None = None,
+    ) -> None:
+        bound = _table_input(table, "table")
+        _binding_name(time, "time")
+        _binding_name(key, "key")
+        if unit is not None:
+            _binding_name(unit, "unit")
+        declared = {} if metrics is None else metrics
+        if not isinstance(declared, Mapping) or any(
+            not isinstance(name, str) or not name or not isinstance(metric, (EventMetric, Ratio))
+            for name, metric in declared.items()
+        ):
+            raise _INVALID_BINDING.error(reason="wrong_type", field="metrics")
+        if isinstance(labels, str) or not isinstance(labels, Iterable):
+            raise _INVALID_BINDING.error(reason="wrong_type", field="labels")
+        names = tuple(labels)
+        for label in names:
+            _binding_name(label, "labels")
+            if "__" in label:
+                raise _RESERVED_NAME.error(reason="reserved_name", kind="label", name=label)
+        if len(set(names)) != len(names):
+            raise _INVALID_BINDING.error(reason="duplicate_names", field="labels")
+        object.__setattr__(self, "table", bound)
+        object.__setattr__(self, "time", time)
+        object.__setattr__(self, "key", key)
+        object.__setattr__(self, "unit", unit)
+        object.__setattr__(self, "metrics", MappingProxyType(dict(declared)))
+        object.__setattr__(self, "labels", names)
+        object.__setattr__(self, "complete", _complete(complete))
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class History:
+    """Declare an attribute's history by unit key and validity times or change time.
+
+    Example: tr.History("plans", key="customer_id", column="plan", changed_at="time")
+    """
+
+    table: str | pa.Table
+    key: str
+    column: str
+    unit: str | None
+    valid_from: str | None
+    valid_to: str | None
+    changed_at: str | None
+    complete: tuple[date, date] | None
+
+    def __init__(
+        self,
+        table: str | DataFrameLike,
+        *,
+        key: str,
+        column: str,
+        unit: str | None = None,
+        valid_from: str | None = None,
+        valid_to: str | None = None,
+        changed_at: str | None = None,
+        complete: tuple[date | str, date | str] | None = None,
+    ) -> None:
+        bound = _table_input(table, "table")
+        _binding_name(key, "key")
+        _binding_name(column, "column")
+        if unit is not None:
+            _binding_name(unit, "unit")
+        for name, value in (
+            ("valid_from", valid_from),
+            ("valid_to", valid_to),
+            ("changed_at", changed_at),
+        ):
+            if value is not None:
+                _binding_name(value, name)
+        if (valid_from is None) == (changed_at is None) or (
+            changed_at is not None and valid_to is not None
+        ):
+            raise _HISTORY_TIME_AXIS.error(
+                reason="history_time_axis",
+                table=bound if isinstance(bound, str) else "<in-memory>",
+            )
+        object.__setattr__(self, "table", bound)
+        object.__setattr__(self, "key", key)
+        object.__setattr__(self, "column", column)
+        object.__setattr__(self, "unit", unit)
+        object.__setattr__(self, "valid_from", valid_from)
+        object.__setattr__(self, "valid_to", valid_to)
+        object.__setattr__(self, "changed_at", changed_at)
+        object.__setattr__(self, "complete", _complete(complete))
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,7 +553,7 @@ class FeatureCutoff:
     reference: Literal["row_t0", "panel_start"] = "row_t0"
 
     def __post_init__(self) -> None:
-        value = seconds(self.latest_seconds)
+        value = seconds(self.latest_seconds, field="latest_seconds")
         if value != self.latest_seconds or not isinstance(self.strict, bool):
             raise ValueError("invalid feature cutoff")
         if self.knowledge not in ("recorded_at", "retrospective_effective_time"):
@@ -481,7 +697,7 @@ class StatePanelMeta:
 class SequenceMeta:
     """Portable event-sequence schema and stable references to status fields."""
 
-    fact: str
+    event: str
     window: Window
     max_events: int
     representation: Literal["positions", "arrays"]
@@ -511,7 +727,7 @@ class SequenceMeta:
     identity_kind: Literal["configured", "timestamp"] = "timestamp"
 
     def __post_init__(self) -> None:
-        _nonempty(self.fact, "fact")
+        _nonempty(self.event, "event")
         if not isinstance(self.window, Window):
             raise TypeError("window must be a Window")
         if (
@@ -993,6 +1209,11 @@ class Provenance:
 
 @dataclass(frozen=True, slots=True)
 class Budget:
+    """Limit output rows, output bytes or estimated scan bytes for a dataset.
+
+    Example: tr.Budget(max_rows=1000)
+    """
+
     max_rows: int | None = None
     max_output_bytes: int | None = None
     max_scan_bytes: int | None = None
@@ -1000,9 +1221,13 @@ class Budget:
 
     def __post_init__(self) -> None:
         for name in ("max_rows", "max_output_bytes", "max_scan_bytes"):
-            _count(getattr(self, name), name)
+            value = getattr(self, name)
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+            ):
+                raise _INVALID_LIMIT.error(reason="not_nonnegative_integer", field=name)
         if not isinstance(self.strict_scan, bool):
-            raise TypeError("strict_scan must be bool")
+            raise _INVALID_LIMIT.error(reason="wrong_type", field="strict_scan")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1291,6 +1516,16 @@ def _bookkeeping_columns(
     return tuple(name for name in names if name in bookkeeping)
 
 
+def _support_columns(names: Sequence[str], columns: Mapping[str, ColumnMeta]) -> tuple[str, ...]:
+    support = {
+        name
+        for meta in columns.values()
+        for name in (meta.complete_column, meta.reason_column)
+        if name is not None and name not in columns
+    }
+    return tuple(name for name in names if name in support)
+
+
 def _ordered_columns(
     names: Sequence[str],
     roles: Roles,
@@ -1298,12 +1533,7 @@ def _ordered_columns(
     timings: Mapping[str, ExpressionTiming],
 ) -> tuple[str, ...]:
     bookkeeping = _bookkeeping_columns(names, roles, columns, timings)
-    support = {
-        name
-        for meta in columns.values()
-        for name in (meta.complete_column, meta.reason_column)
-        if name is not None and name not in columns
-    }
+    support = _support_columns(names, columns)
     ordered = []
     for name in (roles.unit, roles.anchor, roles.t0, *names):
         if name not in names or name in ordered or name in bookkeeping or name in support:
@@ -1369,6 +1599,9 @@ class MaterializedFrame:
         return _bookkeeping_columns(
             self.table.column_names, self.roles, self.columns, self.provenance.expression_timings
         )
+
+    def _support_columns(self) -> tuple[str, ...]:
+        return _support_columns(self.table.column_names, self.columns)
 
     @classmethod
     def from_arrow(cls, table: pa.Table) -> MaterializedFrame:

@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from terrine.spec.io import SCHEMA_VERSION
+
 
 def design_schema() -> dict[str, Any]:
     def ref(name):
@@ -55,13 +57,39 @@ def design_schema() -> dict[str, Any]:
         "Window": {"start": number, "end": number},
         "FixedDate": {"date": ref("Temporal")},
         "EventAnchor": {
-            "fact": text,
+            "event": text,
             "which": {"enum": ["first", "nth", "each"]},
             "n": nullable(integer),
             "offset": duration,
         },
-        "Schedule": {"every": duration, "start": ref("Temporal"), "end": ref("Temporal")},
-        "AnchorRange": {"start": nullable(ref("Temporal")), "end": nullable(ref("Temporal"))},
+        "Schedule": {
+            "every": {
+                **nullable(integer),
+                "description": "Elapsed seconds between anchors; null for a calendar step.",
+            },
+            "months": {
+                **nullable(integer),
+                "description": (
+                    "Calendar months between anchors, each clamped to its month's last day; "
+                    "null for an elapsed step. Exactly one of every and months is set."
+                ),
+            },
+            "start": ref("Temporal"),
+            "end": {
+                **ref("Temporal"),
+                "description": "Last scheduled calendar day, included; start == end is one anchor.",
+            },
+        },
+        "AnchorRange": {
+            "start": nullable(ref("Temporal")),
+            "end": {
+                **nullable(ref("Temporal")),
+                "description": (
+                    "A date keeps anchors through that whole local day; "
+                    "a datetime is an exact exclusive instant."
+                ),
+            },
+        },
         "MetricAgg": {
             "metric": text,
             "window": ref("Window"),
@@ -73,7 +101,7 @@ def design_schema() -> dict[str, Any]:
             "relative_to": nullable(ref("EventTime")),
         },
         "EventTime": {
-            "fact": text,
+            "event": text,
             "window": ref("Window"),
             "label_property": nullable(text),
             "equals": scalar,
@@ -127,7 +155,7 @@ def design_schema() -> dict[str, Any]:
             "within_seconds": nullable(duration),
         },
         "EventSequence": {
-            "fact": text,
+            "event": text,
             "window": ref("Window"),
             "max_events": integer,
             "representation": text,
@@ -136,10 +164,9 @@ def design_schema() -> dict[str, Any]:
             "sessions": nullable(ref("SessionSpec")),
             "funnel": nullable(ref("FunnelSpec")),
         },
-        "Initiation": {"source": text, "property": text, "history_start": text, "knowledge": text},
+        "Initiation": {"event": text, "history_start": text, "knowledge": text},
         "PersistentAdoption": {
-            "source": text,
-            "property": text,
+            "event": text,
             "adopted_value": scalar,
             "history_start": text,
             "persistence": text,
@@ -186,7 +213,7 @@ def design_schema() -> dict[str, Any]:
         )
     definitions["Design"] = obj(
         {
-            "unit": text,
+            "unit": nullable(text),
             "anchor": union("FixedDate", "EventAnchor", "Schedule"),
             "features": outputs,
             "outcomes": outputs,
@@ -217,5 +244,5 @@ def design_schema() -> dict[str, Any]:
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$defs": definitions,
-        **obj({"schema_version": {"const": 1}, "design": ref("Design")}),
+        **obj({"schema_version": {"const": SCHEMA_VERSION}, "design": ref("Design")}),
     }

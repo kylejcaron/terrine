@@ -26,7 +26,10 @@ _SURROGATE_METADATA_KEY = b"terrine.surrogate_arrow.v1"
 
 @dataclass(frozen=True, slots=True)
 class ArrowSurrogate:
-    """Versioned Arrow surrogate projection and portable metadata."""
+    """Return selected Arrow values with unit identity, completeness and portable metadata.
+
+    Example: exports.to_surrogate_arrow(data, features=feature_names, outcomes=outcome_names)
+    """
 
     data: pa.Table
     metadata: Mapping[str, object]
@@ -35,17 +38,26 @@ class ArrowSurrogate:
         import pyarrow as pa
 
         if not isinstance(self.data, pa.Table):
-            raise TypeError("data must be a pyarrow.Table")
+            raise _INVALID.error(reason="wrong_type", field="data")
+        if not isinstance(self.metadata, Mapping):
+            raise _INVALID.error(reason="wrong_type", field="metadata")
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
     @classmethod
     def from_arrow(cls, table: pa.Table) -> ArrowSurrogate:
+        import pyarrow as pa
+
+        if not isinstance(table, pa.Table):
+            raise _INVALID.error(reason="wrong_type", field="table")
         raw = (table.schema.metadata or {}).get(_SURROGATE_METADATA_KEY)
         if raw is None:
-            raise ValueError("Arrow schema has no Terrine surrogate metadata")
-        metadata = json.loads(raw.decode("utf-8"))
-        if metadata.get("schema_version") != 1:
-            raise ValueError("unsupported Terrine surrogate metadata version")
+            raise _INVALID.error(reason="missing_surrogate_metadata", field="table")
+        try:
+            metadata = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as error:
+            raise _INVALID.error(reason="malformed_surrogate_metadata", field="table") from error
+        if not isinstance(metadata, dict) or metadata.get("schema_version") != 1:
+            raise _INVALID.error(reason="unsupported_surrogate_version", field="table")
         clean = dict(table.schema.metadata or {})
         del clean[_SURROGATE_METADATA_KEY]
         return cls(table.replace_schema_metadata(clean or None), metadata)
@@ -62,7 +74,10 @@ class ArrowSurrogate:
 def to_surrogate_arrow(
     data: MaterializedFrame, *, features: tuple[str, ...], outcomes: tuple[str, ...]
 ) -> ArrowSurrogate:
-    """Project Arrow training data with identity, missingness and provenance."""
+    """Select Arrow training values while retaining unit identity and completeness evidence.
+
+    Example: exports.to_surrogate_arrow(data, features=feature_names, outcomes=outcome_names)
+    """
     from terrine.data import MaterializedFrame
 
     if not isinstance(data, MaterializedFrame):

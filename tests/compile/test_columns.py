@@ -36,20 +36,20 @@ def column_model():
     con.raw_sql("CREATE TABLE users AS SELECT * FROM (VALUES ('a'), ('b')) AS u(id)")
     catalog = Catalog.model_validate(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "day_boundary": "UTC",
             "dialect": "duckdb",
             "sources": {
                 "events": {
                     "relation": {"kind": "table", "name": "events"},
-                    "timestamp": "ts",
-                    "entities": {"user": "user_id"},
-                    "facts": ["amount"],
+                    "time": "ts",
+                    "units": {"user": "user_id"},
+                    "events": ["amount"],
                     "properties": ["tier"],
                     "dimensions": [],
                 }
             },
-            "facts": {"amount": {"source": "events", "column": "amount"}},
+            "events": {"amount": {"source": "events", "column": "amount"}},
             "properties": {
                 "tier": {
                     "source": "events",
@@ -59,8 +59,8 @@ def column_model():
                 }
             },
             "dimensions": {},
-            "measures": {"total": {"fact": "amount", "aggregation": "sum"}},
-            "metrics": {"total": {"kind": "mean", "entity": "user", "measure": "total"}},
+            "measures": {"total": {"event": "amount", "aggregation": "sum"}},
+            "metrics": {"total": {"kind": "mean", "unit": "user", "measure": "total"}},
         }
     )
     model = Model.from_catalog(
@@ -141,7 +141,7 @@ def test_time_series_columns_are_values_with_named_support(column_model):
     frame = (
         Design(
             "user",
-            Schedule("1d", "2025-01-02", "2025-01-04"),
+            Schedule("1d", "2025-01-02", "2025-01-03"),
             features={"rev_14d": agg("total", window=("-14d", "0d"))},
         )
         .build(column_model)
@@ -256,12 +256,13 @@ def test_row_check_counts_survive_a_later_unvalidated_join(column_model):
     con.raw_sql("UPDATE events SET weight = CASE WHEN tier = 'old' THEN 'NaN'::DOUBLE ELSE 1 END")
     definition = column_model.catalog.model_dump(mode="python")
     definition["properties"]["tier"]["as_of"] = "static"
-    definition["sources"]["events"]["facts"] = (*definition["sources"]["events"]["facts"], "weight")
-    definition["facts"]["weight"] = {"source": "events", "column": "weight"}
-    definition["measures"]["weight_total"] = {"fact": "weight", "aggregation": "sum"}
+    source_events = definition["sources"]["events"]["events"]
+    definition["sources"]["events"]["events"] = (*source_events, "weight")
+    definition["events"]["weight"] = {"source": "events", "column": "weight"}
+    definition["measures"]["weight_total"] = {"event": "weight", "aggregation": "sum"}
     definition["metrics"]["weight_total"] = {
         "kind": "mean",
-        "entity": "user",
+        "unit": "user",
         "measure": "weight_total",
     }
     model = Model.from_catalog(
@@ -299,8 +300,8 @@ def test_explicit_validity_can_cover_gap_but_derived_change_interval_cannot(
     definition["properties"]["tier"]["dimension"] = "history"
     definition["dimensions"]["history"] = {
         "relation": {"kind": "table", "name": "tier_history"},
-        "source_entity": "user",
-        "entity_column": "id",
+        "unit": "user",
+        "key": "id",
         "properties": ("tier",),
         "validity": {"valid_from": "starts", "valid_to": "ends"}
         if authority == "range"
@@ -342,8 +343,8 @@ def test_dimension_admission_reads_only_the_columns_the_lookup_uses(column_model
     definition["properties"]["tier"]["as_of"] = "static" if validity == "static" else "event_time"
     definition["dimensions"]["history"] = {
         "relation": {"kind": "table", "name": "tier_history"},
-        "source_entity": "user",
-        "entity_column": "id",
+        "unit": "user",
+        "key": "id",
         "properties": ("tier",),
         **(
             {}
@@ -507,8 +508,8 @@ def test_event_time_selector_resolves_dimension_backed_label_property(column_mod
     definition["properties"]["tier"]["dimension"] = "history"
     definition["dimensions"]["history"] = {
         "relation": {"kind": "table", "name": "tier_history"},
-        "source_entity": "user",
-        "entity_column": "id",
+        "unit": "user",
+        "key": "id",
         "properties": ("tier",),
         "validity": {"valid_from": "starts", "valid_to": "ends"},
     }
@@ -660,8 +661,8 @@ def test_event_time_selector_treats_value_less_fact_as_row_occurrence(column_mod
     """)
     definition = column_model.catalog.model_dump(mode="python")
     definition["sources"]["events"]["relation"] = {"kind": "table", "name": "row_events"}
-    definition["sources"]["events"]["facts"] = ("amount", "presence")
-    definition["facts"]["presence"] = {"source": "events", "column": None}
+    definition["sources"]["events"]["events"] = ("amount", "presence")
+    definition["events"]["presence"] = {"source": "events", "column": None}
     model = Model.from_catalog(
         Catalog.model_validate(definition),
         con=con,
@@ -749,12 +750,12 @@ def _dimension_label_model(
     definition["sources"]["events"]["dimensions"] = ("history",)
     definition["sources"]["events"]["relation"] = {"kind": "table", "name": "events"}
     if workspace_by_event_id is not None:
-        definition["sources"]["events"]["entities"]["workspace"] = "workspace_id"
+        definition["sources"]["events"]["units"]["workspace"] = "workspace_id"
     definition["properties"]["tier"]["dimension"] = "history"
     definition["dimensions"]["history"] = {
         "relation": {"kind": "table", "name": "tier_history"},
-        "source_entity": "workspace" if workspace_by_event_id is not None else "user",
-        "entity_column": "id",
+        "unit": "workspace" if workspace_by_event_id is not None else "user",
+        "key": "id",
         "properties": ("tier",),
         "validity": {"valid_from": "starts", "valid_to": "ends"},
     }

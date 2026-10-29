@@ -6,14 +6,28 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-from terrine._time import utc_instant
+from terrine.errors import RefusalSpec
+from terrine.spec.anchors import _aware_instant
 from terrine.windows import seconds
 
 __all__ = ["Trajectory", "CohortSpec", "CohortGrouping", "TimeToEvent", "LifeTable"]
 
+_INVALID = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
+_CHOICE = RefusalSpec("terrine.design.invalid", "Design input {field} must be one of {choices}.")
+
+
+def _name(value: object, field: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise _INVALID.error(reason="empty_name", field=field)
+
 
 @dataclass(frozen=True, slots=True, init=False)
 class Trajectory:
+    """Describe a metric over elapsed periods after t0, optionally accumulated from t0.
+
+    Example: tr.Trajectory("spend", period="30d", periods=2, cumulative=True)
+    """
+
     metric: str
     period: int
     periods: int
@@ -22,15 +36,14 @@ class Trajectory:
     def __init__(
         self, metric: str, period: str | int, periods: int, cumulative: bool = False
     ) -> None:
-        if not isinstance(metric, str) or not metric.strip():
-            raise ValueError("metric must be a non-empty name")
-        duration = seconds(period)
+        _name(metric, "metric")
+        duration = seconds(period, field="period")
         if duration <= 0:
-            raise ValueError("period must be positive")
+            raise _INVALID.error(reason="not_positive", field="period")
         if isinstance(periods, bool) or not isinstance(periods, int) or periods <= 0:
-            raise ValueError("periods must be a positive finite integer")
+            raise _INVALID.error(reason="not_positive_integer", field="periods")
         if not isinstance(cumulative, bool):
-            raise TypeError("cumulative must be bool")
+            raise _INVALID.error(reason="wrong_type", field="cumulative")
         object.__setattr__(self, "metric", metric)
         object.__setattr__(self, "period", duration)
         object.__setattr__(self, "periods", periods)
@@ -39,18 +52,27 @@ class Trajectory:
 
 @dataclass(frozen=True, slots=True)
 class CohortSpec:
+    """Pair a unit's origin event with a metric trajectory.
+
+    Example: tr.CohortSpec("orders", tr.Trajectory("spend", "30d", 2))
+    """
+
     origin: str
     trajectory: Trajectory
 
     def __post_init__(self) -> None:
-        if not isinstance(self.origin, str) or not self.origin.strip():
-            raise ValueError("origin must be a non-empty fact name")
+        _name(self.origin, "origin")
         if not isinstance(self.trajectory, Trajectory):
-            raise TypeError("trajectory must be Trajectory")
+            raise _INVALID.error(reason="wrong_type", field="trajectory")
 
 
 @dataclass(frozen=True, slots=True, init=False)
 class CohortGrouping:
+    """Group units by origin-time buckets and summarize their trajectory values.
+
+    Example: tr.CohortGrouping("30d", datetime(2025, 1, 1, tzinfo=UTC))
+    """
+
     bucket: int
     bucket_origin: datetime
     statistic: Literal["total", "mean"]
@@ -61,45 +83,51 @@ class CohortGrouping:
         bucket_origin: datetime,
         statistic: Literal["total", "mean"] = "mean",
     ) -> None:
-        duration = seconds(bucket)
+        duration = seconds(bucket, field="bucket")
         if duration <= 0:
-            raise ValueError("bucket must be positive")
-        if (
-            not isinstance(bucket_origin, datetime)
-            or bucket_origin.tzinfo is None
-            or bucket_origin.utcoffset() is None
-        ):
-            raise ValueError("bucket_origin must be timezone-aware")
+            raise _INVALID.error(reason="not_positive", field="bucket")
+        if not isinstance(bucket_origin, datetime):
+            raise _INVALID.error(reason="wrong_type", field="bucket_origin")
+        origin = _aware_instant(bucket_origin, "bucket_origin")
         if statistic not in ("total", "mean"):
-            raise ValueError("statistic must be 'total' or 'mean'")
+            raise _CHOICE.error(
+                reason="unsupported_value", field="statistic", choices=("total", "mean")
+            )
         object.__setattr__(self, "bucket", duration)
-        object.__setattr__(self, "bucket_origin", utc_instant(bucket_origin))
+        object.__setattr__(self, "bucket_origin", origin)
         object.__setattr__(self, "statistic", statistic)
 
 
 @dataclass(frozen=True, slots=True)
 class TimeToEvent:
+    """Describe follow-up from t0 until an event, exit or the end of complete history.
+
+    Example: tr.TimeToEvent("orders")
+    """
+
     event: str
     exit: str | None = None
     entry: str | None = None
     delayed_entry: bool = False
 
     def __post_init__(self) -> None:
-        if not isinstance(self.event, str) or not self.event.strip():
-            raise ValueError("event must be a non-empty fact name")
+        _name(self.event, "event")
         for name in ("exit", "entry"):
             value = getattr(self, name)
-            if value is not None and (not isinstance(value, str) or not value.strip()):
-                raise ValueError(f"{name} must be a non-empty fact name or None")
+            if value is not None:
+                _name(value, name)
         if not isinstance(self.delayed_entry, bool):
-            raise TypeError("delayed_entry must be bool")
+            raise _INVALID.error(reason="wrong_type", field="delayed_entry")
         if self.delayed_entry and self.entry is None:
-            raise ValueError("delayed_entry requires an entry fact")
+            raise _INVALID.error(reason="entry_required", field="entry")
 
 
 @dataclass(frozen=True, slots=True, init=False)
 class LifeTable:
-    """Bin observed time-to-event records into descriptive risk-set summaries."""
+    """Summarize time-to-event follow-up in elapsed bins with risk and censor counts.
+
+    Example: tr.LifeTable(tr.TimeToEvent("orders"), interval="7d")
+    """
 
     time_to_event: TimeToEvent
     interval: int
@@ -112,18 +140,16 @@ class LifeTable:
         group_by: tuple[str, ...] = (),
     ) -> None:
         if not isinstance(time_to_event, TimeToEvent):
-            raise TypeError("time_to_event must be TimeToEvent")
-        width = seconds(interval)
+            raise _INVALID.error(reason="wrong_type", field="time_to_event")
+        width = seconds(interval, field="interval")
         if width <= 0:
-            raise ValueError("interval must be positive")
-        if (
-            isinstance(group_by, (str, bytes))
-            or not isinstance(group_by, tuple)
-            or any(not isinstance(name, str) or not name.strip() for name in group_by)
-        ):
-            raise TypeError("group_by must be a tuple of non-empty feature names")
+            raise _INVALID.error(reason="not_positive", field="interval")
+        if isinstance(group_by, (str, bytes)) or not isinstance(group_by, tuple):
+            raise _INVALID.error(reason="wrong_type", field="group_by")
+        for name in group_by:
+            _name(name, "group_by")
         if len(set(group_by)) != len(group_by):
-            raise ValueError("group_by names must be unique")
+            raise _INVALID.error(reason="duplicate_names", field="group_by")
         reserved = {
             "unit",
             "anchor_id",
@@ -138,7 +164,11 @@ class LifeTable:
             "censor_rate",
         }
         if reserved.intersection(group_by):
-            raise ValueError("group_by names cannot collide with life-table output columns")
+            raise _INVALID.error(
+                reason="reserved_name",
+                field="group_by",
+                names=tuple(sorted(reserved.intersection(group_by))),
+            )
         object.__setattr__(self, "time_to_event", time_to_event)
         object.__setattr__(self, "interval", width)
         object.__setattr__(self, "group_by", group_by)

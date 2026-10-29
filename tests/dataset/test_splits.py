@@ -12,6 +12,7 @@ from terrine.dataset.splits import (
     group_bucket,
     reason_counts,
 )
+from terrine.errors import TerrineError
 
 
 def test_group_split_typed_keys_are_order_independent_and_never_alias() -> None:
@@ -75,12 +76,23 @@ def test_time_split_embargo_exclusions_have_reason_counts() -> None:
 def test_group_split_rejects_ambiguous_keys_and_invalid_fractions() -> None:
     policy = GroupSplit()
     for key in (True, None, 1.0):
-        with pytest.raises(TypeError):
+        with pytest.raises(TerrineError) as error:
             group_bucket(cast(Any, key), policy)
-    with pytest.raises(ValueError):
-        GroupSplit(train_fraction=0.0)
-    with pytest.raises(ValueError):
-        GroupSplit(seed=True)
+        assert error.value.code == "terrine.dataset.invalid_split"
+        assert error.value.context["reason"] == "unsupported_group_key"
+    for build, expected in (
+        (lambda: GroupSplit(train_fraction=0.0), ("out_of_range", "train_fraction")),
+        (
+            lambda: GroupSplit(train_fraction=0.5, validation_fraction=0.6),
+            ("fractions_exceed_one", "validation_fraction"),
+        ),
+        (lambda: GroupSplit(seed=cast(Any, True)), ("wrong_type", "seed")),
+        (lambda: GroupSplit(seed=2**63), ("out_of_range", "seed")),
+    ):
+        with pytest.raises(TerrineError) as error:
+            build()
+        assert error.value.code == "terrine.dataset.invalid_split"
+        assert (error.value.context["reason"], error.value.context["field"]) == expected
 
 
 def test_combined_split_keeps_group_mismatches_unassigned() -> None:
@@ -138,16 +150,19 @@ def test_calendar_boundary_uses_catalog_local_day_and_preserves_date_until_bindi
 
 
 def test_submicrosecond_split_timestamps_are_rejected() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(TerrineError) as error:
         TimeSplit(train_until="2025-02-01T00:00:00.000000001Z")
+    assert error.value.code == "terrine.dataset.invalid_split"
+    assert error.value.context == {"reason": "invalid_instant", "field": "train_until"}
     policy = TimeSplit(train_until="2025-02-01T00:00:00Z")
     row = {
         "id": "precision",
         "origin": datetime(2025, 1, 1, tzinfo=UTC),
         "label_end": "2025-02-01T00:00:00.000000001Z",
     }
-    with pytest.raises(ValueError):
+    with pytest.raises(TerrineError) as error:
         assign_splits([row], policy)
+    assert error.value.context == {"reason": "invalid_instant", "field": "label_end"}
 
 
 def test_mixed_calendar_and_instant_boundaries_order_after_catalog_binding() -> None:
@@ -169,5 +184,11 @@ def test_split_policy_record_reconstructs_identical_assignments():
     policy = TimeSplit(train_until="2025-02-01", embargo="2d", groups=groups)
     assert policy_from_record(policy.to_record()) == policy
     assert policy_from_record(groups.to_record()) == groups
-    with pytest.raises(ValueError):
-        policy_from_record({**groups.to_record(), "codec": "unknown"})
+    for record, reason in (
+        ({**groups.to_record(), "codec": "unknown"}, "unknown_record"),
+        ({**groups.to_record(), "train_fraction": "most"}, "malformed_record"),
+    ):
+        with pytest.raises(TerrineError) as error:
+            policy_from_record(record)
+        assert error.value.code == "terrine.dataset.invalid_split"
+        assert error.value.context["reason"] == reason

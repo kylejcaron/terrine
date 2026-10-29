@@ -370,19 +370,19 @@ def test_filtered_source_decimal_keeps_wide_coefficient_domain(connection):
 # --- window results through the public API -----------------------------------------
 
 _CATALOG = {
-    "schema_version": 1,
+    "schema_version": 2,
     "day_boundary": "UTC",
     "sources": {
         "orders": {
             "relation": {"kind": "table", "name": "events"},
-            "timestamp": "occurred_at",
-            "entities": {"user": "user_id"},
-            "facts": ["order", "quantity", "amount", "weight"],
+            "time": "occurred_at",
+            "units": {"user": "user_id"},
+            "events": ["order", "quantity", "amount", "weight"],
             "properties": [],
             "dimensions": [],
         }
     },
-    "facts": {
+    "events": {
         "order": {"source": "orders", "column": None},
         "quantity": {"source": "orders", "column": "qty"},
         "amount": {"source": "orders", "column": "amount"},
@@ -391,34 +391,34 @@ _CATALOG = {
     "properties": {},
     "dimensions": {},
     "measures": {
-        "order_count": {"fact": "order", "aggregation": "count"},
-        "quantity_average": {"fact": "quantity", "aggregation": "avg_event"},
-        "amount_total": {"fact": "amount", "aggregation": "sum"},
-        "amount_average": {"fact": "amount", "aggregation": "avg_event"},
-        "weight_total": {"fact": "weight", "aggregation": "sum"},
-        "weight_average": {"fact": "weight", "aggregation": "avg_event"},
+        "order_count": {"event": "order", "aggregation": "count"},
+        "quantity_average": {"event": "quantity", "aggregation": "avg_event"},
+        "amount_total": {"event": "amount", "aggregation": "sum"},
+        "amount_average": {"event": "amount", "aggregation": "avg_event"},
+        "weight_total": {"event": "weight", "aggregation": "sum"},
+        "weight_average": {"event": "weight", "aggregation": "avg_event"},
     },
     "metrics": {
-        "orders": {"kind": "mean", "entity": "user", "measure": "order_count"},
-        "spend": {"kind": "mean", "entity": "user", "measure": "amount_total"},
-        "average_spend": {"kind": "mean", "entity": "user", "measure": "amount_average"},
+        "orders": {"kind": "mean", "unit": "user", "measure": "order_count"},
+        "spend": {"kind": "mean", "unit": "user", "measure": "amount_total"},
+        "average_spend": {"kind": "mean", "unit": "user", "measure": "amount_average"},
         "spend_per_order": {
             "kind": "ratio",
-            "entity": "user",
+            "unit": "user",
             "numerator": "amount_total",
             "denominator": "order_count",
         },
-        "weight": {"kind": "mean", "entity": "user", "measure": "weight_total"},
-        "average_weight": {"kind": "mean", "entity": "user", "measure": "weight_average"},
+        "weight": {"kind": "mean", "unit": "user", "measure": "weight_total"},
+        "average_weight": {"kind": "mean", "unit": "user", "measure": "weight_average"},
         "weight_per_order": {
             "kind": "ratio",
-            "entity": "user",
+            "unit": "user",
             "numerator": "weight_total",
             "denominator": "order_count",
         },
         "weight_per_quantity": {
             "kind": "ratio",
-            "entity": "user",
+            "unit": "user",
             "numerator": "weight_average",
             "denominator": "quantity_average",
         },
