@@ -1025,3 +1025,53 @@ def test_unknown_string_shape_is_rejected():
     with pytest.raises(TerrineError) as error:
         design.validate(model())
     assert error.value.code == "terrine.design.invalid"
+
+
+def _bound_units(native_inputs, units):
+    from terrine.data import Coverage, UnitSource
+    from terrine.model import Model
+
+    catalog, con = native_inputs
+    return Model.from_catalog(
+        catalog,
+        con=con,
+        readiness={name: Coverage("2025-01-01", "2025-01-31") for name in catalog.sources},
+        units={name: UnitSource("users", column) for name, column in units.items()},
+    )
+
+
+def test_resolve_unit_fills_the_only_unit_and_refuses_otherwise(native_inputs):
+    from dataclasses import replace
+
+    from terrine import recipes
+    from terrine.spec.validate import resolve_unit, validate_design
+
+    design = recipes.time_series(
+        every="1d",
+        start="2025-01-02",
+        end="2025-01-03",
+        features={"past": agg("sessions", window=("-1d", "0d"))},
+    )
+    one = _bound_units(native_inputs, {"user": "user_id"})
+    resolved = resolve_unit(design, one)
+    assert resolved.unit == "user"
+    assert resolved.spec_hash == replace(design, unit="user").spec_hash
+    assert resolve_unit(resolved, one) is resolved
+    assert validate_design(design, one) == validate_design(resolved, one)
+    two = _bound_units(native_inputs, {"user": "user_id", "account": "alt_id"})
+    with pytest.raises(TerrineError) as error:
+        resolve_unit(design, two)
+    assert error.value.code == "terrine.model.ambiguous_unit"
+    assert error.value.context == {
+        "owner": "design",
+        "choices": ("account", "user"),
+        "parameter": "unit",
+    }
+    assert resolve_unit(replace(design, unit="account"), two).unit == "account"
+    with pytest.raises(TerrineError) as error:
+        resolve_unit(design, _bound_units(native_inputs, {}))
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "no_unit_source"
+    with pytest.raises(TerrineError) as error:
+        design.validate(two)
+    assert error.value.code == "terrine.model.ambiguous_unit"

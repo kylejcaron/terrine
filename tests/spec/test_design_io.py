@@ -60,6 +60,18 @@ def test_anchor_variants_and_design_maps_round_trip_as_safe_yaml_and_json():
         assert from_yaml(to_yaml(design)).spec_hash == design.spec_hash
 
 
+def test_unit_null_round_trips():
+    design = Design(None, FixedDate("2025-01-01"))
+    assert design.unit is None
+    assert '"unit":null' in to_json(design)
+    assert from_json(to_json(design)) == design
+    assert from_yaml(to_yaml(design)).unit is None
+    assert from_yaml(to_yaml(design)).spec_hash == design.spec_hash
+    assert design.spec_hash != Design("user", FixedDate("2025-01-01")).spec_hash
+    with pytest.raises(TypeError):
+        from_json(to_json(design).replace('"unit":null', '"unit":1'))
+
+
 def _versioned(design, version):
     document = json.loads(to_json(design))
     document["schema_version"] = version

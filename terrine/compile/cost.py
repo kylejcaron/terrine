@@ -65,7 +65,9 @@ def preview(
     if budget is not None and not isinstance(budget, Budget):
         raise TypeError("budget must be Budget or None")
     from terrine.compile.dispatch import compile_design
+    from terrine.spec.validate import resolve_unit, validate_design
 
+    design = resolve_unit(design, model)
     planned = compile_design(design, model)
     warnings = (_SCAN_WARNING,)
     counts: dict[str, Any] = {}
@@ -80,8 +82,6 @@ def preview(
             input_binding=model.input_binding,
             engine=model._engine,
         ) as context:
-            from terrine.spec.validate import validate_design
-
             execution_model = model._for_execution(
                 context,
                 source_names=set(validate_design(design, model).required_sources),

@@ -27,7 +27,7 @@ from terrine.runtime.state import RuntimeStore
 from terrine.spec.dataset import INVALID_DEFINITION, DatasetDefinition
 from terrine.spec.design import Design
 from terrine.spec.io import from_json, to_json
-from terrine.spec.validate import ensure_runtime_shape_supported
+from terrine.spec.validate import ensure_runtime_shape_supported, resolve_unit
 
 __all__ = ["PlanRequest", "PlanInvocation", "OwnerPlanner"]
 
@@ -282,10 +282,12 @@ class OwnerPlanner:
         budget = request.budget or Budget()
         _scan_policy(request.budget)
         enforce_shape_budget(request.design.shape, budget)
-        design = request.design
-        if request.dataset_definition is not None:
+        design = resolve_unit(request.design, model)
+        definition = request.dataset_definition
+        if definition is not None:
+            definition = definition.resolve_unit(model)
             try:
-                frame = request.dataset_definition.build(model)
+                frame = definition.build(model)
             except TerrineError:
                 raise
             except (KeyError, TypeError, ValueError, OverflowError) as error:
@@ -301,11 +303,9 @@ class OwnerPlanner:
             design,
             sources=source_names,
             definition_hash=(
-                request.design.spec_hash
-                if request.dataset_definition is None
-                else hashlib.sha256(
-                    (request.dataset_definition.digest + model.model_hash).encode()
-                ).hexdigest()
+                design.spec_hash
+                if definition is None
+                else hashlib.sha256((definition.digest + model.model_hash).encode()).hexdigest()
             ),
             partitions=(request.requested_scope or "all",),
             expression_timings=compiled.expression_timings,
@@ -327,8 +327,8 @@ class OwnerPlanner:
             )
             snapshot_compiled = (
                 compile_design(design, execution_model)
-                if request.dataset_definition is None
-                else request.dataset_definition.build(execution_model)._active_compiled()
+                if definition is None
+                else definition.build(execution_model)._active_compiled()
             )
             validate_compiled_output(snapshot_compiled, execution_model.con.to_pyarrow)
         finally:
@@ -336,7 +336,7 @@ class OwnerPlanner:
         plan = plan_refresh(
             namespace=namespace,
             dataset=request.destination.dataset,
-            definition_hash=request.design.spec_hash,
+            definition_hash=design.spec_hash,
             snapshot_id=snapshot.snapshot_id,
             graph=graph,
             changes=request.changes,
@@ -344,12 +344,12 @@ class OwnerPlanner:
         )
         saved_plan = SavedPlan.create(
             plan_json=plan.serialize(),
-            design=request.design,
+            design=design,
             model=request.model,
             destination=request.destination,
             namespace=namespace,
             expected_base_manifest=expected_manifest,
-            dataset_definition=request.dataset_definition,
+            dataset_definition=definition,
         )
         request_key = hashlib.sha256(
             _canonical([namespace, request.invocation_id, request.destination.to_dict()]).encode()

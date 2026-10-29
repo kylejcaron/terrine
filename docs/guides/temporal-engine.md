@@ -136,7 +136,8 @@ inferred from tables.
 ### Scheduled time series
 
 Start with `recipes.time_series`: one row per roster unit and scheduled calendar
-anchor. Required arguments are `unit`, `every`, `start`, and `end`; dates may
+anchor. Required arguments are `every`, `start`, and `end`; `unit` is the model's
+only unit unless named (see [unit inference](design-specs.md#unit-inference)). Dates may
 be calendar dates or ISO date strings, never timestamps. The schedule defines
 the anchors, without a separate period count: `t0` runs from `start` in steps
 of `every` through the `end` day, which is included, so `start == end` is a
@@ -158,8 +159,7 @@ outcomes = {
     "mean": agg("order_value", window=("0d", "7d")),
 }
 design = recipes.time_series(
-    "customer", every="7d", start="2025-01-01", end="2025-01-07",
-    outcomes=outcomes,
+    every="7d", start="2025-01-01", end="2025-01-07", outcomes=outcomes,
 )
 result = design.build(model).materialize(
     Budget(max_rows=1_000, max_output_bytes=1_000_000)
@@ -175,8 +175,7 @@ A monthly series is the same call with a calendar step:
 
 ```python
 monthly = recipes.time_series(
-    "customer", every="1mo", start="2025-01-31", end="2025-03-31",
-    outcomes=outcomes,
+    every="1mo", start="2025-01-31", end="2025-03-31", outcomes=outcomes,
 )
 ```
 
@@ -195,7 +194,7 @@ Its anchors are the local midnights of Jan 31, Feb 28 and Mar 31. Only a
 from terrine import Design, Schedule
 
 equivalent = Design(
-    "customer", Schedule("7d", "2025-01-01", "2025-01-07"), outcomes=outcomes,
+    None, Schedule("7d", "2025-01-01", "2025-01-07"), outcomes=outcomes,
 )
 assert design == equivalent
 ```
@@ -742,7 +741,7 @@ run in the integration tier with `uv run pytest integration/temporal`.
 ## Bounded event sequences and event-time origins
 
 Start a bounded ordered dataset with `recipes.event_sequence`. Required
-arguments are `unit`, `event`, `horizon`, and positive `max_events`. It selects
+arguments are `event`, `horizon`, and positive `max_events`. It selects
 the first event as anchor by default and includes matching events in
 `[anchor, anchor + horizon)`. `occurrence` accepts `"first"`, `"each"`, or
 `"nth"`; only `"nth"` takes a positive one-based `n`. Supported options are
@@ -753,7 +752,7 @@ the first event as anchor by default and includes matching events in
 from terrine import recipes
 
 sequence = recipes.event_sequence(
-    "user", event="activity", horizon="2h", max_events=4, session_gap="1h",
+    event="activity", horizon="2h", max_events=4, session_gap="1h",
 )
 ```
 
@@ -763,7 +762,7 @@ sequence = recipes.event_sequence(
 from terrine import Design, EventAnchor, EventSequence, SessionSpec, Window
 
 equivalent = Design(
-    "user", EventAnchor("activity"),
+    None, EventAnchor("activity"),
     shape=EventSequence(
         "activity", Window(0, "2h"), max_events=4, sessions=SessionSpec("1h"),
     ),

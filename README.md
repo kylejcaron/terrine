@@ -56,7 +56,7 @@ model = tr.Model.from_tables(
 # One row per customer on the first of each month: the last 30 days as
 # features, spend in the next 30 days as the target.
 design = tr.recipes.time_series(
-    "customer", every="1mo", start="2025-02-01", end="2025-03-01",
+    every="1mo", start="2025-02-01", end="2025-03-01",
     features={
         "orders_30d": tr.agg("orders", window=("-30d", "0s")),
         "spend_30d": tr.agg("spend", window=("-30d", "0s")),

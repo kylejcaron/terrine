@@ -77,7 +77,7 @@ _VIEW = TypeAdapter(Annotated[TrainingView | ScoringView, Field(discriminator="k
 
 
 def parse_definition(serialized: str, model: Model) -> DatasetDefinition:
-    definition = DatasetDefinition.from_json(serialized)
+    definition = DatasetDefinition.from_json(serialized).resolve_unit(model)
     if definition.view is not None:
         try:
             _VIEW.validate_json(json.dumps(thaw(definition.view)))

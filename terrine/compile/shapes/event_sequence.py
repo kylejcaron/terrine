@@ -127,6 +127,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         raise TypeError("design shape must be EventSequence")
     _validate_sequence_column_names(design, sequence)
     design.validate(model)
+    assert design.unit is not None  # every entry point resolves the design first
     # Column expressions remain anchor-grain values; event payloads are joined to them
     # only after sequence selection, using the same compiled anchor relation.
     base_design = Design(

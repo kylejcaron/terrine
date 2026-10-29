@@ -59,10 +59,9 @@ def readme_model(con: Any | None = None) -> Model:
     )
 
 
-def readme_design(unit: str = "customer") -> Design:
+def readme_design() -> Design:
     """The README's monthly snapshots: trailing 30-day features, next 30 days of spend."""
     return recipes.time_series(
-        unit,
         every="1mo",
         start="2025-02-01",
         end="2025-03-01",

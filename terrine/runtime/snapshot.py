@@ -469,8 +469,9 @@ class _SnapshotContext(ExecutionContext):
 def _design_root_names(
     model: Model, design: Design
 ) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
-    from terrine.spec.validate import validate_design
+    from terrine.spec.validate import resolve_unit, validate_design
 
+    design = resolve_unit(design, model)
     sources: set[str] = (
         set(validate_design(design, model).required_sources)
         if design.unit in model.units

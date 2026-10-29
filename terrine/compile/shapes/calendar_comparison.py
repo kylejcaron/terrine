@@ -137,6 +137,7 @@ def _period_check(cohorts, anchors, periods, every):
 def _cohort_units(design: Design, model: Model, anchors: AnchorTable):
     spec = design.shape
     assert isinstance(spec, CalendarComparisonSpec)
+    assert design.unit is not None  # every entry point resolves the design first
     selector = spec.cohort
     source = model.sources[resolve_selector_source(model, selector.event)]
     events = normalize_events(model._relation(source.relation), source, source.units[design.unit])

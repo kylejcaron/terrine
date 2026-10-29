@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
@@ -46,7 +46,7 @@ from terrine.windows import Window
 
 if TYPE_CHECKING:
     from terrine.model import Model
-__all__ = ["ValidationReport", "resolve_selector_source", "validate_design"]
+__all__ = ["ValidationReport", "resolve_selector_source", "resolve_unit", "validate_design"]
 
 _INVALID = RefusalSpec("terrine.design.invalid", "Design validation failed: {reason}.")
 _QUANTILE_BACKEND = RefusalSpec(
@@ -98,6 +98,11 @@ _AMBIGUOUS = RefusalSpec(
 )
 _UNIT = RefusalSpec(
     "terrine.design.incompatible_unit", "Analysis unit {unit!r} is incompatible with {name!r}."
+)
+_AMBIGUOUS_UNIT = RefusalSpec(
+    "terrine.model.ambiguous_unit",
+    "{owner} does not say which unit its rows belong to and the model declares "
+    "{choices}; pass {parameter}= with one of them.",
 )
 _WINDOW = RefusalSpec("terrine.design.invalid_window", "Window for {name!r} must have start < end.")
 _GAP = RefusalSpec("terrine.design.gap_violation", "{role} window or cutoff violates gap {gap}.")
@@ -726,7 +731,24 @@ def resolve_selector_source(model: Model, name: str) -> str:
     return owners.pop()
 
 
+def resolve_unit(design: Design, model: Model) -> Design:
+    """Return ``design`` with a concrete unit: unchanged when set, else the model's only one.
+
+    With two or more ``UnitSource``s the choice is the user's and the design refuses
+    with ``terrine.model.ambiguous_unit``; with none there is nothing to infer.
+    """
+    if design.unit is not None:
+        return design
+    choices = tuple(sorted(model.units))
+    if len(choices) == 1:
+        return replace(design, unit=choices[0])
+    if not choices:
+        raise _INVALID.error(reason="no_unit_source")
+    raise _AMBIGUOUS_UNIT.error(owner="design", choices=choices, parameter="unit")
+
+
 def validate_design(design: Design, model: Model) -> ValidationReport:
+    design = resolve_unit(design, model)
     required: set[str] = set()
     obligations: list[str] = []
     _validate_shape(design, model, required, obligations)

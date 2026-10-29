@@ -14,7 +14,7 @@ from terrine.spec.design import Design
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import StatePanel
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
-from terrine.spec.validate import ensure_runtime_shape_supported
+from terrine.spec.validate import ensure_runtime_shape_supported, resolve_unit
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -33,6 +33,7 @@ def compile_design(
     """Compile a shape, propagating supported verified logical substitutions."""
     from terrine.compile.columns import exact_scope
 
+    design = resolve_unit(design, model)
     with exact_scope(model):
         return _compile_design(
             design,

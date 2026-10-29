@@ -109,6 +109,19 @@
   `CalendarComparisonSpec` on a month schedule refuses with
   `terrine.design.invalid_calendar_comparison` (same reason, `every`, `route`),
   because both shapes step by a fixed elapsed width.
+- `Design.unit` may be `None`, and every `terrine.recipes` constructor takes
+  `unit: str | None = None`: an unset unit means the model's only `UnitSource`.
+  The design is resolved wherever it meets a model (`validate`, `build`,
+  `snapshot`, `preview`, `plan_layers`, the agent tools and staging); with
+  several `UnitSource`s it refuses with `terrine.model.ambiguous_unit`
+  (context `owner="design"`, sorted `choices`, `parameter="unit"`) and with
+  none with `terrine.design.invalid` (`reason="no_unit_source"`). `to_yaml`
+  and `to_json` write `unit: null` and read it back; `spec_hash` of such a
+  design hashes that document, while the identity recorded by staging, saved
+  definitions and scoring views is the resolved design's, so a typed and an
+  inferred unit give the same staged `design_hash`, definition digest and
+  scoring `view_hash`. The README and the guides omit the unit on single-unit
+  models.
 
 ### Breaking changes
 
@@ -195,6 +208,10 @@
   parameter, and `SessionSpec(gap=)` and `FunnelSpec(within=)` let a
   malformed duration refuse with `terrine.window.invalid_duration` instead of
   rewrapping it as `terrine.sequence.invalid_spec`.
+- `recipes.life_table` takes `group_by` as a mapping from each grouping
+  column's name to its expression or predicate and no longer accepts
+  `features=`; the names are the design's features and the life table's
+  groups, so a mismatch cannot arise and the former `ValueError` is gone.
 - Output row order on DuckDB may differ from anchor order for a small study
   (DuckDB rewrites an as-of join with fewer than 64 estimated cutoffs into a
   hash aggregate). Row order was never part of the dataset contract on any

@@ -106,11 +106,24 @@ def test_design_example_handles_event_only_and_multiple_entity_models(tools, ros
         model_reference=reference,
         allowed_catalogs=frozenset({reference.catalog_hash}),
     )
-    result = DatasetTools(model, policy, namespace="agent").design_example()
+    agent = DatasetTools(model, policy, namespace="agent")
+    result = agent.design_example()
     assert result.status == "ok"
     assert result.output is not None
     design = from_json(result.output.serialized)
     assert design.unit == ("user" if roster else "account")
+    document = json.loads(result.output.serialized)
+    document["design"]["unit"] = None
+    proposed = agent.propose_design(json.dumps(document), base=result.output.serialized)
+    if roster:
+        assert proposed.status == "ok"
+        assert proposed.output is not None
+        assert from_json(proposed.output.serialized) == design
+        assert proposed.output.spec_hash == design.spec_hash
+        assert proposed.output.changed_paths == ()
+    else:
+        assert proposed.code == "terrine.design.invalid"
+        assert agent.validate_design(json.dumps(document)).code == "terrine.design.invalid"
 
 
 def test_propose_design_and_definition_from_discovered_schema(tools, monkeypatch):

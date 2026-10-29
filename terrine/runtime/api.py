@@ -470,9 +470,10 @@ class DesignExecutor:
         from threading import RLock
 
         from terrine.runtime.backends.duckdb import DuckDBBackend
+        from terrine.spec.validate import resolve_unit
 
         self._model = model
-        self.design = design
+        self.design = resolve_unit(design, model)
         self._plan = plan
         self._keys: tuple[Any, ...] | None = None
         self._backend = DuckDBBackend(con, namespace=namespace)

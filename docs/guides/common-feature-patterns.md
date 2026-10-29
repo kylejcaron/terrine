@@ -61,7 +61,7 @@ rolling = {
     for days in (7, 14, 30)
 }
 rolling_rows = tr.recipes.time_series(
-    "user", every="1d", start="2025-02-01", end="2025-02-01", features=rolling,
+    every="1d", start="2025-02-01", end="2025-02-01", features=rolling,
 ).build(model).to_pandas()
 ```
 
@@ -77,7 +77,7 @@ purchase = tr.event_time(
     "activity", window=("0s", "7d"), label_property="kind", equals="purchase",
 )
 conditional_rows = tr.recipes.time_series(
-    "user", every="1d", start="2025-02-01", end="2025-02-01",
+    every="1d", start="2025-02-01", end="2025-02-01",
     outcomes={"activity_after_purchase": tr.agg(
         "activity_count", window=("0s", "1h"), relative_to=purchase,
     )},
@@ -94,7 +94,7 @@ eligibility refuses export rather than being treated as false.
 
 ```python
 eligible_rows = tr.recipes.time_series(
-    "user", every="1d", start="2025-02-01", end="2025-02-01",
+    every="1d", start="2025-02-01", end="2025-02-01",
     features=rolling,
     eligibility={"active_before": tr.gt(tr.agg("activity_count", window=("-30d", "0s")), 0)},
 ).build(model).to_pandas()
@@ -110,7 +110,7 @@ authoritative validity intervals, bind a history table with `tr.History`
 
 ```python
 attribute_rows = tr.recipes.time_series(
-    "user", every="1d", start="2025-02-01", end="2025-02-01",
+    every="1d", start="2025-02-01", end="2025-02-01",
     features={"tier_at_t0": tr.asof("tier", before="0s")},
 ).build(model).to_pandas()
 ```
@@ -124,7 +124,7 @@ This derived pandas column is not a new Terrine expression or saved definition.
 
 ```python
 recency_rows = tr.recipes.time_series(
-    "user", every="1d", start="2025-02-01", end="2025-02-01",
+    every="1d", start="2025-02-01", end="2025-02-01",
     features={"last_seen": tr.event_time(
         "activity", window=("-30d", "0s"), occurrence="last",
     )},
@@ -141,7 +141,7 @@ Incomplete follow-up remains null with its completeness reason, not false.
 
 ```python
 label_rows = tr.recipes.time_series(
-    "user", every="1d", start="2025-02-01", end="2025-02-01",
+    every="1d", start="2025-02-01", end="2025-02-01",
     outcomes={
         "converted_7d": tr.gt(tr.agg("purchase_count", window=("0s", "7d")), 0),
         "churned_30d": tr.eq(tr.agg("activity_count", window=("0s", "30d")), 0),

@@ -161,6 +161,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         if name.casefold() in generated:
             raise _INVALID.error(reason=f"generated_column_collision_{name}")
     design.validate(model)
+    assert design.unit is not None  # every entry point resolves the design first
     shape = design.shape
     base_design = Design(
         design.unit,

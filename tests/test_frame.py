@@ -72,3 +72,28 @@ def test_sequence_materialization_requires_positive_row_and_byte_limits(native_i
     with pytest.raises(TerrineError) as error:
         frame.materialize(budget)
     assert error.value.code == "terrine.sequence.budget_required"
+
+
+def test_inferred_unit_frame_shares_the_explicit_design_identity(native_inputs):
+    catalog, con = native_inputs
+    readiness = {name: Coverage("2025-01-01", "2025-01-31") for name in catalog.sources}
+    features = {"past": agg("sessions", window=("-1d", "0d"))}
+    explicit = Design("user", EventAnchor("session"), features=features)
+    inferred = Design(None, EventAnchor("session"), features=features)
+    one = Model.from_catalog(
+        catalog, con=con, readiness=readiness, units={"user": UnitSource("users", "user_id")}
+    )
+    result = inferred.build(one).materialize()
+    assert result.provenance.design_hash == explicit.spec_hash
+    assert result.table.equals(explicit.build(one).materialize().table)
+    two = Model.from_catalog(
+        catalog,
+        con=con,
+        readiness=readiness,
+        units={"user": UnitSource("users", "user_id"), "account": UnitSource("users", "alt_id")},
+    )
+    with pytest.raises(TerrineError) as error:
+        inferred.build(two)
+    assert error.value.code == "terrine.model.ambiguous_unit"
+    assert error.value.context["choices"] == ("account", "user")
+    assert explicit.build(two).materialize().provenance.design_hash == explicit.spec_hash

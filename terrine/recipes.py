@@ -53,7 +53,7 @@ def _entry_anchor(event: str, occurrence: str, n: int | None) -> EventAnchor:
 
 
 def time_series(
-    unit: str,
+    unit: str | None = None,
     *,
     every: str | int,
     start: date | str,
@@ -67,6 +67,7 @@ def time_series(
 ) -> Design:
     """Build a Design on a calendar-date Schedule whose ``end`` day is included.
 
+    ``unit`` defaults to the model's only unit; a model with several needs it named.
     ``every`` is an elapsed duration (``"7d"``, ``"4w"``) or a calendar step (``"1mo"``,
     ``"3mo"``, ``"1y"``) whose anchors clamp to each month's last day.
     """
@@ -83,7 +84,7 @@ def time_series(
 
 
 def trial_panel(
-    unit: str,
+    unit: str | None = None,
     *,
     every: str | int,
     start: date | str,
@@ -121,7 +122,7 @@ def trial_panel(
 
 
 def event_panel(
-    unit: str,
+    unit: str | None = None,
     *,
     event: str,
     periods: tuple[int, ...],
@@ -154,7 +155,7 @@ def event_panel(
 
 
 def ltv(
-    unit: str,
+    unit: str | None = None,
     *,
     start_event: str,
     metric: str,
@@ -187,7 +188,7 @@ def ltv(
 
 
 def survival(
-    unit: str,
+    unit: str | None = None,
     *,
     start_event: str,
     end_event: str,
@@ -215,29 +216,30 @@ def survival(
 
 
 def life_table(
-    unit: str,
+    unit: str | None = None,
     *,
     start_event: str,
     end_event: str,
     bin: str | int,
+    group_by: Mapping[str, Expr | Predicate] | None = None,
     occurrence: Literal["first", "nth"] = "first",
     n: int | None = None,
-    features: Mapping[str, Expr | Predicate] | None = None,
-    group_by: tuple[str, ...] = (),
     eligibility: Mapping[str, Predicate] | None = None,
     anchor_range: AnchorRange | None = None,
     gap: str | int = "0d",
     administrative_cutoff: datetime | None = None,
 ) -> Design:
-    """Build a LifeTable over TimeToEvent, retaining exactly the declared grouping features."""
-    shape = LifeTable(TimeToEvent(end_event), bin, group_by=group_by)
-    if set(shape.group_by) != set(features or {}):
-        raise ValueError("life-table features must exactly match group_by names")
+    """Build a LifeTable over TimeToEvent whose rows are grouped by the ``group_by`` expressions.
+
+    Each ``group_by`` entry is a named feature expression or predicate; the names are
+    the life table's grouping columns, so nothing else can be declared as a feature.
+    """
+    groups = {} if group_by is None else dict(group_by)
     return Design(
         unit,
         _entry_anchor(start_event, occurrence, n),
-        shape=shape,
-        features=features,
+        shape=LifeTable(TimeToEvent(end_event), bin, group_by=tuple(groups)),
+        features=groups,
         eligibility=eligibility,
         anchor_range=anchor_range,
         gap=gap,
@@ -246,7 +248,7 @@ def life_table(
 
 
 def state_panel(
-    unit: str,
+    unit: str | None = None,
     *,
     state_source: StateObservations | BinnedMetricState,
     every: str | int,
@@ -280,7 +282,7 @@ def state_panel(
 
 
 def event_sequence(
-    unit: str,
+    unit: str | None = None,
     *,
     event: str,
     horizon: str | int,

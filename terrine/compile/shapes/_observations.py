@@ -77,6 +77,7 @@ def _period_design(
 def _points(design: Design, model: Model, state: StateObservations):
     schedule = design.anchor
     assert isinstance(schedule, Schedule) and schedule.every is not None
+    assert design.unit is not None  # every entry point resolves the design first
     candidates = [
         (source, source.properties[state.property])
         for source in model.sources.values()
@@ -141,6 +142,7 @@ def _points(design: Design, model: Model, state: StateObservations):
 
 
 def _bounds_relation(design: Design, model: Model):
+    assert design.unit is not None  # every entry point resolves the design first
     unit_source = model.units[design.unit]
     raw = model._relation(TableRef(kind="table", name=unit_source.table))
     checks = _unique_checks(raw, unit_source.key, "roster")

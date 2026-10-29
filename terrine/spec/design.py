@@ -97,7 +97,7 @@ class Treatment:
 
 @dataclass(frozen=True, slots=True, init=False)
 class Design:
-    unit: str
+    unit: str | None
     anchor: FixedDate | EventAnchor | Schedule
     features: Mapping[str, Expr | Predicate]
     outcomes: Mapping[str, Expr | Predicate]
@@ -121,7 +121,7 @@ class Design:
 
     def __init__(
         self,
-        unit: str,
+        unit: str | None,
         anchor: FixedDate | EventAnchor | Schedule,
         *,
         features: Mapping[str, Expr | Predicate] | None = None,
@@ -142,8 +142,8 @@ class Design:
         sample: MatchedT0Sample | None = None,
         administrative_cutoff: datetime | None = None,
     ) -> None:
-        if not isinstance(unit, str) or not unit.strip():
-            raise ValueError("unit must be a non-empty string")
+        if unit is not None and (not isinstance(unit, str) or not unit.strip()):
+            raise ValueError("unit must be a non-empty string or None")
         if not isinstance(anchor, (FixedDate, EventAnchor, Schedule)):
             raise TypeError("anchor must be a supported anchor node")
         if treatment is not None and not isinstance(treatment, Treatment):
@@ -294,10 +294,15 @@ class Design:
         eligibility: Mapping[str, Predicate],
         features: tuple[str, ...] | None = None,
     ) -> Frame:
-        """Build a roster-backed feature-only scoring view at one fixed instant."""
+        """Build a roster-backed feature-only scoring view at one fixed instant.
+
+        An unset ``unit`` is resolved against ``model`` first, so the scoring view and
+        its parent identity are those of the resolved design.
+        """
         from terrine.semantic.time import boundary_timezone
         from terrine.spec.anchors import FixedDate
         from terrine.spec.dataset import INVALID_VIEW, UNSUPPORTED_VIEW
+        from terrine.spec.validate import resolve_unit
 
         if self.shape != "cross_section":
             raise UNSUPPORTED_VIEW.error(
@@ -337,12 +342,13 @@ class Design:
             resolved = utc_instant(resolved)
         except (TypeError, ValueError, OverflowError) as error:
             raise INVALID_VIEW.error(reason="as_of is invalid") from error
+        parent = resolve_unit(self, model)
         scoring_design = Design(
-            self.unit,
+            parent.unit,
             FixedDate(resolved),
-            features={name: self.features[name] for name in selected},
+            features={name: parent.features[name] for name in selected},
             eligibility=eligibility,
-            gap=self.gap,
+            gap=parent.gap,
         )
         frame = scoring_design.build(model)
         from terrine.frame import _ScoringView
@@ -350,7 +356,7 @@ class Design:
         object.__setattr__(
             frame,
             "_scoring_view",
-            _ScoringView(self.spec_hash, selected, resolved),
+            _ScoringView(parent.spec_hash, selected, resolved),
         )
         return frame
 

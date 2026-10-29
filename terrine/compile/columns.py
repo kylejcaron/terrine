@@ -403,6 +403,8 @@ def compile_columns(
     """Compile candidates and distinct expressions once without reading source rows."""
     _validate_names(design)
     design.validate(model)
+    unit_name = design.unit
+    assert unit_name is not None  # every entry point resolves the design first
     range_plans = plan_ranges(design, model)
     anchors = _anchor_table or compile_anchors(
         design, model, include_membership=include_membership, persisted=persisted_anchors
@@ -451,7 +453,7 @@ def compile_columns(
                 selector_identity_columns[source_name] = identity_alias
                 extra_columns = {identity_alias: configured_id}
             events = normalize_events(
-                raw, source, source.units[design.unit], extra_columns=extra_columns
+                raw, source, source.units[unit_name], extra_columns=extra_columns
             )
             histories = {}
             for dimension in source.dimensions:
@@ -839,7 +841,7 @@ def compile_columns(
             result = compile_asof(
                 expression_anchors,
                 model,
-                unit=design.unit,
+                unit=unit_name,
                 attribute=node.attribute,
                 offset=node.before,
                 strict=True,
@@ -1335,7 +1337,7 @@ def compile_columns(
         result = compile_asof(
             table,
             model,
-            unit=design.unit,
+            unit=unit_name,
             attribute=treatment.attribute,
             offset=treatment.at,
             strict=False,

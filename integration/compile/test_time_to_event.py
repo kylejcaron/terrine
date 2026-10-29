@@ -20,15 +20,13 @@ def test_life_table_grouping_features_retain_conservative_surrogate_timing():
     try:
         life = (
             recipes.life_table(
-                "user",
                 start_event="purchase",
                 end_event="churn",
                 bin="7d",
-                features={
+                group_by={
                     "region": asof("region", before="-1d"),
                     "north": eq(asof("region", before="-1d"), "north"),
                 },
-                group_by=("region", "north"),
                 administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
             )
             .build(model)

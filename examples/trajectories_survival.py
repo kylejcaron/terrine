@@ -107,7 +107,7 @@ def main() -> None:
     con, model = _model()
     try:
         design = recipes.ltv(
-            "user", start_event="purchase", metric="net_revenue", period="7d", periods=3,
+            start_event="purchase", metric="net_revenue", period="7d", periods=3,
             administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
         )
         budget = Budget(max_rows=100, max_output_bytes=1_000_000)
@@ -127,7 +127,7 @@ def main() -> None:
         print("Cohort rows:", cohort_arrow.to_pylist())
         readiness = model.readiness
         later_design = recipes.ltv(
-            "user", start_event="purchase", metric="net_revenue", period="7d", periods=3,
+            start_event="purchase", metric="net_revenue", period="7d", periods=3,
             administrative_cutoff=datetime(2025, 1, 29, tzinfo=UTC),
         )
         later_rows = later_design.build(model).to_pyarrow(budget=budget).to_pylist()
@@ -142,7 +142,7 @@ def main() -> None:
         )
 
         survival = recipes.survival(
-            "user", start_event="purchase", end_event="churn",
+            start_event="purchase", end_event="churn",
             administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
         ).build(model).materialize(budget)
         records = {row["unit"]: row for row in survival.table.to_pylist()}
@@ -155,9 +155,8 @@ def main() -> None:
         })
 
         life = recipes.life_table(
-            "user", start_event="purchase", end_event="churn", bin="7d",
-            features={"region": asof("region", before="-1d")},
-            group_by=("region",),
+            start_event="purchase", end_event="churn", bin="7d",
+            group_by={"region": asof("region", before="-1d")},
             administrative_cutoff=datetime(2025, 1, 22, tzinfo=UTC),
         ).build(model).materialize(budget)
         assert set(life.table["region"].to_pylist()) == {"north", "south"}

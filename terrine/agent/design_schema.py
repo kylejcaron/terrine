@@ -213,7 +213,7 @@ def design_schema() -> dict[str, Any]:
         )
     definitions["Design"] = obj(
         {
-            "unit": text,
+            "unit": nullable(text),
             "anchor": union("FixedDate", "EventAnchor", "Schedule"),
             "features": outputs,
             "outcomes": outputs,

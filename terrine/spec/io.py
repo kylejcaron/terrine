@@ -747,8 +747,8 @@ def _design(value: Any) -> Design:
     if anchor_range is not None and not isinstance(anchor_range, AnchorRange):
         raise ValueError("anchor_range has invalid node type")
     unit = item["unit"]
-    if not isinstance(unit, str):
-        raise TypeError("unit must be a string")
+    if unit is not None and not isinstance(unit, str):
+        raise TypeError("unit must be a string or null")
     return Design(
         unit,
         anchor,

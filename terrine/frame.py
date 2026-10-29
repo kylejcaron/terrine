@@ -387,7 +387,9 @@ class Frame:
 
     def __init__(self, design: Design, model: Model) -> None:
         from terrine.compile.dispatch import compile_design
+        from terrine.spec.validate import resolve_unit
 
+        design = resolve_unit(design, model)
         object.__setattr__(self, "_design", design)
         object.__setattr__(self, "_model", model)
         object.__setattr__(self, "_compiled", compile_design(design, model))

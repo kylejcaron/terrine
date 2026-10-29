@@ -10,7 +10,8 @@ constructors with assertions on values and materialized roles.
 ## Cumulative LTV
 
 `recipes.ltv` returns one row per unit/cohort origin and age. Required arguments
-are `unit`, `start_event`, `metric`, `period`, and positive `periods`. `metric`
+are `start_event`, `metric`, `period`, and positive `periods`; `unit` is the
+model's only unit unless named (see [unit inference](design-specs.md#unit-inference)). `metric`
 must be an untransformed native metric backed by exactly one SUM measure.
 With `Model.from_tables`, that is a `tr.sum(column)` metric declared on the
 `Events`; counts, means and ratios are not accepted by this shape.
@@ -36,7 +37,7 @@ from terrine import recipes
 
 cutoff = datetime(2025, 1, 22, tzinfo=UTC)
 ltv = recipes.ltv(
-    "user", start_event="purchase", metric="net_revenue", period="7d", periods=3,
+    start_event="purchase", metric="net_revenue", period="7d", periods=3,
     administrative_cutoff=cutoff,
 )
 ```
@@ -47,7 +48,7 @@ ltv = recipes.ltv(
 from terrine import CohortSpec, Design, EventAnchor, Trajectory
 
 equivalent_ltv = Design(
-    "user", EventAnchor("purchase"),
+    None, EventAnchor("purchase"),
     shape=CohortSpec("purchase", Trajectory("net_revenue", "7d", 3, cumulative=True)),
     administrative_cutoff=cutoff,
 )
@@ -71,7 +72,7 @@ cumulative_value__reason`. Cohort summaries use `value__complete` and
 
 ## Survival records
 
-`recipes.survival` requires `unit`, `start_event`, and `end_event`. It returns one
+`recipes.survival` requires `start_event` and `end_event`. It returns one
 per-unit start record with elapsed `duration`, terminal `event_time` or
 `censor_time`, entry time, and completeness/reason metadata. Start occurrence
 defaults to `"first"`; use `occurrence="nth", n=2` for the second start. `n` must
@@ -87,7 +88,7 @@ downstream package such as lifelines when a model or curve is required.
 
 ```python
 survival = recipes.survival(
-    "user", start_event="purchase", end_event="churn",
+    start_event="purchase", end_event="churn",
     administrative_cutoff=cutoff,
 )
 ```
@@ -98,7 +99,7 @@ survival = recipes.survival(
 from terrine import TimeToEvent
 
 equivalent_survival = Design(
-    "user", EventAnchor("purchase"), shape=TimeToEvent("churn"),
+    None, EventAnchor("purchase"), shape=TimeToEvent("churn"),
     administrative_cutoff=cutoff,
 )
 assert survival == equivalent_survival
@@ -154,17 +155,17 @@ substitution for shifted anchors refuses before source access with
 
 ## Grouped life tables
 
-`recipes.life_table` requires `unit`, `start_event`, `end_event`, and `bin`. A
+`recipes.life_table` requires `start_event`, `end_event`, and `bin`. A
 row is a descriptive risk-set summary for one declared feature group and
 elapsed-time bin. Start selection has the same `occurrence="first"` / `"nth"`
-and positive `n` rules as survival. Supported options are `features`,
-`group_by=()`, `eligibility`, `anchor_range`, `gap="0d"`, and
-`administrative_cutoff=None`. Follow-up uses coverage or the absolute cutoff,
-not a relative duration horizon. Neither `treatment` nor `outcomes` is accepted.
+and positive `n` rules as survival. Supported options are `group_by`,
+`eligibility`, `anchor_range`, `gap="0d"`, and `administrative_cutoff=None`.
+Follow-up uses coverage or the absolute cutoff, not a relative duration horizon.
+Neither `treatment` nor `outcomes` is accepted.
 
-Every `group_by` name must be a declared feature, and the feature names must
-exactly match `group_by`. Extra features raise `ValueError` before building;
-they never silently disappear. With no groups, omit features too.
+`group_by` maps each grouping column's name to its expression or predicate; those
+names are the design's features and the life table's groups, so nothing can be
+declared as a feature without grouping by it. With no groups, omit it.
 
 Grouping features may be expressions or Boolean predicates. Their timing support
 is the conservative interval from the earliest contributing start to the latest
@@ -175,10 +176,9 @@ export.
 ```python
 from terrine import asof
 
-features = {"region": asof("region", before="-1d")}
 life = recipes.life_table(
-    "user", start_event="purchase", end_event="churn", bin="7d",
-    features=features, group_by=("region",), administrative_cutoff=cutoff,
+    start_event="purchase", end_event="churn", bin="7d",
+    group_by={"region": asof("region", before="-1d")}, administrative_cutoff=cutoff,
 )
 ```
 
@@ -188,9 +188,9 @@ life = recipes.life_table(
 from terrine import LifeTable
 
 equivalent_life = Design(
-    "user", EventAnchor("purchase"),
+    None, EventAnchor("purchase"),
     shape=LifeTable(TimeToEvent("churn"), "7d", group_by=("region",)),
-    features=features, administrative_cutoff=cutoff,
+    features={"region": asof("region", before="-1d")}, administrative_cutoff=cutoff,
 )
 assert life == equivalent_life
 ```

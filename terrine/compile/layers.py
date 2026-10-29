@@ -84,8 +84,10 @@ def build_layer(design: Design, model, key: LayerKey, *, relation_resolver=None)
     from terrine.compile.anchors import compile_anchors
     from terrine.model import Model
     from terrine.semantic.bind import normalize_events
+    from terrine.spec.validate import resolve_unit
     from terrine.temporal.attributes import enrich_events
 
+    design = resolve_unit(design, model)
     if relation_resolver is None:
         bound_model = model
     else:
@@ -154,8 +156,11 @@ def plan_layers(design: Design, model) -> LayerPlan:
         agg,
     )
     from terrine.spec.state_panel import BinnedMetricState, StatePanel
-    from terrine.spec.validate import _fixed_anchors
+    from terrine.spec.validate import _fixed_anchors, resolve_unit
 
+    design = resolve_unit(design, model)
+    unit_name = design.unit
+    assert unit_name is not None
     measures: dict[tuple[str, str, str, LayerResolution], None] = {}
     anchor_points = (
         _fixed_anchors(design, model) if isinstance(design.anchor, (FixedDate, Schedule)) else None
@@ -193,7 +198,7 @@ def plan_layers(design: Design, model) -> LayerPlan:
                 if measure.aggregation in {"min", "max", "count_distinct"}:
                     continue
                 identity = measure_identity(measure)
-                measures[(measure.source_name, identity, design.unit, resolution)] = None
+                measures[(measure.source_name, identity, unit_name, resolution)] = None
         else:
             raise TypeError(f"unsupported design expression: {type(node).__name__}")
 
@@ -230,7 +235,7 @@ def plan_layers(design: Design, model) -> LayerPlan:
         "anchor",
         "__design__",
         None,
-        design.unit,
+        unit_name,
         "unit_anchor",
         "point",
         definition_hash,

@@ -1204,6 +1204,45 @@ def test_fitted_transform_refuses_different_feature_definition(model):
     assert error.value.code == "terrine.transform.winsorization_identity_mismatch"
 
 
+def test_inferred_unit_snapshot_shares_identity_with_the_explicit_design(model):
+    fitted = training(model).fit_winsorization("value", lower="0.25", upper="0.75")
+    explicit, inferred = design(), replace(design(), unit=None)
+    assert inferred.spec_hash != explicit.spec_hash
+    kwargs = dict(as_of="2025-01-08", features=("value",), eligibility={})
+    explicit_scored = explicit.snapshot(model, **kwargs).winsorize(fitted).materialize()
+    inferred_scored = inferred.snapshot(model, **kwargs).winsorize(fitted).materialize()
+    explicit_view = explicit_scored.provenance.dataset_view
+    inferred_view = inferred_scored.provenance.dataset_view
+    assert inferred_view is not None and explicit_view is not None
+    assert inferred_view.view_hash == explicit_view.view_hash
+    assert inferred_scored.table.equals(explicit_scored.table)
+    definition = _definition_for(inferred.snapshot(model, **kwargs))
+    assert definition.view["parent_design_hash"] == explicit.spec_hash
+    assert definition.digest == _definition_for(explicit.snapshot(model, **kwargs)).digest
+
+
+def test_staged_definition_records_the_resolved_unit(events_world, tmp_path):
+    from terrine import recipes
+
+    bound = _worlds.bind_model(events_world, tmp_path)
+    features = {"sessions": agg("sessions", window=("-7d", "0s"))}
+    explicit = recipes.time_series(
+        "user", every="1d", start="2025-01-02", end="2025-01-03", features=features
+    )
+    inferred = recipes.time_series(
+        every="1d", start="2025-01-02", end="2025-01-03", features=features
+    )
+    dataset = inferred.build(bound).stage("inferred", budget=Budget(strict_scan=False))
+    try:
+        definition = dataset.manifest.definition
+        assert definition.base_design.unit == "user"
+        assert definition.base_design == explicit
+        assert definition.digest == _definition_for(explicit.build(bound)).digest
+        assert dataset.manifest.design_hash == explicit.spec_hash
+    finally:
+        bound.con.disconnect()
+
+
 def test_independently_fitted_features_compose_and_reopen(model):
     from dataclasses import replace
 

@@ -62,7 +62,7 @@ from terrine.spec.anchors import EventAnchor, FixedDate
 from terrine.spec.dataset import INVALID_DEFINITION, DatasetDefinition
 from terrine.spec.design import Design
 from terrine.spec.io import from_json, from_yaml, to_json
-from terrine.spec.validate import ensure_runtime_shape_supported, validate_design
+from terrine.spec.validate import ensure_runtime_shape_supported, resolve_unit, validate_design
 
 __all__ = ["DatasetTools"]
 
@@ -139,7 +139,7 @@ class DatasetTools:
     def _parse(self, serialized: str) -> Design:
         try:
             DesignRequest(serialized=serialized)
-            return (
+            design = (
                 from_json(serialized)
                 if serialized.lstrip().startswith("{")
                 else from_yaml(serialized)
@@ -150,8 +150,10 @@ class DatasetTools:
             raise _INVALID.error(
                 route="Use get_design_schema and design_example to construct a Design."
             ) from error
+        return resolve_unit(design, self.model)
 
     def _validated(self, design: Design) -> ValidationOutput:
+        design = resolve_unit(design, self.model)
         report = validate_design(design, self.model)
         self.policy.authorize("validate", sources=report.required_sources)
         return ValidationOutput(

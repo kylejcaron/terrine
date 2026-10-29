@@ -302,6 +302,7 @@ Correct source, roster and coverage bindings; rebind the Model.
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
 | `terrine.model.ambiguous_unit` | <code>{owner} does not say which unit its rows belong to and the model declares {choices}; pass {parameter}= with one of them.</code> | `choices`, `owner`, `parameter` | [terrine/model.py](../../terrine/model.py) |
+| `terrine.model.ambiguous_unit` | <code>{owner} does not say which unit its rows belong to and the model declares {choices}; pass {parameter}= with one of them.</code> | `choices`, `owner`, `parameter` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 | `terrine.model.invalid_binding` | <code>Column {column!r} of {source!r} has type {dtype}, which cannot be a label or history value; supported types are {supported}.</code> | `column`, `dtype`, `source`, `supported` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.model.invalid_binding` | <code>History {table!r} needs exactly one time axis: valid_from, optionally with valid_to, or changed_at alone.</code> | `table` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.model.invalid_binding` | <code>In-memory tables are registered under their mapping keys, which DuckDB matches without regard to ASCII case, and {name!r} is used by {owners}; give the unit or the event table its own name.</code> | `name`, `owners` | [terrine/model.py](../../terrine/model.py) |

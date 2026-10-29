@@ -201,12 +201,13 @@ def test_survival_matches_time_to_event_design_with_absolute_cutoff():
 
 
 def test_life_table_matches_explicit_feature_grouped_design():
+    shared = {key: value for key, value in _SHARED.items() if key != "features"}
     _assert_equivalent(
         recipes.life_table(
             "user",
             **_REQUIRED["life_table"],
-            **_SHARED,
-            group_by=("region",),
+            **shared,
+            group_by=_FEATURES,
             occurrence="nth",
             n=2,
             administrative_cutoff=_CUTOFF,
@@ -215,10 +216,21 @@ def test_life_table_matches_explicit_feature_grouped_design():
             "user",
             EventAnchor("signup", "nth", 2),
             shape=LifeTable(TimeToEvent("churn"), "7d", group_by=("region",)),
-            **_SHARED,
+            features=_FEATURES,
+            **shared,
             administrative_cutoff=_CUTOFF,
         ),
     )
+
+
+def test_life_table_group_by_mapping_declares_its_features():
+    design = recipes.life_table(
+        **_REQUIRED["life_table"], group_by={"region": asof("region", before="-1d")}
+    )
+    assert isinstance(design.shape, LifeTable)
+    assert design.shape.group_by == ("region",)
+    assert set(design.features) == {"region"}
+    assert recipes.life_table(**_REQUIRED["life_table"]).features == {}
 
 
 @pytest.mark.parametrize(
@@ -284,11 +296,12 @@ def test_event_sequence_matches_bounded_session_design():
 
 
 @pytest.mark.parametrize("name", _REQUIRED)
-def test_row_defining_arguments_cannot_be_omitted(name):
+def test_unit_is_optional_and_row_defining_keywords_are_required(name):
     constructor = getattr(recipes, name)
-    arguments = {"unit": "user", **_REQUIRED[name]}
-    for missing in arguments:
-        supplied = {key: value for key, value in arguments.items() if key != missing}
+    assert constructor(**_REQUIRED[name]).unit is None
+    assert constructor("user", **_REQUIRED[name]).unit == "user"
+    for missing in _REQUIRED[name]:
+        supplied = {key: value for key, value in _REQUIRED[name].items() if key != missing}
         with pytest.raises(TypeError):
             constructor(**supplied)
 
@@ -301,7 +314,7 @@ def test_row_defining_arguments_cannot_be_omitted(name):
         ("event_panel", ("treatment", "administrative_cutoff")),
         ("ltv", ("outcomes", "occurrence", "n")),
         ("survival", ("outcomes", "horizon", "periods")),
-        ("life_table", ("outcomes", "treatment", "horizon")),
+        ("life_table", ("outcomes", "treatment", "horizon", "features")),
         ("state_panel", ("outcomes", "treatment", "administrative_cutoff")),
         ("event_sequence", ("treatment", "administrative_cutoff")),
     ],
@@ -347,15 +360,6 @@ def test_single_entry_shapes_refuse_each_with_portable_coded_context(name):
         assert restored.context == error.value.context
     with pytest.raises(TypeError):
         cast(dict[str, Any], error.value.context)["reason"] = "changed"
-
-
-@pytest.mark.parametrize(
-    ("features", "groups"),
-    [(_FEATURES, ()), (_FEATURES, ("region", "channel")), ({}, ("region",))],
-)
-def test_life_table_features_must_exactly_match_explicit_groups(features, groups):
-    with pytest.raises(ValueError):
-        recipes.life_table("user", **_REQUIRED["life_table"], features=features, group_by=groups)
 
 
 @pytest.mark.parametrize("name", ["time_series", "trial_panel", "state_panel"])

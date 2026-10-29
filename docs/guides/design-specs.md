@@ -45,6 +45,10 @@ Mixed date/timestamp bounds are ordered only after catalog binding resolves the 
 
 Treatment is explicit and descriptive: `Treatment(attribute, at="0d", known_at_t0=False)` records a treatment attribute, its signed elapsed cutoff, and whether the design declares it known at time zero. An event anchor does not imply treatment assignment. Design construction and serialization are data-only; model validation, compilation, and frame execution belong to later APIs.
 
+## Unit inference
+
+`unit` names the roster unit each row is about. `Design(None, ...)`, which is what every `recipes` constructor builds when its `unit` is omitted, means the model's only unit: the design is resolved wherever it meets a model (`validate`, `build`, `snapshot`, `preview`, the agent tools and staging). With exactly one `UnitSource` the design is read as if that name had been typed; with several it refuses with `terrine.model.ambiguous_unit` (context `owner="design"`, sorted `choices`, `parameter="unit"`); with none it refuses with `terrine.design.invalid` (`reason="no_unit_source"`). `to_yaml` and `to_json` write `unit: null` and read it back, and `spec_hash` of such a design hashes that document. The identity recorded by staging, saved definitions and scoring views is the resolved design's, so a typed and an inferred unit give the same staged `design_hash`, definition digest and scoring `view_hash`, and a winsorization fitted on one is admitted by the other.
+
 ## Boolean features and outcomes
 
 Use predicates directly for labels such as conversion and churn, without losing

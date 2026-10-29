@@ -106,6 +106,20 @@ class DatasetDefinition:
     def digest(self) -> str:
         return hashlib.sha256(self.canonical_json()).hexdigest()
 
+    def resolve_unit(self, model: Any) -> DatasetDefinition:
+        """Return this definition on its base design with the unit resolved against ``model``."""
+        from terrine.spec.validate import resolve_unit
+
+        design = resolve_unit(self.base_design, model)
+        if design is self.base_design:
+            return self
+        return DatasetDefinition(
+            schema_version=SCHEMA_VERSION,
+            base_design=design,
+            view=thaw(self.view),
+            transforms=self.transforms,
+        )
+
     def build(self, model: Any):
         """Reconstruct the recorded view and frozen transforms without refitting."""
         frame = self.base_design.build(model)

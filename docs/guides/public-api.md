@@ -33,19 +33,21 @@ For `ltv`, the required `metric` must be an untransformed native metric with
 exactly one SUM measure, such as a `tr.sum(column)` metric declared on
 `Events`; counts, means and ratios are not accepted by this shape.
 
-All constructors require `unit`. The guides list row-defining arguments and
-supported options; unsupported keywords raise Python's `TypeError` rather than
-being silently ignored. Shared defaults are `features=None`, `eligibility=None`,
-`anchor_range=None`, and `gap="0d"`. Where accepted, `outcomes`, `treatment`,
+Every constructor takes `unit` first, positional or keyword, and defaults it to
+`None`: the model's only unit, resolved when the design meets a model (see
+[unit inference](design-specs.md#unit-inference)). The guides list row-defining
+arguments and supported options; unsupported keywords raise Python's `TypeError`
+rather than being silently ignored. Shared defaults are `eligibility=None`,
+`anchor_range=None`, and `gap="0d"`. Where accepted, `features`, `outcomes`, `treatment`,
 and `administrative_cutoff` default to `None`. Event occurrence defaults to
 `"first"`; `occurrence="nth"` requires a positive one-based `n`, while `n` is
 omitted for `"first"` or `"each"`.
 
 Where a constructor accepts `features` or `outcomes`, each named value may be an
 expression or a Boolean predicate, just as in `Design`. Eligibility remains a
-mapping of predicates. Shape-specific restrictions still apply: life-table
-features must exactly match `group_by`, and shapes with derived outcomes do not
-accept arbitrary outcome mappings.
+mapping of predicates. Shape-specific restrictions still apply: `life_table`
+declares its features through `group_by={name: expr}`, and shapes with derived
+outcomes do not accept arbitrary outcome mappings.
 
 ## Top-level constructors
 

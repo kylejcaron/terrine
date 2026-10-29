@@ -329,6 +329,7 @@ def _roster_anchors(
 def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_AnchorCheck]]:
     anchor = design.anchor
     assert isinstance(anchor, EventAnchor)
+    assert design.unit is not None  # every entry point resolves the design first
     event = model.catalog.events.get(anchor.event)
     if event is None:
         raise _MISSING.error(kind="event", name=anchor.event)
