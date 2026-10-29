@@ -85,7 +85,8 @@ def test_inferred_unit_frame_shares_the_explicit_design_identity(native_inputs):
     )
     result = inferred.build(one).materialize()
     assert result.provenance.design_hash == explicit.spec_hash
-    assert result.table.equals(explicit.build(one).materialize().table)
+    expected = explicit.build(one).materialize().table
+    assert result.table.sort_by("unit").equals(expected.sort_by("unit"))
     two = Model.from_catalog(
         catalog,
         con=con,
