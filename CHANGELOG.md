@@ -144,6 +144,8 @@
   Summaries distinguish sequence headers from child rows and arrays, name
   eligibility support columns, and report empty-window values and completeness
   reasons according to the bound aggregation and shape.
+  Survival summaries distinguish pre-entry exclusions from incomplete initial
+  history retained without an entry selector.
 
 ### Breaking changes
 

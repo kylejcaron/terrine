@@ -129,14 +129,16 @@ def test_landmark_features_and_survival_followup_use_shifted_entry(shape):
         con.disconnect()
 
 
-def test_unobserved_initial_history_is_explained_and_excluded():
+def test_unobserved_initial_history_is_explained_and_retained():
     con, model = _model(outcome_start="2025-01-02")
     try:
         design = Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
+        summary = design.describe(model)
         result = _collect(design, model)
         rows = {row["unit"]: row for row in result.to_pylist()}
         assert rows["u1"]["duration__complete"] is False
         assert rows["u1"]["duration__reason"] == "incomplete_initial_history"
+        assert rows["u1"]["duration__reason"] in summary
     finally:
         con.disconnect()
 

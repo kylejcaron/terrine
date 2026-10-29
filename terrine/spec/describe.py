@@ -533,8 +533,10 @@ class _Renderer:
             yield (
                 "",
                 f"Time to event: the first {shape.event} event in [entry_time, censor_time), "
-                f"measured from t0, {self._censoring(shape)}. Events before eligible "
-                "follow-up exclude the record.",
+                f"measured from t0, {self._censoring(shape)}. With an explicit entry selector, "
+                "events before entry exclude the record. Without one, only events before t0 "
+                "exclude it; coverage beginning after t0 keeps the row incomplete with reason "
+                "incomplete_initial_history.",
             )
         elif isinstance(shape, LifeTable):
             inner = shape.time_to_event
