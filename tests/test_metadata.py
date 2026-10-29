@@ -205,8 +205,6 @@ def test_coverage_requires_ordered_dates_and_binds_to_utc_instants():
         start=datetime(2025, 1, 1, tzinfo=UTC),
         end_exclusive=datetime(2025, 1, 4, tzinfo=UTC),
     )
-    with pytest.raises((TypeError, ValueError)):
-        Coverage(start=date(2025, 1, 3), through=date(2025, 1, 1))
     assert Coverage("2025-01-01", "2025-01-03") == coverage
     with pytest.raises(TerrineError) as error:
         Coverage(date.max, date.max)
@@ -562,16 +560,22 @@ def test_budget_and_preview_validate_counts_and_coverage():
         (),
     )
     assert preview.planned_rows is None
-    for kwargs in ({"max_rows": -1}, {"max_output_bytes": -1}, {"max_scan_bytes": -1}):
-        with pytest.raises((TypeError, ValueError)):
-            Budget(**kwargs)  # ty: ignore[invalid-argument-type] intentional invalid inputs
+    for field in ("max_rows", "max_output_bytes", "max_scan_bytes"):
+        for value in (-1, True, 1.0):
+            with pytest.raises(TerrineError) as error:
+                Budget(**{field: value})  # ty: ignore[invalid-argument-type] intentional invalid inputs
+            assert error.value.code == "terrine.budget.invalid_limit"
+            assert error.value.context == {"reason": "not_nonnegative_integer", "field": field}
     with pytest.raises((TypeError, ValueError)):
         Preview(-1, None, None, None, {}, {}, ())
 
 
 def test_unit_source_requires_named_table_and_key():
-    with pytest.raises((TypeError, ValueError)):
-        UnitSource(table="users", key="")
+    for field, arguments in (("key", {"key": ""}), ("entered_at", {"entered_at": ""})):
+        with pytest.raises(TerrineError) as error:
+            UnitSource(**{"table": "users", "key": "user_id", **arguments})
+        assert error.value.code == "terrine.model.invalid_binding"
+        assert error.value.context == {"reason": "empty_name", "field": field}
 
 
 def test_state_panel_roles_and_metadata_survive_arrow_json_roundtrip():

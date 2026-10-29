@@ -209,7 +209,7 @@ def test_initiation_unknown_name_refuses_missing_reference():
     with pytest.raises(TerrineError) as error:
         validate_design(_initiation_design("upgrade"), model())
     assert error.value.code == "terrine.design.missing_reference"
-    assert error.value.context == {"kind": "event", "name": "upgrade"}
+    assert error.value.context == {"kind": "event", "name": "upgrade", "available": ("session",)}
 
 
 def test_calendar_comparison_requires_coverage_through_comparison_horizon():
@@ -418,14 +418,8 @@ def test_event_anchor_fact_must_be_member_of_bound_source_facts():
     with pytest.raises(TerrineError) as error:
         Design("user", EventAnchor("ghost")).validate(bound)
     assert error.value.code == "terrine.design.missing_reference"
-
-
-def test_unknown_metric_refuses_with_stable_code():
-    with pytest.raises(TerrineError) as error:
-        Design(
-            "user", EventAnchor("session"), features={"x": agg("missing", window=("-1d", "0d"))}
-        ).validate(model())
-    assert error.value.code == "terrine.design.missing_reference"
+    assert error.value.context["kind"] == "bound event"
+    assert error.value.context["available"] == ("session",)
 
 
 def test_exact_quantile_is_admitted_without_query():

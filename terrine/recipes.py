@@ -43,12 +43,21 @@ __all__ = [
     "event_sequence",
 ]
 
-_INVALID = RefusalSpec("terrine.design.invalid", "Design validation failed: {reason}.")
+_CHOICE = RefusalSpec("terrine.design.invalid", "Design input {field} must be one of {choices}.")
+
+
+def _event_anchor(event: str, occurrence: str, n: int | None) -> EventAnchor:
+    choices = ("first", "each", "nth")
+    if occurrence not in choices:
+        raise _CHOICE.error(reason="unsupported_value", field="occurrence", choices=choices)
+    return EventAnchor(event, which=occurrence, n=n)
 
 
 def _entry_anchor(event: str, occurrence: str, n: int | None) -> EventAnchor:
     if occurrence not in ("first", "nth"):
-        raise _INVALID.error(reason="single-entry shapes require first or nth occurrence")
+        raise _CHOICE.error(
+            reason="single_entry_required", field="occurrence", choices=("first", "nth")
+        )
     return EventAnchor(event, which=occurrence, n=n)
 
 
@@ -139,7 +148,7 @@ def event_panel(
     """Apply EventPanel to an event-anchored Design for explicit relative periods."""
     base = Design(
         unit,
-        EventAnchor(event, which=occurrence, n=n),
+        _event_anchor(event, occurrence, n),
         features=features,
         outcomes=outcomes,
         eligibility=eligibility,
@@ -299,7 +308,7 @@ def event_sequence(
     """Build an EventSequence over [anchor, anchor + horizon), optionally grouped into sessions."""
     return Design(
         unit,
-        EventAnchor(event, which=occurrence, n=n),
+        _event_anchor(event, occurrence, n),
         shape=EventSequence(
             event,
             Window(0, seconds(horizon, field="horizon")),

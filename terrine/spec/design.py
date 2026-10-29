@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 from terrine.errors import RefusalSpec
 from terrine.execution._metadata import metadata_operation
-from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
+from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule, _aware_instant
 from terrine.spec.expressions import (
     And,
     ApproxMetricDistinct,
@@ -48,6 +48,10 @@ _RESERVED_OUTPUT_NAME = RefusalSpec(
     "terrine.spec.reserved_output_name",
     "Study output name {name!r} is reserved.",
 )
+_INVALID = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
+_NAMED = RefusalSpec(
+    "terrine.design.invalid", "Design input {field}[{name!r}] is invalid: {reason}."
+)
 
 
 def _validate_support_name(name: str) -> None:
@@ -68,14 +72,14 @@ def _named_nodes(
     if values is None:
         return MappingProxyType({})
     if not isinstance(values, Mapping):
-        raise TypeError(f"{field_name} must be a mapping")
+        raise _INVALID.error(reason="wrong_type", field=field_name)
     copied: dict[str, object] = {}
     for key, value in values.items():
         if not isinstance(key, str) or not key.strip():
-            raise ValueError(f"{field_name} keys must be non-empty strings")
+            raise _INVALID.error(reason="empty_name", field=field_name)
         _validate_support_name(key)
         if not isinstance(value, allowed):
-            raise TypeError(f"{field_name} values must be typed specification nodes")
+            raise _NAMED.error(reason="wrong_type", field=field_name, name=key)
         copied[key] = value
     return MappingProxyType({key: copied[key] for key in sorted(copied)})
 
@@ -88,9 +92,9 @@ class Treatment:
 
     def __init__(self, attribute: str, at: str | int = "0d", known_at_t0: bool = False) -> None:
         if not isinstance(attribute, str) or not attribute.strip():
-            raise ValueError("treatment attribute must be a non-empty string")
+            raise _INVALID.error(reason="empty_name", field="attribute")
         if not isinstance(known_at_t0, bool):
-            raise TypeError("known_at_t0 must be a boolean")
+            raise _INVALID.error(reason="wrong_type", field="known_at_t0")
         object.__setattr__(self, "attribute", attribute)
         object.__setattr__(self, "at", seconds(at, field="at"))
         object.__setattr__(self, "known_at_t0", known_at_t0)
@@ -144,13 +148,13 @@ class Design:
         administrative_cutoff: datetime | None = None,
     ) -> None:
         if unit is not None and (not isinstance(unit, str) or not unit.strip()):
-            raise ValueError("unit must be a non-empty string or None")
+            raise _INVALID.error(reason="empty_name", field="unit")
         if not isinstance(anchor, (FixedDate, EventAnchor, Schedule)):
-            raise TypeError("anchor must be a supported anchor node")
+            raise _INVALID.error(reason="wrong_type", field="anchor")
         if treatment is not None and not isinstance(treatment, Treatment):
-            raise TypeError("treatment must be Treatment or None")
+            raise _INVALID.error(reason="wrong_type", field="treatment")
         if anchor_range is not None and not isinstance(anchor_range, AnchorRange):
-            raise TypeError("anchor_range must be AnchorRange or None")
+            raise _INVALID.error(reason="wrong_type", field="anchor_range")
         from terrine.spec.panels import (
             CalendarComparisonSpec,
             EventPanelSpec,
@@ -159,7 +163,7 @@ class Design:
         )
 
         if sample is not None and not isinstance(sample, MatchedT0Sample):
-            raise TypeError("sample must be MatchedT0Sample or None")
+            raise _INVALID.error(reason="wrong_type", field="sample")
 
         if not isinstance(
             shape,
@@ -175,7 +179,7 @@ class Design:
                 LifeTable,
             ),
         ) or (isinstance(shape, str) and not shape.strip()):
-            raise ValueError("shape must be a supported design shape")
+            raise _INVALID.error(reason="wrong_type", field="shape")
         if isinstance(shape, CalendarComparisonSpec) and treatment is not None:
             from terrine.spec.panels import _CONFLICT
 
@@ -186,7 +190,7 @@ class Design:
             raise _CONFLICT.error()
         gap_seconds = seconds(gap, field="gap")
         if gap_seconds < 0:
-            raise ValueError("gap must be non-negative")
+            raise _INVALID.error(reason="negative", field="gap")
         object.__setattr__(self, "unit", unit)
         object.__setattr__(self, "anchor", anchor)
         object.__setattr__(
@@ -246,33 +250,31 @@ class Design:
         object.__setattr__(self, "anchor_range", anchor_range)
         object.__setattr__(self, "sample", sample)
         if administrative_cutoff is not None:
-            if (
-                not isinstance(administrative_cutoff, datetime)
-                or administrative_cutoff.tzinfo is None
-                or administrative_cutoff.utcoffset() is None
-            ):
-                raise ValueError("administrative_cutoff must be timezone-aware or None")
-            administrative_cutoff = utc_instant(administrative_cutoff)
+            if not isinstance(administrative_cutoff, datetime):
+                raise _INVALID.error(reason="wrong_type", field="administrative_cutoff")
+            administrative_cutoff = _aware_instant(administrative_cutoff, "administrative_cutoff")
         if isinstance(shape, CohortSpec) and (
             not isinstance(anchor, EventAnchor)
             or anchor.which != "first"
             or anchor.event != shape.origin
         ):
-            raise ValueError("CohortSpec requires its matching first-event anchor")
+            raise _INVALID.error(reason="anchor_mismatch", field="anchor")
         if isinstance(shape, CohortSpec) and outcomes:
-            raise ValueError("CohortSpec generates outcomes; explicit outcomes are not allowed")
+            raise _INVALID.error(reason="generated_outcomes", field="outcomes")
         time_to_event_shape = shape.time_to_event if isinstance(shape, LifeTable) else shape
         if isinstance(time_to_event_shape, TimeToEvent) and (
             isinstance(anchor, Schedule)
             or (isinstance(anchor, EventAnchor) and anchor.which == "each")
         ):
-            raise ValueError("time-to-event shapes require one analysis entry per unit")
+            raise _INVALID.error(reason="single_entry_required", field="anchor")
         if isinstance(time_to_event_shape, TimeToEvent) and outcomes:
-            raise ValueError(
-                "time-to-event shapes generate outcomes; explicit outcomes are not allowed"
-            )
+            raise _INVALID.error(reason="generated_outcomes", field="outcomes")
         if isinstance(shape, LifeTable) and not set(shape.group_by).issubset(features or {}):
-            raise ValueError("LifeTable group_by names must be declared design features")
+            raise _INVALID.error(
+                reason="undeclared_name",
+                field="features",
+                names=tuple(sorted(set(shape.group_by) - set(features or {}))),
+            )
         object.__setattr__(self, "administrative_cutoff", administrative_cutoff)
 
     def validate(self, model: Model) -> None:

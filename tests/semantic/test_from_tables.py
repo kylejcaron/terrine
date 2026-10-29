@@ -138,25 +138,25 @@ def test_events_descriptor_normalizes_and_detaches_inputs():
 
 
 @pytest.mark.parametrize(
-    "changes",
+    ("changes", "reason", "field"),
     [
-        {"table": ""},
-        {"table": pa.table({})},
-        {"time": ""},
-        {"key": ""},
-        {"unit": ""},
-        {"metrics": {"n": "count"}},
-        {"metrics": {"": tr.count()}},
-        {"labels": "status"},
-        {"labels": ("status", "status")},
-        {"complete": ("2025-01-31", "2025-01-01")},
-        {"complete": ("2025-01-01",)},
-        {"complete": (datetime(2025, 1, 1), date(2025, 1, 31))},
+        ({"table": ""}, "empty_name", "table"),
+        ({"table": pa.table({})}, "empty_table", "table"),
+        ({"time": ""}, "empty_name", "time"),
+        ({"key": ""}, "empty_name", "key"),
+        ({"unit": ""}, "empty_name", "unit"),
+        ({"metrics": {"n": "count"}}, "wrong_type", "metrics"),
+        ({"metrics": {"": tr.count()}}, "wrong_type", "metrics"),
+        ({"labels": "status"}, "wrong_type", "labels"),
+        ({"complete": ("2025-01-31", "2025-01-01")}, "through_before_start", "through"),
+        ({"complete": (datetime(2025, 1, 1), date(2025, 1, 31))}, "invalid_date", "start"),
     ],
 )
-def test_events_descriptor_rejects_invalid_fields(changes):
-    with pytest.raises((TypeError, ValueError)):
+def test_events_descriptor_rejects_invalid_fields(changes, reason, field):
+    with pytest.raises(TerrineError) as error:
         orders(**changes)
+    assert error.value.code == "terrine.model.invalid_binding"
+    assert error.value.context == {"reason": reason, "field": field}
 
 
 def test_where_counts_match_hand_oracles(con):

@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 import pytest
 
 from terrine.data import Coverage, UnitSource
@@ -44,12 +46,30 @@ def test_training_set_selects_named_features_and_derives_label_support(native_in
     assert training.columns["churn"].reason_column
 
 
-def test_training_set_rejects_unknown_or_duplicate_selections(native_inputs):
+def test_training_set_rejects_unknown_or_duplicate_selections_and_untyped_splits(native_inputs):
     frame = _frame(native_inputs)
-    with pytest.raises(TerrineError):
-        frame.training_set(label="missing")
-    with pytest.raises(ValueError):
-        frame.training_set(label=("churn", "churn"))
+    for request, code, context in (
+        ({"label": "missing"}, "terrine.dataset.invalid_selection", {"names": ("missing",)}),
+        (
+            {"label": ("churn", "churn")},
+            "terrine.dataset.invalid_selection",
+            {"reason": "duplicate_names", "field": "label"},
+        ),
+        (
+            {"label": "churn", "features": ("past_sessions", "past_sessions")},
+            "terrine.dataset.invalid_selection",
+            {"reason": "duplicate_names", "field": "features"},
+        ),
+        (
+            {"label": "churn", "split": object()},
+            "terrine.dataset.invalid_split",
+            {"reason": "wrong_type", "field": "split"},
+        ),
+    ):
+        with pytest.raises(TerrineError) as error:
+            frame.training_set(**request)
+        assert error.value.code == code
+        assert error.value.context == context
 
 
 def test_training_set_incomplete_label_policy_is_explicit(native_inputs):
@@ -58,8 +78,11 @@ def test_training_set_incomplete_label_policy_is_explicit(native_inputs):
     dropped = frame.training_set(label="churn", incomplete_labels="drop")
     assert kept._training_view.incomplete_labels == "keep"
     assert dropped._training_view.incomplete_labels == "drop"
-    with pytest.raises(ValueError):
-        frame.training_set(label="churn", incomplete_labels="impute")
+    with pytest.raises(TerrineError) as error:
+        frame.training_set(label="churn", incomplete_labels=cast(Any, "impute"))
+    assert error.value.code == "terrine.dataset.invalid_view"
+    assert error.value.context["reason"] == "unsupported_value"
+    assert error.value.context["choices"] == ("drop", "keep")
 
 
 def test_training_set_values_only_is_the_xy_table(readme_con):

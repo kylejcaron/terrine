@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from importlib.metadata import PackageNotFoundError
@@ -9,7 +10,7 @@ from importlib.metadata import version as package_version
 from typing import TYPE_CHECKING
 
 from terrine.backends.registry import engine_supports
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.semantic.rules import (
     UNALIGNED_CALENDAR_AVERAGE,
     UNSUPPORTED_EVENT_RESOLUTION,
@@ -46,6 +47,7 @@ from terrine.windows import Window
 
 if TYPE_CHECKING:
     from terrine.model import Model
+    from terrine.semantic.models import BoundSource
 __all__ = ["ValidationReport", "resolve_selector_source", "resolve_unit", "validate_design"]
 
 _INVALID = RefusalSpec("terrine.design.invalid", "Design validation failed: {reason}.")
@@ -91,8 +93,16 @@ def ensure_runtime_shape_supported(shape: object, *, anchor: object = None) -> N
 
 
 _MISSING = RefusalSpec(
-    "terrine.design.missing_reference", "Design references unknown {kind} {name!r}."
+    "terrine.design.missing_reference",
+    "Design references unknown {kind} {name!r}; declared: {available}.",
 )
+
+
+def missing_reference(kind: str, name: str, declared: Iterable[str]) -> TerrineError:
+    """The unknown-reference refusal listing the declared names of the same kind, sorted."""
+    return _MISSING.error(kind=kind, name=name, available=tuple(sorted(declared)))
+
+
 _AMBIGUOUS = RefusalSpec(
     "terrine.design.ambiguous_dimension", "Property {name!r} resolves to multiple dimensions."
 )
@@ -142,22 +152,25 @@ def _metric(model: Model, name: str):
     try:
         return model.metrics[name]
     except KeyError as exc:
-        raise _MISSING.error(kind="metric", name=name) from exc
+        raise missing_reference("metric", name, model.metrics) from exc
 
 
 def _event_property(model: Model, source_name: str, name: str) -> str:
     prop = model.catalog.properties.get(name)
     source = model.sources.get(source_name)
-    if prop is None or source is None:
-        raise _MISSING.error(kind="event property", name=name)
+    if source is None:
+        raise missing_reference("event property", name, ())
+    bound = {*source.properties, *(key for item in source.dimensions for key in item.properties)}
+    if prop is None:
+        raise missing_reference("event property", name, bound)
     if prop.dimension is not None:
         for dimension in source.dimensions:
             binding = dimension.properties.get(name)
             if dimension.name == prop.dimension and binding is not None:
                 return binding.dtype
-        raise _MISSING.error(kind="bound event property", name=name)
+        raise missing_reference("bound event property", name, bound)
     if prop.source != source_name or name not in source.properties:
-        raise _MISSING.error(kind="bound event property", name=name)
+        raise missing_reference("bound event property", name, bound)
     return source.properties[name].dtype
 
 
@@ -211,7 +224,7 @@ def _outcome_bounds(design: Design, model: Model) -> tuple[tuple[int, ...], tupl
             if expression.finite_horizon_seconds is None:
                 event = model.catalog.events.get(expression.event)
                 if event is None:
-                    raise _MISSING.error(kind="event", name=expression.event)
+                    raise missing_reference("event", expression.event, model.catalog.events)
                 source = event.source
                 cutoffs.append(model.readiness.for_fact(source).end_exclusive)
             else:
@@ -255,7 +268,7 @@ def _resolve_property(
             ):
                 candidates.append((source, prop, dimension))
     if not candidates:
-        raise _MISSING.error(kind="property", name=expr.attribute)
+        raise missing_reference("property", expr.attribute, model.catalog.properties)
     dimension_names = {
         dimension.name if dimension is not None else None for _, _, dimension in candidates
     }
@@ -409,10 +422,10 @@ def _expression(
     if isinstance(expr, (EventTime, RetentionMetric)):
         event = model.catalog.events.get(expr.event)
         if event is None:
-            raise _MISSING.error(kind="event", name=expr.event)
+            raise missing_reference("event", expr.event, model.catalog.events)
         source = model.sources.get(event.source)
         if source is None or expr.event not in source.events:
-            raise _MISSING.error(kind="bound event", name=expr.event)
+            raise missing_reference("bound event", expr.event, _bound_events(source))
         if design.unit not in source.units:
             raise _UNIT.error(unit=design.unit, name=expr.event)
         if isinstance(expr, RetentionMetric):
@@ -553,10 +566,10 @@ def _validate_sequence_shape(design: Design, model: Model, required: set[str]) -
         raise _SEQUENCE_INVALID.error(reason="event sequences only support EventTime outcomes")
     event = model.catalog.events.get(sequence.event)
     if event is None:
-        raise _MISSING.error(kind="event", name=sequence.event)
+        raise missing_reference("event", sequence.event, model.catalog.events)
     source = model.sources.get(event.source)
     if source is None or sequence.event not in source.events:
-        raise _MISSING.error(kind="bound event", name=sequence.event)
+        raise missing_reference("bound event", sequence.event, _bound_events(source))
     if design.unit not in source.units:
         raise _UNIT.error(unit=design.unit, name=sequence.event)
     _required(model, source.name, required)
@@ -597,7 +610,7 @@ def _validate_shape(
         source_name = resolve_selector_source(model, design.shape.treatment.event)
         source = model.sources.get(source_name)
         if source is None:
-            raise _MISSING.error(kind="treatment source", name=source_name)
+            raise missing_reference("treatment source", source_name, model.sources)
         if design.unit not in source.units:
             raise _UNIT.error(unit=design.unit, name=design.shape.treatment.event)
         if (
@@ -629,7 +642,7 @@ def _validate_shape(
         if design.sample is not None:
             missing = sorted(set(design.sample.strata) - set(design.features))
             if missing:
-                raise _MISSING.error(kind="matched-t0 stratum", name=missing[0])
+                raise missing_reference("matched-t0 stratum", missing[0], design.features)
     elif isinstance(design.shape, EventPanelSpec):
         if not isinstance(design.anchor, EventAnchor):
             raise _INVALID.error(reason="EventPanel requires an EventAnchor")
@@ -647,7 +660,7 @@ def _validate_shape(
         source_name = resolve_selector_source(model, design.shape.cohort.event)
         source = model.sources.get(source_name)
         if source is None:
-            raise _MISSING.error(kind="cohort source", name=source_name)
+            raise missing_reference("cohort source", source_name, model.sources)
         if design.unit not in source.units:
             raise _UNIT.error(unit=design.unit, name=design.shape.cohort.event)
         coverage = model.readiness.for_fact(source.name)
@@ -704,15 +717,20 @@ def _validate_shape(
                 continue
             event = model.catalog.events.get(name)
             if event is None:
-                raise _MISSING.error(kind="event", name=name)
+                raise missing_reference("event", name, model.catalog.events)
             source = model.sources.get(event.source)
             if source is None or name not in source.events:
-                raise _MISSING.error(kind="bound event", name=name)
+                raise missing_reference("bound event", name, _bound_events(source))
             if design.unit not in source.units:
                 raise _UNIT.error(unit=design.unit, name=name)
             _required(model, event.source, required)
     elif design.shape != "cross_section":
         raise _INVALID.error(reason="unsupported design shape")
+
+
+def _bound_events(source: BoundSource | None) -> Iterable[str]:
+    """Events bound on ``source``, or none when the source itself is not bound."""
+    return () if source is None else source.events
 
 
 def resolve_selector_source(model: Model, name: str) -> str:
@@ -725,7 +743,7 @@ def resolve_selector_source(model: Model, name: str) -> str:
     if label is not None:
         owners.add(label.source)
     if not owners:
-        raise _MISSING.error(kind="event", name=name)
+        raise missing_reference("event", name, {*model.catalog.events, *model.catalog.properties})
     if len(owners) > 1:
         raise _INVALID.error(reason="ambiguous_reference", name=name, owners=tuple(sorted(owners)))
     return owners.pop()
@@ -756,12 +774,12 @@ def validate_design(design: Design, model: Model) -> ValidationReport:
     if isinstance(anchor, EventAnchor):
         event = model.catalog.events.get(anchor.event)
         if event is None:
-            raise _MISSING.error(kind="event", name=anchor.event)
+            raise missing_reference("event", anchor.event, model.catalog.events)
         source = model.sources.get(event.source)
         if source is None:
-            raise _MISSING.error(kind="event source", name=event.source)
+            raise missing_reference("event source", event.source, model.sources)
         if anchor.event not in source.events:
-            raise _MISSING.error(kind="bound event", name=anchor.event)
+            raise missing_reference("bound event", anchor.event, source.events)
         if not supports_event_resolution(source.dialect):
             raise UNSUPPORTED_EVENT_RESOLUTION.error(dialect=source.dialect)
         if design.unit not in source.units:

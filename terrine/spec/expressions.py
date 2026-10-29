@@ -43,17 +43,19 @@ _SKETCH_UNAVAILABLE = RefusalSpec(
     "Sketch {algorithm!r} version {version!r} is unavailable; install terrine[sketches] "
     "or use the exact form.",
 )
+_INVALID = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
+_CHOICE = RefusalSpec("terrine.design.invalid", "Design input {field} must be one of {choices}.")
 
 
-def _probability(value: Decimal | str) -> Decimal:
+def _probability(value: Decimal | str, field: str) -> Decimal:
     if isinstance(value, bool) or isinstance(value, float) or not isinstance(value, (Decimal, str)):
-        raise TypeError("probability must be a Decimal or decimal string, never a float")
+        raise _INVALID.error(reason="wrong_type", field=field)
     try:
         result = value if isinstance(value, Decimal) else Decimal(value)
     except InvalidOperation as exc:
-        raise ValueError("probability must be a finite decimal") from exc
+        raise _INVALID.error(reason="not_decimal", field=field) from exc
     if not result.is_finite() or result < 0 or result > 1:
-        raise ValueError("probability must be finite and in [0, 1]")
+        raise _INVALID.error(reason="out_of_range", field=field)
     if not result:
         return Decimal(0)
     sign, digits, exponent = result.as_tuple()
@@ -66,6 +68,16 @@ def _probability(value: Decimal | str) -> Decimal:
     return Decimal((sign, tuple(canonical), exponent))
 
 
+def _window(value: object) -> None:
+    if not isinstance(value, Window):
+        raise _INVALID.error(reason="wrong_type", field="window")
+
+
+def _relative_to(value: object) -> None:
+    if value is not None and not isinstance(value, EventTime):
+        raise _INVALID.error(reason="wrong_type", field="relative_to")
+
+
 @dataclass(frozen=True, slots=True)
 class MetricQuantile:
     metric: str
@@ -75,11 +87,12 @@ class MetricQuantile:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "metric", _name(self.metric, "metric"))
-        object.__setattr__(self, "probability", _probability(self.probability))
-        if not isinstance(self.window, Window):
-            raise TypeError("window must be a Window")
+        object.__setattr__(self, "probability", _probability(self.probability, "probability"))
+        _window(self.window)
         if self.interpolation != "linear_type7":
-            raise ValueError("only linear_type7 interpolation is supported")
+            raise _CHOICE.error(
+                reason="unsupported_value", field="interpolation", choices=("linear_type7",)
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,9 +104,9 @@ class SketchRequest:
     def __post_init__(self) -> None:
         object.__setattr__(self, "algorithm", _name(self.algorithm, "algorithm"))
         object.__setattr__(self, "version", _name(self.version, "version"))
-        error = _probability(self.rank_error)
+        error = _probability(self.rank_error, "rank_error")
         if error == 0:
-            raise ValueError("rank_error must be positive")
+            raise _INVALID.error(reason="not_positive", field="rank_error")
         object.__setattr__(self, "rank_error", error)
 
 
@@ -106,9 +119,10 @@ class ApproxMetricQuantile:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "metric", _name(self.metric, "metric"))
-        object.__setattr__(self, "probability", _probability(self.probability))
-        if not isinstance(self.window, Window) or not isinstance(self.sketch, SketchRequest):
-            raise TypeError("window and sketch must be typed specifications")
+        object.__setattr__(self, "probability", _probability(self.probability, "probability"))
+        _window(self.window)
+        if not isinstance(self.sketch, SketchRequest):
+            raise _INVALID.error(reason="wrong_type", field="sketch")
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,8 +132,7 @@ class ApproxMetricDistinct:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "metric", _name(self.metric, "metric"))
-        if not isinstance(self.window, Window):
-            raise TypeError("window must be a Window")
+        _window(self.window)
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,16 +149,16 @@ class RetentionMetric:
         for field in ("event", "label_property", "target_event"):
             object.__setattr__(self, field, _name(getattr(self, field), field))
         thresholds = tuple(self.count_thresholds)
-        if (
-            not thresholds
-            or any(type(value) is not int or not 0 < value < 2**63 for value in thresholds)
-            or tuple(sorted(set(thresholds))) != thresholds
-        ):
-            raise ValueError("thresholds must be strictly increasing positive Int64 counts")
+        if not thresholds:
+            raise _INVALID.error(reason="empty", field="thresholds")
+        if any(type(value) is not int or not 0 < value < 2**63 for value in thresholds):
+            raise _INVALID.error(reason="not_positive_integer", field="thresholds")
+        if tuple(sorted(set(thresholds))) != thresholds:
+            raise _INVALID.error(reason="not_increasing", field="thresholds")
         object.__setattr__(self, "count_thresholds", thresholds)
         horizon = self.finite_horizon_seconds
         if horizon is not None and (type(horizon) is not int or not 0 < horizon < 2**63):
-            raise ValueError("finite horizon must be positive Int64 elapsed seconds")
+            raise _INVALID.error(reason="not_positive", field="horizon")
 
 
 type JsonScalar = None | bool | int | float | str
@@ -153,16 +166,16 @@ type JsonScalar = None | bool | int | float | str
 
 def _name(value: str, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{field} must be a non-empty string")
+        raise _INVALID.error(reason="empty_name", field=field)
     return value
 
 
-def _scalar(value: object) -> JsonScalar:
+def _scalar(value: object, field: str) -> JsonScalar:
     if value is None or isinstance(value, (str, bool, int)):
         return value
     if isinstance(value, float) and math.isfinite(value):
         return value
-    raise TypeError("predicate values must be finite JSON scalars")
+    raise _INVALID.error(reason="not_json_scalar", field=field)
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,10 +186,8 @@ class MetricAgg:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "metric", _name(self.metric, "metric"))
-        if not isinstance(self.window, Window):
-            raise TypeError("window must be a Window")
-        if self.relative_to is not None and not isinstance(self.relative_to, EventTime):
-            raise TypeError("relative_to must be EventTime or None")
+        _window(self.window)
+        _relative_to(self.relative_to)
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,8 +199,7 @@ class AttributeAsOf:
     def __post_init__(self) -> None:
         object.__setattr__(self, "attribute", _name(self.attribute, "attribute"))
         object.__setattr__(self, "before", seconds(self.before, field="before"))
-        if self.relative_to is not None and not isinstance(self.relative_to, EventTime):
-            raise TypeError("relative_to must be EventTime or None")
+        _relative_to(self.relative_to)
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,23 +214,23 @@ class EventTime:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "event", _name(self.event, "event"))
-        if not isinstance(self.window, Window):
-            raise TypeError("window must be a Window")
+        _window(self.window)
         if (self.label_property is None) != (self.equals is None):
-            raise ValueError("label_property and equals must be supplied together")
+            raise _INVALID.error(reason="unpaired_label_filter", field="label_property")
         if self.label_property is not None:
             object.__setattr__(self, "label_property", _name(self.label_property, "label_property"))
-            object.__setattr__(self, "equals", _scalar(self.equals))
+            object.__setattr__(self, "equals", _scalar(self.equals, "equals"))
         if self.occurrence not in {"first", "last", "nth"}:
-            raise ValueError("occurrence must be 'first', 'last', or 'nth'")
+            raise _CHOICE.error(
+                reason="unsupported_value", field="occurrence", choices=("first", "last", "nth")
+            )
         if self.occurrence in {"first", "last"} and self.n is not None:
-            raise ValueError("n is only valid for nth occurrence")
+            raise _INVALID.error(reason="n_requires_nth", field="n")
         if self.occurrence == "nth" and (
             isinstance(self.n, bool) or not isinstance(self.n, int) or self.n < 1
         ):
-            raise ValueError("nth occurrence requires positive n")
-        if self.relative_to is not None and not isinstance(self.relative_to, EventTime):
-            raise TypeError("relative_to must be EventTime or None")
+            raise _INVALID.error(reason="not_positive_integer", field="n")
+        _relative_to(self.relative_to)
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,8 +239,8 @@ class Gt:
     value: JsonScalar
 
     def __post_init__(self) -> None:
-        _require_expr(self.expr)
-        object.__setattr__(self, "value", _scalar(self.value))
+        _require_expr(self.expr, "expr")
+        object.__setattr__(self, "value", _scalar(self.value, "value"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,8 +249,8 @@ class Eq:
     value: JsonScalar
 
     def __post_init__(self) -> None:
-        _require_expr(self.left)
-        object.__setattr__(self, "value", _scalar(self.value))
+        _require_expr(self.left, "left")
+        object.__setattr__(self, "value", _scalar(self.value, "value"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,9 +259,9 @@ class IsNull:
     negate: bool = False
 
     def __post_init__(self) -> None:
-        _require_expr(self.expr)
+        _require_expr(self.expr, "expr")
         if not isinstance(self.negate, bool):
-            raise TypeError("negate must be a boolean")
+            raise _INVALID.error(reason="wrong_type", field="negate")
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,8 +270,10 @@ class And:
 
     def __post_init__(self) -> None:
         terms = tuple(self.terms)
-        if not terms or any(not isinstance(term, (Gt, Eq, IsNull, And)) for term in terms):
-            raise ValueError("And requires one or more predicates")
+        if not terms:
+            raise _INVALID.error(reason="empty", field="terms")
+        if any(not isinstance(term, (Gt, Eq, IsNull, And)) for term in terms):
+            raise _INVALID.error(reason="wrong_type", field="terms")
         object.__setattr__(self, "terms", terms)
 
 
@@ -317,7 +329,7 @@ def _expression_support_seconds(expression: Expr) -> tuple[int, int]:
     raise TypeError("expected a supported expression node")
 
 
-def _require_expr(value: object) -> None:
+def _require_expr(value: object, field: str) -> None:
     if not isinstance(
         value,
         (
@@ -330,7 +342,13 @@ def _require_expr(value: object) -> None:
             EventTime,
         ),
     ):
-        raise TypeError("expected a supported expression node")
+        raise _INVALID.error(reason="wrong_type", field=field)
+
+
+def _window_pair(value: object) -> tuple[str | int, str | int]:
+    if not isinstance(value, (tuple, list)) or len(value) != 2:
+        raise _INVALID.error(reason="not_a_pair", field="window")
+    return value[0], value[1]
 
 
 def agg(
@@ -339,9 +357,8 @@ def agg(
     window: tuple[str | int, str | int],
     relative_to: EventTime | None = None,
 ) -> MetricAgg:
-    if not isinstance(window, (tuple, list)) or len(window) != 2:
-        raise ValueError("window must contain a start and exclusive end")
-    return MetricAgg(metric, Window(window[0], window[1]), relative_to)
+    start, end = _window_pair(window)
+    return MetricAgg(metric, Window(start, end), relative_to)
 
 
 def retention(
@@ -373,9 +390,10 @@ def quantile(
     window: tuple[str | int, str | int],
     interpolation: str = "linear_type7",
 ) -> MetricQuantile:
-    if not isinstance(window, (tuple, list)) or len(window) != 2:
-        raise ValueError("window must contain a start and exclusive end")
-    return MetricQuantile(metric, _probability(probability), Window(*window), interpolation)
+    start, end = _window_pair(window)
+    return MetricQuantile(
+        metric, _probability(probability, "probability"), Window(start, end), interpolation
+    )
 
 
 def approx_quantile(
@@ -385,17 +403,18 @@ def approx_quantile(
     window: tuple[str | int, str | int],
     sketch: SketchRequest,
 ) -> ApproxMetricQuantile:
-    if not isinstance(window, (tuple, list)) or len(window) != 2:
-        raise ValueError("window must contain a start and exclusive end")
+    start, end = _window_pair(window)
     return ApproxMetricQuantile(
-        _name(metric, "metric"), _probability(probability), Window(*window), sketch
+        _name(metric, "metric"),
+        _probability(probability, "probability"),
+        Window(start, end),
+        sketch,
     )
 
 
 def approx_distinct(metric: str, *, window: tuple[str | int, str | int]) -> ApproxMetricDistinct:
-    if not isinstance(window, (tuple, list)) or len(window) != 2:
-        raise ValueError("window must contain a start and exclusive end")
-    return ApproxMetricDistinct(_name(metric, "metric"), Window(*window))
+    start, end = _window_pair(window)
+    return ApproxMetricDistinct(_name(metric, "metric"), Window(start, end))
 
 
 def asof(
@@ -417,11 +436,8 @@ def event_time(
     n: int | None = None,
     relative_to: EventTime | None = None,
 ) -> EventTime:
-    if not isinstance(window, (tuple, list)) or len(window) != 2:
-        raise ValueError("window must contain a start and exclusive end")
-    return EventTime(
-        event, Window(window[0], window[1]), label_property, equals, occurrence, n, relative_to
-    )
+    start, end = _window_pair(window)
+    return EventTime(event, Window(start, end), label_property, equals, occurrence, n, relative_to)
 
 
 def gt(expr: Expr, value: JsonScalar) -> Gt:

@@ -12,7 +12,7 @@ import yaml
 from yaml.resolver import BaseResolver
 
 from terrine._time import utc_instant
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import (
@@ -53,6 +53,7 @@ __all__ = ["SCHEMA_VERSION", "canonical_json", "to_json", "from_json", "to_yaml"
 SCHEMA_VERSION = 2
 
 _INVALID = RefusalSpec("terrine.design.invalid", "Design document is invalid: {reason}.")
+_INVALID_INPUT = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
 
 
 class _UniqueSafeLoader(yaml.SafeLoader):
@@ -357,7 +358,7 @@ def _sort(value: Any) -> Any:
 
 def canonical_json(design: Design) -> bytes:
     if not isinstance(design, Design):
-        raise TypeError("expected a Design")
+        raise _INVALID_INPUT.error(reason="wrong_type", field="design")
     payload = {"schema_version": SCHEMA_VERSION, "design": _encode(design)}
     return json.dumps(
         _sort(payload), ensure_ascii=False, allow_nan=False, separators=(",", ":")
@@ -795,12 +796,24 @@ def _design(value: Any) -> Design:
 
 
 def _load(payload: Any) -> Design:
-    root = _object(payload, {"schema_version", "design"})
-    if type(root["schema_version"]) is not int or root["schema_version"] != SCHEMA_VERSION:
-        raise _INVALID.error(
-            reason="unsupported_schema_version", field="schema_version", expected=SCHEMA_VERSION
-        )
-    return _design(root["design"])
+    """Decode a parsed document; anything that is not a valid design refuses with a code.
+
+    A constructor's own refusal is kept; a structural error (a missing or extra field, an
+    unknown node, a value of the wrong JSON type) is ``malformed_document``.
+    """
+    try:
+        root = _object(payload, {"schema_version", "design"})
+        if type(root["schema_version"]) is not int or root["schema_version"] != SCHEMA_VERSION:
+            raise _INVALID.error(
+                reason="unsupported_schema_version",
+                field="schema_version",
+                expected=SCHEMA_VERSION,
+            )
+        return _design(root["design"])
+    except TerrineError:
+        raise
+    except (TypeError, ValueError, ArithmeticError) as error:
+        raise _INVALID.error(reason="malformed_document") from error
 
 
 def _pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

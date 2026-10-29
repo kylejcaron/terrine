@@ -85,7 +85,9 @@ def test_validation_uses_existing_metadata_contracts(tools, monkeypatch):
     payload["design"]["features"]["bad"]["window"]["start"] = 10
     assert tools.validate_design(json.dumps(payload)).status == "refused"
     payload["design"]["sql"] = "SELECT secret"
-    assert tools.propose_design(json.dumps(payload)).code == "terrine.agent.invalid_request"
+    smuggled = tools.propose_design(json.dumps(payload))
+    assert smuggled.code == "terrine.design.invalid"
+    assert smuggled.suggested_route
 
 
 def test_design_save_load_is_confined_to_owner_root(tools, tmp_path):

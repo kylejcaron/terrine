@@ -52,6 +52,12 @@ _MISSING_DEPENDENCY = RefusalSpec(
     "terrine.convert.missing_dependency",
     "Conversion requires the optional {extra!r} dependency; install terrine[{extra}].",
 )
+_INVALID_SPLIT = RefusalSpec(
+    "terrine.dataset.invalid_split", "Split input {field} is invalid: {reason}."
+)
+_INVALID_SELECTION = RefusalSpec(
+    "terrine.dataset.invalid_selection", "Training {field} selection is invalid: {reason}."
+)
 
 
 def _optional_dependency(name: str):
@@ -468,7 +474,7 @@ class Frame:
 
             policies = import_module("terrine.dataset.splits")
             if not isinstance(split, (policies.TimeSplit, policies.GroupSplit)):
-                raise TypeError("split must be TimeSplit, GroupSplit, or None")
+                raise _INVALID_SPLIT.error(reason="wrong_type", field="split")
             if isinstance(split, policies.TimeSplit):
                 split = split.bind(boundary_timezone(self._model.catalog.day_boundary))
                 groups = split.groups
@@ -478,15 +484,23 @@ class Frame:
                 self.roles.unit,
                 self.roles.cluster_unit,
             ):
-                raise ValueError("split groups must select the unit or cluster-unit identity")
+                raise _INVALID_SPLIT.error(
+                    reason="unsupported_group",
+                    field="group",
+                    choices=tuple(
+                        name
+                        for name in (self.roles.unit, self.roles.cluster_unit)
+                        if name is not None
+                    ),
+                )
             if {"__terrine_split", "__terrine_split_reason"} & set(self._compiled.table.columns):
-                raise ValueError("split output names collide with Design columns")
+                raise _INVALID_SPLIT.error(reason="reserved_name", field="split")
 
         labels = (label,) if isinstance(label, str) else tuple(label)
         if not labels or any(not isinstance(name, str) or not name for name in labels):
-            raise ValueError("label must select one or more non-empty outcome names")
+            raise _INVALID_SELECTION.error(reason="empty_name", field="label")
         if len(set(labels)) != len(labels):
-            raise ValueError("label names must be unique")
+            raise _INVALID_SELECTION.error(reason="duplicate_names", field="label")
         unknown = set(labels) - set(self.roles.outcomes)
         if unknown:
             raise RefusalSpec(
@@ -495,9 +509,9 @@ class Frame:
             ).error(names=tuple(sorted(unknown)))
         selected_features = self.roles.features if features is None else tuple(features)
         if any(not isinstance(name, str) or not name for name in selected_features):
-            raise ValueError("features must contain non-empty column names")
+            raise _INVALID_SELECTION.error(reason="empty_name", field="features")
         if len(set(selected_features)) != len(selected_features):
-            raise ValueError("feature names must be unique")
+            raise _INVALID_SELECTION.error(reason="duplicate_names", field="features")
         available_features = set(self.roles.features)
         if self.roles.prior_state is not None:
             available_features.add(self.roles.prior_state)
@@ -508,7 +522,11 @@ class Frame:
                 "Unknown training feature selection: {names}",
             ).error(names=tuple(sorted(unknown)))
         if incomplete_labels not in ("drop", "keep"):
-            raise ValueError("incomplete_labels must be 'drop' or 'keep'")
+            from terrine.spec.dataset import INVALID_VIEW
+
+            raise INVALID_VIEW.error(
+                reason="unsupported_value", field="incomplete_labels", choices=("drop", "keep")
+            )
         for name in labels:
             metadata = self.columns[name]
             if metadata.complete_column is None or metadata.reason_column is None:

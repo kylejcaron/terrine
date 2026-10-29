@@ -15,7 +15,7 @@ from terrine.backends.extrema import greatest, least
 from terrine.backends.timestamps import compare_timestamps
 from terrine.data import ColumnMeta
 from terrine.semantic.models import BoundDimension, BoundValidity
-from terrine.spec.validate import _MISSING
+from terrine.spec.validate import missing_reference
 from terrine.temporal.attributes import attribute_asof, history_checks, validate_history
 
 if TYPE_CHECKING:
@@ -50,7 +50,7 @@ def resolve_attribute(model: Model, attribute: str):
         prop = source.properties.get(attribute)
         if prop is not None and prop.dimension_name is None:
             return source, prop, None
-    raise _MISSING.error(kind="property", name=attribute)
+    raise missing_reference("property", attribute, model.catalog.properties)
 
 
 def compile_asof(

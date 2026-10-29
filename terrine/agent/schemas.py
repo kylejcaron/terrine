@@ -200,6 +200,7 @@ class Response[T](Record):
 
 _CONTEXT_FIELDS = frozenset({"operation", "kind", "name", "role", "gap", "shape", "limit", "route"})
 _ROUTES = {
+    "terrine.design.invalid": "Use get_design_schema and design_example to construct a Design.",
     "terrine.design.missing_reference": "Choose a name from inspect_catalog.",
     "terrine.design.invalid_window": "Choose a window with start before end.",
     "terrine.design.gap_violation": (

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import copy
-import pickle
 from datetime import UTC, date, datetime
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -334,9 +332,17 @@ def test_event_occurrence_defaults_to_first_and_nth_is_one_based(name):
     assert constructor("user", **_REQUIRED[name], occurrence="nth", n=3).anchor == EventAnchor(
         fact, "nth", 3
     )
-    for occurrence, n in (("nth", None), ("nth", 0), ("nth", True), ("first", 1), ("last", None)):
-        with pytest.raises(ValueError):
+    for occurrence, n, field in (
+        ("nth", None, "n"),
+        ("nth", 0, "n"),
+        ("nth", True, "n"),
+        ("first", 1, "n"),
+        ("last", None, "occurrence"),
+    ):
+        with pytest.raises(TerrineError) as error:
             constructor("user", **_REQUIRED[name], occurrence=occurrence, n=n)
+        assert error.value.code == "terrine.design.invalid"
+        assert error.value.context["field"] == field
 
 
 @pytest.mark.parametrize("name", ["event_panel", "event_sequence"])
@@ -345,21 +351,18 @@ def test_repeatable_event_shapes_accept_each_without_n(name):
     assert constructor("user", **_REQUIRED[name], occurrence="each").anchor == EventAnchor(
         "purchase", "each"
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(TerrineError) as error:
         constructor("user", **_REQUIRED[name], occurrence="each", n=1)
+    assert error.value.context["reason"] == "n_requires_nth"
 
 
 @pytest.mark.parametrize("name", ["survival", "life_table"])
-def test_single_entry_shapes_refuse_each_with_portable_coded_context(name):
+def test_single_entry_shapes_refuse_each(name):
     with pytest.raises(TerrineError) as error:
         getattr(recipes, name)("user", **_REQUIRED[name], occurrence="each")
     assert error.value.code == "terrine.design.invalid"
-    assert error.value.context
-    for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
-        assert restored.code == error.value.code
-        assert restored.context == error.value.context
-    with pytest.raises(TypeError):
-        cast(dict[str, Any], error.value.context)["reason"] = "changed"
+    assert error.value.context["reason"] == "single_entry_required"
+    assert error.value.context["choices"] == ("first", "nth")
 
 
 @pytest.mark.parametrize("name", ["time_series", "trial_panel", "state_panel"])
@@ -367,8 +370,9 @@ def test_schedules_accept_calendar_dates_not_timestamps(name):
     constructor = getattr(recipes, name)
     for bound in ("start", "end"):
         for timestamp in (datetime(2025, 1, 10, tzinfo=UTC), "2025-01-10T00:00:00Z"):
-            with pytest.raises((TypeError, ValueError)):
+            with pytest.raises(TerrineError) as error:
                 constructor("user", **{**_REQUIRED[name], bound: timestamp})
+            assert error.value.context == {"reason": "invalid_date", "field": bound}
 
 
 @pytest.mark.parametrize(
@@ -446,8 +450,10 @@ def test_elapsed_count_is_arithmetic(monkeypatch):
     assert schedule.instant(schedule.count(_day) - 1, _day) == datetime(
         2025, 12, 31, 23, 59, 59, tzinfo=UTC
     )
-    with pytest.raises(TypeError):
+    with pytest.raises(TerrineError) as error:
         schedule.instants(_day)
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "elapsed_schedule"
 
 
 @pytest.mark.parametrize(

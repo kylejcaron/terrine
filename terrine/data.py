@@ -109,11 +109,23 @@ _UNSUPPORTED_TABLE_INPUT = RefusalSpec(
     "terrine.model.invalid_binding",
     "{field} must be a table name or an in-memory pyarrow, pandas or polars table, not {type}.",
 )
+_INVALID_BINDING = RefusalSpec(
+    "terrine.model.invalid_binding", "Model binding input {field} is invalid: {reason}."
+)
+_INVALID_LIMIT = RefusalSpec(
+    "terrine.budget.invalid_limit",
+    "Budget {field} is invalid: {reason}; limits are nonnegative integers or None.",
+)
 
 
 def _nonempty(value: str, field: str) -> None:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{field} must be a non-empty string")
+
+
+def _binding_name(value: object, field: str) -> None:
+    if not isinstance(value, str) or not value:
+        raise _INVALID_BINDING.error(reason="empty_name", field=field)
 
 
 def _is_dataframe(value: object, library: str) -> bool:
@@ -132,7 +144,7 @@ def _table_input(value: str | DataFrameLike, field: str) -> str | pa.Table:
     refuses with ``terrine.model.invalid_binding`` before a connection is touched.
     """
     if isinstance(value, str):
-        _nonempty(value, field)
+        _binding_name(value, field)
         return value
     if isinstance(value, pa.Table):
         table = value
@@ -148,7 +160,7 @@ def _table_input(value: str | DataFrameLike, field: str) -> str | pa.Table:
             type=f"{kind.__module__}.{kind.__qualname__}",
         )
     if not table.schema:
-        raise ValueError(f"{field} must have at least one column")
+        raise _INVALID_BINDING.error(reason="empty_table", field=field)
     return table
 
 
@@ -184,27 +196,16 @@ class Coverage:
     through: date
 
     def __init__(self, start: date | str, through: date | str) -> None:
-        object.__setattr__(
-            self, "start", date.fromisoformat(start) if isinstance(start, str) else start
-        )
-        object.__setattr__(
-            self, "through", date.fromisoformat(through) if isinstance(through, str) else through
-        )
-        if (
-            not isinstance(self.start, date)
-            or isinstance(self.start, datetime)
-            or not isinstance(self.through, date)
-            or isinstance(self.through, datetime)
-        ):
-            raise TypeError("coverage endpoints must be date values")
+        object.__setattr__(self, "start", _calendar_day(start, "start"))
+        object.__setattr__(self, "through", _calendar_day(through, "through"))
         if self.start > self.through:
-            raise ValueError("coverage start must not follow through")
+            raise _INVALID_BINDING.error(reason="through_before_start", field="through")
         if self.through == date.max:
             raise _COVERAGE_DAY_OVERFLOW.error(through=self.through.isoformat())
 
     def bind(self, day_boundary: Callable[[date], datetime]) -> BoundCoverage:
         if not callable(day_boundary):
-            raise TypeError("day_boundary must be callable")
+            raise _INVALID_BINDING.error(reason="wrong_type", field="day_boundary")
         try:
             start = day_boundary(self.start)
             end = day_boundary(self.through + timedelta(days=1))
@@ -223,8 +224,12 @@ class BoundCoverage:
     end_exclusive: datetime
 
     def __post_init__(self) -> None:
-        _aware(self.start, "start")
-        _aware(self.end_exclusive, "end_exclusive")
+        for name in ("start", "end_exclusive"):
+            value = getattr(self, name)
+            if not isinstance(value, datetime):
+                raise _INVALID_BINDING.error(reason="wrong_type", field=name)
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise _INVALID_BINDING.error(reason="naive_datetime", field=name)
         try:
             start = self.start.astimezone(UTC)
             end = self.end_exclusive.astimezone(UTC)
@@ -233,7 +238,7 @@ class BoundCoverage:
                 start=self.start.isoformat(), end_exclusive=self.end_exclusive.isoformat()
             ) from exc
         if start >= end:
-            raise ValueError("bound coverage start must precede end_exclusive")
+            raise _INVALID_BINDING.error(reason="end_not_after_start", field="end_exclusive")
         object.__setattr__(self, "start", start)
         object.__setattr__(self, "end_exclusive", end)
 
@@ -259,7 +264,7 @@ class UnitSource:
         observed_until: str | None = None,
     ) -> None:
         bound = _table_input(table, "table")
-        _nonempty(key, "key")
+        _binding_name(key, "key")
         optional = {
             "entered_at": entered_at,
             "exited_at": exited_at,
@@ -268,18 +273,29 @@ class UnitSource:
         }
         for name, value in optional.items():
             if value is not None:
-                _nonempty(value, name)
+                _binding_name(value, name)
         object.__setattr__(self, "table", bound)
         object.__setattr__(self, "key", key)
         for name, value in optional.items():
             object.__setattr__(self, name, value)
 
 
+def _calendar_day(value: object, field: str) -> date:
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value)
+        except ValueError as error:
+            raise _INVALID_BINDING.error(reason="invalid_date", field=field) from error
+    if not isinstance(value, date) or isinstance(value, datetime):
+        raise _INVALID_BINDING.error(reason="invalid_date", field=field)
+    return value
+
+
 def _complete(value: tuple[date | str, date | str] | None) -> tuple[date, date] | None:
     if value is None:
         return None
-    if isinstance(value, str) or len(value) != 2:
-        raise ValueError("complete must be a pair of inclusive calendar days")
+    if isinstance(value, str) or not isinstance(value, Sequence) or len(value) != 2:
+        raise _INVALID_BINDING.error(reason="not_a_pair", field="complete")
     coverage = Coverage(*value)
     return (coverage.start, coverage.through)
 
@@ -327,25 +343,25 @@ class Events:
         complete: tuple[date | str, date | str] | None = None,
     ) -> None:
         bound = _table_input(table, "table")
-        _nonempty(time, "time")
-        _nonempty(key, "key")
+        _binding_name(time, "time")
+        _binding_name(key, "key")
         if unit is not None:
-            _nonempty(unit, "unit")
+            _binding_name(unit, "unit")
         declared = {} if metrics is None else metrics
         if not isinstance(declared, Mapping) or any(
             not isinstance(name, str) or not name or not isinstance(metric, (EventMetric, Ratio))
             for name, metric in declared.items()
         ):
-            raise TypeError("metrics must map names to metric declarations")
+            raise _INVALID_BINDING.error(reason="wrong_type", field="metrics")
         if isinstance(labels, str):
-            raise TypeError("labels must be a sequence of column names")
+            raise _INVALID_BINDING.error(reason="wrong_type", field="labels")
         names = tuple(labels)
         for label in names:
-            _nonempty(label, "label")
+            _binding_name(label, "labels")
             if "__" in label:
                 raise _RESERVED_NAME.error(reason="reserved_name", kind="label", name=label)
         if len(set(names)) != len(names):
-            raise ValueError("labels must be unique")
+            raise _INVALID_BINDING.error(reason="duplicate_names", field="labels")
         object.__setattr__(self, "table", bound)
         object.__setattr__(self, "time", time)
         object.__setattr__(self, "key", key)
@@ -381,17 +397,17 @@ class History:
         complete: tuple[date | str, date | str] | None = None,
     ) -> None:
         bound = _table_input(table, "table")
-        _nonempty(key, "key")
-        _nonempty(column, "column")
+        _binding_name(key, "key")
+        _binding_name(column, "column")
         if unit is not None:
-            _nonempty(unit, "unit")
+            _binding_name(unit, "unit")
         for name, value in (
             ("valid_from", valid_from),
             ("valid_to", valid_to),
             ("changed_at", changed_at),
         ):
             if value is not None:
-                _nonempty(value, name)
+                _binding_name(value, name)
         if (valid_from is None) == (changed_at is None) or (
             changed_at is not None and valid_to is not None
         ):
@@ -1181,9 +1197,13 @@ class Budget:
 
     def __post_init__(self) -> None:
         for name in ("max_rows", "max_output_bytes", "max_scan_bytes"):
-            _count(getattr(self, name), name)
+            value = getattr(self, name)
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+            ):
+                raise _INVALID_LIMIT.error(reason="not_nonnegative_integer", field=name)
         if not isinstance(self.strict_scan, bool):
-            raise TypeError("strict_scan must be bool")
+            raise _INVALID_LIMIT.error(reason="wrong_type", field="strict_scan")
 
 
 @dataclass(frozen=True, slots=True)

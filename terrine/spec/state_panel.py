@@ -22,6 +22,9 @@ _INVALID_SCHEDULE = RefusalSpec(
 _INVALID_SOURCE = RefusalSpec(
     "terrine.state_panel.invalid_state_source", "State source is invalid: {reason}."
 )
+_INVALID_INPUT = RefusalSpec(
+    "terrine.state_panel.invalid_state_source", "State source input {field} is invalid: {reason}."
+)
 _INVALID_OBSERVATIONS = RefusalSpec(
     "terrine.state_panel.invalid_observations", "State observations are invalid: {reason}."
 )
@@ -34,13 +37,14 @@ __all__ = ["StateObservations", "BinnedMetricState", "StatePanel"]
 
 
 def _levels(levels: tuple[str, ...]) -> tuple[str, ...]:
-    if (
-        not isinstance(levels, tuple)
-        or len(levels) < 2
-        or any(not isinstance(level, str) or not level for level in levels)
-        or len(set(levels)) != len(levels)
-    ):
-        raise ValueError("levels must contain at least two unique non-empty strings")
+    if not isinstance(levels, tuple):
+        raise _INVALID_INPUT.error(reason="wrong_type", field="levels")
+    if len(levels) < 2:
+        raise _INVALID_INPUT.error(reason="too_few_levels", field="levels")
+    if any(not isinstance(level, str) or not level for level in levels):
+        raise _INVALID_INPUT.error(reason="empty_name", field="levels")
+    if len(set(levels)) != len(levels):
+        raise _INVALID_INPUT.error(reason="duplicate_names", field="levels")
     return levels
 
 
@@ -55,14 +59,16 @@ class StateObservations:
 
     def __post_init__(self) -> None:
         if not isinstance(self.property, str) or not self.property.strip():
-            raise ValueError("property must be a non-empty string")
+            raise _INVALID_INPUT.error(reason="empty_name", field="property")
         object.__setattr__(self, "levels", _levels(self.levels))
         if not isinstance(self.ordered, bool):
-            raise TypeError("ordered must be bool")
-        if not isinstance(self.absorbing, tuple) or len(set(self.absorbing)) != len(self.absorbing):
-            raise ValueError("absorbing must be a duplicate-free tuple")
+            raise _INVALID_INPUT.error(reason="wrong_type", field="ordered")
+        if not isinstance(self.absorbing, tuple):
+            raise _INVALID_INPUT.error(reason="wrong_type", field="absorbing")
+        if len(set(self.absorbing)) != len(self.absorbing):
+            raise _INVALID_INPUT.error(reason="duplicate_names", field="absorbing")
         if any(value not in self.levels for value in self.absorbing):
-            raise ValueError("absorbing states must be declared levels")
+            raise _INVALID_INPUT.error(reason="undeclared_name", field="absorbing")
         object.__setattr__(self, "absorbing", tuple(v for v in self.levels if v in self.absorbing))
 
 
@@ -76,22 +82,19 @@ class BinnedMetricState:
 
     def __post_init__(self) -> None:
         if not isinstance(self.metric, str) or not self.metric.strip():
-            raise ValueError("metric must be a non-empty string")
+            raise _INVALID_INPUT.error(reason="empty_name", field="metric")
         object.__setattr__(self, "levels", _levels(self.levels))
-        if not isinstance(self.cutpoints, tuple) or not self.cutpoints:
-            raise ValueError("at least one cutpoint is required")
+        if not isinstance(self.cutpoints, tuple):
+            raise _INVALID_INPUT.error(reason="wrong_type", field="cutpoints")
+        if not self.cutpoints:
+            raise _INVALID_INPUT.error(reason="empty", field="cutpoints")
         if len(self.levels) != len(self.cutpoints) + 1:
-            raise ValueError("levels must contain exactly one more value than cutpoints")
+            raise _INVALID_INPUT.error(reason="levels_cutpoints_mismatch", field="levels")
         previous = None
         for point in self.cutpoints:
-            if isinstance(point, bool) or not isinstance(point, (int, float, Decimal)):
-                raise TypeError("cutpoints must be integer, float, or Decimal scalars")
-            if isinstance(point, float) and not math.isfinite(point):
-                raise ValueError("cutpoints must be finite")
-            if isinstance(point, Decimal) and not point.is_finite():
-                raise ValueError("cutpoints must be finite")
+            _finite_cutpoint(point)
             if previous is not None and not previous < point:
-                raise ValueError("cutpoints must be numerically strictly increasing")
+                raise _INVALID_INPUT.error(reason="not_increasing", field="cutpoints")
             previous = point
 
 
@@ -116,24 +119,30 @@ class StatePanel:
         from terrine.spec.expressions import AttributeAsOf, MetricAgg
 
         if not isinstance(state, (StateObservations, BinnedMetricState)):
-            raise TypeError("state must be StateObservations or BinnedMetricState")
+            raise _INVALID_INPUT.error(reason="wrong_type", field="state")
         if isinstance(max_periods, bool) or not isinstance(max_periods, int) or max_periods <= 0:
-            raise ValueError("max_periods must be a positive integer")
+            raise _INVALID_INPUT.error(reason="not_positive_integer", field="max_periods")
         nodes = _named_nodes(baseline_features, (MetricAgg, AttributeAsOf), "baseline_features")
         object.__setattr__(self, "state", state)
         object.__setattr__(self, "max_periods", max_periods)
         object.__setattr__(self, "baseline_features", MappingProxyType(dict(nodes)))
 
 
+def _finite_cutpoint(value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+        raise _INVALID_INPUT.error(reason="wrong_type", field="cutpoints")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise _INVALID_INPUT.error(reason="not_finite", field="cutpoints")
+    if isinstance(value, Decimal) and not value.is_finite():
+        raise _INVALID_INPUT.error(reason="not_finite", field="cutpoints")
+
+
 def encode_cutpoint(value: int | float | Decimal) -> dict[str, object]:
     """Encode a cutpoint without losing its declared numeric representation."""
-    if isinstance(value, bool):
-        raise TypeError("boolean cutpoints are unsupported")
+    _finite_cutpoint(value)
     if isinstance(value, int):
         return {"type": "int", "value": str(value)}
     if isinstance(value, Decimal):
-        if not value.is_finite():
-            raise ValueError("cutpoints must be finite")
         item = value.as_tuple()
         return {
             "type": "decimal",
@@ -141,9 +150,7 @@ def encode_cutpoint(value: int | float | Decimal) -> dict[str, object]:
             "digits": list(item.digits),
             "exponent": item.exponent,
         }
-    if isinstance(value, float) and math.isfinite(value):
-        return {"type": "float64", "value": value.hex()}
-    raise ValueError("cutpoints must be finite supported numeric scalars")
+    return {"type": "float64", "value": value.hex()}
 
 
 def decode_cutpoint(value: object) -> int | float | Decimal:

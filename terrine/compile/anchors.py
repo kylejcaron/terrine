@@ -25,7 +25,7 @@ from terrine.model import Model
 from terrine.semantic.models import TableRef
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
-from terrine.spec.validate import _MISSING, _UNIT, ensure_runtime_shape_supported
+from terrine.spec.validate import _UNIT, ensure_runtime_shape_supported, missing_reference
 
 __all__ = ["AnchorTable", "compile_anchors"]
 
@@ -332,12 +332,12 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
     assert design.unit is not None  # every entry point resolves the design first
     event = model.catalog.events.get(anchor.event)
     if event is None:
-        raise _MISSING.error(kind="event", name=anchor.event)
+        raise missing_reference("event", anchor.event, model.catalog.events)
     source = model.sources.get(event.source)
     if source is None:
-        raise _MISSING.error(kind="event source", name=event.source)
+        raise missing_reference("event source", event.source, model.sources)
     if anchor.event not in source.events:
-        raise _MISSING.error(kind="bound event", name=anchor.event)
+        raise missing_reference("bound event", anchor.event, source.events)
     physical_unit = source.units.get(design.unit)
     if physical_unit is None:
         raise _UNIT.error(unit=design.unit, name=anchor.event)

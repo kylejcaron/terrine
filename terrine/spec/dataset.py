@@ -32,6 +32,9 @@ SCHEMA_VERSION = 2
 INVALID_DEFINITION = RefusalSpec(
     "terrine.dataset.invalid_definition", "Invalid dataset definition: {reason}"
 )
+_INVALID_INPUT = RefusalSpec(
+    "terrine.dataset.invalid_definition", "Dataset definition input {field} is invalid: {reason}."
+)
 INVALID_VIEW = RefusalSpec("terrine.dataset.invalid_view", "Invalid dataset view: {reason}.")
 UNSUPPORTED_VIEW = RefusalSpec(
     "terrine.dataset.unsupported_view",
@@ -63,7 +66,7 @@ class DatasetDefinition:
         if schema_version != SCHEMA_VERSION or isinstance(schema_version, bool):
             raise INVALID_DEFINITION.error(reason="unsupported schema version")
         if not isinstance(base_design, Design):
-            raise TypeError("base_design must be Design")
+            raise _INVALID_INPUT.error(reason="wrong_type", field="base_design")
         if view is not None:
             if not isinstance(view, dict) or not isinstance(view.get("kind"), str):
                 raise INVALID_DEFINITION.error(reason="view must be a tagged data mapping")
@@ -216,11 +219,11 @@ class DatasetDefinitionStore:
     def __post_init__(self) -> None:
         object.__setattr__(self, "root", Path(self.root).expanduser().resolve())
         if not isinstance(self.owner, str) or not self.owner:
-            raise ValueError("owner must be a non-empty string")
+            raise _INVALID_INPUT.error(reason="empty_name", field="owner")
 
     def put(self, definition: DatasetDefinition) -> DatasetDefinitionReference:
         if not isinstance(definition, DatasetDefinition):
-            raise TypeError("definition must be DatasetDefinition")
+            raise _INVALID_INPUT.error(reason="wrong_type", field="definition")
         content = definition.canonical_json()
         path = self.root / f"{definition.digest}.json"
         self.root.mkdir(parents=True, exist_ok=True)

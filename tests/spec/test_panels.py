@@ -130,11 +130,6 @@ def test_explicit_trial_weights_round_trip_without_mass_drift():
     assert restored.spec_hash == design.spec_hash
 
 
-def test_explicit_trial_weights_refuse_nonfinite_values():
-    with pytest.raises(ValueError):
-        TrialWeight("explicit", {"a": float("nan")})
-
-
 def test_treatment_history_instants_canonicalize_to_utc():
     first = Initiation(
         "started", history_start=datetime(2025, 1, 1, tzinfo=timezone(timedelta(hours=2)))

@@ -156,7 +156,7 @@ def test_prepare_refuses_invalid_group_identity_without_leaking_exception(owner_
         destination=next(iter(owner_tools.policy.allowed_destinations)),
         invocation_id="bad-group",
     )
-    assert result.code == "terrine.dataset.invalid_definition"
+    assert result.code == "terrine.dataset.invalid_split"
 
 
 def test_prepare_requires_the_connected_dataset_owner_configuration(owner_tools, tmp_path):

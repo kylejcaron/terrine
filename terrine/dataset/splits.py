@@ -11,6 +11,7 @@ from decimal import Decimal
 from fractions import Fraction
 from typing import Any, Literal
 
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.semantic.time import instant
 
 __all__ = [
@@ -23,35 +24,40 @@ __all__ = [
     "reason_counts",
 ]
 
+_INVALID = RefusalSpec("terrine.dataset.invalid_split", "Split input {field} is invalid: {reason}.")
 
-def _boundary(value: date | datetime | str) -> date | datetime:
+
+def _boundary(value: date | datetime | str, field: str) -> date | datetime:
     if isinstance(value, datetime):
-        return _instant(value)
+        return _instant(value, field)
     if isinstance(value, date):
         return value
     if isinstance(value, str):
+        if len(value) != 10:
+            return _instant(value, field)
         try:
-            if len(value) == 10:
-                return date.fromisoformat(value)
-            return _instant(value)
+            return date.fromisoformat(value)
         except ValueError as error:
-            raise ValueError(
-                "split boundaries must be explicit ISO dates or representable aware instants"
-            ) from error
-    raise TypeError("split boundary must be date, aware datetime, or ISO string")
+            raise _INVALID.error(reason="invalid_date", field=field) from error
+    raise _INVALID.error(reason="wrong_type", field=field)
 
 
-def _instant(value: date | datetime | str) -> datetime:
+def _instant(value: date | datetime | str, field: str) -> datetime:
     if isinstance(value, date) and not isinstance(value, datetime):
-        raise TypeError("calendar dates require binding to a Catalog timezone")
-    if isinstance(value, (datetime, str)):
+        raise _INVALID.error(reason="unbound_calendar_date", field=field)
+    if isinstance(value, datetime) and (value.tzinfo is None or value.utcoffset() is None):
+        raise _INVALID.error(reason="naive_datetime", field=field)
+    if not isinstance(value, (datetime, str)):
+        raise _INVALID.error(reason="wrong_type", field=field)
+    try:
         return instant(value, "UTC")
-    raise TypeError("expected an aware timestamp")
+    except (ValueError, OverflowError) as error:
+        raise _INVALID.error(reason="invalid_instant", field=field) from error
 
 
-def _order_instant(value: date | datetime) -> datetime:
+def _order_instant(value: date | datetime, field: str) -> datetime:
     if isinstance(value, datetime):
-        return _instant(value)
+        return _instant(value, field)
     return datetime.combine(value, datetime.min.time(), UTC)
 
 
@@ -63,19 +69,16 @@ def _duration(value: str | timedelta) -> timedelta:
 
         match = re.fullmatch(r"(\d+(?:\.\d+)?)([dhms])", value)
         if not match:
-            raise ValueError("embargo must be elapsed duration in d/h/m/s")
-        result = timedelta(
-            **{
-                "d": {"days": float(match[1])},
-                "h": {"hours": float(match[1])},
-                "m": {"minutes": float(match[1])},
-                "s": {"seconds": float(match[1])},
-            }[match[2]]
-        )
+            raise _INVALID.error(reason="invalid_duration", field="embargo")
+        unit = {"d": "days", "h": "hours", "m": "minutes", "s": "seconds"}[match[2]]
+        try:
+            result = timedelta(**{unit: float(match[1])})
+        except OverflowError as error:
+            raise _INVALID.error(reason="out_of_range", field="embargo") from error
     else:
-        raise TypeError("embargo must be a duration string or timedelta")
+        raise _INVALID.error(reason="wrong_type", field="embargo")
     if result < timedelta(0):
-        raise ValueError("embargo must be nonnegative")
+        raise _INVALID.error(reason="negative", field="embargo")
     return result
 
 
@@ -94,15 +97,19 @@ class TimeSplit:
         embargo: str | timedelta = "0d",
         groups: GroupSplit | None = None,
     ) -> None:
-        train = _boundary(train_until)
-        validation = None if validation_until is None else _boundary(validation_until)
+        train = _boundary(train_until, "train_until")
+        validation = (
+            None if validation_until is None else _boundary(validation_until, "validation_until")
+        )
         if validation is not None and isinstance(validation, datetime) == isinstance(
             train, datetime
         ):
-            if _order_instant(validation) <= _order_instant(train):
-                raise ValueError("validation_until must follow train_until")
+            if _order_instant(validation, "validation_until") <= _order_instant(
+                train, "train_until"
+            ):
+                raise _INVALID.error(reason="validation_not_after_train", field="validation_until")
         if groups is not None and not isinstance(groups, GroupSplit):
-            raise TypeError("groups must be GroupSplit or None")
+            raise _INVALID.error(reason="wrong_type", field="groups")
         object.__setattr__(self, "train_until", train)
         object.__setattr__(self, "validation_until", validation)
         object.__setattr__(self, "embargo", _duration(embargo))
@@ -111,21 +118,20 @@ class TimeSplit:
     def bind(self, catalog_timezone: tzinfo) -> TimeSplit:
         """Resolve calendar-date boundaries at the Catalog-local start of day."""
         if not isinstance(catalog_timezone, tzinfo):
-            raise TypeError("catalog_timezone must be a timezone")
+            raise _INVALID.error(reason="wrong_type", field="catalog_timezone")
 
-        def resolve(value: date | datetime | None) -> datetime | None:
+        def resolve(value: date | datetime | None, field: str) -> datetime | None:
             if value is None:
                 return None
             if isinstance(value, datetime):
-                return _instant(value)
+                return _instant(value, field)
             return datetime.combine(value, datetime.min.time(), catalog_timezone).astimezone(UTC)
 
-        train = resolve(self.train_until)
-        if train is None:
-            raise ValueError("train_until cannot be missing")
+        train = resolve(self.train_until, "train_until")
+        assert train is not None  # train_until is a required constructor argument
         return TimeSplit(
             train_until=train,
-            validation_until=resolve(self.validation_until),
+            validation_until=resolve(self.validation_until, "validation_until"),
             embargo=self.embargo,
             groups=self.groups,
         )
@@ -150,22 +156,25 @@ class GroupSplit:
         seed: int = 0,
     ) -> None:
         if not isinstance(group, str) or not group:
-            raise ValueError("group must be non-empty")
-        if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**63:
-            raise ValueError("seed must be a nonnegative signed-Int64 integer")
-        for fraction in (train_fraction, validation_fraction):
-            if (
-                isinstance(fraction, bool)
-                or not isinstance(fraction, (int, float))
-                or not math.isfinite(fraction)
-            ):
-                raise ValueError("split fractions must be finite numbers")
-        if (
-            not 0 < train_fraction < 1
-            or validation_fraction < 0
-            or train_fraction + validation_fraction > 1
+            raise _INVALID.error(reason="empty_name", field="group")
+        if isinstance(seed, bool) or not isinstance(seed, int):
+            raise _INVALID.error(reason="wrong_type", field="seed")
+        if not 0 <= seed < 2**63:
+            raise _INVALID.error(reason="out_of_range", field="seed")
+        for field, fraction in (
+            ("train_fraction", train_fraction),
+            ("validation_fraction", validation_fraction),
         ):
-            raise ValueError("split fractions must be positive and sum to at most one")
+            if isinstance(fraction, bool) or not isinstance(fraction, (int, float)):
+                raise _INVALID.error(reason="wrong_type", field=field)
+            if not math.isfinite(fraction):
+                raise _INVALID.error(reason="not_finite", field=field)
+        if not 0 < train_fraction < 1:
+            raise _INVALID.error(reason="out_of_range", field="train_fraction")
+        if validation_fraction < 0:
+            raise _INVALID.error(reason="negative", field="validation_fraction")
+        if train_fraction + validation_fraction > 1:
+            raise _INVALID.error(reason="fractions_exceed_one", field="validation_fraction")
         object.__setattr__(self, "group", group)
         object.__setattr__(self, "train_fraction", float(train_fraction))
         object.__setattr__(self, "validation_fraction", float(validation_fraction))
@@ -196,42 +205,49 @@ def _time_record(policy: TimeSplit) -> dict[str, Any]:
 
 def policy_from_record(record: dict[str, Any]) -> TimeSplit | GroupSplit:
     """Restore a versioned split policy through its ordinary input validation."""
-    if (
-        record.get("kind") == "group"
-        and set(record)
-        == {"kind", "group", "train_fraction", "validation_fraction", "seed", "codec"}
-        and record["codec"] == "terrine.group.v1"
-    ):
-        return GroupSplit(
-            group=record["group"],
-            train_fraction=float(record["train_fraction"]),
-            validation_fraction=float(record["validation_fraction"]),
-            seed=record["seed"],
-        )
-    if record.get("kind") == "time" and set(record) == {
-        "kind",
-        "train_until",
-        "validation_until",
-        "embargo_microseconds",
-        "groups",
-    }:
-        groups = None if record["groups"] is None else policy_from_record(record["groups"])
-        if groups is not None and not isinstance(groups, GroupSplit):
-            raise ValueError("time groups must be a group policy")
-        return TimeSplit(
-            train_until=record["train_until"],
-            validation_until=record["validation_until"],
-            embargo=timedelta(microseconds=record["embargo_microseconds"]),
-            groups=groups,
-        )
-    raise ValueError("unknown split policy record")
+    if not isinstance(record, dict):
+        raise _INVALID.error(reason="unknown_record", field="split")
+    try:
+        if (
+            record.get("kind") == "group"
+            and set(record)
+            == {"kind", "group", "train_fraction", "validation_fraction", "seed", "codec"}
+            and record["codec"] == "terrine.group.v1"
+        ):
+            return GroupSplit(
+                group=record["group"],
+                train_fraction=float(record["train_fraction"]),
+                validation_fraction=float(record["validation_fraction"]),
+                seed=record["seed"],
+            )
+        if record.get("kind") == "time" and set(record) == {
+            "kind",
+            "train_until",
+            "validation_until",
+            "embargo_microseconds",
+            "groups",
+        }:
+            groups = None if record["groups"] is None else policy_from_record(record["groups"])
+            if groups is not None and not isinstance(groups, GroupSplit):
+                raise _INVALID.error(reason="unknown_record", field="groups")
+            return TimeSplit(
+                train_until=record["train_until"],
+                validation_until=record["validation_until"],
+                embargo=timedelta(microseconds=record["embargo_microseconds"]),
+                groups=groups,
+            )
+    except TerrineError:
+        raise
+    except (TypeError, ValueError, OverflowError) as error:
+        raise _INVALID.error(reason="malformed_record", field="split") from error
+    raise _INVALID.error(reason="unknown_record", field="split")
 
 
 def group_bucket(key: str | int, policy: GroupSplit) -> Literal["train", "validation", "test"]:
     if isinstance(key, bool) or not isinstance(key, (str, int)):
-        raise TypeError("group keys must be strings or integers, excluding bool")
+        raise _INVALID.error(reason="unsupported_group_key", field="group")
     if not isinstance(policy, GroupSplit):
-        raise TypeError("policy must be GroupSplit")
+        raise _INVALID.error(reason="wrong_type", field="policy")
     kind, value = ("str", key) if isinstance(key, str) else ("int", str(key))
     payload = json.dumps(
         ["terrine.group.v1", str(policy.seed), kind, value],
@@ -255,7 +271,7 @@ def assign_group_splits(
     """Assign repeated group keys to one deterministic bucket independent of row order."""
     field = policy.group if key_field is None else key_field
     if not isinstance(field, str) or not field:
-        raise ValueError("key_field must be non-empty")
+        raise _INVALID.error(reason="empty_name", field="key_field")
     assignments: dict[Any, SplitAssignment] = {}
     for row in rows:
         identity = row["id"]
@@ -283,7 +299,7 @@ def assign_splits(
     """Assign origins using label support and leakage-safe split boundaries."""
     if isinstance(policy.train_until, date) and not isinstance(policy.train_until, datetime):
         if catalog_timezone is None:
-            raise ValueError("date boundaries require catalog_timezone or TimeSplit.bind()")
+            raise _INVALID.error(reason="unbound_calendar_date", field="catalog_timezone")
         policy = policy.bind(catalog_timezone)
     elif (
         policy.validation_until is not None
@@ -291,12 +307,12 @@ def assign_splits(
         and not isinstance(policy.validation_until, datetime)
     ):
         if catalog_timezone is None:
-            raise ValueError("date boundaries require catalog_timezone or TimeSplit.bind()")
+            raise _INVALID.error(reason="unbound_calendar_date", field="catalog_timezone")
         policy = policy.bind(catalog_timezone)
     output: dict[Any, SplitAssignment] = {}
     for row in rows:
         key = row["id"]
-        origin = _instant(row["origin"])
+        origin = _instant(row["origin"], "origin")
         if origin < policy.train_until:
             bucket, boundary = "train", policy.train_until
         elif (
@@ -347,7 +363,7 @@ def assign_splits(
                         "unassigned", row.get("label_reason", "label_unavailable")
                     )
                     break
-                end = _instant(end_value)
+                end = _instant(end_value, "label_end")
                 if not (end < boundary if point else end <= boundary):
                     output[key] = SplitAssignment("unassigned", "label_overlap")
                     break

@@ -44,8 +44,9 @@ def test_comparison_reference_conflict_refuses_without_shifting():
     cohort = Initiation(
         "started", history_start=datetime(2024, 1, 1, tzinfo=UTC), knowledge="recorded_at"
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(TerrineError) as error:
         CalendarComparisonSpec(cohort, "never_treated", -1, (0,), (-1,))
+    assert error.value.code == "terrine.design.invalid_calendar_comparison"
 
 
 def test_pre_treatment_comparisons_must_precede_anticipation():

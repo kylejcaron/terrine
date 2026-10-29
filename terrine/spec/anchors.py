@@ -14,35 +14,47 @@ from terrine.windows import seconds
 
 __all__ = ["FixedDate", "EventAnchor", "Schedule", "AnchorRange"]
 
-_INVALID = RefusalSpec("terrine.design.invalid", "Design validation failed: {reason}.")
+_INVALID = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
+_CHOICE = RefusalSpec("terrine.design.invalid", "Design input {field} must be one of {choices}.")
 _CALENDAR_STEP = re.compile(r"([0-9]{1,19})(mo|y)", re.ASCII)
 
 
-def _date(value: date | str) -> date:
+def _date(value: date | str, field: str) -> date:
     if isinstance(value, datetime) or not isinstance(value, (date, str)):
-        raise TypeError("expected a date, not a timestamp")
+        raise _INVALID.error(reason="invalid_date", field=field)
     try:
-        parsed = date.fromisoformat(value) if isinstance(value, str) else value
+        return date.fromisoformat(value) if isinstance(value, str) else value
     except ValueError as error:
-        raise ValueError("date must be an ISO calendar date") from error
-    return parsed
+        raise _INVALID.error(reason="invalid_date", field=field) from error
 
 
-def _range_bound(value: date | datetime | str | None) -> date | datetime | None:
+def _aware_instant(value: object, field: str) -> datetime:
+    """An aware datetime or ISO instant as exact UTC, or a coded design refusal."""
+    if isinstance(value, datetime) and (value.tzinfo is None or value.utcoffset() is None):
+        raise _INVALID.error(reason="naive_datetime", field=field)
+    if not isinstance(value, (datetime, str)):
+        raise _INVALID.error(reason="wrong_type", field=field)
+    try:
+        return utc_instant(value)
+    except (ValueError, OverflowError) as error:
+        raise _INVALID.error(reason="invalid_instant", field=field) from error
+
+
+def _range_bound(value: date | datetime | str | None, field: str) -> date | datetime | None:
     if value is None:
         return None
     if isinstance(value, str):
         if "T" in value or " " in value:
-            return utc_instant(value)
+            return _aware_instant(value, field)
         try:
             return date.fromisoformat(value)
         except ValueError as error:
-            raise ValueError("range bounds must be ISO dates or timestamps") from error
+            raise _INVALID.error(reason="invalid_date", field=field) from error
     if isinstance(value, datetime):
-        return utc_instant(value)
+        return _aware_instant(value, field)
     if isinstance(value, date):
         return value
-    raise TypeError("range bounds must be date, datetime, ISO string, or None")
+    raise _INVALID.error(reason="wrong_type", field=field)
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -50,9 +62,9 @@ class FixedDate:
     date: date | datetime
 
     def __init__(self, date: date | datetime | str) -> None:
-        bound = _range_bound(date)
+        bound = _range_bound(date, "date")
         if bound is None:
-            raise TypeError("fixed date cannot be None")
+            raise _INVALID.error(reason="wrong_type", field="date")
         object.__setattr__(self, "date", bound)
 
 
@@ -69,17 +81,19 @@ class EventAnchor:
         self, event: str, which: str = "first", n: int | None = None, offset: str | int = 0
     ) -> None:
         if not isinstance(event, str) or not event.strip():
-            raise ValueError("event must be a non-empty string")
+            raise _INVALID.error(reason="empty_name", field="event")
         if which not in ("first", "each", "nth"):
-            raise ValueError("which must be first, each, or nth")
+            raise _CHOICE.error(
+                reason="unsupported_value", field="which", choices=("first", "each", "nth")
+            )
         if which == "nth":
             if isinstance(n, bool) or not isinstance(n, int) or n < 1:
-                raise ValueError("nth anchors require a positive one-based n")
+                raise _INVALID.error(reason="not_positive_integer", field="n")
         elif n is not None:
-            raise ValueError("n is only valid for nth anchors")
+            raise _INVALID.error(reason="n_requires_nth", field="n")
         elapsed = seconds(offset, field="offset")
         if elapsed < 0:
-            raise _INVALID.error(reason="event anchor offset must be non-negative")
+            raise _INVALID.error(reason="negative", field="offset")
         object.__setattr__(self, "event", event)
         object.__setattr__(self, "which", which)
         object.__setattr__(self, "n", n)
@@ -131,8 +145,8 @@ class Schedule:
             step = seconds(every, field="every")
             interval, months = step, None
         if step <= 0:
-            raise ValueError("schedule interval must be positive")
-        start_date, end_date = _date(start), _date(end)
+            raise _INVALID.error(reason="not_positive", field="every")
+        start_date, end_date = _date(start, "start"), _date(end, "end")
         _inclusive_end(start_date, end_date, "schedule_end_before_start")
         object.__setattr__(self, "every", interval)
         object.__setattr__(self, "months", months)
@@ -168,7 +182,7 @@ class Schedule:
     def instants(self, day_boundary: Callable[[date], datetime]) -> tuple[datetime, ...]:
         """Every t0 of a calendar-month schedule in order; an elapsed schedule is arithmetic."""
         if self.months is None:
-            raise TypeError("instants enumerate calendar-month schedules only")
+            raise _INVALID.error(reason="elapsed_schedule", field="every")
         return tuple(self.instant(k, day_boundary) for k in range(self.count(day_boundary)))
 
 
@@ -182,9 +196,9 @@ class AnchorRange:
     def __init__(
         self, start: date | datetime | str | None = None, end: date | datetime | str | None = None
     ) -> None:
-        start_bound, end_bound = _range_bound(start), _range_bound(end)
+        start_bound, end_bound = _range_bound(start, "start"), _range_bound(end, "end")
         if start_bound is None and end_bound is None:
-            raise ValueError("at least one range bound is required")
+            raise _INVALID.error(reason="no_bound", field="start")
         if isinstance(end_bound, datetime):
             if isinstance(start_bound, datetime) and start_bound >= end_bound:
                 raise _INVALID.error(

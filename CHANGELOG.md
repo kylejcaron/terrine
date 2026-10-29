@@ -244,6 +244,49 @@
   Arrow `decimal128(38, 0)` on DuckDB and cannot be read by earlier
   versions; layers written by earlier versions still restore and compose
   identically.
+- Constructor refusals are coded. An argument value that a public constructor,
+  recipe, expression, split policy or model binding input cannot accept raises
+  `TerrineError` at construction (still a `ValueError`; formerly a bare
+  `ValueError` or `TypeError`), with context `field` (the parameter name) and
+  `reason` (a stable token such as `empty_name`, `wrong_type`, `negative`,
+  `not_positive`, `not_positive_integer`, `naive_datetime`, `invalid_date` or
+  `unsupported_value` with `choices`). `terrine.design.invalid` covers
+  `FixedDate`, `EventAnchor`, `Schedule` (and `Schedule.instants` on an elapsed
+  schedule), `AnchorRange`, `Treatment`, `Design`, every expression constructor
+  and node, `Trajectory`, `CohortSpec`, `CohortGrouping`, `TimeToEvent`,
+  `LifeTable`, `Initiation`, `PersistentAdoption`, `TrialWeight`,
+  `MatchedT0Sample`, `SequentialSpec`, `EventPanelSpec`, the argument types of
+  `CalendarComparisonSpec`, `Sequential`, `CalendarPanel`,
+  `CalendarComparisonPanel`, `EventPanel`, `matched_t0` and `to_json`/`to_yaml`
+  of a value that is not a `Design`; `from_json` and `from_yaml` refuse every
+  structural defect of a parsed document (a missing or extra field, an unknown
+  node, a value of the wrong JSON type) with `reason="malformed_document"`
+  instead of a bare error, and keep a node constructor's own refusal.
+  `StateObservations`, `BinnedMetricState` and `StatePanel` refuse with
+  `terrine.state_panel.invalid_state_source`; `Coverage`, `BoundCoverage`,
+  `UnitSource`, `Events` and `History` with `terrine.model.invalid_binding`;
+  `DatasetDefinition(base_design=)` and `DatasetDefinitionStore` with
+  `terrine.dataset.invalid_definition`; and duplicate or empty
+  `training_set` selections with `terrine.dataset.invalid_selection`, an
+  unknown `incomplete_labels` with `terrine.dataset.invalid_view`. Two codes
+  are new: `terrine.dataset.invalid_split` for `TimeSplit`, `GroupSplit`,
+  `TimeSplit.bind`, split records restored from a dataset definition and
+  `training_set(split=...)` (a value that is not a split policy, a group that
+  is not the unit or cluster unit), and `terrine.budget.invalid_limit` for a
+  `Budget` limit that is not a nonnegative integer or `None` and a
+  non-boolean `strict_scan`. Existing refusals change context: a negative
+  `EventAnchor` offset carries `reason="negative"`, `field="offset"`;
+  `survival` and `life_table` with `occurrence="each"` carry
+  `reason="single_entry_required"`, `field="occurrence"`, `choices`; a naive
+  `history_start` keeps `terrine.design.invalid_treatment_history` with
+  `reason="naive_datetime"`, `field="history_start"`. The
+  `terrine.design.missing_reference` context gains `available`, the sorted
+  declared names of the same kind (the model's metric names for
+  `kind="metric"`), and its message lists them. The dataset agent tools return
+  `terrine.design.invalid` (formerly `terrine.agent.invalid_request`) for a
+  design document with unknown fields or wrongly typed values, and
+  `terrine.dataset.invalid_split` (formerly `terrine.dataset.invalid_definition`)
+  when a training view's split group is not the unit.
 
 ## 0.1.0.dev1
 

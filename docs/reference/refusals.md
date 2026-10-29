@@ -58,6 +58,7 @@ Reduce output or obtain a separately reviewed owner budget.
 
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
+| `terrine.budget.invalid_limit` | <code>Budget {field} is invalid: {reason}; limits are nonnegative integers or None.</code> | `field`, `reason` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.budget.output_bytes_exceeded` | <code>Output exceeds the configured byte limit {limit}.</code> | `limit` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.budget.rows_exceeded` | <code>Output exceeds the configured row limit {limit}.</code> | `limit` | [terrine/compile/shapes/life_table.py](../../terrine/compile/shapes/life_table.py) |
 | `terrine.budget.rows_exceeded` | <code>Output exceeds the configured row limit {limit}.</code> | `limit` | [terrine/data.py](../../terrine/data.py) |
@@ -133,6 +134,7 @@ Use pinned manifests, valid definitions and owned destinations.
 | --- | --- | --- | --- |
 | `terrine.dataset.export_conflict` | <code>Export destination conflicts with an existing export or partial export.</code> | None | [terrine/dataset/export.py](../../terrine/dataset/export.py) |
 | `terrine.dataset.invalid_batch_size` | <code>Arrow batch size must be a positive integer.</code> | None | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
+| `terrine.dataset.invalid_definition` | <code>Dataset definition input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/spec/dataset.py](../../terrine/spec/dataset.py) |
 | `terrine.dataset.invalid_definition` | <code>Invalid dataset definition: {reason}</code> | `reason` | [terrine/spec/dataset.py](../../terrine/spec/dataset.py) |
 | `terrine.dataset.invalid_destination` | <code>Dataset destination is invalid: {reason}.</code> | `reason` | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
 | `terrine.dataset.invalid_destination` | <code>Staging, refreshing and reopening a dataset need a file-backed DuckDB connection; an in-memory model materializes only. Bind the same tables with {route}.</code> | `route` | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
@@ -140,8 +142,11 @@ Use pinned manifests, valid definitions and owned destinations.
 | `terrine.dataset.invalid_generation` | <code>Dataset manifest does not identify a verified committed runtime generation.</code> | None | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
 | `terrine.dataset.invalid_label_support` | <code>Selected label lacks completeness and reason metadata: {label}</code> | `label` | [terrine/frame.py](../../terrine/frame.py) |
 | `terrine.dataset.invalid_manifest` | <code>Invalid dataset manifest: {reason}. Stage its dataset definition to create a new manifest.</code> | `reason` | [terrine/dataset/manifest.py](../../terrine/dataset/manifest.py) |
+| `terrine.dataset.invalid_selection` | <code>Training {field} selection is invalid: {reason}.</code> | `field`, `reason` | [terrine/frame.py](../../terrine/frame.py) |
 | `terrine.dataset.invalid_selection` | <code>Unknown training feature selection: {names}</code> | `names` | [terrine/frame.py](../../terrine/frame.py) |
 | `terrine.dataset.invalid_selection` | <code>Unknown training label selection: {names}</code> | `names` | [terrine/frame.py](../../terrine/frame.py) |
+| `terrine.dataset.invalid_split` | <code>Split input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/dataset/splits.py](../../terrine/dataset/splits.py) |
+| `terrine.dataset.invalid_split` | <code>Split input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/frame.py](../../terrine/frame.py) |
 | `terrine.dataset.invalid_view` | <code>Invalid dataset view: {reason}.</code> | `reason` | [terrine/spec/dataset.py](../../terrine/spec/dataset.py) |
 | `terrine.dataset.stale_generation` | <code>Refresh requires the pinned generation to remain the current publication.</code> | None | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
 | `terrine.dataset.unsupported_view` | <code>Unsupported dataset view: {reason}.</code> | `reason` | [terrine/spec/dataset.py](../../terrine/spec/dataset.py) |
@@ -162,16 +167,26 @@ Repair temporal/history contracts; do not zero-fill unknowns.
 | `terrine.design.incomplete_unit_treatment_history` | <code>Roster observation bounds do not cover a scheduled treatment history.</code> | None | [terrine/compile/shapes/sequential.py](../../terrine/compile/shapes/sequential.py) |
 | `terrine.design.incomplete_unit_treatment_history` | <code>Roster observation bounds do not cover the required calendar treatment history.</code> | None | [terrine/compile/shapes/calendar_comparison.py](../../terrine/compile/shapes/calendar_comparison.py) |
 | `terrine.design.invalid` | <code>Design document is invalid: {reason}.</code> | `reason` | [terrine/spec/io.py](../../terrine/spec/io.py) |
-| `terrine.design.invalid` | <code>Design validation failed: {reason}.</code> | `reason` | [terrine/recipes.py](../../terrine/recipes.py) |
-| `terrine.design.invalid` | <code>Design validation failed: {reason}.</code> | `reason` | [terrine/spec/anchors.py](../../terrine/spec/anchors.py) |
+| `terrine.design.invalid` | <code>Design input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/spec/anchors.py](../../terrine/spec/anchors.py) |
+| `terrine.design.invalid` | <code>Design input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/spec/design.py](../../terrine/spec/design.py) |
+| `terrine.design.invalid` | <code>Design input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/spec/expressions.py](../../terrine/spec/expressions.py) |
+| `terrine.design.invalid` | <code>Design input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/spec/io.py](../../terrine/spec/io.py) |
+| `terrine.design.invalid` | <code>Design input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/spec/panels.py](../../terrine/spec/panels.py) |
+| `terrine.design.invalid` | <code>Design input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/spec/trajectory.py](../../terrine/spec/trajectory.py) |
+| `terrine.design.invalid` | <code>Design input {field} must be one of {choices}.</code> | `choices`, `field` | [terrine/recipes.py](../../terrine/recipes.py) |
+| `terrine.design.invalid` | <code>Design input {field} must be one of {choices}.</code> | `choices`, `field` | [terrine/spec/anchors.py](../../terrine/spec/anchors.py) |
+| `terrine.design.invalid` | <code>Design input {field} must be one of {choices}.</code> | `choices`, `field` | [terrine/spec/expressions.py](../../terrine/spec/expressions.py) |
+| `terrine.design.invalid` | <code>Design input {field} must be one of {choices}.</code> | `choices`, `field` | [terrine/spec/panels.py](../../terrine/spec/panels.py) |
+| `terrine.design.invalid` | <code>Design input {field} must be one of {choices}.</code> | `choices`, `field` | [terrine/spec/trajectory.py](../../terrine/spec/trajectory.py) |
+| `terrine.design.invalid` | <code>Design input {field}[{name!r}] is invalid: {reason}.</code> | `field`, `name`, `reason` | [terrine/spec/design.py](../../terrine/spec/design.py) |
 | `terrine.design.invalid` | <code>Design validation failed: {reason}.</code> | `reason` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 | `terrine.design.invalid_calendar_comparison` | <code>Calendar comparison specification is invalid: {reason}.</code> | `reason` | [terrine/spec/panels.py](../../terrine/spec/panels.py) |
 | `terrine.design.invalid_matched_t0_sample` | <code>Matched-t0 sample policy is invalid: {reason}.</code> | `reason` | [terrine/spec/panels.py](../../terrine/spec/panels.py) |
-| `terrine.design.invalid_treatment_history` | <code>Treatment history is invalid: {reason}.</code> | `reason` | [terrine/spec/panels.py](../../terrine/spec/panels.py) |
+| `terrine.design.invalid_treatment_history` | <code>Treatment history input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/spec/panels.py](../../terrine/spec/panels.py) |
 | `terrine.design.invalid_trial_weight` | <code>Trial weights must name every scheduled trial exactly once.</code> | None | [terrine/compile/shapes/sequential.py](../../terrine/compile/shapes/sequential.py) |
 | `terrine.design.invalid_window` | <code>Window for {name!r} must have start &lt; end.</code> | `name` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 | `terrine.design.metric_window_conflict` | <code>Metric {metric!r} declares a conflicting window_days value.</code> | `metric` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
-| `terrine.design.missing_reference` | <code>Design references unknown {kind} {name!r}.</code> | `kind`, `name` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
+| `terrine.design.missing_reference` | <code>Design references unknown {kind} {name!r}; declared: {available}.</code> | `available`, `kind`, `name` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 
 ## diff_diff
 
@@ -308,6 +323,7 @@ Correct source, roster and coverage bindings; rebind the Model.
 | `terrine.model.invalid_binding` | <code>In-memory tables are registered under their mapping keys, which DuckDB matches without regard to ASCII case, and {name!r} is used by {owners}; give the unit or the event table its own name.</code> | `name`, `owners` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.model.invalid_binding` | <code>Metric argument {field!r} is unusable: name a column or metric, pass per=&#x27;event&#x27; or per=&#x27;day&#x27;, and give where= as a mapping keyed by label.</code> | `field` | [terrine/metrics.py](../../terrine/metrics.py) |
 | `terrine.model.invalid_binding` | <code>Model binding input is invalid: {reason}.</code> | `reason` | [terrine/model.py](../../terrine/model.py) |
+| `terrine.model.invalid_binding` | <code>Model binding input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.model.invalid_binding` | <code>where= key {key!r} is not a label name or &lt;label&gt;__&lt;op&gt; with a usable value; the operators are ne, in, not_in, gt, gte, lt, lte and between, comparisons take one scalar, in and not_in a non-empty list, and between a (low, high) pair.</code> | `key` | [terrine/metrics.py](../../terrine/metrics.py) |
 | `terrine.model.invalid_binding` | <code>{field} must be a table name or an in-memory pyarrow, pandas or polars table, not {type}.</code> | `field`, `type` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.model.invalid_binding` | <code>{inputs} are in-memory tables but a connection was given; Terrine never uploads data, so load them into the warehouse yourself or omit con to build on a private in-process DuckDB.</code> | `inputs` | [terrine/model.py](../../terrine/model.py) |
@@ -427,6 +443,7 @@ Use ordered, bounded observations and explicit missingness.
 | `terrine.state_panel.budget_required` | <code>State-panel materialization requires positive max_rows and max_output_bytes budgets.</code> | None | [terrine/execution/gates.py](../../terrine/execution/gates.py) |
 | `terrine.state_panel.invalid_observations` | <code>State observations are invalid: {reason}.</code> | `reason` | [terrine/spec/state_panel.py](../../terrine/spec/state_panel.py) |
 | `terrine.state_panel.invalid_schedule` | <code>State panel schedule is invalid: {reason}.</code> | `reason` | [terrine/spec/state_panel.py](../../terrine/spec/state_panel.py) |
+| `terrine.state_panel.invalid_state_source` | <code>State source input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/spec/state_panel.py](../../terrine/spec/state_panel.py) |
 | `terrine.state_panel.invalid_state_source` | <code>State source is invalid: {reason}.</code> | `reason` | [terrine/spec/state_panel.py](../../terrine/spec/state_panel.py) |
 | `terrine.state_panel.unsupported_combination` | <code>State panel combination is unsupported: {reason}.</code> | `reason` | [terrine/spec/state_panel.py](../../terrine/spec/state_panel.py) |
 

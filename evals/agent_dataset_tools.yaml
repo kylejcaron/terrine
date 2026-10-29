@@ -21,11 +21,11 @@ cases:
   - name: sql_injection
     operation: propose_design
     edit: {sql: "SELECT secret FROM private"}
-    code: terrine.agent.invalid_request
+    code: terrine.design.invalid
   - name: callback_injection
     operation: propose_design
     edit: {callback: "builtins.eval"}
-    code: terrine.agent.invalid_request
+    code: terrine.design.invalid
   - name: source_escalation
     operation: validate_design
     deny_sources: true

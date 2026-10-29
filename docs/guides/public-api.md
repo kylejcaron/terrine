@@ -43,6 +43,17 @@ and `administrative_cutoff` default to `None`. Event occurrence defaults to
 `"first"`; `occurrence="nth"` requires a positive one-based `n`, while `n` is
 omitted for `"first"` or `"each"`.
 
+An argument value a constructor cannot accept refuses at construction with a
+`TerrineError`, before a model or any row is read. Its context carries `field`,
+the parameter name, and `reason`, a stable token such as `empty_name`,
+`wrong_type`, `not_positive` or `unsupported_value` (then with `choices`). Design
+specifications, recipes and expressions use `terrine.design.invalid`; state sources
+and `StatePanel` use `terrine.state_panel.invalid_state_source`; `TimeSplit`,
+`GroupSplit` and `training_set(split=...)` use `terrine.dataset.invalid_split`;
+`Budget` uses `terrine.budget.invalid_limit`; and `Coverage`, `UnitSource`,
+`Events` and `History` use `terrine.model.invalid_binding`. `TerrineError`
+subclasses `ValueError`.
+
 Where a constructor accepts `features` or `outcomes`, each named value may be an
 expression or a Boolean predicate, just as in `Design`. Eligibility remains a
 mapping of predicates. Shape-specific restrictions still apply: `life_table`

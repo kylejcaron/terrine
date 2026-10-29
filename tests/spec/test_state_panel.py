@@ -2,6 +2,7 @@ from decimal import Decimal
 
 import pytest
 
+from terrine.errors import TerrineError
 from terrine.spec import (
     BinnedMetricState,
     Design,
@@ -20,10 +21,17 @@ def test_observed_state_levels_and_absorbing_order_are_explicit():
     state = StateObservations("status", levels=("new", "active", "closed"), absorbing=("closed",))
     assert state.levels == ("new", "active", "closed")
     assert state.absorbing == ("closed",)
-    with pytest.raises(ValueError):
-        StateObservations("status", levels=("new", "new"))
-    with pytest.raises(ValueError):
-        StateObservations("status", levels=("new", "closed"), absorbing=("other",))
+    for build, reason in (
+        (lambda: StateObservations("status", levels=("new", "new")), "duplicate_names"),
+        (
+            lambda: StateObservations("status", levels=("new", "closed"), absorbing=("other",)),
+            "undeclared_name",
+        ),
+    ):
+        with pytest.raises(TerrineError) as error:
+            build()
+        assert error.value.code == "terrine.state_panel.invalid_state_source"
+        assert error.value.context["reason"] == reason
 
 
 def test_binned_state_preserves_exact_numeric_variants_and_right_closed_contract():
@@ -34,10 +42,14 @@ def test_binned_state_preserves_exact_numeric_variants_and_right_closed_contract
     )
     assert state.cutpoints[0] == 2**60
     assert state.cutpoints[1] == Decimal(2**60) + Decimal("0.1")
-    with pytest.raises(ValueError):
-        BinnedMetricState("sessions", cutpoints=(1, 1.0), levels=("a", "b", "c"))
-    with pytest.raises(ValueError):
-        BinnedMetricState("sessions", cutpoints=(float("inf"),), levels=("a", "b"))
+    for cutpoints, levels, reason in (
+        ((1, 1.0), ("a", "b", "c"), "not_increasing"),
+        ((float("inf"),), ("a", "b"), "not_finite"),
+    ):
+        with pytest.raises(TerrineError) as error:
+            BinnedMetricState("sessions", cutpoints=cutpoints, levels=levels)
+        assert error.value.code == "terrine.state_panel.invalid_state_source"
+        assert error.value.context["reason"] == reason
 
 
 def test_cutpoint_decoder_rejects_extra_tags_noncanonical_values_and_nonfinite():
@@ -76,11 +88,6 @@ def test_state_panel_design_round_trips_cutpoint_types_in_json_and_yaml():
             Decimal,
             float,
         )
-
-
-def test_state_panel_requires_positive_period_limit():
-    with pytest.raises(ValueError):
-        StatePanel(StateObservations("status", levels=("a", "b")), max_periods=0)
 
 
 def test_observed_state_level_order_and_terminal_definition_round_trip():

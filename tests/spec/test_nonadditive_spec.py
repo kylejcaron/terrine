@@ -51,8 +51,10 @@ def test_high_precision_probability_is_context_independent_in_design_round_trip(
 def test_serialized_probability_rejects_numeric_and_boolean_json(malformed):
     payload = json.loads(to_json(_design("0.5")))
     payload["design"]["outcomes"]["p50"]["probability"] = malformed
-    with pytest.raises((TypeError, ValueError)):
+    with pytest.raises(TerrineError) as error:
         from_json(json.dumps(payload))
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "malformed_document"
 
 
 def test_approximate_quantile_spec_serialization_keeps_sketch_contract():
@@ -85,8 +87,10 @@ def test_serialized_sketch_rank_error_rejects_numeric_and_boolean_json(malformed
     )
     payload = json.loads(to_json(design))
     payload["design"]["outcomes"]["p50"]["sketch"]["rank_error"] = malformed
-    with pytest.raises((TypeError, ValueError)):
+    with pytest.raises(TerrineError) as error:
         from_json(json.dumps(payload))
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "malformed_document"
 
 
 def test_approximate_distinct_design_round_trips():
