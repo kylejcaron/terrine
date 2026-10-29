@@ -29,11 +29,16 @@ if TYPE_CHECKING:
     from terrine.execution.inputs import ExecutionContext, VerifiedInputBinding
 __all__ = ["Model"]
 
-_INVALID = RefusalSpec("terrine.model.invalid_binding", "Model binding input is invalid: {reason}.")
+_INVALID = RefusalSpec(
+    "terrine.model.invalid_binding",
+    "The model cannot use this input ({reason}). "
+    "Check the unit, event and history declarations passed to the model.",
+)
 _MISSING_EVENT_COMPLETENESS = RefusalSpec(
     "terrine.model.missing_event_completeness",
-    "Event source {source!r} requires complete=(start, end); declare authoritative "
-    "inclusive local calendar days, not observed event maxima.",
+    "{source!r} has no complete=(first_day, last_day). Declare the inclusive calendar "
+    "days that its event or history table is fully loaded for, not the first and last "
+    "event times you happen to have.",
 )
 _AMBIGUOUS_UNIT = RefusalSpec(
     "terrine.model.ambiguous_unit",
@@ -52,7 +57,8 @@ _UNSUPPORTED_COLUMN_TYPE = RefusalSpec(
 )
 _MISSING_REFERENCE = RefusalSpec(
     "terrine.semantic.missing_reference",
-    "{owner} references {kind} {name!r}, which is not declared; declared: {available}.",
+    "{owner!r} uses {kind} {name!r}, which is not declared; available names are {available!r}. "
+    "Use one of these names or add the missing {kind} to the model.",
 )
 _IN_MEMORY_WITH_CONNECTION = RefusalSpec(
     "terrine.model.invalid_binding",

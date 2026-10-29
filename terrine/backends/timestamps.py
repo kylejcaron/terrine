@@ -40,8 +40,9 @@ __all__ = [
 
 _UNSUPPORTED = RefusalSpec(
     "terrine.temporal.timestamp_order_unsupported",
-    "Timestamp ordering cannot preserve {dtype}. Normalize to a losslessly representable "
-    "native microsecond or nanosecond timestamp before binding.",
+    "Event times of type {dtype!r} cannot be ordered without losing precision. "
+    "Convert the times losslessly to a supported microsecond or nanosecond time type "
+    "before adding the table to the model.",
 )
 
 

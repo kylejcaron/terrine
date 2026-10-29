@@ -10,7 +10,8 @@ from terrine.windows import Window, seconds
 
 _UNSUPPORTED_SHAPE = RefusalSpec(
     "terrine.sequence.unsupported_shape",
-    "Event-time expression is unsupported by the selected compiler.",
+    "The design cannot calculate this event-time request. "
+    "Use a declared event and label, and a supported occurrence and time window.",
 )
 _INVALID = RefusalSpec("terrine.sequence.invalid_spec", "Invalid event sequence request: {reason}.")
 _MAX = 2**63 - 1

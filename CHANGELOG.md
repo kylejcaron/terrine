@@ -39,6 +39,11 @@
 
 ### Public API
 
+- Refusal messages describe units, events, labels, metrics, history, t0 and
+  windows, explain what was wrong and give a route forward. Unknown names
+  list the available declarations, feature and outcome timing errors explain
+  their side of t0, and reversed schedule and window bounds explain which
+  endpoints are included. Refusal codes and structured context are unchanged.
 - `Events(table, *, time, key, unit=None, metrics=None, labels=(), complete=None)`
   declares user-named metrics with the constructors `tr.count`, `tr.sum`,
   `tr.mean` (per event, or `per="day"`), `tr.min`, `tr.max`,

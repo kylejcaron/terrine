@@ -46,7 +46,8 @@ from terrine.windows import seconds
 
 _RESERVED_OUTPUT_NAME = RefusalSpec(
     "terrine.spec.reserved_output_name",
-    "Study output name {name!r} is reserved.",
+    "Design output name {name!r} is reserved for observation details. "
+    "Give the feature or outcome a different name.",
 )
 _INVALID = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
 _NAMED = RefusalSpec(

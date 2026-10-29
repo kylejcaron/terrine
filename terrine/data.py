@@ -66,15 +66,18 @@ _INVALID_ELIGIBILITY = RefusalSpec(
 )
 _COVERAGE_DAY_OVERFLOW = RefusalSpec(
     "terrine.metadata.unrepresentable_coverage",
-    "Coverage requires a following calendar day; use through before date.max",
+    "Complete end day {through!r} leaves no following day to include the whole end day. "
+    "Choose an earlier last complete day.",
 )
 _COVERAGE_BOUND_OVERFLOW = RefusalSpec(
     "terrine.metadata.unrepresentable_coverage",
-    "Coverage boundary exceeds datetime's range; use interior calendar dates",
+    "Complete days {start!r} through {through!r} cannot be represented in the model's "
+    "local time. Choose days farther from the calendar limits.",
 )
 _COVERAGE_UTC_OVERFLOW = RefusalSpec(
     "terrine.metadata.unrepresentable_coverage",
-    "Coverage exceeds UTC datetime's range; use interior instants",
+    "Complete times {start!r} through {end_exclusive!r} cannot be represented in UTC. "
+    "Choose times farther from the calendar limits.",
 )
 _MISSING_COLUMNS = RefusalSpec(
     "terrine.metadata.missing_columns",
@@ -110,7 +113,9 @@ _UNSUPPORTED_TABLE_INPUT = RefusalSpec(
     "{field} must be a table name or an in-memory pyarrow, pandas or polars table, not {type}.",
 )
 _INVALID_BINDING = RefusalSpec(
-    "terrine.model.invalid_binding", "Model binding input {field} is invalid: {reason}."
+    "terrine.model.invalid_binding",
+    "Model input {field!r} is invalid ({reason}). "
+    "Use a declared name, the expected input type and an ordered complete time range.",
 )
 _INVALID_LIMIT = RefusalSpec(
     "terrine.budget.invalid_limit",

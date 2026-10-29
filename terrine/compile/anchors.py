@@ -25,25 +25,36 @@ from terrine.model import Model
 from terrine.semantic.models import TableRef
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
-from terrine.spec.validate import _UNIT, ensure_runtime_shape_supported, missing_reference
+from terrine.spec.validate import (
+    _UNIT,
+    _UNKNOWN_UNIT,
+    ensure_runtime_shape_supported,
+    missing_reference,
+)
 
 __all__ = ["AnchorTable", "compile_anchors"]
 
-_INVALID = RefusalSpec("terrine.compile.invalid_anchor", "Anchor compilation is invalid: {reason}.")
+_INVALID = RefusalSpec(
+    "terrine.compile.invalid_anchor",
+    "The design cannot choose t0 ({reason}). "
+    "Use a fixed time, an event time or a supported schedule.",
+)
 _INTEGRITY = RefusalSpec(
     "terrine.compile.anchor_integrity",
-    "Candidate anchor integrity check failed ({check_key}).",
+    "Unit and t0 rows failed check {check_key!r}. "
+    "Correct missing or ambiguous unit keys, event IDs and event times before building the design.",
 )
 _TIMESTAMP_PRECISION = RefusalSpec(
     "terrine.compile.anchor_timestamp_precision",
-    "Anchor timestamp column {column!r} contains submicrosecond values that cannot be "
-    "represented exactly as UTC; normalize those values to microseconds.",
+    "Time column {column!r} contains values finer than microseconds that cannot be "
+    "represented exactly as UTC. Convert those values to exact microsecond times.",
 )
 
 
 _UTC_CONVERSION_UNSUPPORTED = RefusalSpec(
     "terrine.compile.anchor_utc_conversion_unsupported",
-    "Exact conversion of naive timestamps to UTC is unsupported for backend {backend!r}.",
+    "Event times without a timezone cannot be converted exactly to UTC on {backend!r}. "
+    "Convert the times to timezone-aware UTC before adding the table to the model.",
 )
 
 
@@ -282,7 +293,7 @@ def _roster_anchors(
 ) -> tuple[ibis.Table, list[_AnchorCheck]]:
     unit_source = model.units.get(design.unit)
     if unit_source is None:
-        raise _UNIT.error(unit=design.unit, name="roster")
+        raise _UNKNOWN_UNIT.error(unit=design.unit, name="roster")
     if isinstance(design.anchor, FixedDate):
         instant = _bound(model, design.anchor.date)
         assert instant is not None

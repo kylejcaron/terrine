@@ -27,14 +27,19 @@ __all__ = ["normalize_source", "bind_metric", "normalize_events"]
 
 _SCHEMA = RefusalSpec(
     "terrine.semantic.schema_mismatch",
-    "Declared {field} column {column!r} is absent or has an incompatible type.",
+    "The {field!r} column {column!r} is missing or has the wrong type. "
+    "Choose an existing column with the required type, or correct the table before "
+    "adding it to the model.",
 )
 _MISSING = RefusalSpec(
-    "terrine.semantic.missing_reference", "Catalog reference {reference!r} is not declared."
+    "terrine.semantic.missing_reference",
+    "The model does not declare {reference!r}. "
+    "Add the missing declaration or use a name already declared in the model.",
 )
 _AMBIGUOUS = RefusalSpec(
     "terrine.semantic.ambiguous_column",
-    "Normalized event aliases conflict with declared physical column {column!r}.",
+    "Event table column {column!r} conflicts with a name Terrine needs in its output. "
+    "Rename the column before adding the table to the model.",
 )
 _DECIMAL_SCALE = RefusalSpec(
     "terrine.semantic.decimal_scale_required",

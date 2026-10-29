@@ -91,7 +91,8 @@ __all__ = ["CompiledStudy", "compile_columns", "resolve_sketch_sidecars"]
 
 _NAME_CONFLICT = RefusalSpec(
     "terrine.spec.output_name_conflict",
-    "Study output name {name!r} conflicts with {other!r}.",
+    "Design output name {name!r} conflicts with {other!r}. "
+    "Give the feature or outcome a different name.",
 )
 _RESERVED = {"unit", "anchor_id", "t0", "treatment", "_observed_from", "_observed_until"}
 
@@ -881,7 +882,8 @@ def compile_columns(
             if len(metric.measures) != 1:
                 raise RefusalSpec(
                     "terrine.metric.quantile_requires_single_measure",
-                    "Exact quantile requires metric {metric!r} to have exactly one measure.",
+                    "Metric {metric!r} combines values that cannot define one exact quantile. "
+                    "Use a metric over a single event value instead of a ratio.",
                 ).error(metric=node.metric)
             unresolved = metric.measures[0]
             source = model.sources[unresolved.source_name]
@@ -909,7 +911,9 @@ def compile_columns(
             if len(metric.measures) != 1:
                 raise RefusalSpec(
                     "terrine.metric.quantile_requires_single_measure",
-                    "Approximate quantile requires metric {metric!r} to have exactly one measure.",
+                    "Metric {metric!r} combines values that cannot define one "
+                    "approximate quantile. "
+                    "Use a metric over a single event value instead of a ratio.",
                 ).error(metric=node.metric)
             unresolved = metric.measures[0]
             source = model.sources[unresolved.source_name]
@@ -965,7 +969,8 @@ def compile_columns(
             if len(metric.measures) != 1:
                 raise RefusalSpec(
                     "terrine.metric.approx_distinct_requires_single_measure",
-                    "Approximate distinct requires metric {metric!r} to have exactly one measure.",
+                    "Metric {metric!r} combines values that cannot define one distinct count. "
+                    "Use a metric over a single event value instead of a ratio.",
                 ).error(metric=node.metric)
             unresolved = metric.measures[0]
             source = model.sources[unresolved.source_name]

@@ -19,26 +19,33 @@ __all__ = ["attribute_asof", "enrich_events", "history_checks", "validate_histor
 
 _ALIAS_COLLISION = RefusalSpec(
     "terrine.temporal.alias_collision",
-    "Temporal output alias conflicts with an existing point column.",
+    "A history label name conflicts with an existing output column. "
+    "Give the history label a different output name.",
 )
 _MISSING_KEY = RefusalSpec(
     "terrine.temporal.missing_join_key",
-    "Dimension {dimension!r} cannot resolve its declared event-side entity key.",
+    "History {dimension!r} has no matching unit key on its event table. "
+    "Use the same unit key for the history and its events.",
 )
 _INVALID_HISTORY = RefusalSpec(
     "terrine.temporal.malformed_history",
-    "Dimension history contains null keys, null starts, or malformed validity intervals.",
+    "History has missing unit keys or start times, or an end time at or before its start. "
+    "Fill the missing keys and times, and make each end later than its start.",
 )
 _DUPLICATE_HISTORY = RefusalSpec(
-    "terrine.temporal.duplicate_history", "Dimension history contains duplicate entity/start keys."
+    "terrine.temporal.duplicate_history",
+    "History repeats a start time for the same unit. "
+    "Keep one history value per unit and start time.",
 )
 _OVERLAPPING_HISTORY = RefusalSpec(
     "terrine.temporal.overlapping_history",
-    "Dimension history contains overlapping validity intervals.",
+    "History has overlapping time ranges for the same unit. "
+    "Make the ranges non-overlapping so each unit has at most one value at any time.",
 )
 _STATIC_MULTIPLICITY = RefusalSpec(
     "terrine.temporal.static_key_multiplicity",
-    "Static dimension has multiple rows for an entity key.",
+    "A label declared static has more than one row for the same unit. "
+    "Keep one row per unit, or declare time-varying values as history.",
 )
 
 

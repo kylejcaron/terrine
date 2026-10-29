@@ -35,7 +35,8 @@ _UNSUPPORTED = RefusalSpec(
 
 _INCOMPLETE_HISTORY = RefusalSpec(
     "terrine.design.incomplete_unit_treatment_history",
-    "Roster observation bounds do not cover the required calendar treatment history.",
+    "The time observed for some units does not cover the required calendar treatment history. "
+    "Use a schedule within the observed time, or supply the missing unit history.",
 )
 
 

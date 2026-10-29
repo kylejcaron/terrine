@@ -10,10 +10,13 @@ __all__ = ["Readiness"]
 
 _MISSING = RefusalSpec(
     "terrine.readiness.missing_source",
-    "No completeness coverage was declared for fact source {source!r}.",
+    "Event or history table {source!r} has no declared complete time range. "
+    "Pass complete=(first_day, last_day) with the inclusive days fully loaded for that table.",
 )
 _INVALID_BINDING = RefusalSpec(
-    "terrine.model.invalid_binding", "Model binding input {field} is invalid: {reason}."
+    "terrine.model.invalid_binding",
+    "Model input {field!r} is invalid ({reason}). "
+    "Provide the declared complete time range for each event and history table.",
 )
 
 

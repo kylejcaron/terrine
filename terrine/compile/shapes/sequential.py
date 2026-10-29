@@ -25,11 +25,13 @@ from terrine.temporal.aggregate import _Check
 
 _INVALID_TRIAL_WEIGHT = RefusalSpec(
     "terrine.design.invalid_trial_weight",
-    "Trial weights must name every scheduled trial exactly once.",
+    "Trial weights do not name every scheduled trial exactly once. "
+    "Provide one weight for each trial in the schedule.",
 )
 _CONTRADICTORY_ADOPTION = RefusalSpec(
     "terrine.compile.contradictory_persistent_adoption_history",
-    "Persistent adoption history contradicts absorbing state.",
+    "Treatment history changes after a unit has adopted, but adoption must be permanent. "
+    "Correct the history or use a design that allows treatment changes.",
 )
 
 
@@ -70,12 +72,14 @@ def _trial_columns(table, design: Design, model):
 
 _LATER_INITIATION = RefusalSpec(
     "terrine.compile.later_control_initiation",
-    "Control initiates during the sustained no-initiation follow-up.",
+    "A control unit starts treatment during a follow-up that requires no treatment. "
+    "Use a design whose control rule matches that treatment history.",
 )
 
 _INCOMPLETE_UNIT_HISTORY = RefusalSpec(
     "terrine.design.incomplete_unit_treatment_history",
-    "Roster observation bounds do not cover a scheduled treatment history.",
+    "The time observed for some units does not cover the scheduled treatment history. "
+    "Use a schedule within the observed time, or supply the missing unit history.",
 )
 
 

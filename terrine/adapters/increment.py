@@ -35,23 +35,27 @@ _MISSING = RefusalSpec(
 )
 _DUPLICATE_YAML_KEY = RefusalSpec(
     "terrine.increment.duplicate_yaml_key",
-    "increment YAML repeats mapping key {key!r} in {path!r}.",
+    "The increment YAML at {path!r} repeats key {key!r}. Keep one declaration for each key.",
 )
 _UNSUPPORTED = RefusalSpec(
     "terrine.increment.unsupported_definition",
-    "increment declaration {declaration!r} has semantics not represented by the native Catalog.",
+    "The model cannot represent increment declaration {declaration!r}. "
+    "Declare supported units, events, labels and metrics directly in the model.",
 )
 _INVALID_DEFINITIONS = RefusalSpec(
     "terrine.increment.invalid_definitions",
-    "increment definitions were rejected with upstream code {upstream_code!r}.",
+    "Increment rejected the model definitions with code {upstream_code!r}. "
+    "Correct the definitions according to that code before loading the model.",
 )
 _PROPERTY_COLLISION = RefusalSpec(
     "terrine.increment.property_name_collision",
-    "increment property names cannot be qualified without a Catalog name collision: {name!r}.",
+    "Increment label {name!r} conflicts with another name in the model. "
+    "Give each label its own name before loading the model.",
 )
 _AMBIGUOUS_PROPERTY = RefusalSpec(
     "terrine.increment.ambiguous_property",
-    "increment filter property {property!r} is ambiguous in source {source!r}.",
+    "Increment label {property!r} is ambiguous in event table {source!r}. "
+    "Qualify the label with its event table name.",
 )
 
 

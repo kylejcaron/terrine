@@ -14,7 +14,9 @@ _INVALID_DURATION = RefusalSpec(
     "accepted only by a Schedule's every.",
 )
 _INVALID_WINDOW = RefusalSpec(
-    "terrine.window.invalid_window", "Window start must precede its exclusive end."
+    "terrine.window.invalid_window",
+    "The window start is not before its end. "
+    "Use window=(earlier_time, later_time); the start is included and the end is excluded.",
 )
 _PATTERN = re.compile(r"([+-]?[0-9]+)([smhdw])", re.ASCII)
 _UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}

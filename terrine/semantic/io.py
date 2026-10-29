@@ -13,17 +13,24 @@ from terrine.semantic.models import Catalog
 
 __all__ = ["load_catalog", "dump_catalog"]
 
-_DUPLICATE = RefusalSpec("terrine.catalog.duplicate_yaml_key", "Catalog YAML repeats key {key!r}.")
+_DUPLICATE = RefusalSpec(
+    "terrine.catalog.duplicate_yaml_key",
+    "The model YAML repeats key {key!r}. Keep one declaration for each key.",
+)
 _INVALID_YAML = RefusalSpec(
-    "terrine.catalog.invalid_yaml", "Catalog YAML is not safe valid YAML: {reason}."
+    "terrine.catalog.invalid_yaml",
+    "The model YAML cannot be read safely ({reason}). "
+    "Correct the YAML and use plain values without custom tags.",
 )
 
 _INVALID_DEFINITION = RefusalSpec(
     "terrine.catalog.invalid_definition",
-    "Catalog definition is invalid:\n{diagnostics}",
+    "The model document is invalid. Correct the listed inputs:\n{diagnostics}",
 )
 _INVALID_INPUT = RefusalSpec(
-    "terrine.catalog.invalid_definition", "Catalog input {field} is invalid: {reason}."
+    "terrine.catalog.invalid_definition",
+    "Model document input {field!r} is invalid ({reason}). "
+    "Use a model YAML document with the supported schema version and declared names.",
 )
 _HINTS = {
     "missing": "Provide this required Catalog field.",

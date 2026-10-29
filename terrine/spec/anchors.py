@@ -16,6 +16,21 @@ __all__ = ["FixedDate", "EventAnchor", "Schedule", "AnchorRange"]
 
 _INVALID = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
 _CHOICE = RefusalSpec("terrine.design.invalid", "Design input {field} must be one of {choices}.")
+_DATE_END_OVERFLOW = RefusalSpec(
+    "terrine.design.invalid",
+    "End day {end!r} leaves no following day to include the whole end day. "
+    "Choose an earlier end day.",
+)
+_REVERSED_DAYS = RefusalSpec(
+    "terrine.design.invalid",
+    "End day {end!r} is before start day {start!r}. "
+    "The end is the last included day; choose an end on or after the start.",
+)
+_REVERSED_INSTANTS = RefusalSpec(
+    "terrine.design.invalid",
+    "End time {end!r} is not after start time {start!r}. "
+    "Choose a later end time; the end time itself is excluded.",
+)
 _CALENDAR_STEP = re.compile(r"([0-9]{1,19})(mo|y)", re.ASCII)
 
 
@@ -103,9 +118,9 @@ class EventAnchor:
 def _inclusive_end(start: date | None, end: date, reason: str) -> None:
     """Refuse a calendar end that cannot be widened by one day or precedes its start."""
     if end == date.max:
-        raise _INVALID.error(reason="date_overflow", field="end", end=end.isoformat())
+        raise _DATE_END_OVERFLOW.error(reason="date_overflow", field="end", end=end.isoformat())
     if start is not None and start > end:
-        raise _INVALID.error(
+        raise _REVERSED_DAYS.error(
             reason=reason, field="end", start=start.isoformat(), end=end.isoformat()
         )
 
@@ -201,7 +216,7 @@ class AnchorRange:
             raise _INVALID.error(reason="no_bound", field="start")
         if isinstance(end_bound, datetime):
             if isinstance(start_bound, datetime) and start_bound >= end_bound:
-                raise _INVALID.error(
+                raise _REVERSED_INSTANTS.error(
                     reason="range_end_before_start",
                     field="end",
                     start=start_bound.isoformat(),

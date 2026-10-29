@@ -41,7 +41,8 @@ __all__ = [
 
 _INVALID = RefusalSpec(
     "terrine.execution.invalid_input_binding",
-    "Execution inputs are not an exact verified binding: {reason}.",
+    "The event and history tables cannot be verified for this model ({reason}). "
+    "Reopen the model on the declared tables and a supported connection.",
 )
 
 

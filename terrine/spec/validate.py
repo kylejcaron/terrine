@@ -50,7 +50,11 @@ if TYPE_CHECKING:
     from terrine.semantic.models import BoundSource
 __all__ = ["ValidationReport", "resolve_selector_source", "resolve_unit", "validate_design"]
 
-_INVALID = RefusalSpec("terrine.design.invalid", "Design validation failed: {reason}.")
+_INVALID = RefusalSpec(
+    "terrine.design.invalid",
+    "The design cannot use this input ({reason}). "
+    "Check its unit, event, label, metric and schedule declarations against the model.",
+)
 _QUANTILE_BACKEND = RefusalSpec(
     "terrine.metric.exact_quantile_backend_unsupported",
     (
@@ -60,7 +64,8 @@ _QUANTILE_BACKEND = RefusalSpec(
 )
 _NONADDITIVE_KIND_UNSUPPORTED = RefusalSpec(
     "terrine.metric.nonadditive_kind_unsupported",
-    "Nonadditive aggregation {aggregation!r} is unsupported for metric kind {kind!r}.",
+    "Metric aggregation {aggregation!r} cannot be used with metric kind {kind!r}. "
+    "Use a metric over a single event value instead of a ratio.",
 )
 _APPROX_PREDICATE = RefusalSpec(
     "terrine.metric.approx_eligibility_unavailable",
@@ -70,8 +75,13 @@ _APPROX_PREDICATE = RefusalSpec(
 
 _RUNTIME_SHAPE_UNSUPPORTED = RefusalSpec(
     "terrine.compile.runtime_shape_unsupported",
-    "Persisted-layer runtime does not support shape {shape!r}; use ordinary Frame "
-    "materialization or a full rebuild.",
+    "Design shape {shape!r} cannot reuse saved unit and t0 rows. "
+    "Build the frame directly or rebuild the full dataset.",
+)
+_CALENDAR_COMPARISON_STEP = RefusalSpec(
+    "terrine.design.invalid_calendar_comparison",
+    "Calendar comparisons need equal elapsed periods, but every={every!r} uses calendar months. "
+    "Use every={route!r} for fixed-width periods.",
 )
 
 
@@ -94,7 +104,8 @@ def ensure_runtime_shape_supported(shape: object, *, anchor: object = None) -> N
 
 _MISSING = RefusalSpec(
     "terrine.design.missing_reference",
-    "Design references unknown {kind} {name!r}; declared: {available}.",
+    "{kind} {name!r} is not declared in the model; available names are {available!r}. "
+    "Use one of these names or add the missing {kind} to the model.",
 )
 
 
@@ -104,25 +115,44 @@ def missing_reference(kind: str, name: str, declared: Iterable[str]) -> TerrineE
 
 
 _AMBIGUOUS = RefusalSpec(
-    "terrine.design.ambiguous_dimension", "Property {name!r} resolves to multiple dimensions."
+    "terrine.design.ambiguous_dimension",
+    "Label {name!r} belongs to more than one history. Give each history label its own name.",
 )
 _UNIT = RefusalSpec(
-    "terrine.design.incompatible_unit", "Analysis unit {unit!r} is incompatible with {name!r}."
+    "terrine.design.incompatible_unit",
+    "{name!r} does not provide values for unit {unit!r}. "
+    "Use a unit shared by the design and the requested event, label, history or metric.",
 )
 _AMBIGUOUS_UNIT = RefusalSpec(
     "terrine.model.ambiguous_unit",
     "{owner} does not say which unit its rows belong to and the model declares "
     "{choices}; pass {parameter}= with one of them.",
 )
-_WINDOW = RefusalSpec("terrine.design.invalid_window", "Window for {name!r} must have start < end.")
-_GAP = RefusalSpec("terrine.design.gap_violation", "{role} window or cutoff violates gap {gap}.")
+_UNKNOWN_UNIT = RefusalSpec(
+    "terrine.design.incompatible_unit",
+    "Unit {unit!r} is not declared in the model. "
+    "Use a declared unit or add it to Model.from_tables(units=...).",
+)
+_WINDOW = RefusalSpec(
+    "terrine.design.invalid_window",
+    "Metric {name!r} has a window whose start is not before its end. "
+    "Set window=(earlier_time, later_time), relative to t0.",
+)
+_GAP = RefusalSpec(
+    "terrine.design.gap_violation",
+    "{role!r} uses time on the wrong side of t0. End feature and eligibility windows "
+    "and cutoffs at least {gap} seconds before t0, and start outcome windows at or after t0.",
+)
 _INCOMPLETE_TREATMENT_HISTORY = RefusalSpec(
     "terrine.design.incomplete_treatment_history",
-    "Treatment history for source {source!r} does not cover {boundary!r}.",
+    "Event history {source!r} does not cover all treatment time required by the design, "
+    "starting at {boundary!r}. Supply complete history for the required time, or narrow "
+    "the schedule and follow-up.",
 )
 _METRIC_WINDOW = RefusalSpec(
     "terrine.design.metric_window_conflict",
-    "Metric {metric!r} declares a conflicting window_days value.",
+    "Metric {metric!r} requires a different window length from the design. "
+    "Match the design window to the metric's declared window_days.",
 )
 _RETENTION_IDENTITY = RefusalSpec(
     "terrine.metric.retention_identity_unavailable",
@@ -136,7 +166,9 @@ _SEQUENCE_INVALID = RefusalSpec(
 )
 _REANCHOR_LEAK = RefusalSpec(
     "terrine.sequence.reanchor_leak",
-    "{role} expression support may cross the required gap {gap}.",
+    "{role!r} uses an event-relative window that may cross t0 or its {gap}-second gap. "
+    "Choose event times and window bounds that keep feature and eligibility time before "
+    "the gap and outcome time at or after t0.",
 )
 
 
@@ -507,7 +539,8 @@ def _expression(
     if isinstance(expr, MetricQuantile) and len(metric.measures) != 1:
         raise RefusalSpec(
             "terrine.metric.quantile_requires_single_measure",
-            "Exact quantile requires metric {metric!r} to have exactly one measure.",
+            "Metric {metric!r} combines values that cannot define one exact quantile. "
+            "Use a metric over a single event value instead of a ratio.",
         ).error(metric=expr.metric)
     nonadditive = {"min", "max", "count_distinct"}
     if any(measure.aggregation in nonadditive for measure in metric.measures) and (
@@ -589,7 +622,6 @@ def _validate_shape(
     design: Design, model: Model, required: set[str], obligations: list[str]
 ) -> None:
     from terrine.spec.panels import (
-        _INVALID_COMPARISON,
         CalendarComparisonSpec,
         EventPanelSpec,
         PersistentAdoption,
@@ -652,7 +684,7 @@ def _validate_shape(
             raise _INVALID.error(reason="CalendarComparison requires a Schedule anchor")
         if schedule.every is None:
             # Reference and anticipation periods are multiples of a fixed step.
-            raise _INVALID_COMPARISON.error(
+            raise _CALENDAR_COMPARISON_STEP.error(
                 reason="calendar_months_unsupported", every=f"{schedule.months}mo", route="4w"
             )
         if design.sample is not None:
@@ -787,7 +819,7 @@ def validate_design(design: Design, model: Model) -> ValidationReport:
         _required(model, source.name, required)
         obligations.append("event_anchor_alignment")
     elif isinstance(anchor, (FixedDate, Schedule)) and design.unit not in model.units:
-        raise _UNIT.error(unit=design.unit, name="roster")
+        raise _UNKNOWN_UNIT.error(unit=design.unit, name="roster")
 
     for role, expressions in (("feature", design.features), ("outcome", design.outcomes)):
         for expr in expressions.values():

@@ -60,8 +60,8 @@ __all__ = ["TemporalResult", "aggregate_window"]
 
 _DAY_ALIGNMENT = RefusalSpec(
     "terrine.temporal.unaligned_day_resolution",
-    "Day prefixes require both endpoints at local midnight; use event prefixes "
-    "for arbitrary instants.",
+    "Per-day windows need both time bounds at local midnight. "
+    "Choose matching t0 and window bounds, or use event-time windows for other times.",
 )
 
 

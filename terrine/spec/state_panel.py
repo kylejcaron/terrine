@@ -17,7 +17,24 @@ from terrine.errors import RefusalSpec
 from terrine.spec.anchors import Schedule
 
 _INVALID_SCHEDULE = RefusalSpec(
-    "terrine.state_panel.invalid_schedule", "State panel schedule is invalid: {reason}."
+    "terrine.state_panel.invalid_schedule",
+    "The state panel needs a finite schedule ({reason}). "
+    "Choose start and end days and an elapsed every= duration.",
+)
+_CALENDAR_SCHEDULE = RefusalSpec(
+    "terrine.state_panel.invalid_schedule",
+    "State panels need equal elapsed periods, but every={every!r} uses calendar months. "
+    "Use every={route!r} for fixed-width periods.",
+)
+_PARTIAL_PERIOD = RefusalSpec(
+    "terrine.state_panel.invalid_schedule",
+    "Schedule days {start!r} through {end!r}, inclusive, do not contain whole "
+    "{every}-second periods. Adjust the end day or every= so all periods fit exactly.",
+)
+_TOO_MANY_PERIODS = RefusalSpec(
+    "terrine.state_panel.invalid_schedule",
+    "The schedule has {periods} periods, more than the {max_periods} allowed. "
+    "Shorten the schedule or set periods= to include the full schedule.",
 )
 _INVALID_SOURCE = RefusalSpec(
     "terrine.state_panel.invalid_state_source", "State source is invalid: {reason}."
@@ -194,12 +211,12 @@ def schedule_periods(schedule: Schedule) -> int:
     rather than truncating.
     """
     if schedule.every is None:
-        raise _INVALID_SCHEDULE.error(
+        raise _CALENDAR_SCHEDULE.error(
             reason="calendar_months_unsupported", every=f"{schedule.months}mo", route="4w"
         )
     elapsed = (schedule.end_exclusive - schedule.start).days * 86_400
     if elapsed % schedule.every:
-        raise _INVALID_SCHEDULE.error(
+        raise _PARTIAL_PERIOD.error(
             reason="schedule_not_whole_periods",
             every=schedule.every,
             start=schedule.start.isoformat(),
@@ -223,7 +240,7 @@ def validate_state_panel(
         raise _INVALID_SCHEDULE.error(reason="a finite Schedule anchor is required")
     periods = schedule_periods(schedule)
     if periods > panel.max_periods:
-        raise _INVALID_SCHEDULE.error(
+        raise _TOO_MANY_PERIODS.error(
             reason="schedule_exceeds_max_periods", periods=periods, max_periods=panel.max_periods
         )
     if design.outcomes or design.treatment is not None:

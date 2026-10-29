@@ -32,7 +32,8 @@ _EXACT_PRECISION = RefusalSpec(
 )
 _UNSUPPORTED_TYPE = RefusalSpec(
     "terrine.metric.nonadditive_type_unsupported",
-    "Exact {operation} does not support source type {value_type!r}; use an ordered numeric fact.",
+    "Exact {operation} cannot order event values of type {value_type!r}. "
+    "Use event values with a supported ordered numeric type.",
 )
 
 
