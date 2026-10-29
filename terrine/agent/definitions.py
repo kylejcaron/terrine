@@ -115,6 +115,8 @@ def parse_definition(serialized: str, model: Model) -> DatasetDefinition:
                 eligibility_design = from_json(
                     json.dumps({"schema_version": DESIGN_SCHEMA_VERSION, "design": document})
                 )
+            except TerrineError:
+                raise
             except (KeyError, TypeError, ValueError, OverflowError) as error:
                 raise INVALID_DEFINITION.error(
                     reason="scoring eligibility must use typed predicates"

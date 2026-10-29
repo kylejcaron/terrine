@@ -172,6 +172,11 @@ def test_histogram_reference_matches_independent_pandas_windows(corrected):
             ("not_positive_integer", "window_days"),
         ),
         ({"span_days": 10**9}, "terrine.simulate.invalid_config", ("out_of_range", "span_days")),
+        (
+            {"anchor_periods": 10**9},
+            "terrine.simulate.invalid_config",
+            ("out_of_range", "anchor_periods"),
+        ),
         ({"seed": 1.5}, "terrine.simulate.invalid_seed", ("wrong_type", "seed")),
     ],
 )
@@ -187,6 +192,7 @@ def test_stream_arguments_refuse_with_codes():
     for build, field in (
         (lambda: list(oracle_batches(config, corrected=cast(Any, 1))), "corrected"),
         (lambda: list(event_batches(config, unit_start=3)), "unit_start"),
+        (lambda: list(event_batches(config, unit_stop=5)), "unit_stop"),
     ):
         with pytest.raises(TerrineError) as error:
             build()

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from terrine.data import Budget, UnitSource
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.execution._metadata import metadata_operation
 from terrine.execution.inputs import (
     ExecutionContext,
@@ -405,6 +405,8 @@ class SnapshotAuthority:
                 isinstance(key, str) and isinstance(value, str) for key, value in event_ids.items()
             ):
                 raise ValueError("event ID declarations are malformed")
+        except TerrineError:
+            raise
         except (ValueError, TypeError, KeyError) as exc:
             raise _INVALID.error(reason="source declarations cannot be reconstructed") from exc
         if (

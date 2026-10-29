@@ -173,9 +173,9 @@ class PlanRequest:
                 value.get("expected_base_manifest"),
                 value.get("bind_base_manifest", False),
             )
+        except TerrineError:
+            raise
         except (KeyError, TypeError, ValueError) as error:
-            if getattr(error, "code", None) == _INVALID_REQUEST.code:
-                raise
             raise _INVALID_REQUEST.error(reason="malformed or unsupported schema") from error
 
 
@@ -222,6 +222,8 @@ class PlanInvocation:
                 value.get("saved_plan_json", ""),
                 value["schema_version"],
             )
+        except TerrineError:
+            raise
         except (KeyError, TypeError, ValueError) as error:
             raise _INVALID_REQUEST.error(reason="malformed invocation receipt") from error
 

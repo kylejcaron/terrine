@@ -15,7 +15,7 @@ from terrine.runtime.control import ControlEndpoint, ControlServer
 from terrine.runtime.graph import dependency_graph
 from terrine.runtime.leases import LeaseStore
 from terrine.runtime.planner import RefreshPlan, plan_refresh
-from terrine.runtime.planning import PlanRequest
+from terrine.runtime.planning import PlanInvocation, PlanRequest
 from terrine.runtime.saved_plan import DestinationRef, ModelReference, SavedPlan
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
@@ -24,6 +24,7 @@ from terrine.spec.design import Design
 
 _DESTINATION = DestinationRef("warehouse.duckdb", "published", "study")
 _MODEL = ModelReference("owner", "catalog", "model", "units", "readiness", "events")
+_BAD_DESTINATION = {"database": "warehouse.duckdb", "schema": "bad-name", "dataset": "study"}
 
 
 def _serialized_plan(**changes: Any) -> str:
@@ -136,6 +137,51 @@ CASES = [
         "terrine.runtime.invalid_configuration",
         lambda: OpenTelemetryAdapter(None, None, queue_size=0),
         {"reason": "not_positive_integer", "field": "queue_size"},
+    ),
+    # decoders keep a coded refusal raised while rebuilding their records
+    (
+        "terrine.dataset.invalid_destination",
+        lambda: PlanRequest.from_dict(_request(destination=_BAD_DESTINATION)),
+        {"reason": "invalid_identifier", "field": "schema"},
+    ),
+    (
+        "terrine.dataset.invalid_destination",
+        lambda: PlanInvocation.from_dict(
+            {
+                "invocation_id": "run-1",
+                "serialized_plan": "{}",
+                "request_key": "key",
+                "destination": _BAD_DESTINATION,
+                "snapshot_id": "s",
+                "expected_base_manifest": None,
+                "schema_version": 1,
+            }
+        ),
+        {"reason": "invalid_identifier", "field": "schema"},
+    ),
+    (
+        "terrine.dataset.invalid_destination",
+        lambda: SavedPlan.from_json(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "plan_json": "{}",
+                    "design_json": "{}",
+                    "design_hash": "0" * 64,
+                    "model": _MODEL.to_dict(),
+                    "destination": _BAD_DESTINATION,
+                    "namespace": "owner",
+                    "expected_base_manifest": None,
+                    "plan_hash": "0" * 64,
+                }
+            )
+        ),
+        {"reason": "invalid_identifier", "field": "schema"},
+    ),
+    (
+        "terrine.budget.invalid_limit",
+        lambda: RefreshPlan.deserialize(_serialized_plan(budget={"max_rows": -1})),
+        {"reason": "not_nonnegative_integer", "field": "max_rows"},
     ),
 ]
 

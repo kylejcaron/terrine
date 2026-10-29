@@ -308,4 +308,4 @@ def test_scoring_definition_malformed_eligibility_is_a_coded_refusal(tools):
     ):
         result = operation(json.dumps(definition))
         assert result.status == "refused"
-        assert result.code == "terrine.dataset.invalid_definition"
+        assert result.code == "terrine.design.invalid"

@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from terrine.data import Budget
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, TerrineError
 from terrine.runtime.changes import ChangeSet
 from terrine.runtime.cost import ScanEvidence, estimate_task_cost, evaluate_costs
 from terrine.runtime.graph import DependencyGraph
@@ -220,9 +220,9 @@ class RefreshPlan:
             ).hexdigest()
             if not isinstance(fingerprint, str) or fingerprint != expected:
                 raise _UNVERIFIABLE.error(reason="fingerprint_mismatch")
+        except TerrineError:
+            raise
         except (ValueError, TypeError, KeyError) as exc:
-            if getattr(exc, "code", None) == _UNVERIFIABLE.code:
-                raise
             raise _UNVERIFIABLE.error(reason="malformed_plan") from exc
         scan_bytes, warnings = evaluate_costs(
             tasks, budget, definition_hash=definition_hash, snapshot_id=snapshot_id

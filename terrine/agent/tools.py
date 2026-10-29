@@ -656,6 +656,8 @@ class DatasetTools:
                 expected_base_manifest=expected_base_manifest,
                 bind_base_manifest=bind_base_manifest,
             )
+        except TerrineError:
+            raise
         except (TypeError, ValueError) as error:
             raise _INVALID.error(
                 route="Use a safe invocation ID and typed change evidence."

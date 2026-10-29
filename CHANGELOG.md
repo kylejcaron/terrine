@@ -328,7 +328,15 @@
   succeed raises `terrine.runtime.execution_failed` with context `run_id`,
   `state`, `error_code` (formerly `AirflowException` or `RuntimeError`).
   `Model.from_tables` and `Model.from_catalog` binding refusals carry token
-  reasons with `field` (`wrong_type`, `undeclared_name`) instead of prose. A
+  reasons with `field` (`wrong_type`, `undeclared_name`) instead of prose.
+  Decoders keep a coded refusal raised while rebuilding a record instead of
+  rewrapping it: `PlanRequest.from_dict`, `PlanInvocation.from_dict` and
+  `SavedPlan.from_json` surface `terrine.dataset.invalid_destination` for a
+  stored destination that is not a simple identifier (and the record's other
+  codes, such as `terrine.budget.invalid_limit` for a stored budget, also from
+  `RefreshPlan.deserialize`), and a scoring definition's malformed eligibility
+  refuses `terrine.design.invalid` through the agent tools (formerly
+  `terrine.dataset.invalid_definition`). A
   public constructor given a non-collection where it iterates one
   (`MatchedT0Sample(strata=5)`, `retention(thresholds=5)`, `EventPanelSpec`,
   `CalendarComparisonSpec`, `Events(labels=)`, `DatasetDefinition(transforms=)`,

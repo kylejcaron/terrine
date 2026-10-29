@@ -283,6 +283,8 @@ class SavedPlan:
                 data["plan_hash"],
                 data.get("dataset_definition_json"),
             )
+        except TerrineError:
+            raise
         except (ValueError, TypeError, KeyError) as exc:
             raise _INVALID.error(reason="saved plan is malformed") from exc
         if saved_plan.schema_version != 1:

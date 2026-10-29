@@ -62,6 +62,17 @@ def test_from_catalog_mapping_binds_same_model_as_catalog():
         Model.from_catalog({**CATALOG, "schema_version": 3}, con=con, readiness=readiness)
     assert error.value.code == "terrine.catalog.invalid_definition"
 
+    with pytest.raises(TerrineError) as error:
+        Model.from_catalog(
+            CATALOG,
+            con=con,
+            readiness=readiness,
+            units=cast(Any, {"user": None}),
+            event_ids=cast(Any, 5),
+        )
+    assert error.value.code == "terrine.model.invalid_binding"
+    assert error.value.context == {"reason": "wrong_type", "field": "event_ids"}
+
 
 @pytest.mark.parametrize("version", [1, 3, "2", None])
 def test_unsupported_schema_version_refuses_before_field_diagnostics(version):

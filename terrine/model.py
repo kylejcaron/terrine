@@ -556,6 +556,9 @@ class Model:
         if units is not None and not isinstance(units, Mapping):
             raise _INVALID.error(reason="wrong_type", field="units")
         unit_map = dict(units or {})
+        if event_ids is not None and not isinstance(event_ids, Mapping):
+            raise _INVALID.error(reason="wrong_type", field="event_ids")
+        event_map = dict(event_ids or {})
         if any(
             not isinstance(key, str) or not isinstance(value, UnitSource)
             for key, value in unit_map.items()
@@ -572,9 +575,6 @@ class Model:
             raise _IN_MEMORY_WITH_CONNECTION.error(
                 reason="in_memory_input_with_connection", inputs=in_memory
             )
-        if event_ids is not None and not isinstance(event_ids, Mapping):
-            raise _INVALID.error(reason="wrong_type", field="event_ids")
-        event_map = dict(event_ids or {})
         if any(
             not isinstance(key, str) or not isinstance(value, str) or not value
             for key, value in event_map.items()

@@ -69,11 +69,20 @@ class ScaleConfig:
             raise _INVALID_SEED.error(reason="wrong_type", field="seed")
         if type(self.version) is not int or self.version != _GENERATOR_VERSION:
             raise _INVALID_CONFIG.error(reason="unsupported_version", field="version")
-        for field, bound in (("window_days", "coverage_start"), ("span_days", "coverage_end")):
-            try:
-                getattr(self, bound)
-            except OverflowError as exc:
-                raise _INVALID_CONFIG.error(reason="out_of_range", field=field) from exc
+        try:
+            _ = self.coverage_start
+        except OverflowError as exc:
+            raise _INVALID_CONFIG.error(reason="out_of_range", field="window_days") from exc
+        try:
+            _ = self.coverage_end
+        except OverflowError as exc:
+            raise _INVALID_CONFIG.error(reason="out_of_range", field=self._end_driver()) from exc
+
+    def _end_driver(self) -> str:
+        """The argument whose value sets ``coverage_end``."""
+        if self.span_days >= self.window_days + self.anchor_periods + 3:
+            return "span_days"
+        return "anchor_periods" if self.anchor_periods >= self.window_days else "window_days"
 
     @property
     def coverage_start(self) -> datetime:
@@ -93,8 +102,10 @@ def _units(config: ScaleConfig, start: int, stop: int | None) -> range:
     if not isinstance(config, ScaleConfig):
         raise _INVALID_CONFIG.error(reason="wrong_type", field="config")
     stop = config.units if stop is None else stop
-    if type(start) is not int or type(stop) is not int or not 0 <= start <= stop <= config.units:
+    if type(start) is not int or not 0 <= start <= config.units:
         raise _INVALID_CONFIG.error(reason="out_of_range", field="unit_start")
+    if type(stop) is not int or not start <= stop <= config.units:
+        raise _INVALID_CONFIG.error(reason="out_of_range", field="unit_stop")
     return range(start, stop)
 
 
