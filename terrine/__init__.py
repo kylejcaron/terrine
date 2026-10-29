@@ -9,10 +9,11 @@ from terrine.windows import Window
 if TYPE_CHECKING:
     from terrine import recipes as recipes
     from terrine.compile.cost import preview
-    from terrine.data import Budget, Coverage, Events, UnitSource
+    from terrine.data import Budget, Coverage, Events, History, UnitSource
     from terrine.dataset.reference import Dataset
     from terrine.errors import UnverifiedBackendWarning
     from terrine.frame import Frame
+    from terrine.metrics import count, count_distinct, max, mean, min, ratio, sum
     from terrine.model import Model
     from terrine.spec import (
         AnchorRange,
@@ -61,6 +62,7 @@ __all__ = [
     "SessionSpec",
     "Coverage",
     "Events",
+    "History",
     "Design",
     "EventAnchor",
     "FixedDate",
@@ -75,6 +77,13 @@ __all__ = [
     "TerrineError",
     "UnverifiedBackendWarning",
     "agg",
+    "count",
+    "count_distinct",
+    "max",
+    "mean",
+    "min",
+    "ratio",
+    "sum",
     "all_of",
     "approx_quantile",
     "approx_distinct",
@@ -105,9 +114,17 @@ _LAZY_MODULES = {
     "preview": "terrine.compile.cost",
     "Coverage": "terrine.data",
     "Events": "terrine.data",
+    "History": "terrine.data",
     "Model": "terrine.model",
     "UnitSource": "terrine.data",
     "UnverifiedBackendWarning": "terrine.errors",
+    "count": "terrine.metrics",
+    "count_distinct": "terrine.metrics",
+    "max": "terrine.metrics",
+    "mean": "terrine.metrics",
+    "min": "terrine.metrics",
+    "ratio": "terrine.metrics",
+    "sum": "terrine.metrics",
 }
 
 

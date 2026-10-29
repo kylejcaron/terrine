@@ -30,8 +30,8 @@ low-level construction under **Under the hood**.
 | `event_sequence` | One selected event anchor with bounded ordered events | [Event sequences](temporal-engine.md#bounded-event-sequences-and-event-time-origins) |
 
 For `ltv`, the required `metric` must be an untransformed native metric with
-exactly one SUM measure. Use `<source>_<value>_sum` from `Model.from_tables`;
-the generated count and mean metrics are not accepted by this shape.
+exactly one SUM measure, such as a `tr.sum(column)` metric declared on
+`Events`; counts, means and ratios are not accepted by this shape.
 
 All constructors require `unit`. The guides list row-defining arguments and
 supported options; unsupported keywords raise Python's `TypeError` rather than
@@ -51,7 +51,8 @@ accept arbitrary outcome mappings.
 
 | Workflow | `terrine` names | Example or guide |
 | --- | --- | --- |
-| Bind and build | `Model`, `Design`, `Frame`, `Dataset`, `Events`, `Coverage`, `UnitSource`, `Budget`, `preview` | First dataset; [event tables and catalogs](temporal-engine.md) |
+| Bind and build | `Model`, `Design`, `Frame`, `Dataset`, `Events`, `History`, `Coverage`, `UnitSource`, `Budget`, `preview` | First dataset; [event tables and catalogs](temporal-engine.md) |
+| Metrics on `Events` | `count`, `sum`, `mean`, `min`, `max`, `count_distinct`, `ratio` | [Binding event tables](temporal-engine.md#binding-event-tables) |
 | Exact anchors and windows | `FixedDate`, `EventAnchor`, `AnchorRange`, `Schedule`, `Window` | [Anchors](candidate-anchors.md) |
 | Named feature/outcome expressions | `agg`, `asof`, `event_time`, `EventTime`, `retention`, `quantile`, `approx_distinct`, `approx_quantile`, `SketchRequest` | [Temporal semantics](temporal-engine.md) |
 | Eligibility and descriptive treatment | `eq`, `gt`, `is_null`, `all_of`, `Treatment` | [Design specifications](design-specs.md) |
@@ -60,12 +61,16 @@ accept arbitrary outcome mappings.
 | Ordered event datasets | `EventSequence`, `SessionSpec`, `FunnelSpec` | [Sequences](temporal-engine.md#bounded-event-sequences-and-event-time-origins) |
 | Save a description or handle a refusal | `DatasetDefinition`, `from_yaml`, `to_yaml`, `TerrineError` | [ML staging](ml-staging.md), [refusal reference](../reference/refusals.md) |
 
-`Events` belongs at the top level because `Model.from_tables` is the starting
-binding path for simple event tables: it combines explicit event completeness
-with an authoritative `UnitSource` roster. Each descriptor names exactly one
-unit. Its immutable typed descriptor is defined in `terrine.data`. Use
-`Model.from_catalog` for static/as-of attributes, filters, ratios, SCD2 dimension
-histories, SQL relations, multi-unit sources, or explicit Catalog names.
+`Events` and `History` belong at the top level because `Model.from_tables` is
+the starting binding path for simple tables: it combines explicit completeness
+with an authoritative `UnitSource` roster, user-named metrics built with the
+`count`, `sum`, `mean`, `min`, `max`, `count_distinct` and `ratio`
+constructors, labels for filtered counts and lookups, and history tables for
+as-of attributes. Each descriptor names exactly one unit key. The immutable
+typed descriptors are defined in `terrine.data` and the constructors in
+`terrine.metrics`; `Model.to_catalog()` writes the equivalent catalog. Use
+`Model.from_catalog` for SQL relations, multi-unit sources or explicit Catalog
+names.
 
 All three Model binding constructors accept keyword-only
 `allow_unverified: bool = False`. A genuine unregistered Ibis backend refuses

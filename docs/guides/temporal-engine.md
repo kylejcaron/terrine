@@ -19,59 +19,115 @@ Pydantic's `ValidationError`.
 
 ## Binding event tables
 
-Use `Model.from_tables` for table-backed events with one declared unit per
-source. `UnitSource` is the authoritative roster, including units without
-matching events; Terrine never derives that roster from event rows.
+Use `Model.from_tables` for table-backed events with one unit key per table.
+`UnitSource` is the authoritative roster, including units without matching
+events; Terrine never derives that roster from event rows.
 
 ```python
-from terrine import Events, Model, UnitSource
+import terrine as tr
+from terrine import Events, History, Model, UnitSource
 
-# con already contains customers(id) and orders(customer_id, occurred_at, amount).
+# con already contains customers(id), orders(customer_id, occurred_at, amount, status)
+# and plans(customer_id, plan, starts, ends).
 model = Model.from_tables(
     con,
     units={"customer": UnitSource("customers", "id")},
     events={
         "orders": Events(
             "orders",
-            "occurred_at",
-            {"customer": "customer_id"},
-            values=("amount",),
+            time="occurred_at",
+            key="customer_id",
+            labels=("status",),
+            metrics={
+                "orders": tr.count(),
+                "refunds": tr.count(where={"status": "refunded"}),
+                "refund_rate": tr.ratio("refunds", "orders"),
+                "spend": tr.sum("amount"),
+                "order_value": tr.mean("amount"),
+            },
             complete=("2025-01-01", "2025-01-31"),
+        )
+    },
+    history={
+        "plan": History(
+            "plans", key="customer_id", column="plan",
+            valid_from="starts", valid_to="ends",
+            complete=("2024-01-01", "2025-01-31"),
         )
     },
 )
 ```
 
-The event source and event fact are both named `orders`. The value fact is
-`orders_amount`; generated metrics are `orders_count`, `orders_amount_sum`,
-and `orders_amount_mean`. Consume these with ordinary `agg` expressions.
-The mean metric uses the native `avg_event` aggregation, not a calendar-day
-average. Binding builds a native Catalog and resolves only schema metadata.
-Use `dialect=` to declare a dialect explicitly; by default it is the admitted
-connection's dialect. `day_boundary` defaults to `UTC`.
+`table` is the only positional argument; `time` names the event timestamp and
+`key` the unit key column. `unit` is inferred from a single `UnitSource` and
+required when the model declares several (omitting it refuses with
+`terrine.model.ambiguous_unit`, context `owner`, `choices`, `parameter`).
+An `Events` with no `metrics` declares the event alone: anchors, `event_time`,
+survival and sequences still work, and nothing is named for you.
 
-Every `Events.complete` declares an inclusive pair of complete local calendar
-days, interpreted in `day_boundary`. Missing completeness refuses with
-`terrine.model.missing_event_completeness` and context `source`; supply an
-authoritative pair, never an observed maximum event timestamp. Optional
-`readiness` adds other coverage declarations; an event's own `complete` pair
-remains authoritative. `event_ids` declares stable identity columns as with
-`Model.from_catalog`.
+Metrics are named by you and built with `tr.count()`, `tr.sum(column)`,
+`tr.mean(column)` (per event; `per="day"` divides by the window's calendar
+days), `tr.min`, `tr.max`, `tr.count_distinct(column)` and
+`tr.ratio(numerator, denominator)` over two metrics of the same `Events`.
+Metric names are unique across the model; a metric may share its event's name.
+Consume them with ordinary `agg` expressions.
 
-Each descriptor's `keys` must name exactly one declared unit. Multiple keys
-refuse with `terrine.model.multiple_event_units` and context `source` and
-`units`; use `Model.from_catalog` to describe multi-unit semantics. A generated
-source, fact or metric name may not collide with another generated name or a
-distinct explicit readiness key. The sole permitted overlap is an event
-source with its own event fact and readiness key. Conflicts refuse with
-`terrine.model.generated_metric_collision`: context `name` identifies the
-conflict and `sources` identifies its event sources. A readiness conflict also
-includes `readiness_key`. Rename the source/value declaration or use
-`Model.from_catalog` for explicit naming.
+`labels=` names event columns that become event-time properties with the same
+name, usable in `where=`, in `event_time(..., label_property=, equals=)`, in
+`asof(label, before=)` (the last value strictly before the cutoff, carried from
+the event log) and in `Treatment(label)`. The dtype is read from the bound
+column: string, integer (or scale-zero decimal), float (or decimal), boolean
+and date; any other type, timestamps included, refuses with
+`terrine.model.invalid_binding` (`reason="unsupported_column_type"`, context
+`source`, `column`, `dtype`, `supported`).
 
-Choose `Model.from_catalog` for static/as-of attributes, filters, ratios, SCD2
-dimension histories, SQL relations, multi-unit sources, or explicit Catalog
-names. These are richer source declarations, not options inferred from tables.
+`where=` is a mapping keyed by `<label>` or `<label>__<op>`; several keys are a
+conjunction. A scalar value means equality and a list means membership;
+`__ne`, `__in`, `__not_in`, `__gt`, `__gte`, `__lt`, `__lte` and
+`__between` (a `(low, high)` pair, inclusive) are the other operators. `__` is
+reserved for that split: a label name containing it refuses at `Events(...)`
+with `reason="reserved_name"`, and a key with an unknown operator, a second
+`__`, the wrong number of values or a non-scalar refuses at the constructor
+with `reason="invalid_filter"` and the `key`. A `where=` label the `Events`
+does not declare, or a ratio operand that is not another non-ratio metric of
+the same `Events`, refuses at `from_tables` with
+`terrine.semantic.missing_reference` (context `kind`, `name`, `owner`,
+`available`). Comparing with `None` compiles a null literal whose comparison
+is unknown for every row, so a build refuses with `terrine.filter.unknown`
+rather than returning zeros.
+
+`history=` binds one attribute per `History`: the mapping key names the
+attribute, `column` its value column, and exactly one time axis is declared,
+either `valid_from` (optionally with `valid_to`) or `changed_at` alone (a
+`changed_at` row is effective until the next change); anything else refuses
+with `reason="history_time_axis"`. A table with several attribute columns is
+declared once per column. The attribute works in `asof` and `Treatment` as a
+label does, with [effective-time semantics](temporal-attributes.md).
+
+Every `Events.complete` and `History.complete` declares an inclusive pair of
+complete local calendar days, interpreted in `day_boundary`. Missing
+completeness refuses with `terrine.model.missing_event_completeness` and
+context `source`; supply an authoritative pair, never an observed maximum
+event timestamp. `event_ids` declares stable identity columns as with
+`Model.from_catalog`. Use `dialect=` to declare a dialect explicitly; by
+default it is the admitted connection's dialect. `day_boundary` defaults to
+`UTC`.
+
+Names are checked before any schema is read. Event names (the `events=` keys),
+history names and labels share one namespace because `Initiation(name)` resolves
+across events and labels; metric names are unique across every `Events`; and
+each metric column reserves a value event named `<events name>_<column>`
+(`orders_amount` above) against every event, label and history name. A clash
+refuses with `terrine.model.invalid_binding` (`reason="name_collision"`,
+context `kind` of `metric`, `label` or `event`, `name`, and the sorted
+`owners`, such as `("events:orders.amount", "labels:orders")`).
+
+`model.to_catalog()` writes the equivalent schema-version-2 catalog as YAML.
+`Model.from_catalog(path, con=con, units=model.units, readiness=model.readiness,
+event_ids=model.event_ids)` binds the same model with an equal `model_hash`.
+Choose `Model.from_catalog` directly for SQL relations, multi-unit sources or
+explicit catalog names; those are richer source declarations, not options
+inferred from tables.
 
 ### Scheduled time series
 
@@ -93,9 +149,9 @@ and `gap` (default `"0d"`); optional roles and filters default to `None`.
 from terrine import Budget, agg, recipes
 
 outcomes = {
-    "count": agg("orders_count", window=("0d", "7d")),
-    "amount": agg("orders_amount_sum", window=("0d", "7d")),
-    "mean": agg("orders_amount_mean", window=("0d", "7d")),
+    "count": agg("orders", window=("0d", "7d")),
+    "amount": agg("spend", window=("0d", "7d")),
+    "mean": agg("order_value", window=("0d", "7d")),
 }
 design = recipes.time_series(
     "customer", every="7d", start="2025-01-01", end="2025-01-07",
@@ -140,11 +196,10 @@ equivalent = Design(
 assert design == equivalent
 ```
 
-The generated event fact `orders` also works as `start_event="orders"` in
+The event `orders` also works as `start_event="orders"` in
 [`recipes.ltv`](trajectories-survival.md#cumulative-ltv). Its required `metric`
-must be an untransformed native metric with exactly one SUM measure: use
-`<source>_<value>_sum`, such as `orders_amount_sum`. Generated count and mean
-metrics are not accepted by this shape. Run
+must be an untransformed metric with exactly one SUM measure, such as
+`spend` above; counts, means and ratios are not accepted by this shape. Run
 `uv run python examples/table_first_dataset.py` for a complete local example
 that creates the roster and orders, checks zero-activity and incomplete-window
 results, and materializes cumulative event-origin values.

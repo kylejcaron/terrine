@@ -10,13 +10,16 @@ from dataclasses import dataclass, fields, is_dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, date, datetime, timedelta
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
 from terrine.backends.registry import get_engine
 from terrine.errors import RefusalSpec, freeze, thaw
 from terrine.windows import Window, seconds
+
+if TYPE_CHECKING:
+    from terrine.semantic.models import Filter
 
 __all__ = [
     "ApproximationMeta",
@@ -33,6 +36,7 @@ __all__ = [
     "ExecutionSnapshot",
     "ExpressionTiming",
     "FeatureCutoff",
+    "History",
     "MaterializedFrame",
     "Preview",
     "Provenance",
@@ -85,6 +89,17 @@ _INVALID_ENGINE_STAMP = RefusalSpec(
 _ENGINE_STAMP_FIELDS = ("dialect", "engine_name", "engine_status")
 _ARROW_METADATA_KEY = b"terrine.materialized_frame.v2"
 _LEGACY_ARROW_METADATA_KEY = b"terrine.materialized_frame.v1"
+
+_RESERVED_NAME = RefusalSpec(
+    "terrine.model.invalid_binding",
+    "{kind} name {name!r} contains '__', which separates a label from its where= operator; "
+    "rename the {kind}.",
+)
+_HISTORY_TIME_AXIS = RefusalSpec(
+    "terrine.model.invalid_binding",
+    "History {table!r} needs exactly one time axis: valid_from, optionally with valid_to, "
+    "or changed_at alone.",
+)
 
 
 def _nonempty(value: str, field: str) -> None:
@@ -196,36 +211,135 @@ class UnitSource:
                 _nonempty(value, name)
 
 
+def _complete(value: tuple[date | str, date | str] | None) -> tuple[date, date] | None:
+    if value is None:
+        return None
+    if isinstance(value, str) or len(value) != 2:
+        raise ValueError("complete must be a pair of inclusive calendar days")
+    coverage = Coverage(*value)
+    return (coverage.start, coverage.through)
+
+
 @dataclass(frozen=True, slots=True)
+class EventMetric:
+    """One aggregation over an event table, optionally restricted by label filters."""
+
+    aggregation: Literal[
+        "count", "sum", "avg_event", "avg_calendar_day", "min", "max", "count_distinct"
+    ]
+    column: str | None
+    filters: tuple[Filter, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Ratio:
+    """Two metric names declared on the same ``Events``, neither of them a ratio."""
+
+    numerator: str
+    denominator: str
+
+
+@dataclass(frozen=True, slots=True, init=False)
 class Events:
-    """Table-backed event declarations with explicit inclusive completeness days."""
+    """Event table bound to one unit key, with user-named metrics and labels."""
 
     table: str
     time: str
-    keys: Mapping[str, str]
-    values: tuple[str, ...] = ()
-    complete: tuple[date | str, date | str] | None = None
+    key: str
+    unit: str | None
+    metrics: Mapping[str, EventMetric | Ratio]
+    labels: tuple[str, ...]
+    complete: tuple[date, date] | None
 
-    def __post_init__(self) -> None:
-        _nonempty(self.table, "table")
-        _nonempty(self.time, "time")
-        keys = _mapping(self.keys, "keys")
-        for unit, column in keys.items():
-            _nonempty(unit, "unit name")
-            _nonempty(column, "key column")
-        if isinstance(self.values, str):
-            raise TypeError("values must be a sequence of column names")
-        values = tuple(self.values)
-        for value in values:
-            _nonempty(value, "value column")
-        object.__setattr__(self, "keys", keys)
-        object.__setattr__(self, "values", values)
-        if self.complete is not None:
-            if len(self.complete) != 2:
-                raise ValueError("complete must be a pair of inclusive calendar days")
-            complete = (self.complete[0], self.complete[1])
-            Coverage(*complete)
-            object.__setattr__(self, "complete", complete)
+    def __init__(
+        self,
+        table: str,
+        *,
+        time: str,
+        key: str,
+        unit: str | None = None,
+        metrics: Mapping[str, EventMetric | Ratio] | None = None,
+        labels: Sequence[str] = (),
+        complete: tuple[date | str, date | str] | None = None,
+    ) -> None:
+        _nonempty(table, "table")
+        _nonempty(time, "time")
+        _nonempty(key, "key")
+        if unit is not None:
+            _nonempty(unit, "unit")
+        declared = {} if metrics is None else metrics
+        if not isinstance(declared, Mapping) or any(
+            not isinstance(name, str) or not name or not isinstance(metric, (EventMetric, Ratio))
+            for name, metric in declared.items()
+        ):
+            raise TypeError("metrics must map names to metric declarations")
+        if isinstance(labels, str):
+            raise TypeError("labels must be a sequence of column names")
+        names = tuple(labels)
+        for label in names:
+            _nonempty(label, "label")
+            if "__" in label:
+                raise _RESERVED_NAME.error(reason="reserved_name", kind="label", name=label)
+        if len(set(names)) != len(names):
+            raise ValueError("labels must be unique")
+        object.__setattr__(self, "table", table)
+        object.__setattr__(self, "time", time)
+        object.__setattr__(self, "key", key)
+        object.__setattr__(self, "unit", unit)
+        object.__setattr__(self, "metrics", MappingProxyType(dict(declared)))
+        object.__setattr__(self, "labels", names)
+        object.__setattr__(self, "complete", _complete(complete))
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class History:
+    """One attribute's history table: a unit key, a value column and one time axis."""
+
+    table: str
+    key: str
+    column: str
+    unit: str | None
+    valid_from: str | None
+    valid_to: str | None
+    changed_at: str | None
+    complete: tuple[date, date] | None
+
+    def __init__(
+        self,
+        table: str,
+        *,
+        key: str,
+        column: str,
+        unit: str | None = None,
+        valid_from: str | None = None,
+        valid_to: str | None = None,
+        changed_at: str | None = None,
+        complete: tuple[date | str, date | str] | None = None,
+    ) -> None:
+        _nonempty(table, "table")
+        _nonempty(key, "key")
+        _nonempty(column, "column")
+        if unit is not None:
+            _nonempty(unit, "unit")
+        for name, value in (
+            ("valid_from", valid_from),
+            ("valid_to", valid_to),
+            ("changed_at", changed_at),
+        ):
+            if value is not None:
+                _nonempty(value, name)
+        if (valid_from is None) == (changed_at is None) or (
+            changed_at is not None and valid_to is not None
+        ):
+            raise _HISTORY_TIME_AXIS.error(reason="history_time_axis", table=table)
+        object.__setattr__(self, "table", table)
+        object.__setattr__(self, "key", key)
+        object.__setattr__(self, "column", column)
+        object.__setattr__(self, "unit", unit)
+        object.__setattr__(self, "valid_from", valid_from)
+        object.__setattr__(self, "valid_to", valid_to)
+        object.__setattr__(self, "changed_at", changed_at)
+        object.__setattr__(self, "complete", _complete(complete))
 
 
 @dataclass(frozen=True, slots=True)

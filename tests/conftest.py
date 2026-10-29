@@ -3,6 +3,7 @@ from functools import wraps
 import pytest
 
 from tests import _worlds
+from tests.fixtures.readme import readme_tables
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -56,5 +57,18 @@ def native_inputs(events_world):
         for name, table in events_world.tables.items():
             con.create_table(name, table)
         yield events_world.catalog, con
+    finally:
+        con.disconnect()
+
+
+@pytest.fixture
+def readme_con():
+    import ibis
+
+    con = ibis.duckdb.connect()
+    try:
+        for name, table in readme_tables().items():
+            con.create_table(name, table)
+        yield con
     finally:
         con.disconnect()

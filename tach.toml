@@ -2,7 +2,7 @@ source_roots = ["."]
 
 [[modules]]
 path = "terrine"
-depends_on = ["terrine.errors", "terrine.windows", "terrine.spec", "terrine.data", "terrine.model", "terrine.frame", "terrine.compile.cost", "terrine.dataset", "terrine.recipes"]
+depends_on = ["terrine.errors", "terrine.windows", "terrine.spec", "terrine.data", "terrine.metrics", "terrine.model", "terrine.frame", "terrine.compile.cost", "terrine.dataset", "terrine.recipes"]
 
 [[modules]]
 path = "terrine.recipes"
@@ -23,6 +23,10 @@ depends_on = []
 [[modules]]
 path = "terrine.data"
 depends_on = ["terrine.backends", "terrine.errors", "terrine.windows"]
+
+[[modules]]
+path = "terrine.metrics"
+depends_on = ["terrine.data", "terrine.errors", "terrine.semantic"]
 
 
 [[modules]]

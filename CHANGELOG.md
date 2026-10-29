@@ -39,6 +39,32 @@
 
 ### Public API
 
+- `Events(table, *, time, key, unit=None, metrics=None, labels=(), complete=None)`
+  declares user-named metrics with the constructors `tr.count`, `tr.sum`,
+  `tr.mean` (per event, or `per="day"`), `tr.min`, `tr.max`,
+  `tr.count_distinct` and `tr.ratio`, each with a `where=` mapping keyed by
+  `<label>` or `<label>__<op>` (`ne`, `in`, `not_in`, `gt`, `gte`, `lt`,
+  `lte`, `between`; a scalar means equality, a list membership, several keys
+  a conjunction) that becomes the catalog's `filters`. `labels=` names event
+  columns that bind as event-time properties with their dtype read from the
+  column, usable in `where=`, `event_time(label_property=, equals=)`, `asof`
+  and `Treatment`. `tr.History(table, *, key, column, unit=None, valid_from=,
+  valid_to=, changed_at=, complete=)` on `Model.from_tables(history={...})`
+  binds one as-of attribute per declaration, as a range-validity dimension
+  (`valid_from`, optional `valid_to`) or a change log (`changed_at`), and
+  `unit` is inferred from a single `UnitSource`. `Model.to_catalog()` writes
+  the equivalent schema-version-2 catalog as YAML; rebinding it with
+  `from_catalog` gives an equal `model_hash`. New refusals: an `Events` or
+  `History` omitting `unit` with several `UnitSource`s refuses with
+  `terrine.model.ambiguous_unit` (context `owner`, `choices`, `parameter`);
+  a bad filter key refuses at the constructor with
+  `terrine.model.invalid_binding` (`reason="invalid_filter"`, `key`); an
+  undeclared `where=` label, ratio operand or unit refuses at `from_tables`
+  with `terrine.semantic.missing_reference` (context `kind`, `name`, `owner`,
+  `available`); a label or history column of an unsupported type with
+  `reason="unsupported_column_type"`; a `History` with two time axes or none
+  with `reason="history_time_axis"`; and a `History` without `complete=` with
+  `terrine.model.missing_event_completeness`.
 - `Schedule`, and so `time_series` and `trial_panel`, accept calendar-month
   steps: `every="1mo"`, `"3mo"` or `"1y"` (twelve months) alongside elapsed
   durations. Anchor `k` is `start` advanced by `k * months` and clamped to that
@@ -66,6 +92,23 @@
 
 ### Breaking changes
 
+- `Events` takes `table` positionally and everything else by keyword; `keys`
+  and `values` are gone, replaced by one `key` column, `metrics=` and
+  `labels=`. Generated metric names (`<source>_count`, `<source>_<value>_sum`,
+  `<source>_<value>_mean`) are gone: an `Events` without `metrics` declares
+  its event only, and every metric is named by the user. `Model.from_tables`
+  loses `readiness=` (completeness comes from each `Events.complete` and
+  `History.complete`; `from_catalog` keeps it) and gains `history=`.
+  `Events.complete` and `History.complete` store `date` values. `__` is
+  reserved: a label containing it refuses at `Events(...)` with
+  `terrine.model.invalid_binding` (`reason="reserved_name"`, `kind="label"`,
+  `name`). Event names, history names and labels share one namespace, metric
+  names are unique across every `Events`, and each metric column reserves the
+  value event `<events name>_<column>` against every event, label and history
+  name; a clash refuses with `reason="name_collision"` (context `kind`,
+  `name`, sorted `owners`). The codes
+  `terrine.model.generated_metric_collision` and
+  `terrine.model.multiple_event_units` are removed.
 - Catalog documents are `schema_version: 2` and use unit, time and event
   vocabulary: a source declares `time`, `units` and `events` (formerly
   `timestamp`, `entities`, `facts`); the root `facts` mapping is `events`

@@ -169,9 +169,9 @@ def ltv(
 ) -> Design:
     """Build an origin-inclusive cumulative trajectory from a native SUM metric.
 
-    The metric must be untransformed and backed by exactly one SUM measure.
-    With Model.from_tables, use <source>_<value>_sum; generated count and mean
-    metrics are not accepted by this shape.
+    The metric must be untransformed and backed by exactly one SUM measure:
+    with Model.from_tables, a tr.sum(column) metric; counts, means and ratios
+    are not accepted by this shape.
     """
     return Design(
         unit,

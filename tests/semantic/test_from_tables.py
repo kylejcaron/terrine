@@ -1,0 +1,428 @@
+import builtins
+import copy
+import pickle
+from dataclasses import FrozenInstanceError
+from datetime import UTC, date, datetime
+from typing import Any
+
+import ibis
+import pytest
+import yaml
+
+import terrine as tr
+from terrine.data import Events, History, UnitSource
+from terrine.errors import TerrineError
+from terrine.model import Model
+from terrine.spec import Design, EventAnchor, FixedDate, Treatment, agg, asof, event_time
+from tests.fixtures.readme import readme_design, readme_model
+
+UNITS = {"customer": UnitSource("customers", "customer_id")}
+COMPLETE = ("2025-01-01", "2025-01-31")
+HISTORY_COMPLETE = ("2024-01-01", "2025-03-20")
+AXES: dict[str, dict[str, Any]] = {
+    "valid_from": {"valid_from": "starts", "valid_to": "ends"},
+    "changed_at": {"changed_at": "changed_at"},
+}
+WINDOW = ("-31d", "0s")
+
+
+def create_tables(con) -> None:
+    """Two customers; six January orders; alice's plan history; one account."""
+    con.raw_sql(
+        "CREATE TABLE customers AS SELECT * FROM (VALUES ('alice'), ('bob')) c(customer_id)"
+    )
+    con.raw_sql("CREATE TABLE accounts AS SELECT * FROM (VALUES ('acme')) a(account_id)")
+    con.raw_sql("""
+        CREATE TABLE orders AS SELECT customer_id, ordered_at::TIMESTAMPTZ AS ordered_at,
+            status::VARCHAR AS status, amount::DOUBLE AS amount, flag::BOOLEAN AS flag,
+            qty::INTEGER AS qty, ordered_at::DATE AS day
+        FROM (VALUES
+            ('alice', '2025-01-05 00:00:00+00', 'refunded', 30, true, 1),
+            ('alice', '2025-01-10 00:00:00+00', 'paid', 60, false, 2),
+            ('alice', '2025-01-15 00:00:00+00', 'chargeback', 15, true, 3),
+            ('bob', '2025-01-06 00:00:00+00', 'refunded', 80, false, 4),
+            ('bob', '2025-01-12 00:00:00+00', 'paid', 45, true, 5),
+            ('bob', '2025-01-20 00:00:00+00', 'paid', 10, false, 6)
+        ) o(customer_id, ordered_at, status, amount, flag, qty)
+    """)
+    con.raw_sql("""
+        CREATE TABLE plans AS SELECT customer_id, plan::VARCHAR AS plan,
+            starts::TIMESTAMPTZ AS starts, ends::TIMESTAMPTZ AS ends,
+            starts::TIMESTAMPTZ AS changed_at
+        FROM (VALUES
+            ('alice', 'basic', '2025-01-01 00:00:00+00', '2025-02-01 00:00:00+00'),
+            ('alice', 'pro', '2025-02-01 00:00:00+00', NULL)
+        ) p(customer_id, plan, starts, ends)
+    """)
+
+
+def orders(**changes) -> Events:
+    return Events("orders", time="ordered_at", key="customer_id", complete=COMPLETE, **changes)
+
+
+def plan(form: str, **changes: Any) -> History:
+    arguments: dict[str, Any] = {
+        "key": "customer_id",
+        "column": "plan",
+        "complete": HISTORY_COMPLETE,
+    }
+    return History("plans", **(arguments | AXES[form] | changes))
+
+
+def rich_model(con) -> Model:
+    """Filtered counts, a ratio, labels and both history forms on one model."""
+    return Model.from_tables(
+        con,
+        units=UNITS,
+        events={
+            "orders": orders(
+                labels=("status", "amount"),
+                metrics={
+                    "orders": tr.count(),
+                    "refunds": tr.count(where={"status": "refunded"}),
+                    "large_paid": tr.count(where={"status__ne": "refunded", "amount__gt": 20}),
+                    "spend": tr.sum("amount"),
+                    "refund_rate": tr.ratio("refunds", "orders"),
+                },
+            )
+        },
+        history={"plan": plan("valid_from"), "plan_change": plan("changed_at")},
+    )
+
+
+@pytest.fixture
+def con():
+    connection = ibis.duckdb.connect()
+    try:
+        create_tables(connection)
+        yield connection
+    finally:
+        connection.disconnect()
+
+
+def _snapshot(model, anchor, **columns):
+    frame = Design("customer", FixedDate(anchor), **columns).build(model)
+    table = frame.to_pyarrow().to_pydict()
+    return {name: dict(zip(table["unit"], values, strict=True)) for name, values in table.items()}
+
+
+def test_events_descriptor_normalizes_and_detaches_inputs():
+    metrics = {"n": tr.count()}
+    labels = ["status"]
+    events = Events(
+        "orders",
+        time="ordered_at",
+        key="customer_id",
+        metrics=metrics,
+        labels=labels,
+        complete=COMPLETE,
+    )
+    metrics["changed"] = tr.count()
+    labels.append("changed")
+    assert dict(events.metrics) == {"n": tr.count()}
+    assert events.labels == ("status",)
+    assert events.unit is None
+    assert events.complete == (date(2025, 1, 1), date(2025, 1, 31))
+    with pytest.raises(TypeError):
+        events.metrics["n"] = tr.count()  # ty: ignore[invalid-assignment]
+    with pytest.raises(FrozenInstanceError):
+        events.table = "changed"  # ty: ignore[invalid-assignment]
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"table": ""},
+        {"time": ""},
+        {"key": ""},
+        {"unit": ""},
+        {"metrics": {"n": "count"}},
+        {"metrics": {"": tr.count()}},
+        {"labels": "status"},
+        {"labels": ("status", "status")},
+        {"complete": ("2025-01-31", "2025-01-01")},
+        {"complete": ("2025-01-01",)},
+        {"complete": (datetime(2025, 1, 1), date(2025, 1, 31))},
+    ],
+)
+def test_events_descriptor_rejects_invalid_fields(changes):
+    with pytest.raises((TypeError, ValueError)):
+        orders(**changes)
+
+
+def test_where_counts_match_hand_oracles(con):
+    cases = {
+        "equals": ({"status": "refunded"}, 2),
+        "in": ({"status": ["refunded", "chargeback"]}, 3),
+        "not_equals": ({"status__ne": "refunded"}, 4),
+        "gt": ({"amount__gt": 50}, 2),
+        "between": ({"amount__between": (10, 50)}, 4),
+        "conjunction": ({"status": "refunded", "amount__gt": 20}, 2),
+    }
+    model = Model.from_tables(
+        con,
+        units=UNITS,
+        events={
+            "orders": orders(
+                labels=("status", "amount"),
+                metrics={name: tr.count(where=where) for name, (where, _) in cases.items()},
+            )
+        },
+    )
+    frame = Design(
+        "customer",
+        FixedDate("2025-02-01"),
+        features={name: agg(name, window=WINDOW) for name in cases},
+    ).build(model)
+    table = frame.to_pyarrow()
+    assert {name: builtins.sum(table.column(name).to_pylist()) for name in cases} == {
+        name: expected for name, (_, expected) in cases.items()
+    }
+
+
+@pytest.mark.parametrize(
+    ("key", "bad"),
+    [("status__like", "x"), ("amount__between", (1,)), ("status__in", []), ("a__b__gt", 1)],
+)
+def test_filter_grammar_errors_are_coded(key, bad):
+    with pytest.raises(TerrineError) as error:
+        tr.count(where={key: bad})
+    assert error.value.code == "terrine.model.invalid_binding"
+    assert error.value.context["reason"] == "invalid_filter"
+    assert error.value.context["key"] == key
+
+
+def test_label_names_may_not_contain_double_underscore():
+    with pytest.raises(TerrineError) as error:
+        orders(labels=("amount__gt",))
+    assert error.value.code == "terrine.model.invalid_binding"
+    assert error.value.context == {"reason": "reserved_name", "kind": "label", "name": "amount__gt"}
+
+
+def test_null_filter_literal_refuses_at_build_not_zero(con):
+    model = Model.from_tables(
+        con,
+        units=UNITS,
+        events={
+            "orders": orders(labels=("status",), metrics={"n": tr.count(where={"status": None})})
+        },
+    )
+    with pytest.raises(TerrineError) as error:
+        _snapshot(model, "2025-02-01", features={"n": agg("n", window=WINDOW)})
+    assert error.value.code == "terrine.filter.unknown"
+
+
+def test_undeclared_label_and_ratio_operand_refuse_missing_reference(con):
+    with pytest.raises(TerrineError) as error:
+        Model.from_tables(
+            con,
+            units=UNITS,
+            events={
+                "orders": orders(
+                    labels=("status",), metrics={"n": tr.count(where={"region": "eu"})}
+                )
+            },
+        )
+    assert error.value.code == "terrine.semantic.missing_reference"
+    assert error.value.context["kind"] == "label"
+    assert error.value.context["name"] == "region"
+    assert error.value.context["available"] == ("status",)
+    with pytest.raises(TerrineError) as error:
+        Model.from_tables(
+            con,
+            units=UNITS,
+            events={"orders": orders(metrics={"n": tr.count(), "r": tr.ratio("n", "missing")})},
+        )
+    assert error.value.code == "terrine.semantic.missing_reference"
+    assert error.value.context["kind"] == "metric"
+    assert error.value.context["available"] == ("n",)
+
+
+@pytest.mark.parametrize(
+    ("kind", "declarations", "owners"),
+    [
+        (
+            "metric",
+            {
+                "events": {
+                    "orders": {"metrics": {"n": tr.count()}},
+                    "sessions": {"metrics": {"n": tr.count()}},
+                }
+            },
+            ("events:orders", "events:sessions"),
+        ),
+        (
+            "label",
+            {"events": {"orders": {"labels": ("status",)}, "sessions": {"labels": ("status",)}}},
+            ("labels:orders", "labels:sessions"),
+        ),
+        (
+            "event",
+            {"events": {"plan": {}}, "history": {"plan": plan("changed_at")}},
+            ("events:plan", "history:plan"),
+        ),
+        (
+            "label",
+            {"events": {"orders": {"labels": ("sessions",)}, "sessions": {}}},
+            ("events:sessions", "labels:orders"),
+        ),
+        (
+            "event",
+            {
+                "events": {
+                    "orders": {"metrics": {"spend": tr.sum("amount")}, "labels": ("orders_amount",)}
+                }
+            },
+            ("events:orders.amount", "labels:orders"),
+        ),
+    ],
+)
+def test_name_collisions_refuse_with_owners(kind, declarations, owners, con):
+    events = {name: orders(**changes) for name, changes in declarations["events"].items()}
+    with pytest.raises(TerrineError) as error:
+        Model.from_tables(con, units=UNITS, events=events, history=declarations.get("history"))
+    assert error.value.code == "terrine.model.invalid_binding"
+    assert error.value.context["reason"] == "name_collision"
+    assert error.value.context["kind"] == kind
+    assert error.value.context["owners"] == owners
+    for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
+        assert restored.code == error.value.code
+        assert restored.context == error.value.context
+
+
+def test_label_dtype_inference_and_timestamp_refusal(con):
+    labels = ("status", "flag", "qty", "amount", "day")
+    model = Model.from_tables(con, units=UNITS, events={"orders": orders(labels=labels)})
+    assert {name: model.catalog.properties[name].dtype for name in labels} == {
+        "status": "string",
+        "flag": "bool",
+        "qty": "int",
+        "amount": "float",
+        "day": "date",
+    }
+    with pytest.raises(TerrineError) as error:
+        Model.from_tables(con, units=UNITS, events={"orders": orders(labels=("ordered_at",))})
+    assert error.value.code == "terrine.model.invalid_binding"
+    assert error.value.context["reason"] == "unsupported_column_type"
+    assert error.value.context["source"] == "orders"
+    assert error.value.context["column"] == "ordered_at"
+
+
+def test_events_without_metrics_declares_only_the_event(con):
+    model = Model.from_tables(con, units=UNITS, events={"orders": orders()})
+    assert set(model.metrics) == set()
+    assert set(model.catalog.events) == {"orders"}
+    assert Design("customer", EventAnchor("orders")).validate(model) is None
+
+
+def test_two_unit_sources_require_unit_on_events(con):
+    units = {"customer": UNITS["customer"], "account": UnitSource("accounts", "account_id")}
+    with pytest.raises(TerrineError) as error:
+        Model.from_tables(con, units=units, events={"orders": orders()})
+    assert error.value.code == "terrine.model.ambiguous_unit"
+    assert error.value.context == {
+        "owner": "events:orders",
+        "choices": ("account", "customer"),
+        "parameter": "unit",
+    }
+    with pytest.raises(TerrineError) as error:
+        Model.from_tables(con, units=units, events={"orders": orders(unit="shop")})
+    assert error.value.code == "terrine.semantic.missing_reference"
+    assert error.value.context["kind"] == "unit"
+    assert error.value.context["available"] == ("account", "customer")
+    model = Model.from_tables(con, units=units, events={"orders": orders(unit="customer")})
+    assert model.metrics == {} and model.sources["orders"].units == {"customer": "customer_id"}
+
+
+@pytest.mark.parametrize("form", ["valid_from", "changed_at"])
+def test_history_asof_and_treatment_rules(form, con):
+    model = Model.from_tables(
+        con, units=UNITS, events={"orders": orders()}, history={"plan": plan(form)}
+    )
+    at_t0 = _snapshot(
+        model,
+        "2025-02-01",
+        features={"plan_at_t0": asof("plan", before="0s")},
+        treatment=Treatment("plan"),
+    )
+    assert at_t0["plan_at_t0"] == {"alice": "basic", "bob": None}
+    assert at_t0["plan_at_t0__reason"]["bob"] == "missing_history"
+    assert at_t0["treatment"]["alice"] == "pro"
+    early = _snapshot(model, "2023-12-15", features={"plan_at_t0": asof("plan", before="0s")})
+    assert set(early["plan_at_t0__reason"].values()) == {"incomplete_coverage"}
+
+
+def test_history_time_axis_and_completeness_are_coded(con):
+    axes: list[dict[str, Any]] = [
+        {"valid_from": "starts", "changed_at": "changed_at"},
+        {},
+        {"changed_at": "c", "valid_to": "e"},
+    ]
+    for axis in axes:
+        with pytest.raises(TerrineError) as error:
+            History("plans", key="customer_id", column="plan", **axis)
+        assert error.value.code == "terrine.model.invalid_binding"
+        assert error.value.context["reason"] == "history_time_axis"
+    with pytest.raises(TerrineError) as error:
+        Model.from_tables(
+            con,
+            units=UNITS,
+            events={"orders": orders()},
+            history={"plan": plan("changed_at", complete=None)},
+        )
+    assert error.value.code == "terrine.model.missing_event_completeness"
+    assert error.value.context["source"] == "plan"
+
+
+def test_label_asof_carries_the_last_event_value(con):
+    model = Model.from_tables(con, units=UNITS, events={"orders": orders(labels=("status",))})
+    rows = _snapshot(model, "2025-01-11", features={"status_at_t0": asof("status", before="0s")})
+    assert rows["status_at_t0"] == {"alice": "paid", "bob": "refunded"}
+
+
+def test_event_time_with_label_equals_works_on_from_tables_model(con):
+    model = Model.from_tables(con, units=UNITS, events={"orders": orders(labels=("status",))})
+    selector = event_time("orders", window=WINDOW, label_property="status", equals="refunded")
+    rows = _snapshot(model, "2025-02-01", features={"first_refund": selector})
+    assert rows["first_refund"] == {
+        "alice": datetime(2025, 1, 5, tzinfo=UTC),
+        "bob": datetime(2025, 1, 6, tzinfo=UTC),
+    }
+
+
+def test_to_catalog_round_trip_has_equal_model_hash(con):
+    model = rich_model(con)
+    restored = Model.from_catalog(
+        yaml.safe_load(model.to_catalog()),
+        con=model.con,
+        units=model.units,
+        readiness=model.readiness,
+        event_ids=model.event_ids,
+    )
+    assert restored.model_hash == model.model_hash
+    assert set(model.catalog.dimensions) == {"plan"}
+    assert model.catalog.sources["plan_change"].dimensions == ()
+
+
+def test_readme_model_builds_the_readme_rows(readme_con):
+    table = readme_design().build(readme_model(readme_con)).to_pyarrow().to_pydict()
+    rows = {
+        (unit, t0.date().isoformat()): (orders_30d, spend_30d, spend_next_30d, reason)
+        for unit, t0, orders_30d, spend_30d, spend_next_30d, reason in zip(
+            table["unit"],
+            table["t0"],
+            table["orders_30d"],
+            table["spend_30d"],
+            table["spend_next_30d"],
+            table["spend_next_30d__reason"],
+            strict=True,
+        )
+    }
+    assert rows == {
+        ("alice", "2025-02-01"): (2, 75.0, 25.0, None),
+        ("bob", "2025-02-01"): (1, 80.0, 0.0, None),
+        ("carol", "2025-02-01"): (0, 0.0, 0.0, None),
+        ("alice", "2025-03-01"): (1, 25.0, None, "incomplete_coverage"),
+        ("bob", "2025-03-01"): (0, 0.0, None, "incomplete_coverage"),
+        ("carol", "2025-03-01"): (0, 0.0, None, "incomplete_coverage"),
+    }

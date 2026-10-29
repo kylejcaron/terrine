@@ -1,9 +1,10 @@
 # Common feature patterns
 
 Start with the [first dataset](first-dataset.md) for `Model.from_tables` and
-`tr.recipes`. These examples use `Model.from_catalog` because event labels,
-filtered measures and as-of attributes need explicit source semantics. Each
-snippet below runs in order after this local setup; no warehouse is required.
+`tr.recipes`. Labels, filtered counts and as-of lookups are declared on the
+same `Events`; see [binding event tables](temporal-engine.md#binding-event-tables)
+for the `where=` grammar and `History`. Each snippet below runs in order after
+this local setup; no warehouse is required.
 
 ## Local setup
 
@@ -28,34 +29,18 @@ con.raw_sql("""
         ('b', TIMESTAMP '2025-01-25 12:00:00', 'visit', 'silver')
     ) t(user_id, occurred_at, kind, tier)
 """)
-catalog = {
-    "schema_version": 2, "dialect": "duckdb", "day_boundary": "UTC",
-    "sources": {"events": {
-        "relation": {"kind": "table", "name": "events"},
-        "time": "occurred_at", "units": {"user": "user_id"},
-        "events": ["activity"], "properties": ["kind", "tier"], "dimensions": [],
-    }},
-    "events": {"activity": {"source": "events", "column": None}},
-    "properties": {
-        name: {"source": "events", "column": name, "dtype": "string", "as_of": "event_time"}
-        for name in ("kind", "tier")
-    },
-    "dimensions": {},
-    "measures": {
-        "activity_count": {"event": "activity", "aggregation": "count"},
-        "purchase_count": {
-            "event": "activity", "aggregation": "count",
-            "filters": [{"property": "kind", "op": "equals", "values": ["purchase"]}],
+model = tr.Model.from_tables(
+    con,
+    units={"user": tr.UnitSource("users", "user_id")},
+    events={"activity": tr.Events(
+        "events", time="occurred_at", key="user_id",
+        labels=("kind", "tier"),
+        metrics={
+            "activity_count": tr.count(),
+            "purchase_count": tr.count(where={"kind": "purchase"}),
         },
-    },
-    "metrics": {
-        name: {"kind": "mean", "unit": "user", "measure": name}
-        for name in ("activity_count", "purchase_count")
-    },
-}
-model = tr.Model.from_catalog(
-    catalog, con=con, units={"user": tr.UnitSource("users", "user_id")},
-    readiness={"events": tr.Coverage("2025-01-01", "2025-03-31")},
+        complete=("2025-01-01", "2025-03-31"),
+    )},
 )
 ```
 
@@ -118,10 +103,10 @@ eligible_rows = tr.recipes.time_series(
 ## Attributes at t0
 
 `asof(..., before="0s")` selects the last known attribute strictly before t0,
-not an arbitrary current value. The setup explicitly declares `tier` as an
-event-time property through `Model.from_catalog`; `Model.from_tables` does not
-infer attribute meaning. For authoritative validity intervals, declare
-[SCD2 dimension history](temporal-attributes.md) in the Catalog instead.
+not an arbitrary current value. The setup declares `tier` as a label, so its
+value is carried from the event log: the last event before t0 supplies it. For
+authoritative validity intervals, bind a history table with `tr.History`
+([effective-time semantics](temporal-attributes.md)).
 
 ```python
 attribute_rows = tr.recipes.time_series(

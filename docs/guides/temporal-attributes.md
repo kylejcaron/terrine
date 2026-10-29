@@ -17,6 +17,13 @@ and excludes an end equal to it. A `changed_at` history is interpreted as
 valid/effective-time semantics only; it does not establish when a correction
 was recorded or known.
 
+`tr.History("plans", key="customer_id", column="plan", valid_from="starts",
+valid_to="ends", complete=...)` on `Model.from_tables(history={"plan": ...})`
+declares the range form, and `changed_at="changed_at"` alone declares the
+change-log form; `asof("plan", before=...)` and `Treatment("plan")` then use
+exactly the semantics above. An `Events` label is the change-log form over the
+event log itself: each event's value holds until the unit's next event.
+
 `enrich_events(events, source, dimension_relations)` applies event-time
 selection and retains event columns. It resolves each dimension's
 `unit` through `source.units`, rather than assuming the analysis

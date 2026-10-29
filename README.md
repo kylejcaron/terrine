@@ -47,13 +47,15 @@ con = ibis.duckdb.connect()  # or your warehouse: ibis.bigquery.connect(...), ..
 con.create_table("customers", customers)
 con.create_table("orders", orders)
 
-# Tell Terrine who the rows are about and which dates the orders table covers.
+# Who the rows are about, which table holds the events, what to measure,
+# and which calendar days (inclusive) the orders table is fully loaded for.
 model = tr.Model.from_tables(
     con,
     units={"customer": tr.UnitSource("customers", "customer_id")},
     events={"orders": tr.Events(
-        "orders", "ordered_at", {"customer": "customer_id"},
-        values=("amount",), complete=("2025-01-01", "2025-03-20"),
+        "orders", time="ordered_at", key="customer_id",
+        metrics={"orders": tr.count(), "spend": tr.sum("amount")},
+        complete=("2025-01-01", "2025-03-20"),
     )},
 )
 
@@ -62,12 +64,10 @@ model = tr.Model.from_tables(
 design = tr.recipes.time_series(
     "customer", every="1mo", start="2025-02-01", end="2025-03-01",
     features={
-        "orders_30d": tr.agg("orders_count", window=("-30d", "0s")),
-        "spend_30d": tr.agg("orders_amount_sum", window=("-30d", "0s")),
+        "orders_30d": tr.agg("orders", window=("-30d", "0s")),
+        "spend_30d": tr.agg("spend", window=("-30d", "0s")),
     },
-    outcomes={
-        "spend_next_30d": tr.agg("orders_amount_sum", window=("0s", "30d")),
-    },
+    outcomes={"spend_next_30d": tr.agg("spend", window=("0s", "30d"))},
 )
 
 data = design.build(model).to_pandas()
@@ -94,7 +94,7 @@ Reading the output:
 - **Alice's February 10 order** is in her February 1 target and her March 1 features. The same order is the future for one row and the past for the next.
 - **The March targets are unknown.** Their 30-day window runs past March 20, where the orders data ends. Drop them, keep them for scoring, or handle them however suits your model.
 
-Terrine names metrics after your table and columns: `orders_count`, `orders_amount_sum` and `orders_amount_mean`. Every value has a `<name>__complete` flag and a `<name>__reason` column, so you can filter or impute deliberately.
+You name the metrics: `tr.count()` counts events, `tr.sum("amount")` adds a column, and `tr.count(where={"status": "refunded"})` counts only matching events once `status` is declared in `labels=`. Every value has a `<name>__complete` flag and a `<name>__reason` column, so you can filter or impute deliberately.
 
 ## The four ideas
 

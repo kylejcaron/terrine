@@ -96,9 +96,16 @@ def _model(con, events):
         events={
             "events": tr.Events(
                 events_name,
-                keys={"user": "user_id"},
                 time="ts",
-                values=tuple(name for name in ("amount", "weight") if name in events.column_names),
+                key="user_id",
+                metrics={
+                    "events": tr.count(),
+                    **{
+                        name: tr.sum(name)
+                        for name in ("amount", "weight")
+                        if name in events.column_names
+                    },
+                },
                 complete=("2024-12-01", "2025-01-31"),
             )
         },
@@ -208,8 +215,8 @@ def test_window_sums_preserve_small_values_after_large_history(engine):
         "user",
         tr.FixedDate("2025-01-02"),
         features={
-            "weight": tr.agg("events_weight_sum", window=("-1d", "0s")),
-            "amount": tr.agg("events_amount_sum", window=("-1d", "0s")),
+            "weight": tr.agg("weight", window=("-1d", "0s")),
+            "amount": tr.agg("amount", window=("-1d", "0s")),
         },
     )
     (row,) = _rows(model, design)
@@ -266,8 +273,8 @@ def test_naive_day_start_ignores_session_time_zone(engine):
     design = tr.Design(
         "user",
         tr.FixedDate("2025-01-01"),
-        features={"before": tr.agg("events_count", window=("-1d", "0s"))},
-        outcomes={"after": tr.agg("events_count", window=("0s", "1d"))},
+        features={"before": tr.agg("events", window=("-1d", "0s"))},
+        outcomes={"after": tr.agg("events", window=("0s", "1d"))},
     )
     (row,) = _rows(model, design)
     assert (row["before"], row["after"]) == (1, 2)

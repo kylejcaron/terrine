@@ -20,8 +20,10 @@ uv run python examples/first_dataset.py
 ## Four objects
 
 1. **Model** binds event tables with `Model.from_tables`, an authoritative unit
-   roster and explicit completeness. Use `Model.from_catalog` for richer source
-   semantics, including labels, filtered measures and as-of attributes.
+   roster and explicit completeness. Name the metrics you will reference
+   (`tr.count()`, `tr.sum("amount")`), declare `labels=` for columns you filter
+   or look up, and `history=` for attribute tables. Use `Model.from_catalog` for
+   SQL relations, multi-unit sources and explicit catalog names.
 2. **Design** describes anchors, features, outcomes and eligibility. Start with a
    constructor in `tr.recipes`; it returns an ordinary Design, not a wrapper.
    Names become output columns, with temporal validation on the same expressions.
@@ -97,8 +99,9 @@ with TemporaryDirectory(prefix="terrine-first-") as directory:
         local,
         units={"customer": tr.UnitSource("customers", "customer_id")},
         events={"orders": tr.Events(
-            "orders", "ordered_at", {"customer": "customer_id"},
-            values=("amount",), complete=("2025-01-01", "2025-03-20"),
+            "orders", time="ordered_at", key="customer_id",
+            metrics={"orders": tr.count(), "spend": tr.sum("amount")},
+            complete=("2025-01-01", "2025-03-20"),
         )},
     )
     dataset = design.build(local_model).stage("spend_forecast", budget=budget)
