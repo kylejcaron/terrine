@@ -12,11 +12,13 @@ from typing import Any
 
 from terrine.errors import RefusalSpec, freeze, thaw
 from terrine.spec.design import Design
+from terrine.spec.io import SCHEMA_VERSION as DESIGN_SCHEMA_VERSION
 from terrine.spec.io import canonical_json as design_json
 from terrine.spec.io import from_json as design_from_json
 from terrine.spec.transforms import Winsorization
 
 __all__ = [
+    "SCHEMA_VERSION",
     "DatasetDefinition",
     "DatasetDefinitionReference",
     "DatasetDefinitionStore",
@@ -24,6 +26,8 @@ __all__ = [
     "INVALID_VIEW",
     "UNSUPPORTED_VIEW",
 ]
+
+SCHEMA_VERSION = 2
 
 INVALID_DEFINITION = RefusalSpec(
     "terrine.dataset.invalid_definition", "Invalid dataset definition: {reason}"
@@ -56,7 +60,7 @@ class DatasetDefinition:
         view: Any = None,
         transforms: tuple[Winsorization, ...] = (),
     ) -> None:
-        if schema_version != 1 or isinstance(schema_version, bool):
+        if schema_version != SCHEMA_VERSION or isinstance(schema_version, bool):
             raise INVALID_DEFINITION.error(reason="unsupported schema version")
         if not isinstance(base_design, Design):
             raise TypeError("base_design must be Design")
@@ -83,14 +87,14 @@ class DatasetDefinition:
             )
         if len({item.column for item in transforms}) != len(transforms):
             raise INVALID_DEFINITION.error(reason="duplicate transformed columns")
-        object.__setattr__(self, "schema_version", 1)
+        object.__setattr__(self, "schema_version", SCHEMA_VERSION)
         object.__setattr__(self, "base_design", base_design)
         object.__setattr__(self, "view", view)
         object.__setattr__(self, "transforms", transforms)
 
     def canonical_json(self) -> bytes:
         payload = {
-            "schema_version": 1,
+            "schema_version": SCHEMA_VERSION,
             "base_design": json.loads(design_json(self.base_design))["design"],
             "view": thaw(self.view),
         }
@@ -148,13 +152,16 @@ class DatasetDefinition:
                 "view",
             }:
                 raise ValueError("unknown definition fields")
-            if payload["schema_version"] != 1 or isinstance(payload["schema_version"], bool):
+            version = payload["schema_version"]
+            if version != SCHEMA_VERSION or isinstance(version, bool):
                 raise ValueError("unsupported definition version")
             design = design_from_json(
-                _canonical({"schema_version": 1, "design": payload["base_design"]})
+                _canonical(
+                    {"schema_version": DESIGN_SCHEMA_VERSION, "design": payload["base_design"]}
+                )
             )
             return cls(
-                schema_version=1,
+                schema_version=SCHEMA_VERSION,
                 base_design=design,
                 view=payload["view"],
                 transforms=tuple(

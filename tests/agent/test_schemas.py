@@ -130,7 +130,7 @@ def test_discovery_schema_matches_existing_tagged_codec(variant):
             "user",
             Schedule("1d", "2025-01-01", "2025-01-05"),
             shape=CalendarComparisonSpec(
-                Initiation("events", "active", datetime(2024, 1, 1, tzinfo=UTC)),
+                Initiation("active", history_start=datetime(2024, 1, 1, tzinfo=UTC)),
                 "never_treated",
                 -2,
                 (0, 1),

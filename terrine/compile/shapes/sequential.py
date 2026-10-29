@@ -20,7 +20,7 @@ from terrine.semantic.bind import normalize_events
 from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
 from terrine.spec.panels import Initiation, PersistentAdoption, SequentialSpec
-from terrine.spec.validate import _outcome_bounds
+from terrine.spec.validate import _outcome_bounds, resolve_selector_source
 from terrine.temporal.aggregate import _Check
 
 _INVALID_TRIAL_WEIGHT = RefusalSpec(
@@ -116,8 +116,8 @@ def _persistent_contradictions(design: Design, model):
     assert isinstance(design.shape.treatment, PersistentAdoption)
     assert isinstance(design.anchor, Schedule)
     selector = design.shape.treatment
-    source = model.sources[selector.source]
-    prop = source.properties[selector.property]
+    source = model.sources[resolve_selector_source(model, selector.event)]
+    prop = source.properties[selector.event]
     events = normalize_events(model._relation(source.relation), source, source.units[design.unit])
     end = cast(
         ir.TimestampScalar,
@@ -164,12 +164,12 @@ def _deferred_refusal(query, refusal: RefusalSpec) -> _Check:
 def _treatment_rows(design: Design, model, anchors):
     assert isinstance(design.shape, SequentialSpec)
     selector = design.shape.treatment
-    source = model.sources[selector.source]
+    source = model.sources[resolve_selector_source(model, selector.event)]
     events = normalize_events(model._relation(source.relation), source, source.units[design.unit])
-    if selector.property in source.events:
+    if selector.event in source.events:
         observed = events._timestamp.notnull()
     else:
-        prop = source.properties[selector.property]
+        prop = source.properties[selector.event]
         if prop.dimension_name is not None:
             raise ValueError("sequential treatment selectors cannot bind dimension properties")
         value = events[prop.column]
@@ -199,12 +199,12 @@ def _later_initiations(design: Design, model, eligible_table, treatment_rows):
     assert isinstance(design.shape, SequentialSpec)
     assert isinstance(design.shape.treatment, Initiation)
     selector = design.shape.treatment
-    source = model.sources[selector.source]
+    source = model.sources[resolve_selector_source(model, selector.event)]
     events = normalize_events(model._relation(source.relation), source, source.units[design.unit])
-    if selector.property in source.events:
+    if selector.event in source.events:
         observed = events._timestamp.notnull()
     else:
-        prop = source.properties[selector.property]
+        prop = source.properties[selector.event]
         observed = events[prop.column].notnull()
     control = eligible_table.join(
         treatment_rows,

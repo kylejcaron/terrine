@@ -56,16 +56,16 @@ class FixedDate:
 class EventAnchor:
     """Select an original event, then shift time zero by a non-negative elapsed duration."""
 
-    fact: str
+    event: str
     which: str
     n: int | None
     offset: int
 
     def __init__(
-        self, fact: str, which: str = "first", n: int | None = None, offset: str | int = 0
+        self, event: str, which: str = "first", n: int | None = None, offset: str | int = 0
     ) -> None:
-        if not isinstance(fact, str) or not fact.strip():
-            raise ValueError("fact must be a non-empty string")
+        if not isinstance(event, str) or not event.strip():
+            raise ValueError("event must be a non-empty string")
         if which not in ("first", "each", "nth"):
             raise ValueError("which must be first, each, or nth")
         if which == "nth":
@@ -76,7 +76,7 @@ class EventAnchor:
         elapsed = seconds(offset)
         if elapsed < 0:
             raise _INVALID.error(reason="event anchor offset must be non-negative")
-        object.__setattr__(self, "fact", fact)
+        object.__setattr__(self, "event", event)
         object.__setattr__(self, "which", which)
         object.__setattr__(self, "n", n)
         object.__setattr__(self, "offset", elapsed)

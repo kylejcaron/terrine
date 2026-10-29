@@ -262,7 +262,7 @@ def test_unsupported_runtime_shape_refusal_names_shape_and_route(column_model, s
     )
     from terrine.windows import Window
 
-    initiation = Initiation("events", "tier", datetime(2025, 1, 1, tzinfo=UTC))
+    initiation = Initiation("tier", history_start=datetime(2025, 1, 1, tzinfo=UTC))
     shapes = {
         "EventSequence": EventSequence("amount", Window("-1d", "0d"), max_events=3),
         "SequentialSpec": SequentialSpec(initiation),

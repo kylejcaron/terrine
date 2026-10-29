@@ -60,16 +60,38 @@ def test_anchor_variants_and_design_maps_round_trip_as_safe_yaml_and_json():
         assert from_yaml(to_yaml(design)).spec_hash == design.spec_hash
 
 
+def _versioned(design, version):
+    document = json.loads(to_json(design))
+    document["schema_version"] = version
+    return json.dumps(document)
+
+
+def test_v1_design_document_refuses_with_a_coded_reason():
+    with pytest.raises(TerrineError) as error:
+        from_json(_versioned(Design("user", EventAnchor("purchase")), 1))
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "unsupported_schema_version"
+    assert error.value.context["field"] == "schema_version"
+
+
+def test_malformed_document_is_a_coded_refusal():
+    for load, document in ((from_json, "{"), (from_yaml, "design: [\n")):
+        with pytest.raises(TerrineError) as error:
+            load(document)
+        assert error.value.code == "terrine.design.invalid"
+        assert error.value.context["reason"] == "malformed_document"
+
+
 def test_event_anchor_offset_preserves_saved_design_identity_and_round_trips():
     saved = (
-        '{"design":{"administrative_cutoff":null,"anchor":{"fact":"purchase","n":2,'
+        '{"design":{"administrative_cutoff":null,"anchor":{"event":"purchase","n":2,'
         '"type":"EventAnchor","which":"nth"},"anchor_range":null,"eligibility":{},'
         '"features":{},"gap":0,"outcomes":{},"sample":null,"shape":"cross_section",'
-        '"treatment":null,"unit":"user"},"schema_version":1}'
+        '"treatment":null,"unit":"user"},"schema_version":2}'
     )
     original = from_json(saved)
     assert to_json(original) == saved
-    assert original.spec_hash == "63522eaa2202585523400fb76e2e6b1d7a70bec1a92e9b3c467fed028978c25f"
+    assert original.spec_hash == "220623d871a835f6579151a7503d759b018c2e538c89663ffed82b53517e0db6"
     assert Design("user", EventAnchor("purchase", "nth", 2, offset="0d")) == original
 
     shifted = Design("user", EventAnchor("purchase", "nth", 2, offset="1d"))
@@ -227,15 +249,15 @@ def test_treatment_known_at_t0_metadata_is_explicit():
 
 def test_yaml_and_json_reject_duplicates_unknown_schema_nodes_and_extra_fields():
     with pytest.raises(ValueError):
-        from_yaml("schema_version: 1\nschema_version: 1\ndesign: {}\n")
+        from_yaml("schema_version: 2\nschema_version: 2\ndesign: {}\n")
     with pytest.raises(ValueError):
-        from_json('{"schema_version":1,"schema_version":1,"design":{}}')
+        from_json('{"schema_version":2,"schema_version":2,"design":{}}')
     with pytest.raises(ValueError):
         from_yaml("schema_version: 99\ndesign: {}\n")
     with pytest.raises(ValueError):
-        from_yaml("schema_version: 1\ndesign: {type: FutureNode}\n")
+        from_yaml("schema_version: 2\ndesign: {type: FutureNode}\n")
     with pytest.raises(ValueError):
-        from_json('{"schema_version":1,"design":{"unit":"u","anchor":{"type":"FutureNode"}}}')
+        from_json('{"schema_version":2,"design":{"unit":"u","anchor":{"type":"FutureNode"}}}')
     with pytest.raises(ValueError):
         from_json(
             to_json(Design(unit="user", anchor=FixedDate("2025-03-01"))).replace(

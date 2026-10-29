@@ -71,7 +71,7 @@ class FunnelSpec:
 
 @dataclass(frozen=True, slots=True, init=False)
 class EventSequence:
-    fact: str
+    event: str
     window: Window
     max_events: int
     representation: Literal["positions", "arrays"]
@@ -82,7 +82,7 @@ class EventSequence:
 
     def __init__(
         self,
-        fact: str,
+        event: str,
         window: Window,
         *,
         max_events: int,
@@ -92,7 +92,7 @@ class EventSequence:
         sessions: SessionSpec | None = None,
         funnel: FunnelSpec | None = None,
     ) -> None:
-        fact = _name(fact, "sequence fact")
+        event = _name(event, "sequence event")
         if not isinstance(window, Window):
             raise _INVALID.error(reason="sequence window must be a Window")
         if isinstance(max_events, bool) or not isinstance(max_events, int):
@@ -155,7 +155,7 @@ class EventSequence:
             raise _INVALID.error(reason="sessions must be SessionSpec or None")
         if funnel is not None and not isinstance(funnel, FunnelSpec):
             raise _INVALID.error(reason="funnel must be FunnelSpec or None")
-        object.__setattr__(self, "fact", fact)
+        object.__setattr__(self, "event", event)
         object.__setattr__(self, "window", window)
         object.__setattr__(self, "max_events", max_events)
         object.__setattr__(self, "representation", representation)

@@ -28,7 +28,7 @@ def test_matched_t0_policy_is_serialized_and_in_design_hash():
         base.unit,
         base.anchor,
         shape=SequentialSpec(
-            Initiation("events", "started", datetime(2024, 1, 1, tzinfo=UTC)),
+            Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC)),
             TrialWeight("equal_trial"),
         ),
         sample=sample,
@@ -43,7 +43,7 @@ def test_matched_t0_policy_is_serialized_and_in_design_hash():
 
 def test_sequential_schedule_spec_round_trips_canonically():
     design = Design("customer_id", Schedule(7, "2025-01-01", "2025-01-15"))
-    treatment = Initiation("events", "started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
+    treatment = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
     sequential = Sequential(design, treatment=treatment)
 
     assert from_json(to_json(sequential)) == sequential
@@ -54,7 +54,7 @@ def test_calendar_panel_is_canonical_sequential_composition():
     from terrine.spec import CalendarPanel
 
     design = Design("customer_id", Schedule(7, "2025-01-01", "2025-01-15"))
-    treatment = Initiation("events", "started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
+    treatment = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
 
     assert CalendarPanel(Sequential(design, treatment=treatment)) == Sequential(
         design, treatment=treatment
@@ -70,9 +70,8 @@ def test_event_panel_emits_only_declared_relative_periods():
 
 
 def test_treatment_initiation_and_persistent_state_are_distinct():
-    initiation = Initiation("events", "started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
+    initiation = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
     persistent = PersistentAdoption(
-        "events",
         "started",
         adopted_value="yes",
         history_start=datetime(2024, 1, 1, tzinfo=UTC),
@@ -92,9 +91,7 @@ def test_conflicting_design_inputs_refuse_before_hash():
     with pytest.raises(TerrineError) as error:
         Sequential(
             base,
-            treatment=Initiation(
-                "events", "started", history_start=datetime(2024, 1, 1, tzinfo=UTC)
-            ),
+            treatment=Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC)),
         )
 
     assert error.value.code == "terrine.design.conflicting_treatment"
@@ -108,7 +105,7 @@ def test_explicit_trial_weights_normalize_without_overflow():
 
 def test_explicit_trial_weight_round_trips_in_design_hash():
     base = Design("user", Schedule("1d", "2025-01-01", "2025-01-03"))
-    treatment = Initiation("events", "started", datetime(2024, 1, 1, tzinfo=UTC))
+    treatment = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
     design = Sequential(
         base,
         treatment=treatment,
@@ -123,7 +120,7 @@ def test_explicit_trial_weights_round_trip_without_mass_drift():
     base = Design("user", Schedule("1d", "2025-01-01", "2025-01-03"))
     design = Sequential(
         base,
-        treatment=Initiation("events", "started", datetime(2024, 1, 1, tzinfo=UTC)),
+        treatment=Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC)),
         trial_weight=TrialWeight("explicit", {"a": 1, "b": 5, "c": 7}),
     )
 
@@ -140,16 +137,16 @@ def test_explicit_trial_weights_refuse_nonfinite_values():
 
 def test_treatment_history_instants_canonicalize_to_utc():
     first = Initiation(
-        "events", "started", datetime(2025, 1, 1, tzinfo=timezone(timedelta(hours=2)))
+        "started", history_start=datetime(2025, 1, 1, tzinfo=timezone(timedelta(hours=2)))
     )
-    second = Initiation("events", "started", datetime(2024, 12, 31, 22, tzinfo=UTC))
+    second = Initiation("started", history_start=datetime(2024, 12, 31, 22, tzinfo=UTC))
 
     assert first == second
     assert first.history_start.tzinfo is UTC
 
 
 def test_direct_design_construction_cannot_conflict_with_sequential_treatment():
-    history = Initiation("events", "started", datetime(2024, 1, 1, tzinfo=UTC))
+    history = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
 
     with pytest.raises(TerrineError) as error:
         Design(
@@ -164,7 +161,7 @@ def test_direct_design_construction_cannot_conflict_with_sequential_treatment():
 
 def test_design_json_without_optional_anchor_range_loads_with_sample_defaults():
     restored = from_json(
-        '{"schema_version":1,"design":{"unit":"user","anchor":'
+        '{"schema_version":2,"design":{"unit":"user","anchor":'
         '{"type":"FixedDate","date":{"type":"date","value":"2025-01-01"}}}}'
     )
 

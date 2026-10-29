@@ -19,7 +19,7 @@ from terrine.semantic.bind import normalize_events
 from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
 from terrine.spec.panels import CalendarComparisonSpec
-from terrine.spec.validate import _outcome_bounds
+from terrine.spec.validate import _outcome_bounds, resolve_selector_source
 from terrine.temporal.aggregate import _Check
 
 if TYPE_CHECKING:
@@ -138,15 +138,15 @@ def _cohort_units(design: Design, model: Model, anchors: AnchorTable):
     spec = design.shape
     assert isinstance(spec, CalendarComparisonSpec)
     selector = spec.cohort
-    source = model.sources[selector.source]
+    source = model.sources[resolve_selector_source(model, selector.event)]
     events = normalize_events(model._relation(source.relation), source, source.units[design.unit])
     precision = _precision_check(model, events, "_timestamp", source_column=source.time_column)
     events = _utc_column(model, events, "_timestamp", "_timestamp_utc")
     timestamp = events._timestamp_utc
-    if selector.property in source.events:
+    if selector.event in source.events:
         observed = timestamp.notnull()
     else:
-        prop = source.properties[selector.property]
+        prop = source.properties[selector.event]
         if prop.dimension_name is not None:
             raise _UNSUPPORTED.error(reason="cohort properties bound to dimensions are unsupported")
         observed = events[prop.column].notnull()

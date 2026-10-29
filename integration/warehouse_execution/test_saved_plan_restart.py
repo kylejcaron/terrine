@@ -399,7 +399,7 @@ def test_saved_panel_publication_preserves_ordinary_provenance(column_model, tmp
                     Schedule("1d", "2025-01-03", "2025-01-05"),
                     features={"total": agg("total", window=("-1d", "0s"))},
                 ),
-                treatment=Initiation("events", "amount", datetime(2025, 1, 1, tzinfo=UTC)),
+                treatment=Initiation("amount", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             )
         else:
             design = EventPanel(
@@ -534,7 +534,7 @@ def test_persisted_shape_matrix_preserves_panel_rows_and_metadata(column_model, 
                 Schedule("12h", "2025-01-03", "2025-01-05"),
                 features={"total": agg("total", window=("-1d", "0s"))},
             ),
-            treatment=Initiation("events", "amount", datetime(2025, 1, 1, tzinfo=UTC)),
+            treatment=Initiation("amount", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
         )
     else:
         design = EventPanel(

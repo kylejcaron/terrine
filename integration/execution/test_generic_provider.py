@@ -140,7 +140,7 @@ def test_frame_admission_precedes_every_source_read(sqlite, monkeypatch, entry):
             ),
             namespace="agent",
         )
-        definition = DatasetDefinition(schema_version=1, base_design=design, view=None)
+        definition = DatasetDefinition(schema_version=2, base_design=design, view=None)
         response = tools.preview_dataset(definition, bounded_count=1)
         if response.status != "ok":
             assert response.code is not None

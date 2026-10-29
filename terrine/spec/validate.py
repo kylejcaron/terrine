@@ -46,7 +46,7 @@ from terrine.windows import Window
 
 if TYPE_CHECKING:
     from terrine.model import Model
-__all__ = ["ValidationReport", "validate_design"]
+__all__ = ["ValidationReport", "resolve_selector_source", "validate_design"]
 
 _INVALID = RefusalSpec("terrine.design.invalid", "Design validation failed: {reason}.")
 _QUANTILE_BACKEND = RefusalSpec(
@@ -111,7 +111,7 @@ _METRIC_WINDOW = RefusalSpec(
 )
 _RETENTION_IDENTITY = RefusalSpec(
     "terrine.metric.retention_identity_unavailable",
-    "Retention fact {fact!r} has no occurrence identity; bind its column to an "
+    "Retention event {event!r} has no occurrence identity; bind its column to an "
     "occurrence ID or declare Model.event_ids for source {source!r}.",
 )
 
@@ -194,7 +194,7 @@ def _fixed_anchors(design: Design, model: Model) -> tuple[datetime, ...] | None:
 def _retention_window(expr: RetentionMetric, model: Model) -> Window:
     if expr.finite_horizon_seconds is not None:
         return Window(0, expr.finite_horizon_seconds)
-    coverage = model.readiness.for_fact(model.catalog.events[expr.fact].source)
+    coverage = model.readiness.for_fact(model.catalog.events[expr.event].source)
     span = coverage.end_exclusive - coverage.start
     return Window(0, span.days * 86_400 + span.seconds + bool(span.microseconds))
 
@@ -206,10 +206,10 @@ def _outcome_bounds(design: Design, model: Model) -> tuple[tuple[int, ...], tupl
     ):
         if isinstance(expression, RetentionMetric):
             if expression.finite_horizon_seconds is None:
-                fact = model.catalog.events.get(expression.fact)
-                if fact is None:
-                    raise _MISSING.error(kind="fact", name=expression.fact)
-                source = fact.source
+                event = model.catalog.events.get(expression.event)
+                if event is None:
+                    raise _MISSING.error(kind="event", name=expression.event)
+                source = event.source
                 cutoffs.append(model.readiness.for_fact(source).end_exclusive)
             else:
                 offsets.append(expression.finite_horizon_seconds)
@@ -404,18 +404,18 @@ def _expression(
         _resolve_property(expr, role, design, model, required, obligations)
         return
     if isinstance(expr, (EventTime, RetentionMetric)):
-        fact = model.catalog.events.get(expr.fact)
-        if fact is None:
-            raise _MISSING.error(kind="fact", name=expr.fact)
-        source = model.sources.get(fact.source)
-        if source is None or expr.fact not in source.events:
-            raise _MISSING.error(kind="bound fact", name=expr.fact)
+        event = model.catalog.events.get(expr.event)
+        if event is None:
+            raise _MISSING.error(kind="event", name=expr.event)
+        source = model.sources.get(event.source)
+        if source is None or expr.event not in source.events:
+            raise _MISSING.error(kind="bound event", name=expr.event)
         if design.unit not in source.units:
-            raise _UNIT.error(unit=design.unit, name=expr.fact)
+            raise _UNIT.error(unit=design.unit, name=expr.event)
         if isinstance(expr, RetentionMetric):
             _check_event_scalar(model, source.name, expr.label_property, expr.target_event)
-            if source.events[expr.fact] is None and source.name not in model.event_ids:
-                raise _RETENTION_IDENTITY.error(fact=expr.fact, source=source.name)
+            if source.events[expr.event] is None and source.name not in model.event_ids:
+                raise _RETENTION_IDENTITY.error(event=expr.event, source=source.name)
             if role != "outcome":
                 raise _GAP.error(role=role, gap=design.gap)
         elif expr.label_property is not None:
@@ -548,14 +548,14 @@ def _validate_sequence_shape(design: Design, model: Model, required: set[str]) -
         raise _SEQUENCE_INVALID.error(reason="event sequences do not support treatment")
     if any(not isinstance(expr, EventTime) for expr in design.outcomes.values()):
         raise _SEQUENCE_INVALID.error(reason="event sequences only support EventTime outcomes")
-    fact = model.catalog.events.get(sequence.fact)
-    if fact is None:
-        raise _MISSING.error(kind="fact", name=sequence.fact)
-    source = model.sources.get(fact.source)
-    if source is None or sequence.fact not in source.events:
-        raise _MISSING.error(kind="bound fact", name=sequence.fact)
+    event = model.catalog.events.get(sequence.event)
+    if event is None:
+        raise _MISSING.error(kind="event", name=sequence.event)
+    source = model.sources.get(event.source)
+    if source is None or sequence.event not in source.events:
+        raise _MISSING.error(kind="bound event", name=sequence.event)
     if design.unit not in source.units:
-        raise _UNIT.error(unit=design.unit, name=sequence.fact)
+        raise _UNIT.error(unit=design.unit, name=sequence.event)
     _required(model, source.name, required)
     requested_properties = [*sequence.properties]
     if sequence.label_property is not None:
@@ -590,21 +590,17 @@ def _validate_shape(
     elif isinstance(design.shape, SequentialSpec):
         if not isinstance(design.anchor, Schedule):
             raise _INVALID.error(reason="Sequential requires a Schedule anchor")
-        source = model.sources.get(design.shape.treatment.source)
+        source_name = resolve_selector_source(model, design.shape.treatment.event)
+        source = model.sources.get(source_name)
         if source is None:
-            raise _MISSING.error(kind="treatment source", name=design.shape.treatment.source)
+            raise _MISSING.error(kind="treatment source", name=source_name)
         if design.unit not in source.units:
-            raise _UNIT.error(unit=design.unit, name=design.shape.treatment.property)
-        declared = set(source.properties) | set(source.events)
-        if design.shape.treatment.property not in declared:
-            raise _MISSING.error(kind="treatment property", name=design.shape.treatment.property)
+            raise _UNIT.error(unit=design.unit, name=design.shape.treatment.event)
         if (
             isinstance(design.shape.treatment, PersistentAdoption)
-            and design.shape.treatment.property in source.events
+            and design.shape.treatment.event in source.events
         ):
-            raise _INVALID.error(
-                reason="PersistentAdoption requires a value-bearing property selector"
-            )
+            raise _INVALID.error(reason="PersistentAdoption requires a value-bearing label")
         coverage = model.readiness.for_fact(source.name)
         span_seconds = (design.anchor.end - design.anchor.start).days * 86_400
         last_offset = ((span_seconds - 1) // design.anchor.every) * design.anchor.every
@@ -637,14 +633,12 @@ def _validate_shape(
             raise _INVALID.error(reason="CalendarComparison requires a Schedule anchor")
         if design.sample is not None:
             raise _INVALID.error(reason="calendar comparisons refuse sampled populations")
-        source = model.sources.get(design.shape.cohort.source)
+        source_name = resolve_selector_source(model, design.shape.cohort.event)
+        source = model.sources.get(source_name)
         if source is None:
-            raise _MISSING.error(kind="cohort source", name=design.shape.cohort.source)
+            raise _MISSING.error(kind="cohort source", name=source_name)
         if design.unit not in source.units:
-            raise _UNIT.error(unit=design.unit, name=design.shape.cohort.property)
-        declared = set(source.properties) | set(source.events)
-        if design.shape.cohort.property not in declared:
-            raise _MISSING.error(kind="cohort property", name=design.shape.cohort.property)
+            raise _UNIT.error(unit=design.unit, name=design.shape.cohort.event)
         coverage = model.readiness.for_fact(source.name)
         if coverage.start > design.shape.cohort.history_start:
             raise _INCOMPLETE_TREATMENT_HISTORY.error(
@@ -698,17 +692,33 @@ def _validate_shape(
         for name in (shape.event, shape.exit, shape.entry):
             if name is None:
                 continue
-            fact = model.catalog.events.get(name)
-            if fact is None:
-                raise _MISSING.error(kind="fact", name=name)
-            source = model.sources.get(fact.source)
+            event = model.catalog.events.get(name)
+            if event is None:
+                raise _MISSING.error(kind="event", name=name)
+            source = model.sources.get(event.source)
             if source is None or name not in source.events:
-                raise _MISSING.error(kind="fact", name=name)
+                raise _MISSING.error(kind="bound event", name=name)
             if design.unit not in source.units:
                 raise _UNIT.error(unit=design.unit, name=name)
-            _required(model, fact.source, required)
+            _required(model, event.source, required)
     elif design.shape != "cross_section":
         raise _INVALID.error(reason="unsupported design shape")
+
+
+def resolve_selector_source(model: Model, name: str) -> str:
+    """Return the one source declaring ``name`` as an event or a label."""
+    owners: set[str] = set()
+    event = model.catalog.events.get(name)
+    if event is not None:
+        owners.add(event.source)
+    label = model.catalog.properties.get(name)
+    if label is not None:
+        owners.add(label.source)
+    if not owners:
+        raise _MISSING.error(kind="event", name=name)
+    if len(owners) > 1:
+        raise _INVALID.error(reason="ambiguous_reference", name=name, owners=tuple(sorted(owners)))
+    return owners.pop()
 
 
 def validate_design(design: Design, model: Model) -> ValidationReport:
@@ -717,18 +727,18 @@ def validate_design(design: Design, model: Model) -> ValidationReport:
     _validate_shape(design, model, required, obligations)
     anchor = design.anchor
     if isinstance(anchor, EventAnchor):
-        fact = model.catalog.events.get(anchor.fact)
-        if fact is None:
-            raise _MISSING.error(kind="fact", name=anchor.fact)
-        source = model.sources.get(fact.source)
+        event = model.catalog.events.get(anchor.event)
+        if event is None:
+            raise _MISSING.error(kind="event", name=anchor.event)
+        source = model.sources.get(event.source)
         if source is None:
-            raise _MISSING.error(kind="event source", name=fact.source)
-        if anchor.fact not in source.events:
-            raise _MISSING.error(kind="bound fact", name=anchor.fact)
+            raise _MISSING.error(kind="event source", name=event.source)
+        if anchor.event not in source.events:
+            raise _MISSING.error(kind="bound event", name=anchor.event)
         if not supports_event_resolution(source.dialect):
             raise UNSUPPORTED_EVENT_RESOLUTION.error(dialect=source.dialect)
         if design.unit not in source.units:
-            raise _UNIT.error(unit=design.unit, name=anchor.fact)
+            raise _UNIT.error(unit=design.unit, name=anchor.event)
         _required(model, source.name, required)
         obligations.append("event_anchor_alignment")
     elif isinstance(anchor, (FixedDate, Schedule)) and design.unit not in model.units:

@@ -158,7 +158,7 @@ def test_panel_sources_refuse_missing_analysis_unit_mapping(shape_name):
     from terrine.spec.validate import validate_design
 
     source_model = model(units={"workspace": "workspace_id"})
-    selector = Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC))
+    selector = Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC))
     shape = (
         SequentialSpec(selector)
         if shape_name == "sequential_treatment"
@@ -173,6 +173,45 @@ def test_panel_sources_refuse_missing_analysis_unit_mapping(shape_name):
     assert error.value.context == {"unit": "user", "name": "session"}
 
 
+def _initiation_design(name):
+    from terrine.spec.panels import Initiation, SequentialSpec
+
+    return Design(
+        "user",
+        Schedule("1d", "2025-01-01", "2025-01-03"),
+        shape=SequentialSpec(Initiation(name, history_start=datetime(2025, 1, 1, tzinfo=UTC))),
+    )
+
+
+@pytest.mark.parametrize("name", ["session", "tier"])
+def test_initiation_resolves_its_source_from_a_unique_event_or_label(name):
+    from terrine.spec.validate import validate_design
+
+    bound = model(properties={"tier": SimpleNamespace(dtype="string", dimension_name=None)})
+    assert validate_design(_initiation_design(name), bound).required_sources == ("events",)
+
+
+def test_initiation_name_declared_by_two_sources_refuses_ambiguous_reference():
+    from terrine.spec.validate import validate_design
+
+    bound = model(catalog_properties={"session": SimpleNamespace(source="labels", dimension=None)})
+    with pytest.raises(TerrineError) as error:
+        validate_design(_initiation_design("session"), bound)
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "ambiguous_reference"
+    assert error.value.context["name"] == "session"
+    assert error.value.context["owners"] == ("events", "labels")
+
+
+def test_initiation_unknown_name_refuses_missing_reference():
+    from terrine.spec.validate import validate_design
+
+    with pytest.raises(TerrineError) as error:
+        validate_design(_initiation_design("upgrade"), model())
+    assert error.value.code == "terrine.design.missing_reference"
+    assert error.value.context == {"kind": "event", "name": "upgrade"}
+
+
 def test_calendar_comparison_requires_coverage_through_comparison_horizon():
     from terrine.spec.panels import CalendarComparisonSpec, Initiation
     from terrine.spec.validate import validate_design
@@ -181,7 +220,9 @@ def test_calendar_comparison_requires_coverage_through_comparison_horizon():
         "user",
         Schedule("1d", "2025-01-01", "2025-01-04"),
         shape=CalendarComparisonSpec(
-            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC), "recorded_at"),
+            Initiation(
+                "session", history_start=datetime(2025, 1, 1, tzinfo=UTC), knowledge="recorded_at"
+            ),
             "never_treated",
             -1,
             (0, 2),
@@ -201,7 +242,9 @@ def test_calendar_comparison_rejects_exclusive_coverage_equal_to_horizon():
         "user",
         Schedule("1d", "2025-01-01", "2025-01-04"),
         shape=CalendarComparisonSpec(
-            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC), "recorded_at"),
+            Initiation(
+                "session", history_start=datetime(2025, 1, 1, tzinfo=UTC), knowledge="recorded_at"
+            ),
             "not_yet_treated",
             -1,
             (0, 2),
@@ -229,7 +272,7 @@ def test_never_treated_negative_comparisons_still_require_full_schedule_history(
         Schedule("1d", "2025-01-01", "2025-01-04"),
         outcomes={"y": agg("sessions", window=("0d", "1d"))},
         shape=CalendarComparisonSpec(
-            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             "never_treated",
             -1,
             (-2,),
@@ -256,7 +299,7 @@ def test_never_treated_coverage_rejects_equality_at_anticipation_cutoff():
         "user",
         Schedule("1d", "2025-01-01", "2025-01-10"),
         shape=CalendarComparisonSpec(
-            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             "never_treated",
             -2,
             (0,),
@@ -284,7 +327,7 @@ def test_never_treated_schedule_boundary_coverage_is_admissible():
         "user",
         Schedule("1d", "2025-01-01", "2025-01-10"),
         shape=CalendarComparisonSpec(
-            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             "never_treated",
             -1,
             (0,),
@@ -309,7 +352,7 @@ def test_never_treated_schedule_history_refusal_reports_schedule_boundary():
         "user",
         Schedule("7d", "2025-01-01", "2025-01-10"),
         shape=CalendarComparisonSpec(
-            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             "never_treated",
             -1,
             (0,),
@@ -336,7 +379,7 @@ def test_not_yet_treated_refusal_reports_comparison_horizon_only():
         "user",
         Schedule("7d", "2025-01-01", "2025-01-10"),
         shape=CalendarComparisonSpec(
-            Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+            Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             "not_yet_treated",
             -1,
             (0,),
@@ -911,7 +954,7 @@ def test_panel_history_validation_covers_reanchored_outcome_support(shape_name):
     from terrine.spec.panels import CalendarComparisonSpec, Initiation, SequentialSpec
 
     selector = event_time("session", window=("2d", "3d"))
-    treatment = Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC))
+    treatment = Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC))
     shape = (
         SequentialSpec(treatment)
         if shape_name == "sequential"
@@ -934,7 +977,7 @@ def test_panel_history_validation_covers_reanchored_outcome_support(shape_name):
 def test_panel_history_validation_covers_exact_quantile_outcome(shape_name):
     from terrine.spec.panels import CalendarComparisonSpec, Initiation, SequentialSpec
 
-    initiation = Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC))
+    initiation = Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC))
     shape = (
         SequentialSpec(initiation)
         if shape_name == "sequential"
@@ -956,7 +999,7 @@ def test_approximate_distinct_outcome_contributes_to_panel_followup_horizon(shap
     from terrine.spec.expressions import approx_distinct
     from terrine.spec.panels import CalendarComparisonSpec, Initiation, SequentialSpec
 
-    initiation = Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC))
+    initiation = Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC))
     shape = (
         SequentialSpec(initiation)
         if shape_name == "sequential"

@@ -49,7 +49,7 @@ _SHARED: dict[str, Any] = {
 }
 _SCHEDULE: dict[str, Any] = {"every": "7d", "start": date(2025, 1, 1), "end": "2025-02-01"}
 _TREATMENT = Treatment("plan", at="-1d")
-_INITIATION = Initiation("adoptions", "started", datetime(2024, 1, 1, tzinfo=UTC))
+_INITIATION = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
 _CUTOFF = datetime(2025, 4, 1, tzinfo=UTC)
 _REQUIRED: dict[str, dict[str, Any]] = {
     "time_series": _SCHEDULE,
@@ -111,7 +111,10 @@ def test_time_series_accepts_typed_boolean_features_and_outcomes() -> None:
     [
         _INITIATION,
         PersistentAdoption(
-            "adoptions", "plan", "paid", datetime(2024, 1, 1, tzinfo=UTC), "absorbing"
+            "plan",
+            adopted_value="paid",
+            history_start=datetime(2024, 1, 1, tzinfo=UTC),
+            persistence="absorbing",
         ),
     ],
 )

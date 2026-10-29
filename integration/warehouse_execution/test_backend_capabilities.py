@@ -360,7 +360,7 @@ def test_sequential_anticipation_extends_control_risk_horizon(native_inputs):
             Schedule("1d", "2025-01-03", "2025-01-04"),
             outcomes={"sessions_after_t0": agg("sessions", window=("0d", "7d"))},
         ),
-        treatment=Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
         anticipation="2d",
     )
 
@@ -415,7 +415,7 @@ def test_calendar_comparison_compiles_quantile_outcome_horizon(native_inputs):
     frame = CalendarComparisonPanel(
         base,
         model,
-        cohort=Initiation("events", "session", datetime(2025, 1, 1, tzinfo=UTC)),
+        cohort=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
         control="never_treated",
         reference_period=-1,
         comparison_periods=(0,),
@@ -434,7 +434,7 @@ def test_all_shapes_build_materialize_and_arrow_round_trip(native_inputs):
         units={"user": UnitSource("users", "user_id")},
         event_ids={"events": "event_id"},
     )
-    treatment = Initiation("events", "session", history_start=datetime(2025, 1, 1, tzinfo=UTC))
+    treatment = Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC))
     sequential = Sequential(
         Design("user", Schedule("1d", "2025-01-03", "2025-01-05")),
         treatment=treatment,

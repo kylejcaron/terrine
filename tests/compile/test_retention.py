@@ -167,7 +167,10 @@ def test_open_retention_sets_independent_treatment_followup_bound(retention_mode
             "user", Schedule("1d", "2025-01-02", "2025-01-04"), outcomes={"retained": expression}
         ),
         treatment=PersistentAdoption(
-            "treatments", "adopted_name", "never", datetime(2025, 1, 1, tzinfo=UTC), "absorbing"
+            "adopted_name",
+            adopted_value="never",
+            history_start=datetime(2025, 1, 1, tzinfo=UTC),
+            persistence="absorbing",
         ),
     )
     with pytest.raises(TerrineError) as error:
@@ -245,7 +248,7 @@ def test_calendar_open_retention_history_includes_anticipation(
         Schedule("1d", "2025-01-01", "2025-01-04"),
         outcomes={"retained": expression},
         shape=CalendarComparisonSpec(
-            Initiation("treatments", "cohort_name", datetime(2025, 1, 1, tzinfo=UTC)),
+            Initiation("cohort_name", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             "not_yet_treated",
             -2,
             (0,),

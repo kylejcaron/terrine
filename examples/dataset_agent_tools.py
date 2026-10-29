@@ -44,17 +44,14 @@ def main() -> None:
                 budget=Budget(max_rows=100, max_output_bytes=1_000_000, strict_scan=False),
             )
             tools = DatasetTools(model, policy, namespace="agent_example")
-            definition = DatasetDefinition(
-                schema_version=1,
-                base_design=training_design(),
-                view={
-                    "kind": "training",
-                    "features": ["past_amount", "segment"],
-                    "labels": ["following_amount"],
-                    "incomplete_labels": "keep",
-                    "split": GroupSplit(seed=17).to_record(),
-                },
-            )
+            definition = DatasetDefinition(schema_version=2, base_design=training_design(),
+            view={
+                "kind": "training",
+                "features": ["past_amount", "segment"],
+                "labels": ["following_amount"],
+                "incomplete_labels": "keep",
+                "split": GroupSplit(seed=17).to_record(),
+            },)
             preview = tools.preview_dataset(definition)
             assert preview.status == "ok" and preview.output is not None
             assert (

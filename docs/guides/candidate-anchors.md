@@ -4,7 +4,7 @@ Use `design.build(model)` to compile a lazy Frame; materialization and staging r
 
 `FixedDate` and `Schedule` use the explicitly declared `UnitSource` roster for the design's logical unit. Roster entry/exit bounds are membership bounds evaluated as `[entered_at, exited_at)` at each candidate `t0`. Observation bounds are copied independently; a missing bound remains null and roster exit is not used as censoring. Fixed-date calendar bounds resolve through the Catalog's declared day boundary. Schedules advance by elapsed seconds from start and exclude their end.
 
-`EventAnchor` reads the declared fact's bound source and physical entity mapping. Fact values are not used as event-presence predicates: a row is an event even when its fact column is null. The source's `Model.event_ids` column is retained from raw relation rows for stable tie ordering and identity. Aware timestamp components of fallback or configured event identities are rendered after explicit UTC normalization, independent of the session timezone. `first` and `nth` are selected over full source history before `Design.anchor_range` filtering; `each` retains every event. A range is half-open; calendar-date endpoints resolve through Catalog day-boundary semantics and aware datetime endpoints remain exact UTC instants.
+`EventAnchor` reads the named event's bound source and physical unit mapping. Event values are not used as event-presence predicates: a row is an event even when its event column is null. The source's `Model.event_ids` column is retained from raw relation rows for stable tie ordering and identity. Aware timestamp components of fallback or configured event identities are rendered after explicit UTC normalization, independent of the session timezone. `first` and `nth` are selected over full source history before `Design.anchor_range` filtering; `each` retains every event. A range is half-open; calendar-date endpoints resolve through Catalog day-boundary semantics and aware datetime endpoints remain exact UTC instants.
 
 ## Landmark event anchors
 
@@ -43,7 +43,7 @@ Frame materialization or a full rebuild instead.
 ## Source integrity
 
 
-An event anchor must name a fact declared by its bound source, not merely
+An event anchor must name an event declared by its bound source, not merely
 present elsewhere in the Catalog; missing references use the same refusal
 as `Design.validate`. Unrelated source columns cannot change generated
 identities, including columns whose names differ only by case from a

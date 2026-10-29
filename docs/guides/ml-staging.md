@@ -126,7 +126,7 @@ and refresh. Scoring verifies the original parent design, feature definition,
 and physical source type; it never reads the training population. Refitting
 requires an explicit new training fit and a new definition.
 Feature identity includes resolved metric/source bindings for aggregates,
-quantiles, and distinct counts. Rebinding a feature to another fact does not
+quantiles, and distinct counts. Rebinding a feature to another event does not
 become compatible merely because its output type is unchanged.
 This also covers standalone EventTime features and every nested `relative_to`
 selector, including label-property bindings, dimension history definitions,

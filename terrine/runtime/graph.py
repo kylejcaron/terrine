@@ -180,7 +180,7 @@ def _selector_nodes(
                 continue
             selectors.setdefault(reference, selectors[reference])
     for selector in selectors.values():
-        event = events.get(selector.fact)
+        event = events.get(selector.event)
         if event is None:
             unknown_reference = True
         else:

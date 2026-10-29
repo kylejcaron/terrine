@@ -321,10 +321,10 @@ design = Design(
 dataset = design.build(model).materialize()
 ```
 
-The fact's column supplies independent occurrence IDs, scoped by analysis unit.
-If the fact is a row marker without a column, declare `Model.event_ids` for its
+The event's column supplies independent occurrence IDs, scoped by analysis unit.
+If the event is a row marker without a column, declare `Model.event_ids` for its
 source. Repeated evidence for one identity is counted once across the entire
-horizon; unrelated labels and null fact identities do not count. The output is
+horizon; unrelated labels and null event identities do not count. The output is
 the ordinal band `sum(count >= threshold)` over strictly increasing positive
 Int64 thresholds, with exact integer comparison and no statistical approximation.
 
@@ -687,7 +687,7 @@ equivalent = Design(
 assert sequence == equivalent
 ```
 
-Use the low-level shape when the selected events differ from the anchor fact,
+Use the low-level shape when the selected events differ from the anchor event,
 or when specifying properties, funnels, or the array representation.
 
 
@@ -709,7 +709,7 @@ configured gap. Funnels retain bounded attempts from each first-step event and
 carry progress/status when a selected observation window ends before a
 deadline.
 
-`EventTime(fact, window)` selects the first matching fact occurrence in its
+`EventTime(event, window)` selects the first matching event occurrence in its
 strict half-open window; `occurrence="last"` selects the last matching event,
 and `occurrence="nth"` selects the corresponding one-based occurrence. Both
 endpoints follow `(timestamp, configured event ID)` order, so tied events choose

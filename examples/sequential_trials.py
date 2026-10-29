@@ -83,9 +83,7 @@ def main() -> None:
         event_ids={"events": "event_id"},
     )
     try:
-        treatment = Initiation(
-            "assignments", "started", history_start=datetime(2025, 1, 1, tzinfo=UTC)
-        )
+        treatment = Initiation("started", history_start=datetime(2025, 1, 1, tzinfo=UTC))
         sequential = recipes.trial_panel(
             "user", every="14d", start="2025-01-01", end="2025-02-01",
             treatment=treatment,

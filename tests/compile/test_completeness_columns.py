@@ -81,7 +81,7 @@ def test_null_reason_round_trips_arrow_and_manifest_under_new_names():
     assert restored.columns == frame.columns
     assert MaterializedFrame.from_json(frame.to_json()).table.equals(table)
     definition = DatasetDefinition(
-        schema_version=1, base_design=Design("user", FixedDate("2025-01-01"))
+        schema_version=2, base_design=Design("user", FixedDate("2025-01-01"))
     )
     manifest = DatasetManifest(
         definition,

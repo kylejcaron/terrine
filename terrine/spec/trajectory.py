@@ -44,7 +44,7 @@ class CohortSpec:
 
     def __post_init__(self) -> None:
         if not isinstance(self.origin, str) or not self.origin.strip():
-            raise ValueError("origin must be a non-empty fact name")
+            raise ValueError("origin must be a non-empty event name")
         if not isinstance(self.trajectory, Trajectory):
             raise TypeError("trajectory must be Trajectory")
 
@@ -86,15 +86,15 @@ class TimeToEvent:
 
     def __post_init__(self) -> None:
         if not isinstance(self.event, str) or not self.event.strip():
-            raise ValueError("event must be a non-empty fact name")
+            raise ValueError("event must be a non-empty event name")
         for name in ("exit", "entry"):
             value = getattr(self, name)
             if value is not None and (not isinstance(value, str) or not value.strip()):
-                raise ValueError(f"{name} must be a non-empty fact name or None")
+                raise ValueError(f"{name} must be a non-empty event name or None")
         if not isinstance(self.delayed_entry, bool):
             raise TypeError("delayed_entry must be bool")
         if self.delayed_entry and self.entry is None:
-            raise ValueError("delayed_entry requires an entry fact")
+            raise ValueError("delayed_entry requires an entry event")
 
 
 @dataclass(frozen=True, slots=True, init=False)

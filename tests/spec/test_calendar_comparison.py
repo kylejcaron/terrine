@@ -21,10 +21,7 @@ def base_design():
 
 def test_comparison_control_modes_round_trip_with_distinct_hashes():
     cohort = Initiation(
-        "treatment",
-        "started",
-        history_start=datetime(2024, 1, 1, tzinfo=UTC),
-        knowledge="recorded_at",
+        "started", history_start=datetime(2024, 1, 1, tzinfo=UTC), knowledge="recorded_at"
     )
     never = Design(
         "unit_id",
@@ -44,21 +41,14 @@ def test_comparison_control_modes_round_trip_with_distinct_hashes():
 
 def test_comparison_reference_conflict_refuses_without_shifting():
     cohort = Initiation(
-        "treatment",
-        "started",
-        history_start=datetime(2024, 1, 1, tzinfo=UTC),
-        knowledge="recorded_at",
+        "started", history_start=datetime(2024, 1, 1, tzinfo=UTC), knowledge="recorded_at"
     )
     with pytest.raises(ValueError):
         CalendarComparisonSpec(cohort, "never_treated", -1, (0,), (-1,))
 
 
 def test_pre_treatment_comparisons_must_precede_anticipation():
-    cohort = Initiation(
-        "treatment",
-        "started",
-        history_start=datetime(2024, 1, 1, tzinfo=UTC),
-    )
+    cohort = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
     spec = CalendarComparisonSpec(cohort, "never_treated", -2, (-3, 0), (-1,))
     assert spec.comparison_periods == (-3, 0)
     with pytest.raises(TerrineError):
@@ -67,10 +57,7 @@ def test_pre_treatment_comparisons_must_precede_anticipation():
 
 def test_calendar_comparison_producer_refuses_sampled_population():
     cohort = Initiation(
-        "treatment",
-        "started",
-        history_start=datetime(2024, 1, 1, tzinfo=UTC),
-        knowledge="recorded_at",
+        "started", history_start=datetime(2024, 1, 1, tzinfo=UTC), knowledge="recorded_at"
     )
     base = Design(
         "unit_id",

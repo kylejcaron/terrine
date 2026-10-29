@@ -495,17 +495,17 @@ def compile_columns(
         origin = source_anchors
         if selector.relative_to is not None:
             origin, _ = resolve_selector(selector.relative_to, source_anchors)
-        fact = model.catalog.events[selector.fact]
-        source = model.sources[fact.source]
+        event = model.catalog.events[selector.event]
+        source = model.sources[event.source]
         events = events_for(source.name, selector=True)
-        fact_column = source.events[selector.fact]
+        event_column = source.events[selector.event]
         predicates = [
             origin.unit == events["_unit"],
             events["_timestamp"] >= origin.t0 + ibis.interval(seconds=selector.window.start),
             events["_timestamp"] < origin.t0 + ibis.interval(seconds=selector.window.end),
         ]
-        if fact_column is not None:
-            predicates.append(events[fact_column].notnull())
+        if event_column is not None:
+            predicates.append(events[event_column].notnull())
         identity = selector_identity_columns.get(source.name)
         if source.name not in checked_selector_sources:
             checked_selector_sources.add(source.name)
@@ -639,8 +639,8 @@ def compile_columns(
                 events["_timestamp"] < end_bound,
                 ~events[property_found],
             ]
-            if fact_column is not None:
-                unknown_predicates.append(events[fact_column].notnull())
+            if event_column is not None:
+                unknown_predicates.append(events[event_column].notnull())
             unknown_events = origin.join(events, predicates=unknown_predicates).select(
                 _unknown_unit=origin.unit,
                 _unknown_anchor=origin.anchor_id,
@@ -856,7 +856,7 @@ def compile_columns(
             strategy = "strict_history"
             result_table = result.table
         elif isinstance(node, RetentionMetric):
-            source = model.sources[model.catalog.events[node.fact].source]
+            source = model.sources[model.catalog.events[node.event].source]
             result = compile_retention(
                 expression_anchors,
                 events_for(source.name),

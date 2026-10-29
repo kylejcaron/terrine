@@ -55,7 +55,8 @@ def test_bounded_shape_matches_exact_path_and_independent_pandas(nonadditive_mod
         design = Design("user", Schedule("1d", "2025-01-02", "2025-01-05"), features=_features())
         if shape == "sequential":
             design = Sequential(
-                design, treatment=Initiation("events", "value", datetime(2025, 1, 1, tzinfo=UTC))
+                design,
+                treatment=Initiation("value", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             )
     compiled = compile_design(design, model)
     assert set(compiled.range_plans) == set(_features())
@@ -184,7 +185,7 @@ def test_shape_outputs_preserve_range_bound_metadata(nonadditive_model, shape):
             Schedule("1d", "2025-01-01", "2025-01-05"),
             features={"q": q},
             shape=CalendarComparisonSpec(
-                Initiation("events", "value", datetime(2025, 1, 1, tzinfo=UTC)),
+                Initiation("value", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
                 "never_treated",
                 -1,
                 (0,),

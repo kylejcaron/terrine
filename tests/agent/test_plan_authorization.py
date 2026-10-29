@@ -10,7 +10,7 @@ from terrine.spec.io import from_json
 
 def definition_for(tools):
     return DatasetDefinition(
-        schema_version=1, base_design=from_json(tools.design_example().output.serialized), view=None
+        schema_version=2, base_design=from_json(tools.design_example().output.serialized), view=None
     )
 
 
@@ -141,7 +141,7 @@ def test_prepare_refuses_invalid_group_identity_without_leaking_exception(owner_
         outcomes={"label": agg(metric, window=("0s", "1d"))},
     )
     definition = DatasetDefinition(
-        schema_version=1,
+        schema_version=2,
         base_design=design,
         view={
             "kind": "training",

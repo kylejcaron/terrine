@@ -19,7 +19,7 @@ def pinned_preview(tools, monkeypatch):
         }
     )
     definition = DatasetDefinition(
-        schema_version=1, base_design=Design("user", FixedDate("2025-01-02")), view=None
+        schema_version=2, base_design=Design("user", FixedDate("2025-01-02")), view=None
     )
 
     class PinnedReader:

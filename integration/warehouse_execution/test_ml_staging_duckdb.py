@@ -1282,7 +1282,7 @@ def test_fitted_transform_refuses_same_typed_rebound_metric(model, kind):
     ("binding", "nested", "feature_kind"),
     (
         ("source", False, "aggregate"),
-        ("fact", True, "aggregate"),
+        ("event", True, "aggregate"),
         ("property", True, "attribute"),
         ("dimension", True, "aggregate"),
     ),
@@ -1378,7 +1378,7 @@ def test_frozen_limits_refuse_rebound_selector_dependencies(model, binding, nest
     )
     if binding == "source":
         definitions["sources"]["selection"]["relation"]["name"] = "alternate_selection_events"
-    elif binding == "fact":
+    elif binding == "event":
         definitions["events"]["selection"]["column"] = "alternate"
     elif binding == "property":
         definitions["properties"]["selection_kind"]["column"] = "other_kind"
@@ -1466,7 +1466,7 @@ def test_staged_batches_preserve_frame_metadata_and_verify_definition_ownership(
 def frame_definition(frame):
     from terrine.spec.dataset import DatasetDefinition
 
-    return DatasetDefinition(schema_version=1, base_design=frame._design)
+    return DatasetDefinition(schema_version=2, base_design=frame._design)
 
 
 def test_stage_renews_lease_during_snapshot_tasks(events_world, tmp_path, monkeypatch):
@@ -1879,9 +1879,7 @@ def test_pre_rename_owner_database_refuses_old_generation_and_stages_new(events_
     fixtures = files("tests.fixtures")
     serialized = fixtures.joinpath("pre_rename_manifest.json").read_text()
     saved = fixtures.joinpath("pre_rename_saved_plan.json").read_text()
-    definition = DatasetDefinition.from_json(
-        fixtures.joinpath("pre_rename_definition.json").read_bytes()
-    )
+    definition = DatasetDefinition.from_json(fixtures.joinpath("definition_v2.json").read_bytes())
     namespace = "terrine_runtime"
     try:
         raw = con.con

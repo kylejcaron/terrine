@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from terrine.spec.io import SCHEMA_VERSION
+
 
 def design_schema() -> dict[str, Any]:
     def ref(name):
@@ -55,7 +57,7 @@ def design_schema() -> dict[str, Any]:
         "Window": {"start": number, "end": number},
         "FixedDate": {"date": ref("Temporal")},
         "EventAnchor": {
-            "fact": text,
+            "event": text,
             "which": {"enum": ["first", "nth", "each"]},
             "n": nullable(integer),
             "offset": duration,
@@ -73,7 +75,7 @@ def design_schema() -> dict[str, Any]:
             "relative_to": nullable(ref("EventTime")),
         },
         "EventTime": {
-            "fact": text,
+            "event": text,
             "window": ref("Window"),
             "label_property": nullable(text),
             "equals": scalar,
@@ -127,7 +129,7 @@ def design_schema() -> dict[str, Any]:
             "within_seconds": nullable(duration),
         },
         "EventSequence": {
-            "fact": text,
+            "event": text,
             "window": ref("Window"),
             "max_events": integer,
             "representation": text,
@@ -136,10 +138,9 @@ def design_schema() -> dict[str, Any]:
             "sessions": nullable(ref("SessionSpec")),
             "funnel": nullable(ref("FunnelSpec")),
         },
-        "Initiation": {"source": text, "property": text, "history_start": text, "knowledge": text},
+        "Initiation": {"event": text, "history_start": text, "knowledge": text},
         "PersistentAdoption": {
-            "source": text,
-            "property": text,
+            "event": text,
             "adopted_value": scalar,
             "history_start": text,
             "persistence": text,
@@ -217,5 +218,5 @@ def design_schema() -> dict[str, Any]:
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$defs": definitions,
-        **obj({"schema_version": {"const": 1}, "design": ref("Design")}),
+        **obj({"schema_version": {"const": SCHEMA_VERSION}, "design": ref("Design")}),
     }

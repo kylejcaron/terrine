@@ -61,16 +61,17 @@ def state_panel_metadata(design: Design, model: Model) -> StatePanelMeta | None:
     )
 
 
-def panel_metadata(design: Design) -> PanelMeta | None:
+def panel_metadata(design: Design, model: Model) -> PanelMeta | None:
     from terrine.spec.anchors import Schedule
     from terrine.spec.panels import EventPanelSpec, Initiation, PersistentAdoption, SequentialSpec
+    from terrine.spec.validate import resolve_selector_source
 
     if isinstance(design.shape, SequentialSpec):
         treatment = design.shape.treatment
         history = TreatmentHistoryMeta(
             "initiation" if isinstance(treatment, Initiation) else "persistent_adoption",
-            treatment.source,
-            treatment.property,
+            resolve_selector_source(model, treatment.event),
+            treatment.event,
             treatment.history_start,
             treatment.knowledge,
             treatment.adopted_value if isinstance(treatment, PersistentAdoption) else None,
@@ -99,9 +100,10 @@ def panel_metadata(design: Design) -> PanelMeta | None:
     return None
 
 
-def calendar_comparison_metadata(design: Design) -> CalendarComparisonMeta | None:
+def calendar_comparison_metadata(design: Design, model: Model) -> CalendarComparisonMeta | None:
     from terrine.spec.anchors import Schedule
     from terrine.spec.panels import CalendarComparisonSpec
+    from terrine.spec.validate import resolve_selector_source
 
     if not isinstance(design.shape, CalendarComparisonSpec):
         return None
@@ -109,8 +111,8 @@ def calendar_comparison_metadata(design: Design) -> CalendarComparisonMeta | Non
     cohort = design.shape.cohort
     return CalendarComparisonMeta(
         design.shape.control,
-        cohort.source,
-        cohort.property,
+        resolve_selector_source(model, cohort.event),
+        cohort.event,
         cohort.history_start,
         cohort.knowledge,
         design.shape.reference_period,

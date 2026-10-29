@@ -102,7 +102,7 @@ def test_sequence_metadata_round_trips_arrow_as_typed_provenance():
         _provenance(),
         shape="event_sequence",
         sequence_meta=SequenceMeta(
-            fact="signup",
+            event="signup",
             window=Window(0, 3600),
             max_events=10,
             representation="positions",
@@ -148,7 +148,7 @@ def test_array_sequence_transition_references_survive_arrow_roundtrip():
     from terrine.windows import Window
 
     sequence_meta = SequenceMeta(
-        fact="signup",
+        event="signup",
         window=Window(0, 3600),
         max_events=10,
         representation="arrays",

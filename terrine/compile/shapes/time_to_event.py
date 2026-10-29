@@ -69,10 +69,10 @@ def _validate_nanosecond_axis(design: Design, timestamp_types) -> None:
             )
 
 
-def _source(model: Model, unit: str, fact_name: str):
-    fact = model.catalog.events[fact_name]
-    source = model.sources[fact.source]
-    return fact, source, source.units.get(unit)
+def _source(model: Model, unit: str, event_name: str):
+    event = model.catalog.events[event_name]
+    source = model.sources[event.source]
+    return event, source, source.units.get(unit)
 
 
 def _events(model: Model, source, unit_column: str):

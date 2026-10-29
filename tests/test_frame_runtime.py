@@ -124,7 +124,7 @@ def test_sequence_provenance_round_trips_on_bounded_materialization(native_input
     )
     materialized = frame.materialize(Budget(max_rows=100, max_output_bytes=1_000_000))
     metadata = materialized.provenance.sequence_meta
-    assert metadata.fact == "session"
+    assert metadata.event == "session"
     assert metadata.representation == "positions"
     assert metadata.event_fields == ()
     stamp = (

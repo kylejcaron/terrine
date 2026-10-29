@@ -617,12 +617,13 @@ class DesignExecutor:
                     budget=self._plan.budget,
                 )
                 reader = spooled.open()
-            panel = _provenance.panel_metadata(self.design)
+            panel = _provenance.panel_metadata(self.design, self._model)
+            calendar_comparison = _provenance.calendar_comparison_metadata(self.design, self._model)
             if isinstance(self.design.shape, StatePanel):
                 shape = "state_panel"
             elif isinstance(self.design.shape, EventSequence):
                 shape = "event_sequence"
-            elif _provenance.calendar_comparison_metadata(self.design) is not None:
+            elif calendar_comparison is not None:
                 shape = "calendar_comparison"
             elif panel is not None:
                 shape = panel.shape
@@ -681,7 +682,7 @@ class DesignExecutor:
                         if self.design.sample is not None
                         else None
                     ),
-                    calendar_comparison=_provenance.calendar_comparison_metadata(self.design),
+                    calendar_comparison=calendar_comparison,
                     administrative_cutoff=self.design.administrative_cutoff,
                 ),
             )

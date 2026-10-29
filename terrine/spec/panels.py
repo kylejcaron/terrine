@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from datetime import datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
@@ -50,14 +50,9 @@ _INVALID_COMPARISON = RefusalSpec(
 )
 
 
-def _selector(source: str, property: str) -> None:
-    if (
-        not isinstance(source, str)
-        or not source.strip()
-        or not isinstance(property, str)
-        or not property.strip()
-    ):
-        raise ValueError("source and property must be non-empty strings")
+def _event_name(value: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("event must be a non-empty string")
 
 
 def _history(value: datetime) -> datetime:
@@ -71,13 +66,15 @@ def _history(value: datetime) -> datetime:
 
 @dataclass(frozen=True, slots=True)
 class Initiation:
-    source: str
-    property: str
+    """Treatment begins once the named event or label has been observed by t0."""
+
+    event: str
+    _: KW_ONLY
     history_start: datetime
     knowledge: Literal["recorded_at", "retrospective_effective_time"] = "recorded_at"
 
     def __post_init__(self) -> None:
-        _selector(self.source, self.property)
+        _event_name(self.event)
         object.__setattr__(self, "history_start", _history(self.history_start))
         if self.knowledge not in ("recorded_at", "retrospective_effective_time"):
             raise ValueError("unsupported treatment knowledge policy")
@@ -85,15 +82,17 @@ class Initiation:
 
 @dataclass(frozen=True, slots=True)
 class PersistentAdoption:
-    source: str
-    property: str
+    """Treatment is the absorbing state in which a label holds ``adopted_value``."""
+
+    event: str
+    _: KW_ONLY
     adopted_value: str
     history_start: datetime
-    persistence: Literal["absorbing"]
+    persistence: Literal["absorbing"] = "absorbing"
     knowledge: Literal["recorded_at", "retrospective_effective_time"] = "recorded_at"
 
     def __post_init__(self) -> None:
-        _selector(self.source, self.property)
+        _event_name(self.event)
         if not isinstance(self.adopted_value, str) or not self.adopted_value:
             raise ValueError("adopted_value must be a non-empty string")
         object.__setattr__(self, "history_start", _history(self.history_start))

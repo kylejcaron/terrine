@@ -152,7 +152,7 @@ def _metric_definition(metric: object, model: Model) -> object:
 
 
 def _selector_definition(selector: EventTime, model: Model) -> object:
-    event = model.catalog.events[selector.fact]
+    event = model.catalog.events[selector.event]
     return {
         "event": _definition_record(event),
         "source": _definition_record(model.sources[event.source]),
@@ -805,8 +805,8 @@ class Frame:
                 and treatment.known_at_t0
                 and pa.types.is_boolean(table.schema.field(treatment_column).type)
             )
-            calendar_comparison = _provenance.calendar_comparison_metadata(self._design)
-            panel = _provenance.panel_metadata(self._design)
+            calendar_comparison = _provenance.calendar_comparison_metadata(self._design, model)
+            panel = _provenance.panel_metadata(self._design, model)
 
             if isinstance(self._design.shape, StatePanel):
                 shape_name = "state_panel"

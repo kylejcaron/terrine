@@ -132,7 +132,7 @@ def test_candidate_unit_refusal_matches_static_validation(native_model, unit, an
         assert error.context["name"] == reference
 
 
-def test_event_anchor_requires_fact_declared_by_bound_source(native_model):
+def test_event_anchor_requires_event_declared_by_bound_source(native_model):
     definition = native_model.catalog.model_dump(mode="python")
     definition["events"]["ghost"] = {"source": "events", "column": "occurred"}
     model = Model.from_catalog(
@@ -146,7 +146,7 @@ def test_event_anchor_requires_fact_declared_by_bound_source(native_model):
     with pytest.raises(TerrineError) as compile_error:
         compile_anchors(design, model)
     assert static_error.value.code == compile_error.value.code == "terrine.design.missing_reference"
-    assert compile_error.value.context["kind"] == "bound fact"
+    assert compile_error.value.context["kind"] == "bound event"
 
 
 def test_roster_observation_bounds_are_independent_of_exit(native_model):

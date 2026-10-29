@@ -14,7 +14,7 @@ def test_manifest_definition_reference_requires_owner_storage_and_verifies_diges
     from terrine.errors import TerrineError
 
     definition = DatasetDefinition(
-        schema_version=1, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
+        schema_version=2, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
     )
     store = DatasetDefinitionStore(tmp_path / "owner-a", owner="owner-a")
     reference = store.put(definition)
@@ -40,7 +40,7 @@ def test_manifest_definition_reference_requires_owner_storage_and_verifies_diges
 
 def test_dataset_manifest_round_trip_preserves_generation_schema_roles_and_metadata() -> None:
     definition = DatasetDefinition(
-        schema_version=1, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
+        schema_version=2, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
     )
     manifest = DatasetManifest(
         definition,
@@ -78,7 +78,7 @@ def test_malformed_manifest_payload_has_coded_refusal(damage) -> None:
     from terrine.errors import TerrineError
 
     definition = DatasetDefinition(
-        schema_version=1, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
+        schema_version=2, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
     )
     manifest = DatasetManifest(
         definition,

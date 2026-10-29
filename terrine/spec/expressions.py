@@ -126,14 +126,14 @@ class ApproxMetricDistinct:
 class RetentionMetric:
     """Ordinal bands of distinct occurrence identities in a declared follow-up horizon."""
 
-    fact: str
+    event: str
     label_property: str
     target_event: str
     count_thresholds: tuple[int, ...]
     finite_horizon_seconds: int | None
 
     def __post_init__(self) -> None:
-        for field in ("fact", "label_property", "target_event"):
+        for field in ("event", "label_property", "target_event"):
             object.__setattr__(self, field, _name(getattr(self, field), field))
         thresholds = tuple(self.count_thresholds)
         if (
@@ -194,7 +194,7 @@ class AttributeAsOf:
 
 @dataclass(frozen=True, slots=True)
 class EventTime:
-    fact: str
+    event: str
     window: Window
     label_property: str | None = None
     equals: JsonScalar = None
@@ -203,7 +203,7 @@ class EventTime:
     relative_to: EventTime | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "fact", _name(self.fact, "fact"))
+        object.__setattr__(self, "event", _name(self.event, "event"))
         if not isinstance(self.window, Window):
             raise TypeError("window must be a Window")
         if (self.label_property is None) != (self.equals is None):
@@ -345,20 +345,20 @@ def agg(
 
 
 def retention(
-    fact: str,
+    event: str,
     *,
     label_property: str,
     target_event: str,
     thresholds: tuple[int, ...],
     horizon: str | int,
 ) -> RetentionMetric:
-    """Count distinct fact identities, then return the highest reached threshold band.
+    """Count distinct ``event`` identities, then return the highest reached threshold band.
 
     A finite duration measures [t0, t0+horizon); ``open_ended`` ends at the
     source's declared complete-through endpoint. Unknown follow-up stays null.
     """
     return RetentionMetric(
-        fact,
+        event,
         label_property,
         target_event,
         thresholds,
@@ -408,7 +408,7 @@ def asof(
 
 
 def event_time(
-    fact: str,
+    event: str,
     *,
     window: tuple[str | int, str | int],
     label_property: str | None = None,
@@ -420,7 +420,7 @@ def event_time(
     if not isinstance(window, (tuple, list)) or len(window) != 2:
         raise ValueError("window must contain a start and exclusive end")
     return EventTime(
-        fact, Window(window[0], window[1]), label_property, equals, occurrence, n, relative_to
+        event, Window(window[0], window[1]), label_property, equals, occurrence, n, relative_to
     )
 
 

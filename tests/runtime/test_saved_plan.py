@@ -81,7 +81,7 @@ def test_saved_plan_reconstructs_design_and_verifies_owner_model_in_fresh_resolv
             ),
         )
         dataset_definition = DatasetDefinition(
-            schema_version=1,
+            schema_version=2,
             base_design=design,
             view={
                 "kind": "training",
@@ -380,7 +380,7 @@ def test_saved_plan_round_trips_typed_dataset_view():
                 "parent_design_hash": design.spec_hash,
             },
         ):
-            typed = DatasetDefinition(schema_version=1, base_design=design, view=view)
+            typed = DatasetDefinition(schema_version=2, base_design=design, view=view)
             saved = SavedPlan.create(
                 plan_json=plan.serialize(),
                 design=design,

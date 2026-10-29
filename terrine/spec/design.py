@@ -255,7 +255,7 @@ class Design:
         if isinstance(shape, CohortSpec) and (
             not isinstance(anchor, EventAnchor)
             or anchor.which != "first"
-            or anchor.fact != shape.origin
+            or anchor.event != shape.origin
         ):
             raise ValueError("CohortSpec requires its matching first-event anchor")
         if isinstance(shape, CohortSpec) and outcomes:

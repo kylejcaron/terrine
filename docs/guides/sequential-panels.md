@@ -24,9 +24,7 @@ from datetime import UTC, datetime
 from terrine import recipes
 from terrine.spec import Initiation, from_json, to_json
 
-treatment_history = Initiation(
-    "assignments", "started", history_start=datetime(2024, 1, 1, tzinfo=UTC)
-)
+treatment_history = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
 trials = recipes.trial_panel(
     "user", every="14d", start="2025-01-01", end="2025-02-01",
     treatment=treatment_history,
@@ -47,12 +45,14 @@ assert trials == equivalent_trials
 `Sequential` is a public transform that lowers a base Design to the canonical
 sequential shape. It does not infer exposure from an event anchor.
 `CalendarPanel` accepts that canonical sequential design unchanged.
-`Initiation` describes treatment onset, its declared source/property, the
-earliest complete history needed for classification, and the information policy
-(`recorded_at` or `retrospective_effective_time`). `PersistentAdoption` is a
-separate declaration and requires explicit absorbing semantics; it is not
-inferred from initiation. A source maximum timestamp does not establish history
-completeness.
+`Initiation` names the event or label whose first observation starts treatment,
+the earliest complete history needed for classification, and the information
+policy (`recorded_at` or `retrospective_effective_time`). The owning source is
+the one that declares that name; a name declared as an event on one source and
+a label on another refuses with `terrine.design.invalid`
+(`reason="ambiguous_reference"`). `PersistentAdoption` is a separate declaration
+and requires explicit absorbing semantics; it is not inferred from initiation.
+A source maximum timestamp does not establish history completeness.
 
 ## Event panels
 
@@ -98,7 +98,7 @@ assert treatment or exposure.
 
 ## Treatment history and matched t0
 
-Sequential treatment is classified at each schedule's exact `t0` from the declared source history. The source must declare complete coverage from `history_start` through the final trial boundary; a latest observed event timestamp is not a completeness guarantee. `Initiation` means that the selected fact/property has been observed by t0. `PersistentAdoption` is a distinct state selector with an explicit adopted value and absorbing-history declaration.
+Sequential treatment is classified at each schedule's exact `t0` from the declared source history. The source must declare complete coverage from `history_start` through the final trial boundary; a latest observed event timestamp is not a completeness guarantee. `Initiation` means that the named event or label has been observed by t0. `PersistentAdoption` is a distinct state selector with an explicit adopted value and absorbing-history declaration.
 
 The sequential `anticipation` interval extends the control no-initiation risk
 horizon and the corresponding treatment-source and roster-history coverage

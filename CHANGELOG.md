@@ -56,6 +56,26 @@
   `.unit_columns`; `BoundMeasure.event`; `BoundDimension.unit`, `.key`), as
   do the definition-hash payload keys, so feature definition hashes and
   `Model.model_hash` differ from earlier versions for the same study.
+- Design specifications name events with `event`: `EventAnchor(event, ...)`,
+  `event_time(event, ...)` and `EventTime.event`, `retention(event, ...)` and
+  `RetentionMetric.event`, `EventSequence(event, ...)` and
+  `SequenceMeta.event` (formerly `fact`). `Initiation(event, *, history_start,
+  knowledge)` and `PersistentAdoption(event, *, adopted_value, history_start,
+  persistence, knowledge)` lose `source`: `event` names an event or a label and
+  the owning source is the one that declares it; a name declared by two
+  sources refuses with `terrine.design.invalid` (`reason="ambiguous_reference"`,
+  context `name`, `owners`) and an unknown name with
+  `terrine.design.missing_reference` (`kind="event"`). Recorded provenance
+  still carries the resolved source. Design documents written by `to_json` and
+  `to_yaml` and `DatasetDefinition` documents are `schema_version: 2` with the
+  `event` keys; a version 1 design document refuses with
+  `terrine.design.invalid` (`reason="unsupported_schema_version"`) and text
+  that does not parse with `reason="malformed_document"`, a version 1
+  definition refuses with `terrine.dataset.invalid_definition`, and manifests
+  and saved plans that embed them refuse through their existing codes. There
+  is no migration: construct and save the design again. The
+  `terrine.design.missing_reference` context uses `kind="event"` and
+  `"bound event"` where it named a fact.
 - Output row order on DuckDB may differ from anchor order for a small study
   (DuckDB rewrites an as-of join with fewer than 64 estimated cutoffs into a
   hash aggregate). Row order was never part of the dataset contract on any

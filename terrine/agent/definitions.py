@@ -12,7 +12,8 @@ from terrine.dataset.splits import policy_from_record
 from terrine.errors import thaw
 from terrine.model import Model
 from terrine.spec.anchors import FixedDate
-from terrine.spec.dataset import INVALID_DEFINITION, DatasetDefinition
+from terrine.spec.dataset import INVALID_DEFINITION, SCHEMA_VERSION, DatasetDefinition
+from terrine.spec.io import SCHEMA_VERSION as DESIGN_SCHEMA_VERSION
 from terrine.spec.io import from_json
 
 
@@ -109,7 +110,7 @@ def parse_definition(serialized: str, model: Model) -> DatasetDefinition:
             document["eligibility"] = thaw(definition.view["eligibility"])
             try:
                 eligibility_design = from_json(
-                    json.dumps({"schema_version": 1, "design": document})
+                    json.dumps({"schema_version": DESIGN_SCHEMA_VERSION, "design": document})
                 )
             except (KeyError, TypeError, ValueError, OverflowError) as error:
                 raise INVALID_DEFINITION.error(
@@ -136,7 +137,7 @@ def definition_schema() -> dict[str, Any]:
         "additionalProperties": False,
         "required": ["schema_version", "base_design", "view"],
         "properties": {
-            "schema_version": {"const": 1},
+            "schema_version": {"const": SCHEMA_VERSION},
             "base_design": {"$ref": "#/$defs/Design"},
             "view": {"anyOf": [view, {"type": "null"}]},
         },

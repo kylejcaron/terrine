@@ -138,7 +138,7 @@ def test_propose_design_and_definition_from_discovered_schema(tools, monkeypatch
         }
     }
     definition = {
-        "schema_version": 1,
+        "schema_version": 2,
         "base_design": document,
         "view": {
             "kind": "training",
@@ -189,7 +189,7 @@ def _scoring_record(tools):
         }
     }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "base_design": document,
         "view": {
             "kind": "scoring",
@@ -215,7 +215,7 @@ def test_scoring_definition_refuses_inconsistent_reconstruction(tools, mutation)
     else:
         definition["base_design"]["anchor"] = {
             "type": "EventAnchor",
-            "fact": "event",
+            "event": "event",
             "which": "first",
         }
     result = tools.propose_definition(json.dumps(definition))

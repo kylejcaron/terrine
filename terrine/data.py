@@ -481,7 +481,7 @@ class StatePanelMeta:
 class SequenceMeta:
     """Portable event-sequence schema and stable references to status fields."""
 
-    fact: str
+    event: str
     window: Window
     max_events: int
     representation: Literal["positions", "arrays"]
@@ -511,7 +511,7 @@ class SequenceMeta:
     identity_kind: Literal["configured", "timestamp"] = "timestamp"
 
     def __post_init__(self) -> None:
-        _nonempty(self.fact, "fact")
+        _nonempty(self.event, "event")
         if not isinstance(self.window, Window):
             raise TypeError("window must be a Window")
         if (

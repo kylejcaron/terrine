@@ -322,17 +322,17 @@ def _roster_anchors(
 def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_AnchorCheck]]:
     anchor = design.anchor
     assert isinstance(anchor, EventAnchor)
-    fact = model.catalog.events.get(anchor.fact)
-    if fact is None:
-        raise _MISSING.error(kind="fact", name=anchor.fact)
-    source = model.sources.get(fact.source)
+    event = model.catalog.events.get(anchor.event)
+    if event is None:
+        raise _MISSING.error(kind="event", name=anchor.event)
+    source = model.sources.get(event.source)
     if source is None:
-        raise _MISSING.error(kind="event source", name=fact.source)
-    if anchor.fact not in source.events:
-        raise _MISSING.error(kind="bound fact", name=anchor.fact)
+        raise _MISSING.error(kind="event source", name=event.source)
+    if anchor.event not in source.events:
+        raise _MISSING.error(kind="bound event", name=anchor.event)
     physical_unit = source.units.get(design.unit)
     if physical_unit is None:
-        raise _UNIT.error(unit=design.unit, name=anchor.fact)
+        raise _UNIT.error(unit=design.unit, name=anchor.event)
     events = _relation(model, source)
     event_id_column = model.event_ids.get(source.name)
 
@@ -378,7 +378,7 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
         anchor_id=identity,
         _raw_t0=raw_timestamp,
         _event_id=event_id,
-        anchor_provenance=ibis.literal(f"event:{anchor.fact}:{anchor.which}"),
+        anchor_provenance=ibis.literal(f"event:{anchor.event}:{anchor.which}"),
     )
     if anchor.which in ("first", "nth"):
         rank = (
