@@ -15,7 +15,7 @@ _INVALID_DURATION = RefusalSpec(
 )
 _INVALID_WINDOW = RefusalSpec(
     "terrine.window.invalid_window",
-    "The window start is not before its end. "
+    "Window start {start_offset!r} is not before end {end_offset!r}. "
     "Use window=(earlier_time, later_time); the start is included and the end is excluded.",
 )
 _PATTERN = re.compile(r"([+-]?[0-9]+)([smhdw])", re.ASCII)
@@ -46,6 +46,21 @@ def seconds(value: str | int, *, field: str) -> int:
     return result
 
 
+def _duration(value: int, *, weeks: bool = False, signed: bool = False) -> str:
+    """Use the largest exact elapsed unit, with optional weeks and an explicit sign."""
+    magnitude = abs(value)
+    if not magnitude:
+        return "0s"
+    sign = "-" if signed and value < 0 else "+" if signed else ""
+    if weeks and magnitude % 604_800 == 0:
+        return f"{sign}{magnitude // 604_800}w"
+    for unit in ("d", "h", "m", "s"):
+        size = _UNITS[unit]
+        if magnitude % size == 0:
+            return f"{sign}{magnitude // size}{unit}"
+    raise AssertionError("every integer is a multiple of one second")
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class Window:
     """An elapsed [start, end) interval relative to an exact anchor instant."""
@@ -56,6 +71,11 @@ class Window:
     def __init__(self, start: str | int, end: str | int) -> None:
         start_seconds, end_seconds = seconds(start, field="window"), seconds(end, field="window")
         if start_seconds >= end_seconds:
-            raise _INVALID_WINDOW.error()
+            raise _INVALID_WINDOW.error(
+                start=start_seconds,
+                end=end_seconds,
+                start_offset=_duration(start_seconds, signed=True),
+                end_offset=_duration(end_seconds, signed=True),
+            )
         object.__setattr__(self, "start", start_seconds)
         object.__setattr__(self, "end", end_seconds)

@@ -115,6 +115,13 @@ def test_predicate_outputs_validate_each_leaf_for_its_role(role, window):
     with pytest.raises(TerrineError) as error:
         design.validate(model())
     assert error.value.code == "terrine.design.gap_violation"
+    assert error.value.context["name"] == "label"
+    assert error.value.context["role"] == role.removesuffix("s")
+    assert error.value.context["gap"] == 0
+    assert error.value.context["start"] == (0 if role == "features" else -604800)
+    assert error.value.context["end"] == (604800 if role == "features" else 0)
+    assert error.value.context["bound"] == ("end" if role == "features" else "start")
+    assert error.value.context["limit"] == 0
 
 
 def test_binned_state_metric_uses_ordinary_metric_admission():
@@ -503,6 +510,8 @@ def test_future_selector_dependency_refuses_safe_looking_preanchor_metric():
     with pytest.raises(TerrineError) as error:
         validate_design(design, bound)
     assert error.value.code == "terrine.sequence.reanchor_leak"
+    assert error.value.context["name"] == "x"
+    assert error.value.context["end"] == 86400
     assert bound.con.calls == []
 
 
@@ -521,6 +530,8 @@ def test_asof_before_offsets_relative_support_for_feature_cutoff():
     with pytest.raises(TerrineError) as error:
         validate_design(design, bound)
     assert error.value.code == "terrine.sequence.reanchor_leak"
+    assert error.value.context["name"] == "status"
+    assert error.value.context["end"] == 86400
     assert bound.con.calls == []
 
 
@@ -547,22 +558,34 @@ def test_event_sequence_validation_accepts_dimension_backed_event_property():
     assert bound.con.calls == []
 
 
-def test_feature_and_eligibility_windows_must_end_by_minus_gap():
+@pytest.mark.parametrize(
+    ("role", "name", "window", "gap", "expected_start", "expected_end", "limit"),
+    [
+        ("features", "x", ("-2d", "0d"), "1d", -172800, 0, -86400),
+        ("eligibility", "eligible", ("-2d", "0d"), "1d", -172800, 0, -86400),
+        ("features", "spend_30d", ("-30d", "1d"), "0s", -2592000, 86400, 0),
+    ],
+)
+def test_feature_and_eligibility_windows_must_end_by_minus_gap(
+    role, name, window, gap, expected_start, expected_end, limit
+):
+    expression = agg("sessions", window=window)
     with pytest.raises(TerrineError) as error:
         Design(
             "user",
             EventAnchor("session"),
-            gap="1d",
-            features={"x": agg("sessions", window=("-2d", "0d"))},
+            gap=gap,
+            features={name: expression} if role == "features" else None,
+            eligibility={name: gt(expression, 0)} if role == "eligibility" else None,
         ).validate(model())
     assert error.value.code == "terrine.design.gap_violation"
-    with pytest.raises(TerrineError):
-        Design(
-            "user",
-            EventAnchor("session"),
-            gap="1d",
-            eligibility={"eligible": gt(agg("sessions", window=("-2d", "0d")), 0)},
-        ).validate(model())
+    assert error.value.context["role"] == role.removesuffix("s")
+    assert error.value.context["gap"] == -limit
+    assert error.value.context["name"] == name
+    assert error.value.context["start"] == expected_start
+    assert error.value.context["end"] == expected_end
+    assert error.value.context["bound"] == "end"
+    assert error.value.context["limit"] == limit
     Design(
         "user",
         EventAnchor("session"),
@@ -577,6 +600,11 @@ def test_outcomes_start_at_or_after_zero():
             "user", EventAnchor("session"), outcomes={"y": agg("sessions", window=("-1s", "1d"))}
         ).validate(model())
     assert error.value.code == "terrine.design.gap_violation"
+    assert error.value.context["name"] == "y"
+    assert error.value.context["start"] == -1
+    assert error.value.context["end"] == 86400
+    assert error.value.context["bound"] == "start"
+    assert error.value.context["limit"] == 0
     Design(
         "user", EventAnchor("session"), outcomes={"y": agg("sessions", window=("0d", "1d"))}
     ).validate(model())
@@ -585,10 +613,15 @@ def test_outcomes_start_at_or_after_zero():
 def test_asof_cutoff_obeys_strict_gap_but_baseline_treatment_at_zero_is_descriptive():
     prop = SimpleNamespace(dimension_name=None, as_of="static")
     properties = {"baseline": prop}
-    with pytest.raises(TerrineError):
+    with pytest.raises(TerrineError) as error:
         Design(
             "user", EventAnchor("session"), gap="1d", features={"x": asof("baseline", before="0d")}
         ).validate(model(properties=properties))
+    assert error.value.context["name"] == "x"
+    assert error.value.context["start"] == 0
+    assert error.value.context["end"] == 0
+    assert error.value.context["bound"] == "before"
+    assert error.value.context["limit"] == -86400
     Design(
         "user",
         EventAnchor("session"),

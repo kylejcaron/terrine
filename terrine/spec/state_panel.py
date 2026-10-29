@@ -275,6 +275,7 @@ def validate_state_panel(
             model,
             required,
             obligations,
+            name=panel.state.metric,
         )
         metric = model.metrics.get(panel.state.metric)
         if metric is None:

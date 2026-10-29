@@ -36,7 +36,7 @@ from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import BinnedMetricState, StatePanel
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
 from terrine.spec.validate import resolve_unit, validate_design
-from terrine.windows import Window
+from terrine.windows import Window, _duration
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -49,7 +49,6 @@ __all__ = ["describe_design"]
 
 _WIDTH = 100
 _LISTED_DATES = 12
-_UNITS = (("d", 86_400), ("h", 3_600), ("m", 60), ("s", 1))
 _AGGREGATIONS = {
     "count": "count of",
     "sum": "sum of",
@@ -80,19 +79,6 @@ _SHAPE_LABELS = (
 )
 
 type Line = tuple[str, str]
-
-
-def _duration(seconds: int, *, weeks: bool = False) -> str:
-    """Use the largest exact elapsed unit, with weeks for schedule steps only."""
-    magnitude = abs(seconds)
-    if not magnitude:
-        return "0s"
-    if weeks and magnitude % 604_800 == 0:
-        return f"{magnitude // 604_800}w"
-    for unit, size in _UNITS:
-        if magnitude % size == 0:
-            return f"{magnitude // size}{unit}"
-    raise AssertionError("every integer is a multiple of one second")
 
 
 def _offset(seconds: int, origin: str) -> str:

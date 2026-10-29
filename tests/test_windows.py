@@ -28,7 +28,12 @@ def test_window_refusals_name_the_window_field():
         Window("-1mo", "0s")
     assert error.value.code == "terrine.window.invalid_duration"
     assert error.value.context == {"field": "window", "value": "-1mo"}
-    for bounds in [("0d", "0d"), ("1d", "-1d")]:
+    for bounds, expected in [
+        (("0d", "0d"), (0, 0)),
+        (("1d", "-1d"), (86400, -86400)),
+    ]:
         with pytest.raises(TerrineError) as error:
             Window(*bounds)
         assert error.value.code == "terrine.window.invalid_window"
+        assert error.value.context["start"] == expected[0]
+        assert error.value.context["end"] == expected[1]

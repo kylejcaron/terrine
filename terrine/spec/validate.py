@@ -43,7 +43,7 @@ from terrine.spec.expressions import (
 )
 from terrine.spec.sequence import EventSequence
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
-from terrine.windows import Window
+from terrine.windows import Window, _duration
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -135,13 +135,29 @@ _UNKNOWN_UNIT = RefusalSpec(
 )
 _WINDOW = RefusalSpec(
     "terrine.design.invalid_window",
-    "Metric {name!r} has a window whose start is not before its end. "
-    "Set window=(earlier_time, later_time), relative to t0.",
+    "Metric {name!r} for output {output!r} has window start {start!r} and end {end!r} "
+    "seconds relative to t0. Set window=(earlier_time, later_time).",
 )
 _GAP = RefusalSpec(
     "terrine.design.gap_violation",
-    "{role!r} uses time on the wrong side of t0. End feature and eligibility windows "
-    "and cutoffs at least {gap} seconds before t0, and start outcome windows at or after t0.",
+    "The {role} {name!r} window ends at {end_offset!r}, after its allowed end "
+    "{limit_offset!r} relative to t0. "
+    "End the window at or before {limit_offset!r} relative to t0.",
+)
+_OUTCOME_GAP = RefusalSpec(
+    "terrine.design.gap_violation",
+    "The outcome {name!r} window starts at {start_offset!r}, before t0. "
+    "Start the outcome window at or after {limit_offset!r} relative to t0.",
+)
+_CUTOFF_GAP = RefusalSpec(
+    "terrine.design.gap_violation",
+    "The {role} {name!r} cutoff {end_offset!r} is after its allowed time "
+    "{limit_offset!r} relative to t0. Set before={limit_offset!r} or an earlier time.",
+)
+_RETENTION_GAP = RefusalSpec(
+    "terrine.design.gap_violation",
+    "The {role} {name!r} uses retention from {start_offset!r} to {end_offset!r} "
+    "relative to t0. Put retention in outcomes rather than features or eligibility.",
 )
 _INCOMPLETE_TREATMENT_HISTORY = RefusalSpec(
     "terrine.design.incomplete_treatment_history",
@@ -166,9 +182,9 @@ _SEQUENCE_INVALID = RefusalSpec(
 )
 _REANCHOR_LEAK = RefusalSpec(
     "terrine.sequence.reanchor_leak",
-    "{role!r} uses an event-relative window that may cross t0 or its {gap}-second gap. "
-    "Choose event times and window bounds that keep feature and eligibility time before "
-    "the gap and outcome time at or after t0.",
+    "The {role} {name!r} event-relative window can end at {end_offset!r}, after its "
+    "allowed time {limit_offset!r} relative to t0. Keep the selected event and the "
+    "whole window at or before that time.",
 )
 
 
@@ -268,6 +284,30 @@ def _outcome_bounds(design: Design, model: Model) -> tuple[tuple[int, ...], tupl
     return tuple(offsets), tuple(cutoffs)
 
 
+def _timing_context(
+    name: str,
+    role: str,
+    design: Design,
+    *,
+    start: int,
+    end: int | None,
+    bound: str,
+    limit: int,
+) -> dict[str, object]:
+    return {
+        "role": role,
+        "gap": design.gap,
+        "name": name,
+        "start": start,
+        "end": end,
+        "bound": bound,
+        "limit": limit,
+        "start_offset": _duration(start, signed=True),
+        "end_offset": _duration(end, signed=True) if end is not None else "unbounded",
+        "limit_offset": _duration(limit, signed=True),
+    }
+
+
 def _required(model: Model, source_name: str, required: set[str]) -> None:
     model.readiness.for_fact(source_name)
     required.add(source_name)
@@ -280,9 +320,21 @@ def _resolve_property(
     model: Model,
     required: set[str],
     obligations: list[str],
+    *,
+    name: str,
 ) -> None:
     if expr.relative_to is None and role != "treatment" and expr.before > -design.gap:
-        raise _GAP.error(role=role, gap=design.gap)
+        raise _CUTOFF_GAP.error(
+            **_timing_context(
+                name,
+                role,
+                design,
+                start=expr.before,
+                end=expr.before,
+                bound="before",
+                limit=-design.gap,
+            )
+        )
     declaration = model.catalog.properties.get(expr.attribute)
     owner = declaration.source if declaration is not None else None
     declared_dimension = declaration.dimension if declaration is not None else None
@@ -401,17 +453,49 @@ def _check_expression_timing(
     | EventTime,
     role: str,
     design: Design,
+    *,
+    name: str,
 ) -> None:
     support, dependencies = _expression_timing(expr)
     if role in {"feature", "eligibility"} and (
         support[1] > -design.gap or any(dependency[1] > -design.gap for dependency in dependencies)
     ):
         if getattr(expr, "relative_to", None) is not None or isinstance(expr, EventTime):
-            raise _REANCHOR_LEAK.error(role=role, gap=design.gap)
+            raise _REANCHOR_LEAK.error(
+                **_timing_context(
+                    name,
+                    role,
+                    design,
+                    start=support[0],
+                    end=max((support[1], *(end for _, end in dependencies))),
+                    bound="end",
+                    limit=-design.gap,
+                )
+            )
         if isinstance(expr, AttributeAsOf):
-            raise _GAP.error(role=role, gap=design.gap)
+            raise _CUTOFF_GAP.error(
+                **_timing_context(
+                    name,
+                    role,
+                    design,
+                    start=support[0],
+                    end=support[1],
+                    bound="before",
+                    limit=-design.gap,
+                )
+            )
     if role == "outcome" and support[0] < 0:
-        raise _GAP.error(role=role, gap=design.gap)
+        raise _OUTCOME_GAP.error(
+            **_timing_context(
+                name,
+                role,
+                design,
+                start=support[0],
+                end=support[1],
+                bound="start",
+                limit=0,
+            )
+        )
 
 
 def _check_predicate_operands(value: Expr | Predicate) -> None:
@@ -429,11 +513,13 @@ def _expression(
     model: Model,
     required: set[str],
     obligations: list[str],
+    *,
+    name: str,
 ) -> None:
     if isinstance(expr, (Gt, Eq, IsNull, And)):
         _check_predicate_operands(expr)
         for leaf in _output_leaves(expr):
-            _expression(leaf, role, design, model, required, obligations)
+            _expression(leaf, role, design, model, required, obligations, name=name)
         return
     relative_to = getattr(expr, "relative_to", None)
     if relative_to is not None:
@@ -446,10 +532,11 @@ def _expression(
             model,
             required,
             obligations,
+            name=name,
         )
     if isinstance(expr, AttributeAsOf):
-        _check_expression_timing(expr, role, design)
-        _resolve_property(expr, role, design, model, required, obligations)
+        _check_expression_timing(expr, role, design, name=name)
+        _resolve_property(expr, role, design, model, required, obligations, name=name)
         return
     if isinstance(expr, (EventTime, RetentionMetric)):
         event = model.catalog.events.get(expr.event)
@@ -465,13 +552,23 @@ def _expression(
             if source.events[expr.event] is None and source.name not in model.event_ids:
                 raise _RETENTION_IDENTITY.error(event=expr.event, source=source.name)
             if role != "outcome":
-                raise _GAP.error(role=role, gap=design.gap)
+                raise _RETENTION_GAP.error(
+                    **_timing_context(
+                        name,
+                        role,
+                        design,
+                        start=0,
+                        end=expr.finite_horizon_seconds,
+                        bound="end",
+                        limit=-design.gap,
+                    )
+                )
         elif expr.label_property is not None:
             _check_event_scalar(model, source.name, expr.label_property, expr.equals)
         _required(model, source.name, required)
         obligations.append("coverage_completeness")
         if not isinstance(expr, RetentionMetric):
-            _check_expression_timing(expr, role, design)
+            _check_expression_timing(expr, role, design, name=name)
         return
     if isinstance(expr, ApproxMetricQuantile):
         if design.shape != "cross_section":
@@ -494,13 +591,18 @@ def _expression(
                 algorithm=expr.sketch.algorithm, version=expr.sketch.version
             )
     if isinstance(expr, MetricAgg):
-        _check_expression_timing(expr, role, design)
+        _check_expression_timing(expr, role, design, name=name)
     metric = _metric(model, expr.metric)
     if metric.unit != design.unit:
         raise _UNIT.error(unit=design.unit, name=expr.metric)
     win = expr.window
     if not isinstance(win, Window) or win.start >= win.end:
-        raise _WINDOW.error(name=expr.metric)
+        raise _WINDOW.error(
+            name=expr.metric,
+            output=name,
+            start=getattr(win, "start", None),
+            end=getattr(win, "end", None),
+        )
     if isinstance(expr, (MetricQuantile, ApproxMetricQuantile)):
         for source_name in metric.source_names:
             dialect = model.sources[source_name].dialect
@@ -523,9 +625,29 @@ def _expression(
             if not supports_event_resolution(source.dialect):
                 raise UNSUPPORTED_EVENT_RESOLUTION.error(dialect=source.dialect)
     if relative_to is None and role in {"feature", "eligibility"} and win.end > -design.gap:
-        raise _GAP.error(role=role, gap=design.gap)
+        raise _GAP.error(
+            **_timing_context(
+                name,
+                role,
+                design,
+                start=win.start,
+                end=win.end,
+                bound="end",
+                limit=-design.gap,
+            )
+        )
     if relative_to is None and role == "outcome" and win.start < 0:
-        raise _GAP.error(role=role, gap=design.gap)
+        raise _OUTCOME_GAP.error(
+            **_timing_context(
+                name,
+                role,
+                design,
+                start=win.start,
+                end=win.end,
+                bound="start",
+                limit=0,
+            )
+        )
     if metric.kind not in {"mean", "conversion", "ratio"}:
         raise UNSUPPORTED_TEMPORAL_KIND.error(kind=metric.kind)
     if metric.transforms:
@@ -822,15 +944,15 @@ def validate_design(design: Design, model: Model) -> ValidationReport:
         raise _UNKNOWN_UNIT.error(unit=design.unit, name="roster")
 
     for role, expressions in (("feature", design.features), ("outcome", design.outcomes)):
-        for expr in expressions.values():
-            _expression(expr, role, design, model, required, obligations)
+        for name, expr in expressions.items():
+            _expression(expr, role, design, model, required, obligations, name=name)
     from terrine.spec.state_panel import StatePanel
 
     if isinstance(design.shape, StatePanel):
-        for expr in design.shape.baseline_features.values():
-            _expression(expr, "feature", design, model, required, obligations)
-    for predicate in design.eligibility.values():
-        _expression(predicate, "eligibility", design, model, required, obligations)
+        for name, expr in design.shape.baseline_features.items():
+            _expression(expr, "feature", design, model, required, obligations, name=name)
+    for name, predicate in design.eligibility.items():
+        _expression(predicate, "eligibility", design, model, required, obligations, name=name)
     if design.treatment is not None:
         treatment = design.treatment
         _expression(
@@ -840,6 +962,7 @@ def validate_design(design: Design, model: Model) -> ValidationReport:
             model,
             required,
             obligations,
+            name=treatment.attribute,
         )
 
     if design.anchor_range is not None:
