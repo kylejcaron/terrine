@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from terrine.spec.design import Design
     from terrine.spec.expressions import Expr
 from terrine.errors import RefusalSpec
+from terrine.spec.anchors import Schedule
 
 _INVALID_SCHEDULE = RefusalSpec(
     "terrine.state_panel.invalid_schedule", "State panel schedule is invalid: {reason}."
@@ -177,13 +178,27 @@ def decode_cutpoint(value: object) -> int | float | Decimal:
     raise ValueError("unknown or malformed cutpoint encoding")
 
 
+def schedule_periods(schedule: Schedule) -> int:
+    """Number of whole ``every`` periods from ``start`` through ``end`` under a fixed day boundary.
+
+    The day boundary is a fixed offset, so the span is exact day arithmetic; a span that is not a
+    whole number of periods refuses rather than truncating.
+    """
+    elapsed = (schedule.end_exclusive - schedule.start).days * 86_400
+    if elapsed % schedule.every:
+        raise _INVALID_SCHEDULE.error(
+            reason="schedule_not_whole_periods",
+            every=schedule.every,
+            start=schedule.start.isoformat(),
+            end=schedule.end.isoformat(),
+        )
+    return elapsed // schedule.every
+
+
 def validate_state_panel(
     design: Design, model: Model, required: set[str], obligations: list[str]
 ) -> None:
     """Validate schedule shape and state-source references without reading rows."""
-    from datetime import UTC
-
-    from terrine.spec.anchors import Schedule
     from terrine.spec.expressions import MetricAgg
     from terrine.spec.validate import _expression, _required
     from terrine.windows import Window
@@ -193,15 +208,11 @@ def validate_state_panel(
     schedule = design.anchor
     if not isinstance(schedule, Schedule):
         raise _INVALID_SCHEDULE.error(reason="a finite Schedule anchor is required")
-    start = model.day_boundary(schedule.start).astimezone(UTC)
-    end = model.day_boundary(schedule.end).astimezone(UTC)
-    elapsed = int((end - start).total_seconds())
-    if elapsed <= 0 or elapsed % schedule.every:
+    periods = schedule_periods(schedule)
+    if periods > panel.max_periods:
         raise _INVALID_SCHEDULE.error(
-            reason="schedule end must be an exact whole number of periods after start"
+            reason="schedule_exceeds_max_periods", periods=periods, max_periods=panel.max_periods
         )
-    if elapsed // schedule.every > panel.max_periods:
-        raise _INVALID_SCHEDULE.error(reason="schedule exceeds max_periods")
     if design.outcomes or design.treatment is not None:
         raise _UNSUPPORTED.error(
             reason="state-panel responses are to_state; treatment and outcomes are unsupported"

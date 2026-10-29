@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from terrine._time import utc_instant
 from terrine.errors import RefusalSpec
@@ -82,8 +82,20 @@ class EventAnchor:
         object.__setattr__(self, "offset", elapsed)
 
 
+def _inclusive_end(start: date | None, end: date, reason: str) -> None:
+    """Refuse a calendar end that cannot be widened by one day or precedes its start."""
+    if end == date.max:
+        raise _INVALID.error(reason="date_overflow", field="end", end=end.isoformat())
+    if start is not None and start > end:
+        raise _INVALID.error(
+            reason=reason, field="end", start=start.isoformat(), end=end.isoformat()
+        )
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class Schedule:
+    """Calendar anchors every ``every`` from ``start`` through ``end``, both days included."""
+
     every: int
     start: date
     end: date
@@ -93,15 +105,21 @@ class Schedule:
         if interval <= 0:
             raise ValueError("schedule interval must be positive")
         start_date, end_date = _date(start), _date(end)
-        if start_date >= end_date:
-            raise ValueError("schedule end is exclusive and must follow start")
+        _inclusive_end(start_date, end_date, "schedule_end_before_start")
         object.__setattr__(self, "every", interval)
         object.__setattr__(self, "start", start_date)
         object.__setattr__(self, "end", end_date)
 
+    @property
+    def end_exclusive(self) -> date:
+        """The day after the last scheduled day; anchors satisfy ``t0 < day(end_exclusive)``."""
+        return self.end + timedelta(days=1)
+
 
 @dataclass(frozen=True, slots=True, init=False)
 class AnchorRange:
+    """Keep anchors from ``start`` through ``end``; a calendar ``end`` includes its whole day."""
+
     start: date | datetime | None
     end: date | datetime | None
 
@@ -111,12 +129,23 @@ class AnchorRange:
         start_bound, end_bound = _range_bound(start), _range_bound(end)
         if start_bound is None and end_bound is None:
             raise ValueError("at least one range bound is required")
-        if (
-            start_bound is not None
-            and end_bound is not None
-            and isinstance(start_bound, datetime) == isinstance(end_bound, datetime)
-            and start_bound >= end_bound
-        ):
-            raise ValueError("range start must precede its exclusive end")
+        if isinstance(end_bound, datetime):
+            if isinstance(start_bound, datetime) and start_bound >= end_bound:
+                raise _INVALID.error(
+                    reason="range_end_before_start",
+                    field="end",
+                    start=start_bound.isoformat(),
+                    end=end_bound.isoformat(),
+                )
+        elif end_bound is not None:
+            same_kind = start_bound if not isinstance(start_bound, datetime) else None
+            _inclusive_end(same_kind, end_bound, "range_end_before_start")
         object.__setattr__(self, "start", start_bound)
         object.__setattr__(self, "end", end_bound)
+
+    @property
+    def end_exclusive(self) -> date | datetime | None:
+        """The bound anchors stay below: an instant unchanged, a calendar day widened by one."""
+        if self.end is None or isinstance(self.end, datetime):
+            return self.end
+        return self.end + timedelta(days=1)

@@ -160,7 +160,7 @@ def test_forced_generic_selection_reaches_nested_literals(engine, request):
 def test_schedule_whole_days_advance_by_every(engine):
     """Catch whole-day intervals zeroed by EXTRACT(SECOND) during interval multiplication."""
     model = _model(engine, _events([_ORIGIN], ["event"]))
-    rows = _rows(model, tr.Design("user", tr.Schedule("2d", "2025-01-01", "2025-01-07")))
+    rows = _rows(model, tr.Design("user", tr.Schedule("2d", "2025-01-01", "2025-01-06")))
     assert sorted(row["t0"] for row in rows) == [_ORIGIN + timedelta(days=day) for day in (0, 2, 4)]
 
 

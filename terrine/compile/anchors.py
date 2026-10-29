@@ -157,7 +157,7 @@ def _range_filter_raw(
     naive = dtype.timezone is None
     if naive and not engine_supports(expression_dialect(model._engine), "naive_anchor_utc"):
         raise _UTC_CONVERSION_UNSUPPORTED.error(backend=model.catalog.dialect)
-    start, end = _bound(model, anchor_range.start), _bound(model, anchor_range.end)
+    start, end = _bound(model, anchor_range.start), _bound(model, anchor_range.end_exclusive)
     for bound, lower in ((start, True), (end, False)):
         if bound is None:
             continue
@@ -193,7 +193,7 @@ def _constant_table(t0: datetime, anchor_id: str, provenance: str) -> Any:
 def _range_filter(table: Any, anchor_range: AnchorRange | None, model: Model) -> Any:
     if anchor_range is None:
         return table
-    start, end = _bound(model, anchor_range.start), _bound(model, anchor_range.end)
+    start, end = _bound(model, anchor_range.start), _bound(model, anchor_range.end_exclusive)
     if start is not None:
         table = table.filter(table.t0 >= ibis.literal(start))
     if end is not None:
@@ -291,10 +291,8 @@ def _roster_anchors(
         schedule = design.anchor
         assert isinstance(schedule, Schedule)
         start = model.day_boundary(schedule.start).astimezone(UTC)
-        end = model.day_boundary(schedule.end).astimezone(UTC)
+        end = model.day_boundary(schedule.end_exclusive).astimezone(UTC)
         elapsed_seconds = int((end - start).total_seconds())
-        if elapsed_seconds <= 0:
-            raise _INVALID.error(reason="schedule interval has no elapsed time")
         stop = (elapsed_seconds + schedule.every - 1) // schedule.every
         sequence = integer_sequence(stop, "ordinal", dialect=expression_dialect(model._engine))
         ordinal = sequence.ordinal

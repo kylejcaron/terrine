@@ -47,7 +47,7 @@ def state_panel_metadata(design: Design, model: Model) -> StatePanelMeta | None:
         ordered=ordered,
         absorbing=absorbing,
         panel_start=model.day_boundary(schedule.start).astimezone(UTC),
-        administrative_end=model.day_boundary(schedule.end).astimezone(UTC),
+        administrative_end=model.day_boundary(schedule.end_exclusive).astimezone(UTC),
         period_seconds=schedule.every,
         baseline_features=tuple(design.shape.baseline_features),
         time_varying_features=tuple(design.features),
@@ -80,7 +80,7 @@ def panel_metadata(design: Design, model: Model) -> PanelMeta | None:
         assert isinstance(design.anchor, Schedule)
         weight = design.shape.trial_weight
         trial_weight = None if weight is None else TrialWeightMeta(weight.kind, weight.values)
-        span = (design.anchor.end - design.anchor.start).days * 86_400
+        span = (design.anchor.end_exclusive - design.anchor.start).days * 86_400
         count = (span - 1) // design.anchor.every + 1
         trials = tuple(f"schedule:{index}" for index in range(count))
         return PanelMeta(

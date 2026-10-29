@@ -210,7 +210,7 @@ def test_row_checks_count_base_candidates_not_shape_rows(con):
     )
     design = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-05"),
+        Schedule("1d", "2025-01-01", "2025-01-04"),
         features={"spend": agg("spend", window=("-1d", "0s"))},
         shape=CalendarComparisonSpec(
             Initiation("amount", history_start=datetime(2025, 1, 1, tzinfo=UTC)),

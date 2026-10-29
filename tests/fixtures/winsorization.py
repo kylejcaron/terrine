@@ -89,7 +89,7 @@ def create_model(con):
 def design():
     return Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-08"),
+        Schedule("1d", "2025-01-03", "2025-01-07"),
         features={
             "value": agg("total", window=("-1d", "0s")),
             "category": asof("category", before="0s"),

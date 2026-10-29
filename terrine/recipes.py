@@ -29,6 +29,7 @@ from terrine.spec import (
     TrialWeight,
 )
 from terrine.spec.expressions import Expr, Predicate
+from terrine.spec.state_panel import schedule_periods
 from terrine.windows import Window, seconds
 
 __all__ = [
@@ -64,7 +65,7 @@ def time_series(
     anchor_range: AnchorRange | None = None,
     gap: str | int = "0d",
 ) -> Design:
-    """Build a Design on a calendar-date Schedule with an exclusive end."""
+    """Build a Design on a calendar-date Schedule whose ``end`` day is included."""
     return Design(
         unit,
         Schedule(every, start, end),
@@ -244,17 +245,23 @@ def state_panel(
     every: str | int,
     start: date | str,
     end: date | str,
-    periods: int,
+    periods: int | None = None,
     features: Mapping[str, Expr | Predicate] | None = None,
     eligibility: Mapping[str, Predicate] | None = None,
     anchor_range: AnchorRange | None = None,
     gap: str | int = "0d",
 ) -> Design:
-    """Build a Schedule Design with a StatePanel bounded by the required period count."""
+    """Build a Schedule Design with a StatePanel over the whole periods from start through end.
+
+    ``periods`` defaults to the schedule's own period count; an explicit value is an upper
+    bound that validation refuses to exceed.
+    """
+    schedule = Schedule(every, start, end)
+    max_periods = schedule_periods(schedule) if periods is None else periods
     return Design(
         unit,
-        Schedule(every, start, end),
-        shape=StatePanel(state_source, max_periods=periods),
+        schedule,
+        shape=StatePanel(state_source, max_periods=max_periods),
         features=features,
         eligibility=eligibility,
         anchor_range=anchor_range,

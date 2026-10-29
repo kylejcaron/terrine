@@ -183,7 +183,7 @@ def _fixed_anchors(design: Design, model: Model) -> tuple[datetime, ...] | None:
         return (resolved,)
     if isinstance(anchor, Schedule):
         first = model.day_boundary(anchor.start)
-        span = (anchor.end - anchor.start).days * 86400
+        span = (anchor.end_exclusive - anchor.start).days * 86400
         count = (span - 1) // anchor.every + 1
         if count > 1:
             return first, first + timedelta(seconds=anchor.every)
@@ -602,7 +602,7 @@ def _validate_shape(
         ):
             raise _INVALID.error(reason="PersistentAdoption requires a value-bearing label")
         coverage = model.readiness.for_fact(source.name)
-        span_seconds = (design.anchor.end - design.anchor.start).days * 86_400
+        span_seconds = (design.anchor.end_exclusive - design.anchor.start).days * 86_400
         last_offset = ((span_seconds - 1) // design.anchor.every) * design.anchor.every
         outcome_horizons, outcome_cutoffs = _outcome_bounds(design, model)
         anticipation = design.shape.anticipation_seconds
@@ -611,7 +611,9 @@ def _validate_shape(
             ends = [last_t0 + timedelta(seconds=horizon) for horizon in outcome_horizons]
             followup_end = max(last_t0, *ends, *outcome_cutoffs) + timedelta(seconds=anticipation)
         else:
-            followup_end = model.day_boundary(design.anchor.end) + timedelta(seconds=anticipation)
+            followup_end = model.day_boundary(design.anchor.end_exclusive) + timedelta(
+                seconds=anticipation
+            )
         if (
             coverage.start > design.shape.treatment.history_start
             or coverage.end_exclusive < followup_end
@@ -646,7 +648,7 @@ def _validate_shape(
                 boundary=design.shape.cohort.history_start.isoformat(),
             )
         schedule = design.anchor
-        span_seconds = (schedule.end - schedule.start).days * 86_400
+        span_seconds = (schedule.end_exclusive - schedule.start).days * 86_400
         last_offset = ((span_seconds - 1) // schedule.every) * schedule.every
         anticipation = max((abs(period) for period in design.shape.anticipation_periods), default=0)
         outcome_horizons, outcome_cutoffs = _outcome_bounds(design, model)
@@ -665,11 +667,13 @@ def _validate_shape(
         )
         schedule_incomplete = (
             design.shape.control == "never_treated"
-            and coverage.end_exclusive < model.day_boundary(schedule.end)
+            and coverage.end_exclusive < model.day_boundary(schedule.end_exclusive)
         )
         if comparison_incomplete or schedule_incomplete:
             required_boundary = (
-                max(horizon, model.day_boundary(schedule.end)) if schedule_incomplete else horizon
+                max(horizon, model.day_boundary(schedule.end_exclusive))
+                if schedule_incomplete
+                else horizon
             )
             raise _INCOMPLETE_TREATMENT_HISTORY.error(
                 source=source.name,
@@ -766,8 +770,15 @@ def validate_design(design: Design, model: Model) -> ValidationReport:
         )
 
     if design.anchor_range is not None:
-        start = _range_bound(design.anchor_range.start, model)
-        end = _range_bound(design.anchor_range.end, model)
+        anchor_range = design.anchor_range
+        start = _range_bound(anchor_range.start, model)
+        end = _range_bound(anchor_range.end_exclusive, model)
         if start is not None and end is not None and start >= end:
-            raise _INVALID.error(reason="anchor range start must precede exclusive end")
+            assert anchor_range.start is not None and anchor_range.end is not None
+            raise _INVALID.error(
+                reason="range_end_before_start",
+                field="end",
+                start=anchor_range.start.isoformat(),
+                end=anchor_range.end.isoformat(),
+            )
     return ValidationReport(tuple(sorted(required)), tuple(dict.fromkeys(obligations)))

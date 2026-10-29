@@ -850,7 +850,7 @@ def test_state_panel_stage_matches_ordinary_normalization_and_support(events_wor
     frame = (
         Design(
             "user",
-            Schedule("1d", "2025-01-03", "2025-01-05"),
+            Schedule("1d", "2025-01-03", "2025-01-04"),
             shape=StatePanel(
                 BinnedMetricState("sessions", (0,), ("none", "some")),
                 max_periods=2,
@@ -1362,7 +1362,7 @@ def test_frozen_limits_refuse_rebound_selector_dependencies(model, binding, nest
         else asof("amount_value", before="0s", relative_to=selector)
     )
     study = replace(
-        design(), anchor=Schedule("1d", "2025-01-05", "2025-01-08"), features={"value": expression}
+        design(), anchor=Schedule("1d", "2025-01-05", "2025-01-07"), features={"value": expression}
     )
     split = TimeSplit(train_until="2025-01-07", validation_until="2025-01-08")
     original = bind()
@@ -1719,7 +1719,7 @@ def test_state_panel_training_view_hashes_baseline_and_prior_state(native_inputs
     )
     frame = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
+        Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             BinnedMetricState("sessions", (Decimal("0"),), ("none", "some")),
             max_periods=2,

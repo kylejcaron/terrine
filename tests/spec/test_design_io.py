@@ -35,7 +35,7 @@ def test_anchor_variants_and_design_maps_round_trip_as_safe_yaml_and_json():
     anchors = (
         FixedDate("2025-03-01"),
         EventAnchor("feature_enabled", which="nth", n=2),
-        Schedule(every="1w", start="2025-01-06", end="2025-02-03"),
+        Schedule(every="1w", start="2025-01-06", end="2025-02-02"),
     )
     for anchor in anchors:
         design = Design(
@@ -138,14 +138,15 @@ def test_predicate_outcome_round_trips_json():
         assert restored.spec_hash == design.spec_hash
 
 
-def test_schedule_uses_positive_elapsed_cadence_and_exclusive_end():
-    schedule = Schedule(every="1w", start="2025-01-06", end="2025-02-03")
+def test_schedule_uses_positive_elapsed_cadence_and_ordered_dates():
+    schedule = Schedule(every="1w", start="2025-01-06", end="2025-02-02")
     assert schedule.every == 7 * 86400
-    assert schedule.end == date(2025, 2, 3)
+    assert schedule.end == date(2025, 2, 2)
+    assert Schedule(every="1d", start="2025-01-06", end="2025-01-06").end == date(2025, 1, 6)
     with pytest.raises(ValueError):
-        Schedule(every="0d", start="2025-01-06", end="2025-02-03")
+        Schedule(every="0d", start="2025-01-06", end="2025-02-02")
     with pytest.raises(ValueError):
-        Schedule(every="1d", start="2025-01-06", end="2025-01-06")
+        Schedule(every="1d", start="2025-01-07", end="2025-01-06")
 
 
 def test_design_named_maps_are_detached_and_read_only():
@@ -295,7 +296,7 @@ def test_time_to_event_design_round_trips_and_requires_matching_occurrence_ancho
     with pytest.raises(ValueError):
         Design(
             unit="user",
-            anchor=Schedule("1d", "2025-03-01", "2025-03-04"),
+            anchor=Schedule("1d", "2025-03-01", "2025-03-03"),
             shape=TimeToEvent("churn"),
         )
 

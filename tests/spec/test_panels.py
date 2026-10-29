@@ -22,7 +22,7 @@ from terrine.spec import (
 
 
 def test_matched_t0_policy_is_serialized_and_in_design_hash():
-    base = Design("user", Schedule("1d", "2025-01-01", "2025-01-03"))
+    base = Design("user", Schedule("1d", "2025-01-01", "2025-01-02"))
     sample = MatchedT0Sample(("region", "channel"), controls_per_treated=2, seed=17)
     design = Design(
         base.unit,
@@ -42,7 +42,7 @@ def test_matched_t0_policy_is_serialized_and_in_design_hash():
 
 
 def test_sequential_schedule_spec_round_trips_canonically():
-    design = Design("customer_id", Schedule(7, "2025-01-01", "2025-01-15"))
+    design = Design("customer_id", Schedule(7, "2025-01-01", "2025-01-14"))
     treatment = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
     sequential = Sequential(design, treatment=treatment)
 
@@ -53,7 +53,7 @@ def test_sequential_schedule_spec_round_trips_canonically():
 def test_calendar_panel_is_canonical_sequential_composition():
     from terrine.spec import CalendarPanel
 
-    design = Design("customer_id", Schedule(7, "2025-01-01", "2025-01-15"))
+    design = Design("customer_id", Schedule(7, "2025-01-01", "2025-01-14"))
     treatment = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
 
     assert CalendarPanel(Sequential(design, treatment=treatment)) == Sequential(
@@ -86,7 +86,7 @@ def test_conflicting_design_inputs_refuse_before_hash():
     from terrine.spec import Treatment
 
     base = Design(
-        "customer_id", Schedule(7, "2025-01-01", "2025-01-15"), treatment=Treatment("started")
+        "customer_id", Schedule(7, "2025-01-01", "2025-01-14"), treatment=Treatment("started")
     )
     with pytest.raises(TerrineError) as error:
         Sequential(
@@ -104,7 +104,7 @@ def test_explicit_trial_weights_normalize_without_overflow():
 
 
 def test_explicit_trial_weight_round_trips_in_design_hash():
-    base = Design("user", Schedule("1d", "2025-01-01", "2025-01-03"))
+    base = Design("user", Schedule("1d", "2025-01-01", "2025-01-02"))
     treatment = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
     design = Sequential(
         base,
@@ -117,7 +117,7 @@ def test_explicit_trial_weight_round_trips_in_design_hash():
 
 
 def test_explicit_trial_weights_round_trip_without_mass_drift():
-    base = Design("user", Schedule("1d", "2025-01-01", "2025-01-03"))
+    base = Design("user", Schedule("1d", "2025-01-01", "2025-01-02"))
     design = Sequential(
         base,
         treatment=Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC)),
@@ -151,7 +151,7 @@ def test_direct_design_construction_cannot_conflict_with_sequential_treatment():
     with pytest.raises(TerrineError) as error:
         Design(
             "user",
-            Schedule("1d", "2025-01-01", "2025-01-02"),
+            Schedule("1d", "2025-01-01", "2025-01-01"),
             treatment=Treatment("started"),
             shape=SequentialSpec(history),
         )

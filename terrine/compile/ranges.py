@@ -56,7 +56,7 @@ def plan_ranges(design: Design, model) -> dict[Expr, RangePlan]:
         if isinstance(anchor, FixedDate):
             count, basis = 1, "fixed"
         elif isinstance(anchor, Schedule):
-            span = (anchor.end - anchor.start).days * 86_400
+            span = (anchor.end_exclusive - anchor.start).days * 86_400
             count = (span - 1) // anchor.every + 1
             step, basis = anchor.every, "schedule"
         elif isinstance(anchor, EventAnchor) and anchor.which in {"first", "nth"}:

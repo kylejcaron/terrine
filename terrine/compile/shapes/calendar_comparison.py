@@ -90,7 +90,7 @@ def _history_check(
         outcome_cutoff=outcome_cutoff,
         anticipation_seconds=anticipation * anchor.every,
     )
-    schedule_end = ibis.literal(model.day_boundary(anchor.end))
+    schedule_end = ibis.literal(model.day_boundary(anchor.end_exclusive))
     never_control = participants.control_eligible & ~participants.treatment
     missing = cast(ir.BooleanValue, ibis.literal(False))
     if "_observed_from" in participants.columns:

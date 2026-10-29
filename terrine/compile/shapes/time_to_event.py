@@ -55,7 +55,7 @@ def _validate_nanosecond_axis(design: Design, timestamp_types) -> None:
     if isinstance(design.anchor, FixedDate):
         instants.append(design.anchor.date)
     if design.anchor_range is not None:
-        instants.extend((design.anchor_range.start, design.anchor_range.end))
+        instants.extend((design.anchor_range.start, design.anchor_range.end_exclusive))
     if design.administrative_cutoff is not None:
         instants.append(design.administrative_cutoff)
     for instant in instants:

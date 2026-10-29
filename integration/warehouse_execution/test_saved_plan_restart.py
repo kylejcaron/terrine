@@ -345,7 +345,7 @@ def test_state_panel_composition_matches_full_rebuild(column_model):
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-02", "2025-01-03"),
+        Schedule("1d", "2025-01-02", "2025-01-02"),
         shape=StatePanel(
             BinnedMetricState("total", cutpoints=(0,), levels=("none", "some")), max_periods=2
         ),
@@ -396,7 +396,7 @@ def test_saved_panel_publication_preserves_ordinary_provenance(column_model, tmp
             design = Sequential(
                 Design(
                     "user",
-                    Schedule("1d", "2025-01-03", "2025-01-05"),
+                    Schedule("1d", "2025-01-03", "2025-01-04"),
                     features={"total": agg("total", window=("-1d", "0s"))},
                 ),
                 treatment=Initiation("amount", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
@@ -531,7 +531,7 @@ def test_persisted_shape_matrix_preserves_panel_rows_and_metadata(column_model, 
         design = Sequential(
             Design(
                 "user",
-                Schedule("12h", "2025-01-03", "2025-01-05"),
+                Schedule("12h", "2025-01-03", "2025-01-04"),
                 features={"total": agg("total", window=("-1d", "0s"))},
             ),
             treatment=Initiation("amount", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
@@ -625,7 +625,7 @@ def test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors(
     )
     design = Design(
         "user",
-        Schedule(every, "2025-01-02", "2025-01-04"),
+        Schedule(every, "2025-01-02", "2025-01-03"),
         features={"total": agg("total", window=("-1d", "0s"))},
         shape=StatePanel(
             state,

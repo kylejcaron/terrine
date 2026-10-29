@@ -94,7 +94,7 @@ def _points(design: Design, model: Model, state: StateObservations):
     observations = _utc_column(model, observations, "point_ts", "point_time")
     coverage = model.readiness.for_fact(source.name)
     start = model.day_boundary(schedule.start).astimezone(UTC)
-    end = model.day_boundary(schedule.end).astimezone(UTC)
+    end = model.day_boundary(schedule.end_exclusive).astimezone(UTC)
     all_points = observations.select(
         unit=observations.unit,
         point_time=observations.point_time,

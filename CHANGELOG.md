@@ -76,6 +76,25 @@
   is no migration: construct and save the design again. The
   `terrine.design.missing_reference` context uses `kind="event"` and
   `"bound event"` where it named a fact.
+- A calendar date typed as an end bound includes that whole local day.
+  `Schedule(every, start, end)`, and so `time_series`, `trial_panel` and
+  `state_panel`, anchor every `t0 = day(start) + k * every` before
+  `day(end + 1 day)`; `start == end` is one anchor. A date `AnchorRange.end`
+  keeps anchors through that day; an aware datetime end is still an exact
+  exclusive instant, relative windows and `TimeSplit` are unchanged. Both
+  carry a read-only `end_exclusive` (`end + 1 day` for a date; an instant
+  unchanged) that the compiler reads. `start > end` on dates refuses with
+  `terrine.design.invalid` (`reason="schedule_end_before_start"` or
+  `"range_end_before_start"`, context `field`, `start`, `end`), a datetime
+  range still needs `start < end`, and a date end of `date.max` refuses with
+  `reason="date_overflow"`. Design documents keep the same `end` key with the
+  new meaning; version 1 documents already refuse under the gate above.
+  `recipes.state_panel(periods=None)` derives the period count from the
+  schedule and refuses `terrine.state_panel.invalid_schedule`
+  (`reason="schedule_not_whole_periods"`, context `every`, `start`, `end`)
+  when the span is not whole periods; an explicit `periods` is an upper
+  bound and a longer schedule refuses with `reason="schedule_exceeds_max_periods"`
+  (context `periods`, `max_periods`) rather than truncating.
 - Output row order on DuckDB may differ from anchor order for a small study
   (DuckDB rewrites an as-of join with fewer than 64 estimated cutoffs into a
   hash aggregate). Row order was never part of the dataset contract on any

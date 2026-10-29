@@ -74,7 +74,7 @@ def test_observed_state_panel_compiles_point_lookup_contract(observed_panel_mode
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
+        Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             StateObservations("state", ("active", "closed"), absorbing=("closed",)),
             max_periods=2,
@@ -105,7 +105,7 @@ def test_observed_panel_baseline_preserves_event_origin_timing(observed_panel_mo
     origin = EventTime("session", Window("-2d", "-1d"))
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
+        Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             StateObservations("state", ("active", "closed"), absorbing=("closed",)),
             max_periods=2,
@@ -194,7 +194,7 @@ def observed_model_factory(native_inputs):
 def test_binned_state_panel_compiles_bounded_period_pairing(panel_model):
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
+        Schedule("1d", "2025-01-03", "2025-01-04"),
         features={"panel_metric": agg("sessions", window=("-1d", "0d"))},
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
@@ -227,7 +227,7 @@ def test_panel_baseline_preserves_event_origin_timing_references(panel_model):
     origin = EventTime("session", Window("-2d", "-1d"))
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
+        Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
             max_periods=2,
@@ -247,7 +247,7 @@ def test_panel_baseline_preserves_event_origin_timing_references(panel_model):
 def test_panel_baseline_and_per_origin_feature_cutoffs_are_distinct(panel_model):
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
+        Schedule("1d", "2025-01-03", "2025-01-04"),
         features={
             "per_origin": agg("sessions", window=("-1d", "0d")),
             "panel_start": agg("sessions", window=("-1d", "0d")),
@@ -273,7 +273,7 @@ def test_binned_state_periods_ignore_covariate_gap(panel_model):
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
+        Schedule("1d", "2025-01-03", "2025-01-04"),
         gap="1d",
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
@@ -303,7 +303,7 @@ def test_state_panel_rejects_generated_status_name_collisions(panel_model, name)
     with pytest.raises(TerrineError) as error:
         Design(
             "user",
-            Schedule("1d", "2025-01-03", "2025-01-04"),
+            Schedule("1d", "2025-01-03", "2025-01-03"),
             features={name: agg("sessions", window=("-1d", "0d"))},
             shape=StatePanel(
                 BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
@@ -344,9 +344,9 @@ def test_state_panel_refuses_partial_schedule_and_unsupported_designs(panel_mode
         max_periods=2,
     )
     schedule = (
-        Schedule("36h", "2025-01-03", "2025-01-05")
+        Schedule("36h", "2025-01-03", "2025-01-04")
         if kind == "partial"
-        else Schedule("1d", "2025-01-03", "2025-01-05")
+        else Schedule("1d", "2025-01-03", "2025-01-04")
     )
     if kind == "outcome":
         design = Design(
@@ -379,7 +379,7 @@ def test_float_metric_rejects_integer_cutpoint_outside_float64_range():
 def test_observed_state_property_must_be_source_owned(panel_model):
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
+        Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             StateObservations("not_a_property", ("active", "closed")),
             max_periods=2,
@@ -390,18 +390,22 @@ def test_observed_state_property_must_be_source_owned(panel_model):
     assert error.value.code == "terrine.state_panel.invalid_state_source"
 
 
-def test_state_panel_rejects_schedule_over_cap_with_owned_refusal(panel_model):
-    design = Design(
+def test_state_panel_rejects_schedule_over_explicit_period_cap(panel_model):
+    from terrine import recipes
+
+    design = recipes.state_panel(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-06"),
-        shape=StatePanel(
-            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=2,
-        ),
+        state_source=BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
+        every="1d",
+        start="2025-01-03",
+        end="2025-01-05",
+        periods=2,
     )
     with pytest.raises(TerrineError) as error:
         design.validate(panel_model)
     assert error.value.code == "terrine.state_panel.invalid_schedule"
+    assert error.value.context["reason"] == "schedule_exceeds_max_periods"
+    assert (error.value.context["periods"], error.value.context["max_periods"]) == (3, 2)
 
 
 @pytest.mark.parametrize(
@@ -416,7 +420,7 @@ def test_state_panel_rejects_schedule_over_cap_with_owned_refusal(panel_model):
 def test_state_panel_materialization_requires_positive_row_and_byte_budgets(panel_model, budget):
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
+        Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
             max_periods=2,
@@ -432,7 +436,7 @@ def _observed_design(*, absorbing=("closed",)):
 
     return Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-05"),
+        Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             StateObservations("state", ("active", "closed"), absorbing=absorbing),
             max_periods=2,
@@ -571,7 +575,7 @@ def test_float_metric_refuses_decimal_cutpoints(native_inputs):
     )
     design = Design(
         "user",
-        Schedule("1d", "2025-01-03", "2025-01-04"),
+        Schedule("1d", "2025-01-03", "2025-01-03"),
         shape=StatePanel(
             BinnedMetricState("score_avg", cutpoints=(Decimal("0.1"),), levels=("low", "high")),
             max_periods=1,

@@ -57,7 +57,7 @@ def main() -> None:
                 "customer",
                 every="7d",
                 start="2025-01-01",
-                end="2025-01-08",
+                end="2025-01-07",
                 outcomes=outcomes,
             )
             .build(model)
@@ -80,7 +80,7 @@ def main() -> None:
                 "customer",
                 every="7d",
                 start="2025-01-29",
-                end="2025-01-30",
+                end="2025-01-29",
                 outcomes=outcomes,
             )
             .build(model)

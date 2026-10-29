@@ -27,7 +27,7 @@ def test_matched_t0_samples_controls_without_replacement_and_records_probability
     design = Sequential(
         Design(
             "user",
-            Schedule("1d", "2025-01-03", "2025-01-04"),
+            Schedule("1d", "2025-01-03", "2025-01-03"),
             sample=MatchedT0Sample((), controls_per_treated=2, seed=27),
         ),
         treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
@@ -85,7 +85,7 @@ def test_matched_t0_refuses_insufficient_controls_during_materialization(native_
     design = Sequential(
         Design(
             "user",
-            Schedule("1d", "2025-01-03", "2025-01-04"),
+            Schedule("1d", "2025-01-03", "2025-01-03"),
             sample=MatchedT0Sample((), controls_per_treated=4, seed=27),
         ),
         treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
@@ -104,7 +104,7 @@ def test_matched_t0_strata_must_name_compiled_features(native_inputs):
     design = Sequential(
         Design(
             "user",
-            Schedule("1d", "2025-01-03", "2025-01-04"),
+            Schedule("1d", "2025-01-03", "2025-01-03"),
             sample=MatchedT0Sample(("missing_stratum",), controls_per_treated=1, seed=0),
         ),
         treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
@@ -121,7 +121,7 @@ def test_matched_t0_convenience_lowers_policy_onto_design(native_inputs):
 
     model = _model(native_inputs)
     base = Sequential(
-        Design("user", Schedule("1d", "2025-01-03", "2025-01-04")),
+        Design("user", Schedule("1d", "2025-01-03", "2025-01-03")),
         treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
     )
 
@@ -139,7 +139,7 @@ def test_matched_t0_keeps_no_controls_from_zero_treated_strata(native_inputs):
     design = Sequential(
         Design(
             "user",
-            Schedule("1d", "2025-01-03", "2025-01-04"),
+            Schedule("1d", "2025-01-03", "2025-01-03"),
             sample=MatchedT0Sample((), controls_per_treated=1, seed=0),
         ),
         treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),

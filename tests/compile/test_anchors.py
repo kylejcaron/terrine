@@ -111,7 +111,7 @@ def test_fixed_date_keeps_exact_aware_time_zero(native_model):
     ("unit", "anchor", "reference"),
     [
         ("user", FixedDate(date(2025, 1, 3)), "roster"),
-        ("user", Schedule("1d", "2025-01-02", "2025-01-04"), "roster"),
+        ("user", Schedule("1d", "2025-01-02", "2025-01-03"), "roster"),
         ("account", EventAnchor("occurred"), "occurred"),
     ],
 )
@@ -156,17 +156,34 @@ def test_roster_observation_bounds_are_independent_of_exit(native_model):
     assert user_b["_observed_until"] is None
 
 
-def test_schedule_end_exclusive_and_roster_lifetime_half_open(native_model):
-    design = Design(unit="user", anchor=Schedule("1d", "2025-01-02", "2025-01-04"))
+def test_schedule_end_is_the_last_scheduled_day_and_roster_lifetime_half_open(native_model):
+    # The model's day boundary is UTC-05:00, so local midnight is 05:00Z.
+    design = Design(unit="user", anchor=Schedule("1d", "2025-01-02", "2025-01-03"))
     result = candidate_rows(design, native_model)
     assert {(row["unit"], row["t0"]) for row in result} == {
-        ("a", datetime(2025, 1, 2, 5, tzinfo=UTC)),
-        ("a", datetime(2025, 1, 3, 5, tzinfo=UTC)),
-        ("b", datetime(2025, 1, 2, 5, tzinfo=UTC)),
-        ("b", datetime(2025, 1, 3, 5, tzinfo=UTC)),
-        ("c", datetime(2025, 1, 2, 5, tzinfo=UTC)),
-        ("c", datetime(2025, 1, 3, 5, tzinfo=UTC)),
+        (unit, datetime(2025, 1, day, 5, tzinfo=UTC)) for unit in "abc" for day in (2, 3)
     }
+    single = candidate_rows(
+        Design(unit="user", anchor=Schedule("1d", "2025-01-02", "2025-01-02")), native_model
+    )
+    assert {row["t0"] for row in single} == {datetime(2025, 1, 2, 5, tzinfo=UTC)}
+
+
+def test_date_anchor_range_end_includes_that_whole_local_day(native_model):
+    def anchors(anchor_range):
+        design = Design(
+            unit="user", anchor=EventAnchor("occurred", "each"), anchor_range=anchor_range
+        )
+        return [(row["unit"], row["t0"]) for row in candidate_rows(design, native_model)]
+
+    # Local Jan 3 is [Jan 3 05:00Z, Jan 4 05:00Z): a's 12:00Z event stays and b's Jan 4
+    # 00:00Z event falls at b's exit, outside b's half-open roster lifetime.
+    assert anchors(AnchorRange(start=date(2025, 1, 3), end=date(2025, 1, 3))) == [
+        ("a", datetime(2025, 1, 3, 12, tzinfo=UTC))
+    ]
+    assert (
+        anchors(AnchorRange(end=date(2025, 1, 2))) == [("a", datetime(2025, 1, 2, tzinfo=UTC))] * 2
+    )
 
 
 def test_event_first_uses_exact_t0_and_stable_id_for_ties(native_model):

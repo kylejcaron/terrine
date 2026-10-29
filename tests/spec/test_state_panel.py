@@ -63,7 +63,7 @@ def test_state_panel_design_round_trips_cutpoint_types_in_json_and_yaml():
         max_periods=12,
         baseline_features={"plan": agg("plan_size", window=("-1d", "0d"))},
     )
-    design = Design("user", Schedule("1w", "2025-01-06", "2025-03-31"), shape=panel)
+    design = Design("user", Schedule("1w", "2025-01-06", "2025-03-30"), shape=panel)
     for loader, serialized in ((from_json, to_json(design)), (from_yaml, to_yaml(design))):
         restored = loader(serialized)
         assert restored.spec_hash == design.spec_hash
@@ -93,7 +93,7 @@ def test_observed_state_level_order_and_terminal_definition_round_trip():
         ),
         max_periods=3,
     )
-    design = Design("user", Schedule("1d", "2025-01-01", "2025-01-04"), shape=panel)
+    design = Design("user", Schedule("1d", "2025-01-01", "2025-01-03"), shape=panel)
     for loader, serialized in ((from_json, to_json(design)), (from_yaml, to_yaml(design))):
         restored = loader(serialized)
         assert isinstance(restored.shape, StatePanel)

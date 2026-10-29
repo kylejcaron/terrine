@@ -7,12 +7,12 @@ for both constructors with calendar-date and relative-period assertions.
 
 ## Scheduled trial panels
 
-`recipes.trial_panel` requires `unit`, `every`, `start`, exclusive `end`, and a
+`recipes.trial_panel` requires `unit`, `every`, `start`, `end`, and a
 `treatment` history declaration (`Initiation` or `PersistentAdoption`). Its rows
 are eligible units at scheduled trial time zero; schedule dates, not a redundant
 period count, define the trials. Dates are calendar dates or ISO date strings,
-never timestamps. For example, the following schedule has Jan 1, Jan 15, and
-Jan 29 anchors, not Feb 1.
+never timestamps, and the `end` day is included. For example, the following
+schedule has Jan 1, Jan 15, and Jan 29 anchors.
 
 Supported options are `trial_weight=None`, `anticipation="0d"`,
 `reference_period="-1d"`, `features`, `outcomes`, `eligibility`, `anchor_range`,
@@ -26,7 +26,7 @@ from terrine.spec import Initiation, from_json, to_json
 
 treatment_history = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
 trials = recipes.trial_panel(
-    "user", every="14d", start="2025-01-01", end="2025-02-01",
+    "user", every="14d", start="2025-01-01", end="2025-01-29",
     treatment=treatment_history,
 )
 assert from_json(to_json(trials)) == trials
@@ -37,7 +37,7 @@ assert from_json(to_json(trials)) == trials
 ```python
 from terrine.spec import Design, Schedule, Sequential
 
-base = Design("user", Schedule("14d", "2025-01-01", "2025-02-01"))
+base = Design("user", Schedule("14d", "2025-01-01", "2025-01-29"))
 equivalent_trials = Sequential(base, treatment=treatment_history)
 assert trials == equivalent_trials
 ```

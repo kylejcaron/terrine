@@ -62,8 +62,24 @@ def design_schema() -> dict[str, Any]:
             "n": nullable(integer),
             "offset": duration,
         },
-        "Schedule": {"every": duration, "start": ref("Temporal"), "end": ref("Temporal")},
-        "AnchorRange": {"start": nullable(ref("Temporal")), "end": nullable(ref("Temporal"))},
+        "Schedule": {
+            "every": duration,
+            "start": ref("Temporal"),
+            "end": {
+                **ref("Temporal"),
+                "description": "Last scheduled calendar day, included; start == end is one anchor.",
+            },
+        },
+        "AnchorRange": {
+            "start": nullable(ref("Temporal")),
+            "end": {
+                **nullable(ref("Temporal")),
+                "description": (
+                    "A date keeps anchors through that whole local day; "
+                    "a datetime is an exact exclusive instant."
+                ),
+            },
+        },
         "MetricAgg": {
             "metric": text,
             "window": ref("Window"),

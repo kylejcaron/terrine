@@ -41,7 +41,9 @@ def _followup_at(design: Design, model, timestamp):
     if cutoffs:
         ends.append(ibis.literal(max(cutoffs)))
     end = (
-        greatest(timestamp, *ends) if ends else ibis.literal(model.day_boundary(design.anchor.end))
+        greatest(timestamp, *ends)
+        if ends
+        else ibis.literal(model.day_boundary(design.anchor.end_exclusive))
     )
     return cast(ir.TimestampValue, end) + ibis.interval(seconds=design.shape.anticipation_seconds)
 
@@ -54,7 +56,7 @@ def _trial_columns(table, design: Design):
     if weight is None:
         return table
     schedule = design.anchor
-    span = (schedule.end - schedule.start).days * 86_400
+    span = (schedule.end_exclusive - schedule.start).days * 86_400
     count = (span - 1) // schedule.every + 1
     trial_ids = tuple(f"schedule:{index}" for index in range(count))
     if weight.kind == "equal_trial":
@@ -101,7 +103,7 @@ def _unit_history_gaps(design: Design, model, anchors, eligible_table):
     end = (
         _followup_at(design, model, table.t0)
         if isinstance(selector, Initiation)
-        else ibis.literal(model.day_boundary(design.anchor.end))
+        else ibis.literal(model.day_boundary(design.anchor.end_exclusive))
     )
     missing = ibis.literal(False)
     if "_observed_from" in source.columns:
@@ -121,7 +123,7 @@ def _persistent_contradictions(design: Design, model):
     events = normalize_events(model._relation(source.relation), source, source.units[design.unit])
     end = cast(
         ir.TimestampScalar,
-        ibis.literal(model.day_boundary(design.anchor.end).astimezone(UTC)),
+        ibis.literal(model.day_boundary(design.anchor.end_exclusive).astimezone(UTC)),
     )
     value = events[prop.column]
     adopted = events.filter(

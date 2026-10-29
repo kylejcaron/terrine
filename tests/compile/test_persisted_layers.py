@@ -176,7 +176,7 @@ def test_runtime_layer_composition_matches_direct_state_audit(column_model):
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-02", "2025-01-03"),
+        Schedule("1d", "2025-01-02", "2025-01-02"),
         shape=StatePanel(
             BinnedMetricState("total", cutpoints=(0,), levels=("none", "some")),
             max_periods=1,
@@ -297,7 +297,7 @@ def test_runtime_and_frame_share_shape_budget_refusal():
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-02", "2025-01-03"),
+        Schedule("1d", "2025-01-02", "2025-01-02"),
         shape=DerivedStatePanel(
             BinnedMetricState("total", cutpoints=(0,), levels=("none", "some")),
             max_periods=2,

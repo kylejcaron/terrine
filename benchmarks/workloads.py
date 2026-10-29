@@ -137,7 +137,7 @@ def designs(config: ScaleConfig) -> dict[str, Design]:
         Schedule(
             "1d",
             (_EPOCH + timedelta(days=config.window_days)).date(),
-            (_EPOCH + timedelta(days=config.window_days + config.anchor_periods)).date(),
+            (_EPOCH + timedelta(days=config.window_days + config.anchor_periods - 1)).date(),
         ),
         features=features,
     )

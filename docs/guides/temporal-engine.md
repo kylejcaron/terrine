@@ -76,11 +76,13 @@ names. These are richer source declarations, not options inferred from tables.
 ### Scheduled time series
 
 Start with `recipes.time_series`: one row per roster unit and scheduled calendar
-anchor. Required arguments are `unit`, `every`, `start`, and exclusive `end`;
-dates may be calendar dates or ISO date strings, never timestamps. The schedule
-defines the anchors, without a separate period count. Supported options are
-`features`, `outcomes`, `eligibility`, `treatment`, `anchor_range`, and `gap`
-(default `"0d"`); optional roles and filters default to `None`.
+anchor. Required arguments are `unit`, `every`, `start`, and `end`; dates may
+be calendar dates or ISO date strings, never timestamps. The schedule defines
+the anchors, without a separate period count: `t0` runs from `start` in steps
+of `every` through the `end` day, which is included, so `start == end` is a
+single anchor. Supported options are `features`, `outcomes`, `eligibility`,
+`treatment`, `anchor_range`, and `gap` (default `"0d"`); optional roles and
+filters default to `None`.
 
 ```python
 from terrine import Budget, agg, recipes
@@ -91,7 +93,7 @@ outcomes = {
     "mean": agg("orders_amount_mean", window=("0d", "7d")),
 }
 design = recipes.time_series(
-    "customer", every="7d", start="2025-01-01", end="2025-01-08",
+    "customer", every="7d", start="2025-01-01", end="2025-01-07",
     outcomes=outcomes,
 )
 result = design.build(model).materialize(
@@ -110,7 +112,7 @@ zero-activity customer; unknown is not zero.
 from terrine import Design, Schedule
 
 equivalent = Design(
-    "customer", Schedule("7d", "2025-01-01", "2025-01-08"), outcomes=outcomes,
+    "customer", Schedule("7d", "2025-01-01", "2025-01-07"), outcomes=outcomes,
 )
 assert design == equivalent
 ```

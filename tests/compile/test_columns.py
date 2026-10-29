@@ -141,7 +141,7 @@ def test_time_series_columns_are_values_with_named_support(column_model):
     frame = (
         Design(
             "user",
-            Schedule("1d", "2025-01-02", "2025-01-04"),
+            Schedule("1d", "2025-01-02", "2025-01-03"),
             features={"rev_14d": agg("total", window=("-14d", "0d"))},
         )
         .build(column_model)

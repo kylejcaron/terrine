@@ -202,7 +202,7 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
         if scenario.startswith("state_panel"):
             design = Design(
                 "user",
-                Schedule("1d", "2025-01-02", "2025-01-04"),
+                Schedule("1d", "2025-01-02", "2025-01-03"),
                 features=features,
                 shape=StatePanel(
                     (

@@ -132,7 +132,7 @@ _DESIGNS = {
     ),
     "schedule": tr.Design(
         "user",
-        tr.Schedule("1d", "2025-01-01", "2025-01-05"),
+        tr.Schedule("1d", "2025-01-01", "2025-01-04"),
         features={"orders_before": tr.agg("orders", window=("-1d", "0s"))},
         outcomes={"spend_after": tr.agg("spend", window=("0s", "1d"))},
     ),
@@ -160,7 +160,7 @@ _DESIGNS = {
     ),
     "observed_state_panel": tr.Design(
         "user",
-        tr.Schedule("1d", "2025-01-02", "2025-01-05"),
+        tr.Schedule("1d", "2025-01-02", "2025-01-04"),
         shape=tr.StatePanel(
             tr.StateObservations("state", ("active", "closed"), absorbing=("closed",)),
             max_periods=3,
@@ -214,7 +214,7 @@ def test_landmark_nth_anchor_matches_original_time_oracle(postgres_scratch, tmp_
     design = tr.Design(
         "user",
         tr.EventAnchor("order", which="nth", n=2, offset="1d"),
-        anchor_range=tr.AnchorRange("2025-01-02", "2025-01-03"),
+        anchor_range=tr.AnchorRange("2025-01-02", "2025-01-02"),
         features={"day_one_orders": tr.agg("orders", window=("-1d", "0s"))},
     )
     expected = _rows(duckdb, design)

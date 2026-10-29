@@ -324,7 +324,7 @@ def test_shadowed_native_function_in_compiled_query_is_refused_before_it_runs(
     )
     con.raw_sql("CREATE MACRO range(lo, hi) AS (SELECT list(ordinal) FROM read_csv(probe_path()))")
     calls.clear()
-    design = Design("user", tr.Schedule("1d", "2025-01-03", "2025-01-05"))
+    design = Design("user", tr.Schedule("1d", "2025-01-03", "2025-01-04"))
     frame = design.build(model)  # compiling sends no SQL
     with pytest.raises(TerrineError) as error:
         frame.materialize()

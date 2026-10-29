@@ -144,7 +144,7 @@ def _union_state_periods(
         state_design, model, include_membership=False, persisted_prefixes=persisted_prefixes
     )
     endpoint = _state_panel_design(
-        design, anchor=FixedDate(schedule.end), features={"_state_period": node}, gap=0
+        design, anchor=FixedDate(schedule.end_exclusive), features={"_state_period": node}, gap=0
     )
     final = compile_columns(
         endpoint, model, include_membership=False, persisted_prefixes=persisted_prefixes

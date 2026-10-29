@@ -16,7 +16,7 @@ from terrine.spec.panels import (
 
 
 def base_design():
-    return Design("unit_id", Schedule("30d", date(2025, 1, 1), date(2025, 3, 1)))
+    return Design("unit_id", Schedule("30d", date(2025, 1, 1), date(2025, 2, 28)))
 
 
 def test_comparison_control_modes_round_trip_with_distinct_hashes():

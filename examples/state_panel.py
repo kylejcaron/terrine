@@ -109,8 +109,7 @@ def main() -> None:
             ),
             every="1w",
             start="2025-01-06",
-            end="2025-03-31",
-            periods=12,
+            end="2025-03-30",
             features={"sessions_before": agg("weekly_sessions", window=("-4w", "0d"))},
         )
         materialized = design.build(model).materialize(
@@ -136,8 +135,7 @@ def main() -> None:
             ),
             every="1w",
             start="2025-01-06",
-            end="2025-03-31",
-            periods=12,
+            end="2025-03-30",
         )
         status_frame = status_design.build(model).materialize(
             tr.Budget(max_rows=10_000, max_output_bytes=8_000_000)

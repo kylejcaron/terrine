@@ -85,14 +85,14 @@ def main() -> None:
     try:
         treatment = Initiation("started", history_start=datetime(2025, 1, 1, tzinfo=UTC))
         sequential = recipes.trial_panel(
-            "user", every="14d", start="2025-01-01", end="2025-02-01",
+            "user", every="14d", start="2025-01-01", end="2025-01-29",
             treatment=treatment,
         )
         events = recipes.event_panel(
             "user", event="purchase", periods=(-1, 0, 1), period="1d",
         )
         assert sequential == Sequential(
-            Design("user", Schedule("14d", "2025-01-01", "2025-02-01")),
+            Design("user", Schedule("14d", "2025-01-01", "2025-01-29")),
             treatment=treatment,
         )
         assert events == EventPanel(

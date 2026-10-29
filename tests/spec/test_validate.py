@@ -137,7 +137,7 @@ def test_binned_state_metric_uses_ordinary_metric_admission():
         unit = "workspace" if "units" in options else "user"
         design = Design(
             unit,
-            Schedule("1d", date(2025, 1, 1), date(2025, 1, 3)),
+            Schedule("1d", date(2025, 1, 1), date(2025, 1, 2)),
             shape=StatePanel(
                 BinnedMetricState("sessions", (0,), ("none", "some")),
                 max_periods=2,
@@ -164,7 +164,7 @@ def test_panel_sources_refuse_missing_analysis_unit_mapping(shape_name):
         if shape_name == "sequential_treatment"
         else CalendarComparisonSpec(selector, "never_treated", -1, (0,))
     )
-    design = Design("user", Schedule("1d", "2025-01-01", "2025-01-04"), shape=shape)
+    design = Design("user", Schedule("1d", "2025-01-01", "2025-01-03"), shape=shape)
 
     with pytest.raises(TerrineError) as error:
         validate_design(design, source_model)
@@ -178,7 +178,7 @@ def _initiation_design(name):
 
     return Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-03"),
+        Schedule("1d", "2025-01-01", "2025-01-02"),
         shape=SequentialSpec(Initiation(name, history_start=datetime(2025, 1, 1, tzinfo=UTC))),
     )
 
@@ -218,7 +218,7 @@ def test_calendar_comparison_requires_coverage_through_comparison_horizon():
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-04"),
+        Schedule("1d", "2025-01-01", "2025-01-03"),
         shape=CalendarComparisonSpec(
             Initiation(
                 "session", history_start=datetime(2025, 1, 1, tzinfo=UTC), knowledge="recorded_at"
@@ -240,7 +240,7 @@ def test_calendar_comparison_rejects_exclusive_coverage_equal_to_horizon():
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-04"),
+        Schedule("1d", "2025-01-01", "2025-01-03"),
         shape=CalendarComparisonSpec(
             Initiation(
                 "session", history_start=datetime(2025, 1, 1, tzinfo=UTC), knowledge="recorded_at"
@@ -269,7 +269,7 @@ def test_never_treated_negative_comparisons_still_require_full_schedule_history(
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-04"),
+        Schedule("1d", "2025-01-01", "2025-01-03"),
         outcomes={"y": agg("sessions", window=("0d", "1d"))},
         shape=CalendarComparisonSpec(
             Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
@@ -297,7 +297,7 @@ def test_never_treated_coverage_rejects_equality_at_anticipation_cutoff():
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-10"),
+        Schedule("1d", "2025-01-01", "2025-01-09"),
         shape=CalendarComparisonSpec(
             Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             "never_treated",
@@ -325,7 +325,7 @@ def test_never_treated_schedule_boundary_coverage_is_admissible():
 
     design = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-10"),
+        Schedule("1d", "2025-01-01", "2025-01-09"),
         shape=CalendarComparisonSpec(
             Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             "never_treated",
@@ -350,7 +350,7 @@ def test_never_treated_schedule_history_refusal_reports_schedule_boundary():
 
     design = Design(
         "user",
-        Schedule("7d", "2025-01-01", "2025-01-10"),
+        Schedule("7d", "2025-01-01", "2025-01-09"),
         shape=CalendarComparisonSpec(
             Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             "never_treated",
@@ -377,7 +377,7 @@ def test_not_yet_treated_refusal_reports_comparison_horizon_only():
 
     design = Design(
         "user",
-        Schedule("7d", "2025-01-01", "2025-01-10"),
+        Schedule("7d", "2025-01-01", "2025-01-09"),
         shape=CalendarComparisonSpec(
             Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
             "not_yet_treated",
@@ -655,7 +655,7 @@ def test_subday_schedule_calendar_average_refuses_known_intraday_anchor():
     with pytest.raises(TerrineError) as error:
         Design(
             "user",
-            Schedule("12h", date(2025, 3, 1), date(2025, 3, 3)),
+            Schedule("12h", date(2025, 3, 1), date(2025, 3, 2)),
             features={"x": agg("sessions", window=("-1d", "0d"))},
         ).validate(model(aggregation="avg_calendar_day"))
     assert error.value.code == "terrine.metric.unaligned_calendar_average"
@@ -859,19 +859,23 @@ def test_unsupported_kind_transform_and_event_profile_refuse():
 
 
 def test_fixed_anchor_and_mixed_date_datetime_range_use_model_day_boundary():
-    Design(
-        "user",
-        FixedDate(date(2025, 3, 1)),
-        anchor_range=AnchorRange(start=datetime(2025, 3, 1, 1, tzinfo=UTC), end=date(2025, 3, 1)),
-    ).validate(model(boundary="UTC-05:00"))
-    with pytest.raises(TerrineError):
-        Design(
+    def design(start):
+        return Design(
             "user",
             FixedDate(date(2025, 3, 1)),
-            anchor_range=AnchorRange(
-                start=datetime(2025, 3, 1, 1, tzinfo=UTC), end=date(2025, 3, 1)
-            ),
-        ).validate(model())
+            anchor_range=AnchorRange(start=start, end=date(2025, 3, 1)),
+        )
+
+    design(datetime(2025, 3, 1, 1, tzinfo=UTC)).validate(model())
+    # Local Mar 1 under UTC-05:00 runs through Mar 2 05:00Z, so a Mar 2 01:00Z start is inside it;
+    # under UTC it is past the end.
+    past_midnight = datetime(2025, 3, 2, 1, tzinfo=UTC)
+    design(past_midnight).validate(model(boundary="UTC-05:00"))
+    with pytest.raises(TerrineError) as error:
+        design(past_midnight).validate(model())
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "range_end_before_start"
+    assert error.value.context["field"] == "end"
     code = r"""
 import builtins
 from datetime import UTC, date, datetime
@@ -962,7 +966,7 @@ def test_panel_history_validation_covers_reanchored_outcome_support(shape_name):
     )
     design = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-02"),
+        Schedule("1d", "2025-01-01", "2025-01-01"),
         outcomes={"y": agg("sessions", window=("0d", "1d"), relative_to=selector)},
         shape=shape,
     )
@@ -985,7 +989,7 @@ def test_panel_history_validation_covers_exact_quantile_outcome(shape_name):
     )
     design = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-02"),
+        Schedule("1d", "2025-01-01", "2025-01-01"),
         outcomes={"y": quantile("sessions", "0.5", window=("0d", "7d"))},
         shape=shape,
     )
@@ -1007,7 +1011,7 @@ def test_approximate_distinct_outcome_contributes_to_panel_followup_horizon(shap
     )
     design = Design(
         "user",
-        Schedule("1d", "2025-01-01", "2025-01-02"),
+        Schedule("1d", "2025-01-01", "2025-01-01"),
         outcomes={"distinct": approx_distinct("sessions", window=("0d", "7d"))},
         shape=shape,
     )
