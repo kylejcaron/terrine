@@ -32,7 +32,10 @@ _NS_PER_UNIT = {"s": 1_000_000_000, "ms": 1_000_000, "us": 1_000, "ns": 1}
 
 @dataclass(frozen=True, slots=True)
 class DiffDiffData:
-    """Dataframe with positive period codes, observed cohorts and exclusions."""
+    """Return a dataframe with unit identity, positive period codes and observed adoption times.
+
+    Example: exports.to_diff_diff(adoption_data, period_col="t0", period_seconds=86400)
+    """
 
     df: Any
     unit_col: str
@@ -92,12 +95,12 @@ def to_diff_diff(
     period_seconds: int | None = None,
     drop_incomplete: bool = False,
 ) -> DiffDiffData:
-    """Derive first_treat without changing treatment history or calendar distances.
+    """Encode observed adoption times without changing treatment history or period gaps.
 
-    Zero denotes no observed adoption in the supplied history, not a lifetime
-    claim. Validate the original history and encode periods before excluding
-    incomplete outcomes. Integer ticks retain gaps; timestamps require a cadence
-    supplied explicitly or retained in panel metadata. No estimator is invoked.
+    Zero means no adoption observed in the supplied history, not over a unit's lifetime;
+    dated periods need a cadence, and no estimator is fitted.
+
+    Example: exports.to_diff_diff(adoption_data, period_col="t0", period_seconds=86400)
     """
     checked = preflight_export(data, drop_incomplete=drop_incomplete)
     try:

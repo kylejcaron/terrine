@@ -97,6 +97,11 @@ class MetricQuantile:
 
 @dataclass(frozen=True, slots=True)
 class SketchRequest:
+    """Request a versioned quantile sketch with an explicit rank-error limit.
+
+    Example: tr.SketchRequest("tdigest", version("datasketches"), Decimal("0.01"))
+    """
+
     algorithm: str
     version: str
     rank_error: Decimal
@@ -206,6 +211,11 @@ class AttributeAsOf:
 
 @dataclass(frozen=True, slots=True)
 class EventTime:
+    """Select an event time within a window relative to t0 or another event time.
+
+    Example: tr.EventTime("orders", tr.Window("-30d", "0s"))
+    """
+
     event: str
     window: Window
     label_property: str | None = None
@@ -361,6 +371,10 @@ def agg(
     window: tuple[str | int, str | int],
     relative_to: EventTime | None = None,
 ) -> MetricAgg:
+    """Aggregate a named metric over a half-open window relative to t0 or an event time.
+
+    Example: tr.agg("spend", window=("-30d", "0s"))
+    """
     start, end = _window_pair(window)
     return MetricAgg(metric, Window(start, end), relative_to)
 
@@ -373,10 +387,11 @@ def retention(
     thresholds: tuple[int, ...],
     horizon: str | int,
 ) -> RetentionMetric:
-    """Count distinct ``event`` identities, then return the highest reached threshold band.
+    """Return the highest threshold band reached by distinct target events.
 
-    A finite duration measures [t0, t0+horizon); ``open_ended`` ends at the
-    source's declared complete-through endpoint. Unknown follow-up stays null.
+    Follow-up ends at the horizon or, for ``"open_ended"``, the last complete event time.
+
+    Example: tr.retention("orders", label_property="customer_id", **followup)
     """
     with parameter_names(count_thresholds="thresholds", finite_horizon_seconds="horizon"):
         return RetentionMetric(
@@ -395,6 +410,10 @@ def quantile(
     window: tuple[str | int, str | int],
     interpolation: str = "linear_type7",
 ) -> MetricQuantile:
+    """Request an exact quantile over a window of a metric's integer or Decimal event values.
+
+    Example: tr.quantile("spend", "0.5", window=("-30d", "0s"))
+    """
     start, end = _window_pair(window)
     return MetricQuantile(
         metric, _probability(probability, "probability"), Window(start, end), interpolation
@@ -408,6 +427,10 @@ def approx_quantile(
     window: tuple[str | int, str | int],
     sketch: SketchRequest,
 ) -> ApproxMetricQuantile:
+    """Request an approximate event-value quantile over a window with a declared sketch.
+
+    Example: tr.approx_quantile("spend", "0.5", window=("-30d", "0s"), sketch=sketch)
+    """
     start, end = _window_pair(window)
     return ApproxMetricQuantile(
         _name(metric, "metric"),
@@ -418,6 +441,10 @@ def approx_quantile(
 
 
 def approx_distinct(metric: str, *, window: tuple[str | int, str | int]) -> ApproxMetricDistinct:
+    """Request an approximate distinct-value count for a metric over a window.
+
+    Example: tr.approx_distinct("spend", window=("-30d", "0s"))
+    """
     start, end = _window_pair(window)
     return ApproxMetricDistinct(_name(metric, "metric"), Window(start, end))
 
@@ -428,6 +455,10 @@ def asof(
     before: str | int,
     relative_to: EventTime | None = None,
 ) -> AttributeAsOf:
+    """Read an attribute's history strictly before a time relative to t0 or an event.
+
+    Example: tr.asof("plan", before="0s")
+    """
     return AttributeAsOf(attribute, seconds(before, field="before"), relative_to)
 
 
@@ -441,21 +472,41 @@ def event_time(
     n: int | None = None,
     relative_to: EventTime | None = None,
 ) -> EventTime:
+    """Select the first, last or nth event time in a window, optionally matching a label.
+
+    Example: tr.event_time("orders", window=("-30d", "0s"))
+    """
     start, end = _window_pair(window)
     return EventTime(event, Window(start, end), label_property, equals, occurrence, n, relative_to)
 
 
 def gt(expr: Expr, value: JsonScalar) -> Gt:
+    """Require an expression's value to be greater than a literal.
+
+    Example: tr.gt(tr.agg("orders", window=("-30d", "0s")), 0)
+    """
     return Gt(expr, value)
 
 
 def eq(left: Expr, value: JsonScalar) -> Eq:
+    """Require an expression's value to equal a literal.
+
+    Example: tr.eq(tr.agg("orders", window=("-30d", "0s")), 1)
+    """
     return Eq(left, value)
 
 
 def is_null(expr: Expr, *, negate: bool = False) -> IsNull:
+    """Test whether an expression is null, or non-null when ``negate=True``.
+
+    Example: tr.is_null(tr.event_time("orders", window=("-30d", "0s")))
+    """
     return IsNull(expr, negate)
 
 
 def all_of(*terms: Predicate) -> And:
+    """Require every supplied eligibility predicate to hold.
+
+    Example: tr.all_of(tr.gt(tr.agg("orders", window=("-30d", "0s")), 0))
+    """
     return And(tuple(terms))

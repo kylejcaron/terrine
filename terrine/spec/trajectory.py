@@ -23,6 +23,11 @@ def _name(value: object, field: str) -> None:
 
 @dataclass(frozen=True, slots=True, init=False)
 class Trajectory:
+    """Describe a metric over elapsed periods after t0, optionally accumulated from t0.
+
+    Example: tr.Trajectory("spend", period="30d", periods=2, cumulative=True)
+    """
+
     metric: str
     period: int
     periods: int
@@ -47,6 +52,11 @@ class Trajectory:
 
 @dataclass(frozen=True, slots=True)
 class CohortSpec:
+    """Pair a unit's origin event with a metric trajectory.
+
+    Example: tr.CohortSpec("orders", tr.Trajectory("spend", "30d", 2))
+    """
+
     origin: str
     trajectory: Trajectory
 
@@ -58,6 +68,11 @@ class CohortSpec:
 
 @dataclass(frozen=True, slots=True, init=False)
 class CohortGrouping:
+    """Group units by origin-time buckets and summarize their trajectory values.
+
+    Example: tr.CohortGrouping("30d", datetime(2025, 1, 1, tzinfo=UTC))
+    """
+
     bucket: int
     bucket_origin: datetime
     statistic: Literal["total", "mean"]
@@ -85,6 +100,11 @@ class CohortGrouping:
 
 @dataclass(frozen=True, slots=True)
 class TimeToEvent:
+    """Describe follow-up from t0 until an event, exit or the end of complete history.
+
+    Example: tr.TimeToEvent("orders")
+    """
+
     event: str
     exit: str | None = None
     entry: str | None = None
@@ -104,7 +124,10 @@ class TimeToEvent:
 
 @dataclass(frozen=True, slots=True, init=False)
 class LifeTable:
-    """Bin observed time-to-event records into descriptive risk-set summaries."""
+    """Summarize time-to-event follow-up in elapsed bins with risk and censor counts.
+
+    Example: tr.LifeTable(tr.TimeToEvent("orders"), interval="7d")
+    """
 
     time_to_event: TimeToEvent
     interval: int

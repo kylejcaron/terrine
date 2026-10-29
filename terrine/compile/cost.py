@@ -55,10 +55,11 @@ def preview(
     *,
     bounded_count: int = 0,
 ) -> Preview:
-    """Compile without reading rows, or explicitly count at most cap+1 candidates.
+    """Describe a design's planned output without reading rows unless ``bounded_count`` is set.
 
-    Counts and integrity checks can scan upstream data. Strict unknown scan-byte
-    budgets refuse that explicit execution; output caps are not scan bounds.
+    Explicit counts and integrity checks may scan event data; output limits are not scan bounds.
+
+    Example: tr.preview(design, model)
     """
     if isinstance(bounded_count, bool) or not isinstance(bounded_count, int) or bounded_count < 0:
         raise ValueError("bounded_count must be a nonnegative integer")

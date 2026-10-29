@@ -40,7 +40,10 @@ _NS_PER_UNIT = {"s": 1_000_000_000, "ms": 1_000_000, "us": 1_000, "ns": 1}
 
 @dataclass(frozen=True, slots=True)
 class LifelinesKM:
-    """KM fit arguments; seconds for records, bin indices for risk counts."""
+    """Return Kaplan-Meier inputs in elapsed seconds for unit records or bins for risk counts.
+
+    Example: exports.to_lifelines_km(survival_data)
+    """
 
     durations: np.ndarray
     event_observed: np.ndarray
@@ -54,7 +57,10 @@ class LifelinesKM:
 
 @dataclass(frozen=True, slots=True)
 class LifelinesCox:
-    """Feature-only Cox dataframe and its explicitly assigned fit columns."""
+    """Return Cox inputs containing declared features and explicitly assigned fit columns.
+
+    Example: exports.to_lifelines_cox(survival_data)
+    """
 
     df: Any
     duration_col: str
@@ -165,11 +171,12 @@ def _risk_arrays(data: MaterializedFrame, checked: ExportPreflight) -> Lifelines
 
 
 def to_lifelines_km(data: MaterializedFrame, *, drop_incomplete: bool = False) -> LifelinesKM:
-    """Prepare KM arrays without fitting a curve or making a censoring assumption.
+    """Prepare Kaplan-Meier inputs without fitting a curve or assuming independent censoring.
 
-    Records use elapsed seconds from each t0, including entry on the same clock.
-    Risk tables use coarsened bin indices and compressed terminal-count weights;
-    delayed entry and incomplete risk trajectories require per-unit records.
+    Unit records use elapsed seconds from t0; risk counts use bins and frequency weights
+    and cannot recover delayed entry or incomplete follow-up.
+
+    Example: exports.to_lifelines_km(survival_data)
     """
     checked = preflight_export(data, drop_incomplete=drop_incomplete)
     if data.provenance.shape == "life_table":
@@ -178,10 +185,11 @@ def to_lifelines_km(data: MaterializedFrame, *, drop_incomplete: bool = False) -
 
 
 def to_lifelines_cox(data: MaterializedFrame, *, drop_incomplete: bool = False) -> LifelinesCox:
-    """Prepare Cox inputs using only declared features and assigned fit fields.
+    """Prepare Cox inputs from features and assigned time, event, weight and cluster columns.
 
-    Treatment is not automatically a predictor. Identity/support/outcome fields
-    are excluded unless explicitly assigned as the weight or cluster column.
+    Treatment is not automatically a predictor, and other identity or outcome columns are excluded.
+
+    Example: exports.to_lifelines_cox(survival_data)
     """
     checked = preflight_export(data, drop_incomplete=drop_incomplete)
     arrays = _record_arrays(data, checked)

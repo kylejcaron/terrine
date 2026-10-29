@@ -257,7 +257,10 @@ def _boundary_function(boundary: str):
 
 @dataclass(frozen=True, slots=True, init=False, repr=False, eq=False)
 class Model:
-    """Bound semantic metadata and a connection, without executing source data queries."""
+    """Bind units, events, metrics and history to a connection without reading event rows.
+
+    Example: tr.Model.from_tables(units=units, events=events)
+    """
 
     catalog: Catalog
     con: Any
@@ -322,24 +325,12 @@ class Model:
         event_ids: Mapping[str, str] | None = None,
         allow_unverified: bool = False,
     ) -> Model:
-        """Bind event and history tables with explicit rosters and completeness.
+        """Bind unit, event and history tables with explicit complete days.
 
-        Each ``Events`` becomes a source with one event of its own name, one
-        value event ``<name>_<column>`` per metric column, a measure and metric
-        per declared metric and a property per label; each ``History`` becomes
-        a source carrying one event-time property, backed by a dimension when
-        it declares ``valid_from``.
+        In-memory tables need no connection and materialize only; table names need ``con``,
+        and unverified connections must have no pending writes during schema inspection.
 
-        Tables are names in ``con``, or, with ``con`` omitted, in-memory
-        pyarrow, pandas or polars tables: those are registered under their
-        mapping keys on a private in-process DuckDB that becomes ``model.con``.
-        Nothing is uploaded, so a connection beside an in-memory table refuses,
-        and such a model materializes only; staging needs a file-backed
-        connection.
-
-        With ``allow_unverified=True``, Ibis schema inspection may end an open
-        transaction on ``con``. Use a connection with no pending writes or a
-        dedicated read connection.
+        Example: tr.Model.from_tables(units=units, events=events)
         """
         if not isinstance(allow_unverified, bool):
             raise _INVALID.error(reason="wrong_type", field="allow_unverified")
@@ -489,7 +480,10 @@ class Model:
         )
 
     def to_catalog(self) -> str:
-        """YAML text of this model's Catalog (schema version 2)."""
+        """Return this model's event, metric and history definitions as catalog YAML.
+
+        Example: model.to_catalog()
+        """
         return dump_catalog(self.catalog)
 
     @classmethod
@@ -505,11 +499,11 @@ class Model:
         input_binding: VerifiedInputBinding | None = None,
         allow_unverified: bool = False,
     ) -> Model:
-        """Bind definitions; explicitly opt in to unverified, statement-scoped reads.
+        """Bind catalog definitions to a connection, unit tables and complete event times.
 
-        With ``allow_unverified=True``, Ibis schema inspection may end an open
-        transaction on ``con``. Use a connection with no pending writes or a
-        dedicated read connection.
+        Unverified connections must have no pending writes during schema inspection.
+
+        Example: tr.Model.from_catalog(model.catalog, con=model.con, **bindings)
         """
         if not isinstance(allow_unverified, bool):
             raise _INVALID.error(reason="wrong_type", field="allow_unverified")
@@ -725,11 +719,11 @@ class Model:
         input_binding: VerifiedInputBinding | None = None,
         allow_unverified: bool = False,
     ) -> Model:
-        """Adapt optional published semantics through the native Catalog workflow.
+        """Bind published Increment definitions as a model with units and complete event times.
 
-        With ``allow_unverified=True``, Ibis schema inspection may end an open
-        transaction on ``con``. Use a connection with no pending writes or a
-        dedicated read connection.
+        Unverified connections must have no pending writes during schema inspection.
+
+        Example: tr.Model.from_increment("semantics.yaml", con=model.con, **bindings)
         """
         if not isinstance(allow_unverified, bool):
             raise _INVALID.error(reason="wrong_type", field="allow_unverified")

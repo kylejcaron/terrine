@@ -25,6 +25,11 @@ def _name(value: object, field: str) -> str:
 
 @dataclass(frozen=True, slots=True, init=False)
 class SessionSpec:
+    """Group a unit's consecutive events into sessions separated by more than ``gap``.
+
+    Example: tr.SessionSpec(gap="30m")
+    """
+
     gap_seconds: int
 
     def __init__(self, gap: str | int) -> None:
@@ -36,6 +41,11 @@ class SessionSpec:
 
 @dataclass(frozen=True, slots=True, init=False)
 class FunnelSpec:
+    """Describe ordered event-label steps with an optional time limit.
+
+    Example: tr.FunnelSpec("status", ("placed", "paid"), within="7d")
+    """
+
     event_property: str
     steps: tuple[str, ...]
     within_seconds: int | None
@@ -61,6 +71,11 @@ class FunnelSpec:
 
 @dataclass(frozen=True, slots=True, init=False)
 class EventSequence:
+    """Describe a bounded sequence of a unit's events within a window.
+
+    Example: tr.EventSequence("orders", tr.Window("0s", "30d"), max_events=10)
+    """
+
     event: str
     window: Window
     max_events: int

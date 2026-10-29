@@ -384,11 +384,12 @@ def _excluded_label_counts(compiled: CompiledStudy, view: _TrainingView, execute
 
 @dataclass(frozen=True, slots=True, init=False, repr=False, eq=False)
 class Frame:
-    """A compiled study, not executed data.
+    """Represent a dataset design compiled against a model, before reading event rows.
 
-    ``expr`` is an unsafe Ibis escape hatch. Only materialization/conversion
-    methods hold execution authority and enforce integrity and output budgets.
-    Output limits do not bound upstream scan, query work or peak memory.
+    Materialization and conversion enforce integrity and output limits; direct ``expr``
+    execution bypasses them, and output limits do not bound scans or peak memory.
+
+    Example: design.build(model)
     """
 
     _design: Design
@@ -462,7 +463,10 @@ class Frame:
         incomplete_labels: Literal["drop", "keep"] = "drop",
         split: object | None = None,
     ) -> Frame:
-        """Return a lazy feature/label projection with explicit label completeness."""
+        """Select features and labels lazily, dropping incomplete labels unless asked to keep them.
+
+        Example: frame.training_set(label="spend_next_30d")
+        """
         if self._training_view is not None or self._scoring_view is not None:
             from terrine.spec.dataset import INVALID_VIEW
 
@@ -633,11 +637,18 @@ class Frame:
         return result
 
     def stage(self, table: str, *, budget: Budget | None = None):
-        """Publish this Frame as a pinned, bounded-stream Dataset generation."""
+        """Publish a pinned dataset generation on a file-backed DuckDB connection.
+
+        Example: frame.stage("customer_spend")
+        """
         stage_frame = import_module("terrine.dataset.reference").stage_frame
         return stage_frame(self, table, budget=budget)
 
     def materialize(self, budget: Budget | None = None) -> MaterializedFrame:
+        """Read dataset rows with integrity checks and retain their metadata and completeness.
+
+        Example: frame.materialize()
+        """
         return self._materialize(budget)
 
     def _materialize(
@@ -1021,7 +1032,10 @@ class Frame:
         return table
 
     def to_pyarrow(self, *, budget: Budget | None = None) -> pa.Table:
-        """Execute once and return lossless Arrow with portable study metadata."""
+        """Read dataset rows as Arrow with lossless time, completeness and model metadata.
+
+        Example: frame.to_pyarrow()
+        """
         return self.materialize(budget).to_arrow()
 
     def _dataframe_table(
@@ -1052,7 +1066,12 @@ class Frame:
         include_observation_metadata: bool = False,
         values_only: bool = False,
     ):
-        """Return a compact, lossy dataframe; ``values_only`` also drops support columns."""
+        """Return a pandas dataframe without observation metadata by default.
+
+        ``values_only=True`` also drops completeness and reason columns.
+
+        Example: frame.to_pandas(values_only=True)
+        """
         pandas, table = self._dataframe_table(
             "pandas", budget, include_observation_metadata, values_only
         )
@@ -1065,13 +1084,22 @@ class Frame:
         include_observation_metadata: bool = False,
         values_only: bool = False,
     ):
-        """Return a compact, lossy dataframe; ``values_only`` also drops support columns."""
+        """Return a Polars dataframe without observation metadata by default.
+
+        ``values_only=True`` also drops completeness and reason columns.
+
+        Example: frame.to_polars(values_only=True)
+        """
         polars, table = self._dataframe_table(
             "polars", budget, include_observation_metadata, values_only
         )
         return polars.from_arrow(table)
 
     def cohorts(self, *, grouping: CohortGrouping, value_column: str) -> CohortTable:
+        """Group a trajectory frame's values by units' origin-time buckets.
+
+        Example: ltv_frame.cohorts(grouping=grouping, value_column="cumulative_value")
+        """
         if not isinstance(self._design.shape, CohortSpec):
             raise _INVALID_COHORTS.error(reason="requires_trajectory", field="frame")
         if not isinstance(grouping, CohortGrouping):

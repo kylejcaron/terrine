@@ -13,7 +13,10 @@ type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, J
 
 
 class UnverifiedBackendWarning(UserWarning):
-    """An explicitly admitted backend has no verified read or consistency guarantees."""
+    """Warn that an admitted connection has no verified read or consistency guarantees.
+
+    Example: tr.UnverifiedBackendWarning("This connection has unverified read guarantees.")
+    """
 
 
 class FrozenMap(Mapping[str, Any]):
@@ -69,7 +72,10 @@ def thaw(value: Any) -> Any:
 
 
 class TerrineError(ValueError):
-    """Refusal identified by a stable code rather than message wording."""
+    """Report a refused request with a stable code and immutable structured context.
+
+    Example: tr.TerrineError("Invalid design.", code="terrine.design.invalid", context={})
+    """
 
     def __init__(self, message: str, *, code: str, context: Mapping[str, Any]) -> None:
         super().__init__(message)

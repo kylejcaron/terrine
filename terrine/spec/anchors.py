@@ -74,6 +74,11 @@ def _range_bound(value: date | datetime | str | None, field: str) -> date | date
 
 @dataclass(frozen=True, slots=True, init=False)
 class FixedDate:
+    """Set t0 to one calendar date or an exact timezone-aware time.
+
+    Example: tr.FixedDate("2025-02-01")
+    """
+
     date: date | datetime
 
     def __init__(self, date: date | datetime | str) -> None:
@@ -85,7 +90,10 @@ class FixedDate:
 
 @dataclass(frozen=True, slots=True, init=False)
 class EventAnchor:
-    """Select an original event, then shift time zero by a non-negative elapsed duration."""
+    """Set t0 from a unit's first, each or nth event, with an optional elapsed offset.
+
+    Example: tr.EventAnchor("orders", which="first")
+    """
 
     event: str
     which: str
@@ -139,12 +147,12 @@ def add_months(day: date, months: int) -> date:
 
 @dataclass(frozen=True, slots=True, init=False)
 class Schedule:
-    """Anchors every ``every`` from ``start`` through ``end``, both days included.
+    """Schedule t0 from ``start`` through ``end``, including both calendar days.
 
-    ``every`` is an elapsed duration (``"7d"``, ``"4w"``, integral seconds) or a calendar step
-    (``"1mo"``, ``"3mo"``, ``"1y"``); exactly one of ``every`` and ``months`` is set. Calendar
-    anchors are ``start + k * months``, each clamped to its own month's last day, never chained
-    from the previous anchor.
+    Elapsed steps use durations; calendar steps such as ``"1mo"`` clamp each date
+    independently to its month's last day.
+
+    Example: tr.Schedule("1mo", "2025-02-01", "2025-03-01")
     """
 
     every: int | None
@@ -203,7 +211,10 @@ class Schedule:
 
 @dataclass(frozen=True, slots=True, init=False)
 class AnchorRange:
-    """Keep anchors from ``start`` through ``end``; a calendar ``end`` includes its whole day."""
+    """Limit t0 to a time range, including the whole end day when ``end`` is a date.
+
+    Example: tr.AnchorRange(start="2025-02-01", end="2025-03-01")
+    """
 
     start: date | datetime | None
     end: date | datetime | None

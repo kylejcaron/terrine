@@ -39,6 +39,9 @@
 
 ### Public API
 
+- Public constructors, recipes and dataset conversion methods now include short
+  docstrings ending in a one-line example, including the focused design, split
+  and export APIs.
 - Refusal messages describe units, events, labels, metrics, history, t0 and
   windows, explain what was wrong and give a route forward. Unknown names
   list the available declarations, feature and outcome timing errors explain

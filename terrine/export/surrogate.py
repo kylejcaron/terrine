@@ -26,7 +26,10 @@ _SURROGATE_METADATA_KEY = b"terrine.surrogate_arrow.v1"
 
 @dataclass(frozen=True, slots=True)
 class ArrowSurrogate:
-    """Versioned Arrow surrogate projection and portable metadata."""
+    """Return selected Arrow values with unit identity, completeness and portable metadata.
+
+    Example: exports.to_surrogate_arrow(data, features=feature_names, outcomes=outcome_names)
+    """
 
     data: pa.Table
     metadata: Mapping[str, object]
@@ -71,7 +74,10 @@ class ArrowSurrogate:
 def to_surrogate_arrow(
     data: MaterializedFrame, *, features: tuple[str, ...], outcomes: tuple[str, ...]
 ) -> ArrowSurrogate:
-    """Project Arrow training data with identity, missingness and provenance."""
+    """Select Arrow training values while retaining unit identity and completeness evidence.
+
+    Example: exports.to_surrogate_arrow(data, features=feature_names, outcomes=outcome_names)
+    """
     from terrine.data import MaterializedFrame
 
     if not isinstance(data, MaterializedFrame):

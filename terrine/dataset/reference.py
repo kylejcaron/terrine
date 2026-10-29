@@ -134,7 +134,10 @@ def _require_runtime_reader(con: Any) -> None:
 
 
 class Dataset:
-    """An immutable reference to one committed output generation."""
+    """Reference one immutable published dataset generation.
+
+    Example: frame.stage("customer_spend")
+    """
 
     __slots__ = ("_con", "_raw", "_namespace", "_manifest", "_receipt")
 

@@ -51,6 +51,11 @@ def _canonical(value: Any) -> bytes:
 
 @dataclass(frozen=True, slots=True, init=False)
 class DatasetDefinition:
+    """Save a versioned design with its selected view and fixed transforms.
+
+    Example: tr.DatasetDefinition(schema_version=2, base_design=design)
+    """
+
     schema_version: int
     base_design: Design
     view: Any
@@ -199,7 +204,10 @@ class DatasetDefinition:
 
 @dataclass(frozen=True, slots=True)
 class DatasetDefinitionReference:
-    """Content-addressed definition identity scoped to a configured owner."""
+    """Identify an immutable dataset definition by owner and content digest.
+
+    Example: spec.DatasetDefinitionReference("analytics", definition.digest)
+    """
 
     owner: str
     digest: str
@@ -217,7 +225,10 @@ class DatasetDefinitionReference:
 
 @dataclass(frozen=True, slots=True)
 class DatasetDefinitionStore:
-    """Immutable local definition storage configured for one data owner."""
+    """Store immutable dataset definitions locally for one data owner.
+
+    Example: spec.DatasetDefinitionStore(Path("definitions"), owner="analytics")
+    """
 
     root: Path
     owner: str

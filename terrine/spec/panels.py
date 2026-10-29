@@ -77,7 +77,10 @@ def _history(value: datetime) -> datetime:
 
 @dataclass(frozen=True, slots=True)
 class Initiation:
-    """Treatment begins once the named event or label has been observed by t0."""
+    """Declare that treatment starts when a unit's named event or label is observed by t0.
+
+    Example: spec.Initiation("orders", history_start=datetime(2025, 1, 1, tzinfo=UTC))
+    """
 
     event: str
     _: KW_ONLY
@@ -92,7 +95,10 @@ class Initiation:
 
 @dataclass(frozen=True, slots=True)
 class PersistentAdoption:
-    """Treatment is the absorbing state in which a label holds ``adopted_value``."""
+    """Declare an absorbing treatment state when a unit's label equals ``adopted_value``.
+
+    Example: spec.PersistentAdoption("status", adopted_value="paid", history_start=history_start)
+    """
 
     event: str
     _: KW_ONLY
@@ -115,6 +121,11 @@ class PersistentAdoption:
 
 @dataclass(frozen=True, slots=True, init=False)
 class TrialWeight:
+    """Assign equal trial weights or normalize explicitly named positive trial weights.
+
+    Example: spec.TrialWeight("equal_trial")
+    """
+
     kind: Literal["equal_trial", "explicit"]
     values: Mapping[str, float] | None
 
@@ -159,7 +170,10 @@ class TrialWeight:
 
 @dataclass(frozen=True, slots=True)
 class MatchedT0Sample:
-    """Canonical matched-t0 sampling policy, retained on its Design."""
+    """Describe reproducible sampling of controls for treated units within t0 strata.
+
+    Example: spec.MatchedT0Sample(strata=(), controls_per_treated=2, seed=0)
+    """
 
     strata: tuple[str, ...]
     controls_per_treated: int
@@ -186,6 +200,11 @@ class MatchedT0Sample:
 
 @dataclass(frozen=True, slots=True)
 class SequentialSpec:
+    """Describe repeated trials with treatment history and elapsed reference times.
+
+    Example: spec.SequentialSpec(initiation)
+    """
+
     treatment: Initiation | PersistentAdoption
     trial_weight: TrialWeight | None = None
     anticipation_seconds: int = 0
@@ -206,6 +225,11 @@ class SequentialSpec:
 
 @dataclass(frozen=True, slots=True)
 class EventPanelSpec:
+    """Describe elapsed periods around an event, including a named reference period.
+
+    Example: spec.EventPanelSpec(periods=(-1, 0, 1), period_seconds=86400, reference_period=-1)
+    """
+
     periods: tuple[int, ...]
     period_seconds: int
     reference_period: int
@@ -233,6 +257,11 @@ class EventPanelSpec:
 
 @dataclass(frozen=True, slots=True)
 class CalendarComparisonSpec:
+    """Describe calendar-period comparisons by initiation time and control history.
+
+    Example: spec.CalendarComparisonSpec(initiation, **comparison)
+    """
+
     cohort: Initiation
     control: Literal["never_treated", "not_yet_treated"]
     reference_period: int
@@ -311,6 +340,10 @@ def Sequential(
     anticipation: str = "0d",
     reference_period: str = "-1d",
 ) -> Design:
+    """Add repeated-trial treatment history to a scheduled design.
+
+    Example: spec.Sequential(design, treatment=initiation)
+    """
     if not isinstance(base, Design):
         raise _INVALID.error(reason="wrong_type", field="base")
     if base.treatment is not None:
@@ -326,6 +359,10 @@ def Sequential(
 
 
 def CalendarPanel(sequential: Design) -> Design:
+    """Return a repeated-trial design with its calendar schedule and treatment history.
+
+    Example: spec.CalendarPanel(trial_design)
+    """
     if not isinstance(sequential, Design) or not isinstance(sequential.shape, SequentialSpec):
         raise _INVALID.error(reason="requires_sequential", field="sequential")
     return sequential
@@ -341,7 +378,10 @@ def CalendarComparisonPanel(
     comparison_periods: tuple[int, ...],
     anticipation_periods: tuple[int, ...] = (),
 ) -> Frame:
-    """Build a canonical roster-backed calendar comparison Frame."""
+    """Build unit rows for calendar-period comparisons using observed initiation history.
+
+    Example: spec.CalendarComparisonPanel(daily_design, model, cohort=initiation, **comparison)
+    """
     if not isinstance(base, Design):
         raise _INVALID.error(reason="wrong_type", field="base")
     if base.sample is not None:
@@ -361,6 +401,10 @@ def EventPanel(
     period_seconds: int,
     reference_period: int = -1,
 ) -> Design:
+    """Add elapsed event-relative periods to an event-anchored design.
+
+    Example: spec.EventPanel(event_design, periods=(-1, 0, 1), period_seconds=86400)
+    """
     if not isinstance(base, Design):
         raise _INVALID.error(reason="wrong_type", field="base")
     if not isinstance(base.anchor, EventAnchor):
@@ -372,7 +416,10 @@ def EventPanel(
 
 
 def matched_t0(base: Design, model: Model, *, sample: MatchedT0Sample) -> Frame:
-    """Build a sampled sequential Frame with its policy serialized on the Design."""
+    """Build a repeated-trial frame with reproducible matched-t0 control sampling.
+
+    Example: spec.matched_t0(trial_design, model, sample=sample)
+    """
     if not isinstance(base, Design) or not isinstance(base.shape, SequentialSpec):
         raise _INVALID.error(reason="requires_sequential", field="base")
     if not isinstance(sample, MatchedT0Sample):

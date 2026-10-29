@@ -84,6 +84,11 @@ def _duration(value: str | timedelta) -> timedelta:
 
 @dataclass(frozen=True, slots=True, init=False)
 class TimeSplit:
+    """Split rows by exclusive t0 cutoffs with an optional embargo and unit-group policy.
+
+    Example: from terrine.dataset import TimeSplit; TimeSplit(train_until="2025-02-15")
+    """
+
     train_until: date | datetime
     validation_until: date | datetime | None
     embargo: timedelta
@@ -142,6 +147,11 @@ class TimeSplit:
 
 @dataclass(frozen=True, slots=True, init=False)
 class GroupSplit:
+    """Assign whole unit groups reproducibly to training, validation and test sets.
+
+    Example: from terrine.dataset import GroupSplit; GroupSplit(seed=42)
+    """
+
     group: str
     train_fraction: float
     validation_fraction: float

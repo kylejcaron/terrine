@@ -67,7 +67,10 @@ def _levels(levels: tuple[str, ...]) -> tuple[str, ...]:
 
 @dataclass(frozen=True, slots=True)
 class StateObservations:
-    """Interpret a source property as point observations, never carried state."""
+    """Describe an event label's observed states without carrying a state between events.
+
+    Example: tr.StateObservations("status", levels=("placed", "paid"))
+    """
 
     property: str
     levels: tuple[str, ...]
@@ -91,7 +94,10 @@ class StateObservations:
 
 @dataclass(frozen=True, slots=True)
 class BinnedMetricState:
-    """Map an exact metric result to right-closed ordered state intervals."""
+    """Map a metric's period value to ordered states with right-closed intervals.
+
+    Example: tr.BinnedMetricState("spend", cutpoints=(50,), levels=("low", "high"))
+    """
 
     metric: str
     cutpoints: tuple[int | float | Decimal, ...]
@@ -117,7 +123,10 @@ class BinnedMetricState:
 
 @dataclass(frozen=True, slots=True, init=False)
 class StatePanel:
-    """Bounded repeated state rows over a finite schedule."""
+    """Describe bounded repeated state rows for each unit over a finite schedule.
+
+    Example: tr.StatePanel(tr.BinnedMetricState("spend", (50,), ("low", "high")), max_periods=28)
+    """
 
     state: StateObservations | BinnedMetricState
     max_periods: int

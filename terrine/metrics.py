@@ -94,19 +94,28 @@ def _filters(where: Where | None) -> tuple[Filter, ...]:
 
 
 def count(*, where: Where | None = None) -> EventMetric:
-    """Number of events, optionally only those matching ``where``."""
+    """Declare an event count, optionally restricted by ``where`` labels.
+
+    Example: tr.count()
+    """
     return EventMetric("count", None, _filters(where))
 
 
 def sum(column: str, *, where: Where | None = None) -> EventMetric:
-    """Sum of ``column`` over the matching events."""
+    """Declare the sum of ``column`` over matching events.
+
+    Example: tr.sum("amount")
+    """
     return EventMetric("sum", _name(column, "column"), _filters(where))
 
 
 def mean(
     column: str, *, per: Literal["event", "day"] = "event", where: Where | None = None
 ) -> EventMetric:
-    """Mean of ``column`` per event, or per local calendar day of the window."""
+    """Declare the mean of ``column`` per event or per local calendar day of a window.
+
+    Example: tr.mean("amount", per="day")
+    """
     if per not in ("event", "day"):
         raise _INVALID_ARGUMENT.error(reason="invalid_argument", field="per")
     aggregation = "avg_event" if per == "event" else "avg_calendar_day"
@@ -114,20 +123,32 @@ def mean(
 
 
 def min(column: str, *, where: Where | None = None) -> EventMetric:
-    """Smallest ``column`` value over the matching events."""
+    """Declare the smallest ``column`` value over matching events.
+
+    Example: tr.min("amount")
+    """
     return EventMetric("min", _name(column, "column"), _filters(where))
 
 
 def max(column: str, *, where: Where | None = None) -> EventMetric:
-    """Largest ``column`` value over the matching events."""
+    """Declare the largest ``column`` value over matching events.
+
+    Example: tr.max("amount")
+    """
     return EventMetric("max", _name(column, "column"), _filters(where))
 
 
 def count_distinct(column: str, *, where: Where | None = None) -> EventMetric:
-    """Number of distinct ``column`` values over the matching events."""
+    """Declare the number of distinct ``column`` values over matching events.
+
+    Example: tr.count_distinct("amount")
+    """
     return EventMetric("count_distinct", _name(column, "column"), _filters(where))
 
 
 def ratio(numerator: str, denominator: str) -> Ratio:
-    """Quotient of two metrics declared on the same ``Events``."""
+    """Declare the quotient of two metrics on the same event table.
+
+    Example: tr.ratio("spend", "orders")
+    """
     return Ratio(_name(numerator, "numerator"), _name(denominator, "denominator"))

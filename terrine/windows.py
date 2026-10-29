@@ -63,7 +63,10 @@ def _duration(value: int, *, weeks: bool = False, signed: bool = False) -> str:
 
 @dataclass(frozen=True, slots=True, init=False)
 class Window:
-    """An elapsed [start, end) interval relative to an exact anchor instant."""
+    """Describe an elapsed [start, end) window relative to t0 or a selected event time.
+
+    Example: tr.Window("-30d", "0s")
+    """
 
     start: int
     end: int

@@ -87,6 +87,11 @@ def _named_nodes(
 
 @dataclass(frozen=True, slots=True, init=False)
 class Treatment:
+    """Read a treatment attribute at an elapsed time relative to t0.
+
+    Example: tr.Treatment("plan", at="0s", known_at_t0=True)
+    """
+
     attribute: str
     at: int
     known_at_t0: bool
@@ -103,6 +108,11 @@ class Treatment:
 
 @dataclass(frozen=True, slots=True, init=False)
 class Design:
+    """Describe dataset rows by unit, t0, feature windows and outcome windows.
+
+    Example: tr.Design("customer", tr.FixedDate("2025-02-01"), features=design.features)
+    """
+
     unit: str | None
     anchor: FixedDate | EventAnchor | Schedule
     features: Mapping[str, Expr | Predicate]
@@ -279,17 +289,19 @@ class Design:
         object.__setattr__(self, "administrative_cutoff", administrative_cutoff)
 
     def validate(self, model: Model) -> None:
-        """Validate this design against bound model metadata without executing queries."""
+        """Check the design's units, names and time windows against a model without reading rows.
+
+        Example: design.validate(model)
+        """
         from terrine.spec.validate import validate_design
 
         validate_design(self, model)
 
     @metadata_operation()
     def describe(self, model: Model) -> str:
-        """Plain-language summary of the rows, snapshots, columns and completeness to be produced.
+        """Return a plain-language summary of units, t0, columns, windows and complete days.
 
-        The text is read from the design and the bound model metadata after
-        validation; no query is compiled or run.
+        The summary uses model definitions without compiling or running a query.
 
         Example: print(design.describe(model))
         """
@@ -298,7 +310,10 @@ class Design:
         return describe_design(self, model)
 
     def build(self, model: Model) -> Frame:
-        """Compile a lazy study frame without reading source rows."""
+        """Build a lazy frame from the design and model without reading event rows.
+
+        Example: design.build(model)
+        """
         from terrine.frame import Frame
 
         return Frame(self, model)
@@ -311,10 +326,11 @@ class Design:
         eligibility: Mapping[str, Predicate],
         features: tuple[str, ...] | None = None,
     ) -> Frame:
-        """Build a roster-backed feature-only scoring view at one fixed instant.
+        """Build a feature-only view for every eligible unit at one fixed t0.
 
-        An unset ``unit`` is resolved against ``model`` first, so the scoring view and
-        its parent identity are those of the resolved design.
+        An omitted unit is resolved from the model before recording the parent design.
+
+        Example: design.snapshot(model, as_of="2025-03-01", eligibility={})
         """
         from terrine.semantic.time import boundary_timezone
         from terrine.spec.anchors import FixedDate

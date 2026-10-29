@@ -154,6 +154,11 @@ class WinsorizationFit:
 
 @dataclass(frozen=True, slots=True)
 class Winsorization:
+    """Declare fixed lower and upper limits for a feature after aggregation.
+
+    Example: spec.Winsorization("spend_30d", lower="0", upper="100")
+    """
+
     column: str
     lower: Decimal | str | int
     upper: Decimal | str | int

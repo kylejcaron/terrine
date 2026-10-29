@@ -195,7 +195,10 @@ def _typed_mapping(value: Mapping[str, Any], name: str, value_type: type) -> Map
 
 @dataclass(frozen=True, slots=True, init=False)
 class Coverage:
-    """Inclusive complete local calendar-day declaration; binding owns timezone."""
+    """Declare the inclusive local calendar days for which events or history are complete.
+
+    Example: tr.Coverage("2025-01-01", "2025-03-20")
+    """
 
     start: date
     through: date
@@ -250,7 +253,10 @@ class BoundCoverage:
 
 @dataclass(frozen=True, slots=True, init=False)
 class UnitSource:
-    """The unit roster: a table name in the connection or an in-memory table, and its key."""
+    """Declare a unit's table and key, using a table name or an in-memory table.
+
+    Example: tr.UnitSource(customers, "customer_id")
+    """
 
     table: str | pa.Table
     key: str
@@ -327,7 +333,10 @@ class Ratio:
 
 @dataclass(frozen=True, slots=True, init=False)
 class Events:
-    """Event table bound to one unit key, with user-named metrics and labels."""
+    """Declare an event table's time, unit key, named metrics, labels and complete days.
+
+    Example: tr.Events(orders, time="ordered_at", key="customer_id", complete=complete)
+    """
 
     table: str | pa.Table
     time: str
@@ -379,7 +388,10 @@ class Events:
 
 @dataclass(frozen=True, slots=True, init=False)
 class History:
-    """One attribute's history table: a unit key, a value column and one time axis."""
+    """Declare an attribute's history by unit key and validity times or change time.
+
+    Example: tr.History("plans", key="customer_id", column="plan", changed_at="time")
+    """
 
     table: str | pa.Table
     key: str
@@ -1196,6 +1208,11 @@ class Provenance:
 
 @dataclass(frozen=True, slots=True)
 class Budget:
+    """Limit output rows, output bytes or estimated scan bytes for a dataset.
+
+    Example: tr.Budget(max_rows=1000)
+    """
+
     max_rows: int | None = None
     max_output_bytes: int | None = None
     max_scan_bytes: int | None = None

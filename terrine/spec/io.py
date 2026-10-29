@@ -366,10 +366,18 @@ def canonical_json(design: Design) -> bytes:
 
 
 def to_json(design: Design) -> str:
+    """Return a design's versioned JSON document.
+
+    Example: spec.to_json(design)
+    """
     return canonical_json(design).decode("utf-8")
 
 
 def to_yaml(design: Design) -> str:
+    """Return a design's versioned YAML document.
+
+    Example: tr.to_yaml(design)
+    """
     payload = json.loads(canonical_json(design))
     return yaml.safe_dump(payload, allow_unicode=True, sort_keys=True, default_flow_style=False)
 
@@ -830,6 +838,10 @@ def _reject_constant(item: str) -> Any:
 
 
 def from_json(value: str | bytes) -> Design:
+    """Read a design from a supported versioned JSON document.
+
+    Example: spec.from_json(spec.to_json(design))
+    """
     try:
         payload = json.loads(value, object_pairs_hook=_pairs, parse_constant=_reject_constant)
     except (TypeError, ValueError) as error:
@@ -838,6 +850,10 @@ def from_json(value: str | bytes) -> Design:
 
 
 def from_yaml(value: str | bytes) -> Design:
+    """Read a design from a supported versioned YAML document.
+
+    Example: tr.from_yaml(tr.to_yaml(design))
+    """
     try:
         payload = yaml.load(value, Loader=_UniqueSafeLoader)
     except (yaml.YAMLError, ValueError) as error:
