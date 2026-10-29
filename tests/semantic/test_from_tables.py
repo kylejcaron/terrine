@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 import ibis
+import pyarrow as pa
 import pytest
 import yaml
 
@@ -14,7 +15,7 @@ from terrine.data import Events, History, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.spec import Design, EventAnchor, FixedDate, Treatment, agg, asof, event_time
-from tests.fixtures.readme import readme_design, readme_model
+from tests.fixtures.readme import readme_design, readme_model, readme_tables
 
 UNITS = {"customer": UnitSource("customers", "customer_id")}
 COMPLETE = ("2025-01-01", "2025-01-31")
@@ -140,6 +141,7 @@ def test_events_descriptor_normalizes_and_detaches_inputs():
     "changes",
     [
         {"table": ""},
+        {"table": pa.table({})},
         {"time": ""},
         {"key": ""},
         {"unit": ""},
@@ -422,9 +424,19 @@ def test_to_catalog_round_trip_has_equal_model_hash(con):
     assert model.catalog.sources["plan_change"].dimensions == ()
 
 
-def test_readme_model_builds_the_readme_rows(readme_con):
-    table = readme_design().build(readme_model(readme_con)).to_pyarrow().to_pydict()
-    rows = {
+README_ROWS = {
+    ("alice", "2025-02-01"): (2, 75.0, 25.0, None),
+    ("bob", "2025-02-01"): (1, 80.0, 0.0, None),
+    ("carol", "2025-02-01"): (0, 0.0, 0.0, None),
+    ("alice", "2025-03-01"): (1, 25.0, None, "incomplete_coverage"),
+    ("bob", "2025-03-01"): (0, 0.0, None, "incomplete_coverage"),
+    ("carol", "2025-03-01"): (0, 0.0, None, "incomplete_coverage"),
+}
+
+
+def _readme_rows(model: Model) -> dict[tuple[str, str], tuple[Any, ...]]:
+    table = readme_design().build(model).to_pyarrow().to_pydict()
+    return {
         (unit, t0.date().isoformat()): (orders_30d, spend_30d, spend_next_30d, reason)
         for unit, t0, orders_30d, spend_30d, spend_next_30d, reason in zip(
             table["unit"],
@@ -436,11 +448,130 @@ def test_readme_model_builds_the_readme_rows(readme_con):
             strict=True,
         )
     }
-    assert rows == {
-        ("alice", "2025-02-01"): (2, 75.0, 25.0, None),
-        ("bob", "2025-02-01"): (1, 80.0, 0.0, None),
-        ("carol", "2025-02-01"): (0, 0.0, 0.0, None),
-        ("alice", "2025-03-01"): (1, 25.0, None, "incomplete_coverage"),
-        ("bob", "2025-03-01"): (0, 0.0, None, "incomplete_coverage"),
-        ("carol", "2025-03-01"): (0, 0.0, None, "incomplete_coverage"),
+
+
+def _in_memory(kind: str, table: pa.Table) -> Any:
+    if kind == "arrow":
+        return table
+    if kind == "pandas":
+        return table.to_pandas()
+    return pytest.importorskip("polars").from_arrow(table)
+
+
+def _readme_events(table: Any) -> dict[str, Events]:
+    return {
+        "orders": Events(
+            table,
+            time="ordered_at",
+            key="customer_id",
+            metrics={"orders": tr.count(), "spend": tr.sum("amount")},
+            complete=("2025-01-01", "2025-03-20"),
+        )
     }
+
+
+def _in_memory_model(customers: Any, orders_table: Any) -> Model:
+    return Model.from_tables(
+        units={"customer": UnitSource(customers, "customer_id")},
+        events=_readme_events(orders_table),
+    )
+
+
+def test_readme_model_builds_the_readme_rows(readme_con):
+    assert _readme_rows(readme_model(readme_con)) == README_ROWS
+
+
+@pytest.mark.parametrize("kind", ["arrow", "pandas", "polars"])
+def test_in_memory_tables_build_the_readme_dataset(kind):
+    tables = {name: _in_memory(kind, table) for name, table in readme_tables().items()}
+    model = _in_memory_model(tables["customers"], tables["orders"])
+    assert {"customer", "orders"} <= set(model.con.list_tables())
+    assert model.units["customer"].table == "customer"
+    catalog = yaml.safe_load(model.to_catalog())
+    assert catalog["sources"]["orders"]["relation"] == {"kind": "table", "name": "orders"}
+    assert _readme_rows(model) == README_ROWS
+
+
+@pytest.mark.parametrize("kind", ["pandas", "polars"])
+def test_descriptors_store_in_memory_tables_as_arrow(kind):
+    frame = _in_memory(kind, readme_tables()["orders"])
+    if kind == "pandas":
+        frame = frame.set_axis([f"row{index}" for index in range(5)])
+    for descriptor in (
+        _readme_events(frame)["orders"],
+        History(frame, key="customer_id", column="amount", changed_at="ordered_at"),
+        UnitSource(frame, "customer_id"),
+    ):
+        assert isinstance(descriptor.table, pa.Table)
+        assert set(descriptor.table.column_names) == {"customer_id", "ordered_at", "amount"}
+        assert descriptor.table.num_rows == 5
+
+
+def test_aware_timestamp_column_matches_naive_utc():
+    customers = readme_tables()["customers"].to_pandas()
+    naive = readme_tables()["orders"].to_pandas()
+    aware = naive.assign(
+        ordered_at=naive["ordered_at"].dt.tz_localize("UTC").dt.tz_convert("US/Eastern")
+    )
+    assert _readme_rows(_in_memory_model(customers, aware)) == README_ROWS
+    assert _readme_rows(_in_memory_model(customers, naive)) == README_ROWS
+
+
+@pytest.mark.parametrize(
+    ("reason", "build", "context"),
+    [
+        (
+            "in_memory_input_with_connection",
+            lambda con: Model.from_tables(
+                con,
+                units={"customer": UnitSource(readme_tables()["customers"], "customer_id")},
+                events=_readme_events(readme_tables()["orders"]),
+            ),
+            {"inputs": ("events:orders", "units:customer")},
+        ),
+        (
+            "in_memory_input_with_connection",
+            lambda con: Model.from_catalog(
+                readme_model(con).catalog,
+                con=con,
+                units={"customer": UnitSource(readme_tables()["customers"], "customer_id")},
+                readiness=readme_model(con).readiness,
+            ),
+            {"inputs": ("units:customer",)},
+        ),
+        (
+            "connection_required",
+            lambda con: Model.from_tables(
+                units=UNITS, events=_readme_events(readme_tables()["orders"])
+            ),
+            {"tables": ("units:customer",)},
+        ),
+        (
+            "unsupported_table_input",
+            lambda con: UnitSource(con.table("customers"), "customer_id"),
+            {"field": "table"},
+        ),
+        (
+            "unsupported_table_input",
+            lambda con: _readme_events({"customer_id": ["alice"]}),
+            {"field": "table"},
+        ),
+        (
+            "name_collision",
+            lambda con: Model.from_tables(
+                units={"orders": UnitSource(readme_tables()["customers"], "customer_id")},
+                events=_readme_events(readme_tables()["orders"]),
+            ),
+            {"kind": "table", "name": "orders", "owners": ("events:orders", "units:orders")},
+        ),
+    ],
+)
+def test_in_memory_refusals(reason, build, context, readme_con):
+    with pytest.raises(TerrineError) as error:
+        build(readme_con)
+    assert error.value.code == "terrine.model.invalid_binding"
+    assert error.value.context["reason"] == reason
+    for key, value in context.items():
+        assert error.value.context[key] == value
+    for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
+        assert restored.context == error.value.context

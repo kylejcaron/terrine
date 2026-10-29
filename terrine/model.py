@@ -5,11 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
+
+import pyarrow as pa
 
 from terrine.backends.registry import Engine, resolve_engine
 from terrine.data import BoundCoverage, Coverage, EventMetric, Events, History, Ratio, UnitSource
@@ -49,6 +51,22 @@ _UNSUPPORTED_COLUMN_TYPE = RefusalSpec(
 _MISSING_REFERENCE = RefusalSpec(
     "terrine.semantic.missing_reference",
     "{owner} references {kind} {name!r}, which is not declared; declared: {available}.",
+)
+_IN_MEMORY_WITH_CONNECTION = RefusalSpec(
+    "terrine.model.invalid_binding",
+    "{inputs} are in-memory tables but a connection was given; Terrine never uploads "
+    "data, so load them into the warehouse yourself or omit con to build on a private "
+    "in-process DuckDB.",
+)
+_CONNECTION_REQUIRED = RefusalSpec(
+    "terrine.model.invalid_binding",
+    "{tables} are table names but no connection was given; pass the connection that "
+    "holds them, or pass the tables themselves.",
+)
+_TABLE_NAME_COLLISION = RefusalSpec(
+    "terrine.model.invalid_binding",
+    "In-memory tables are registered under their mapping keys and {name!r} is used by "
+    "{owners}; give the unit or the event table its own name.",
 )
 _LABEL_DTYPES = ("string", "int", "float", "bool", "date")
 
@@ -155,6 +173,59 @@ def _resolve_unit(owner: str, declared: str | None, units: Mapping[str, UnitSour
     raise _AMBIGUOUS_UNIT.error(owner=owner, choices=tuple(sorted(units)), parameter="unit")
 
 
+def _in_memory_tables(
+    con: Any | None,
+    units: Mapping[str, UnitSource],
+    events: Mapping[str, Events],
+    history: Mapping[str, History],
+) -> dict[str, pa.Table] | None:
+    """The tables to register on a private DuckDB, keyed by their mapping keys.
+
+    ``None`` when every table is a name in ``con``. A connection beside an
+    in-memory table, or a table name beside no connection, refuses: nothing is
+    uploaded, and a name needs the connection that holds it.
+    """
+    declared = [
+        (f"{kind}:{name}", name, item.table)
+        for kind, mapping in (("units", units), ("events", events), ("history", history))
+        for name, item in mapping.items()
+    ]
+    named = tuple(sorted(owner for owner, _, table in declared if isinstance(table, str)))
+    in_memory = [
+        (owner, name, table) for owner, name, table in declared if not isinstance(table, str)
+    ]
+    if con is not None:
+        if in_memory:
+            raise _IN_MEMORY_WITH_CONNECTION.error(
+                reason="in_memory_input_with_connection",
+                inputs=tuple(sorted(owner for owner, _, _ in in_memory)),
+            )
+        return None
+    if named:
+        raise _CONNECTION_REQUIRED.error(reason="connection_required", tables=named)
+    owners: dict[str, str] = {}
+    for owner, name, _ in in_memory:
+        prior = owners.setdefault(name, owner)
+        if prior != owner:
+            raise _TABLE_NAME_COLLISION.error(
+                reason="name_collision",
+                kind="table",
+                name=name,
+                owners=tuple(sorted((prior, owner))),
+            )
+    return {name: table for _, name, table in in_memory}
+
+
+def _private_connection(tables: Mapping[str, pa.Table]) -> Any:
+    """An in-process DuckDB holding ``tables``; nothing leaves the machine."""
+    import ibis
+
+    con = ibis.duckdb.connect()
+    for name, table in tables.items():
+        con.create_table(name, table)
+    return con
+
+
 def _boundary_function(boundary: str):
     zone = boundary_timezone(boundary)
 
@@ -223,7 +294,7 @@ class Model:
     @classmethod
     def from_tables(
         cls,
-        con: Any,
+        con: Any | None = None,
         *,
         units: Mapping[str, UnitSource],
         events: Mapping[str, Events],
@@ -241,14 +312,24 @@ class Model:
         a source carrying one event-time property, backed by a dimension when
         it declares ``valid_from``.
 
+        Tables are names in ``con``, or, with ``con`` omitted, in-memory
+        pyarrow, pandas or polars tables: those are registered under their
+        mapping keys on a private in-process DuckDB that becomes ``model.con``.
+        Nothing is uploaded, so a connection beside an in-memory table refuses,
+        and such a model materializes only; staging needs a file-backed
+        connection.
+
         With ``allow_unverified=True``, Ibis schema inspection may end an open
         transaction on ``con``. Use a connection with no pending writes or a
         dedicated read connection.
         """
         if not isinstance(allow_unverified, bool):
             raise _INVALID.error(reason="allow_unverified must be a bool")
-        if not isinstance(units, Mapping):
-            raise _INVALID.error(reason="units must map names to UnitSource")
+        if not isinstance(units, Mapping) or any(
+            not isinstance(name, str) or not name or not isinstance(unit, UnitSource)
+            for name, unit in units.items()
+        ):
+            raise _INVALID.error(reason="units must map nonempty names to UnitSource")
         if not isinstance(events, Mapping) or any(
             not isinstance(name, str) or not name or not isinstance(event, Events)
             for name, event in events.items()
@@ -261,6 +342,7 @@ class Model:
         ):
             raise _INVALID.error(reason="history must map nonempty names to History")
         _check_names(events, attributes)
+        in_memory = _in_memory_tables(con, units, events, attributes)
         event_units = {
             name: _resolve_unit(f"events:{name}", event.unit, units)
             for name, event in events.items()
@@ -276,6 +358,11 @@ class Model:
             coverage[name] = Coverage(*declared.complete)
         for name, event in events.items():
             _check_references(name, event)
+        if in_memory is not None:
+            con = _private_connection(in_memory)
+            units = {name: replace(unit, table=name) for name, unit in units.items()}
+            events = {name: replace(event, table=name) for name, event in events.items()}
+            attributes = {name: replace(item, table=name) for name, item in attributes.items()}
         engine = resolve_engine(con, allow_unverified=allow_unverified)
         if dialect is None:
             from terrine.execution.backend import backend_provider
@@ -463,6 +550,17 @@ class Model:
             for key, value in unit_map.items()
         ):
             raise _INVALID.error(reason="units must map names to UnitSource")
+        in_memory = tuple(
+            sorted(
+                f"units:{name}"
+                for name, unit in unit_map.items()
+                if not isinstance(unit.table, str)
+            )
+        )
+        if in_memory:
+            raise _IN_MEMORY_WITH_CONNECTION.error(
+                reason="in_memory_input_with_connection", inputs=in_memory
+            )
         if any(
             not isinstance(key, str) or not isinstance(value, str) or not value
             for key, value in event_map.items()

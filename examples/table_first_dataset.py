@@ -1,4 +1,4 @@
-"""Bind simple event tables and materialize scheduled and cumulative datasets."""
+"""Bind event tables by name on a connection; materialize scheduled and cumulative datasets."""
 
 from datetime import UTC, datetime
 

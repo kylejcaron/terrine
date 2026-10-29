@@ -39,6 +39,11 @@ __all__ = ["Dataset", "stage_frame", "dataset_from_run"]
 _INVALID_DESTINATION = RefusalSpec(
     "terrine.dataset.invalid_destination", "Dataset destination is invalid: {reason}."
 )
+_FILE_BACKED_CONNECTION_REQUIRED = RefusalSpec(
+    "terrine.dataset.invalid_destination",
+    "Staging, refreshing and reopening a dataset need a file-backed DuckDB connection; "
+    "an in-memory model materializes only. Bind the same tables with {route}.",
+)
 _INVALID_BATCH = RefusalSpec(
     "terrine.dataset.invalid_batch_size", "Arrow batch size must be a positive integer."
 )
@@ -56,8 +61,9 @@ def _owner_for(con: Any) -> RuntimeOwner:
     try:
         return RuntimeOwner.from_connection(con)
     except Exception as error:
-        raise _INVALID_DESTINATION.error(
-            reason="staging requires a file-backed DuckDB connection"
+        raise _FILE_BACKED_CONNECTION_REQUIRED.error(
+            reason="file_backed_connection_required",
+            route="Model.from_tables(ibis.duckdb.connect('<file>.duckdb'), ...)",
         ) from error
 
 

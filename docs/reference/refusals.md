@@ -134,6 +134,7 @@ Use pinned manifests, valid definitions and owned destinations.
 | `terrine.dataset.invalid_batch_size` | <code>Arrow batch size must be a positive integer.</code> | None | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
 | `terrine.dataset.invalid_definition` | <code>Invalid dataset definition: {reason}</code> | `reason` | [terrine/spec/dataset.py](../../terrine/spec/dataset.py) |
 | `terrine.dataset.invalid_destination` | <code>Dataset destination is invalid: {reason}.</code> | `reason` | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
+| `terrine.dataset.invalid_destination` | <code>Staging, refreshing and reopening a dataset need a file-backed DuckDB connection; an in-memory model materializes only. Bind the same tables with {route}.</code> | `route` | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
 | `terrine.dataset.invalid_export` | <code>Invalid Parquet export: {reason}.</code> | `reason` | [terrine/dataset/export.py](../../terrine/dataset/export.py) |
 | `terrine.dataset.invalid_generation` | <code>Dataset manifest does not identify a verified committed runtime generation.</code> | None | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
 | `terrine.dataset.invalid_label_support` | <code>Selected label lacks completeness and reason metadata: {label}</code> | `label` | [terrine/frame.py](../../terrine/frame.py) |
@@ -302,11 +303,15 @@ Correct source, roster and coverage bindings; rebind the Model.
 | `terrine.model.ambiguous_unit` | <code>{owner} does not say which unit its rows belong to and the model declares {choices}; pass {parameter}= with one of them.</code> | `choices`, `owner`, `parameter` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.model.invalid_binding` | <code>Column {column!r} of {source!r} has type {dtype}, which cannot be a label or history value; supported types are {supported}.</code> | `column`, `dtype`, `source`, `supported` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.model.invalid_binding` | <code>History {table!r} needs exactly one time axis: valid_from, optionally with valid_to, or changed_at alone.</code> | `table` | [terrine/data.py](../../terrine/data.py) |
+| `terrine.model.invalid_binding` | <code>In-memory tables are registered under their mapping keys and {name!r} is used by {owners}; give the unit or the event table its own name.</code> | `name`, `owners` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.model.invalid_binding` | <code>Metric argument {field!r} is unusable: name a column or metric, pass per=&#x27;event&#x27; or per=&#x27;day&#x27;, and give where= as a mapping keyed by label.</code> | `field` | [terrine/metrics.py](../../terrine/metrics.py) |
 | `terrine.model.invalid_binding` | <code>Model binding input is invalid: {reason}.</code> | `reason` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.model.invalid_binding` | <code>where= key {key!r} is not a label name or &lt;label&gt;__&lt;op&gt; with a usable value; the operators are ne, in, not_in, gt, gte, lt, lte and between, comparisons take one scalar, in and not_in a non-empty list, and between a (low, high) pair.</code> | `key` | [terrine/metrics.py](../../terrine/metrics.py) |
+| `terrine.model.invalid_binding` | <code>{field} must be a table name or an in-memory pyarrow, pandas or polars table, not {type}.</code> | `field`, `type` | [terrine/data.py](../../terrine/data.py) |
+| `terrine.model.invalid_binding` | <code>{inputs} are in-memory tables but a connection was given; Terrine never uploads data, so load them into the warehouse yourself or omit con to build on a private in-process DuckDB.</code> | `inputs` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.model.invalid_binding` | <code>{kind} name {name!r} contains &#x27;__&#x27;, which separates a label from its where= operator; rename the {kind}.</code> | `kind`, `name` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.model.invalid_binding` | <code>{kind} name {name!r} is declared by {owners}; event, label and history names are shared by every Events and History of a model, so give each its own name.</code> | `kind`, `name`, `owners` | [terrine/model.py](../../terrine/model.py) |
+| `terrine.model.invalid_binding` | <code>{tables} are table names but no connection was given; pass the connection that holds them, or pass the tables themselves.</code> | `tables` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.model.missing_event_completeness` | <code>Event source {source!r} requires complete=(start, end); declare authoritative inclusive local calendar days, not observed event maxima.</code> | `source` | [terrine/model.py](../../terrine/model.py) |
 
 ## readiness

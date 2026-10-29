@@ -20,7 +20,10 @@ uv run python examples/first_dataset.py
 ## Four objects
 
 1. **Model** binds event tables with `Model.from_tables`, an authoritative unit
-   roster and explicit completeness. Name the metrics you will reference
+   roster and explicit completeness. Tables are pandas, Polars or Arrow objects,
+   queried in a private in-process DuckDB as in the tutorial, or names in an
+   Ibis connection passed first (`Model.from_tables(con, ...)`); the two are not
+   mixed, and nothing is uploaded. Name the metrics you will reference
    (`tr.count()`, `tr.sum("amount")`), declare `labels=` for columns you filter
    or look up, and `history=` for attribute tables. Use `Model.from_catalog` for
    SQL relations, multi-unit sources and explicit catalog names.
@@ -86,10 +89,16 @@ totals, and integrity checks can still scan upstream data. See
 ## Keep a pinned dataset
 
 Staging is a separate, optional durable lifecycle that needs a file-backed DuckDB
-database. Bind the same tables there and stage the same Design:
+database. A model built from DataFrames lives in a private in-memory DuckDB and
+materializes only: `frame.stage(...)` on it refuses with
+`terrine.dataset.invalid_destination` (`reason="file_backed_connection_required"`)
+and a `route` naming `Model.from_tables(ibis.duckdb.connect("<file>.duckdb"), ...)`.
+Bind the same tables there by name and stage the same Design:
 
 ```python
 from tempfile import TemporaryDirectory
+
+import ibis
 
 with TemporaryDirectory(prefix="terrine-first-") as directory:
     local = ibis.duckdb.connect(f"{directory}/shop.duckdb")

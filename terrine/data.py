@@ -19,7 +19,12 @@ from terrine.errors import RefusalSpec, freeze, thaw
 from terrine.windows import Window, seconds
 
 if TYPE_CHECKING:
+    import pandas
+    import polars
+
     from terrine.semantic.models import Filter
+
+type DataFrameLike = pa.Table | pandas.DataFrame | polars.DataFrame
 
 __all__ = [
     "ApproximationMeta",
@@ -100,11 +105,51 @@ _HISTORY_TIME_AXIS = RefusalSpec(
     "History {table!r} needs exactly one time axis: valid_from, optionally with valid_to, "
     "or changed_at alone.",
 )
+_UNSUPPORTED_TABLE_INPUT = RefusalSpec(
+    "terrine.model.invalid_binding",
+    "{field} must be a table name or an in-memory pyarrow, pandas or polars table, not {type}.",
+)
 
 
 def _nonempty(value: str, field: str) -> None:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{field} must be a non-empty string")
+
+
+def _is_dataframe(value: object, library: str) -> bool:
+    """Whether ``value`` is ``library``'s DataFrame, without importing the library."""
+    return any(
+        cls.__module__.startswith(f"{library}.") and cls.__name__ == "DataFrame"
+        for cls in type(value).__mro__
+    )
+
+
+def _table_input(value: str | DataFrameLike, field: str) -> str | pa.Table:
+    """A non-empty table name, or the Arrow form of an in-memory table.
+
+    pandas converts with its index dropped and polars through Arrow; neither
+    library is imported. Any other object (an Ibis table, a path, a mapping)
+    refuses with ``terrine.model.invalid_binding`` before a connection is touched.
+    """
+    if isinstance(value, str):
+        _nonempty(value, field)
+        return value
+    if isinstance(value, pa.Table):
+        table = value
+    elif _is_dataframe(value, "pandas"):
+        table = pa.Table.from_pandas(value, preserve_index=False)
+    elif _is_dataframe(value, "polars"):
+        table = value.to_arrow()
+    else:
+        kind = type(value)
+        raise _UNSUPPORTED_TABLE_INPUT.error(
+            reason="unsupported_table_input",
+            field=field,
+            type=f"{kind.__module__}.{kind.__qualname__}",
+        )
+    if not table.schema:
+        raise ValueError(f"{field} must have at least one column")
+    return table
 
 
 def _count(value: int | None, field: str) -> None:
@@ -193,22 +238,41 @@ class BoundCoverage:
         object.__setattr__(self, "end_exclusive", end)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class UnitSource:
-    table: str
-    key: str
-    entered_at: str | None = None
-    exited_at: str | None = None
-    observed_from: str | None = None
-    observed_until: str | None = None
+    """The unit roster: a table name in the connection or an in-memory table, and its key."""
 
-    def __post_init__(self) -> None:
-        _nonempty(self.table, "table")
-        _nonempty(self.key, "key")
-        for name in ("entered_at", "exited_at", "observed_from", "observed_until"):
-            value = getattr(self, name)
+    table: str | pa.Table
+    key: str
+    entered_at: str | None
+    exited_at: str | None
+    observed_from: str | None
+    observed_until: str | None
+
+    def __init__(
+        self,
+        table: str | DataFrameLike,
+        key: str,
+        entered_at: str | None = None,
+        exited_at: str | None = None,
+        observed_from: str | None = None,
+        observed_until: str | None = None,
+    ) -> None:
+        bound = _table_input(table, "table")
+        _nonempty(key, "key")
+        optional = {
+            "entered_at": entered_at,
+            "exited_at": exited_at,
+            "observed_from": observed_from,
+            "observed_until": observed_until,
+        }
+        for name, value in optional.items():
             if value is not None:
                 _nonempty(value, name)
+        object.__setattr__(self, "table", bound)
+        object.__setattr__(self, "key", key)
+        for name, value in optional.items():
+            object.__setattr__(self, name, value)
 
 
 def _complete(value: tuple[date | str, date | str] | None) -> tuple[date, date] | None:
@@ -243,7 +307,7 @@ class Ratio:
 class Events:
     """Event table bound to one unit key, with user-named metrics and labels."""
 
-    table: str
+    table: str | pa.Table
     time: str
     key: str
     unit: str | None
@@ -253,7 +317,7 @@ class Events:
 
     def __init__(
         self,
-        table: str,
+        table: str | DataFrameLike,
         *,
         time: str,
         key: str,
@@ -262,7 +326,7 @@ class Events:
         labels: Sequence[str] = (),
         complete: tuple[date | str, date | str] | None = None,
     ) -> None:
-        _nonempty(table, "table")
+        bound = _table_input(table, "table")
         _nonempty(time, "time")
         _nonempty(key, "key")
         if unit is not None:
@@ -282,7 +346,7 @@ class Events:
                 raise _RESERVED_NAME.error(reason="reserved_name", kind="label", name=label)
         if len(set(names)) != len(names):
             raise ValueError("labels must be unique")
-        object.__setattr__(self, "table", table)
+        object.__setattr__(self, "table", bound)
         object.__setattr__(self, "time", time)
         object.__setattr__(self, "key", key)
         object.__setattr__(self, "unit", unit)
@@ -295,7 +359,7 @@ class Events:
 class History:
     """One attribute's history table: a unit key, a value column and one time axis."""
 
-    table: str
+    table: str | pa.Table
     key: str
     column: str
     unit: str | None
@@ -306,7 +370,7 @@ class History:
 
     def __init__(
         self,
-        table: str,
+        table: str | DataFrameLike,
         *,
         key: str,
         column: str,
@@ -316,7 +380,7 @@ class History:
         changed_at: str | None = None,
         complete: tuple[date | str, date | str] | None = None,
     ) -> None:
-        _nonempty(table, "table")
+        bound = _table_input(table, "table")
         _nonempty(key, "key")
         _nonempty(column, "column")
         if unit is not None:
@@ -331,8 +395,11 @@ class History:
         if (valid_from is None) == (changed_at is None) or (
             changed_at is not None and valid_to is not None
         ):
-            raise _HISTORY_TIME_AXIS.error(reason="history_time_axis", table=table)
-        object.__setattr__(self, "table", table)
+            raise _HISTORY_TIME_AXIS.error(
+                reason="history_time_axis",
+                table=bound if isinstance(bound, str) else "<in-memory>",
+            )
+        object.__setattr__(self, "table", bound)
         object.__setattr__(self, "key", key)
         object.__setattr__(self, "column", column)
         object.__setattr__(self, "unit", unit)

@@ -37,14 +37,19 @@ def readme_tables() -> dict[str, pa.Table]:
     }
 
 
-def readme_model(con: Any) -> Model:
-    """The README binding on a connection holding ``customers`` and ``orders``."""
+def readme_model(con: Any | None = None) -> Model:
+    """The README binding: table names on ``con``, or its pandas frames on a private DuckDB."""
+    tables = (
+        {name: table.to_pandas() for name, table in readme_tables().items()}
+        if con is None
+        else {name: name for name in readme_tables()}
+    )
     return Model.from_tables(
         con,
-        units={"customer": UnitSource("customers", "customer_id")},
+        units={"customer": UnitSource(tables["customers"], "customer_id")},
         events={
             "orders": Events(
-                "orders",
+                tables["orders"],
                 time="ordered_at",
                 key="customer_id",
                 metrics={"orders": count(), "spend": sum("amount")},

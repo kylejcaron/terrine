@@ -65,6 +65,26 @@
   `reason="unsupported_column_type"`; a `History` with two time axes or none
   with `reason="history_time_axis"`; and a `History` without `complete=` with
   `terrine.model.missing_event_completeness`.
+- `UnitSource`, `Events` and `History` take a pandas DataFrame, a Polars
+  DataFrame or a pyarrow Table as `table`, stored as Arrow (a pandas index is
+  dropped; neither library is imported by Terrine). `Model.from_tables`'s
+  `con` is optional: with every table in memory, the tables are registered
+  under their mapping keys on a private in-process DuckDB that becomes
+  `model.con`, so `Model.units`, the catalog relations, `model_hash` and
+  `to_catalog()` carry those names exactly as for a warehouse, and nothing
+  is uploaded. The README binds its DataFrames this way without an Ibis
+  import. Such a model materializes only: `frame.stage(...)`, and reopening
+  or refreshing a dataset on any connection that is not a file-backed
+  DuckDB, refuse with `terrine.dataset.invalid_destination`
+  (`reason="file_backed_connection_required"`, `route`). New refusals, all
+  `terrine.model.invalid_binding`: a connection beside an in-memory table
+  (`reason="in_memory_input_with_connection"`, sorted `inputs` such as
+  `("events:orders", "units:customer")`; also from `from_catalog(units=)`),
+  a table name without a connection (`reason="connection_required"`, sorted
+  `tables`), a unit name equal to an event or history name when both are in
+  memory (`reason="name_collision"`, `kind="table"`, `name`, `owners`), and
+  any other `table` object such as an Ibis table, a path or a mapping
+  (`reason="unsupported_table_input"`, `field`, `type`) at the descriptor.
 - `Schedule`, and so `time_series` and `trial_panel`, accept calendar-month
   steps: `every="1mo"`, `"3mo"` or `"1y"` (twelve months) alongside elapsed
   durations. Anchor `k` is `start` advanced by `k * months` and clamped to that

@@ -30,7 +30,6 @@ pip install --pre "terrine[duckdb,pandas]"
 
 <!-- --8<-- [start:first-dataset] -->
 ```python
-import ibis
 import pandas as pd
 import terrine as tr
 
@@ -43,17 +42,12 @@ orders = pd.DataFrame({
     "amount": [30.0, 45.0, 25.0, 60.0, 80.0],
 })
 
-con = ibis.duckdb.connect()  # or your warehouse: ibis.bigquery.connect(...), ...
-con.create_table("customers", customers)
-con.create_table("orders", orders)
-
 # Who the rows are about, which table holds the events, what to measure,
 # and which calendar days (inclusive) the orders table is fully loaded for.
 model = tr.Model.from_tables(
-    con,
-    units={"customer": tr.UnitSource("customers", "customer_id")},
+    units={"customer": tr.UnitSource(customers, "customer_id")},
     events={"orders": tr.Events(
-        "orders", time="ordered_at", key="customer_id",
+        orders, time="ordered_at", key="customer_id",
         metrics={"orders": tr.count(), "spend": tr.sum("amount")},
         complete=("2025-01-01", "2025-03-20"),
     )},
@@ -123,7 +117,7 @@ More feature recipes are in [common feature patterns](https://github.com/kylejca
 
 ## Where it runs
 
-Queries run where your data lives; nothing is uploaded. Results come back as pandas, Polars or Arrow.
+Queries run where your data lives; nothing is uploaded. DataFrames and Arrow tables, as above, are queried in a private in-process DuckDB. For a warehouse, pass its Ibis connection first and name the tables: `tr.Model.from_tables(con, units={"customer": tr.UnitSource("customers", "customer_id")}, events={"orders": tr.Events("orders", ...)})`. Results come back as pandas, Polars or Arrow.
 
 | Backend | Status |
 | --- | --- |
