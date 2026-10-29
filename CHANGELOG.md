@@ -157,6 +157,11 @@
   Survival summaries distinguish pre-entry exclusions from incomplete initial
   history retained without an entry selector.
 
+### Fixes
+
+- Warehouse exports retain every scoring row when the dataset has no outcome
+  windows, instead of passing an empty filter to Ibis.
+
 ### Breaking changes
 
 - `Events` takes `table` positionally and everything else by keyword; `keys`

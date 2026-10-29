@@ -245,6 +245,6 @@ def preflight_warehouse(
             counts = evidence.group_by("reason").aggregate(n=ibis._.count()).to_pyarrow()
             excluded = {row["reason"]: row["n"] for row in counts.to_pylist()}
         _check_exclusions(excluded, drop=drop_incomplete)
-        yield WarehousePreflight(table.filter(keep), excluded)
+        yield WarehousePreflight(table.filter(keep) if keep else table, excluded)
     finally:
         con.raw_sql("ROLLBACK")

@@ -51,6 +51,25 @@ def test_warehouse_preflight_matches_arrow_exclusions(frame, drop, reasons):
         con.disconnect()
 
 
+def test_warehouse_preflight_keeps_scoring_rows_without_outcomes(frame):
+    frame = replace(
+        frame,
+        table=frame.table.select(["id", "anchor", "t0", "x"]),
+        roles=replace(frame.roles, treatment=None, outcomes=()),
+        columns={"x": frame.columns["x"]},
+    )
+    con = ibis.duckdb.connect()
+    try:
+        relation = con.create_table("dataset", frame.table)
+        with preflight.preflight_warehouse(
+            relation, roles=frame.roles, columns=frame.columns, provenance=frame.provenance
+        ) as checked:
+            assert checked.excluded_counts == {}
+            assert checked.table.to_pyarrow().equals(frame.table)
+    finally:
+        con.disconnect()
+
+
 def test_warehouse_snapshot_spans_evidence_and_consumer(frame, tmp_path):
     path = str(tmp_path / "dataset.duckdb")
     con = ibis.duckdb.connect(path)
