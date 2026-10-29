@@ -28,9 +28,12 @@ Use owner-approved resources, grants and fresh receipts.
 
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
+| `terrine.agent.invalid_request` | <code>Tool request input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/agent/policy.py](../../terrine/agent/policy.py) |
 | `terrine.agent.invalid_request` | <code>Use a valid typed Design payload.</code> | None | [terrine/agent/tools.py](../../terrine/agent/tools.py) |
 | `terrine.agent.model_mismatch` | <code>Owner model configuration has changed.</code> | None | [terrine/agent/tools.py](../../terrine/agent/tools.py) |
 | `terrine.agent.owner_configuration` | <code>Owner execution configuration is unavailable.</code> | None | [terrine/agent/tools.py](../../terrine/agent/tools.py) |
+| `terrine.agent.owner_configuration` | <code>Owner policy input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/agent/policy.py](../../terrine/agent/policy.py) |
+| `terrine.agent.owner_configuration` | <code>Owner tool configuration {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/agent/tools.py](../../terrine/agent/tools.py) |
 | `terrine.agent.permission_denied` | <code>Owner policy denies this operation.</code> | None | [terrine/agent/policy.py](../../terrine/agent/policy.py) |
 | `terrine.agent.receipt_unavailable` | <code>Use an unchanged owner-prepared receipt.</code> | None | [terrine/agent/tools.py](../../terrine/agent/tools.py) |
 | `terrine.agent.request_limit` | <code>Owner tool request limit has been reached.</code> | None | [terrine/agent/policy.py](../../terrine/agent/policy.py) |
@@ -80,6 +83,7 @@ Correct the named Catalog field or source declaration.
 | --- | --- | --- | --- |
 | `terrine.catalog.duplicate_yaml_key` | <code>Catalog YAML repeats key {key!r}.</code> | `key` | [terrine/semantic/io.py](../../terrine/semantic/io.py) |
 | `terrine.catalog.invalid_definition` | <code>Catalog definition is invalid:<br>{diagnostics}</code> | `diagnostics` | [terrine/semantic/io.py](../../terrine/semantic/io.py) |
+| `terrine.catalog.invalid_definition` | <code>Catalog input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/semantic/io.py](../../terrine/semantic/io.py) |
 | `terrine.catalog.invalid_yaml` | <code>Catalog YAML is not safe valid YAML: {reason}.</code> | `reason` | [terrine/semantic/io.py](../../terrine/semantic/io.py) |
 
 ## cohort
@@ -91,6 +95,8 @@ Check grouping and observable cohort denominators.
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
 | `terrine.cohort.invalid_operation` | <code>Cohort aggregation cannot be compiled ({reason}).</code> | `reason` | [terrine/compile/shapes/cohorts.py](../../terrine/compile/shapes/cohorts.py) |
+| `terrine.cohort.invalid_operation` | <code>Cohort input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/frame.py](../../terrine/frame.py) |
+| `terrine.cohort.invalid_operation` | <code>Cohort input {field} must be one of {choices}.</code> | `choices`, `field` | [terrine/frame.py](../../terrine/frame.py) |
 
 ## compile
 
@@ -137,10 +143,17 @@ Use pinned manifests, valid definitions and owned destinations.
 | `terrine.dataset.invalid_definition` | <code>Dataset definition input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/spec/dataset.py](../../terrine/spec/dataset.py) |
 | `terrine.dataset.invalid_definition` | <code>Invalid dataset definition: {reason}</code> | `reason` | [terrine/spec/dataset.py](../../terrine/spec/dataset.py) |
 | `terrine.dataset.invalid_destination` | <code>Dataset destination is invalid: {reason}.</code> | `reason` | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
+| `terrine.dataset.invalid_destination` | <code>Destination {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/runtime/saved_plan.py](../../terrine/runtime/saved_plan.py) |
+| `terrine.dataset.invalid_destination` | <code>Runtime {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/orchestration/airflow.py](../../terrine/orchestration/airflow.py) |
+| `terrine.dataset.invalid_destination` | <code>Runtime {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/orchestration/dagster.py](../../terrine/orchestration/dagster.py) |
+| `terrine.dataset.invalid_destination` | <code>Runtime {field} is invalid: {reason}; use a simple SQL identifier.</code> | `field`, `reason` | [terrine/agent/tools.py](../../terrine/agent/tools.py) |
+| `terrine.dataset.invalid_destination` | <code>Runtime {field} is invalid: {reason}; use a simple SQL identifier.</code> | `field`, `reason` | [terrine/runtime/leases.py](../../terrine/runtime/leases.py) |
 | `terrine.dataset.invalid_destination` | <code>Staging, refreshing and reopening a dataset need a file-backed DuckDB connection; an in-memory model materializes only. Bind the same tables with {route}.</code> | `route` | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
 | `terrine.dataset.invalid_export` | <code>Invalid Parquet export: {reason}.</code> | `reason` | [terrine/dataset/export.py](../../terrine/dataset/export.py) |
 | `terrine.dataset.invalid_generation` | <code>Dataset manifest does not identify a verified committed runtime generation.</code> | None | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
 | `terrine.dataset.invalid_label_support` | <code>Selected label lacks completeness and reason metadata: {label}</code> | `label` | [terrine/frame.py](../../terrine/frame.py) |
+| `terrine.dataset.invalid_manifest` | <code>Dataset manifest input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/dataset/manifest.py](../../terrine/dataset/manifest.py) |
+| `terrine.dataset.invalid_manifest` | <code>Dataset manifest input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
 | `terrine.dataset.invalid_manifest` | <code>Invalid dataset manifest: {reason}. Stage its dataset definition to create a new manifest.</code> | `reason` | [terrine/dataset/manifest.py](../../terrine/dataset/manifest.py) |
 | `terrine.dataset.invalid_selection` | <code>Training {field} selection is invalid: {reason}.</code> | `field`, `reason` | [terrine/frame.py](../../terrine/frame.py) |
 | `terrine.dataset.invalid_selection` | <code>Unknown training feature selection: {names}</code> | `names` | [terrine/frame.py](../../terrine/frame.py) |
@@ -167,6 +180,7 @@ Repair temporal/history contracts; do not zero-fill unknowns.
 | `terrine.design.incomplete_unit_treatment_history` | <code>Roster observation bounds do not cover a scheduled treatment history.</code> | None | [terrine/compile/shapes/sequential.py](../../terrine/compile/shapes/sequential.py) |
 | `terrine.design.incomplete_unit_treatment_history` | <code>Roster observation bounds do not cover the required calendar treatment history.</code> | None | [terrine/compile/shapes/calendar_comparison.py](../../terrine/compile/shapes/calendar_comparison.py) |
 | `terrine.design.invalid` | <code>Design document is invalid: {reason}.</code> | `reason` | [terrine/spec/io.py](../../terrine/spec/io.py) |
+| `terrine.design.invalid` | <code>Design input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/recipes.py](../../terrine/recipes.py) |
 | `terrine.design.invalid` | <code>Design input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/spec/anchors.py](../../terrine/spec/anchors.py) |
 | `terrine.design.invalid` | <code>Design input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/spec/design.py](../../terrine/spec/design.py) |
 | `terrine.design.invalid` | <code>Design input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/spec/expressions.py](../../terrine/spec/expressions.py) |
@@ -221,6 +235,8 @@ Satisfy shared preflight and the library shape contract.
 | `terrine.export.cluster_required` | <code>Repeated rows per independent unit require a valid cluster column; declare the unit cluster.</code> | None | [terrine/export/preflight.py](../../terrine/export/preflight.py) |
 | `terrine.export.grace_baseline_treatment` | <code>Grace-defined treatment cannot be exported as a baseline treatment; use a baseline design.</code> | None | [terrine/export/preflight.py](../../terrine/export/preflight.py) |
 | `terrine.export.incomplete_outcome` | <code>Outcome windows are incomplete; provide complete data or explicitly drop incomplete rows.</code> | None | [terrine/export/preflight.py](../../terrine/export/preflight.py) |
+| `terrine.export.invalid_input` | <code>Export input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/export/preflight.py](../../terrine/export/preflight.py) |
+| `terrine.export.invalid_input` | <code>Export input {field} must be one of {choices}.</code> | `choices`, `field` | [terrine/export/preflight.py](../../terrine/export/preflight.py) |
 | `terrine.export.invalid_surrogate` | <code>Surrogate export input is invalid ({reason}).</code> | `reason` | [terrine/export/surrogate.py](../../terrine/export/surrogate.py) |
 | `terrine.export.repeated_units_unsupported` | <code>{consumer} cannot handle repeated units; use one row per unit or a cluster-aware library.</code> | `consumer` | [terrine/export/preflight.py](../../terrine/export/preflight.py) |
 | `terrine.export.snapshot_required` | <code>Warehouse export needs its own DuckDB snapshot transaction; use a DuckDB relation outside an existing transaction and fit inside the context.</code> | None | [terrine/export/preflight.py](../../terrine/export/preflight.py) |
@@ -324,6 +340,7 @@ Correct source, roster and coverage bindings; rebind the Model.
 | `terrine.model.invalid_binding` | <code>Metric argument {field!r} is unusable: name a column or metric, pass per=&#x27;event&#x27; or per=&#x27;day&#x27;, and give where= as a mapping keyed by label.</code> | `field` | [terrine/metrics.py](../../terrine/metrics.py) |
 | `terrine.model.invalid_binding` | <code>Model binding input is invalid: {reason}.</code> | `reason` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.model.invalid_binding` | <code>Model binding input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/data.py](../../terrine/data.py) |
+| `terrine.model.invalid_binding` | <code>Model binding input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/temporal/readiness.py](../../terrine/temporal/readiness.py) |
 | `terrine.model.invalid_binding` | <code>where= key {key!r} is not a label name or &lt;label&gt;__&lt;op&gt; with a usable value; the operators are ne, in, not_in, gt, gte, lt, lte and between, comparisons take one scalar, in and not_in a non-empty list, and between a (low, high) pair.</code> | `key` | [terrine/metrics.py](../../terrine/metrics.py) |
 | `terrine.model.invalid_binding` | <code>{field} must be a table name or an in-memory pyarrow, pandas or polars table, not {type}.</code> | `field`, `type` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.model.invalid_binding` | <code>{inputs} are in-memory tables but a connection was given; Terrine never uploads data, so load them into the warehouse yourself or omit con to build on a private in-process DuckDB.</code> | `inputs` | [terrine/model.py](../../terrine/model.py) |
@@ -356,15 +373,28 @@ Inspect authoritative run state. Replay unchanged requests; replan changed input
 | `terrine.runtime.cost_estimate_mismatch` | <code>Cost evidence does not match the task, definition or snapshot; replan with the owner&#x27;s metadata provider.</code> | None | [terrine/runtime/cost.py](../../terrine/runtime/cost.py) |
 | `terrine.runtime.design_partition_unsupported` | <code>The built-in Design executor supports one output partition; use a single-partition plan or a custom executor with per-partition bounds.</code> | None | [terrine/runtime/api.py](../../terrine/runtime/api.py) |
 | `terrine.runtime.execution_failed` | <code>Runtime execution failed outside a coded Terrine refusal.</code> | None | [terrine/runtime/execute.py](../../terrine/runtime/execute.py) |
+| `terrine.runtime.execution_failed` | <code>Terrine runtime run {run_id} finished as {state}.</code> | `run_id`, `state` | [terrine/orchestration/airflow.py](../../terrine/orchestration/airflow.py) |
+| `terrine.runtime.execution_failed` | <code>Terrine runtime run {run_id} finished as {state}.</code> | `run_id`, `state` | [terrine/orchestration/dagster.py](../../terrine/orchestration/dagster.py) |
 | `terrine.runtime.executor_unavailable` | <code>No owner execution callbacks are configured for this runtime.</code> | None | [terrine/runtime/api.py](../../terrine/runtime/api.py) |
+| `terrine.runtime.invalid_configuration` | <code>Owner runtime configuration {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/adapters/opentelemetry.py](../../terrine/adapters/opentelemetry.py) |
+| `terrine.runtime.invalid_configuration` | <code>Owner runtime configuration {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/orchestration/airflow.py](../../terrine/orchestration/airflow.py) |
+| `terrine.runtime.invalid_configuration` | <code>Owner runtime configuration {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/orchestration/dagster.py](../../terrine/orchestration/dagster.py) |
+| `terrine.runtime.invalid_configuration` | <code>Owner runtime configuration {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/runtime/control.py](../../terrine/runtime/control.py) |
+| `terrine.runtime.invalid_configuration` | <code>Owner runtime configuration {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/runtime/snapshot.py](../../terrine/runtime/snapshot.py) |
 | `terrine.runtime.lazy_duration_unsupported` | <code>DuckDB lazy reads cannot represent duration unit {unit!r} in column {column!r}; use {route}.</code> | `column`, `route`, `unit` | [terrine/runtime/backends/duckdb.py](../../terrine/runtime/backends/duckdb.py) |
 | `terrine.runtime.owner_interrupted` | <code>The runtime owner stopped before completing or publishing this run.</code> | None | [terrine/runtime/status.py](../../terrine/runtime/status.py) |
 | `terrine.runtime.plan_invocation_conflict` | <code>Invocation ID is already bound to a different planning request.</code> | None | [terrine/runtime/planning.py](../../terrine/runtime/planning.py) |
+| `terrine.runtime.plan_request_invalid` | <code>Owner plan request input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
+| `terrine.runtime.plan_request_invalid` | <code>Owner plan request input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/orchestration/airflow.py](../../terrine/orchestration/airflow.py) |
+| `terrine.runtime.plan_request_invalid` | <code>Owner plan request input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/orchestration/dagster.py](../../terrine/orchestration/dagster.py) |
+| `terrine.runtime.plan_request_invalid` | <code>Owner plan request input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/runtime/api.py](../../terrine/runtime/api.py) |
 | `terrine.runtime.plan_request_invalid` | <code>Owner plan request is invalid ({reason}).</code> | `reason` | [terrine/runtime/planning.py](../../terrine/runtime/planning.py) |
 | `terrine.runtime.request_key_conflict` | <code>Request key is already bound to a different plan or destination.</code> | None | [terrine/runtime/execute.py](../../terrine/runtime/execute.py) |
 | `terrine.runtime.request_key_conflict` | <code>Request key is already bound to a different plan.</code> | None | [terrine/runtime/api.py](../../terrine/runtime/api.py) |
 | `terrine.runtime.run_unavailable` | <code>Run status is unavailable for the requested run.</code> | None | [terrine/runtime/status.py](../../terrine/runtime/status.py) |
+| `terrine.runtime.saved_plan_mismatch` | <code>Saved plan input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/runtime/saved_plan.py](../../terrine/runtime/saved_plan.py) |
 | `terrine.runtime.saved_plan_mismatch` | <code>Saved plan reconstruction failed verification (retained snapshot Model declaration differs).</code> | None | [terrine/runtime/api.py](../../terrine/runtime/api.py) |
+| `terrine.runtime.saved_plan_mismatch` | <code>Saved plan reconstruction failed verification ({reason}).</code> | `reason` | [terrine/runtime/planner.py](../../terrine/runtime/planner.py) |
 | `terrine.runtime.saved_plan_mismatch` | <code>Saved plan reconstruction failed verification ({reason}).</code> | `reason` | [terrine/runtime/saved_plan.py](../../terrine/runtime/saved_plan.py) |
 | `terrine.runtime.sketch_sidecar_unavailable` | <code>Approximate quantile sidecars are unavailable in runtime planning and composition; use ordinary Frame materialization.</code> | None | [terrine/runtime/materialize.py](../../terrine/runtime/materialize.py) |
 | `terrine.runtime.snapshot_invalid` | <code>Runtime snapshot receipt is invalid: {reason}.</code> | `reason` | [terrine/runtime/snapshot.py](../../terrine/runtime/snapshot.py) |
@@ -408,7 +438,9 @@ Use representable, consistent raw-source configurations.
 
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
+| `terrine.simulate.invalid_config` | <code>Simulation input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/simulate/scale.py](../../terrine/simulate/scale.py) |
 | `terrine.simulate.invalid_seed` | <code>Use an integer seed in [0, 2**64).</code> | None | [terrine/simulate/generate.py](../../terrine/simulate/generate.py) |
+| `terrine.simulate.invalid_seed` | <code>Use an integer seed in [0, 2**64).</code> | None | [terrine/simulate/scale.py](../../terrine/simulate/scale.py) |
 | `terrine.simulate.nonfinite` | <code>Generated {quantity} is nonfinite; reduce coefficient or noise magnitudes.</code> | `quantity` | [terrine/simulate/generate.py](../../terrine/simulate/generate.py) |
 
 ## spec

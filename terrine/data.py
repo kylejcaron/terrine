@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from base64 import b64decode, b64encode
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, date, datetime, timedelta
@@ -354,7 +354,7 @@ class Events:
             for name, metric in declared.items()
         ):
             raise _INVALID_BINDING.error(reason="wrong_type", field="metrics")
-        if isinstance(labels, str):
+        if isinstance(labels, str) or not isinstance(labels, Iterable):
             raise _INVALID_BINDING.error(reason="wrong_type", field="labels")
         names = tuple(labels)
         for label in names:

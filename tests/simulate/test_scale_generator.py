@@ -1,8 +1,10 @@
 from datetime import datetime, timedelta
+from typing import Any, cast
 
 import pyarrow as pa
 import pytest
 
+from terrine.errors import TerrineError
 from terrine.simulate.scale import (
     ScaleConfig,
     anchor_batches,
@@ -150,18 +152,46 @@ def test_histogram_reference_matches_independent_pandas_windows(corrected):
 
 
 @pytest.mark.parametrize(
-    "options",
+    ("options", "code", "context"),
     [
-        {"version": 1},
-        {"version": True},
-        {"span_days": 0},
-        {"anchor_periods": -1},
-        {"window_days": True},
+        ({"version": 1}, "terrine.simulate.invalid_config", ("unsupported_version", "version")),
+        ({"version": True}, "terrine.simulate.invalid_config", ("unsupported_version", "version")),
+        (
+            {"span_days": 0},
+            "terrine.simulate.invalid_config",
+            ("not_positive_integer", "span_days"),
+        ),
+        (
+            {"anchor_periods": -1},
+            "terrine.simulate.invalid_config",
+            ("not_positive_integer", "anchor_periods"),
+        ),
+        (
+            {"window_days": True},
+            "terrine.simulate.invalid_config",
+            ("not_positive_integer", "window_days"),
+        ),
+        ({"span_days": 10**9}, "terrine.simulate.invalid_config", ("out_of_range", "span_days")),
+        ({"seed": 1.5}, "terrine.simulate.invalid_seed", ("wrong_type", "seed")),
     ],
 )
-def test_generator_rejects_unsupported_versions_and_invalid_dimensions(options):
-    with pytest.raises((TypeError, ValueError)):
+def test_generator_rejects_unsupported_versions_and_invalid_dimensions(options, code, context):
+    with pytest.raises(TerrineError) as error:
         ScaleConfig(units=2, events_per_unit=3, batch_size=2, **options)
+    assert error.value.code == code
+    assert (error.value.context["reason"], error.value.context["field"]) == context
+
+
+def test_stream_arguments_refuse_with_codes():
+    config = ScaleConfig(units=2, events_per_unit=3, batch_size=2)
+    for build, field in (
+        (lambda: list(oracle_batches(config, corrected=cast(Any, 1))), "corrected"),
+        (lambda: list(event_batches(config, unit_start=3)), "unit_start"),
+    ):
+        with pytest.raises(TerrineError) as error:
+            build()
+        assert error.value.code == "terrine.simulate.invalid_config"
+        assert error.value.context["field"] == field
 
 
 def test_large_unit_identifiers_keep_reference_order_without_materializing_the_roster():

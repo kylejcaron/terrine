@@ -1,9 +1,12 @@
 import json
 from datetime import date
+from typing import Any, cast
 
 import pytest
 
+from terrine.dataset.export import ExportManifest
 from terrine.dataset.manifest import DatasetManifest, ManifestColumn, ManifestGeneration
+from terrine.dataset.reference import Dataset
 from terrine.spec import Design, FixedDate
 from terrine.spec.dataset import DatasetDefinition, DatasetDefinitionStore
 
@@ -125,3 +128,68 @@ def test_malformed_manifest_payload_has_coded_refusal(damage) -> None:
     with pytest.raises(TerrineError) as error:
         DatasetManifest.from_json(serialized)
     assert error.value.code == "terrine.dataset.invalid_manifest"
+
+
+_DEFINITION = DatasetDefinition(
+    schema_version=2, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
+)
+_GENERATION = ManifestGeneration("ds", "g1", ("table:g1",), ("sha256:x",), 0)
+
+
+@pytest.mark.parametrize(
+    ("code", "build", "context"),
+    [
+        (
+            "terrine.dataset.invalid_manifest",
+            lambda: ManifestColumn("", "int64", "feature"),
+            {"reason": "empty_name", "field": "name"},
+        ),
+        (
+            "terrine.dataset.invalid_manifest",
+            lambda: ManifestGeneration("ds", "g1", ("a",), ("x",), -1),
+            {"reason": "not_nonnegative_integer", "field": "row_count"},
+        ),
+        (
+            "terrine.dataset.invalid_manifest",
+            lambda: ManifestGeneration("ds", "g1", ("a", "b"), ("x",), 0),
+            {"reason": "checksum_count_mismatch", "field": "checksums"},
+        ),
+        (
+            "terrine.dataset.invalid_manifest",
+            lambda: DatasetManifest(_DEFINITION, _GENERATION, (), "d", "m", {}, {}, None, None, 2),
+            {"reason": "unsupported_schema_version", "field": "schema_version"},
+        ),
+        (
+            "terrine.dataset.invalid_manifest",
+            lambda: DatasetManifest(_DEFINITION, _GENERATION, cast(Any, 5), "d", "m", {}, {}),
+            {"reason": "wrong_type", "field": "columns"},
+        ),
+        (
+            "terrine.dataset.invalid_manifest",
+            lambda: DatasetManifest.from_json("{}"),
+            {"reason": "malformed_manifest"},
+        ),
+        (
+            "terrine.dataset.invalid_export",
+            lambda: ExportManifest.from_json("{}"),
+            {"reason": "unsupported_export_manifest"},
+        ),
+        (
+            "terrine.dataset.invalid_export",
+            lambda: ExportManifest.from_json("["),
+            {"reason": "malformed_export_manifest"},
+        ),
+        (
+            "terrine.dataset.invalid_manifest",
+            lambda: Dataset(cast(Any, None), con=None, namespace="owner"),
+            {"reason": "wrong_type", "field": "manifest"},
+        ),
+    ],
+)
+def test_manifest_inputs_refuse_with_codes(code, build, context):
+    from terrine.errors import TerrineError
+
+    with pytest.raises(TerrineError) as error:
+        build()
+    assert error.value.code == code
+    assert {key: error.value.context.get(key) for key in context} == context

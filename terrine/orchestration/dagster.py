@@ -6,10 +6,25 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import Any
 
+from terrine.errors import RefusalSpec
 from terrine.runtime.control import ControlClient, ControlEndpoint
 from terrine.runtime.planning import PlanRequest
 
 __all__ = ["build_materialization_asset"]
+
+_INVALID_CONFIGURATION = RefusalSpec(
+    "terrine.runtime.invalid_configuration",
+    "Owner runtime configuration {field} is invalid: {reason}.",
+)
+_INVALID_NAMESPACE = RefusalSpec(
+    "terrine.dataset.invalid_destination", "Runtime {field} is invalid: {reason}."
+)
+_INVALID_REQUEST = RefusalSpec(
+    "terrine.runtime.plan_request_invalid", "Owner plan request input {field} is invalid: {reason}."
+)
+_RUN_FAILED = RefusalSpec(
+    "terrine.runtime.execution_failed", "Terrine runtime run {run_id} finished as {state}."
+)
 
 
 def build_materialization_asset(
@@ -25,9 +40,15 @@ def build_materialization_asset(
     from dagster import DailyPartitionsDefinition, Failure, asset
 
     if not isinstance(endpoint, ControlEndpoint):
-        raise TypeError("endpoint must be ControlEndpoint")
-    if not namespace or not resource_concurrency_key or not asset_key:
-        raise ValueError("namespace, concurrency key, and asset key must be non-empty")
+        raise _INVALID_CONFIGURATION.error(reason="wrong_type", field="endpoint")
+    if not isinstance(namespace, str) or not namespace:
+        raise _INVALID_NAMESPACE.error(reason="empty_name", field="namespace")
+    for field, value in (
+        ("resource_concurrency_key", resource_concurrency_key),
+        ("asset_key", asset_key),
+    ):
+        if not isinstance(value, str) or not value:
+            raise _INVALID_CONFIGURATION.error(reason="empty_name", field=field)
 
     @asset(
         name=asset_key,
@@ -44,7 +65,7 @@ def build_materialization_asset(
         ).hexdigest()
         request = plan_request_provider({"partition_key": partition, "run_id": run.run_id})
         if not isinstance(request, PlanRequest):
-            raise RuntimeError("Terrine planning provider must return PlanRequest")
+            raise _INVALID_REQUEST.error(reason="wrong_type", field="plan_request_provider")
         request = replace(
             request,
             invocation_id=invocation_id,
@@ -84,8 +105,10 @@ def build_materialization_asset(
                 allow_retries=False,
             )
         if status.run_id != receipt.run_id or status.durable_state != "succeeded":
-            raise RuntimeError(
-                f"Terrine runtime run {receipt.run_id} finished as {status.durable_state}"
+            raise _RUN_FAILED.error(
+                run_id=receipt.run_id,
+                state=status.durable_state,
+                error_code=getattr(status, "error_code", None),
             )
         published_generation = (
             getattr(status, "pinned_result_ref", None) or receipt.published_generation

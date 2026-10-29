@@ -50,6 +50,12 @@ _SNAPSHOT_REQUIRED = RefusalSpec(
     "Warehouse export needs its own DuckDB snapshot transaction; "
     "use a DuckDB relation outside an existing transaction and fit inside the context.",
 )
+_INVALID_INPUT = RefusalSpec(
+    "terrine.export.invalid_input", "Export input {field} is invalid: {reason}."
+)
+_CHOICE = RefusalSpec(
+    "terrine.export.invalid_input", "Export input {field} must be one of {choices}."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,9 +159,9 @@ def preflight_export(
     completeness evidence. A row with two distinct reasons counts under both.
     """
     if not isinstance(data, MaterializedFrame):
-        raise TypeError("data must be a MaterializedFrame")
+        raise _INVALID_INPUT.error(reason="wrong_type", field="data")
     if consumer not in (None, "dowhy"):
-        raise ValueError("consumer must be None or 'dowhy'")
+        raise _CHOICE.error(reason="unsupported_value", field="consumer", choices=(None, "dowhy"))
     _check_metadata(data.provenance)
     roles, table = data.roles, data.table
     units = table[roles.unit].to_pylist() if roles.unit in table.column_names else []

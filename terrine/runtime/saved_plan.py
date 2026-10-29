@@ -28,6 +28,12 @@ _INVALID = RefusalSpec(
     "terrine.runtime.saved_plan_mismatch",
     "Saved plan reconstruction failed verification ({reason}).",
 )
+_INVALID_INPUT = RefusalSpec(
+    "terrine.runtime.saved_plan_mismatch", "Saved plan input {field} is invalid: {reason}."
+)
+_INVALID_DESTINATION = RefusalSpec(
+    "terrine.dataset.invalid_destination", "Destination {field} is invalid: {reason}."
+)
 
 
 def _digest(value: Any) -> str:
@@ -48,11 +54,11 @@ class DestinationRef:
 
     def __post_init__(self) -> None:
         if not isinstance(self.database, str) or not self.database.strip():
-            raise ValueError("destination database must be non-empty")
+            raise _INVALID_DESTINATION.error(reason="empty_name", field="database")
         for field in ("schema", "dataset"):
             value = getattr(self, field)
             if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
-                raise ValueError(f"destination {field} must be a simple identifier")
+                raise _INVALID_DESTINATION.error(reason="invalid_identifier", field=field)
 
     def to_dict(self) -> dict[str, str]:
         return {"database": self.database, "schema": self.schema, "dataset": self.dataset}
@@ -136,14 +142,16 @@ class SavedPlan:
         dataset_definition: DatasetDefinition | None = None,
     ) -> SavedPlan:
         ensure_runtime_expressions_supported(design)
-        if not isinstance(model, ModelReference) or not isinstance(destination, DestinationRef):
-            raise TypeError("model and destination must be verified references")
-        if not namespace:
-            raise ValueError("namespace must be non-empty")
+        if not isinstance(model, ModelReference):
+            raise _INVALID_INPUT.error(reason="wrong_type", field="model")
+        if not isinstance(destination, DestinationRef):
+            raise _INVALID_INPUT.error(reason="wrong_type", field="destination")
+        if not isinstance(namespace, str) or not namespace:
+            raise _INVALID_DESTINATION.error(reason="empty_name", field="namespace")
         try:
             parsed_plan = json.loads(plan_json)
         except (TypeError, ValueError) as exc:
-            raise ValueError("plan_json must contain a JSON plan") from exc
+            raise _INVALID_INPUT.error(reason="malformed_plan", field="plan_json") from exc
         canonical_plan = json.dumps(parsed_plan, sort_keys=True, separators=(",", ":"))
         design_json = to_json(design)
         design_hash = hashlib.sha256(canonical_json(design)).hexdigest()
@@ -151,7 +159,7 @@ class SavedPlan:
             not isinstance(dataset_definition, DatasetDefinition)
             or canonical_json(dataset_definition.base_design) != canonical_json(design)
         ):
-            raise TypeError("dataset_definition must describe the saved Design")
+            raise _INVALID_INPUT.error(reason="design_mismatch", field="dataset_definition")
         dataset_definition_json = (
             dataset_definition.canonical_json().decode() if dataset_definition is not None else None
         )

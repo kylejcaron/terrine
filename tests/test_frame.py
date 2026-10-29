@@ -6,7 +6,16 @@ from terrine import recipes
 from terrine.data import BoundCoverage, Budget, Coverage, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
-from terrine.spec import Design, EventAnchor, EventSequence, Initiation, agg
+from terrine.spec import (
+    CohortGrouping,
+    CohortSpec,
+    Design,
+    EventAnchor,
+    EventSequence,
+    Initiation,
+    Trajectory,
+    agg,
+)
 from terrine.windows import Window
 from tests.fixtures.readme import readme_design, readme_model
 
@@ -171,3 +180,32 @@ def test_values_only_on_shapes_keeps_structural_columns(readme_con, native_input
     roles = frame.roles
     assert list(panel.columns) == ["unit", "anchor_id", "t0", "treatment", "trial_id"]
     assert {roles.unit, roles.cluster_unit, roles.treatment, roles.trial} <= set(panel.columns)
+
+
+@pytest.mark.parametrize(
+    ("build", "value_column", "context"),
+    [
+        (readme_design, "period_value", {"reason": "requires_trajectory", "field": "frame"}),
+        (
+            lambda: recipes.ltv(start_event="orders", metric="spend", period="7d", periods=2),
+            "total",
+            {"reason": "unsupported_value", "field": "value_column"},
+        ),
+        (
+            lambda: Design(
+                "customer",
+                EventAnchor("orders"),
+                shape=CohortSpec("orders", Trajectory("spend", "7d", 2)),
+            ),
+            "cumulative_value",
+            {"reason": "not_cumulative", "field": "value_column"},
+        ),
+    ],
+)
+def test_cohort_requests_refuse_with_codes(readme_con, build, value_column, context):
+    frame = build().build(readme_model(readme_con))
+    grouping = CohortGrouping("7d", datetime(2025, 1, 1, tzinfo=UTC))
+    with pytest.raises(TerrineError) as error:
+        frame.cohorts(grouping=grouping, value_column=value_column)
+    assert error.value.code == "terrine.cohort.invalid_operation"
+    assert {key: error.value.context[key] for key in context} == context

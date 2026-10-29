@@ -65,6 +65,11 @@ def test_training_set_rejects_unknown_or_duplicate_selections_and_untyped_splits
             "terrine.dataset.invalid_split",
             {"reason": "wrong_type", "field": "split"},
         ),
+        (
+            {"label": 5},
+            "terrine.dataset.invalid_selection",
+            {"reason": "wrong_type", "field": "label"},
+        ),
     ):
         with pytest.raises(TerrineError) as error:
             frame.training_set(**request)

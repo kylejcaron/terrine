@@ -55,6 +55,12 @@ _STALE_BASE = RefusalSpec(
     "terrine.dataset.stale_generation",
     "Refresh requires the pinned generation to remain the current publication.",
 )
+_INVALID_MANIFEST = RefusalSpec(
+    "terrine.dataset.invalid_manifest", "Dataset manifest input {field} is invalid: {reason}."
+)
+_INVALID_REQUEST = RefusalSpec(
+    "terrine.runtime.plan_request_invalid", "Owner plan request input {field} is invalid: {reason}."
+)
 
 
 def _owner_for(con: Any) -> RuntimeOwner:
@@ -134,7 +140,7 @@ class Dataset:
 
     def __init__(self, manifest: DatasetManifest, *, con: Any, namespace: str) -> None:
         if not isinstance(manifest, DatasetManifest):
-            raise TypeError("manifest must be a DatasetManifest")
+            raise _INVALID_MANIFEST.error(reason="wrong_type", field="manifest")
         _require_runtime_reader(con)
         self._con, self._raw = con, con.con
         self._namespace, self._manifest = namespace, manifest
@@ -294,7 +300,7 @@ class Dataset:
         if _owner_for(model.con).reference != self.manifest.source_snapshots["owner"]:
             raise _GENERATION_INVALID.error()
         if changes is not None and not isinstance(changes, ChangeSet):
-            raise TypeError("changes must be ChangeSet or None")
+            raise _INVALID_REQUEST.error(reason="wrong_type", field="changes")
         if model.model_hash != self.manifest.model_hash:
             changes = ChangeSet((), "conservative_rebuild")
         frame = self.manifest.definition.build(model)

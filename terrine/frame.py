@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import warnings
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
@@ -57,6 +58,12 @@ _INVALID_SPLIT = RefusalSpec(
 )
 _INVALID_SELECTION = RefusalSpec(
     "terrine.dataset.invalid_selection", "Training {field} selection is invalid: {reason}."
+)
+_INVALID_COHORTS = RefusalSpec(
+    "terrine.cohort.invalid_operation", "Cohort input {field} is invalid: {reason}."
+)
+_COHORT_CHOICE = RefusalSpec(
+    "terrine.cohort.invalid_operation", "Cohort input {field} must be one of {choices}."
 )
 
 
@@ -496,6 +503,8 @@ class Frame:
             if {"__terrine_split", "__terrine_split_reason"} & set(self._compiled.table.columns):
                 raise _INVALID_SPLIT.error(reason="reserved_name", field="split")
 
+        if not isinstance(label, (str, Iterable)):
+            raise _INVALID_SELECTION.error(reason="wrong_type", field="label")
         labels = (label,) if isinstance(label, str) else tuple(label)
         if not labels or any(not isinstance(name, str) or not name for name in labels):
             raise _INVALID_SELECTION.error(reason="empty_name", field="label")
@@ -507,6 +516,10 @@ class Frame:
                 "terrine.dataset.invalid_selection",
                 "Unknown training label selection: {names}",
             ).error(names=tuple(sorted(unknown)))
+        if features is not None and (
+            isinstance(features, str) or not isinstance(features, Iterable)
+        ):
+            raise _INVALID_SELECTION.error(reason="wrong_type", field="features")
         selected_features = self.roles.features if features is None else tuple(features)
         if any(not isinstance(name, str) or not name for name in selected_features):
             raise _INVALID_SELECTION.error(reason="empty_name", field="features")
@@ -1060,16 +1073,20 @@ class Frame:
 
     def cohorts(self, *, grouping: CohortGrouping, value_column: str) -> CohortTable:
         if not isinstance(self._design.shape, CohortSpec):
-            raise TypeError("cohorts requires a trajectory Frame")
+            raise _INVALID_COHORTS.error(reason="requires_trajectory", field="frame")
         if not isinstance(grouping, CohortGrouping):
-            raise TypeError("grouping must be CohortGrouping")
+            raise _INVALID_COHORTS.error(reason="wrong_type", field="grouping")
         if not isinstance(value_column, str) or value_column not in {
             "period_value",
             "cumulative_value",
         }:
-            raise ValueError("value_column must name a trajectory value")
+            raise _COHORT_CHOICE.error(
+                reason="unsupported_value",
+                field="value_column",
+                choices=("period_value", "cumulative_value"),
+            )
         if value_column == "cumulative_value" and not self._design.shape.trajectory.cumulative:
-            raise ValueError("the trajectory did not request cumulative values")
+            raise _INVALID_COHORTS.error(reason="not_cumulative", field="value_column")
         return CohortTable(self, grouping, value_column)
 
 

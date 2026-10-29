@@ -1,6 +1,7 @@
 import copy
 import pickle
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -104,6 +105,10 @@ def test_safe_yaml_roundtrips_native_mapping(tmp_path: Path):
     path = tmp_path / "catalog.yaml"
     path.write_text(dump_catalog(catalog))
     assert load_catalog(path) == catalog
+    with pytest.raises(TerrineError) as error:
+        dump_catalog(cast(Any, CATALOG))
+    assert error.value.code == "terrine.catalog.invalid_definition"
+    assert error.value.context == {"reason": "wrong_type", "field": "catalog"}
     with pytest.raises(TypeError):
         catalog.sources["events"].units["user"] = "workspace_id"  # ty: ignore[invalid-assignment]
     with pytest.raises(TypeError):

@@ -35,17 +35,26 @@ class ArrowSurrogate:
         import pyarrow as pa
 
         if not isinstance(self.data, pa.Table):
-            raise TypeError("data must be a pyarrow.Table")
+            raise _INVALID.error(reason="wrong_type", field="data")
+        if not isinstance(self.metadata, Mapping):
+            raise _INVALID.error(reason="wrong_type", field="metadata")
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
     @classmethod
     def from_arrow(cls, table: pa.Table) -> ArrowSurrogate:
+        import pyarrow as pa
+
+        if not isinstance(table, pa.Table):
+            raise _INVALID.error(reason="wrong_type", field="table")
         raw = (table.schema.metadata or {}).get(_SURROGATE_METADATA_KEY)
         if raw is None:
-            raise ValueError("Arrow schema has no Terrine surrogate metadata")
-        metadata = json.loads(raw.decode("utf-8"))
-        if metadata.get("schema_version") != 1:
-            raise ValueError("unsupported Terrine surrogate metadata version")
+            raise _INVALID.error(reason="missing_surrogate_metadata", field="table")
+        try:
+            metadata = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as error:
+            raise _INVALID.error(reason="malformed_surrogate_metadata", field="table") from error
+        if not isinstance(metadata, dict) or metadata.get("schema_version") != 1:
+            raise _INVALID.error(reason="unsupported_surrogate_version", field="table")
         clean = dict(table.schema.metadata or {})
         del clean[_SURROGATE_METADATA_KEY]
         return cls(table.replace_schema_metadata(clean or None), metadata)

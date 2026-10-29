@@ -51,8 +51,11 @@ specifications, recipes and expressions use `terrine.design.invalid`; state sour
 and `StatePanel` use `terrine.state_panel.invalid_state_source`; `TimeSplit`,
 `GroupSplit` and `training_set(split=...)` use `terrine.dataset.invalid_split`;
 `Budget` uses `terrine.budget.invalid_limit`; and `Coverage`, `UnitSource`,
-`Events` and `History` use `terrine.model.invalid_binding`. `TerrineError`
-subclasses `ValueError`.
+`Events` and `History` use `terrine.model.invalid_binding`. Owner runtime,
+manifest, export, orchestration and agent-policy inputs refuse the same way
+under their own family's code (for example `terrine.dataset.invalid_destination`
+for a runtime namespace, `terrine.runtime.invalid_configuration` for
+orchestration and control settings). `TerrineError` subclasses `ValueError`.
 
 Where a constructor accepts `features` or `outcomes`, each named value may be an
 expression or a Boolean predicate, just as in `Design`. Eligibility remains a

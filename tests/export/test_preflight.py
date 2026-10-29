@@ -8,6 +8,20 @@ from terrine.errors import TerrineError
 from terrine.export.preflight import preflight_export
 
 
+@pytest.mark.parametrize(
+    ("data", "consumer", "context"),
+    [
+        (None, None, {"reason": "wrong_type", "field": "data"}),
+        ("frame", "pandas", {"reason": "unsupported_value", "field": "consumer"}),
+    ],
+)
+def test_preflight_inputs_refuse_with_codes(frame, data, consumer, context):
+    with pytest.raises(TerrineError) as error:
+        preflight_export(frame if data == "frame" else data, consumer=consumer)
+    assert error.value.code == "terrine.export.invalid_input"
+    assert {key: error.value.context[key] for key in context} == context
+
+
 def test_incomplete_outcomes_refuse_by_default(frame):
     table = frame.table.set_column(
         frame.table.schema.get_field_index("complete"), "complete", pa.array([False, True])

@@ -3,7 +3,7 @@ import copy
 import pickle
 from dataclasses import FrozenInstanceError
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, cast
 
 import ibis
 import pyarrow as pa
@@ -570,6 +570,22 @@ def test_aware_timestamp_column_matches_naive_utc():
                 events=_readme_events(readme_tables()["orders"]),
             ),
             {"kind": "table", "owners": ("events:orders", "units:Orders")},
+        ),
+        (
+            "wrong_type",
+            lambda con: Model.from_tables(
+                units={"customer": UnitSource(readme_tables()["customers"], "customer_id")},
+                events=_readme_events(readme_tables()["orders"]),
+                event_ids=cast(Any, 5),
+            ),
+            {"field": "event_ids"},
+        ),
+        (
+            "wrong_type",
+            lambda con: Model.from_tables(
+                units=cast(Any, 5), events=_readme_events(readme_tables()["orders"])
+            ),
+            {"field": "units"},
         ),
     ],
 )

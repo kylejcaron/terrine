@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import KW_ONLY, dataclass
 from datetime import datetime
 from types import MappingProxyType
@@ -166,6 +166,8 @@ class MatchedT0Sample:
     seed: int
 
     def __post_init__(self) -> None:
+        if not isinstance(self.strata, Iterable):
+            raise _INVALID.error(reason="wrong_type", field="strata")
         strata = tuple(self.strata)
         if any(not isinstance(name, str) or not name.strip() for name in strata):
             raise _INVALID.error(reason="empty_name", field="strata")
@@ -209,6 +211,8 @@ class EventPanelSpec:
     reference_period: int
 
     def __post_init__(self) -> None:
+        if not isinstance(self.periods, Iterable):
+            raise _INVALID.error(reason="wrong_type", field="periods")
         periods = tuple(self.periods)
         if not periods:
             raise _INVALID.error(reason="empty", field="periods")
@@ -246,10 +250,12 @@ class CalendarComparisonSpec:
             )
         for field, values in (
             ("reference_period", (self.reference_period,)),
-            ("comparison_periods", tuple(self.comparison_periods)),
-            ("anticipation_periods", tuple(self.anticipation_periods)),
+            ("comparison_periods", self.comparison_periods),
+            ("anticipation_periods", self.anticipation_periods),
         ):
-            if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+            if not isinstance(values, Iterable) or any(
+                isinstance(value, bool) or not isinstance(value, int) for value in tuple(values)
+            ):
                 raise _INVALID.error(reason="wrong_type", field=field)
         comparisons = tuple(self.comparison_periods)
         anticipations = tuple(self.anticipation_periods)

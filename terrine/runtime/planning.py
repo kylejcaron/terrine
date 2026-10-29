@@ -140,7 +140,7 @@ class PlanRequest:
                 or type(value["schema_version"]) is not int
                 or value["schema_version"] != 1
             ):
-                raise ValueError("unsupported request fields or version")
+                raise _INVALID_REQUEST.error(reason="unsupported_request_version")
             changes_data = value["changes"]
             changes = None
             if changes_data is not None:
@@ -174,6 +174,8 @@ class PlanRequest:
                 value.get("bind_base_manifest", False),
             )
         except (KeyError, TypeError, ValueError) as error:
+            if getattr(error, "code", None) == _INVALID_REQUEST.code:
+                raise
             raise _INVALID_REQUEST.error(reason="malformed or unsupported schema") from error
 
 

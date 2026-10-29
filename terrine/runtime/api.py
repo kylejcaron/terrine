@@ -52,6 +52,9 @@ _EXECUTOR_UNAVAILABLE = RefusalSpec(
     "terrine.runtime.executor_unavailable",
     "No owner execution callbacks are configured for this runtime.",
 )
+_INVALID_REQUEST = RefusalSpec(
+    "terrine.runtime.plan_request_invalid", "Owner plan request input {field} is invalid: {reason}."
+)
 
 
 class Executor(Protocol):
@@ -274,9 +277,9 @@ def find_run_by_request_key(
     namespace: str,
 ) -> RunReceipt | None:
     if not isinstance(request_key, str) or not request_key.strip() or len(request_key) > 256:
-        raise ValueError("request_key must be a non-empty string of at most 256 characters")
+        raise _INVALID_REQUEST.error(reason="invalid_request_key", field="request_key")
     if not isinstance(destination, DestinationRef):
-        raise TypeError("destination must be DestinationRef")
+        raise _INVALID_REQUEST.error(reason="wrong_type", field="destination")
     store = RuntimeStore(con, namespace=namespace)
     store.initialize()
     schema = store._schema

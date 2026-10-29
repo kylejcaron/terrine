@@ -20,7 +20,7 @@ from terrine.runtime.backends.base import (
     StagedGeneration,
 )
 from terrine.runtime.cost import ScanEvidence
-from terrine.runtime.leases import LeaseStore
+from terrine.runtime.leases import _INVALID_NAMESPACE, LeaseStore
 from terrine.runtime.planner import TaskSpec
 from terrine.runtime.state import RuntimeStore, snapshot_manifest_reference
 
@@ -38,8 +38,8 @@ class DuckDBBackend:
     capabilities = ENGINES["duckdb"].capabilities
 
     def __init__(self, con: Any, *, namespace: str) -> None:
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", namespace):
-            raise ValueError("namespace must be a simple SQL identifier")
+        if not isinstance(namespace, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", namespace):
+            raise _INVALID_NAMESPACE.error(reason="invalid_namespace", field="namespace")
         self.con = con
         self.namespace = namespace
         self._schema = f'"{namespace}"'

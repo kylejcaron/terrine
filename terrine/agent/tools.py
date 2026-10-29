@@ -76,6 +76,13 @@ _RUN = RefusalSpec(
 _OWNER = RefusalSpec(
     "terrine.agent.owner_configuration", "Owner execution configuration is unavailable."
 )
+_OWNER_INPUT = RefusalSpec(
+    "terrine.agent.owner_configuration", "Owner tool configuration {field} is invalid: {reason}."
+)
+_INVALID_NAMESPACE = RefusalSpec(
+    "terrine.dataset.invalid_destination",
+    "Runtime {field} is invalid: {reason}; use a simple SQL identifier.",
+)
 _RECEIPT = RefusalSpec(
     "terrine.agent.receipt_unavailable", "Use an unchanged owner-prepared receipt."
 )
@@ -101,12 +108,14 @@ class DatasetTools:
     def __init__(
         self, model: Model, policy: AgentPolicy, *, namespace: str, executor: Executor | None = None
     ) -> None:
-        if not isinstance(model, Model) or not isinstance(policy, AgentPolicy):
-            raise TypeError("model and policy must be owner-created typed values")
+        if not isinstance(model, Model):
+            raise _OWNER_INPUT.error(reason="wrong_type", field="model")
+        if not isinstance(policy, AgentPolicy):
+            raise _OWNER_INPUT.error(reason="wrong_type", field="policy")
         if not isinstance(namespace, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", namespace):
-            raise ValueError("namespace must be a simple identifier")
+            raise _INVALID_NAMESPACE.error(reason="invalid_namespace", field="namespace")
         if executor is not None and executor is not policy.executor:
-            raise TypeError("executor must be the owner policy executor")
+            raise _OWNER_INPUT.error(reason="not_policy_executor", field="executor")
         self.model = model
         self.policy = policy
         self.namespace = namespace

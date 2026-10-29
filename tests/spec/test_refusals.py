@@ -44,6 +44,7 @@ from terrine.spec import (
     from_json,
     gt,
     quantile,
+    retention,
     to_json,
 )
 from terrine.spec.expressions import RetentionMetric
@@ -385,6 +386,66 @@ CASES = [
         "terrine.model.invalid_binding",
         lambda: Events("orders", time="at", key="id", complete=("2025-01-31", "2025-01-01")),
         {"reason": "through_before_start", "field": "complete"},
+    ),
+    # a value that is not a collection where one is iterated refuses instead of a bare TypeError
+    (
+        "terrine.design.invalid",
+        lambda: MatchedT0Sample(cast(Any, 5), 1, 0),
+        {"reason": "wrong_type", "field": "strata"},
+    ),
+    (
+        "terrine.design.invalid",
+        lambda: retention(
+            "visit",
+            label_property="kind",
+            target_event="buy",
+            thresholds=cast(Any, 5),
+            horizon="1d",
+        ),
+        {"reason": "wrong_type", "field": "thresholds"},
+    ),
+    (
+        "terrine.design.invalid",
+        lambda: EventPanelSpec(cast(Any, 5), 1, 0),
+        {"reason": "wrong_type", "field": "periods"},
+    ),
+    (
+        "terrine.design.invalid",
+        lambda: CalendarComparisonSpec(_INITIATION, "never_treated", -2, cast(Any, 5)),
+        {"reason": "wrong_type", "field": "comparison_periods"},
+    ),
+    (
+        "terrine.design.invalid",
+        lambda: event_time("purchase", window=("-1d", "0s"), occurrence=cast(Any, ["last"])),
+        {"reason": "unsupported_value", "field": "occurrence"},
+    ),
+    (
+        "terrine.design.invalid",
+        lambda: recipes.life_table(
+            start_event="signup", end_event="churn", bin="1d", group_by=cast(Any, 5)
+        ),
+        {"reason": "wrong_type", "field": "group_by"},
+    ),
+    (
+        "terrine.model.invalid_binding",
+        lambda: Events("orders", time="at", key="id", labels=cast(Any, 5)),
+        {"reason": "wrong_type", "field": "labels"},
+    ),
+    (
+        "terrine.dataset.invalid_definition",
+        lambda: DatasetDefinition(
+            schema_version=2,
+            base_design=Design("user", FixedDate("2025-01-01")),
+            transforms=cast(Any, 5),
+        ),
+        {},
+    ),
+    (
+        "terrine.sequence.invalid_spec",
+        lambda: EventSequence(
+            "purchase", Window("-1d", "0d"), max_events=2, representation=cast(Any, [])
+        ),
+        {},
     ),
 ]
 

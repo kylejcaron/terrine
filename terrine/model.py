@@ -336,23 +336,23 @@ class Model:
         dedicated read connection.
         """
         if not isinstance(allow_unverified, bool):
-            raise _INVALID.error(reason="allow_unverified must be a bool")
+            raise _INVALID.error(reason="wrong_type", field="allow_unverified")
         if not isinstance(units, Mapping) or any(
             not isinstance(name, str) or not name or not isinstance(unit, UnitSource)
             for name, unit in units.items()
         ):
-            raise _INVALID.error(reason="units must map nonempty names to UnitSource")
+            raise _INVALID.error(reason="wrong_type", field="units")
         if not isinstance(events, Mapping) or any(
             not isinstance(name, str) or not name or not isinstance(event, Events)
             for name, event in events.items()
         ):
-            raise _INVALID.error(reason="events must map nonempty names to Events")
+            raise _INVALID.error(reason="wrong_type", field="events")
         attributes = {} if history is None else history
         if not isinstance(attributes, Mapping) or any(
             not isinstance(name, str) or not name or not isinstance(item, History)
             for name, item in attributes.items()
         ):
-            raise _INVALID.error(reason="history must map nonempty names to History")
+            raise _INVALID.error(reason="wrong_type", field="history")
         _check_names(events, attributes)
         in_memory = _in_memory_tables(con, units, events, attributes)
         event_units = {
@@ -506,7 +506,7 @@ class Model:
         dedicated read connection.
         """
         if not isinstance(allow_unverified, bool):
-            raise _INVALID.error(reason="allow_unverified must be a bool")
+            raise _INVALID.error(reason="wrong_type", field="allow_unverified")
         catalog = (
             path_or_catalog
             if isinstance(path_or_catalog, Catalog)
@@ -549,19 +549,18 @@ class Model:
                 elif isinstance(coverage, BoundCoverage):
                     bound[name] = coverage
                 else:
-                    raise _INVALID.error(
-                        reason=f"readiness for {name!r} must be Coverage or BoundCoverage"
-                    )
+                    raise _INVALID.error(reason="wrong_type", field="readiness", name=str(name))
             bound_readiness = Readiness(bound)
         else:
-            raise _INVALID.error(reason="readiness must be a Readiness or source mapping")
+            raise _INVALID.error(reason="wrong_type", field="readiness")
+        if units is not None and not isinstance(units, Mapping):
+            raise _INVALID.error(reason="wrong_type", field="units")
         unit_map = dict(units or {})
-        event_map = dict(event_ids or {})
         if any(
             not isinstance(key, str) or not isinstance(value, UnitSource)
             for key, value in unit_map.items()
         ):
-            raise _INVALID.error(reason="units must map names to UnitSource")
+            raise _INVALID.error(reason="wrong_type", field="units")
         in_memory = tuple(
             sorted(
                 f"units:{name}"
@@ -573,11 +572,14 @@ class Model:
             raise _IN_MEMORY_WITH_CONNECTION.error(
                 reason="in_memory_input_with_connection", inputs=in_memory
             )
+        if event_ids is not None and not isinstance(event_ids, Mapping):
+            raise _INVALID.error(reason="wrong_type", field="event_ids")
+        event_map = dict(event_ids or {})
         if any(
             not isinstance(key, str) or not isinstance(value, str) or not value
             for key, value in event_map.items()
         ):
-            raise _INVALID.error(reason="event_ids must map source names to column names")
+            raise _INVALID.error(reason="wrong_type", field="event_ids")
         from terrine.execution.inputs import bind_resolver
 
         resolver = bind_resolver(
@@ -641,9 +643,9 @@ class Model:
         for source_name, column in event_ids.items():
             source = sources.get(source_name)
             if source is None:
-                raise _INVALID.error(reason=f"event ID source {source_name!r} is not declared")
+                raise _INVALID.error(reason="undeclared_name", field="event_ids", name=source_name)
             if column not in resolver(source.relation).schema().names:
-                raise _INVALID.error(reason=f"event ID column {column!r} is not declared")
+                raise _INVALID.error(reason="undeclared_name", field="event_ids", name=column)
         return cls(
             catalog=catalog,
             con=con,
@@ -724,7 +726,7 @@ class Model:
         dedicated read connection.
         """
         if not isinstance(allow_unverified, bool):
-            raise _INVALID.error(reason="allow_unverified must be a bool")
+            raise _INVALID.error(reason="wrong_type", field="allow_unverified")
         from terrine.adapters.increment import _load_semantics, to_catalog
         from terrine.execution.backend import backend_provider
 

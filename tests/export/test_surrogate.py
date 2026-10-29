@@ -1,10 +1,35 @@
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 import pyarrow as pa
+import pytest
 
 from terrine.data import ExpressionTiming, SamplingMeta
+from terrine.errors import TerrineError
 from terrine.export import ArrowSurrogate, to_surrogate_arrow
+
+
+@pytest.mark.parametrize(
+    ("build", "reason"),
+    [
+        (lambda: ArrowSurrogate(cast(Any, None), {}), "wrong_type"),
+        (lambda: ArrowSurrogate.from_arrow(pa.table({"x": [1]})), "missing_surrogate_metadata"),
+        (
+            lambda: ArrowSurrogate.from_arrow(
+                pa.table({"x": [1]}).replace_schema_metadata(
+                    {b"terrine.surrogate_arrow.v1": b'{"schema_version": 2}'}
+                )
+            ),
+            "unsupported_surrogate_version",
+        ),
+    ],
+)
+def test_surrogate_inputs_refuse_with_codes(build, reason):
+    with pytest.raises(TerrineError) as error:
+        build()
+    assert error.value.code == "terrine.export.invalid_surrogate"
+    assert error.value.context["reason"] == reason
 
 
 def test_surrogate_arrow_round_trip_preserves_selected_columns_and_provenance(frame):

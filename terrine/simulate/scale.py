@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 
 import pyarrow as pa
 
+from terrine.errors import RefusalSpec
+
 __all__ = [
     "ScaleConfig",
     "anchor_batches",
@@ -17,6 +19,10 @@ __all__ = [
     "unit_batches",
 ]
 
+_INVALID_CONFIG = RefusalSpec(
+    "terrine.simulate.invalid_config", "Simulation input {field} is invalid: {reason}."
+)
+_INVALID_SEED = RefusalSpec("terrine.simulate.invalid_seed", "Use an integer seed in [0, 2**64).")
 _EPOCH = datetime(2025, 1, 1, tzinfo=UTC)
 _GENERATOR_VERSION = 2
 _TIMESTAMP = pa.timestamp("us", tz="UTC")
@@ -58,16 +64,16 @@ class ScaleConfig:
         ):
             value = getattr(self, name)
             if type(value) is not int or value <= 0:
-                raise ValueError(f"{name} must be a positive integer")
+                raise _INVALID_CONFIG.error(reason="not_positive_integer", field=name)
         if type(self.seed) is not int:
-            raise ValueError("seed must be an integer")
+            raise _INVALID_SEED.error(reason="wrong_type", field="seed")
         if type(self.version) is not int or self.version != _GENERATOR_VERSION:
-            raise ValueError(f"unsupported scale generator version {self.version}")
-        try:
-            _ = self.coverage_start
-            _ = self.coverage_end
-        except OverflowError as exc:
-            raise ValueError("workload timestamps exceed the datetime domain") from exc
+            raise _INVALID_CONFIG.error(reason="unsupported_version", field="version")
+        for field, bound in (("window_days", "coverage_start"), ("span_days", "coverage_end")):
+            try:
+                getattr(self, bound)
+            except OverflowError as exc:
+                raise _INVALID_CONFIG.error(reason="out_of_range", field=field) from exc
 
     @property
     def coverage_start(self) -> datetime:
@@ -85,10 +91,10 @@ class ScaleConfig:
 
 def _units(config: ScaleConfig, start: int, stop: int | None) -> range:
     if not isinstance(config, ScaleConfig):
-        raise TypeError("config must be ScaleConfig")
+        raise _INVALID_CONFIG.error(reason="wrong_type", field="config")
     stop = config.units if stop is None else stop
     if type(start) is not int or type(stop) is not int or not 0 <= start <= stop <= config.units:
-        raise ValueError("unit partition must lie within the configured unit range")
+        raise _INVALID_CONFIG.error(reason="out_of_range", field="unit_start")
     return range(start, stop)
 
 
@@ -215,7 +221,7 @@ def oracle_batches(
     """Yield separate expected target counts without reading generated observation batches."""
     indices = _units(config, unit_start, unit_stop)
     if type(corrected) is not bool:
-        raise TypeError("corrected must be bool")
+        raise _INVALID_CONFIG.error(reason="wrong_type", field="corrected")
 
     def rows():
         for unit in indices:

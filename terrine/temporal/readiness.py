@@ -12,6 +12,9 @@ _MISSING = RefusalSpec(
     "terrine.readiness.missing_source",
     "No completeness coverage was declared for fact source {source!r}.",
 )
+_INVALID_BINDING = RefusalSpec(
+    "terrine.model.invalid_binding", "Model binding input {field} is invalid: {reason}."
+)
 
 
 class Readiness:
@@ -24,7 +27,7 @@ class Readiness:
             not isinstance(name, str) or not name or not isinstance(value, BoundCoverage)
             for name, value in sources.items()
         ):
-            raise TypeError("sources must map names to BoundCoverage")
+            raise _INVALID_BINDING.error(reason="wrong_type", field="sources")
         self._sources = MappingProxyType(dict(sources))
 
     @property

@@ -44,6 +44,7 @@ __all__ = [
 ]
 
 _CHOICE = RefusalSpec("terrine.design.invalid", "Design input {field} must be one of {choices}.")
+_INVALID = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
 
 
 def _event_anchor(event: str, occurrence: str, n: int | None) -> EventAnchor:
@@ -252,6 +253,8 @@ def life_table(
     Each ``group_by`` entry is a named feature expression or predicate; the names are
     the life table's grouping columns, so nothing else can be declared as a feature.
     """
+    if group_by is not None and not isinstance(group_by, Mapping):
+        raise _INVALID.error(reason="wrong_type", field="group_by")
     groups = {} if group_by is None else dict(group_by)
     anchor = _entry_anchor(start_event, occurrence, n)
     with parameter_names(event="end_event"):

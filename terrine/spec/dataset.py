@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -81,6 +82,10 @@ class DatasetDefinition:
                 view = freeze(view)
             except (TypeError, ValueError) as error:
                 raise INVALID_DEFINITION.error(reason="view contains a runtime value") from error
+        if not isinstance(transforms, Iterable):
+            raise INVALID_DEFINITION.error(
+                reason="transforms must be typed frozen winsorization records"
+            )
         transforms = tuple(transforms)
         if any(
             not isinstance(item, Winsorization) or item.source_type is None for item in transforms

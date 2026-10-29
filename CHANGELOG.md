@@ -295,6 +295,50 @@
   `terrine.dataset.invalid_split` (formerly `terrine.dataset.invalid_definition`)
   when a training view's split group is not the unit or its split record does
   not restore (`propose_definition`, `validate_definition`, `save_design`).
+- Owner, runtime, manifest, export, orchestration, agent-policy and simulation
+  inputs refuse with coded `TerrineError`s as well (formerly bare `ValueError`,
+  `TypeError`, `RuntimeError` or `FileExistsError`), with `reason` and `field`,
+  reusing the code of the same hazard. A runtime namespace or destination name
+  that is not a simple identifier (`LeaseStore`, `RuntimeStore`,
+  `DuckDBBackend`, `DestinationRef`, `DatasetTools`, `SavedPlan.create`, the
+  Airflow and Dagster builders) refuses `terrine.dataset.invalid_destination`;
+  `find_run_by_request_key`, `PlanRequest.from_dict`, `Dataset.plan_refresh(changes=)`
+  and an orchestration provider that does not return a `PlanRequest` refuse
+  `terrine.runtime.plan_request_invalid`; `RefreshPlan.deserialize` and
+  `SavedPlan.create` refuse `terrine.runtime.saved_plan_mismatch` (`reason`
+  `malformed_plan`, `unsupported_plan_version`, `fingerprint_mismatch`, ...);
+  manifest records and `DatasetManifest.from_json` refuse
+  `terrine.dataset.invalid_manifest` with token reasons and keep a record's own
+  `field`; `Dataset(manifest=)` refuses `terrine.dataset.invalid_manifest`;
+  `ExportManifest.from_json` refuses `terrine.dataset.invalid_export`;
+  `ArrowSurrogate` refuses `terrine.export.invalid_surrogate`; `AgentPolicy`,
+  `DatasetTools` and an owner budget refuse `terrine.agent.owner_configuration`
+  and a requested budget `terrine.agent.invalid_request`; `dump_catalog` refuses
+  `terrine.catalog.invalid_definition`; `Readiness` refuses
+  `terrine.model.invalid_binding`; `Frame.cohorts` refuses
+  `terrine.cohort.invalid_operation`; and `ScaleConfig`'s seed refuses
+  `terrine.simulate.invalid_seed`. Three codes are new:
+  `terrine.runtime.invalid_configuration` (Airflow and Dagster builder
+  settings, `OpenTelemetryAdapter(queue_size=)`, `SnapshotAuthority(owner=)`, a
+  `ControlServer` namespace that differs from its store, and an endpoint that
+  exists and is not a socket or is already served, formerly `FileExistsError`),
+  `terrine.export.invalid_input` (`preflight_export` data and consumer) and
+  `terrine.simulate.invalid_config` (`ScaleConfig` dimensions and version,
+  stream arguments). An Airflow or Dagster materialization whose run does not
+  succeed raises `terrine.runtime.execution_failed` with context `run_id`,
+  `state`, `error_code` (formerly `AirflowException` or `RuntimeError`).
+  `Model.from_tables` and `Model.from_catalog` binding refusals carry token
+  reasons with `field` (`wrong_type`, `undeclared_name`) instead of prose. A
+  public constructor given a non-collection where it iterates one
+  (`MatchedT0Sample(strata=5)`, `retention(thresholds=5)`, `EventPanelSpec`,
+  `CalendarComparisonSpec`, `Events(labels=)`, `DatasetDefinition(transforms=)`,
+  `life_table(group_by=)`, `training_set(label=)`, `from_tables(units=, event_ids=)`,
+  `AgentPolicy` collections) refuses with its family's code and
+  `reason="wrong_type"` instead of a bare `TypeError`, and an unhashable
+  `event_time(occurrence=)` or `EventSequence(representation=)` refuses instead
+  of raising `TypeError`. Pydantic models (`WorldConfig`, the agent's view and
+  response schemas) keep raising pydantic's `ValidationError`; the agent tools
+  report it as a coded refusal.
 
 ## 0.1.0.dev1
 

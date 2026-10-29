@@ -46,6 +46,10 @@ _INVALID = RefusalSpec(
     "terrine.runtime.snapshot_invalid",
     "Runtime snapshot receipt is invalid: {reason}.",
 )
+_INVALID_CONFIGURATION = RefusalSpec(
+    "terrine.runtime.invalid_configuration",
+    "Owner runtime configuration {field} is invalid: {reason}.",
+)
 
 _BUDGET_UNKNOWN = RefusalSpec(
     "terrine.budget.scan_unknown",
@@ -144,7 +148,7 @@ class SnapshotAuthority:
 
     def __init__(self, owner: RuntimeOwner) -> None:
         if not isinstance(owner, RuntimeOwner):
-            raise TypeError("owner must be RuntimeOwner")
+            raise _INVALID_CONFIGURATION.error(reason="wrong_type", field="owner")
         self.owner = owner
 
     def find_retained(self, snapshot_id: str, *, namespace: str) -> ReopenableSnapshot:

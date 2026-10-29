@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
@@ -148,6 +148,8 @@ class RetentionMetric:
     def __post_init__(self) -> None:
         for field in ("event", "label_property", "target_event"):
             object.__setattr__(self, field, _name(getattr(self, field), field))
+        if not isinstance(self.count_thresholds, Iterable):
+            raise _INVALID.error(reason="wrong_type", field="count_thresholds")
         thresholds = tuple(self.count_thresholds)
         if not thresholds:
             raise _INVALID.error(reason="empty", field="count_thresholds")
@@ -220,11 +222,11 @@ class EventTime:
         if self.label_property is not None:
             object.__setattr__(self, "label_property", _name(self.label_property, "label_property"))
             object.__setattr__(self, "equals", _scalar(self.equals, "equals"))
-        if self.occurrence not in {"first", "last", "nth"}:
+        if self.occurrence not in ("first", "last", "nth"):
             raise _CHOICE.error(
                 reason="unsupported_value", field="occurrence", choices=("first", "last", "nth")
             )
-        if self.occurrence in {"first", "last"} and self.n is not None:
+        if self.occurrence in ("first", "last") and self.n is not None:
             raise _INVALID.error(reason="n_requires_nth", field="n")
         if self.occurrence == "nth" and (
             isinstance(self.n, bool) or not isinstance(self.n, int) or self.n < 1
@@ -269,6 +271,8 @@ class And:
     terms: tuple[Predicate, ...]
 
     def __post_init__(self) -> None:
+        if not isinstance(self.terms, Iterable):
+            raise _INVALID.error(reason="wrong_type", field="terms")
         terms = tuple(self.terms)
         if not terms:
             raise _INVALID.error(reason="empty", field="terms")

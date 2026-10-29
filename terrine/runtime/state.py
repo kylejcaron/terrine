@@ -9,7 +9,7 @@ from types import MappingProxyType
 from typing import Any
 
 from terrine.data import BoundCoverage
-from terrine.runtime.leases import Lease, LeaseStore
+from terrine.runtime.leases import _INVALID_NAMESPACE, Lease, LeaseStore
 
 __all__ = [
     "DefinitionVersion",
@@ -75,7 +75,7 @@ class RuntimeStore:
 
     def __init__(self, con: Any, *, namespace: str) -> None:
         if not isinstance(namespace, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", namespace):
-            raise ValueError("namespace must be a simple SQL identifier")
+            raise _INVALID_NAMESPACE.error(reason="invalid_namespace", field="namespace")
         self.con = con
         self.namespace = namespace
         self._schema = '"' + namespace.replace('"', '""') + '"'

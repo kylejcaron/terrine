@@ -41,6 +41,10 @@ _MESSAGE_TOO_LARGE = RefusalSpec(
 _CONTROL_UNAVAILABLE = RefusalSpec(
     "terrine.runtime.control_unavailable", "Owner control request was refused."
 )
+_INVALID_CONFIGURATION = RefusalSpec(
+    "terrine.runtime.invalid_configuration",
+    "Owner runtime configuration {field} is invalid: {reason}.",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +70,7 @@ class ControlServer:
         snapshot_authority: Any | None = None,
     ) -> None:
         if store.namespace != namespace:
-            raise ValueError("control namespace does not match runtime store")
+            raise _INVALID_CONFIGURATION.error(reason="namespace_mismatch", field="namespace")
         self.store = store
         self.namespace = namespace
         self.endpoint = endpoint
@@ -127,7 +131,7 @@ class ControlServer:
             mode = None
         if mode is not None:
             if not stat.S_ISSOCK(mode):
-                raise FileExistsError("control endpoint exists and is not a socket")
+                raise _INVALID_CONFIGURATION.error(reason="endpoint_not_socket", field="endpoint")
             probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             try:
                 probe.connect(str(self.endpoint.path))
@@ -136,7 +140,7 @@ class ControlServer:
                     raise
                 self.endpoint.path.unlink()
             else:
-                raise FileExistsError("control endpoint is already active")
+                raise _INVALID_CONFIGURATION.error(reason="endpoint_active", field="endpoint")
             finally:
                 probe.close()
         self._server = OwnerUnixStreamServer(str(self.endpoint.path), Handler)

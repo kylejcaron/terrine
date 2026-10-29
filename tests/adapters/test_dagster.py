@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from dagster import DagsterInstance, materialize
 
+from terrine.errors import TerrineError
 from terrine.orchestration.dagster import build_materialization_asset
 from terrine.runtime.control import ControlEndpoint
 from terrine.runtime.planning import PlanRequest
@@ -156,8 +157,10 @@ def test_dagster_rejects_non_succeeded_owner_receipt(monkeypatch, tmp_path):
         partitions_start="2025-01-01",
         resource_concurrency_key="terrine-owner",
     )
-    with pytest.raises(RuntimeError):
+    with pytest.raises(TerrineError) as error:
         materialize([asset], partition_key="2025-01-15", instance=DagsterInstance.ephemeral())
+    assert error.value.code == "terrine.runtime.execution_failed"
+    assert error.value.context["state"] == "failed"
 
 
 def test_dagster_cancelled_run_fails_without_materialization_retry(monkeypatch, tmp_path):
@@ -197,3 +200,26 @@ def test_dagster_cancelled_run_fails_without_materialization_retry(monkeypatch, 
         materialize([asset], partition_key="2025-01-15", instance=DagsterInstance.ephemeral())
 
     assert not error.value.allow_retries
+
+
+@pytest.mark.parametrize(
+    ("options", "code", "field"),
+    [
+        ({"endpoint": None}, "terrine.runtime.invalid_configuration", "endpoint"),
+        ({"namespace": ""}, "terrine.dataset.invalid_destination", "namespace"),
+        ({"asset_key": ""}, "terrine.runtime.invalid_configuration", "asset_key"),
+    ],
+)
+def test_dagster_asset_configuration_refuses_with_codes(tmp_path, options, code, field):
+    arguments: dict[str, Any] = {
+        "plan_request_provider": lambda context: _request(),
+        "endpoint": ControlEndpoint(tmp_path / "owner.sock"),
+        "namespace": "owner",
+        "partitions_start": "2025-01-01",
+        "resource_concurrency_key": "terrine-owner",
+        **options,
+    }
+    with pytest.raises(TerrineError) as error:
+        build_materialization_asset(**arguments)
+    assert error.value.code == code
+    assert error.value.context["field"] == field

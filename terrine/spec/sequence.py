@@ -88,7 +88,7 @@ class EventSequence:
             raise _INVALID.error(reason="max_events must be a positive signed-Int64")
         if not 0 < max_events <= _MAX:
             raise _INVALID.error(reason="max_events must be a positive signed-Int64")
-        if representation not in {"positions", "arrays"}:
+        if representation not in ("positions", "arrays"):
             raise _INVALID.error(reason="unsupported sequence representation")
         if not isinstance(properties, (tuple, list)):
             raise _INVALID.error(reason="properties must be an ordered sequence")

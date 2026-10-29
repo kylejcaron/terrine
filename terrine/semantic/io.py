@@ -22,6 +22,9 @@ _INVALID_DEFINITION = RefusalSpec(
     "terrine.catalog.invalid_definition",
     "Catalog definition is invalid:\n{diagnostics}",
 )
+_INVALID_INPUT = RefusalSpec(
+    "terrine.catalog.invalid_definition", "Catalog input {field} is invalid: {reason}."
+)
 _HINTS = {
     "missing": "Provide this required Catalog field.",
     "extra_forbidden": "Remove this field or use a declared Catalog field.",
@@ -130,5 +133,5 @@ def load_catalog(path: str | Path) -> Catalog:
 def dump_catalog(catalog: Catalog) -> str:
     """Serialize a native Catalog using ordinary safe YAML values."""
     if not isinstance(catalog, Catalog):
-        raise TypeError("catalog must be a Catalog")
+        raise _INVALID_INPUT.error(reason="wrong_type", field="catalog")
     return yaml.safe_dump(catalog.model_dump(mode="json"), sort_keys=False)
