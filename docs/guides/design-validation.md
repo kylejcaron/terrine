@@ -35,9 +35,12 @@ Features (before t0):
 Outcomes (after t0):
   spend_next_30d: sum of orders.amount in [t0, t0 + 30d)
 Completeness: orders is declared complete for 2025-01-01 through 2025-03-20 (UTC days).
-  A value whose window reaches outside those days is null with reason incomplete_coverage.
-  A customer with no events in a complete window gets 0 for counts and sums, and null for means,
-    minima, maxima and quantiles.
+  A metric window outside declared source coverage is null with reason incomplete_coverage; unit
+    observation bounds use incomplete_observation.
+Empty complete metric windows (no matching events):
+  orders_30d: 0 (no reason)
+  spend_30d: 0 (no reason)
+  spend_next_30d: 0 (no reason)
 Columns: unit, anchor_id, t0, orders_30d, orders_30d__complete, orders_30d__reason, spend_30d,
   spend_30d__complete, spend_30d__reason, spend_next_30d, spend_next_30d__complete,
   spend_next_30d__reason.
@@ -54,6 +57,16 @@ the required sources' declarations, not observed data. Long schedules list their
 first twelve dates and the remaining count. Shape summaries include their own
 events, periods, state levels or sequence limits; non-cross-sectional structural
 columns are described by reference to the roles available after building.
+
+Empty-window values are listed per metric output, from its bound aggregation:
+calendar-day averages return zero on an empty complete window, while event
+averages return null with `no_observations`. Shape-specific completeness is
+separate: a sequence uses `source_coverage` or `unit_observation`, while
+time-to-event follow-up can end in complete censoring rather than a missing
+metric window. Positional sequences have an `is_event=false` header plus
+`is_event=true` child rows; array sequences keep their events in `event_values`
+on a single row. Cross-sectional and panel column lists include eligibility
+values and their support columns.
 
 The [dataset agent tools](dataset-agent-tools.md) return the same text as
 `summary` in both design validation and proposal outputs, after source

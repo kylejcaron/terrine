@@ -141,6 +141,9 @@
   Long schedules show their first twelve dates and the remaining count.
   `DatasetTools.validate_design` and `propose_design` include the same text in
   the required `ValidationOutput.summary` field after source authorization.
+  Summaries distinguish sequence headers from child rows and arrays, name
+  eligibility support columns, and report empty-window values and completeness
+  reasons according to the bound aggregation and shape.
 
 ### Breaking changes
 

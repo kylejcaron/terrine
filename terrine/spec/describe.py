@@ -202,6 +202,26 @@ class _Renderer:
             for measure in self.model.metrics[name].measures
         )
 
+    def _empty_metric(self, name: str) -> tuple[str, str | None]:
+        metric = self.model.metrics[name]
+        if metric.kind == "conversion":
+            return "false", None
+        if metric.kind == "ratio":
+            reason = (
+                "no_observations"
+                if any(measure.aggregation == "avg_event" for measure in metric.measures)
+                else "zero_denominator"
+            )
+            return "null", reason
+        (measure,) = metric.measures
+        if measure.aggregation in ("count", "sum"):
+            return "0", None
+        if measure.aggregation == "avg_calendar_day":
+            return "0.0", None
+        if measure.aggregation == "count_distinct":
+            return "0", "no_observations"
+        return "null", "no_observations"
+
     def _property_source(self, attribute: str) -> str:
         declaration = self.model.catalog.properties.get(attribute)
         if declaration is not None:
@@ -330,14 +350,32 @@ class _Renderer:
                 f"One row per {_duration(shape.interval)} time bin{groups}, counting "
                 f"{self._who()} entries {self._at_anchor()}.",
             )
+        elif isinstance(shape, EventSequence):
+            if shape.representation == "positions":
+                yield (
+                    "",
+                    f"One header row (is_event=false) per {self._who()} {self._at_anchor()}; "
+                    f"one child row (is_event=true) per selected {shape.event} event in a "
+                    "complete sequence window.",
+                )
+            else:
+                yield (
+                    "",
+                    f"One row per {self._who()} {self._at_anchor()}; selected {shape.event} "
+                    "events are stored in event_values.",
+                )
+        elif isinstance(shape, CalendarComparisonSpec):
+            yield (
+                "",
+                f"One row per {self._who()}, focal cohort (cohort) and relative period "
+                "(event_period), including reference, comparison and anticipation periods.",
+            )
         else:
             multiplier = ""
             if isinstance(shape, CohortSpec):
                 multiplier = ", one per age period"
             elif isinstance(shape, EventPanelSpec):
                 multiplier = ", one per relative period"
-            elif isinstance(shape, CalendarComparisonSpec):
-                multiplier = ", one per comparison period"
             yield "", f"One row per {self._who()} {self._at_anchor()}{multiplier}."
         anchor_range = design.anchor_range
         if anchor_range is not None:
@@ -441,8 +479,9 @@ class _Renderer:
             periods = ", ".join(str(period) for period in shape.periods)
             yield (
                 "",
-                f"Panel: periods {periods} of {_duration(shape.period_seconds)} around each "
-                f"{anchor.event} event, reference period {shape.reference_period}.",
+                f"Panel: event_period values {periods} of {_duration(shape.period_seconds)} "
+                f"around parent_t0 (the selected {anchor.event} anchor), "
+                f"reference period {shape.reference_period}.",
             )
         elif isinstance(shape, CalendarComparisonSpec):
             anchor = self.design.anchor
@@ -464,6 +503,9 @@ class _Renderer:
         if shape.exit is not None:
             reasons.append(f"the {shape.exit} event")
         reasons.append("the end of complete coverage")
+        roster = self.model.units.get(self.unit)
+        if roster is not None and roster.observed_until is not None:
+            reasons.append(f"the end of unit observation ({roster.observed_until})")
         if self.design.administrative_cutoff is not None:
             reasons.append("the administrative cutoff")
         censored = (
@@ -484,21 +526,24 @@ class _Renderer:
                 "",
                 f"Trajectory: {kind} {trajectory.metric} ({self._metric(trajectory.metric)}) "
                 f"by age, {_plural(trajectory.periods, 'period')} "
-                f"of {_duration(trajectory.period)} from the first {shape.origin} event.",
+                f"of {_duration(trajectory.period)} "
+                f"starting at cohort_time = t0, selected from {shape.origin}.",
             )
         elif isinstance(shape, TimeToEvent):
             yield (
                 "",
-                f"Time to event: from t0 to the first {shape.event} event, "
-                f"{self._censoring(shape)}.",
+                f"Time to event: the first {shape.event} event in [entry_time, censor_time), "
+                f"measured from t0, {self._censoring(shape)}. Events before eligible "
+                "follow-up exclude the record.",
             )
         elif isinstance(shape, LifeTable):
             inner = shape.time_to_event
             groups = f", grouped by {_names(shape.group_by)}" if shape.group_by else ""
             yield (
                 "",
-                f"Life table: time from t0 to the first {inner.event} event, binned by "
-                f"{_duration(shape.interval)}{groups}, {self._censoring(inner)}.",
+                f"Life table: time from t0 to the first {inner.event} in "
+                f"[entry_time, censor_time), binned by {_duration(shape.interval)}{groups}, "
+                f"{self._censoring(inner)}.",
             )
         elif isinstance(shape, StatePanel):
             schedule = self.design.anchor
@@ -511,6 +556,8 @@ class _Renderer:
             else:
                 origin = f"{state.property} (source {self._property_source(state.property)})"
                 qualifiers = f"; absorbing {_names(state.absorbing)}" if state.absorbing else ""
+                if state.absorbing:
+                    qualifiers += "; the incoming terminal transition is kept, later rows stop"
                 qualifiers += "" if state.ordered else "; levels unordered"
             yield (
                 "",
@@ -543,6 +590,36 @@ class _Renderer:
                     f"funnel {' > '.join(funnel.steps)} by {funnel.event_property}{within}"
                 )
             yield "", ", ".join(parts) + "."
+            yield "", "Sequences over max_events refuse rather than truncate."
+
+    def _metric_outputs(self) -> Iterator[tuple[str, Expr | Predicate]]:
+        design = self.design
+        yield from design.features.items()
+        yield from design.outcomes.items()
+        if isinstance(design.shape, StatePanel):
+            yield from design.shape.baseline_features.items()
+        elif isinstance(design.shape, CohortSpec):
+            trajectory = design.shape.trajectory
+            yield "period_value", MetricAgg(trajectory.metric, Window(0, trajectory.period))
+
+    def _empty_windows(self) -> Iterator[Line]:
+        rows = []
+        for name, node in self._metric_outputs():
+            if isinstance(node, MetricAgg):
+                value, reason = self._empty_metric(node.metric)
+            elif isinstance(node, (MetricQuantile, ApproxMetricQuantile)):
+                value, reason = "null", "no_observations"
+            elif isinstance(node, ApproxMetricDistinct):
+                value, reason = "0", "no_observations"
+            elif isinstance(node, RetentionMetric):
+                value, reason = "0", None
+            else:
+                continue
+            suffix = f" (reason {reason})" if reason is not None else " (no reason)"
+            rows.append(("  ", f"{name}: {value}{suffix}"))
+        if rows:
+            yield "", "Empty complete metric windows (no matching events):"
+            yield from rows
 
     def _completeness(self) -> Iterator[Line]:
         if not self.required_sources:
@@ -551,16 +628,69 @@ class _Renderer:
         yield "", f"Completeness: {self._coverage(first)}"
         for source in rest:
             yield "  ", self._coverage(source)
-        yield (
-            "  ",
-            "A value whose window reaches outside those days is null with reason "
-            "incomplete_coverage.",
-        )
-        yield (
-            "  ",
-            f"A {self.unit} with no events in a complete window gets 0 for counts and sums, and "
-            "null for means, minima, maxima and quantiles.",
-        )
+        shape = self.design.shape
+        if isinstance(shape, (TimeToEvent, LifeTable)):
+            inner = shape.time_to_event if isinstance(shape, LifeTable) else shape
+            reasons = ["source_coverage"]
+            if inner.exit is not None:
+                reasons.append("exit")
+            if self.design.administrative_cutoff is not None:
+                reasons.append("administrative_cutoff")
+            yield (
+                "  ",
+                "Follow-up without an end event is censored "
+                f"(censor_reason: {_names(tuple(reasons))}), not a missing metric window. "
+                "Incomplete records use incomplete_initial_history "
+                "or no_eligible_followup.",
+            )
+            if inner.delayed_entry:
+                yield "  ", "A missing entry event uses missing_delayed_entry."
+            if isinstance(shape, LifeTable):
+                yield "  ", "Life-table counts aggregate censoring reasons into censored_by_reason."
+        elif isinstance(shape, EventSequence):
+            yield (
+                "  ",
+                "An unavailable sequence has null event_count with reason source_coverage "
+                "outside source coverage, or unit_observation outside unit observation. "
+                "Only complete sequences emit child events or non-null event_values.",
+            )
+        elif isinstance(shape, StatePanel):
+            yield (
+                "  ",
+                "Unavailable states use incomplete_coverage outside source coverage or "
+                "incomplete_observation outside unit observation.",
+            )
+            if not isinstance(shape.state, BinnedMetricState):
+                yield (
+                    "  ",
+                    "Point states use missing_state_observation when absent, or state_value_null "
+                    "when the observed state is null.",
+                )
+        if any(
+            isinstance(
+                node, (MetricAgg, MetricQuantile, ApproxMetricQuantile, ApproxMetricDistinct)
+            )
+            for _, node in self._metric_outputs()
+        ):
+            yield (
+                "  ",
+                "A metric window outside declared source coverage is null with reason "
+                "incomplete_coverage; unit observation bounds use incomplete_observation.",
+            )
+        if isinstance(shape, CohortSpec):
+            if self.design.administrative_cutoff is not None:
+                yield (
+                    "  ",
+                    "period_value is null with reason administrative_cutoff when its period "
+                    "ends after the cutoff.",
+                )
+            if shape.trajectory.cumulative:
+                yield (
+                    "  ",
+                    "cumulative_value stays null after a missing period contribution, "
+                    "retaining the earliest reason.",
+                )
+        yield from self._empty_windows()
 
     def _columns(self) -> Iterator[Line]:
         design, shape = self.design, self.design.shape
@@ -574,7 +704,7 @@ class _Renderer:
             named.append("treatment")
         elif isinstance(shape, CalendarComparisonSpec):
             columns.append("treatment")
-        named.extend((*design.features, *design.outcomes))
+        named.extend((*design.features, *design.outcomes, *design.eligibility))
         for name in named:
             columns.extend((name, f"{name}__complete", f"{name}__reason"))
         if shape == "cross_section":
