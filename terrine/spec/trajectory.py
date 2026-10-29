@@ -118,9 +118,9 @@ class LifeTable:
     ) -> None:
         if not isinstance(time_to_event, TimeToEvent):
             raise _INVALID.error(reason="wrong_type", field="time_to_event")
-        width = seconds(interval, field="bin")
+        width = seconds(interval, field="interval")
         if width <= 0:
-            raise _INVALID.error(reason="not_positive", field="bin")
+            raise _INVALID.error(reason="not_positive", field="interval")
         if isinstance(group_by, (str, bytes)) or not isinstance(group_by, tuple):
             raise _INVALID.error(reason="wrong_type", field="group_by")
         for name in group_by:

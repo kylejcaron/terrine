@@ -206,7 +206,7 @@ def _time_record(policy: TimeSplit) -> dict[str, Any]:
 def policy_from_record(record: dict[str, Any]) -> TimeSplit | GroupSplit:
     """Restore a versioned split policy through its ordinary input validation."""
     if not isinstance(record, dict):
-        raise _INVALID.error(reason="unknown_record", field="split")
+        raise _INVALID.error(reason="unknown_record", field="record")
     try:
         if (
             record.get("kind") == "group"
@@ -239,13 +239,13 @@ def policy_from_record(record: dict[str, Any]) -> TimeSplit | GroupSplit:
     except TerrineError:
         raise
     except (TypeError, ValueError, OverflowError) as error:
-        raise _INVALID.error(reason="malformed_record", field="split") from error
-    raise _INVALID.error(reason="unknown_record", field="split")
+        raise _INVALID.error(reason="malformed_record", field="record") from error
+    raise _INVALID.error(reason="unknown_record", field="record")
 
 
 def group_bucket(key: str | int, policy: GroupSplit) -> Literal["train", "validation", "test"]:
     if isinstance(key, bool) or not isinstance(key, (str, int)):
-        raise _INVALID.error(reason="unsupported_group_key", field="group")
+        raise _INVALID.error(reason="unsupported_group_key", field="key")
     if not isinstance(policy, GroupSplit):
         raise _INVALID.error(reason="wrong_type", field="policy")
     kind, value = ("str", key) if isinstance(key, str) else ("int", str(key))

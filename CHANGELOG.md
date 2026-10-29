@@ -250,7 +250,14 @@
   `ValueError` or `TypeError`), with context `field` (the parameter name) and
   `reason` (a stable token such as `empty_name`, `wrong_type`, `negative`,
   `not_positive`, `not_positive_integer`, `naive_datetime`, `invalid_date` or
-  `unsupported_value` with `choices`). `terrine.design.invalid` covers
+  `unsupported_value` with `choices`). A refusal raised by a constructor a
+  recipe or convenience function calls names the caller's own parameter
+  (`occurrence`, `period`, `bin`, `start_event`, `end_event`, `state_source`,
+  `periods` in the recipes; `thresholds` and `horizon` in `retention`;
+  `anticipation` in `Sequential`; `complete` in `Events` and `History`), and
+  the record constructors name theirs (`period_seconds`,
+  `anticipation_seconds`, `interval`, `count_thresholds`,
+  `finite_horizon_seconds`). `terrine.design.invalid` covers
   `FixedDate`, `EventAnchor`, `Schedule` (and `Schedule.instants` on an elapsed
   schedule), `AnchorRange`, `Treatment`, `Design`, every expression constructor
   and node, `Trajectory`, `CohortSpec`, `CohortGrouping`, `TimeToEvent`,
@@ -286,7 +293,8 @@
   `terrine.design.invalid` (formerly `terrine.agent.invalid_request`) for a
   design document with unknown fields or wrongly typed values, and
   `terrine.dataset.invalid_split` (formerly `terrine.dataset.invalid_definition`)
-  when a training view's split group is not the unit.
+  when a training view's split group is not the unit or its split record does
+  not restore (`propose_definition`, `validate_definition`, `save_design`).
 
 ## 0.1.0.dev1
 

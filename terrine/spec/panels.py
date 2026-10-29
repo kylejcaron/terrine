@@ -10,7 +10,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
 from terrine._time import utc_instant
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, parameter_names
 from terrine.spec.anchors import EventAnchor
 from terrine.spec.design import Design
 from terrine.spec.state_panel import StatePanel
@@ -199,7 +199,7 @@ class SequentialSpec:
             or not isinstance(self.anticipation_seconds, int)
             or self.anticipation_seconds < 0
         ):
-            raise _INVALID.error(reason="negative", field="anticipation")
+            raise _INVALID.error(reason="negative", field="anticipation_seconds")
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,7 +221,7 @@ class EventPanelSpec:
             or not isinstance(self.period_seconds, int)
             or self.period_seconds <= 0
         ):
-            raise _INVALID.error(reason="not_positive_integer", field="period")
+            raise _INVALID.error(reason="not_positive_integer", field="period_seconds")
         if self.reference_period not in periods:
             raise _INVALID.error(reason="undeclared_name", field="reference_period")
         object.__setattr__(self, "periods", periods)
@@ -309,15 +309,14 @@ def Sequential(
         raise _INVALID.error(reason="wrong_type", field="base")
     if base.treatment is not None:
         raise _CONFLICT.error()
-    return _copy_design(
-        base,
-        SequentialSpec(
+    with parameter_names(anticipation_seconds="anticipation"):
+        spec = SequentialSpec(
             treatment,
             trial_weight,
             seconds(anticipation, field="anticipation"),
             seconds(reference_period, field="reference_period"),
-        ),
-    )
+        )
+    return _copy_design(base, spec)
 
 
 def CalendarPanel(sequential: Design) -> Design:

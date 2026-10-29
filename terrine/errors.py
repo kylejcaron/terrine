@@ -1,7 +1,8 @@
 """Stable coded refusals with immutable, portable structured context."""
 
 import math
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
@@ -74,6 +75,7 @@ class TerrineError(ValueError):
         super().__init__(message)
         self._code = code
         self._context = freeze(context)
+        self._spec: RefusalSpec | None = None
 
     @property
     def code(self) -> str:
@@ -99,4 +101,22 @@ class RefusalSpec:
     template: str
 
     def error(self, **context: Any) -> TerrineError:
-        return TerrineError(self.template.format(**context), code=self.code, context=context)
+        error = TerrineError(self.template.format(**context), code=self.code, context=context)
+        error._spec = self
+        return error
+
+
+@contextmanager
+def parameter_names(**names: str) -> Generator[None]:
+    """Report a refusal raised inside the block under the caller's own parameter names.
+
+    A refusal whose ``field`` is a key of ``names`` is raised again from the same
+    declaration with that field renamed; every other refusal passes through unchanged.
+    """
+    try:
+        yield
+    except TerrineError as error:
+        field = error.context.get("field")
+        if error._spec is None or not isinstance(field, str) or field not in names:
+            raise
+        raise error._spec.error(**{**thaw(error.context), "field": names[field]}) from error

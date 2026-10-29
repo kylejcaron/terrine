@@ -9,6 +9,7 @@ from typing import Any, cast
 import pyarrow as pa
 import pytest
 
+from terrine import recipes
 from terrine.data import BoundCoverage, Budget, Coverage, Events, History, UnitSource
 from terrine.dataset import GroupSplit, TimeSplit
 from terrine.errors import TerrineError
@@ -28,6 +29,7 @@ from terrine.spec import (
     MatchedT0Sample,
     Schedule,
     Sequential,
+    SequentialSpec,
     SketchRequest,
     StateObservations,
     StatePanel,
@@ -44,10 +46,12 @@ from terrine.spec import (
     quantile,
     to_json,
 )
+from terrine.spec.expressions import RetentionMetric
 from terrine.windows import Window
 from tests.fixtures.readme import readme_model
 
 _HISTORY = datetime(2024, 1, 1)
+_INITIATION = Initiation("upgrade", history_start=datetime(2024, 1, 1, tzinfo=UTC))
 _METRIC = agg("orders", window=("-1d", "0s"))
 
 CASES = [
@@ -298,6 +302,89 @@ CASES = [
         "terrine.model.invalid_binding",
         lambda: History("plans", key="", column="plan", changed_at="at"),
         {"reason": "empty_name", "field": "key"},
+    ),
+    # the field names the parameter the caller passed, in the constructor's own order
+    (
+        "terrine.design.invalid",
+        lambda: EventPanelSpec((0, 1), 0, 0),
+        {"reason": "not_positive_integer", "field": "period_seconds"},
+    ),
+    (
+        "terrine.design.invalid",
+        lambda: SequentialSpec(_INITIATION, None, -1),
+        {"reason": "negative", "field": "anticipation_seconds"},
+    ),
+    (
+        "terrine.design.invalid",
+        lambda: LifeTable(TimeToEvent("churn"), 0),
+        {"reason": "not_positive", "field": "interval"},
+    ),
+    (
+        "terrine.design.invalid",
+        lambda: RetentionMetric("visit", "kind", "buy", (2, 1), None),
+        {"reason": "not_increasing", "field": "count_thresholds"},
+    ),
+    (
+        "terrine.design.invalid",
+        lambda: recipes.event_panel(event="purchase", periods=(-1, 0), period=0),
+        {"reason": "not_positive_integer", "field": "period"},
+    ),
+    (
+        "terrine.design.invalid",
+        lambda: recipes.trial_panel(
+            every="7d",
+            start="2025-01-01",
+            end="2025-01-28",
+            treatment=_INITIATION,
+            anticipation="-1d",
+        ),
+        {"reason": "negative", "field": "anticipation"},
+    ),
+    (
+        "terrine.design.invalid",
+        lambda: recipes.life_table(start_event="signup", end_event="churn", bin=0),
+        {"reason": "not_positive", "field": "bin"},
+    ),
+    (
+        "terrine.window.invalid_duration",
+        lambda: LifeTable(TimeToEvent("churn"), "1mo"),
+        {"field": "interval", "value": "1mo"},
+    ),
+    (
+        "terrine.design.invalid",
+        lambda: recipes.ltv(start_event="", metric="spend", period="7d", periods=2),
+        {"reason": "empty_name", "field": "start_event"},
+    ),
+    (
+        "terrine.design.invalid",
+        lambda: recipes.survival(start_event="signup", end_event=""),
+        {"reason": "empty_name", "field": "end_event"},
+    ),
+    (
+        "terrine.state_panel.invalid_state_source",
+        lambda: recipes.state_panel(
+            state_source=cast(Any, None), every="7d", start="2025-01-01", end="2025-01-28"
+        ),
+        {"reason": "wrong_type", "field": "state_source"},
+    ),
+    (
+        "terrine.design.invalid",
+        lambda: recipes.event_sequence(
+            event="", horizon="7d", max_events=3, occurrence=cast(Any, "last")
+        ),
+        {"reason": "empty_name", "field": "event"},
+    ),
+    (
+        "terrine.design.invalid",
+        lambda: recipes.event_panel(
+            event="purchase", periods=(-1, 0), period="1d", occurrence=cast(Any, "last")
+        ),
+        {"reason": "unsupported_value", "field": "occurrence"},
+    ),
+    (
+        "terrine.model.invalid_binding",
+        lambda: Events("orders", time="at", key="id", complete=("2025-01-31", "2025-01-01")),
+        {"reason": "through_before_start", "field": "complete"},
     ),
 ]
 

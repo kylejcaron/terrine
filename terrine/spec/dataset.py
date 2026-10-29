@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from terrine.errors import RefusalSpec, freeze, thaw
+from terrine.errors import RefusalSpec, freeze, parameter_names, thaw
 from terrine.spec.design import Design
 from terrine.spec.io import SCHEMA_VERSION as DESIGN_SCHEMA_VERSION
 from terrine.spec.io import canonical_json as design_json
@@ -132,7 +132,8 @@ class DatasetDefinition:
             if split is not None:
                 from importlib import import_module
 
-                split = import_module("terrine.dataset.splits").policy_from_record(split)
+                with parameter_names(record="split"):
+                    split = import_module("terrine.dataset.splits").policy_from_record(split)
             frame = frame.training_set(
                 label=tuple(view["labels"]),
                 features=tuple(view["features"]),

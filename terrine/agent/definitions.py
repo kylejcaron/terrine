@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 from terrine._time import utc_instant
 from terrine.agent.design_schema import design_schema
 from terrine.dataset.splits import policy_from_record
-from terrine.errors import thaw
+from terrine.errors import TerrineError, parameter_names, thaw
 from terrine.model import Model
 from terrine.spec.anchors import FixedDate
 from terrine.spec.dataset import INVALID_DEFINITION, SCHEMA_VERSION, DatasetDefinition
@@ -82,7 +82,10 @@ def parse_definition(serialized: str, model: Model) -> DatasetDefinition:
         try:
             _VIEW.validate_json(json.dumps(thaw(definition.view)))
             if definition.view["kind"] == "training" and definition.view["split"] is not None:
-                policy_from_record(thaw(definition.view["split"]))
+                with parameter_names(record="split"):
+                    policy_from_record(thaw(definition.view["split"]))
+        except TerrineError:
+            raise
         except (ValueError, OverflowError) as error:
             raise INVALID_DEFINITION.error(
                 reason="use the discovered typed training or scoring view"

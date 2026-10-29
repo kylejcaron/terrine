@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from datetime import date, datetime
 from typing import Literal
 
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, parameter_names
 from terrine.spec import (
     AnchorRange,
     BinnedMetricState,
@@ -47,18 +47,18 @@ _CHOICE = RefusalSpec("terrine.design.invalid", "Design input {field} must be on
 
 
 def _event_anchor(event: str, occurrence: str, n: int | None) -> EventAnchor:
-    choices = ("first", "each", "nth")
-    if occurrence not in choices:
-        raise _CHOICE.error(reason="unsupported_value", field="occurrence", choices=choices)
-    return EventAnchor(event, which=occurrence, n=n)
+    """EventAnchor's own validation order, reported under the recipe's ``occurrence``."""
+    with parameter_names(which="occurrence"):
+        return EventAnchor(event, which=occurrence, n=n)
 
 
-def _entry_anchor(event: str, occurrence: str, n: int | None) -> EventAnchor:
+def _entry_anchor(start_event: str, occurrence: str, n: int | None) -> EventAnchor:
     if occurrence not in ("first", "nth"):
         raise _CHOICE.error(
             reason="single_entry_required", field="occurrence", choices=("first", "nth")
         )
-    return EventAnchor(event, which=occurrence, n=n)
+    with parameter_names(event="start_event"):
+        return EventAnchor(start_event, which=occurrence, n=n)
 
 
 def time_series(
@@ -155,12 +155,13 @@ def event_panel(
         anchor_range=anchor_range,
         gap=gap,
     )
-    return EventPanel(
-        base,
-        periods=periods,
-        period_seconds=seconds(period, field="period"),
-        reference_period=reference_period,
-    )
+    with parameter_names(period_seconds="period"):
+        return EventPanel(
+            base,
+            periods=periods,
+            period_seconds=seconds(period, field="period"),
+            reference_period=reference_period,
+        )
 
 
 def ltv(
@@ -183,10 +184,15 @@ def ltv(
     with Model.from_tables, a tr.sum(column) metric; counts, means and ratios
     are not accepted by this shape.
     """
+    with parameter_names(event="start_event"):
+        anchor = EventAnchor(start_event)
+    trajectory = Trajectory(metric, period, periods, cumulative=True)
+    with parameter_names(origin="start_event"):
+        shape = CohortSpec(start_event, trajectory)
     return Design(
         unit,
-        EventAnchor(start_event),
-        shape=CohortSpec(start_event, Trajectory(metric, period, periods, cumulative=True)),
+        anchor,
+        shape=shape,
         features=features,
         eligibility=eligibility,
         treatment=treatment,
@@ -211,10 +217,13 @@ def survival(
     administrative_cutoff: datetime | None = None,
 ) -> Design:
     """Build TimeToEvent follow-up from a first or nth start event, bounded by coverage/cutoff."""
+    anchor = _entry_anchor(start_event, occurrence, n)
+    with parameter_names(event="end_event"):
+        shape = TimeToEvent(end_event)
     return Design(
         unit,
-        _entry_anchor(start_event, occurrence, n),
-        shape=TimeToEvent(end_event),
+        anchor,
+        shape=shape,
         features=features,
         eligibility=eligibility,
         treatment=treatment,
@@ -244,10 +253,15 @@ def life_table(
     the life table's grouping columns, so nothing else can be declared as a feature.
     """
     groups = {} if group_by is None else dict(group_by)
+    anchor = _entry_anchor(start_event, occurrence, n)
+    with parameter_names(event="end_event"):
+        time_to_event = TimeToEvent(end_event)
+    with parameter_names(interval="bin"):
+        shape = LifeTable(time_to_event, bin, group_by=tuple(groups))
     return Design(
         unit,
-        _entry_anchor(start_event, occurrence, n),
-        shape=LifeTable(TimeToEvent(end_event), bin, group_by=tuple(groups)),
+        anchor,
+        shape=shape,
         features=groups,
         eligibility=eligibility,
         anchor_range=anchor_range,
@@ -279,10 +293,12 @@ def state_panel(
     schedule = Schedule(every, start, end)
     whole_periods = schedule_periods(schedule)
     max_periods = whole_periods if periods is None else periods
+    with parameter_names(state="state_source", max_periods="periods"):
+        shape = StatePanel(state_source, max_periods=max_periods)
     return Design(
         unit,
         schedule,
-        shape=StatePanel(state_source, max_periods=max_periods),
+        shape=shape,
         features=features,
         eligibility=eligibility,
         anchor_range=anchor_range,

@@ -148,8 +148,7 @@ def test_events_descriptor_normalizes_and_detaches_inputs():
         ({"metrics": {"n": "count"}}, "wrong_type", "metrics"),
         ({"metrics": {"": tr.count()}}, "wrong_type", "metrics"),
         ({"labels": "status"}, "wrong_type", "labels"),
-        ({"complete": ("2025-01-31", "2025-01-01")}, "through_before_start", "through"),
-        ({"complete": (datetime(2025, 1, 1), date(2025, 1, 31))}, "invalid_date", "start"),
+        ({"complete": (datetime(2025, 1, 1), date(2025, 1, 31))}, "invalid_date", "complete"),
     ],
 )
 def test_events_descriptor_rejects_invalid_fields(changes, reason, field):

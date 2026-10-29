@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import pyarrow as pa
 
 from terrine.backends.registry import get_engine
-from terrine.errors import RefusalSpec, freeze, thaw
+from terrine.errors import RefusalSpec, freeze, parameter_names, thaw
 from terrine.windows import Window, seconds
 
 if TYPE_CHECKING:
@@ -296,7 +296,8 @@ def _complete(value: tuple[date | str, date | str] | None) -> tuple[date, date] 
         return None
     if isinstance(value, str) or not isinstance(value, Sequence) or len(value) != 2:
         raise _INVALID_BINDING.error(reason="not_a_pair", field="complete")
-    coverage = Coverage(*value)
+    with parameter_names(start="complete", through="complete"):
+        coverage = Coverage(*value)
     return (coverage.start, coverage.through)
 
 

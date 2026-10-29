@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
-from terrine.errors import RefusalSpec
+from terrine.errors import RefusalSpec, parameter_names
 from terrine.windows import Window, seconds
 
 __all__ = [
@@ -150,15 +150,15 @@ class RetentionMetric:
             object.__setattr__(self, field, _name(getattr(self, field), field))
         thresholds = tuple(self.count_thresholds)
         if not thresholds:
-            raise _INVALID.error(reason="empty", field="thresholds")
+            raise _INVALID.error(reason="empty", field="count_thresholds")
         if any(type(value) is not int or not 0 < value < 2**63 for value in thresholds):
-            raise _INVALID.error(reason="not_positive_integer", field="thresholds")
+            raise _INVALID.error(reason="not_positive_integer", field="count_thresholds")
         if tuple(sorted(set(thresholds))) != thresholds:
-            raise _INVALID.error(reason="not_increasing", field="thresholds")
+            raise _INVALID.error(reason="not_increasing", field="count_thresholds")
         object.__setattr__(self, "count_thresholds", thresholds)
         horizon = self.finite_horizon_seconds
         if horizon is not None and (type(horizon) is not int or not 0 < horizon < 2**63):
-            raise _INVALID.error(reason="not_positive", field="horizon")
+            raise _INVALID.error(reason="not_positive", field="finite_horizon_seconds")
 
 
 type JsonScalar = None | bool | int | float | str
@@ -374,13 +374,14 @@ def retention(
     A finite duration measures [t0, t0+horizon); ``open_ended`` ends at the
     source's declared complete-through endpoint. Unknown follow-up stays null.
     """
-    return RetentionMetric(
-        event,
-        label_property,
-        target_event,
-        thresholds,
-        None if horizon == "open_ended" else seconds(horizon, field="horizon"),
-    )
+    with parameter_names(count_thresholds="thresholds", finite_horizon_seconds="horizon"):
+        return RetentionMetric(
+            event,
+            label_property,
+            target_event,
+            thresholds,
+            None if horizon == "open_ended" else seconds(horizon, field="horizon"),
+        )
 
 
 def quantile(

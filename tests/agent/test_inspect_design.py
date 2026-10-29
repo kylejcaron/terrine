@@ -5,6 +5,7 @@ import pytest
 
 from terrine.agent.tools import DatasetTools
 from terrine.data import Coverage, UnitSource
+from terrine.dataset.splits import GroupSplit
 from terrine.model import Model
 from terrine.runtime.saved_plan import ModelReference
 from terrine.spec.io import from_json
@@ -264,29 +265,37 @@ def test_scoring_definition_canonicalizes_eligibility_defaults(tools):
     assert tools.propose_definition(json.dumps(definition)).status == "ok"
 
 
-def test_definition_split_overflow_is_a_coded_refusal(tools):
-    definition = _scoring_record(tools)
-    definition["view"] = {
-        "kind": "training",
-        "features": ["history"],
-        "labels": ["future"],
-        "incomplete_labels": "keep",
-        "split": {
+@pytest.mark.parametrize(
+    "split",
+    [
+        {
             "kind": "time",
             "train_until": "2025-01-15",
             "validation_until": None,
             "embargo_microseconds": 10**30,
             "groups": None,
         },
+        {**GroupSplit().to_record(), "train_fraction": "1.5"},
+    ],
+    ids=["embargo_overflow", "train_fraction_out_of_range"],
+)
+def test_definition_split_refusal_keeps_its_split_code(tools, split):
+    definition = _scoring_record(tools)
+    definition["view"] = {
+        "kind": "training",
+        "features": ["history"],
+        "labels": ["future"],
+        "incomplete_labels": "keep",
+        "split": split,
     }
     for operation in (
         tools.propose_definition,
         tools.validate_definition,
-        lambda value: tools.save_design("overflow", value),
+        lambda value: tools.save_design("split", value),
     ):
         result = operation(json.dumps(definition))
         assert result.status == "refused"
-        assert result.code == "terrine.dataset.invalid_definition"
+        assert result.code == "terrine.dataset.invalid_split"
 
 
 def test_scoring_definition_malformed_eligibility_is_a_coded_refusal(tools):
