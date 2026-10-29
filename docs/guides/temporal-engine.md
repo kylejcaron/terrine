@@ -82,14 +82,17 @@ and date; any other type, timestamps included, refuses with
 `source`, `column`, `dtype`, `supported`).
 
 `where=` is a mapping keyed by `<label>` or `<label>__<op>`; several keys are a
-conjunction. A scalar value means equality and a list means membership;
-`__ne`, `__in`, `__not_in`, `__gt`, `__gte`, `__lt`, `__lte` and
-`__between` (a `(low, high)` pair, inclusive) are the other operators. `__` is
-reserved for that split: a label name containing it refuses at `Events(...)`
-with `reason="reserved_name"`, and a key with an unknown operator, a second
-`__`, the wrong number of values or a non-scalar refuses at the constructor
-with `reason="invalid_filter"` and the `key`. A `where=` label the `Events`
-does not declare, or a ratio operand that is not another non-ratio metric of
+conjunction. A scalar value means equality and a list, tuple or set means
+membership; `__ne`, `__in`, `__not_in`, `__gt`, `__gte`, `__lt`, `__lte` and
+`__between` are the other operators. `__between` takes an ordered `(low, high)`
+list or tuple, both ends included, with `low <= high`; a set, a reversed pair
+or bounds that cannot be compared are refused rather than matching nothing.
+`__` is reserved for that split: a label name containing it refuses at
+`Events(...)` with `reason="reserved_name"`, and a key with an unknown
+operator, a second `__`, the wrong number of values or a non-scalar refuses
+at the constructor with `reason="invalid_filter"` and the `key`. A `where=`
+label the `Events` does not declare, or a ratio operand that is not another
+non-ratio metric of
 the same `Events`, refuses at `from_tables` with
 `terrine.semantic.missing_reference` (context `kind`, `name`, `owner`,
 `available`). Comparing with `None` compiles a null literal whose comparison

@@ -27,7 +27,7 @@ WINDOW = ("-31d", "0s")
 
 
 def create_tables(con) -> None:
-    """Two customers; six January orders; alice's plan history; one account."""
+    """Two customers; six January orders (qty 2 and 10 bound a range); alice's plan history."""
     con.raw_sql(
         "CREATE TABLE customers AS SELECT * FROM (VALUES ('alice'), ('bob')) c(customer_id)"
     )
@@ -37,12 +37,12 @@ def create_tables(con) -> None:
             status::VARCHAR AS status, amount::DOUBLE AS amount, flag::BOOLEAN AS flag,
             qty::INTEGER AS qty, ordered_at::DATE AS day
         FROM (VALUES
-            ('alice', '2025-01-05 00:00:00+00', 'refunded', 30, true, 1),
-            ('alice', '2025-01-10 00:00:00+00', 'paid', 60, false, 2),
-            ('alice', '2025-01-15 00:00:00+00', 'chargeback', 15, true, 3),
-            ('bob', '2025-01-06 00:00:00+00', 'refunded', 80, false, 4),
-            ('bob', '2025-01-12 00:00:00+00', 'paid', 45, true, 5),
-            ('bob', '2025-01-20 00:00:00+00', 'paid', 10, false, 6)
+            ('alice', '2025-01-05 00:00:00+00', 'refunded', 30, true, 2),
+            ('alice', '2025-01-10 00:00:00+00', 'paid', 60, false, 10),
+            ('alice', '2025-01-15 00:00:00+00', 'chargeback', 15, true, 1),
+            ('bob', '2025-01-06 00:00:00+00', 'refunded', 80, false, 11),
+            ('bob', '2025-01-12 00:00:00+00', 'paid', 45, true, 0),
+            ('bob', '2025-01-20 00:00:00+00', 'paid', 10, false, 20)
         ) o(customer_id, ordered_at, status, amount, flag, qty)
     """)
     con.raw_sql("""
@@ -56,8 +56,15 @@ def create_tables(con) -> None:
     """)
 
 
-def orders(**changes) -> Events:
-    return Events("orders", time="ordered_at", key="customer_id", complete=COMPLETE, **changes)
+def orders(**changes: Any) -> Events:
+    arguments: dict[str, Any] = {
+        "table": "orders",
+        "time": "ordered_at",
+        "key": "customer_id",
+        "complete": COMPLETE,
+        **changes,
+    }
+    return Events(arguments.pop("table"), **arguments)
 
 
 def plan(form: str, **changes: Any) -> History:
@@ -157,6 +164,7 @@ def test_where_counts_match_hand_oracles(con):
         "not_equals": ({"status__ne": "refunded"}, 4),
         "gt": ({"amount__gt": 50}, 2),
         "between": ({"amount__between": (10, 50)}, 4),
+        "between_bounds": ({"qty__between": [2, 10]}, 2),
         "conjunction": ({"status": "refunded", "amount__gt": 20}, 2),
     }
     model = Model.from_tables(
@@ -164,7 +172,7 @@ def test_where_counts_match_hand_oracles(con):
         units=UNITS,
         events={
             "orders": orders(
-                labels=("status", "amount"),
+                labels=("status", "amount", "qty"),
                 metrics={name: tr.count(where=where) for name, (where, _) in cases.items()},
             )
         },
@@ -182,7 +190,16 @@ def test_where_counts_match_hand_oracles(con):
 
 @pytest.mark.parametrize(
     ("key", "bad"),
-    [("status__like", "x"), ("amount__between", (1,)), ("status__in", []), ("a__b__gt", 1)],
+    [
+        ("status__like", "x"),
+        ("amount__between", (1,)),
+        ("qty__between", {2, 10}),
+        ("qty__between", (10, 2)),
+        ("qty__between", (None, 2)),
+        ("status__in", []),
+        ("status__in", "refunded"),
+        ("a__b__gt", 1),
+    ],
 )
 def test_filter_grammar_errors_are_coded(key, bad):
     with pytest.raises(TerrineError) as error:

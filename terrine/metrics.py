@@ -47,6 +47,13 @@ def _name(value: object, field: str) -> str:
     return value
 
 
+def _ordered(low: object, high: object) -> bool:
+    try:
+        return bool(low <= high)  # ty: ignore[unsupported-operator]
+    except TypeError:
+        return False
+
+
 def _filter(key: object, value: object) -> Filter:
     if not isinstance(key, str):
         raise _INVALID_ARGUMENT.error(reason="invalid_argument", field="where")
@@ -54,7 +61,12 @@ def _filter(key: object, value: object) -> Filter:
     if not label or "__" in suffix or (separator and suffix not in _OPERATORS):
         raise _INVALID_FILTER.error(reason="invalid_filter", key=key)
     op: _Op = _OPERATORS[suffix] if separator else "in" if isinstance(value, _LISTS) else "equals"
-    if op in {"in", "not_in", "between"}:
+    if op == "between":
+        # A range is an ordered pair: a set has no order and a reversed pair matches nothing.
+        if not isinstance(value, (list, tuple)) or len(value) != 2 or not _ordered(*value):
+            raise _INVALID_FILTER.error(reason="invalid_filter", key=key)
+        values = tuple(value)
+    elif op in {"in", "not_in"}:
         if not isinstance(value, _LISTS):
             raise _INVALID_FILTER.error(reason="invalid_filter", key=key)
         # Sets carry no order; a sorted tuple keeps the catalog and model hash stable.
