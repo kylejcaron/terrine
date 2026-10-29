@@ -2,8 +2,10 @@
 
 ## Start here
 
-- [Your first dataset](first-dataset.md): Model → Design → Frame → Dataset.
-- [Public API](public-api.md): ordinary constructors and focused advanced modules.
+- [Your first dataset](first-dataset.md): DataFrames → Model → Design → Frame;
+  materialize in memory, or bind a file-backed DuckDB to stage a Dataset.
+- [Public API](public-api.md): `Events`, `History`, user-named metric constructors,
+  `Model.to_catalog`, `Design.describe`, values-only exports and advanced modules.
 - [Common feature patterns](common-feature-patterns.md): rolling windows, conditional
   events, eligibility, as-of attributes, recency and Boolean labels.
 - [Dataset capabilities](capabilities.md): metric × shape × backend evidence.
@@ -39,7 +41,8 @@
 - [ML staging](ml-staging.md): training/scoring, leakage-aware splits,
   frozen preprocessing, persisted definitions and Parquet export.
 - [Common-stack interoperability](common-stack-interop.md): Arrow/pandas/Polars.
-- [Library hand-offs](library-handoffs.md): shared preflight and downstream workflows.
+- [Library hand-offs](library-handoffs.md): shared preflight, a catalog-backed
+  grid of trial panels for DoubleML and other downstream workflows.
 - [Orchestrators](orchestrators.md): optional Airflow, Dagster and dbt Core triggers.
 - [Dataset agent tools](dataset-agent-tools.md): permissions, budgets and redaction.
 

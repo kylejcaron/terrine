@@ -136,7 +136,8 @@ def _binding_name(value: object, field: str) -> None:
 def _is_dataframe(value: object, library: str) -> bool:
     """Whether ``value`` is ``library``'s DataFrame, without importing the library."""
     return any(
-        cls.__module__.startswith(f"{library}.") and cls.__name__ == "DataFrame"
+        (cls.__module__ == library or cls.__module__.startswith(f"{library}."))
+        and cls.__name__ == "DataFrame"
         for cls in type(value).__mro__
     )
 

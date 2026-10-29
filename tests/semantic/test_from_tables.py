@@ -622,6 +622,15 @@ def test_missing_duckdb_extra_refuses_before_any_connection(monkeypatch):
     assert "route" in error.value.context
 
 
+def test_pandas_public_module_dataframe_converts_without_its_index(monkeypatch):
+    pd = pytest.importorskip("pandas")
+    customers = pd.DataFrame({"customer_id": ["alice", "bob"]}, index=[10, 20])
+    monkeypatch.setattr(pd.DataFrame, "__module__", "pandas")
+    roster = UnitSource(customers, "customer_id")
+    assert isinstance(roster.table, pa.Table)
+    assert roster.table.to_pydict() == {"customer_id": ["alice", "bob"]}
+
+
 def test_pandas_nullable_and_categorical_columns_survive_conversion():
     pd = pytest.importorskip("pandas")
     customers = pd.DataFrame({"customer_id": pd.Series(["alice", "bob"], dtype="string")})

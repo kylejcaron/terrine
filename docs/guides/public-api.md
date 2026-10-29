@@ -88,6 +88,24 @@ typed descriptors are defined in `terrine.data` and the constructors in
 `Model.from_catalog` for SQL relations, multi-unit sources or explicit Catalog
 names.
 
+`Model.from_tables(units=..., events=..., history=...)` accepts pandas, Polars
+and Arrow tables directly when `con` is omitted, querying them in a private
+in-process DuckDB. Such a model **materializes only**: staging refuses with
+`terrine.dataset.invalid_destination` and
+`reason="file_backed_connection_required"`. For a durable Dataset, load tables
+into a file-backed DuckDB and pass its connection and table names instead.
+
+Call `design.describe(model)` to inspect the rows, schedule, windows and declared
+completeness using metadata only. `Schedule`, `time_series` and `trial_panel`
+accept `"1mo"`/`"1y"` calendar steps and include a calendar-date end; relative
+windows still use elapsed durations with an exclusive end.
+`frame.to_pandas(values_only=True)` and `frame.to_polars(values_only=True)` keep
+identity, role and value columns without completeness/reason columns; incomplete
+values remain null. `frame.training_set(label=...).to_pandas(values_only=True)`
+also drops incomplete-label rows. Leave the flag unset or use Arrow to retain
+observation evidence, and do not combine `values_only=True` with
+`include_observation_metadata=True`.
+
 All three Model binding constructors accept keyword-only
 `allow_unverified: bool = False`. A genuine unregistered Ibis backend refuses
 by default with `terrine.backend.capability_unavailable` (`operation="query"`,

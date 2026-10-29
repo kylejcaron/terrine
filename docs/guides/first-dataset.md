@@ -24,12 +24,19 @@ uv run python examples/first_dataset.py
    queried in a private in-process DuckDB as in the tutorial, or names in an
    Ibis connection passed first (`Model.from_tables(con, ...)`); the two are not
    mixed, and nothing is uploaded. Name the metrics you will reference
-   (`tr.count()`, `tr.sum("amount")`), declare `labels=` for columns you filter
-   or look up, and `history=` for attribute tables. Use `Model.from_catalog` for
-   SQL relations, multi-unit sources and explicit catalog names.
+   (`tr.count()`, `tr.sum("amount")`, `tr.mean("amount")`, `tr.min("amount")`,
+   `tr.max("amount")`, `tr.count_distinct("amount")`, `tr.ratio("spend", "orders")`),
+   declare `labels=` for columns you filter or look up, and bind as-of attribute
+   tables with `tr.History` in `history={...}`. `model.to_catalog()` writes the
+   equivalent catalog YAML. Use `Model.from_catalog` for SQL relations,
+   multi-unit sources and explicit catalog names.
 2. **Design** describes anchors, features, outcomes and eligibility. Start with a
    constructor in `tr.recipes`; it returns an ordinary Design, not a wrapper.
    Names become output columns, with temporal validation on the same expressions.
+   `design.describe(model)` explains rows, windows, completeness and output
+   columns before any source rows are read. Schedules accept calendar steps such
+   as `"1mo"` and include their end date; relative windows remain elapsed and
+   end-exclusive.
 3. **Frame** is a lazy compiled dataset. `Design.build(model)` does not materialize
    source rows. `frame.materialize()` collects a result with roles, column
    completeness, null reasons and provenance; an explicit budget bounds output.

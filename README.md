@@ -53,8 +53,8 @@ model = tr.Model.from_tables(
     )},
 )
 
-# One row per customer on the first of each month: the last 30 days as
-# features, spend in the next 30 days as the target.
+# One row per customer on the first of each month, February through March:
+# the last 30 days as features, spend in the next 30 days as the target.
 design = tr.recipes.time_series(
     every="1mo", start="2025-02-01", end="2025-03-01",
     features={
@@ -63,8 +63,8 @@ design = tr.recipes.time_series(
     },
     outcomes={"spend_next_30d": tr.agg("spend", window=("0s", "30d"))},
 )
-
 print(design.describe(model))
+
 data = design.build(model).to_pandas()
 columns = ["unit", "t0", "orders_30d", "spend_30d", "spend_next_30d", "spend_next_30d__reason"]
 print(data[columns].assign(t0=data["t0"].dt.date).sort_values(["t0", "unit"]).to_string(index=False))
@@ -72,10 +72,28 @@ print(data[columns].assign(t0=data["t0"].dt.date).sort_values(["t0", "unit"]).to
 <!-- --8<-- [end:first-dataset] -->
 
 `describe` explains the rows, windows and declared completeness without querying
-the source tables ([sample summary](docs/guides/design-validation.md#describing-a-design)).
-The selected data columns are:
+the source tables ([sample summary](https://github.com/kylejcaron/terrine/blob/main/docs/guides/design-validation.md#describing-a-design)).
+Running the example prints:
 
 ```text
+One row per customer (table customer, key customer_id) at each snapshot.
+Snapshots: every 1 month from 2025-02-01 through 2025-03-01 (2 dates: 2025-02-01, 2025-03-01), at
+  00:00 UTC.
+Features (before t0):
+  orders_30d: count of orders in [t0 - 30d, t0)
+  spend_30d: sum of orders.amount in [t0 - 30d, t0)
+Outcomes (after t0):
+  spend_next_30d: sum of orders.amount in [t0, t0 + 30d)
+Completeness: orders is declared complete for 2025-01-01 through 2025-03-20 (UTC days).
+  A metric window outside declared source coverage is null with reason incomplete_coverage; unit
+    observation bounds use incomplete_observation.
+Empty complete metric windows (no matching events):
+  orders_30d: 0 (no reason)
+  spend_30d: 0 (no reason)
+  spend_next_30d: 0 (no reason)
+Columns: unit, anchor_id, t0, orders_30d, orders_30d__complete, orders_30d__reason, spend_30d,
+  spend_30d__complete, spend_30d__reason, spend_next_30d, spend_next_30d__complete,
+  spend_next_30d__reason.
  unit         t0  orders_30d  spend_30d  spend_next_30d spend_next_30d__reason
 alice 2025-02-01           2       75.0            25.0                   <NA>
   bob 2025-02-01           1       80.0             0.0                   <NA>
