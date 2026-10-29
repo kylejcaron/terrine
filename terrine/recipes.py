@@ -266,7 +266,8 @@ def state_panel(
     refuses to exceed.
     """
     schedule = Schedule(every, start, end)
-    max_periods = schedule_periods(schedule) if periods is None else periods
+    whole_periods = schedule_periods(schedule)
+    max_periods = whole_periods if periods is None else periods
     return Design(
         unit,
         schedule,

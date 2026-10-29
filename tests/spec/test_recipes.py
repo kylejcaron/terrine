@@ -486,7 +486,8 @@ def test_elapsed_fields_refuse_calendar_units_with_a_route(field, value, build):
     assert error.value.context == {"field": field, "value": value}
 
 
-def test_state_panel_refuses_month_schedules_with_an_elapsed_route():
+@pytest.mark.parametrize("periods", [None, 3])
+def test_state_panel_refuses_month_schedules_with_an_elapsed_route(periods):
     with pytest.raises(TerrineError) as error:
         recipes.state_panel(
             "user",
@@ -494,6 +495,7 @@ def test_state_panel_refuses_month_schedules_with_an_elapsed_route():
             every="1mo",
             start="2025-01-01",
             end="2025-03-01",
+            periods=periods,
             **_SHARED,
         )
     assert error.value.code == "terrine.state_panel.invalid_schedule"

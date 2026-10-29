@@ -57,7 +57,9 @@
   `field` and `value` and whose message routes to `"30d"` or `"4w"`.
   `state_panel(every="1mo")` and a `StatePanel` design on a month schedule
   refuse with `terrine.state_panel.invalid_schedule`
-  (`reason="calendar_months_unsupported"`, context `every`, `route="4w"`); a
+  (`reason="calendar_months_unsupported"`, context `every`, `route="4w"`);
+  the recipe checks the schedule's step and whole periods at construction
+  whether or not `periods` is given; a
   `CalendarComparisonSpec` on a month schedule refuses with
   `terrine.design.invalid_calendar_comparison` (same reason, `every`, `route`),
   because both shapes step by a fixed elapsed width.
