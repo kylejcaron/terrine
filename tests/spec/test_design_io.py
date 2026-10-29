@@ -173,6 +173,23 @@ def test_month_schedule_round_trips_months():
         assert error.value.code == "terrine.design.invalid"
 
 
+def test_calendar_steps_round_trip_at_the_normalized_month_limit():
+    max_months = 10**19 - 1
+    max_years = max_months // 12
+    for every, months in ((f"{max_months}mo", max_months), (f"{max_years}y", 12 * max_years)):
+        design = Design("user", Schedule(every, "2025-01-31", "2025-12-31"))
+        for restored in (from_json(to_json(design)), from_yaml(to_yaml(design))):
+            assert restored == design
+            assert isinstance(restored.anchor, Schedule)
+            assert restored.anchor.months == months
+    for every in (f"{max_years + 1}y", f"{max_months}y"):
+        with pytest.raises(TerrineError) as error:
+            Schedule(every, "2025-01-31", "2025-12-31")
+        assert error.value.code == "terrine.design.invalid"
+        assert error.value.context["reason"] == "out_of_range"
+        assert error.value.context["field"] == "every"
+
+
 def test_design_named_maps_are_detached_and_read_only():
     features = {"visits": agg("sessions", window=("-1d", "0d"))}
     design = Design(unit="user", anchor=FixedDate("2025-03-01"), features=features)

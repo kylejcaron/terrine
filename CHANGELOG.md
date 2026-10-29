@@ -113,6 +113,8 @@
   this arithmetic. Windows and other elapsed fields still require seconds,
   minutes, hours, days or weeks; state and calendar-comparison panels require
   a fixed elapsed cadence.
+  Normalized calendar steps must fit in 19 decimal digits, so accepted year
+  steps remain readable from their serialized month representation.
 - `Frame.to_pandas(values_only=True)` and `to_polars(values_only=True)` retain
   identity, role and structural value columns while dropping completeness,
   reason and bookkeeping columns. Incomplete values remain null.

@@ -163,6 +163,8 @@ class Schedule:
     def __init__(self, every: str | int, start: date | str, end: date | str) -> None:
         if isinstance(every, str) and (match := _CALENDAR_STEP.fullmatch(every)):
             step = int(match[1]) * (12 if match[2] == "y" else 1)
+            if step > 10**19 - 1:
+                raise _INVALID.error(reason="out_of_range", field="every")
             interval, months = None, step
         else:
             step = seconds(every, field="every")
