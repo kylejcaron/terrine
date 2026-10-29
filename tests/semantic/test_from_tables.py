@@ -165,6 +165,7 @@ def test_where_counts_match_hand_oracles(con):
         "gt": ({"amount__gt": 50}, 2),
         "between": ({"amount__between": (10, 50)}, 4),
         "between_bounds": ({"qty__between": [2, 10]}, 2),
+        "between_text_bounds": ({"qty__between": ("2", "10")}, 2),
         "conjunction": ({"status": "refunded", "amount__gt": 20}, 2),
     }
     model = Model.from_tables(
@@ -195,7 +196,7 @@ def test_where_counts_match_hand_oracles(con):
         ("amount__between", (1,)),
         ("qty__between", {2, 10}),
         ("qty__between", (10, 2)),
-        ("qty__between", (None, 2)),
+        ("qty__between", (10.5, 2)),
         ("status__in", []),
         ("status__in", "refunded"),
         ("a__b__gt", 1),

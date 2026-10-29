@@ -85,8 +85,9 @@ and date; any other type, timestamps included, refuses with
 conjunction. A scalar value means equality and a list, tuple or set means
 membership; `__ne`, `__in`, `__not_in`, `__gt`, `__gte`, `__lt`, `__lte` and
 `__between` are the other operators. `__between` takes an ordered `(low, high)`
-list or tuple, both ends included, with `low <= high`; a set, a reversed pair
-or bounds that cannot be compared are refused rather than matching nothing.
+list or tuple, both ends included; a set, or two numbers with `low > high`, is
+refused rather than matching nothing, while text bounds such as `("2", "10")`
+are exact literals ordered by the label's type when the filter compiles.
 `__` is reserved for that split: a label name containing it refuses at
 `Events(...)` with `reason="reserved_name"`, and a key with an unknown
 operator, a second `__`, the wrong number of values or a non-scalar refuses

@@ -47,11 +47,15 @@ def _name(value: object, field: str) -> str:
     return value
 
 
-def _ordered(low: object, high: object) -> bool:
-    try:
-        return bool(low <= high)  # ty: ignore[unsupported-operator]
-    except TypeError:
+def _reversed(low: object, high: object) -> bool:
+    """Whether a numeric pair is reversed; any other pair is ordered by the label's type.
+
+    Text bounds such as ``("2", "10")`` are exact literals for a numeric label and are
+    compared in the catalog filter path, so only two real numbers are checked here.
+    """
+    if isinstance(low, bool) or isinstance(high, bool):
         return False
+    return isinstance(low, (int, float)) and isinstance(high, (int, float)) and low > high
 
 
 def _filter(key: object, value: object) -> Filter:
@@ -63,7 +67,7 @@ def _filter(key: object, value: object) -> Filter:
     op: _Op = _OPERATORS[suffix] if separator else "in" if isinstance(value, _LISTS) else "equals"
     if op == "between":
         # A range is an ordered pair: a set has no order and a reversed pair matches nothing.
-        if not isinstance(value, (list, tuple)) or len(value) != 2 or not _ordered(*value):
+        if not isinstance(value, (list, tuple)) or len(value) != 2 or _reversed(*value):
             raise _INVALID_FILTER.error(reason="invalid_filter", key=key)
         values = tuple(value)
     elif op in {"in", "not_in"}:
