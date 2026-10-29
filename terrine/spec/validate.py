@@ -182,11 +182,9 @@ def _fixed_anchors(design: Design, model: Model) -> tuple[datetime, ...] | None:
             resolved = model.day_boundary(value)
         return (resolved,)
     if isinstance(anchor, Schedule):
-        first = model.day_boundary(anchor.start)
-        span = (anchor.end_exclusive - anchor.start).days * 86400
-        count = (span - 1) // anchor.every + 1
-        if count > 1:
-            return first, first + timedelta(seconds=anchor.every)
+        first = anchor.instant(0, model.day_boundary)
+        if anchor.count(model.day_boundary) > 1:
+            return first, anchor.instant(1, model.day_boundary)
         return (first,)
     return None
 
@@ -573,6 +571,7 @@ def _validate_shape(
     design: Design, model: Model, required: set[str], obligations: list[str]
 ) -> None:
     from terrine.spec.panels import (
+        _INVALID_COMPARISON,
         CalendarComparisonSpec,
         EventPanelSpec,
         PersistentAdoption,
@@ -602,12 +601,11 @@ def _validate_shape(
         ):
             raise _INVALID.error(reason="PersistentAdoption requires a value-bearing label")
         coverage = model.readiness.for_fact(source.name)
-        span_seconds = (design.anchor.end_exclusive - design.anchor.start).days * 86_400
-        last_offset = ((span_seconds - 1) // design.anchor.every) * design.anchor.every
         outcome_horizons, outcome_cutoffs = _outcome_bounds(design, model)
         anticipation = design.shape.anticipation_seconds
         if outcome_horizons or outcome_cutoffs:
-            last_t0 = model.day_boundary(design.anchor.start) + timedelta(seconds=last_offset)
+            schedule = design.anchor
+            last_t0 = schedule.instant(schedule.count(model.day_boundary) - 1, model.day_boundary)
             ends = [last_t0 + timedelta(seconds=horizon) for horizon in outcome_horizons]
             followup_end = max(last_t0, *ends, *outcome_cutoffs) + timedelta(seconds=anticipation)
         else:
@@ -631,8 +629,14 @@ def _validate_shape(
         if not isinstance(design.anchor, EventAnchor):
             raise _INVALID.error(reason="EventPanel requires an EventAnchor")
     elif isinstance(design.shape, CalendarComparisonSpec):
-        if not isinstance(design.anchor, Schedule):
+        schedule = design.anchor
+        if not isinstance(schedule, Schedule):
             raise _INVALID.error(reason="CalendarComparison requires a Schedule anchor")
+        if schedule.every is None:
+            # Reference and anticipation periods are multiples of a fixed step.
+            raise _INVALID_COMPARISON.error(
+                reason="calendar_months_unsupported", every=f"{schedule.months}mo", route="4w"
+            )
         if design.sample is not None:
             raise _INVALID.error(reason="calendar comparisons refuse sampled populations")
         source_name = resolve_selector_source(model, design.shape.cohort.event)
@@ -647,15 +651,12 @@ def _validate_shape(
                 source=source.name,
                 boundary=design.shape.cohort.history_start.isoformat(),
             )
-        schedule = design.anchor
-        span_seconds = (schedule.end_exclusive - schedule.start).days * 86_400
-        last_offset = ((span_seconds - 1) // schedule.every) * schedule.every
         anticipation = max((abs(period) for period in design.shape.anticipation_periods), default=0)
         outcome_horizons, outcome_cutoffs = _outcome_bounds(design, model)
         outcome_window_end = max(outcome_horizons, default=0)
-        last_t0 = model.day_boundary(schedule.start) + timedelta(
-            seconds=last_offset + max(0, max(design.shape.comparison_periods)) * schedule.every
-        )
+        last_t0 = schedule.instant(
+            schedule.count(model.day_boundary) - 1, model.day_boundary
+        ) + timedelta(seconds=max(0, max(design.shape.comparison_periods)) * schedule.every)
         horizon = last_t0 + timedelta(seconds=outcome_window_end)
         if outcome_cutoffs:
             horizon = max(horizon, *outcome_cutoffs)

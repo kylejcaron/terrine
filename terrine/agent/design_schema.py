@@ -63,7 +63,17 @@ def design_schema() -> dict[str, Any]:
             "offset": duration,
         },
         "Schedule": {
-            "every": duration,
+            "every": {
+                **nullable(integer),
+                "description": "Elapsed seconds between anchors; null for a calendar step.",
+            },
+            "months": {
+                **nullable(integer),
+                "description": (
+                    "Calendar months between anchors, each clamped to its month's last day; "
+                    "null for an elapsed step. Exactly one of every and months is set."
+                ),
+            },
             "start": ref("Temporal"),
             "end": {
                 **ref("Temporal"),

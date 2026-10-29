@@ -80,9 +80,14 @@ anchor. Required arguments are `unit`, `every`, `start`, and `end`; dates may
 be calendar dates or ISO date strings, never timestamps. The schedule defines
 the anchors, without a separate period count: `t0` runs from `start` in steps
 of `every` through the `end` day, which is included, so `start == end` is a
-single anchor. Supported options are `features`, `outcomes`, `eligibility`,
-`treatment`, `anchor_range`, and `gap` (default `"0d"`); optional roles and
-filters default to `None`.
+single anchor. `every` is an elapsed duration (`"7d"`, `"4w"`, integral
+seconds) or a calendar step: `"1mo"`, `"3mo"` or `"1y"` (twelve months).
+Calendar anchors are `start` plus `k` months, each clamped to its own month's
+last day and never chained from the previous anchor, so `every="1mo"` from
+`2025-01-31` through `2025-04-30` gives Jan 31, Feb 28, Mar 31 and Apr 30, and
+`every="1y"` from `2024-02-29` gives Feb 28 in 2025 and 2026. Supported
+options are `features`, `outcomes`, `eligibility`, `treatment`, `anchor_range`,
+and `gap` (default `"0d"`); optional roles and filters default to `None`.
 
 ```python
 from terrine import Budget, agg, recipes
@@ -105,6 +110,24 @@ A customer in `customers` with no orders still has a row. In a complete window
 its count and sum are `0`, and its mean is null with reason `no_observations`.
 An incomplete window is null with its completeness reason, including for a
 zero-activity customer; unknown is not zero.
+
+A monthly series is the same call with a calendar step:
+
+```python
+monthly = recipes.time_series(
+    "customer", every="1mo", start="2025-01-31", end="2025-03-31",
+    outcomes=outcomes,
+)
+```
+
+Its anchors are the local midnights of Jan 31, Feb 28 and Mar 31. Only a
+`Schedule` accepts calendar units: windows, `asof(before=)`, `gap=`,
+`EventAnchor(offset=)`, `ltv(period=)`, `life_table(bin=)` and
+`event_sequence(horizon=)` are elapsed time and refuse `"1mo"` with
+`terrine.window.invalid_duration` (context `field`, `value`); use `"30d"` or
+`"4w"`. `state_panel(every="1mo")` refuses with
+`terrine.state_panel.invalid_schedule` (`reason="calendar_months_unsupported"`,
+`route="4w"`) because a state transition's period is a fixed width.
 
 #### Under the hood
 

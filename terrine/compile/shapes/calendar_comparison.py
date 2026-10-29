@@ -76,7 +76,7 @@ def _history_check(
     spec = design.shape
     assert isinstance(spec, CalendarComparisonSpec)
     anchor = design.anchor
-    assert isinstance(anchor, Schedule)
+    assert isinstance(anchor, Schedule) and anchor.every is not None
     selector = spec.cohort
     participants = rows
     if "__terrine_eligible" in rows.columns:
@@ -287,9 +287,10 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
         raise _UNSUPPORTED.error(reason="sampled analysis populations are not admissible")
     _validate_names(design)
     design.validate(model)
-    if not isinstance(design.anchor, Schedule):
-        raise _UNSUPPORTED.error(reason="calendar comparisons require a schedule anchor")
     schedule = design.anchor
+    if not isinstance(schedule, Schedule) or schedule.every is None:
+        raise _UNSUPPORTED.error(reason="calendar comparisons require an elapsed schedule anchor")
+    every = schedule.every
     base = Design(
         design.unit,
         design.anchor,
@@ -315,7 +316,7 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
             cohorts=cohort_units,
             initiations=initiation_times,
             spec=spec,
-            every=schedule.every,
+            every=every,
             outcome_window_end=outcome_window_end,
             outcome_cutoff=outcome_cutoff,
         )
@@ -360,7 +361,7 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
                 cohort_units,
                 anchors,
                 (spec.reference_period, *spec.comparison_periods, *spec.anticipation_periods),
-                schedule.every,
+                every,
             ),
         ),
         expression_timings=compiled.expression_timings,

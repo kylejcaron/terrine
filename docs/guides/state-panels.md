@@ -10,7 +10,10 @@ Required arguments are `unit`, `state_source` (`StateObservations` or
 `BinnedMetricState`), `every`, `start` and `end`. The schedule defines candidate
 origins; `end` is the last scheduled calendar day, included, and the span from
 `start` through `end` must be a whole number of periods (`schedule_not_whole_periods`
-refuses otherwise). `periods` defaults to that count; an explicit value is an
+refuses otherwise). `every` is an elapsed duration: a transition's period is a
+fixed width, so a calendar step such as `"1mo"` refuses with
+`terrine.state_panel.invalid_schedule` (`reason="calendar_months_unsupported"`,
+`route="4w"`). `periods` defaults to that count; an explicit value is an
 upper bound, and a longer schedule refuses rather than truncating. Dates are
 calendar dates or ISO date strings, never timestamps. Supported options are
 `features`, `eligibility`, `anchor_range`, and `gap="0d"`; other optional inputs

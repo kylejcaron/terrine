@@ -13,6 +13,7 @@ from terrine.spec.panels import (
     Initiation,
     MatchedT0Sample,
 )
+from tests.spec.test_validate import model as static_model
 
 
 def base_design():
@@ -73,3 +74,19 @@ def test_calendar_comparison_producer_refuses_sampled_population():
             reference_period=-2,
             comparison_periods=(0,),
         )
+
+
+def test_calendar_comparison_refuses_month_schedules_before_reading_sources():
+    cohort = Initiation("session", history_start=datetime(2024, 1, 1, tzinfo=UTC))
+    design = Design(
+        "user",
+        Schedule("1mo", date(2025, 1, 1), date(2025, 3, 1)),
+        shape=CalendarComparisonSpec(cohort, "never_treated", -2, (0,)),
+    )
+    model = static_model()
+    with pytest.raises(TerrineError) as error:
+        design.validate(model)
+    assert error.value.code == "terrine.design.invalid_calendar_comparison"
+    assert error.value.context["reason"] == "calendar_months_unsupported"
+    assert (error.value.context["every"], error.value.context["route"]) == ("1mo", "4w")
+    assert model.con.calls == []

@@ -27,10 +27,7 @@ class SessionSpec:
     gap_seconds: int
 
     def __init__(self, gap: str | int) -> None:
-        try:
-            normalized = seconds(gap)
-        except (TypeError, ValueError) as exc:
-            raise _INVALID.error(reason="session gap must be integral elapsed seconds") from exc
+        normalized = seconds(gap, field="session_gap")
         if normalized < 0:
             raise _INVALID.error(reason="session gap must be non-negative")
         object.__setattr__(self, "gap_seconds", normalized)
@@ -53,17 +50,9 @@ class FunnelSpec:
             raise _INVALID.error(reason="funnel steps must contain distinct non-empty strings")
         if len(set(normalized)) != len(normalized):
             raise _INVALID.error(reason="funnel steps must be distinct")
-        if within is None:
-            within_seconds = None
-        else:
-            try:
-                within_seconds = seconds(within)
-            except (TypeError, ValueError) as exc:
-                raise _INVALID.error(
-                    reason="funnel within must be integral elapsed seconds"
-                ) from exc
-            if within_seconds <= 0:
-                raise _INVALID.error(reason="funnel within must be positive")
+        within_seconds = None if within is None else seconds(within, field="within")
+        if within_seconds is not None and within_seconds <= 0:
+            raise _INVALID.error(reason="funnel within must be positive")
         object.__setattr__(self, "event_property", event_property)
         object.__setattr__(self, "steps", normalized)
         object.__setattr__(self, "within_seconds", within_seconds)

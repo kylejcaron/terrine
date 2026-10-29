@@ -11,8 +11,11 @@ for both constructors with calendar-date and relative-period assertions.
 `treatment` history declaration (`Initiation` or `PersistentAdoption`). Its rows
 are eligible units at scheduled trial time zero; schedule dates, not a redundant
 period count, define the trials. Dates are calendar dates or ISO date strings,
-never timestamps, and the `end` day is included. For example, the following
-schedule has Jan 1, Jan 15, and Jan 29 anchors.
+never timestamps, and the `end` day is included. `every` is an elapsed duration
+or a calendar step (`"1mo"`, `"1y"`), as for `time_series`: monthly trials from
+`2025-01-31` fall on Jan 31, Feb 28 and Mar 31, and `trial_id` stays
+`schedule:<k>`. For example, the following schedule has Jan 1, Jan 15, and
+Jan 29 anchors.
 
 Supported options are `trial_weight=None`, `anticipation="0d"`,
 `reference_period="-1d"`, `features`, `outcomes`, `eligibility`, `anchor_range`,

@@ -41,6 +41,7 @@ def state_panel_metadata(design: Design, model: Model) -> StatePanelMeta | None:
         }
         levels, ordered, absorbing = state.levels, state.ordered, state.absorbing
         timing = "at_origin"
+    assert schedule.every is not None
     return StatePanelMeta(
         state_source=source,
         levels=levels,
@@ -80,8 +81,7 @@ def panel_metadata(design: Design, model: Model) -> PanelMeta | None:
         assert isinstance(design.anchor, Schedule)
         weight = design.shape.trial_weight
         trial_weight = None if weight is None else TrialWeightMeta(weight.kind, weight.values)
-        span = (design.anchor.end_exclusive - design.anchor.start).days * 86_400
-        count = (span - 1) // design.anchor.every + 1
+        count = design.anchor.count(model.day_boundary)
         trials = tuple(f"schedule:{index}" for index in range(count))
         return PanelMeta(
             "sequential",
@@ -108,6 +108,7 @@ def calendar_comparison_metadata(design: Design, model: Model) -> CalendarCompar
     if not isinstance(design.shape, CalendarComparisonSpec):
         return None
     assert isinstance(design.anchor, Schedule)
+    assert design.anchor.every is not None
     cohort = design.shape.cohort
     return CalendarComparisonMeta(
         design.shape.control,

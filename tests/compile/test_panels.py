@@ -365,6 +365,48 @@ def test_sequential_explicit_trial_weights_are_normalized_on_output(native_input
     }
 
 
+def test_month_schedule_trials_are_the_schedule_count(native_inputs):
+    from terrine import recipes
+    from terrine.spec import TrialWeight
+
+    model = _event_model(native_inputs, Coverage("2025-01-01", "2025-04-30"))
+    design = recipes.trial_panel(
+        "user",
+        every="1mo",
+        start="2025-01-31",
+        end="2025-03-31",
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        trial_weight=TrialWeight("equal_trial"),
+    )
+    assert isinstance(design.anchor, Schedule)
+    count = design.anchor.count(model.day_boundary)
+    assert count == 3
+
+    rows = design.build(model)._compiled.table.to_pyarrow().to_pylist()
+
+    assert {row["trial_id"] for row in rows} == {f"schedule:{k}" for k in range(count)}
+    assert {row["t0"] for row in rows} == set(design.anchor.instants(model.day_boundary))
+    assert {row["trial_weight"] for row in rows} == {1 / count}
+
+
+def test_calendar_comparison_panel_refuses_month_schedules(native_inputs):
+    from terrine.errors import TerrineError
+    from terrine.spec import CalendarComparisonPanel
+
+    model = _event_model(native_inputs)
+    with pytest.raises(TerrineError) as error:
+        CalendarComparisonPanel(
+            Design("user", Schedule("1mo", "2025-01-03", "2025-01-03")),
+            model,
+            cohort=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+            control="never_treated",
+            reference_period=-2,
+            comparison_periods=(0,),
+        )
+    assert error.value.code == "terrine.design.invalid_calendar_comparison"
+    assert error.value.context["reason"] == "calendar_months_unsupported"
+
+
 def test_persistent_adoption_refuses_contradictory_history(native_inputs):
     from terrine.errors import TerrineError
     from terrine.semantic.models import Catalog

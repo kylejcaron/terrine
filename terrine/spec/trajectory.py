@@ -24,7 +24,7 @@ class Trajectory:
     ) -> None:
         if not isinstance(metric, str) or not metric.strip():
             raise ValueError("metric must be a non-empty name")
-        duration = seconds(period)
+        duration = seconds(period, field="period")
         if duration <= 0:
             raise ValueError("period must be positive")
         if isinstance(periods, bool) or not isinstance(periods, int) or periods <= 0:
@@ -61,7 +61,7 @@ class CohortGrouping:
         bucket_origin: datetime,
         statistic: Literal["total", "mean"] = "mean",
     ) -> None:
-        duration = seconds(bucket)
+        duration = seconds(bucket, field="bucket")
         if duration <= 0:
             raise ValueError("bucket must be positive")
         if (
@@ -113,7 +113,7 @@ class LifeTable:
     ) -> None:
         if not isinstance(time_to_event, TimeToEvent):
             raise TypeError("time_to_event must be TimeToEvent")
-        width = seconds(interval)
+        width = seconds(interval, field="bin")
         if width <= 0:
             raise ValueError("interval must be positive")
         if (

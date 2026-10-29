@@ -290,15 +290,24 @@ def _roster_anchors(
     else:
         schedule = design.anchor
         assert isinstance(schedule, Schedule)
-        start = model.day_boundary(schedule.start).astimezone(UTC)
         end = model.day_boundary(schedule.end_exclusive).astimezone(UTC)
-        elapsed_seconds = int((end - start).total_seconds())
-        stop = (elapsed_seconds + schedule.every - 1) // schedule.every
-        sequence = integer_sequence(stop, "ordinal", dialect=expression_dialect(model._engine))
+        count = schedule.count(model.day_boundary)
+        sequence = integer_sequence(count, "ordinal", dialect=expression_dialect(model._engine))
         ordinal = sequence.ordinal
-        # An integer-seconds interval: Ibis lowers `interval * column` on BigQuery
-        # through EXTRACT(SECOND ...), which normalizes 86400 s to zero.
-        t0 = ibis.literal(start) + (ordinal * schedule.every).as_interval("s")
+        if schedule.every is not None:
+            start = model.day_boundary(schedule.start).astimezone(UTC)
+            # An integer-seconds interval: Ibis lowers `interval * column` on BigQuery
+            # through EXTRACT(SECOND ...), which normalizes 86400 s to zero.
+            t0 = ibis.literal(start) + (ordinal * schedule.every).as_interval("s")
+        else:
+            # Month arithmetic clamps differently across engines, so each anchor's
+            # instant is computed here and the ordinal selects it.
+            t0 = ibis.cases(
+                *(
+                    (ordinal == k, ibis.literal(instant.astimezone(UTC)))
+                    for k, instant in enumerate(schedule.instants(model.day_boundary))
+                )
+            )
         base = sequence.select(
             unit=ibis.literal(None, type="string"),
             anchor_id=cast(ir.StringValue, ibis.literal("schedule:")).concat(

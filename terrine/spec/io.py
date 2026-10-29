@@ -118,6 +118,7 @@ def _encode(value: Any) -> Any:
         return {
             "type": "Schedule",
             "every": value.every,
+            "months": value.months,
             "start": _date_value(value.start),
             "end": _date_value(value.end),
         }
@@ -445,11 +446,18 @@ def _node(value: Any) -> Any:
         item = _object(value, {"type", "event", "which", "n", "offset"}, {"type", "event", "which"})
         return EventAnchor(item["event"], item["which"], item.get("n"), item.get("offset", 0))
     if tag == "Schedule":
-        item = _object(value, {"type", "every", "start", "end"})
+        item = _object(value, {"type", "every", "months", "start", "end"})
         start, end = _read_date(item["start"]), _read_date(item["end"])
         if isinstance(start, datetime) or isinstance(end, datetime):
             raise ValueError("Schedule bounds require dates")
-        return Schedule(item["every"], start, end)
+        every, months = item["every"], item["months"]
+        if (every is None) == (months is None):
+            raise ValueError("Schedule requires exactly one of every and months")
+        if months is not None:
+            if type(months) is not int or months <= 0:
+                raise ValueError("Schedule months must be a positive integer")
+            return Schedule(f"{months}mo", start, end)
+        return Schedule(every, start, end)
     if tag == "AnchorRange":
         item = _object(value, {"type", "start", "end"})
         start = None if item["start"] is None else _read_date(item["start"])

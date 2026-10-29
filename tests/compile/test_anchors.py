@@ -169,6 +169,20 @@ def test_schedule_end_is_the_last_scheduled_day_and_roster_lifetime_half_open(na
     assert {row["t0"] for row in single} == {datetime(2025, 1, 2, 5, tzinfo=UTC)}
 
 
+def test_month_schedule_candidate_rows_match_python_instants(native_model):
+    schedule = Schedule("1mo", "2025-01-31", "2025-03-31")
+    result = candidate_rows(Design(unit="user", anchor=schedule), native_model)
+    expected = schedule.instants(native_model.day_boundary)
+    assert expected == tuple(
+        datetime(2025, month, day, 5, tzinfo=UTC) for month, day in ((1, 31), (2, 28), (3, 31))
+    )
+    assert sorted({row["t0"] for row in result}) == sorted(expected)
+    assert {row["anchor_id"] for row in result} == {f"schedule:{k}" for k in range(len(expected))}
+    assert {(row["anchor_id"], row["t0"]) for row in result} == {
+        (f"schedule:{k}", instant) for k, instant in enumerate(expected)
+    }
+
+
 def test_date_anchor_range_end_includes_that_whole_local_day(native_model):
     def anchors(anchor_range):
         design = Design(

@@ -37,6 +37,31 @@
   change only in the gate shape, the pruned state columns and integer count
   literals.
 
+### Public API
+
+- `Schedule`, and so `time_series` and `trial_panel`, accept calendar-month
+  steps: `every="1mo"`, `"3mo"` or `"1y"` (twelve months) alongside elapsed
+  durations. Anchor `k` is `start` advanced by `k * months` and clamped to that
+  month's last day, never chained from the previous anchor, so a monthly
+  schedule from `2025-01-31` through `2025-04-30` lands on Jan 31, Feb 28,
+  Mar 31 and Apr 30, and a yearly one from `2024-02-29` on Feb 28 in 2025 and
+  2026; anchors stop at the last `k` whose day is on or before the inclusive
+  `end`. Each anchor's instant is computed in Python and selected by ordinal in
+  the query, so every backend agrees on end-of-month clamping. `Schedule.count`,
+  `Schedule.instant` and `Schedule.instants` expose the anchor arithmetic to
+  callers that hold the model's day boundary. Calendar units stay a `Schedule`
+  feature: `window=`, `asof(before=)`, `gap=`, `EventAnchor(offset=)`,
+  `ltv(period=)`, `event_panel(period=)`, `life_table(bin=)`,
+  `event_sequence(horizon=, session_gap=)` and the other elapsed fields refuse
+  `"1mo"` with `terrine.window.invalid_duration`, whose context now carries
+  `field` and `value` and whose message routes to `"30d"` or `"4w"`.
+  `state_panel(every="1mo")` and a `StatePanel` design on a month schedule
+  refuse with `terrine.state_panel.invalid_schedule`
+  (`reason="calendar_months_unsupported"`, context `every`, `route="4w"`); a
+  `CalendarComparisonSpec` on a month schedule refuses with
+  `terrine.design.invalid_calendar_comparison` (same reason, `every`, `route`),
+  because both shapes step by a fixed elapsed width.
+
 ### Breaking changes
 
 - Catalog documents are `schema_version: 2` and use unit, time and event
@@ -95,6 +120,16 @@
   when the span is not whole periods; an explicit `periods` is an upper
   bound and a longer schedule refuses with `reason="schedule_exceeds_max_periods"`
   (context `periods`, `max_periods`) rather than truncating.
+- `Schedule.every` is `int | None`: a calendar-month schedule stores `months`
+  and leaves `every` as `None`; exactly one of the two is set. Design
+  documents written by `to_json` and `to_yaml` carry both keys
+  (`"every": 2419200, "months": null` or `"every": null, "months": 1`), a
+  document that sets both, neither, or a non-positive value refuses as
+  invalid node data, and the agent design schema describes both fields.
+  `terrine.windows.seconds` requires the keyword `field` naming the caller's
+  parameter, and `SessionSpec(gap=)` and `FunnelSpec(within=)` let a
+  malformed duration refuse with `terrine.window.invalid_duration` instead of
+  rewrapping it as `terrine.sequence.invalid_spec`.
 - Output row order on DuckDB may differ from anchor order for a small study
   (DuckDB rewrites an as-of join with fewer than 64 estimated cutoffs into a
   hash aggregate). Row order was never part of the dataset contract on any

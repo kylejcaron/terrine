@@ -286,7 +286,12 @@ def Sequential(
         raise _CONFLICT.error()
     return _copy_design(
         base,
-        SequentialSpec(treatment, trial_weight, seconds(anticipation), seconds(reference_period)),
+        SequentialSpec(
+            treatment,
+            trial_weight,
+            seconds(anticipation, field="anticipation"),
+            seconds(reference_period, field="reference_period"),
+        ),
     )
 
 

@@ -18,6 +18,7 @@ from terrine.spec import (
     EventAnchor,
     EventPanel,
     EventSequence,
+    FixedDate,
     Initiation,
     LifeTable,
     PersistentAdoption,
@@ -396,6 +397,109 @@ def test_calendar_ends_include_their_day_and_instants_are_unchanged():
     assert AnchorRange(end=instant).end_exclusive == instant
     assert AnchorRange(start="2025-01-02").end_exclusive is None
     assert AnchorRange(start=instant, end=date(2025, 1, 1)).end == date(2025, 1, 1)
+
+
+def _day(value: date) -> datetime:
+    return datetime(value.year, value.month, value.day, tzinfo=UTC)
+
+
+def _instants(*days: tuple[int, int, int]) -> tuple[datetime, ...]:
+    return tuple(datetime(*day, tzinfo=UTC) for day in days)
+
+
+def test_month_schedule_anchors_are_start_plus_k_months_clamped_to_the_month():
+    assert Schedule("1mo", "2025-01-31", "2025-04-30").instants(_day) == _instants(
+        (2025, 1, 31), (2025, 2, 28), (2025, 3, 31), (2025, 4, 30)
+    )
+    assert Schedule("1y", "2024-02-29", "2026-03-01").instants(_day) == _instants(
+        (2024, 2, 29), (2025, 2, 28), (2026, 2, 28)
+    )
+    assert Schedule("1mo", "2025-01-31", "2025-03-31").count(_day) == 3
+    assert Schedule("1mo", "2025-01-31", "2025-03-30").count(_day) == 2
+    assert Schedule("1mo", "2025-01-31", "2025-01-31").count(_day) == 1
+    assert Schedule("1mo", "2025-01-30", "2025-02-28").count(_day) == 2
+    monthly = Schedule("1mo", "2025-01-01", "2025-02-01")
+    assert (monthly.months, monthly.every) == (1, None)
+    assert Schedule("2y", "2025-01-01", "2025-02-01").months == 24
+
+
+def test_month_count_never_builds_a_date_beyond_the_end_month():
+    schedule = Schedule("1y", "9999-01-01", "9999-12-30")
+    assert schedule.count(_day) == 1
+    assert schedule.instants(_day) == _instants((9999, 1, 1))
+
+
+def test_elapsed_count_is_arithmetic(monkeypatch):
+    import terrine.spec.anchors as anchors
+
+    def never(*args):
+        raise AssertionError("an elapsed schedule does not walk months")
+
+    monkeypatch.setattr(anchors, "add_months", never)
+    schedule = Schedule("1s", "2025-01-01", "2025-12-31")
+    assert (schedule.every, schedule.months) == (1, None)
+    assert schedule.count(_day) == 365 * 86_400
+    assert schedule.instant(schedule.count(_day) - 1, _day) == datetime(
+        2025, 12, 31, 23, 59, 59, tzinfo=UTC
+    )
+    with pytest.raises(TypeError):
+        schedule.instants(_day)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "build"),
+    [
+        ("window", "-1mo", lambda: agg("sessions", window=("-1mo", "0s"))),
+        (
+            "period",
+            "1mo",
+            lambda: recipes.ltv(
+                "user", start_event="purchase", metric="spend", period="1mo", periods=3
+            ),
+        ),
+        ("gap", "1mo", lambda: Design("user", FixedDate("2025-01-01"), gap="1mo")),
+        ("before", "1mo", lambda: asof("region", before="1mo")),
+        ("offset", "1mo", lambda: EventAnchor("purchase", offset="1mo")),
+        (
+            "bin",
+            "1mo",
+            lambda: recipes.life_table("user", start_event="signup", end_event="churn", bin="1mo"),
+        ),
+        (
+            "horizon",
+            "1y",
+            lambda: recipes.event_sequence("user", event="purchase", horizon="1y", max_events=3),
+        ),
+        (
+            "session_gap",
+            "1mo",
+            lambda: recipes.event_sequence(
+                "user", event="purchase", horizon="7d", max_events=3, session_gap="1mo"
+            ),
+        ),
+    ],
+)
+def test_elapsed_fields_refuse_calendar_units_with_a_route(field, value, build):
+    with pytest.raises(TerrineError) as error:
+        build()
+    assert error.value.code == "terrine.window.invalid_duration"
+    assert error.value.context == {"field": field, "value": value}
+
+
+def test_state_panel_refuses_month_schedules_with_an_elapsed_route():
+    with pytest.raises(TerrineError) as error:
+        recipes.state_panel(
+            "user",
+            state_source=StateObservations("health", ("well", "ill")),
+            every="1mo",
+            start="2025-01-01",
+            end="2025-03-01",
+            **_SHARED,
+        )
+    assert error.value.code == "terrine.state_panel.invalid_schedule"
+    assert error.value.context["reason"] == "calendar_months_unsupported"
+    assert error.value.context["every"] == "1mo"
+    assert error.value.context["route"] == "4w"
 
 
 def test_conditional_events_remain_low_level_expression_composition():

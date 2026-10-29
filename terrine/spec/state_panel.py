@@ -181,9 +181,15 @@ def decode_cutpoint(value: object) -> int | float | Decimal:
 def schedule_periods(schedule: Schedule) -> int:
     """Number of whole ``every`` periods from ``start`` through ``end`` under a fixed day boundary.
 
-    The day boundary is a fixed offset, so the span is exact day arithmetic; a span that is not a
-    whole number of periods refuses rather than truncating.
+    A state transition's period is a fixed elapsed width, so a calendar-month schedule
+    refuses with a route to an elapsed step. The day boundary is a fixed offset, so the
+    span is exact day arithmetic; a span that is not a whole number of periods refuses
+    rather than truncating.
     """
+    if schedule.every is None:
+        raise _INVALID_SCHEDULE.error(
+            reason="calendar_months_unsupported", every=f"{schedule.months}mo", route="4w"
+        )
     elapsed = (schedule.end_exclusive - schedule.start).days * 86_400
     if elapsed % schedule.every:
         raise _INVALID_SCHEDULE.error(
@@ -237,6 +243,7 @@ def validate_state_panel(
             raise _INVALID_SOURCE.error(reason="state source lacks the requested unit mapping")
         _required(model, source.name, required)
     else:
+        assert schedule.every is not None
         _expression(
             MetricAgg(panel.state.metric, Window(-schedule.every, 0)),
             "state",

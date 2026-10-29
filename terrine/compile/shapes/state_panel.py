@@ -134,7 +134,7 @@ def _union_state_periods(
     persisted_prefixes: Mapping[tuple[str, str, str, str], ibis.Table] | None,
 ):
     schedule = design.anchor
-    assert isinstance(schedule, Schedule)
+    assert isinstance(schedule, Schedule) and schedule.every is not None
     period = Window(-schedule.every, 0)
     node = MetricAgg(metric, period)
     state_design = _state_panel_design(
@@ -163,7 +163,8 @@ def _binned(
     spec = panel.state
     assert isinstance(spec, BinnedMetricState)
     schedule = design.anchor
-    assert isinstance(schedule, Schedule)
+    assert isinstance(schedule, Schedule) and schedule.every is not None
+    every = schedule.every
     period_relation, period_compiled, endpoint_compiled = _union_state_periods(
         design, model, spec.metric, persisted_prefixes=persisted_prefixes
     )
@@ -194,17 +195,17 @@ def _binned(
         ).left_join(
             response,
             (source.unit == response.unit)
-            & (source.t0 + ibis.interval(seconds=schedule.every) == response.t0),
+            & (source.t0 + ibis.interval(seconds=every) == response.t0),
         )
         from_state, from_complete, from_reason = _state_value(prior, spec)
         to_state, to_complete, to_reason = _state_value(response, spec)
         projection = {name: source[name] for name in source.columns}
         projection.update(
             from_time=source.t0,
-            to_time=source.t0 + ibis.interval(seconds=schedule.every),
-            scheduled_to=source.t0 + ibis.interval(seconds=schedule.every),
+            to_time=source.t0 + ibis.interval(seconds=every),
+            scheduled_to=source.t0 + ibis.interval(seconds=every),
             period_index=(source.anchor_id.re_replace("^schedule:", "").cast("int64")),
-            gap=schedule.every * 1_000_000,
+            gap=every * 1_000_000,
             from_state=from_state,
             to_state=to_state,
             terminal=ibis.literal(False),
@@ -291,7 +292,7 @@ def _binned(
         )
     state_columns = {
         "from_state": ColumnMeta(
-            Window(-schedule.every, 0),
+            Window(-every, 0),
             "prior_state",
             None,
             None,
@@ -299,7 +300,7 @@ def _binned(
             "from_state_reason",
         ),
         "to_state": ColumnMeta(
-            Window(0, schedule.every),
+            Window(0, every),
             "outcome",
             None,
             None,

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import calendar
+import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
@@ -12,6 +15,7 @@ from terrine.windows import seconds
 __all__ = ["FixedDate", "EventAnchor", "Schedule", "AnchorRange"]
 
 _INVALID = RefusalSpec("terrine.design.invalid", "Design validation failed: {reason}.")
+_CALENDAR_STEP = re.compile(r"([0-9]{1,19})(mo|y)", re.ASCII)
 
 
 def _date(value: date | str) -> date:
@@ -73,7 +77,7 @@ class EventAnchor:
                 raise ValueError("nth anchors require a positive one-based n")
         elif n is not None:
             raise ValueError("n is only valid for nth anchors")
-        elapsed = seconds(offset)
+        elapsed = seconds(offset, field="offset")
         if elapsed < 0:
             raise _INVALID.error(reason="event anchor offset must be non-negative")
         object.__setattr__(self, "event", event)
@@ -92,21 +96,46 @@ def _inclusive_end(start: date | None, end: date, reason: str) -> None:
         )
 
 
+def add_months(day: date, months: int) -> date:
+    """Advance ``day`` by whole calendar months, clamping to the target month's last day.
+
+    ``2025-01-31 + 1`` is ``2025-02-28``, ``+ 2`` is ``2025-03-31``; ``2024-02-29 + 12`` is
+    ``2025-02-28``. The target month must stay within the calendar's year range.
+    """
+    index = day.year * 12 + day.month - 1 + months
+    year, month = divmod(index, 12)
+    month += 1
+    return date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class Schedule:
-    """Calendar anchors every ``every`` from ``start`` through ``end``, both days included."""
+    """Anchors every ``every`` from ``start`` through ``end``, both days included.
 
-    every: int
+    ``every`` is an elapsed duration (``"7d"``, ``"4w"``, integral seconds) or a calendar step
+    (``"1mo"``, ``"3mo"``, ``"1y"``); exactly one of ``every`` and ``months`` is set. Calendar
+    anchors are ``start + k * months``, each clamped to its own month's last day, never chained
+    from the previous anchor.
+    """
+
+    every: int | None
+    months: int | None
     start: date
     end: date
 
     def __init__(self, every: str | int, start: date | str, end: date | str) -> None:
-        interval = seconds(every)
-        if interval <= 0:
+        if isinstance(every, str) and (match := _CALENDAR_STEP.fullmatch(every)):
+            step = int(match[1]) * (12 if match[2] == "y" else 1)
+            interval, months = None, step
+        else:
+            step = seconds(every, field="every")
+            interval, months = step, None
+        if step <= 0:
             raise ValueError("schedule interval must be positive")
         start_date, end_date = _date(start), _date(end)
         _inclusive_end(start_date, end_date, "schedule_end_before_start")
         object.__setattr__(self, "every", interval)
+        object.__setattr__(self, "months", months)
         object.__setattr__(self, "start", start_date)
         object.__setattr__(self, "end", end_date)
 
@@ -114,6 +143,33 @@ class Schedule:
     def end_exclusive(self) -> date:
         """The day after the last scheduled day; anchors satisfy ``t0 < day(end_exclusive)``."""
         return self.end + timedelta(days=1)
+
+    def count(self, day_boundary: Callable[[date], datetime]) -> int:
+        """Number of anchors: arithmetic for an elapsed step, one clamp check for months.
+
+        A month schedule bounds ``k`` by the year-month difference and checks the clamped
+        day once, so no date beyond ``end``'s month is constructed.
+        """
+        if self.months is None:
+            assert self.every is not None
+            span = day_boundary(self.end_exclusive) - day_boundary(self.start)
+            return (int(span.total_seconds()) + self.every - 1) // self.every
+        whole_months = (self.end.year - self.start.year) * 12 + self.end.month - self.start.month
+        last = whole_months // self.months
+        return last + 1 if add_months(self.start, last * self.months) <= self.end else last
+
+    def instant(self, k: int, day_boundary: Callable[[date], datetime]) -> datetime:
+        """t0 of anchor ``k``: ``start + k * every`` seconds, or local midnight of its month."""
+        if self.months is None:
+            assert self.every is not None
+            return day_boundary(self.start) + timedelta(seconds=k * self.every)
+        return day_boundary(add_months(self.start, k * self.months))
+
+    def instants(self, day_boundary: Callable[[date], datetime]) -> tuple[datetime, ...]:
+        """Every t0 of a calendar-month schedule in order; an elapsed schedule is arithmetic."""
+        if self.months is None:
+            raise TypeError("instants enumerate calendar-month schedules only")
+        return tuple(self.instant(k, day_boundary) for k in range(self.count(day_boundary)))
 
 
 @dataclass(frozen=True, slots=True, init=False)

@@ -408,6 +408,22 @@ def test_state_panel_rejects_schedule_over_explicit_period_cap(panel_model):
     assert (error.value.context["periods"], error.value.context["max_periods"]) == (3, 2)
 
 
+def test_state_panel_validation_refuses_month_schedules(panel_model):
+    design = Design(
+        "user",
+        Schedule("1y", "2025-01-03", "2025-01-03"),
+        shape=StatePanel(
+            BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
+            max_periods=2,
+        ),
+    )
+    with pytest.raises(TerrineError) as error:
+        design.validate(panel_model)
+    assert error.value.code == "terrine.state_panel.invalid_schedule"
+    assert error.value.context["reason"] == "calendar_months_unsupported"
+    assert (error.value.context["every"], error.value.context["route"]) == ("12mo", "4w")
+
+
 @pytest.mark.parametrize(
     "budget",
     [

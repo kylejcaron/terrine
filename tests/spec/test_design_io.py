@@ -140,13 +140,35 @@ def test_predicate_outcome_round_trips_json():
 
 def test_schedule_uses_positive_elapsed_cadence_and_ordered_dates():
     schedule = Schedule(every="1w", start="2025-01-06", end="2025-02-02")
-    assert schedule.every == 7 * 86400
+    assert (schedule.every, schedule.months) == (7 * 86400, None)
     assert schedule.end == date(2025, 2, 2)
     assert Schedule(every="1d", start="2025-01-06", end="2025-01-06").end == date(2025, 1, 6)
-    with pytest.raises(ValueError):
-        Schedule(every="0d", start="2025-01-06", end="2025-02-02")
+    for every in ("0d", "0mo", "0y"):
+        with pytest.raises(ValueError):
+            Schedule(every=every, start="2025-01-06", end="2025-02-02")
     with pytest.raises(ValueError):
         Schedule(every="1d", start="2025-01-07", end="2025-01-06")
+
+
+def test_month_schedule_round_trips_months():
+    design = Design("user", Schedule("3mo", "2025-01-31", "2025-12-31"))
+    for restored in (from_json(to_json(design)), from_yaml(to_yaml(design))):
+        assert isinstance(restored.anchor, Schedule)
+        assert (restored.anchor.months, restored.anchor.every) == (3, None)
+        assert restored.spec_hash == design.spec_hash
+    document = json.loads(to_json(design))
+    anchor = document["design"]["anchor"]
+    assert (anchor["every"], anchor["months"]) == (None, 3)
+    elapsed = json.loads(to_json(Design("user", Schedule("4w", "2025-01-31", "2025-12-31"))))
+    assert (elapsed["design"]["anchor"]["every"], elapsed["design"]["anchor"]["months"]) == (
+        4 * 7 * 86400,
+        None,
+    )
+    for every, months in ((1, 1), (None, None), (0, None), (None, 0), (None, True)):
+        malformed = {**document, "design": {**document["design"]}}
+        malformed["design"]["anchor"] = {**anchor, "every": every, "months": months}
+        with pytest.raises(ValueError):
+            from_json(json.dumps(malformed))
 
 
 def test_design_named_maps_are_detached_and_read_only():

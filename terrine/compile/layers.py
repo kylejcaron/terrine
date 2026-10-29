@@ -210,7 +210,7 @@ def plan_layers(design: Design, model) -> LayerPlan:
         for node in design.shape.baseline_features.values():
             expression(node, baseline_points)
         if isinstance(design.shape.state, BinnedMetricState):
-            assert isinstance(design.anchor, Schedule)
+            assert isinstance(design.anchor, Schedule) and design.anchor.every is not None
             expression(agg(design.shape.state.metric, window=(-design.anchor.every, 0)))
     source_schema = {
         name: {

@@ -497,5 +497,5 @@ Use ordered integral elapsed endpoints with s/m/h/d/w units.
 
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
-| `terrine.window.invalid_duration` | <code>Expected integral elapsed seconds or a signed s/m/h/d/w duration.</code> | None | [terrine/windows.py](../../terrine/windows.py) |
+| `terrine.window.invalid_duration` | <code>{field}={value!r} is not an elapsed duration: use integral seconds or a signed s/m/h/d/w string such as &quot;30d&quot; or &quot;4w&quot;. Calendar months (&quot;1mo&quot;, &quot;1y&quot;) are accepted only by a Schedule&#x27;s every.</code> | `field`, `value` | [terrine/windows.py](../../terrine/windows.py) |
 | `terrine.window.invalid_window` | <code>Window start must precede its exclusive end.</code> | None | [terrine/windows.py](../../terrine/windows.py) |

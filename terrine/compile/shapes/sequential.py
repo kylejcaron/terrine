@@ -48,16 +48,14 @@ def _followup_at(design: Design, model, timestamp):
     return cast(ir.TimestampValue, end) + ibis.interval(seconds=design.shape.anticipation_seconds)
 
 
-def _trial_columns(table, design: Design):
+def _trial_columns(table, design: Design, model):
     assert isinstance(design.shape, SequentialSpec)
     assert isinstance(design.anchor, Schedule)
     table = table.mutate(trial_id=table.anchor_id.cast("string"))
     weight = design.shape.trial_weight
     if weight is None:
         return table
-    schedule = design.anchor
-    span = (schedule.end_exclusive - schedule.start).days * 86_400
-    count = (span - 1) // schedule.every + 1
+    count = design.anchor.count(model.day_boundary)
     trial_ids = tuple(f"schedule:{index}" for index in range(count))
     if weight.kind == "equal_trial":
         values = {trial: 1.0 / count for trial in trial_ids}
@@ -263,7 +261,7 @@ def compile_sequential(
     )
     values = _treatment_rows(design, model, compiled._anchors)
     sample = design.sample
-    table = _trial_columns(_attach_treatment(compiled.table, values), design)
+    table = _trial_columns(_attach_treatment(compiled.table, values), design, model)
     checks = list(compiled._checks)
     checks.append(
         _deferred_refusal(

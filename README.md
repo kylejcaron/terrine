@@ -57,10 +57,10 @@ model = tr.Model.from_tables(
     )},
 )
 
-# One row per customer every 28 days: the last 30 days as features,
-# spend in the next 30 days as the target.
+# One row per customer on the first of each month: the last 30 days as
+# features, spend in the next 30 days as the target.
 design = tr.recipes.time_series(
-    "customer", every="28d", start="2025-02-01", end="2025-03-01",
+    "customer", every="1mo", start="2025-02-01", end="2025-03-01",
     features={
         "orders_30d": tr.agg("orders_count", window=("-30d", "0s")),
         "spend_30d": tr.agg("orders_amount_sum", window=("-30d", "0s")),
@@ -101,8 +101,8 @@ Terrine names metrics after your table and columns: `orders_count`, `orders_amou
 | Idea | In the example |
 | --- | --- |
 | **Unit:** who each row is about, read from a table so nobody silently drops out | `customers.customer_id` |
-| **t0:** the snapshot time of each row | every 28 days from 2025-02-01 through 2025-03-01, both days included |
-| **Windows:** relative to t0, start included, end excluded. Features must end at or before t0; outcomes must start at or after t0 | `("-30d", "0s")` is the 30 days before t0; `("0s", "30d")` is the 30 days after |
+| **t0:** the snapshot time of each row. `every` is an elapsed duration (`"7d"`, `"4w"`) or a calendar step (`"1mo"`, `"3mo"`, `"1y"`); a monthly schedule from the 31st lands on Jan 31, Feb 28, Mar 31 | `every="1mo"`: the first of each month from 2025-02-01 through 2025-03-01, both days included |
+| **Windows:** relative to t0, start included, end excluded. Features must end at or before t0; outcomes must start at or after t0. Windows are elapsed time: `"-1mo"` is refused, use `"-30d"` or `"-4w"` | `("-30d", "0s")` is the 30 days before t0; `("0s", "30d")` is the 30 days after |
 | **Completeness:** the calendar days, inclusive, that you declare fully loaded for each event table (not just the first and last event you happen to have). Windows outside them are unknown, not zero | `complete=("2025-01-01", "2025-03-20")` |
 
 ## Other datasets

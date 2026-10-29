@@ -337,7 +337,7 @@ class FeatureCutoff:
     reference: Literal["row_t0", "panel_start"] = "row_t0"
 
     def __post_init__(self) -> None:
-        value = seconds(self.latest_seconds)
+        value = seconds(self.latest_seconds, field="latest_seconds")
         if value != self.latest_seconds or not isinstance(self.strict, bool):
             raise ValueError("invalid feature cutoff")
         if self.knowledge not in ("recorded_at", "retrospective_effective_time"):

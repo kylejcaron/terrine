@@ -187,7 +187,7 @@ class AttributeAsOf:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "attribute", _name(self.attribute, "attribute"))
-        object.__setattr__(self, "before", seconds(self.before))
+        object.__setattr__(self, "before", seconds(self.before, field="before"))
         if self.relative_to is not None and not isinstance(self.relative_to, EventTime):
             raise TypeError("relative_to must be EventTime or None")
 
@@ -362,7 +362,7 @@ def retention(
         label_property,
         target_event,
         thresholds,
-        None if horizon == "open_ended" else seconds(horizon),
+        None if horizon == "open_ended" else seconds(horizon, field="horizon"),
     )
 
 
@@ -404,7 +404,7 @@ def asof(
     before: str | int,
     relative_to: EventTime | None = None,
 ) -> AttributeAsOf:
-    return AttributeAsOf(attribute, seconds(before), relative_to)
+    return AttributeAsOf(attribute, seconds(before, field="before"), relative_to)
 
 
 def event_time(

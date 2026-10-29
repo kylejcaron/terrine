@@ -65,7 +65,11 @@ def time_series(
     anchor_range: AnchorRange | None = None,
     gap: str | int = "0d",
 ) -> Design:
-    """Build a Design on a calendar-date Schedule whose ``end`` day is included."""
+    """Build a Design on a calendar-date Schedule whose ``end`` day is included.
+
+    ``every`` is an elapsed duration (``"7d"``, ``"4w"``) or a calendar step (``"1mo"``,
+    ``"3mo"``, ``"1y"``) whose anchors clamp to each month's last day.
+    """
     return Design(
         unit,
         Schedule(every, start, end),
@@ -94,7 +98,10 @@ def trial_panel(
     anchor_range: AnchorRange | None = None,
     gap: str | int = "0d",
 ) -> Design:
-    """Apply Sequential to a Design whose Schedule dates define the trials."""
+    """Apply Sequential to a Design whose Schedule dates define the trials.
+
+    ``every`` is an elapsed duration or a calendar step, as for ``time_series``.
+    """
     base = Design(
         unit,
         Schedule(every, start, end),
@@ -141,7 +148,7 @@ def event_panel(
     return EventPanel(
         base,
         periods=periods,
-        period_seconds=seconds(period),
+        period_seconds=seconds(period, field="period"),
         reference_period=reference_period,
     )
 
@@ -253,8 +260,10 @@ def state_panel(
 ) -> Design:
     """Build a Schedule Design with a StatePanel over the whole periods from start through end.
 
-    ``periods`` defaults to the schedule's own period count; an explicit value is an upper
-    bound that validation refuses to exceed.
+    ``every`` is an elapsed duration: a state transition's period is a fixed width, so a
+    calendar step refuses with a route to its elapsed equivalent. ``periods`` defaults to
+    the schedule's own period count; an explicit value is an upper bound that validation
+    refuses to exceed.
     """
     schedule = Schedule(every, start, end)
     max_periods = schedule_periods(schedule) if periods is None else periods
@@ -290,7 +299,7 @@ def event_sequence(
         EventAnchor(event, which=occurrence, n=n),
         shape=EventSequence(
             event,
-            Window(0, horizon),
+            Window(0, seconds(horizon, field="horizon")),
             max_events=max_events,
             sessions=None if session_gap is None else SessionSpec(session_gap),
         ),

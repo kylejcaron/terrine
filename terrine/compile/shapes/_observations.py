@@ -76,7 +76,7 @@ def _period_design(
 
 def _points(design: Design, model: Model, state: StateObservations):
     schedule = design.anchor
-    assert isinstance(schedule, Schedule)
+    assert isinstance(schedule, Schedule) and schedule.every is not None
     candidates = [
         (source, source.properties[state.property])
         for source in model.sources.values()
@@ -221,7 +221,7 @@ def compile_observed_state_panel(
     state = panel.state
     assert isinstance(state, StateObservations)
     schedule = design.anchor
-    assert isinstance(schedule, Schedule)
+    assert isinstance(schedule, Schedule) and schedule.every is not None
     coverage, points, grid_points, precision, checks = _points(design, model, state)
     bounds, bounds_anchors = _bounds_relation(design, model)
     point_bounds = points.left_join(bounds, points.unit == bounds.unit)

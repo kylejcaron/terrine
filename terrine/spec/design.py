@@ -91,7 +91,7 @@ class Treatment:
         if not isinstance(known_at_t0, bool):
             raise TypeError("known_at_t0 must be a boolean")
         object.__setattr__(self, "attribute", attribute)
-        object.__setattr__(self, "at", seconds(at))
+        object.__setattr__(self, "at", seconds(at, field="at"))
         object.__setattr__(self, "known_at_t0", known_at_t0)
 
 
@@ -183,7 +183,7 @@ class Design:
             from terrine.spec.panels import _CONFLICT
 
             raise _CONFLICT.error()
-        gap_seconds = seconds(gap)
+        gap_seconds = seconds(gap, field="gap")
         if gap_seconds < 0:
             raise ValueError("gap must be non-negative")
         object.__setattr__(self, "unit", unit)
