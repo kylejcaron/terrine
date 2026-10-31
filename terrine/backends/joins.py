@@ -9,8 +9,14 @@ import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
 from terrine.backends.dialect import current_dialect
+from terrine.errors import RefusalSpec
 
 __all__ = ["asof_join", "has_native_asof", "null_safe_equal", "union_unit_keys"]
+
+_INCOMPATIBLE_UNIT_KEYS = RefusalSpec(
+    "terrine.compile.incompatible_unit_keys",
+    "Temporal lookup unit key types {left_type} and {right_type} are incompatible. {route}",
+)
 
 
 def has_native_asof(*values: ibis.Value) -> bool:
@@ -19,7 +25,7 @@ def has_native_asof(*values: ibis.Value) -> bool:
 
 
 def union_unit_keys(left: ir.Value, right: ir.Value) -> tuple[ir.Value, ir.Value]:
-    """Align timeline key nullability and losslessly promote integer widths."""
+    """Align nullable unit keys, widening integers or refusing unequal types."""
     left_type = left.type().copy(nullable=True)
     right_type = right.type().copy(nullable=True)
     if left_type.is_integer() and right_type.is_integer():
@@ -41,6 +47,12 @@ def union_unit_keys(left: ir.Value, right: ir.Value) -> tuple[ir.Value, ir.Value
                 dt.Decimal(20, 0),
             )
         left_type = right_type = common
+    if left_type != right_type:
+        raise _INCOMPATIBLE_UNIT_KEYS.error(
+            left_type=str(left_type),
+            right_type=str(right_type),
+            route="Align the source key types before building the dataset.",
+        )
     return left.cast(left_type), right.cast(right_type)
 
 

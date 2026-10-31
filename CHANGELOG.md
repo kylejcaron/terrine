@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- Temporal union/window lookups refuse incompatible unit-key types with
+  `terrine.compile.incompatible_unit_keys` and a route to align source key types,
+  instead of exposing internal set-operation errors.
+
 ### Performance
 
 - PostgreSQL prefix and first-occurrence lookups use set-based union/window
