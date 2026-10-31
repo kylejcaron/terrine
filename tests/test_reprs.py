@@ -23,6 +23,48 @@ def test_model_and_frame_reprs_name_contents_without_addresses():
     assert "columns=" in frame_repr
 
 
+def test_training_frame_repr_reflects_selected_features_and_outcomes():
+    frame = readme_design().build(readme_model())
+    training = frame.training_set(
+        label="spend_next_30d",
+        features=("spend_30d",),
+    )
+
+    result = repr(training)
+    assert "spend_30d" in result
+    assert "orders_30d" not in result
+    assert "outcomes=('spend_next_30d',)" in result
+
+
+def test_model_repr_separates_event_names_from_event_labels():
+    from datetime import datetime
+
+    model = tr.Model.from_tables(
+        units={"customer": tr.UnitSource(pa.table({"id": ["a"]}), "id")},
+        events={
+            "orders": tr.Events(
+                pa.table(
+                    {
+                        "id": ["a"],
+                        "time": [datetime(2025, 1, 1)],
+                        "channel": ["web"],
+                    }
+                ),
+                time="time",
+                key="id",
+                labels=("channel",),
+                metrics={"orders": tr.count()},
+                complete=("2025-01-01", "2025-01-02"),
+            )
+        },
+    )
+
+    result = repr(model)
+    assert "events=('orders',)" in result
+    assert "history=()" in result
+    assert "channel" not in result.split("history=", 1)[1].split(",", 1)[0]
+
+
 def test_dataset_repr_names_generation_and_column_count_without_addresses():
     from terrine.dataset.reference import Dataset
 

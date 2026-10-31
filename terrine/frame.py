@@ -412,10 +412,11 @@ class Frame:
         object.__setattr__(self, "_winsorizations", ())
 
     def __repr__(self) -> str:
-        roles = self._compiled.roles
+        roles = self.roles
+        columns = self.columns
         return (
             f"Frame(unit={roles.unit!r}, features={roles.features!r}, "
-            f"outcomes={roles.outcomes!r}, columns={len(self._compiled.columns)})"
+            f"outcomes={roles.outcomes!r}, columns={len(columns)})"
         )
 
     def _active_compiled(self, compiled: CompiledStudy | None = None) -> CompiledStudy:

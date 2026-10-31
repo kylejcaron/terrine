@@ -346,9 +346,15 @@ class Model:
         object.__setattr__(self, "day_boundary", _boundary_function(catalog.day_boundary))
 
     def __repr__(self) -> str:
+        events = tuple(name for name, source in self.catalog.sources.items() if source.events)
+        history = tuple(
+            name
+            for name, source in self.catalog.sources.items()
+            if source.properties and not source.events
+        )
         return (
-            f"Model(units={tuple(self.units)!r}, events={tuple(self.event_ids)!r}, "
-            f"history={tuple(self.catalog.properties)!r}, metrics={tuple(self.metrics)!r}, "
+            f"Model(units={tuple(self.units)!r}, events={events!r}, "
+            f"history={history!r}, metrics={tuple(self.metrics)!r}, "
             f"dialect={self.catalog.dialect!r})"
         )
 
