@@ -19,7 +19,7 @@ from terrine.data import BoundCoverage, Coverage, EventMetric, Events, History, 
 from terrine.errors import RefusalSpec
 from terrine.execution._metadata import metadata_operation
 from terrine.execution._native import _ascii_key
-from terrine.semantic.bind import _SCHEMA, _relation, bind_metric, normalize_source
+from terrine.semantic.bind import _KEY_SCHEMA, _SCHEMA, _relation, bind_metric, normalize_source
 from terrine.semantic.io import dump_catalog, load_catalog, validate_catalog
 from terrine.semantic.models import BoundMetric, BoundSource, Catalog, RelationSpec, TableRef
 from terrine.semantic.time import boundary_timezone
@@ -83,6 +83,39 @@ _MISSING_DEPENDENCY = RefusalSpec(
     "tables by name on a connection.",
 )
 _LABEL_DTYPES = ("string", "int", "float", "bool", "date")
+
+
+def _check_key_types(
+    sources: Mapping[str, BoundSource],
+    units: Mapping[str, UnitSource],
+    resolver: Callable[[RelationSpec], Any],
+) -> None:
+    """Require source and roster unit keys to use the same Ibis dtype."""
+    roster_types = {
+        unit_name: resolver(TableRef(kind="table", name=unit.table)).schema()[unit.key]
+        for unit_name, unit in units.items()
+    }
+
+    def check(unit_name: str, source_name: str, relation: RelationSpec, column: str) -> None:
+        if unit_name not in roster_types:
+            return
+        unit_type = roster_types[unit_name]
+        source_type = resolver(relation).schema()[column]
+        if unit_type.copy(nullable=True) != source_type.copy(nullable=True):
+            raise _KEY_SCHEMA.error(
+                field="unit key",
+                unit=unit_name,
+                source=source_name,
+                column=column,
+                unit_type=str(unit_type),
+                source_type=str(source_type),
+            )
+
+    for source_name, source in sources.items():
+        for unit_name, column in source.units.items():
+            check(unit_name, source_name, source.relation, column)
+        for dimension in source.dimensions:
+            check(dimension.unit, dimension.name, dimension.relation, dimension.key)
 
 
 def _label_dtype(dtype: Any, *, source: str, column: str) -> str:
@@ -640,6 +673,7 @@ class Model:
             ):
                 if column is not None and not schema[column].is_timestamp():
                     raise _SCHEMA.error(field="roster timestamp", column=column)
+        _check_key_types(sources, units, resolver)
         for source_name, column in event_ids.items():
             source = sources.get(source_name)
             if source is None:

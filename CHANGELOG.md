@@ -7,6 +7,7 @@
 - Make every package and recipe export discoverable through `dir()`.
 - Require unit-bearing strings for nonzero elapsed durations; preserve integer
   seconds in saved designs and metadata.
+- Require source and unit roster keys to have identical dtypes when binding a model.
 
 ### Performance
 

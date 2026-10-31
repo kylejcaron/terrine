@@ -422,6 +422,7 @@ Correct native semantics or use an admitted staged table.
 | `terrine.semantic.dialect_mismatch` | <code>The model uses SQL dialect {declared!r}, but the connection uses {execution!r}. Set the model dialect to match the connection and use SQL for that dialect.</code> | `declared`, `execution` | [terrine/semantic/sql.py](../../terrine/semantic/sql.py) |
 | `terrine.semantic.missing_reference` | <code>The model does not declare {reference!r}. Add the missing declaration or use a name already declared in the model.</code> | `reference` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
 | `terrine.semantic.missing_reference` | <code>{owner!r} uses {kind} {name!r}, which is not declared; available names are {available!r}. Use one of these names or add the missing {kind} to the model.</code> | `available`, `kind`, `name`, `owner` | [terrine/model.py](../../terrine/model.py) |
+| `terrine.semantic.schema_mismatch` | <code>The {field!r} column {column!r} for unit {unit!r} has type {source_type}, but the unit roster key has type {unit_type}. Use matching key types in the source and roster.</code> | `column`, `field`, `source_type`, `unit`, `unit_type` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
 | `terrine.semantic.schema_mismatch` | <code>The {field!r} column {column!r} is missing or has the wrong type. Choose an existing column with the required type, or correct the table before adding it to the model.</code> | `column`, `field` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
 
 ## sequence

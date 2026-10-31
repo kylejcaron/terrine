@@ -31,6 +31,11 @@ _SCHEMA = RefusalSpec(
     "Choose an existing column with the required type, or correct the table before "
     "adding it to the model.",
 )
+_KEY_SCHEMA = RefusalSpec(
+    "terrine.semantic.schema_mismatch",
+    "The {field!r} column {column!r} for unit {unit!r} has type {source_type}, but the "
+    "unit roster key has type {unit_type}. Use matching key types in the source and roster.",
+)
 _MISSING = RefusalSpec(
     "terrine.semantic.missing_reference",
     "The model does not declare {reference!r}. "

@@ -684,3 +684,83 @@ def test_pandas_nullable_and_categorical_columns_survive_conversion():
     assert rows["last_flag"] == {"alice": None, "bob": True}
     assert rows["last_flag__reason"] == {"alice": "all_values_null", "bob": None}
     assert rows["last_qty"] == {"alice": None, "bob": 4}
+def test_string_unit_key_with_integer_event_key_refuses_at_bind(con):
+    con.create_table(
+        "integer_orders",
+        schema=ibis.schema({"user_id": "int64", "at": "timestamp"}),
+    )
+    with pytest.raises(TerrineError) as error:
+        Model.from_tables(
+            con,
+            units={"user": UnitSource("customers", "customer_id")},
+            events={
+                "orders": Events(
+                    "integer_orders",
+                    time="at",
+                    key="user_id",
+                    metrics={"orders": tr.count()},
+                    complete=COMPLETE,
+                )
+            },
+        )
+    assert error.value.code == "terrine.semantic.schema_mismatch"
+    assert error.value.context == {
+        "field": "unit key",
+        "unit": "user",
+        "source": "orders",
+        "column": "user_id",
+        "unit_type": "string",
+        "source_type": "int64",
+    }
+
+
+def test_integer_key_width_mismatch_in_history_refuses_at_bind(con):
+    con.create_table("int_users", schema=ibis.schema({"user_id": "int32"}))
+    con.create_table(
+        "integer_orders",
+        schema=ibis.schema({"user_id": "int32", "at": "timestamp"}),
+    )
+    con.create_table(
+        "integer_plans",
+        schema=ibis.schema(
+            {
+                "user_id": "int64",
+                "plan": "string",
+                "starts": "timestamp",
+                "ends": "timestamp",
+            }
+        ),
+    )
+    with pytest.raises(TerrineError) as error:
+        Model.from_tables(
+            con,
+            units={"user": UnitSource("int_users", "user_id")},
+            events={
+                "orders": Events(
+                    "integer_orders",
+                    time="at",
+                    key="user_id",
+                    metrics={"orders": tr.count()},
+                    complete=COMPLETE,
+                )
+            },
+            history={
+                "plan": History(
+                    "integer_plans",
+                    key="user_id",
+                    column="plan",
+                    valid_from="starts",
+                    valid_to="ends",
+                    complete=HISTORY_COMPLETE,
+                )
+            },
+        )
+    assert error.value.code == "terrine.semantic.schema_mismatch"
+    assert error.value.context == {
+        "field": "unit key",
+        "unit": "user",
+        "source": "plan",
+        "column": "user_id",
+        "unit_type": "int32",
+        "source_type": "int64",
+    }
