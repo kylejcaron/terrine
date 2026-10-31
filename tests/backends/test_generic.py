@@ -455,3 +455,33 @@ def test_cohort_summary_uses_the_passed_policy_scope(monkeypatch):
     cohorts.compile_cohorts(study, grouping=None, value_column="value", dialect="generic")  # ty: ignore[invalid-argument-type]
     assert seen == ["generic"]
     assert policies.current_dialect().name == "duckdb"
+
+
+@pytest.mark.parametrize(
+    "left_type,right_type,expected",
+    [
+        (dt.int16, dt.int32, dt.int32),
+        (dt.int32, dt.int64, dt.int64),
+        (dt.uint16, dt.uint32, dt.uint32),
+        (dt.int8, dt.uint8, dt.int16),
+        (dt.int64, dt.uint32, dt.int64),
+        (dt.uint64, dt.int64, dt.Decimal(20, 0)),
+        (dt.int64, dt.int64, dt.int64),
+        (dt.string, dt.string, dt.string),
+    ],
+)
+@pytest.mark.parametrize("reverse", [False, True])
+def test_union_unit_keys_preserve_integer_domains(left_type, right_type, expected, reverse):
+    from terrine.backends.joins import union_unit_keys
+
+    if reverse:
+        left_type, right_type = right_type, left_type
+    left = ibis.table({"key": left_type.copy(nullable=False)}, name="requests").key
+    right = ibis.table({"key": right_type}, name="states").key
+    normalized = union_unit_keys(left, right)
+    assert tuple(value.type() for value in normalized) == (expected, expected)
+    assert left.type() == left_type.copy(nullable=False)
+    assert right.type() == right_type
+    if expected.is_integer():
+        assert expected.bounds.lower <= min(left_type.bounds.lower, right_type.bounds.lower)
+        assert expected.bounds.upper >= max(left_type.bounds.upper, right_type.bounds.upper)

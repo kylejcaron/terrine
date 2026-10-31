@@ -139,7 +139,7 @@ def test_duckdb_lookup_keys_are_native_for_microsecond_pairs_and_structs_for_nan
         assert caught.value.code == "terrine.temporal.timestamp_order_unsupported"
     with dialect_scope("postgres"):
         point, state = lookup_keys(t.aware, t.naive)
-        assert point.equals(t.aware) and state.equals(t.naive)
+        assert point.type() == state.type() == dt.Timestamp(scale=6)
 
 
 @pytest.mark.parametrize(

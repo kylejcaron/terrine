@@ -307,6 +307,15 @@ microsecond precision. Decimal columns need a declared `numeric(p, s)` with
 `terrine.backend.nonfinite_decimal`. Sums that do not fit the output type refuse
 with `terrine.temporal.exact_overflow`.
 
+Prefix and first-occurrence lookups use set-based union/window evaluation,
+not correlated top-one subqueries. Equal-timestamp ordering retains strict
+prefix cutoffs and the inclusive lower bound of a first-occurrence window;
+duplicate requests keep their multiplicity. Lookup keys use the UTC wall
+clock at native microsecond precision, including naive source timestamps.
+Nullable anchor identities remain null-safe while admitting hash/merge joins.
+Compatible integer unit keys use a lossless common timeline type, including
+different roster and event key widths; output keys retain their original types.
+
 Averages, ratios and float-valued windows match DuckDB within a tight tolerance
 rather than bit for bit. On every backend a float fact enters exact state as
 the decimal value of its shortest round-trip text (`REAL` is widened first;

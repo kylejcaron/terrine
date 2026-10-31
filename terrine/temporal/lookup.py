@@ -11,7 +11,7 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
-from terrine.backends.joins import has_native_asof
+from terrine.backends.joins import has_native_asof, union_unit_keys
 from terrine.backends.numeric import is_exact_type
 from terrine.backends.timestamps import lookup_keys
 
@@ -121,9 +121,10 @@ def lookup_prefix(
             ],
         )
     else:
+        left_unit_key, right_unit_key = union_unit_keys(left[point_unit], right[state_unit])
         states = right.select(
             **{
-                point_unit: right[state_unit],
+                point_unit: right_unit_key,
                 point_time: right[state_time],
                 kind_name: ibis.literal(1).cast("int8"),
                 **{
@@ -134,7 +135,7 @@ def lookup_prefix(
         )
         requests = left.select(
             **{
-                point_unit: left[point_unit],
+                point_unit: left_unit_key,
                 point_time: left[point_time],
                 kind_name: ibis.literal(0).cast("int8"),
                 **{timeline_points[name]: left[name] for name in points.columns},
