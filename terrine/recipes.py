@@ -78,6 +78,24 @@ def time_series(
 
     ``every`` accepts elapsed durations or calendar steps such as ``"1mo"``.
 
+
+    Args:
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        every: Positive duration string (see `terrine.windows`) or calendar step such as "1mo" or
+            "1y".
+        start: First scheduled calendar day, as a date or ISO YYYY-MM-DD string, included.
+        end: Last scheduled calendar day, as a date or ISO YYYY-MM-DD string, included in full.
+        features: Mapping of output names to expressions or predicates; None declares no features.
+        outcomes: Mapping of output names to future expressions or predicates; None declares no
+            outcomes.
+        eligibility: Mapping of rule names to predicates; None applies no eligibility rules.
+        treatment: Treatment declaration; None produces no treatment column.
+        anchor_range: AnchorRange restricting row t0 values; None keeps all generated anchors.
+        gap: Nonnegative duration string (see `terrine.windows`); "0d" leaves no feature-to-t0 gap.
+
+    Returns:
+        An ordinary immutable Design; call describe(model) or build(model) to use it.
+
     Example: tr.recipes.time_series(every="1mo", start="2025-02-01", end="2025-03-01")
     """
     return Design(
@@ -110,7 +128,38 @@ def trial_panel(
 ) -> Design:
     """Build repeated trials at scheduled t0 times with an event or adoption treatment.
 
-    Example: tr.recipes.trial_panel(treatment=initiation, **schedule)
+
+    Args:
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        every: Positive duration string (see `terrine.windows`) or calendar step such as "1mo" or
+            "1y".
+        start: First scheduled calendar day, as a date or ISO YYYY-MM-DD string, included.
+        end: Last scheduled calendar day, as a date or ISO YYYY-MM-DD string, included in full.
+        treatment: Initiation or PersistentAdoption declaration supplying treatment history.
+        trial_weight: TrialWeight declaration; None gives each qualifying trial its ordinary weight.
+        anticipation: Nonnegative duration string (see `terrine.windows`); "0d" excludes no
+            anticipatory time.
+        reference_period: Nonpositive duration string (see `terrine.windows`); "-1d" compares one
+            day before t0.
+        features: Mapping of output names to expressions or predicates; None declares no features.
+        outcomes: Mapping of output names to future expressions or predicates; None declares no
+            outcomes.
+        eligibility: Mapping of rule names to predicates; None applies no eligibility rules.
+        anchor_range: AnchorRange restricting row t0 values; None keeps all generated anchors.
+        gap: Nonnegative duration string (see `terrine.windows`); "0d" leaves no feature-to-t0 gap.
+
+    Returns:
+        An ordinary immutable Design; call describe(model) or build(model) to use it.
+
+    Example:
+        from datetime import datetime, UTC
+
+        tr.recipes.trial_panel(
+            every="1d",
+            start="2025-02-01",
+            end="2025-02-03",
+            treatment=spec.Initiation("orders", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        )
     """
     base = Design(
         unit,
@@ -147,6 +196,26 @@ def event_panel(
 ) -> Design:
     """Build rows at elapsed periods relative to each unit's selected event time.
 
+
+    Args:
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        event: Name of an event declared in the model.
+        periods: Tuple of integer event-relative period indexes to emit.
+        period: Positive elapsed duration string (see `terrine.windows`) defining one period.
+        occurrence: "first", "each" or "nth"; "first" uses the earliest event as the panel origin.
+        n: Positive one-based occurrence index for "nth"; None is required for other rules.
+        reference_period: Integer reference index included in periods; -1 uses the period before the
+            event.
+        features: Mapping of output names to expressions or predicates; None declares no features.
+        outcomes: Mapping of output names to future expressions or predicates; None declares no
+            outcomes.
+        eligibility: Mapping of rule names to predicates; None applies no eligibility rules.
+        anchor_range: AnchorRange restricting row t0 values; None keeps all generated anchors.
+        gap: Nonnegative duration string (see `terrine.windows`); "0d" leaves no feature-to-t0 gap.
+
+    Returns:
+        An ordinary immutable Design; call describe(model) or build(model) to use it.
+
     Example: tr.recipes.event_panel(event="orders", periods=(-1, 0, 1), period="7d")
     """
     base = Design(
@@ -178,6 +247,24 @@ def ltv(
     """Build a cumulative metric trajectory starting at each unit's first origin event.
 
     The metric must be an untransformed sum, and ``period`` must be an elapsed duration.
+
+
+    Args:
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        start_event: Declared event name whose selected occurrence starts follow-up.
+        metric: Name of a metric declared in the model.
+        period: Positive elapsed duration string (see `terrine.windows`) defining one period.
+        periods: Positive integer number of periods to produce.
+        features: Mapping of output names to expressions or predicates; None declares no features.
+        eligibility: Mapping of rule names to predicates; None applies no eligibility rules.
+        treatment: Treatment declaration; None produces no treatment column.
+        anchor_range: AnchorRange restricting row t0 values; None keeps all generated anchors.
+        gap: Nonnegative duration string (see `terrine.windows`); "0d" leaves no feature-to-t0 gap.
+        administrative_cutoff: Timezone-aware datetime ending follow-up; None uses declared
+            completeness.
+
+    Returns:
+        An ordinary immutable Design; call describe(model) or build(model) to use it.
 
     Example: tr.recipes.ltv(start_event="orders", metric="spend", period="30d", periods=2)
     """
@@ -215,6 +302,24 @@ def survival(
 ) -> Design:
     """Build follow-up from a unit's first or nth start event until an end event or cutoff.
 
+
+    Args:
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        start_event: Declared event name whose selected occurrence starts follow-up.
+        end_event: Declared event name whose first occurrence at or after t0 ends follow-up.
+        occurrence: "first" or "nth" start event; "first" begins at the earliest occurrence.
+        n: Positive one-based occurrence index for "nth"; None is required for other rules.
+        features: Mapping of output names to expressions or predicates; None declares no features.
+        eligibility: Mapping of rule names to predicates; None applies no eligibility rules.
+        treatment: Treatment declaration; None produces no treatment column.
+        anchor_range: AnchorRange restricting row t0 values; None keeps all generated anchors.
+        gap: Nonnegative duration string (see `terrine.windows`); "0d" leaves no feature-to-t0 gap.
+        administrative_cutoff: Timezone-aware datetime ending follow-up; None uses declared
+            completeness.
+
+    Returns:
+        An ordinary immutable Design; call describe(model) or build(model) to use it.
+
     Example: tr.recipes.survival(start_event="orders", end_event="orders")
     """
     anchor = _entry_anchor(start_event, occurrence, n)
@@ -247,6 +352,25 @@ def life_table(
     administrative_cutoff: datetime | None = None,
 ) -> Design:
     """Build elapsed-bin risk and censor counts, optionally grouped by named expressions.
+
+
+    Args:
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        start_event: Declared event name whose selected occurrence starts follow-up.
+        end_event: Declared event name whose first occurrence at or after t0 ends follow-up.
+        bin: Positive elapsed duration string (see `terrine.windows`) defining risk-count bins.
+        group_by: Mapping of grouping names to expressions or predicates; None yields an ungrouped
+            life table.
+        occurrence: "first" or "nth" start event; "first" begins at the earliest occurrence.
+        n: Positive one-based occurrence index for "nth"; None is required for other rules.
+        eligibility: Mapping of rule names to predicates; None applies no eligibility rules.
+        anchor_range: AnchorRange restricting row t0 values; None keeps all generated anchors.
+        gap: Nonnegative duration string (see `terrine.windows`); "0d" leaves no feature-to-t0 gap.
+        administrative_cutoff: Timezone-aware datetime ending follow-up; None uses declared
+            completeness.
+
+    Returns:
+        An ordinary immutable Design; call describe(model) or build(model) to use it.
 
     Example: tr.recipes.life_table(start_event="orders", end_event="orders", bin="7d")
     """
@@ -284,7 +408,31 @@ def state_panel(
 
     ``periods`` bounds the schedule's period count and defaults to that count.
 
-    Example: tr.recipes.state_panel(state_source=state, **schedule)
+
+    Args:
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        state_source: StateObservations or BinnedMetricState declaration defining each period's
+            state.
+        every: Positive elapsed duration string (see `terrine.windows`); calendar steps cannot
+            define state periods.
+        start: First scheduled calendar day, as a date or ISO YYYY-MM-DD string, included.
+        end: Last scheduled calendar day, as a date or ISO YYYY-MM-DD string, included in full.
+        periods: Positive integer bound on schedule periods; None uses the whole finite schedule.
+        features: Mapping of output names to expressions or predicates; None declares no features.
+        eligibility: Mapping of rule names to predicates; None applies no eligibility rules.
+        anchor_range: AnchorRange restricting row t0 values; None keeps all generated anchors.
+        gap: Nonnegative duration string (see `terrine.windows`); "0d" leaves no feature-to-t0 gap.
+
+    Returns:
+        An ordinary immutable Design; call describe(model) or build(model) to use it.
+
+    Example:
+        tr.recipes.state_panel(
+            every="7d",
+            start="2025-02-01",
+            end="2025-02-14",
+            state_source=spec.BinnedMetricState("spend", (50,), ("low", "high")),
+        )
     """
     schedule = Schedule(every, start, end)
     whole_periods = schedule_periods(schedule)
@@ -318,6 +466,27 @@ def event_sequence(
     gap: str | Literal[0] = "0d",
 ) -> Design:
     """Build each unit's event sequence over [t0, t0 + horizon), with optional sessions.
+
+
+    Args:
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        event: Name of an event declared in the model.
+        horizon: Positive elapsed duration string (see `terrine.windows`) bounding follow-up after
+            t0.
+        max_events: Positive integer maximum number of events per anchor.
+        occurrence: "first", "each" or "nth"; "first" starts at the earliest event.
+        n: Positive one-based occurrence index for "nth"; None is required for other rules.
+        session_gap: Positive duration string (see `terrine.windows`); None does not group events
+            into sessions.
+        features: Mapping of output names to expressions or predicates; None declares no features.
+        outcomes: Mapping of output names to future expressions or predicates; None declares no
+            outcomes.
+        eligibility: Mapping of rule names to predicates; None applies no eligibility rules.
+        anchor_range: AnchorRange restricting row t0 values; None keeps all generated anchors.
+        gap: Nonnegative duration string (see `terrine.windows`); "0d" leaves no feature-to-t0 gap.
+
+    Returns:
+        An ordinary immutable Design; call describe(model) or build(model) to use it.
 
     Example: tr.recipes.event_sequence(event="orders", horizon="30d", max_events=10)
     """

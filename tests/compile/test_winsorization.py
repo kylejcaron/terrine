@@ -1,4 +1,5 @@
 from decimal import Decimal
+from typing import Any, cast
 
 import ibis
 import pyarrow as pa
@@ -56,7 +57,7 @@ def test_winsorization_refuses_unrepresentable_output_and_unknown_stage():
         bind_winsorization(Winsorization("value", lower="1e38", upper="1e38"), pa.int64())
     assert precision.value.code == "terrine.transform.winsorization_precision_unavailable"
     with pytest.raises(TerrineError) as stage:
-        Winsorization("value", lower="0", upper="1", stage="before_aggregation")
+        Winsorization("value", lower="0", upper="1", stage=cast(Any, "before_aggregation"))
     assert stage.value.code == "terrine.transform.invalid_winsorization"
 
 

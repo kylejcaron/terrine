@@ -123,6 +123,13 @@ def _range_bound(value: date | datetime | str | None, field: str) -> date | date
 class FixedDate:
     """Set t0 to one calendar date or an exact timezone-aware time.
 
+
+    Args:
+        date: Calendar date/ISO date string or timezone-aware datetime/ISO instant string for t0.
+
+    Attributes:
+        date: Calendar date/ISO date string or timezone-aware datetime/ISO instant string for t0.
+
     Example: tr.FixedDate("2025-02-01")
     """
 
@@ -138,6 +145,19 @@ class FixedDate:
 @dataclass(frozen=True, slots=True, init=False)
 class EventAnchor:
     """Set t0 from a unit's first, each or nth event, with an optional elapsed offset.
+
+
+    Args:
+        event: Name of an event declared in the model.
+        occurrence: "first", "each" or "nth"; "first" makes one anchor at the earliest event.
+        n: Positive one-based occurrence index for "nth"; None is required for other rules.
+        offset: Elapsed duration string (see `terrine.windows`); "0s" anchors at the selected event.
+
+    Attributes:
+        event: Name of an event declared in the model.
+        occurrence: "first", "each" or "nth"; "first" makes one anchor at the earliest event.
+        n: Positive one-based occurrence index for "nth"; None is required for other rules.
+        offset: Exact elapsed offset stored as integer seconds.
 
     Example: tr.EventAnchor("orders", occurrence="first")
     """
@@ -203,6 +223,19 @@ class Schedule:
     Elapsed steps use durations; calendar steps such as ``"1mo"`` clamp each date
     independently to its month's last day.
 
+
+    Args:
+        every: Positive duration string (see `terrine.windows`) or calendar step such as "1mo" or
+            "1y".
+        start: First scheduled calendar day, as a date or ISO YYYY-MM-DD string, included.
+        end: Last scheduled calendar day, as a date or ISO YYYY-MM-DD string, included in full.
+
+    Attributes:
+        every: Elapsed step in integer seconds, or None for a calendar schedule.
+        months: Calendar step in whole months, or None for an elapsed schedule.
+        start: First scheduled calendar day, as a date or ISO YYYY-MM-DD string, included.
+        end: Last scheduled calendar day, as a date or ISO YYYY-MM-DD string, included in full.
+
     Example: tr.Schedule("1mo", "2025-02-01", "2025-03-01")
     """
 
@@ -265,6 +298,17 @@ class Schedule:
 @dataclass(frozen=True, slots=True, init=False)
 class AnchorRange:
     """Limit t0 to a time range, including the whole end day when ``end`` is a date.
+
+
+    Args:
+        start: Date, aware datetime or ISO string lower bound, included; None is unbounded.
+        end: Date, aware datetime or ISO string upper bound; dates include the whole day, instants
+            exclude equality; None is unbounded.
+
+    Attributes:
+        start: Date, aware datetime or ISO string lower bound, included; None is unbounded.
+        end: Date, aware datetime or ISO string upper bound; dates include the whole day, instants
+            exclude equality; None is unbounded.
 
     Example: tr.AnchorRange(start="2025-02-01", end="2025-03-01")
     """

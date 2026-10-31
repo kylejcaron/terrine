@@ -117,7 +117,19 @@ def _named_nodes(
 class Treatment:
     """Read a treatment attribute at an elapsed time relative to t0.
 
-    Example: Treatment("plan", at="0s", known_at_t0=True)
+    Args:
+        attribute: Declared static roster attribute, event label or history attribute name.
+        at: Elapsed duration string (see `terrine.windows`); "0d" reads treatment at the t0 cutoff.
+        known_at_t0: Whether to declare treatment known at baseline; False makes no such
+            declaration.
+
+    Attributes:
+        attribute: Declared static roster attribute, event label or history attribute name.
+        at: Treatment cutoff offset stored as exact integer seconds.
+        known_at_t0: Whether to declare treatment known at baseline; False makes no such
+            declaration.
+
+    Example: spec.Treatment("plan", at="0s", known_at_t0=True)
     """
 
     attribute: str
@@ -140,6 +152,39 @@ class Treatment:
 class Design:
     """Describe dataset rows by unit, t0, feature windows and outcome windows.
 
+
+    Args:
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        anchor: FixedDate, EventAnchor or Schedule defining row snapshot times.
+        features: Mapping of output names to expressions or predicates; None declares no features.
+        outcomes: Mapping of output names to future expressions or predicates; None declares no
+            outcomes.
+        eligibility: Mapping of rule names to predicates; None applies no eligibility rules.
+        treatment: Treatment declaration; None produces no treatment column.
+        gap: Nonnegative duration string (see `terrine.windows`); "0d" leaves no feature-to-t0 gap.
+        shape: "cross_section" or a specialized shape declaration; "cross_section" gives one row per
+            anchor.
+        anchor_range: AnchorRange restricting row t0 values; None keeps all generated anchors.
+        sample: MatchedT0Sample for repeated-trial controls; None retains all qualifying units.
+        administrative_cutoff: Timezone-aware datetime ending follow-up; None uses declared
+            completeness.
+
+    Attributes:
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        anchor: FixedDate, EventAnchor or Schedule defining row snapshot times.
+        features: Mapping of output names to expressions or predicates; None declares no features.
+        outcomes: Mapping of output names to future expressions or predicates; None declares no
+            outcomes.
+        eligibility: Mapping of rule names to predicates; None applies no eligibility rules.
+        treatment: Treatment declaration; None produces no treatment column.
+        gap: Minimum feature-to-t0 gap stored as exact integer seconds.
+        shape: "cross_section" or a specialized shape declaration; "cross_section" gives one row per
+            anchor.
+        anchor_range: AnchorRange restricting row t0 values; None keeps all generated anchors.
+        sample: MatchedT0Sample for repeated-trial controls; None retains all qualifying units.
+        administrative_cutoff: Timezone-aware datetime ending follow-up; None uses declared
+            completeness.
+
     Example: tr.Design("customer", tr.FixedDate("2025-02-01"), features=design.features)
     """
 
@@ -151,7 +196,7 @@ class Design:
     treatment: Treatment | None
     gap: int
     shape: (
-        str
+        Literal["cross_section"]
         | StatePanel
         | EventSequence
         | SequentialSpec
@@ -175,7 +220,7 @@ class Design:
         eligibility: Mapping[str, Predicate] | None = None,
         treatment: Treatment | None = None,
         gap: str | Literal[0] = "0d",
-        shape: str
+        shape: Literal["cross_section"]
         | StatePanel
         | EventSequence
         | SequentialSpec
@@ -321,6 +366,13 @@ class Design:
     def validate(self, model: Model) -> None:
         """Check the design's units, names and time windows against a model without reading rows.
 
+
+        Args:
+            model: Model binding the design names to tables, metrics, attributes and completeness.
+
+        Returns:
+            None; invalid declarations raise a coded refusal.
+
         Example: design.validate(model)
         """
         from terrine.spec.validate import validate_design
@@ -333,6 +385,13 @@ class Design:
 
         The summary uses model definitions without compiling or running a query.
 
+
+        Args:
+            model: Model binding the design names to tables, metrics, attributes and completeness.
+
+        Returns:
+            A human-readable summary string; no source rows are queried.
+
         Example: print(design.describe(model))
         """
         from terrine.spec.describe import describe_design
@@ -341,6 +400,13 @@ class Design:
 
     def build(self, model: Model) -> Frame:
         """Build a lazy frame from the design and model without reading event rows.
+
+
+        Args:
+            model: Model binding the design names to tables, metrics, attributes and completeness.
+
+        Returns:
+            A lazy Frame compiled against the model; event rows are not read yet.
 
         Example: design.build(model)
         """
@@ -359,6 +425,16 @@ class Design:
         """Build a feature-only view for every eligible unit at one fixed t0.
 
         An omitted unit is resolved from the model before recording the parent design.
+
+
+        Args:
+            model: Model binding the design names to tables, metrics, attributes and completeness.
+            as_of: Fixed t0 as a calendar date, aware datetime or ISO string.
+            eligibility: Explicit mapping of scoring-rule names to predicates; {} admits all units.
+            features: Tuple of feature names to retain; None selects all design features.
+
+        Returns:
+            A lazy feature-only Frame retaining its parent design identity.
 
         Example: design.snapshot(model, as_of="2025-03-01", eligibility={})
         """

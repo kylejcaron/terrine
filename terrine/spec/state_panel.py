@@ -68,7 +68,19 @@ def _levels(levels: tuple[str, ...]) -> tuple[str, ...]:
 class StateObservations:
     """Describe an event label's observed states without carrying a state between events.
 
-    Example: StateObservations("status", levels=("placed", "paid"))
+    Args:
+        property: Declared event label whose observed values identify states.
+        levels: Tuple of distinct state names in their declared order.
+        ordered: Whether levels have an order; True records the supplied order.
+        absorbing: Tuple of levels that cannot be exited; () declares none.
+
+    Attributes:
+        property: Declared event label whose observed values identify states.
+        levels: Tuple of distinct state names in their declared order.
+        ordered: Whether levels have an order; True records the supplied order.
+        absorbing: Tuple of levels that cannot be exited; () declares none.
+
+    Example: spec.StateObservations("status", levels=("placed", "paid"))
     """
 
     property: str
@@ -95,7 +107,17 @@ class StateObservations:
 class BinnedMetricState:
     """Map a metric's period value to ordered states with right-closed intervals.
 
-    Example: BinnedMetricState("spend", cutpoints=(50,), levels=("low", "high"))
+    Args:
+        metric: Name of a metric declared in the model.
+        cutpoints: Strictly increasing numeric tuple separating the ordered state levels.
+        levels: Tuple of distinct state names in their declared order.
+
+    Attributes:
+        metric: Name of a metric declared in the model.
+        cutpoints: Strictly increasing numeric tuple separating the ordered state levels.
+        levels: Tuple of distinct state names in their declared order.
+
+    Example: spec.BinnedMetricState("spend", cutpoints=(50,), levels=("low", "high"))
     """
 
     metric: str
@@ -124,7 +146,17 @@ class BinnedMetricState:
 class StatePanel:
     """Describe bounded repeated state rows for each unit over a finite schedule.
 
-    Example: StatePanel(BinnedMetricState("spend", (50,), ("low", "high")), periods=28)
+    Args:
+        state: StateObservations or BinnedMetricState defining period state membership.
+        periods: Positive integer number of periods to produce.
+        baseline_features: Mapping of baseline feature names to expressions; None declares none.
+
+    Attributes:
+        state: StateObservations or BinnedMetricState defining period state membership.
+        periods: Positive integer number of periods to produce.
+        baseline_features: Mapping of baseline feature names to expressions; None declares none.
+
+    Example: spec.StatePanel(spec.BinnedMetricState("spend", (50,), ("low", "high")), periods=2)
     """
 
     state: StateObservations | BinnedMetricState

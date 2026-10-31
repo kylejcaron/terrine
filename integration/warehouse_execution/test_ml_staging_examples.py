@@ -4,10 +4,12 @@ import json
 import re
 import subprocess
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
+from terrine.dataset import TimeSplit
 from tests._timing import HANG_GUARD_SECONDS
 
 
@@ -42,10 +44,12 @@ def test_readme_builds_and_reopens_first_dataset(tmp_path, monkeypatch):
     section = source.read_text().split("[start:first-dataset] -->\n", 1)[1]
     code = section.split("```python\n", 1)[1].split("\n```", 1)[0]
     # The guide's optional steps continue the README session.
+    training = source.read_text().split("[start:train-validate] -->\n", 1)[1]
+    training_code = training.split("```python\n", 1)[1].split("\n```", 1)[0]
     guide = source.parent / "docs/guides/first-dataset.md"
     snippets = re.findall(r"```python\n(.*?)\n```", guide.read_text(), re.S)
     namespace = {}
-    exec(compile("\n".join([code, *snippets]), str(source), "exec"), namespace)
+    exec(compile("\n".join([code, training_code, *snippets]), str(source), "exec"), namespace)
     data = namespace["data"].sort_values(["t0", "unit"])
     assert data["t0"].dt.strftime("%Y-%m-%d").tolist() == ["2025-02-01"] * 3 + ["2025-03-01"] * 3
     assert data["unit"].tolist() == ["alice", "bob", "carol"] * 2
@@ -58,3 +62,29 @@ def test_readme_builds_and_reopens_first_dataset(tmp_path, monkeypatch):
     assert namespace["result"].roles.features == ("orders_30d", "spend_30d")
     assert namespace["result"].roles.outcomes == ("spend_next_30d",)
     assert namespace["reopened"].manifest == namespace["dataset"].manifest
+    training_rows = namespace["training"].to_pandas()
+    cutoff = namespace["pd"].Timestamp(namespace["split"].train_until, tz="UTC")
+    assigned_train = training_rows.loc[training_rows["__terrine_split"].eq("train")]
+    assert not assigned_train.empty
+    label_ends = [origin + timedelta(days=30) for origin in assigned_train["t0"].tolist()]
+    assert all(end <= cutoff for end in label_ends)
+    crossing = (
+        namespace["frame"]
+        .training_set(
+            label="spend_next_30d",
+            split=TimeSplit(train_until="2025-03-01", validation_until="2025-04-01"),
+        )
+        .to_pandas()
+    )
+    assert crossing["__terrine_split"].tolist() == ["unassigned"] * 3
+    assert crossing["__terrine_split_reason"].tolist() == ["label_overlap"] * 3
+    assert namespace["modeling"].columns.tolist() == [
+        "unit",
+        "anchor_id",
+        "t0",
+        "orders_30d",
+        "spend_30d",
+        "spend_next_30d",
+        "__terrine_split",
+        "__terrine_split_reason",
+    ]

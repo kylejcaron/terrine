@@ -2,6 +2,7 @@ import subprocess
 import sys
 from datetime import UTC, date, datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -1056,7 +1057,7 @@ def test_approximate_distinct_outcome_contributes_to_panel_followup_horizon(shap
 
 
 def test_unknown_string_shape_is_rejected():
-    design = Design("user", FixedDate(date(2025, 1, 1)), shape="ltv")
+    design = Design("user", FixedDate(date(2025, 1, 1)), shape=cast(Any, "ltv"))
     with pytest.raises(TerrineError) as error:
         design.validate(model())
     assert error.value.code == "terrine.design.invalid"

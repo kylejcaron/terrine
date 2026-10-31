@@ -401,6 +401,11 @@ class Frame:
     Materialization and conversion enforce integrity and output limits; direct ``expr``
     execution bypasses them, and output limits do not bound scans or peak memory.
 
+
+    Args:
+        design: Design describing the rows and expressions to compile.
+        model: Model binding the design names to tables, metrics, attributes and completeness.
+
     Example: design.build(model)
     """
 
@@ -492,7 +497,30 @@ class Frame:
     ) -> Frame:
         """Select features and labels lazily, dropping incomplete labels unless asked to keep them.
 
-        Example: frame.training_set(label="spend_next_30d")
+
+        TimeSplit uses exclusive t0 cutoffs. Label windows crossing a split cutoff are
+        unassigned with __terrine_split_reason="label_overlap", never used to train across the
+        cutoff.
+        Use to_pandas(values_only=True) for modeling after inspecting completeness and splits.
+
+        Args:
+            label: Outcome column name or nonempty tuple of outcome names to use as labels.
+            features: Tuple of feature names to retain; None selects all design features.
+            incomplete_labels: "drop" removes rows with incomplete labels; "keep" retains them with
+                completeness metadata.
+            split: TimeSplit or GroupSplit from terrine.dataset; None assigns no split columns.
+
+        Returns:
+            A lazy Frame with selected labels/features and optional __terrine_split and
+            __terrine_split_reason columns.
+
+        Example:
+            from terrine.dataset import TimeSplit
+
+            frame.training_set(
+                label="spend_next_30d",
+                split=TimeSplit(train_until="2025-03-15", validation_until="2025-04-15"),
+            )
         """
         if self._training_view is not None or self._scoring_view is not None:
             from terrine.spec.dataset import INVALID_VIEW
@@ -666,23 +694,31 @@ class Frame:
     def stage(self, table: str, *, budget: Budget | None = None):
         """Publish a pinned dataset generation on a file-backed DuckDB connection.
 
-        Copy the README tables to a file-backed connection before binding the model:
+        Use a file-backed DuckDB model for publication; in-memory models cannot be staged.
 
-        >>> import ibis
-        >>> con = ibis.duckdb.connect("shop.duckdb")
-        >>> for name in ("customer", "orders"):
-        ...     _ = con.create_table(name, model.con.table(name).to_pyarrow())
-        >>> staged_model = tr.Model.from_catalog(
-        ...     model.catalog, con=con, units=model.units, readiness=model.readiness)
-        >>> staged_frame = design.build(staged_model)
+        Args:
+            table: Destination dataset table name on the model's file-backed DuckDB connection.
+            budget: Budget limiting output and estimated scans; None uses the ordinary default
+                limits.
 
-        Example: staged_frame.stage("customer_spend")
+        Returns:
+            A Dataset pinned to the newly published immutable generation.
+
+        Example: frame.stage("customer_spend")
         """
         stage_frame = import_module("terrine.dataset.reference").stage_frame
         return stage_frame(self, table, budget=budget)
 
     def materialize(self, budget: Budget | None = None) -> MaterializedFrame:
         """Read dataset rows with integrity checks and retain their metadata and completeness.
+
+
+        Args:
+            budget: Budget limiting output and estimated scans; None uses the ordinary default
+                limits.
+
+        Returns:
+            A MaterializedFrame containing Arrow rows, roles, column metadata and provenance.
 
         Example: frame.materialize()
         """
@@ -1089,6 +1125,14 @@ class Frame:
     def to_pyarrow(self, *, budget: Budget | None = None) -> pa.Table:
         """Read dataset rows as Arrow with lossless time, completeness and model metadata.
 
+
+        Args:
+            budget: Budget limiting output and estimated scans; None uses the ordinary default
+                limits.
+
+        Returns:
+            A PyArrow Table preserving completeness, reason columns and portable schema metadata.
+
         Example: frame.to_pyarrow()
         """
         return self.materialize(budget).to_pyarrow()
@@ -1103,6 +1147,18 @@ class Frame:
         """Return a pandas dataframe without observation metadata by default.
 
         ``values_only=True`` also drops completeness and reason columns.
+
+
+        Args:
+            budget: Budget limiting output and estimated scans; None uses the ordinary default
+                limits.
+            include_observation_metadata: Whether to retain observation-bound columns; False omits
+                them.
+            values_only: Whether to omit completeness/reason columns too; False retains them;
+                incompatible with observation metadata.
+
+        Returns:
+            A pandas DataFrame with Arrow-backed dtypes and the requested metadata columns.
 
         Example: frame.to_pandas(values_only=True)
         """
@@ -1127,6 +1183,18 @@ class Frame:
 
         ``values_only=True`` also drops completeness and reason columns.
 
+
+        Args:
+            budget: Budget limiting output and estimated scans; None uses the ordinary default
+                limits.
+            include_observation_metadata: Whether to retain observation-bound columns; False omits
+                them.
+            values_only: Whether to omit completeness/reason columns too; False retains them;
+                incompatible with observation metadata.
+
+        Returns:
+            A Polars DataFrame with the requested values and metadata columns.
+
         Example: frame.to_polars(values_only=True)
         """
         dataframe_view_preflight(
@@ -1142,7 +1210,23 @@ class Frame:
     def cohorts(self, *, grouping: CohortGrouping, value_column: str) -> CohortTable:
         """Group a trajectory frame's values by units' origin-time buckets.
 
-        Example: ltv_frame.cohorts(grouping=grouping, value_column="cumulative_value")
+
+        Args:
+            grouping: CohortGrouping defining elapsed origin-time buckets and the summary statistic.
+            value_column: "period_value" or, for a cumulative trajectory, "cumulative_value".
+
+        Returns:
+            A lazy CohortTable that can be materialized or converted to a dataframe.
+
+        Example:
+            from datetime import datetime, UTC
+
+            tr.recipes.ltv(start_event="orders", metric="spend", period="7d", periods=2).build(
+                model
+            ).cohorts(
+                grouping=spec.CohortGrouping("30d", datetime(2025, 1, 1, tzinfo=UTC)),
+                value_column="cumulative_value",
+            )
         """
         if not isinstance(self._design.shape, CohortSpec):
             raise _INVALID_COHORTS.error(reason="requires_trajectory", field="frame")

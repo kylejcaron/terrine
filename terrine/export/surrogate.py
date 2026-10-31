@@ -28,7 +28,18 @@ _SURROGATE_METADATA_KEY = b"terrine.surrogate_arrow.v1"
 class ArrowSurrogate:
     """Return selected Arrow values with unit identity, completeness and portable metadata.
 
-    Example: exports.to_surrogate_arrow(data, features=feature_names, outcomes=outcome_names)
+    Args:
+        data: PyArrow Table containing selected values and unit identities.
+        metadata: Mapping of portable metadata describing the selected Arrow values.
+
+    Attributes:
+        data: PyArrow Table containing selected values and unit identities.
+        metadata: Mapping of portable metadata describing the selected Arrow values.
+
+    Example:
+        tr.export.to_surrogate_arrow(
+            frame.materialize(), features=("spend_30d",), outcomes=("spend_next_30d",)
+        )
     """
 
     data: pa.Table
@@ -76,7 +87,19 @@ def to_surrogate_arrow(
 ) -> ArrowSurrogate:
     """Select Arrow training values while retaining unit identity and completeness evidence.
 
-    Example: exports.to_surrogate_arrow(data, features=feature_names, outcomes=outcome_names)
+    Args:
+        data: MaterializedFrame carrying checked roles, column metadata, completeness and
+            provenance.
+        features: Tuple of feature column names to export.
+        outcomes: Tuple of outcome column names to export.
+
+    Returns:
+        An ArrowSurrogate preserving selected values and their portable metadata.
+
+    Example:
+        tr.export.to_surrogate_arrow(
+            frame.materialize(), features=("spend_30d",), outcomes=("spend_next_30d",)
+        )
     """
     from terrine.data import MaterializedFrame
 

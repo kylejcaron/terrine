@@ -19,6 +19,10 @@ type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, J
 class UnverifiedBackendWarning(UserWarning):
     """Warn that an admitted connection has no verified read or consistency guarantees.
 
+
+    Args:
+        message: Human-readable description of the unverified connection guarantees.
+
     Example: tr.UnverifiedBackendWarning("This connection has unverified read guarantees.")
     """
 
@@ -80,6 +84,13 @@ def thaw(value: Any) -> Any:
 
 class TerrineError(ValueError):
     """Report a refused request with a stable code and immutable structured context.
+
+
+    Args:
+        message: Human-readable refusal explanation; consumers should inspect code and context
+            instead.
+        code: Stable refusal identifier from terrine.errors.REFUSAL_CODES.
+        context: Mapping of structured refusal facts, stored immutably on the exception.
 
     Example: tr.TerrineError("Invalid design.", code="terrine.design.invalid", context={})
     """

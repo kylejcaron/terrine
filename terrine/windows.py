@@ -1,4 +1,14 @@
-"""Exact elapsed-second windows; endpoints are half-open and never bucketed."""
+"""Exact elapsed-second windows; endpoints are half-open and never bucketed.
+
+Public elapsed durations are a signed integer followed by ``s``, ``m``, ``h``,
+``d`` or ``w``: seconds, minutes, hours, days or weeks. An optional ``+`` or
+``-`` sign is accepted. Bare integer ``0`` is allowed; nonzero bare integers,
+decimals (``"1.5d"``), compounds (``"1h30m"``) and unitless strings are refused.
+Offsets are exact integer seconds within the signed 64-bit range.
+
+Calendar months (``"1mo"``) and years (``"1y"``) are accepted only by
+``Schedule.every`` and recipe ``every=`` parameters, not by elapsed windows.
+"""
 
 import re
 from dataclasses import dataclass
@@ -94,7 +104,20 @@ def _duration(value: int, *, weeks: bool = False, signed: bool = False) -> str:
 class Window:
     """Describe an elapsed [start, end) window relative to t0 or a selected event time.
 
-    Example: Window("-30d", "0s")
+
+    Offsets use signed integers with s, m, h, d or w units, or bare 0.
+    Decimals, compound durations and calendar mo/y offsets are refused; calendar
+    steps are accepted only by Schedule.every and recipe every= parameters.
+
+    Args:
+        start: Earlier offset as a duration string (see `terrine.windows`) or bare 0; included.
+        end: Later offset as a duration string (see `terrine.windows`) or bare 0; excluded.
+
+    Attributes:
+        start: Inclusive elapsed offset stored as exact integer seconds.
+        end: Exclusive elapsed offset stored as exact integer seconds.
+
+    Example: from terrine.windows import Window; Window("-30d", "0s")
     """
 
     start: int

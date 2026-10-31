@@ -237,6 +237,14 @@ def _typed_mapping(value: Mapping[str, Any], name: str, value_type: type) -> Map
 class Coverage:
     """Declare the inclusive local calendar days for which events or history are complete.
 
+    Args:
+        start: First complete day, as a date or ISO YYYY-MM-DD string.
+        end: Last complete day, as a date or ISO YYYY-MM-DD string, included in full.
+
+    Attributes:
+        start: First scheduled calendar day, as a date or ISO YYYY-MM-DD string, included.
+        end: Last scheduled calendar day, as a date or ISO YYYY-MM-DD string, included in full.
+
     Example: tr.Coverage("2025-01-01", "2025-03-20")
     """
 
@@ -294,6 +302,31 @@ class BoundCoverage:
 @dataclass(frozen=True, slots=True, init=False, repr=False)
 class UnitSource:
     """Declare a unit's table and key; naive source timestamps are interpreted as UTC instants.
+
+
+    Args:
+        table: Warehouse table name or pandas, Polars or Arrow table supplying the unit roster.
+        key: Column name identifying each unique, non-null unit.
+        entered_at: Entry timestamp column name; None declares no entry bound.
+        exited_at: Exit timestamp column name; None declares no exit bound.
+        observed_from: Observation-start timestamp column name; None declares no lower observation
+            bound.
+        observed_until: Observation-end timestamp column name; None declares no upper observation
+            bound.
+        attributes: Sequence of static attribute column names readable with asof(); () declares
+            none.
+
+    Attributes:
+        table: Warehouse table name or pandas, Polars or Arrow table supplying the unit roster.
+        key: Column name identifying each unique, non-null unit.
+        entered_at: Entry timestamp column name; None declares no entry bound.
+        exited_at: Exit timestamp column name; None declares no exit bound.
+        observed_from: Observation-start timestamp column name; None declares no lower observation
+            bound.
+        observed_until: Observation-end timestamp column name; None declares no upper observation
+            bound.
+        attributes: Sequence of static attribute column names readable with asof(); () declares
+            none.
 
     Example: tr.UnitSource(customers, "customer_id")
     """
@@ -413,7 +446,39 @@ class Ratio:
 class Events:
     """Declare an event table; naive source timestamps are interpreted as UTC instants.
 
-    Example: tr.Events(orders, time="ordered_at", key="customer_id", complete=complete)
+
+    Args:
+        table: Warehouse table name or pandas, Polars or Arrow table supplying events.
+        time: Event timestamp column name; naive timestamps are interpreted as UTC.
+        key: Unit-key column name, with the same dtype as the roster key.
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        metrics: Mapping of names to count/sum/mean/min/max/count_distinct/ratio declarations; None
+            declares none.
+        labels: Sequence of event label column names available to filters and asof(); () declares
+            none.
+        where: Label-name mapping to scalar or membership values restricting this event source; None
+            keeps all rows.
+        complete: Inclusive pair of date objects or ISO calendar-day strings; None leaves coverage
+            undeclared.
+
+    Attributes:
+        table: Warehouse table name or pandas, Polars or Arrow table supplying events.
+        time: Event timestamp column name; naive timestamps are interpreted as UTC.
+        key: Unit-key column name, with the same dtype as the roster key.
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        metrics: Mapping of names to count/sum/mean/min/max/count_distinct/ratio declarations; None
+            declares none.
+        labels: Sequence of event label column names available to filters and asof(); () declares
+            none.
+        where: Label-name mapping to scalar or membership values restricting this event source; None
+            keeps all rows.
+        complete: Inclusive pair of date objects or ISO calendar-day strings; None leaves coverage
+            undeclared.
+
+    Example:
+        tr.Events(
+            orders, time="ordered_at", key="customer_id", complete=("2025-01-01", "2025-03-20")
+        )
     """
 
     table: str | pa.Table
@@ -495,6 +560,33 @@ class Events:
 @dataclass(frozen=True, slots=True, init=False, repr=False)
 class History:
     """Declare attribute history; naive source timestamps are interpreted as UTC instants.
+
+
+    Args:
+        table: Warehouse table name or pandas, Polars or Arrow table supplying attribute versions.
+        key: Unit-key column name, with the same dtype as the roster key.
+        column: Column name holding this attribute value.
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        valid_from: Range-start timestamp column name; None requires changed_at instead.
+        valid_to: Exclusive range-end timestamp column name; None leaves valid_from ranges
+            open-ended.
+        changed_at: Change timestamp column name; None requires valid_from; mutually exclusive with
+            range columns.
+        complete: Inclusive pair of date objects or ISO calendar-day strings; None leaves coverage
+            undeclared.
+
+    Attributes:
+        table: Warehouse table name or pandas, Polars or Arrow table supplying attribute versions.
+        key: Unit-key column name, with the same dtype as the roster key.
+        column: Column name holding this attribute value.
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        valid_from: Range-start timestamp column name; None requires changed_at instead.
+        valid_to: Exclusive range-end timestamp column name; None leaves valid_from ranges
+            open-ended.
+        changed_at: Change timestamp column name; None requires valid_from; mutually exclusive with
+            range columns.
+        complete: Inclusive pair of date objects or ISO calendar-day strings; None leaves coverage
+            undeclared.
 
     Example: tr.History("plans", key="customer_id", column="plan", changed_at="time")
     """
@@ -1326,6 +1418,21 @@ class Provenance:
 @dataclass(frozen=True, slots=True)
 class Budget:
     """Limit output rows, output bytes or estimated scan bytes for a dataset.
+
+
+    Args:
+        max_rows: Nonnegative output-row limit; None imposes no row cap.
+        max_output_bytes: Nonnegative output-byte limit; None imposes no output-byte cap.
+        max_scan_bytes: Nonnegative estimated-scan-byte limit; None imposes no scan cap.
+        strict_scan: Whether unavailable scan estimates refuse a scan limit; True refuses rather
+            than guessing.
+
+    Attributes:
+        max_rows: Nonnegative output-row limit; None imposes no row cap.
+        max_output_bytes: Nonnegative output-byte limit; None imposes no output-byte cap.
+        max_scan_bytes: Nonnegative estimated-scan-byte limit; None imposes no scan cap.
+        strict_scan: Whether unavailable scan estimates refuse a scan limit; True refuses rather
+            than guessing.
 
     Example: tr.Budget(max_rows=1000)
     """

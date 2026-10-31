@@ -104,7 +104,7 @@ def test_custom_saved_plan_executor_is_not_limited_by_builtin_shape_preflight(tm
         "user",
         FixedDate("2025-01-02T00:00:00+00:00"),
         features={"total": agg("total", window=("-1d", "0s"))},
-        shape="unsupported-test-shape",
+        shape=cast(Any, "unsupported-test-shape"),
     )
     owner = RuntimeOwner(state_path=path, snapshot_root=tmp_path / "snapshots")
     authority = SnapshotAuthority(owner)

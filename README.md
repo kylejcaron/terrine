@@ -118,6 +118,33 @@ Reading the output:
 
 You name the metrics: `tr.count()` counts events, `tr.sum("amount")` adds a column, and `tr.count(where={"status": "refunded"})` counts only matching events once `status` is declared in `labels=`. Every value has a `<name>__complete` flag and a `<name>__reason` column, so you can filter or impute deliberately.
 
+## Train and validate
+
+Continue the example with an explicit time split from `terrine.dataset`:
+
+<!-- --8<-- [start:train-validate] -->
+```python
+from terrine.dataset import TimeSplit
+
+frame = design.build(model)
+split = TimeSplit(train_until="2025-03-03", validation_until="2025-04-01")
+training = frame.training_set(label="spend_next_30d", split=split)
+modeling = training.to_pandas(values_only=True)
+train = modeling.loc[modeling["__terrine_split"].eq("train")]
+validation = modeling.loc[modeling["__terrine_split"].eq("validation")]
+```
+<!-- --8<-- [end:train-validate] -->
+
+Rows are split by `t0`, but a label window that crosses its split cutoff is
+`unassigned` with `__terrine_split_reason="label_overlap"`: training never uses a future
+label from across the cutoff. For example, a March 1 cutoff would leave the
+February rows unassigned because their 30-day labels end on March 3.
+Incomplete labels are dropped by default. This tiny example has three training
+rows and no validation rows because its March labels are incomplete; extend the
+complete history to validate a model. Inspect completeness and `__terrine_split_reason`
+before using `.to_pandas(values_only=True)` to omit completeness/reason columns
+from modeling inputs.
+
 ## The four ideas
 
 | Idea | In the example |

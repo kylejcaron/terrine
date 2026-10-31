@@ -311,7 +311,36 @@ def _boundary_function(boundary: str):
 class Model:
     """Bind units, events, metrics and history to a connection without reading event rows.
 
-    Example: tr.Model.from_tables(units=units, events=events)
+
+    Args:
+        *args: No positional construction is supported; use from_tables or from_catalog.
+        **kwargs: No keyword construction is supported; use from_tables or from_catalog.
+
+    Attributes:
+        catalog: Validated semantic Catalog describing the source relations and metrics.
+        con: Admitted Ibis connection used to resolve and execute relations.
+        readiness: Declared source completeness, bound to absolute instants.
+        units: Immutable mapping of unit names to roster declarations.
+        event_ids: Immutable event-name to occurrence-ID-column mapping.
+        sources: Immutable mapping of validated bound sources.
+        metrics: Immutable mapping of validated bound metrics.
+        model_hash: Content digest of catalog and runtime binding declarations.
+        day_boundary: Callable mapping a catalog-local calendar date to its UTC start instant.
+        input_binding: Retained input binding, or None for direct reads.
+
+    Example:
+        tr.Model.from_tables(
+            units={"customer": tr.UnitSource(customers, "customer_id")},
+            events={
+                "orders": tr.Events(
+                    orders,
+                    time="ordered_at",
+                    key="customer_id",
+                    metrics={"spend": tr.sum("amount")},
+                    complete=("2025-01-01", "2025-03-20"),
+                )
+            },
+        )
     """
 
     catalog: Catalog
@@ -401,7 +430,38 @@ class Model:
         In-memory tables need no connection and materialize only; table names need ``con``,
         and unverified connections must have no pending writes during schema inspection.
 
-        Example: tr.Model.from_tables(units=units, events=events)
+
+        Args:
+            con: Ibis warehouse connection; None creates a private DuckDB for in-memory inputs.
+            units: Mapping of unit names to UnitSource roster declarations.
+            events: Mapping of event names to Events declarations with explicit metrics and complete
+                days.
+            history: Mapping of attribute names to History declarations; None declares no history
+                attributes.
+            dialect: Catalog dialect name; None infers it from the admitted connection.
+            day_boundary: "UTC" or an IANA timezone name defining local calendar-day boundaries;
+                default "UTC".
+            event_ids: Mapping of event names to unique occurrence-ID column names; None supplies no
+                tie breaker.
+            allow_unverified: Whether to allow read-only use of unverified Ibis backends; False
+                refuses them.
+
+        Returns:
+            A bound Model with validated declarations and table schemas, without reading event rows.
+
+        Example:
+            tr.Model.from_tables(
+                units={"customer": tr.UnitSource(customers, "customer_id")},
+                events={
+                    "orders": tr.Events(
+                        orders,
+                        time="ordered_at",
+                        key="customer_id",
+                        metrics={"spend": tr.sum("amount")},
+                        complete=("2025-01-01", "2025-03-20"),
+                    )
+                },
+            )
         """
         if not isinstance(allow_unverified, bool):
             raise _INVALID.error(reason="wrong_type", field="allow_unverified")
@@ -556,6 +616,10 @@ class Model:
 
         The catalog does not include units, readiness or event_ids.
 
+
+        Returns:
+            Versioned catalog YAML text; unit rosters, readiness and event IDs are not included.
+
         Example: model.to_catalog()
         """
         return dump_catalog(self.catalog)
@@ -581,7 +645,30 @@ class Model:
 
         Unverified connections must have no pending writes during schema inspection.
 
-        Example: tr.Model.from_catalog(model.catalog, con=model.con, **bindings)
+
+        Args:
+            path_or_catalog: Catalog, definition mapping, YAML text containing a newline, or path as
+                str/Path.
+            con: Ibis connection resolving catalog relations; it must have no pending writes if
+                unverified.
+            readiness: Readiness or mapping of source names to Coverage/BoundCoverage declaring
+                complete times.
+            units: Mapping of unit names to UnitSource rosters; None declares no rosters.
+            event_ids: Mapping of event names to unique occurrence-ID column names; None supplies no
+                tie breaker.
+            input_binding: VerifiedInputBinding for retained inputs; None reads the supplied
+                connection directly.
+            allow_unverified: Whether to allow read-only use of unverified Ibis backends; False
+                refuses them.
+
+        Returns:
+            A bound Model with validated definitions and runtime bindings, without reading event
+            rows.
+
+        Example:
+            tr.Model.from_catalog(
+                model.to_catalog(), con=model.con, units=model.units, readiness=model.readiness
+            )
         """
         if not isinstance(allow_unverified, bool):
             raise _INVALID.error(reason="wrong_type", field="allow_unverified")
@@ -828,7 +915,45 @@ class Model:
 
         Unverified connections must have no pending writes during schema inspection.
 
-        Example: tr.Model.from_increment("semantics.yaml", con=model.con, **bindings)
+
+        Args:
+            path_or_definitions: Increment semantic YAML path or published Increment definitions
+                object.
+            con: Ibis connection resolving semantic relations; it must have no pending writes if
+                unverified.
+            readiness: Readiness or mapping of source names to Coverage/BoundCoverage declaring
+                complete times.
+            units: Mapping of unit names to UnitSource rosters; None declares no rosters.
+            event_ids: Mapping of event names to unique occurrence-ID column names; None supplies no
+                tie breaker.
+            input_binding: VerifiedInputBinding for retained inputs; None reads the supplied
+                connection directly.
+            allow_unverified: Whether to allow read-only use of unverified Ibis backends; False
+                refuses them.
+
+        Returns:
+            A bound Model translated from published Increment definitions.
+
+        Example:
+            from increment.semantics import Definitions
+            from increment.semantics.models import FactSource, Fact
+
+            tr.Model.from_increment(
+                Definitions(
+                    fact_sources=(
+                        FactSource(
+                            name="orders",
+                            sql="SELECT * FROM orders",
+                            timestamp_column="ordered_at",
+                            entities=("customer_id",),
+                            facts=(Fact(name="purchases"),),
+                        ),
+                    )
+                ),
+                con=model.con,
+                units={"customer_id": tr.UnitSource("customers", "customer_id")},
+                readiness={"orders": tr.Coverage("2025-01-01", "2025-03-20")},
+            )
         """
         if not isinstance(allow_unverified, bool):
             raise _INVALID.error(reason="wrong_type", field="allow_unverified")

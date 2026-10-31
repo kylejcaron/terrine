@@ -147,17 +147,14 @@ def _require_runtime_reader(con: Any) -> None:
 class Dataset:
     """Reference one immutable published dataset generation.
 
-    Copy the README tables to a file-backed connection before binding the model:
+    Use a file-backed DuckDB model for publication; in-memory models cannot be staged.
 
-    >>> import ibis
-    >>> con = ibis.duckdb.connect("shop.duckdb")
-    >>> for name in ("customer", "orders"):
-    ...     _ = con.create_table(name, model.con.table(name).to_pyarrow())
-    >>> staged_model = tr.Model.from_catalog(
-    ...     model.catalog, con=con, units=model.units, readiness=model.readiness)
-    >>> staged_frame = design.build(staged_model)
+    Args:
+        manifest: DatasetManifest identifying an already-published immutable generation.
+        con: Verified Ibis connection holding the published dataset generation.
+        namespace: Runtime schema name containing publication metadata and generation tables.
 
-    Example: staged_frame.stage("customer_spend")
+    Example: frame.stage("customer_spend")
     """
 
     __slots__ = ("_con", "_raw", "_namespace", "_manifest", "_receipt")
@@ -293,6 +290,16 @@ class Dataset:
         )
 
     def to_arrow_batches(self, *, batch_size: int = 65_536) -> Generator[pa.RecordBatch]:
+        """Stream the pinned generation as bounded Arrow record batches.
+
+        Args:
+            batch_size: Positive maximum rows per batch; 65_536 bounds each yielded batch.
+
+        Returns:
+            A generator of RecordBatch values; close it if stopping before exhaustion.
+
+        Example: list(dataset.to_arrow_batches(batch_size=2))
+        """
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
             raise _INVALID_BATCH.error()
         self._require_arrow_batches()
@@ -300,6 +307,14 @@ class Dataset:
 
     def to_pyarrow(self, *, budget: Budget | None = None) -> pa.Table:
         """Read the pinned dataset generation into a lossless Arrow table.
+
+
+        Args:
+            budget: Budget limiting pinned-generation reads; None has no output cap and requests no
+                scan estimate.
+
+        Returns:
+            A PyArrow Table preserving completeness, reason columns and portable schema metadata.
 
         Example: dataset.to_pyarrow()
         """
@@ -351,6 +366,18 @@ class Dataset:
     ):
         """Return the pinned dataset as a pandas dataframe.
 
+
+        Args:
+            budget: Budget limiting pinned-generation reads; None has no output cap and requests no
+                scan estimate.
+            include_observation_metadata: Whether to retain observation-bound columns; False omits
+                them.
+            values_only: Whether to omit completeness/reason columns too; False retains them;
+                incompatible with observation metadata.
+
+        Returns:
+            A pandas DataFrame with Arrow-backed dtypes and the requested metadata columns.
+
         Example: dataset.to_pandas(values_only=True)
         """
         dataframe_view_preflight(
@@ -378,6 +405,18 @@ class Dataset:
         values_only: bool = False,
     ):
         """Return the pinned dataset as a Polars dataframe.
+
+
+        Args:
+            budget: Budget limiting pinned-generation reads; None has no output cap and requests no
+                scan estimate.
+            include_observation_metadata: Whether to retain observation-bound columns; False omits
+                them.
+            values_only: Whether to omit completeness/reason columns too; False retains them;
+                incompatible with observation metadata.
+
+        Returns:
+            A Polars DataFrame with the requested values and metadata columns.
 
         Example: dataset.to_polars(values_only=True)
         """

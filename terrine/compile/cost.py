@@ -59,6 +59,17 @@ def preview(
 
     Explicit counts and integrity checks may scan event data; output limits are not scan bounds.
 
+
+    Args:
+        design: Design describing the rows and expressions to compile.
+        model: Model binding the design names to tables, metrics, attributes and completeness.
+        budget: Budget limiting output and estimated scans; None uses the ordinary default limits.
+        bounded_count: Nonnegative count bound; 0 does not query rows, positive values request a
+            bounded count.
+
+    Returns:
+        A Preview containing planned columns, estimates and any requested bounded row count.
+
     Example: tr.preview(design, model)
     """
     if isinstance(bounded_count, bool) or not isinstance(bounded_count, int) or bounded_count < 0:

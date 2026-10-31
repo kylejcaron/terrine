@@ -94,6 +94,13 @@ def _filters(where: Where | None) -> tuple[Filter, ...]:
 def count(*, where: Where | None = None) -> EventMetric:
     """Declare an event count, optionally restricted by ``where`` labels.
 
+
+    Args:
+        where: Label-name mapping to scalar equality or membership values; None includes all events.
+
+    Returns:
+        An event-count metric declaration; complete empty windows count as zero.
+
     Example: tr.count()
     """
     return EventMetric("count", None, _filters(where))
@@ -101,6 +108,14 @@ def count(*, where: Where | None = None) -> EventMetric:
 
 def sum(column: str, *, where: Where | None = None) -> EventMetric:
     """Declare the sum of ``column`` over matching events.
+
+
+    Args:
+        column: Event-table column name whose values are aggregated.
+        where: Label-name mapping to scalar equality or membership values; None includes all events.
+
+    Returns:
+        An event-sum metric declaration; complete empty windows sum to zero.
 
     Example: tr.sum("amount")
     """
@@ -111,6 +126,16 @@ def mean(
     column: str, *, per: Literal["event", "day"] = "event", where: Where | None = None
 ) -> EventMetric:
     """Declare the mean of ``column`` per event or per local calendar day of a window.
+
+
+    Args:
+        column: Event-table column name whose values are aggregated.
+        per: "event" averages matching event values; "day" averages local calendar-day totals;
+            default "event".
+        where: Label-name mapping to scalar equality or membership values; None includes all events.
+
+    Returns:
+        An event- or day-mean metric declaration with completeness retained.
 
     Example: tr.mean("amount", per="day")
     """
@@ -123,6 +148,14 @@ def mean(
 def min(column: str, *, where: Where | None = None) -> EventMetric:
     """Declare the smallest ``column`` value over matching events.
 
+
+    Args:
+        column: Event-table column name whose values are aggregated.
+        where: Label-name mapping to scalar equality or membership values; None includes all events.
+
+    Returns:
+        An event-minimum metric declaration; an empty complete window is unavailable.
+
     Example: tr.min("amount")
     """
     return EventMetric("min", _name(column, "column"), _filters(where))
@@ -130,6 +163,14 @@ def min(column: str, *, where: Where | None = None) -> EventMetric:
 
 def max(column: str, *, where: Where | None = None) -> EventMetric:
     """Declare the largest ``column`` value over matching events.
+
+
+    Args:
+        column: Event-table column name whose values are aggregated.
+        where: Label-name mapping to scalar equality or membership values; None includes all events.
+
+    Returns:
+        An event-maximum metric declaration; an empty complete window is unavailable.
 
     Example: tr.max("amount")
     """
@@ -139,6 +180,14 @@ def max(column: str, *, where: Where | None = None) -> EventMetric:
 def count_distinct(column: str, *, where: Where | None = None) -> EventMetric:
     """Declare the number of distinct ``column`` values over matching events.
 
+
+    Args:
+        column: Event-table column name whose values are aggregated.
+        where: Label-name mapping to scalar equality or membership values; None includes all events.
+
+    Returns:
+        A distinct-value-count metric declaration over non-null column values.
+
     Example: tr.count_distinct("amount")
     """
     return EventMetric("count_distinct", _name(column, "column"), _filters(where))
@@ -146,6 +195,15 @@ def count_distinct(column: str, *, where: Where | None = None) -> EventMetric:
 
 def ratio(numerator: str, denominator: str) -> Ratio:
     """Declare the quotient of two metrics on the same event table.
+
+
+    Args:
+        numerator: Name of a non-ratio metric on the same Events declaration.
+        denominator: Name of a non-ratio metric on the same Events declaration; zero yields an
+            unavailable ratio.
+
+    Returns:
+        A Ratio declaration referring to two named metrics.
 
     Example: tr.ratio("spend", "orders")
     """

@@ -87,6 +87,24 @@ def _duration(value: str | timedelta) -> timedelta:
 class TimeSplit:
     """Split rows by exclusive t0 cutoffs with an optional embargo and unit-group policy.
 
+    Args:
+        train_until: Exclusive training t0 cutoff, as a date, aware datetime or ISO string.
+        validation_until: Exclusive validation t0 cutoff in the same formats; None has no later test
+            split.
+        embargo: Nonnegative duration string (see `terrine.windows`) or timedelta; "0d" leaves no
+            gap.
+        groups: GroupSplit requiring unit groups to agree with the time bucket; None uses time
+            alone.
+
+    Attributes:
+        train_until: Exclusive training t0 cutoff, as a date, aware datetime or ISO string.
+        validation_until: Exclusive validation t0 cutoff in the same formats; None has no later test
+            split.
+        embargo: Nonnegative duration string (see `terrine.windows`) or timedelta; "0d" leaves no
+            gap.
+        groups: GroupSplit requiring unit groups to agree with the time bucket; None uses time
+            alone.
+
     Example: from terrine.dataset import TimeSplit; TimeSplit(train_until="2025-02-15")
     """
 
@@ -149,6 +167,20 @@ class TimeSplit:
 @dataclass(frozen=True, slots=True, init=False)
 class GroupSplit:
     """Assign whole unit groups reproducibly to training, validation and test sets.
+
+    Args:
+        group: Name of the grouping key; "unit" keeps all rows for a unit in one bucket.
+        train_fraction: Fraction in [0, 1] assigned to train; default 0.8.
+        validation_fraction: Fraction in [0, 1] assigned to validation; default 0.1; total cannot
+            exceed 1.
+        seed: Integer deterministic partition seed; 0 is the reproducible default.
+
+    Attributes:
+        group: Name of the grouping key; "unit" keeps all rows for a unit in one bucket.
+        train_fraction: Fraction in [0, 1] assigned to train; default 0.8.
+        validation_fraction: Fraction in [0, 1] assigned to validation; default 0.1; total cannot
+            exceed 1.
+        seed: Integer deterministic partition seed; 0 is the reproducible default.
 
     Example: from terrine.dataset import GroupSplit; GroupSplit(seed=42)
     """

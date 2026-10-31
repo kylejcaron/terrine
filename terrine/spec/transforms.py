@@ -7,7 +7,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Literal
 
 from terrine.errors import RefusalSpec, TerrineError, freeze, thaw
 
@@ -156,13 +156,37 @@ class WinsorizationFit:
 class Winsorization:
     """Declare fixed lower and upper limits for a feature after aggregation.
 
+    Args:
+        column: Feature column name to clamp after aggregation.
+        lower: Finite Decimal, decimal string or integer lower limit, included.
+        upper: Finite Decimal, decimal string or integer upper limit, included; must be at least
+            lower.
+        stage: Only "post_aggregation" is accepted; the default clamps the aggregated feature.
+        source_type: Recorded source dtype string; None leaves the transform unbound.
+        output_precision: Decimal output precision from 1 to 38; None leaves it unbound.
+        output_scale: Decimal output scale from 0 through output_precision; None leaves it unbound.
+        fit: WinsorizationFit recording training identity; None declares fixed rather than fitted
+            limits.
+
+    Attributes:
+        column: Feature column name to clamp after aggregation.
+        lower: Finite Decimal, decimal string or integer lower limit, included.
+        upper: Finite Decimal, decimal string or integer upper limit, included; must be at least
+            lower.
+        stage: Only "post_aggregation" is accepted; the default clamps the aggregated feature.
+        source_type: Recorded source dtype string; None leaves the transform unbound.
+        output_precision: Decimal output precision from 1 to 38; None leaves it unbound.
+        output_scale: Decimal output scale from 0 through output_precision; None leaves it unbound.
+        fit: WinsorizationFit recording training identity; None declares fixed rather than fitted
+            limits.
+
     Example: spec.Winsorization("spend_30d", lower="0", upper="100")
     """
 
     column: str
     lower: Decimal | str | int
     upper: Decimal | str | int
-    stage: str = "post_aggregation"
+    stage: Literal["post_aggregation"] = "post_aggregation"
     source_type: str | None = None
     output_precision: int | None = None
     output_scale: int | None = None

@@ -62,7 +62,18 @@ def _validate_schema_version(value: Any) -> None:
 class DatasetDefinition:
     """Save a versioned design with its selected view and fixed transforms.
 
-    Example: DatasetDefinition(base_design=design)
+    Args:
+        base_design: Design whose rows and expressions are saved in the dataset definition.
+        view: Recorded training/scoring view mapping; None saves the full design.
+        transforms: Tuple of fixed or training-fitted Winsorization declarations; () applies none.
+
+    Attributes:
+        schema_version: Current version of the portable dataset-definition format.
+        base_design: Design whose rows and expressions are saved in the dataset definition.
+        view: Recorded training/scoring view mapping; None saves the full design.
+        transforms: Tuple of fixed or training-fitted Winsorization declarations; () applies none.
+
+    Example: spec.DatasetDefinition(base_design=design)
     """
 
     schema_version: int = field(init=False, default=SCHEMA_VERSION)
@@ -208,7 +219,18 @@ class DatasetDefinition:
 class DatasetDefinitionReference:
     """Identify an immutable dataset definition by owner and content digest.
 
-    Example: spec.DatasetDefinitionReference("analytics", definition.digest)
+    Args:
+        owner: Nonempty name identifying the data owner of this definition store.
+        digest: Content digest identifying one immutable dataset definition.
+
+    Attributes:
+        owner: Nonempty name identifying the data owner of this definition store.
+        digest: Content digest identifying one immutable dataset definition.
+
+    Example:
+        spec.DatasetDefinitionReference(
+            "analytics", spec.DatasetDefinition(base_design=design).digest
+        )
     """
 
     owner: str
@@ -229,7 +251,18 @@ class DatasetDefinitionReference:
 class DatasetDefinitionStore:
     """Store immutable dataset definitions locally for one data owner.
 
-    Example: spec.DatasetDefinitionStore(Path("definitions"), owner="analytics")
+    Args:
+        root: Path to the local directory containing immutable definition documents.
+        owner: Nonempty name identifying the data owner of this definition store.
+
+    Attributes:
+        root: Path to the local directory containing immutable definition documents.
+        owner: Nonempty name identifying the data owner of this definition store.
+
+    Example:
+        from pathlib import Path
+
+        spec.DatasetDefinitionStore(Path("definitions"), owner="analytics")
     """
 
     root: Path

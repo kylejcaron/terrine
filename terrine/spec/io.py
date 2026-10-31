@@ -361,6 +361,12 @@ def canonical_json(design: Design) -> bytes:
 def to_json(design: Design) -> str:
     """Return a design's versioned JSON document.
 
+    Args:
+        design: Design describing the rows and expressions to compile.
+
+    Returns:
+        Versioned JSON document text describing the Design.
+
     Example: spec.to_json(design)
     """
     return canonical_json(design).decode("utf-8")
@@ -368,6 +374,13 @@ def to_json(design: Design) -> str:
 
 def to_yaml(design: Design) -> str:
     """Return a design's versioned YAML document.
+
+
+    Args:
+        design: Design describing the rows and expressions to compile.
+
+    Returns:
+        Versioned YAML document text describing this Design.
 
     Example: tr.to_yaml(design)
     """
@@ -849,6 +862,12 @@ def _reject_constant(item: str) -> Any:
 def from_json(value: str | bytes) -> Design:
     """Read a design from a supported versioned JSON document.
 
+    Args:
+        value: Versioned JSON document text or UTF-8 bytes, not a filesystem path.
+
+    Returns:
+        A validated reconstructed Design.
+
     Example: spec.from_json(spec.to_json(design))
     """
     try:
@@ -860,6 +879,13 @@ def from_json(value: str | bytes) -> Design:
 
 def from_yaml(value: str | bytes) -> Design:
     """Read a design from a supported versioned YAML document.
+
+
+    Args:
+        value: YAML document text or UTF-8 bytes returned by to_yaml(), not a filesystem path.
+
+    Returns:
+        The reconstructed Design after document validation.
 
     Example: tr.from_yaml(tr.to_yaml(design))
     """

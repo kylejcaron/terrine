@@ -34,7 +34,56 @@ _NS_PER_UNIT = {"s": 1_000_000_000, "ms": 1_000_000, "us": 1_000, "ns": 1}
 class DiffDiffData:
     """Return a dataframe with unit identity, positive period codes and observed adoption times.
 
-    Example: exports.to_diff_diff(adoption_data, period_col="t0", period_seconds=86400)
+    Args:
+        df: Dataframe carrying the prepared consumer columns.
+        unit_col: Dataframe column name identifying the independent unit.
+        time_col: Dataframe column name holding positive integer period codes.
+        first_treat_col: Dataframe column name holding observed adoption periods; zero means not
+            observed.
+        period_mapping: Mapping from source period values to positive integer period codes.
+        excluded_counts: Mapping of missing-value reason codes to excluded row counts.
+
+    Attributes:
+        df: Dataframe carrying the prepared consumer columns.
+        unit_col: Dataframe column name identifying the independent unit.
+        time_col: Dataframe column name holding positive integer period codes.
+        first_treat_col: Dataframe column name holding observed adoption periods; zero means not
+            observed.
+        period_mapping: Mapping from source period values to positive integer period codes.
+        excluded_counts: Mapping of missing-value reason codes to excluded row counts.
+
+    Example:
+        from datetime import datetime, UTC
+
+        tr.export.to_diff_diff(
+            tr.recipes.trial_panel(
+                every="1d",
+                start="2025-02-01",
+                end="2025-02-03",
+                treatment=spec.PersistentAdoption(
+                    "customer_id",
+                    adopted_value="alice",
+                    history_start=datetime(2025, 1, 1, tzinfo=UTC),
+                ),
+            )
+            .build(
+                tr.Model.from_tables(
+                    units={"customer": tr.UnitSource(customers, "customer_id")},
+                    events={
+                        "orders": tr.Events(
+                            orders,
+                            time="ordered_at",
+                            key="customer_id",
+                            labels=("customer_id",),
+                            complete=("2025-01-01", "2025-03-20"),
+                        )
+                    },
+                )
+            )
+            .materialize(),
+            period_col="t0",
+            period_seconds=86400,
+        )
     """
 
     df: Any
@@ -100,7 +149,49 @@ def to_diff_diff(
     Zero means no adoption observed in the supplied history, not over a unit's lifetime;
     dated periods need a cadence, and no estimator is fitted.
 
-    Example: exports.to_diff_diff(adoption_data, period_col="t0", period_seconds=86400)
+    Args:
+        data: MaterializedFrame carrying checked roles, column metadata, completeness and
+            provenance.
+        period_col: Source column name containing the ordered panel periods.
+        period_seconds: Positive integer elapsed seconds per dated period; None uses panel cadence
+            metadata.
+        drop_incomplete: Whether to drop incomplete outcomes explicitly; False refuses them.
+
+    Returns:
+        DiffDiffData with period codes, observed adoption periods and excluded counts.
+
+    Example:
+        from datetime import datetime, UTC
+
+        tr.export.to_diff_diff(
+            tr.recipes.trial_panel(
+                every="1d",
+                start="2025-02-01",
+                end="2025-02-03",
+                treatment=spec.PersistentAdoption(
+                    "customer_id",
+                    adopted_value="alice",
+                    history_start=datetime(2025, 1, 1, tzinfo=UTC),
+                ),
+            )
+            .build(
+                tr.Model.from_tables(
+                    units={"customer": tr.UnitSource(customers, "customer_id")},
+                    events={
+                        "orders": tr.Events(
+                            orders,
+                            time="ordered_at",
+                            key="customer_id",
+                            labels=("customer_id",),
+                            complete=("2025-01-01", "2025-03-20"),
+                        )
+                    },
+                )
+            )
+            .materialize(),
+            period_col="t0",
+            period_seconds=86400,
+        )
     """
     checked = preflight_export(data, drop_incomplete=drop_incomplete)
     try:

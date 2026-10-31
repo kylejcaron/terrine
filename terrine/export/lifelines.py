@@ -42,7 +42,24 @@ _NS_PER_UNIT = {"s": 1_000_000_000, "ms": 1_000_000, "us": 1_000, "ns": 1}
 class LifelinesKM:
     """Return Kaplan-Meier inputs in elapsed seconds for unit records or bins for risk counts.
 
-    Example: exports.to_lifelines_km(survival_data)
+    Args:
+        durations: NumPy array of follow-up durations in elapsed seconds or life-table bins.
+        event_observed: NumPy array of binary observed-endpoint indicators.
+        entry: Optional NumPy array of delayed-entry durations; None declares no delayed entry.
+        weights: Optional NumPy array of positive weights; None declares unweighted records.
+        excluded_counts: Mapping of missing-value reason codes to excluded row counts.
+
+    Attributes:
+        durations: NumPy array of follow-up durations in elapsed seconds or life-table bins.
+        event_observed: NumPy array of binary observed-endpoint indicators.
+        entry: Optional NumPy array of delayed-entry durations; None declares no delayed entry.
+        weights: Optional NumPy array of positive weights; None declares unweighted records.
+        excluded_counts: Mapping of missing-value reason codes to excluded row counts.
+
+    Example:
+        tr.export.to_lifelines_km(
+            tr.recipes.survival(start_event="orders", end_event="orders").build(model).materialize()
+        )
     """
 
     durations: np.ndarray
@@ -59,7 +76,30 @@ class LifelinesKM:
 class LifelinesCox:
     """Return Cox inputs containing declared features and explicitly assigned fit columns.
 
-    Example: exports.to_lifelines_cox(survival_data)
+    Args:
+        df: Dataframe carrying the prepared consumer columns.
+        duration_col: Dataframe column name holding elapsed follow-up durations.
+        event_col: Dataframe column name holding binary endpoint indicators.
+        entry_col: Dataframe column name holding delayed-entry durations.
+        weights_col: Optional dataframe weight column name; None declares no weights.
+        cluster_col: Optional independent-unit cluster column name; None declares no clustering.
+        excluded_counts: Mapping of missing-value reason codes to excluded row counts.
+
+    Attributes:
+        df: Dataframe carrying the prepared consumer columns.
+        duration_col: Dataframe column name holding elapsed follow-up durations.
+        event_col: Dataframe column name holding binary endpoint indicators.
+        entry_col: Dataframe column name holding delayed-entry durations.
+        weights_col: Optional dataframe weight column name; None declares no weights.
+        cluster_col: Optional independent-unit cluster column name; None declares no clustering.
+        excluded_counts: Mapping of missing-value reason codes to excluded row counts.
+
+    Example:
+        tr.export.to_lifelines_cox(
+            tr.Design("customer", tr.FixedDate("2025-02-01"), shape=spec.TimeToEvent("orders"))
+            .build(model)
+            .materialize()
+        )
     """
 
     df: Any
@@ -176,7 +216,18 @@ def to_lifelines_km(data: MaterializedFrame, *, drop_incomplete: bool = False) -
     Unit records use elapsed seconds from t0; risk counts use bins and frequency weights
     and cannot recover delayed entry or incomplete follow-up.
 
-    Example: exports.to_lifelines_km(survival_data)
+    Args:
+        data: MaterializedFrame carrying checked roles, column metadata, completeness and
+            provenance.
+        drop_incomplete: Whether to drop incomplete outcomes explicitly; False refuses them.
+
+    Returns:
+        LifelinesKM arrays of follow-up, event indicators, entry and optional weights.
+
+    Example:
+        tr.export.to_lifelines_km(
+            tr.recipes.survival(start_event="orders", end_event="orders").build(model).materialize()
+        )
     """
     checked = preflight_export(data, drop_incomplete=drop_incomplete)
     if data.provenance.shape == "life_table":
@@ -189,7 +240,20 @@ def to_lifelines_cox(data: MaterializedFrame, *, drop_incomplete: bool = False) 
 
     Treatment is not automatically a predictor, and other identity or outcome columns are excluded.
 
-    Example: exports.to_lifelines_cox(survival_data)
+    Args:
+        data: MaterializedFrame carrying checked roles, column metadata, completeness and
+            provenance.
+        drop_incomplete: Whether to drop incomplete outcomes explicitly; False refuses them.
+
+    Returns:
+        LifelinesCox containing the prepared dataframe and its fit column names.
+
+    Example:
+        tr.export.to_lifelines_cox(
+            tr.Design("customer", tr.FixedDate("2025-02-01"), shape=spec.TimeToEvent("orders"))
+            .build(model)
+            .materialize()
+        )
     """
     checked = preflight_export(data, drop_incomplete=drop_incomplete)
     arrays = _record_arrays(data, checked)

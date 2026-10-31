@@ -25,7 +25,19 @@ def _name(value: object, field: str) -> None:
 class Trajectory:
     """Describe a metric over elapsed periods after t0, optionally accumulated from t0.
 
-    Example: Trajectory("spend", period="30d", periods=2, cumulative=True)
+    Args:
+        metric: Name of a metric declared in the model.
+        period: Positive elapsed duration string (see `terrine.windows`) defining one period.
+        periods: Positive integer number of periods to produce.
+        cumulative: Whether values accumulate from t0; False aggregates each period separately.
+
+    Attributes:
+        metric: Name of a metric declared in the model.
+        period: Positive period width stored as exact integer seconds.
+        periods: Positive integer number of periods to produce.
+        cumulative: Whether values accumulate from t0; False aggregates each period separately.
+
+    Example: spec.Trajectory("spend", period="30d", periods=2, cumulative=True)
     """
 
     metric: str
@@ -54,7 +66,15 @@ class Trajectory:
 class CohortSpec:
     """Pair a unit's origin event with a metric trajectory.
 
-    Example: CohortSpec("orders", Trajectory("spend", "30d", 2))
+    Args:
+        origin: Declared event name that defines each unit's cohort entry.
+        trajectory: Trajectory declaration defining the metric and elapsed follow-up periods.
+
+    Attributes:
+        origin: Declared event name that defines each unit's cohort entry.
+        trajectory: Trajectory declaration defining the metric and elapsed follow-up periods.
+
+    Example: spec.CohortSpec("orders", spec.Trajectory("spend", "30d", 2))
     """
 
     origin: str
@@ -70,7 +90,21 @@ class CohortSpec:
 class CohortGrouping:
     """Group units by origin-time buckets and summarize their trajectory values.
 
-    Example: CohortGrouping("30d", datetime(2025, 1, 1, tzinfo=UTC))
+    Args:
+        bucket: Positive elapsed duration string (see `terrine.windows`) defining origin-time
+            cohorts.
+        bucket_origin: Timezone-aware datetime fixing the cohort bucket grid origin.
+        statistic: "total" or "mean"; "mean" averages observable units in each cohort.
+
+    Attributes:
+        bucket: Positive cohort width stored as exact integer seconds.
+        bucket_origin: Timezone-aware datetime fixing the cohort bucket grid origin.
+        statistic: "total" or "mean"; "mean" averages observable units in each cohort.
+
+    Example:
+        from datetime import datetime, UTC
+
+        spec.CohortGrouping("30d", datetime(2025, 1, 1, tzinfo=UTC))
     """
 
     bucket: int
@@ -102,7 +136,19 @@ class CohortGrouping:
 class TimeToEvent:
     """Describe follow-up from t0 until an event, exit or the end of complete history.
 
-    Example: TimeToEvent("orders")
+    Args:
+        end_event: Declared event name whose first occurrence at or after t0 ends follow-up.
+        exit_event: Declared event name ending observation without the endpoint; None declares none.
+        entry_event: Declared event name marking delayed entry; None begins at t0.
+        delayed_entry: Whether entry_event starts risk after t0; False has no delayed entry.
+
+    Attributes:
+        end_event: Declared event name whose first occurrence at or after t0 ends follow-up.
+        exit_event: Declared event name ending observation without the endpoint; None declares none.
+        entry_event: Declared event name marking delayed entry; None begins at t0.
+        delayed_entry: Whether entry_event starts risk after t0; False has no delayed entry.
+
+    Example: spec.TimeToEvent("orders")
     """
 
     end_event: str
@@ -127,7 +173,17 @@ class TimeToEvent:
 class LifeTable:
     """Summarize time-to-event follow-up in elapsed bins with risk and censor counts.
 
-    Example: LifeTable(TimeToEvent("orders"), bin="7d")
+    Args:
+        time_to_event: TimeToEvent declaration defining end, exit and delayed-entry events.
+        bin: Positive elapsed duration string (see `terrine.windows`) defining one life-table bin.
+        group_by: Tuple of feature/grouping column names; () produces an ungrouped life table.
+
+    Attributes:
+        time_to_event: TimeToEvent declaration defining end, exit and delayed-entry events.
+        bin: Positive risk-bin width stored as exact integer seconds.
+        group_by: Tuple of feature/grouping column names; () produces an ungrouped life table.
+
+    Example: spec.LifeTable(spec.TimeToEvent("orders"), bin="7d")
     """
 
     time_to_event: TimeToEvent

@@ -63,7 +63,18 @@ _CHOICE = RefusalSpec(
 class ExportPreflight:
     """Return checked export rows and exclusion counts by reason.
 
-    Example: exports.preflight_export(scoring_frame.materialize())
+    Args:
+        table: PyArrow Table containing the admitted complete rows.
+        excluded_counts: Mapping of missing-value reason codes to excluded row counts.
+
+    Attributes:
+        table: PyArrow Table containing the admitted complete rows.
+        excluded_counts: Mapping of missing-value reason codes to excluded row counts.
+
+    Example:
+        tr.export.preflight_export(
+            design.snapshot(model, as_of="2025-03-01", eligibility={}).materialize()
+        )
     """
 
     table: pa.Table
@@ -77,7 +88,22 @@ class ExportPreflight:
 class WarehousePreflight:
     """Hold checked rows and exclusions inside a DuckDB export context.
 
-    Example: with exports.preflight_warehouse(relation, **metadata) as rows: rows.table.execute()
+    Args:
+        table: Ibis Table of admitted rows, valid only inside the export context.
+        excluded_counts: Mapping of missing-value reason codes to excluded row counts.
+
+    Attributes:
+        table: Ibis Table of admitted rows, valid only inside the export context.
+        excluded_counts: Mapping of missing-value reason codes to excluded row counts.
+
+    Example:
+        with tr.export.preflight_warehouse(
+            (snapshot := design.snapshot(model, as_of="2025-03-01", eligibility={})).expr,
+            roles=snapshot.roles,
+            columns=snapshot.columns,
+            provenance=snapshot.materialize().provenance,
+        ) as rows:
+            rows.table.to_pyarrow()
     """
 
     table: ir.Table
@@ -164,7 +190,20 @@ def preflight_export(
 
     Exclusion counts include each row once per reason; ``drop_incomplete`` permits their removal.
 
-    Example: exports.preflight_export(scoring_frame.materialize())
+    Args:
+        data: MaterializedFrame carrying checked roles, column metadata, completeness and
+            provenance.
+        drop_incomplete: Whether to drop incomplete outcomes explicitly; False refuses them.
+        consumer: "dowhy" applies its additional hand-off restrictions; None applies shared checks
+            only.
+
+    Returns:
+        An ExportPreflight containing admitted rows and excluded counts.
+
+    Example:
+        tr.export.preflight_export(
+            design.snapshot(model, as_of="2025-03-01", eligibility={}).materialize()
+        )
     """
     if not isinstance(data, MaterializedFrame):
         raise _INVALID_INPUT.error(reason="wrong_type", field="data")
@@ -200,7 +239,24 @@ def preflight_warehouse(
     Use matching roles, columns and provenance and consume rows inside the context;
     exiting rolls back temporary views and all other writes in that transaction.
 
-    Example: with exports.preflight_warehouse(relation, **metadata) as rows: rows.table.execute()
+    Args:
+        table: Verified DuckDB Ibis Table to read inside a dedicated export transaction.
+        roles: Roles matching this relation, including independent unit and outcome identities.
+        columns: Mapping of column names to ColumnMeta for this relation.
+        provenance: Provenance belonging to this relation and its admitted snapshot.
+        drop_incomplete: Whether to drop incomplete outcomes explicitly; False refuses them.
+
+    Yields:
+        WarehousePreflight: Checked relation and exclusion counts inside the pinned transaction.
+
+    Example:
+        with tr.export.preflight_warehouse(
+            (snapshot := design.snapshot(model, as_of="2025-03-01", eligibility={})).expr,
+            roles=snapshot.roles,
+            columns=snapshot.columns,
+            provenance=snapshot.materialize().provenance,
+        ) as rows:
+            rows.table.to_pyarrow()
     """
     import ibis
 
