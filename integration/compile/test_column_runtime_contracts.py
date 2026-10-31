@@ -1,15 +1,29 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from importlib.metadata import version
 
 import pandas as pd
 import pyarrow as pa
 import pytest
 
+import terrine as tr
 from terrine.data import Coverage
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.models import Catalog
-from terrine.spec import Design, FixedDate, Treatment, agg, all_of, asof, eq, event_time, gt, since
+from terrine.spec import (
+    Design,
+    FixedDate,
+    Treatment,
+    agg,
+    all_of,
+    approx_quantile,
+    asof,
+    eq,
+    event_time,
+    gt,
+    since,
+)
 from tests.compile.test_columns import _compile
 from tests.compile.test_columns import column_model as column_model  # noqa: F401
 
@@ -369,3 +383,44 @@ def test_since_timing_references_the_selected_instant(column_model):
     metadata = json.loads(restored.to_json())
     del metadata["columns"]["recency"]["measure"]
     assert MaterializedFrame.from_json(json.dumps(metadata)).columns["recency"].measure is None
+
+
+def test_approx_quantile_needs_no_sketch_settings():
+    pytest.importorskip("datasketches")
+    model = tr.Model.from_tables(
+        units={"user": tr.UnitSource(pa.table({"id": ["a"]}), key="id")},
+        events={
+            "orders": tr.Events(
+                pa.table(
+                    {
+                        "user_id": ["a", "a", "a"],
+                        "at": [datetime(2025, 1, 2, tzinfo=UTC)] * 3,
+                        "amount": [2, 2, 2],
+                    }
+                ),
+                key="user_id",
+                time="at",
+                metrics={"spend": tr.sum("amount")},
+                complete=("2025-01-01", "2025-01-03"),
+            ),
+        },
+    )
+    try:
+        result = (
+            tr.Design(
+                None,
+                tr.FixedDate("2025-01-03"),
+                features={"q": approx_quantile("spend", "0.5", window=("-1d", "0s"))},
+            )
+            .build(model)
+            .materialize()
+        )
+        assert result.table.column("q").to_pylist() == [pytest.approx(2.0)]
+        metadata = result.columns["q"].approximation
+        assert metadata is not None
+        assert metadata.algorithm == "tdigest"
+        assert metadata.version == version("datasketches")
+        assert dict(metadata.parameters) == {"k": 200}
+        assert metadata.error_description == "t-digest empirical, no guaranteed bound"
+    finally:
+        model.con.disconnect()
