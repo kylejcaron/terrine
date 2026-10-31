@@ -35,6 +35,7 @@ Features (before t0):
 Outcomes (after t0):
   spend_next_30d: sum of orders.amount in [t0, t0 + 30d)
 Completeness: orders is declared complete for 2025-01-01 through 2025-03-20 (UTC days).
+  Naive source timestamps are read as UTC instants.
   A metric window outside declared source coverage is null with reason incomplete_coverage; unit
     observation bounds use incomplete_observation.
 Empty complete metric windows (no matching events):

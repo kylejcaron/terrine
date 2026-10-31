@@ -67,7 +67,7 @@ print(design.describe(model))
 
 data = design.build(model).to_pandas()
 columns = ["unit", "t0", "orders_30d", "spend_30d", "spend_next_30d", "spend_next_30d__reason"]
-print(data[columns].assign(t0=data["t0"].dt.date).sort_values(["t0", "unit"]).to_string(index=False))
+print(data[columns].assign(t0=data["t0"].dt.date).to_string(index=False))
 ```
 <!-- --8<-- [end:first-dataset] -->
 
@@ -85,6 +85,7 @@ Features (before t0):
 Outcomes (after t0):
   spend_next_30d: sum of orders.amount in [t0, t0 + 30d)
 Completeness: orders is declared complete for 2025-01-01 through 2025-03-20 (UTC days).
+  Naive source timestamps are read as UTC instants.
   A metric window outside declared source coverage is null with reason incomplete_coverage; unit
     observation bounds use incomplete_observation.
 Empty complete metric windows (no matching events):
@@ -96,14 +97,18 @@ Columns: unit, anchor_id, t0, orders_30d, orders_30d__complete, orders_30d__reas
   spend_next_30d__reason.
  unit         t0  orders_30d  spend_30d  spend_next_30d spend_next_30d__reason
 alice 2025-02-01           2       75.0            25.0                   <NA>
-  bob 2025-02-01           1       80.0             0.0                   <NA>
-carol 2025-02-01           0        0.0             0.0                   <NA>
 alice 2025-03-01           1       25.0            <NA>    incomplete_coverage
+  bob 2025-02-01           1       80.0             0.0                   <NA>
   bob 2025-03-01           0        0.0            <NA>    incomplete_coverage
+carol 2025-02-01           0        0.0             0.0                   <NA>
 carol 2025-03-01           0        0.0            <NA>    incomplete_coverage
 ```
 
 (Only some columns are printed; `t0` is shown as a date.)
+
+Rows are returned in ascending unit, snapshot time and anchor-ID order, followed
+by each shape's position or period columns; life tables use their grouping
+columns and time bin. Naive source timestamps are interpreted as UTC instants.
 
 Reading the output:
 

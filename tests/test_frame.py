@@ -2,10 +2,11 @@ import copy
 import pickle
 from datetime import UTC, datetime, timedelta, timezone
 
+import pyarrow as pa
 import pytest
 
 from terrine import recipes
-from terrine.data import BoundCoverage, Budget, Coverage, UnitSource
+from terrine.data import BoundCoverage, Budget, Coverage, Roles, UnitSource, output_sort_keys
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.spec import (
@@ -20,6 +21,60 @@ from terrine.spec import (
 )
 from terrine.windows import Window
 from tests.fixtures.readme import readme_design, readme_model
+
+
+@pytest.mark.parametrize(
+    ("names", "roles", "expected"),
+    [
+        (
+            (
+                "age",
+                "trial_id",
+                "event_period",
+                "period_index",
+                "sequence_position",
+                "t0",
+                "anchor_id",
+                "unit",
+                "value",
+            ),
+            Roles("unit", "anchor_id", "t0", None, ("value",), ()),
+            (
+                "unit",
+                "t0",
+                "anchor_id",
+                "period_index",
+                "event_period",
+                "trial_id",
+                "age",
+                "sequence_position",
+            ),
+        ),
+        (
+            ("unit", "cohort_time", "age"),
+            Roles("unit", "anchor_id", "cohort_time", None, (), ()),
+            ("unit", "cohort_time", "age"),
+        ),
+        (
+            ("unit", "anchor_id", "t0", "region", "segment", "time_bin", "events"),
+            Roles("unit", "anchor_id", "t0", None, ("region", "segment", "time_bin"), ("events",)),
+            ("region", "segment", "time_bin"),
+        ),
+        (
+            ("unit", "anchor_id", "t0", "time_bin"),
+            Roles("unit", "anchor_id", "t0", None, ("time_bin",), ()),
+            ("time_bin",),
+        ),
+        (
+            ("value",),
+            Roles("identity", "identity", "origin", None, (), ("value",)),
+            (),
+        ),
+    ],
+)
+def test_output_sort_keys_use_present_identity_or_life_table_group_columns(names, roles, expected):
+    table = pa.table({name: pa.array([], type=pa.int64()) for name in names})
+    assert output_sort_keys(table.schema, roles) == expected
 
 
 def test_unused_label_source_readiness_is_not_a_model_requirement(native_inputs):
@@ -216,24 +271,6 @@ def test_cohort_requests_refuse_with_codes(readme_con, build, value_column, cont
         frame.cohorts(grouping=grouping, value_column=value_column)
     assert error.value.code == "terrine.cohort.invalid_operation"
     assert {key: error.value.context[key] for key in context} == context
-
-
-def test_materialized_frame_dataframes_match_frame_dataframes(readme_con):
-    frame = readme_design().build(readme_model(readme_con))
-    materialized = frame.materialize()
-
-    keys = ["unit", "anchor_id"]
-    assert (
-        materialized.to_pandas(values_only=True)
-        .sort_values(keys)
-        .reset_index(drop=True)
-        .equals(frame.to_pandas(values_only=True).sort_values(keys).reset_index(drop=True))
-    )
-    pytest.importorskip("polars")
-    materialized_polars = materialized.to_polars(values_only=True).sort(keys)
-    frame_polars = frame.to_polars(values_only=True).sort(keys)
-    assert materialized_polars.columns == frame_polars.columns
-    assert materialized_polars.to_dicts() == frame_polars.to_dicts()
 
 
 def test_conflicting_view_flags_refuse_before_frame_materialization(readme_con, monkeypatch):

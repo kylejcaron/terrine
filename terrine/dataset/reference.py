@@ -20,8 +20,10 @@ from terrine.data import (
     _ROWS_EXCEEDED,
     Budget,
     MaterializedFrame,
+    Roles,
     _optional_dependency,
     dataframe_view_preflight,
+    output_sort_keys,
 )
 from terrine.dataset.manifest import DatasetManifest, ManifestColumn, ManifestGeneration
 from terrine.errors import INVALID_VIEW, RefusalSpec
@@ -320,7 +322,20 @@ class Dataset:
                 collected.append(batch)
         finally:
             batches.close()
-        return pa.Table.from_batches(collected, schema=schema)
+        table = pa.Table.from_batches(collected, schema=schema)
+        identity = {column.role: column.name for column in self._manifest.columns}
+        roles = Roles(
+            identity.get("unit", "unit"),
+            identity.get("anchor", "anchor_id"),
+            identity.get("t0", "t0"),
+            None,
+            tuple(column.name for column in self._manifest.columns if column.role == "feature"),
+            (),
+        )
+        keys = output_sort_keys(table.schema, roles)
+        if keys:
+            table = table.sort_by([(name, "ascending") for name in keys], null_placement="at_end")
+        return table
 
     def to_pandas(
         self,

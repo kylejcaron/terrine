@@ -638,6 +638,7 @@ class _Renderer:
         yield "", f"Completeness: {self._coverage(first)}"
         for source in rest:
             yield "  ", self._coverage(source)
+        yield "  ", "Naive source timestamps are read as UTC instants."
         shape = self.design.shape
         if isinstance(shape, (TimeToEvent, LifeTable)):
             inner = shape.time_to_event if isinstance(shape, LifeTable) else shape

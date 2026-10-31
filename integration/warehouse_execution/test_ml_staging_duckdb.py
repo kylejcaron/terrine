@@ -1990,27 +1990,28 @@ def test_pre_rename_owner_database_refuses_old_generation_and_stages_new(events_
         con.disconnect()
 
 
-def test_dataset_reads_match_materialized_rows(common_frame):
+def test_dataset_reads_match_materialized_rows(common_frame, monkeypatch):
     dataset = common_frame.stage("readback", budget=Budget(strict_scan=False))
 
-    expected = common_frame.to_pyarrow().sort_by(
-        [("unit", "ascending"), ("anchor_id", "ascending")]
-    )
-    assert (
-        dataset.to_pyarrow()
-        .sort_by([("unit", "ascending"), ("anchor_id", "ascending")])
-        .to_pylist()
-        == expected.to_pylist()
-    )
-    expected_pandas = (
-        common_frame.to_pandas().sort_values(["unit", "anchor_id"]).reset_index(drop=True)
-    )
-    actual_pandas = dataset.to_pandas().sort_values(["unit", "anchor_id"]).reset_index(drop=True)
-    assert actual_pandas.equals(expected_pandas)
+    expected = common_frame.to_pyarrow()
+    expected_schema = dataset._arrow_schema()
+    original = Dataset._iter_arrow_batches
+
+    def reversed_batches(self, batch_size):
+        table = pa.Table.from_batches(list(original(self, batch_size)), schema=self._arrow_schema())
+        table = table.take(pa.array(range(table.num_rows - 1, -1, -1), type=pa.int64()))
+        yield from table.to_batches(max_chunksize=1)
+
+    monkeypatch.setattr(Dataset, "_iter_arrow_batches", reversed_batches)
+    actual = dataset.to_pyarrow()
+    assert actual.to_pylist() == expected.to_pylist()
+    assert actual.schema.equals(expected_schema, check_metadata=True)
+    assert dataset.to_pandas().equals(common_frame.to_pandas())
     pytest.importorskip("polars")
-    expected_polars = common_frame.to_polars(values_only=True).sort(["unit", "anchor_id"])
-    actual_polars = dataset.to_polars(values_only=True).sort(["unit", "anchor_id"])
-    assert actual_polars.to_dicts() == expected_polars.to_dicts()
+    assert (
+        dataset.to_polars(values_only=True).to_dicts()
+        == common_frame.to_polars(values_only=True).to_dicts()
+    )
 
 
 def test_dataset_read_budget_refuses(tmp_path, interop_world):

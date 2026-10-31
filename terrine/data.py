@@ -293,7 +293,7 @@ class BoundCoverage:
 
 @dataclass(frozen=True, slots=True, init=False, repr=False)
 class UnitSource:
-    """Declare a unit's table and key, using a table name or an in-memory table.
+    """Declare a unit's table and key; naive source timestamps are interpreted as UTC instants.
 
     Example: tr.UnitSource(customers, "customer_id")
     """
@@ -411,7 +411,7 @@ class Ratio:
 
 @dataclass(frozen=True, slots=True, init=False, repr=False)
 class Events:
-    """Declare an event table's time, unit key, metrics, labels, row filters and complete days.
+    """Declare an event table; naive source timestamps are interpreted as UTC instants.
 
     Example: tr.Events(orders, time="ordered_at", key="customer_id", complete=complete)
     """
@@ -494,7 +494,7 @@ class Events:
 
 @dataclass(frozen=True, slots=True, init=False, repr=False)
 class History:
-    """Declare an attribute's history by unit key and validity times or change time.
+    """Declare attribute history; naive source timestamps are interpreted as UTC instants.
 
     Example: tr.History("plans", key="customer_id", column="plan", changed_at="time")
     """
@@ -1666,6 +1666,30 @@ def _ordered_columns(
     return (*ordered, *bookkeeping)
 
 
+def output_sort_keys(schema: pa.Schema, roles: Roles) -> tuple[str, ...]:
+    """Return the stable identity and shape-specific ordering columns."""
+    names = set(schema.names)
+    if "time_bin" in names:
+        ordered = [name for name in roles.features if name in names and name != "time_bin"]
+        ordered.append("time_bin")
+    else:
+        ordered = [
+            name
+            for name in (
+                roles.unit,
+                roles.t0,
+                roles.anchor,
+                "period_index",
+                "event_period",
+                "trial_id",
+                "age",
+                "sequence_position",
+            )
+            if name in names
+        ]
+    return tuple(dict.fromkeys(ordered))
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class MaterializedFrame:
     table: pa.Table
@@ -1683,18 +1707,18 @@ class MaterializedFrame:
         ):
             raise TypeError("columns must map names to ColumnMeta")
         object.__setattr__(self, "columns", _typed_mapping(self.columns, "columns", ColumnMeta))
-        object.__setattr__(
-            self,
-            "table",
-            self.table.select(
-                _ordered_columns(
-                    self.table.column_names,
-                    self.roles,
-                    self.columns,
-                    self.provenance.expression_timings,
-                )
-            ),
+        table = self.table.select(
+            _ordered_columns(
+                self.table.column_names,
+                self.roles,
+                self.columns,
+                self.provenance.expression_timings,
+            )
         )
+        keys = output_sort_keys(table.schema, self.roles)
+        if keys:
+            table = table.sort_by([(name, "ascending") for name in keys], null_placement="at_end")
+        object.__setattr__(self, "table", table)
 
     def __repr__(self) -> str:
         return (

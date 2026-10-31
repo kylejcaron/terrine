@@ -167,6 +167,28 @@ def test_describe_names_every_part_of_the_readme_design(readme_con):
         assert f"{column}__reason" in text
 
 
+def test_describe_states_naive_times_are_utc(shapes_model):
+    model = tr.Model.from_catalog(
+        shapes_model.catalog.model_copy(update={"day_boundary": "UTC+05:30"}),
+        con=shapes_model.con,
+        units=shapes_model.units,
+        readiness={name: tr.Coverage(*_COMPLETE) for name in shapes_model.sources},
+    )
+    design = Design(
+        None,
+        FixedDate("2025-02-01"),
+        features={
+            "spend_before": tr.agg("spend", window=("-30d", "0s")),
+            "baseline_plan": tr.asof("plan"),
+        },
+    )
+    completeness = design.describe(model).split("Completeness:", 1)[1].split("Columns:", 1)[0]
+    facts = [" ".join(line.split()) for line in completeness.splitlines()]
+    assert any("naive" in line.lower() and "UTC" in line for line in facts)
+    assert any("purchase" in line for line in facts)
+    assert any("plan" in line for line in facts)
+
+
 @pytest.mark.parametrize("name", ["readme", *_DESIGNS])
 def test_describe_runs_no_query(name, shapes_model, readme_con, monkeypatch):
     model = readme_model(readme_con) if name == "readme" else shapes_model
