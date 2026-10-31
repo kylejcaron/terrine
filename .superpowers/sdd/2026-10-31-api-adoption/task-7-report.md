@@ -17,7 +17,7 @@
 - `make check TESTS="tests/compile"` — passed: ruff, vulture, pydoclint, tach, ty, and **305 passed** tests.
 - `eval "$(uv run python -m tests.integration.postgres_scratch start)" && make test-postgres` — passed: 79 PostgreSQL probes and 9 generic-dialect conformance tests passed. Scratch server stopped with `uv run python -m tests.integration.postgres_scratch stop`.
 - `uv run python tests/documentation.py` — completed: documented 175 codes from 270 declarations.
-- A direct focused post-change test run was started but was waiting for shared agent-slots at report time; the full compile selection above includes the three affected tests.
+- A separate direct focused post-change test run timed out after 300 seconds waiting for shared agent-slots. The full compile selection above includes the three affected tests.
 
 ## Files changed
 
@@ -36,4 +36,4 @@ No scope deviations. Tests use the existing compact fixtures; selector assertion
 
 ## Concerns
 
-The first `make test-postgres` attempt was run without carrying the scratch server's exported environment into the same shell and failed because PostgreSQL settings were missing. The required combined start-and-test invocation then passed. The focused test command's first post-change attempt encountered a transient format-string error; after escaping the literal mapping braces, coverage passed in the compile-wide check. A further targeted rerun was queued behind external shared agent-slot contention.
+The first `make test-postgres` attempt was run without carrying the scratch server's exported environment into the same shell and failed because PostgreSQL settings were missing. The required combined start-and-test invocation then passed. The focused test command's first post-change attempt encountered a transient format-string error; after escaping the literal mapping braces, coverage passed in the compile-wide check. The additional targeted rerun later timed out after 300 seconds waiting for external shared agent-slot contention.
