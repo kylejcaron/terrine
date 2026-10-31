@@ -7,6 +7,9 @@
 - Document public parameters, defaults and constructed attributes with runnable
   examples; expose closed choices to type checkers. Explain strict as-of cutoffs
   and demonstrate leakage-safe training and validation splits in the README.
+- Clarify session transition labels, zero-length session gaps, funnel step counts,
+  split duration syntax and open training fractions. Document uncapped budget
+  defaults and keep Increment examples optional.
 
 - List every shape's dataframe columns in `Design.describe` and publish
   `terrine.reasons.REASONS` and `terrine.errors.REFUSAL_CODES` for interpreting

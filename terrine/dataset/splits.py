@@ -91,8 +91,8 @@ class TimeSplit:
         train_until: Exclusive training t0 cutoff, as a date, aware datetime or ISO string.
         validation_until: Exclusive validation t0 cutoff in the same formats; None has no later test
             split.
-        embargo: Nonnegative duration string (see `terrine.windows`) or timedelta; "0d" leaves no
-            gap.
+        embargo: Unsigned decimal string ending in d/h/m/s (e.g. "1.5d") or nonnegative timedelta;
+            "0d" leaves no gap. Weeks, signs and compound strings are refused.
         groups: GroupSplit requiring unit groups to agree with the time bucket; None uses time
             alone.
 
@@ -100,8 +100,7 @@ class TimeSplit:
         train_until: Exclusive training t0 cutoff, as a date, aware datetime or ISO string.
         validation_until: Exclusive validation t0 cutoff in the same formats; None has no later test
             split.
-        embargo: Nonnegative duration string (see `terrine.windows`) or timedelta; "0d" leaves no
-            gap.
+        embargo: Normalized nonnegative timedelta between time buckets.
         groups: GroupSplit requiring unit groups to agree with the time bucket; None uses time
             alone.
 
@@ -170,14 +169,14 @@ class GroupSplit:
 
     Args:
         group: Name of the grouping key; "unit" keeps all rows for a unit in one bucket.
-        train_fraction: Fraction in [0, 1] assigned to train; default 0.8.
+        train_fraction: Fraction in (0, 1) assigned to train; default 0.8.
         validation_fraction: Fraction in [0, 1] assigned to validation; default 0.1; total cannot
             exceed 1.
         seed: Integer deterministic partition seed; 0 is the reproducible default.
 
     Attributes:
         group: Name of the grouping key; "unit" keeps all rows for a unit in one bucket.
-        train_fraction: Fraction in [0, 1] assigned to train; default 0.8.
+        train_fraction: Fraction in (0, 1) assigned to train; default 0.8.
         validation_fraction: Fraction in [0, 1] assigned to validation; default 0.1; total cannot
             exceed 1.
         seed: Integer deterministic partition seed; 0 is the reproducible default.

@@ -28,10 +28,12 @@ class SessionSpec:
     """Group a unit's consecutive events into sessions separated by more than ``gap``.
 
     Args:
-        gap: Positive duration string (see `terrine.windows`); longer gaps start new sessions.
+        gap: Nonnegative duration string (see `terrine.windows`); "0s" groups only simultaneous
+            events.
 
     Attributes:
-        gap_seconds: Positive session-separation threshold in exact integer seconds.
+        gap_seconds: Nonnegative threshold in exact integer seconds; zero groups only simultaneous
+            events.
 
     Example: spec.SessionSpec(gap="30m")
     """
@@ -51,12 +53,12 @@ class FunnelSpec:
 
     Args:
         event_property: Declared event label name whose values define funnel steps.
-        steps: Nonempty ordered tuple of distinct label values to follow.
+        steps: Ordered tuple of at least two distinct nonempty string label values to follow.
         within: Positive duration string (see `terrine.windows`); None imposes no funnel time limit.
 
     Attributes:
         event_property: Declared event label name whose values define funnel steps.
-        steps: Nonempty ordered tuple of distinct label values to follow.
+        steps: Ordered tuple of at least two distinct nonempty string label values to follow.
         within_seconds: Elapsed funnel time limit in integer seconds, or None for no limit.
 
     Example: spec.FunnelSpec("status", ("placed", "paid"), within="7d")
@@ -97,8 +99,8 @@ class EventSequence:
         representation: "positions" emits event rows; "arrays" emits one bounded array row; default
             "positions".
         properties: Tuple of event property names to retain; () retains none.
-        label_property: Declared event label name to match; None selects events without a label
-            filter.
+        label_property: Declared label used for transition_from/transition_to when sessions are
+            enabled; None records no transition labels. It does not filter events.
         sessions: SessionSpec grouping events by elapsed gaps; None does not assign sessions.
         funnel: FunnelSpec assigning ordered label steps; None does not assign funnel steps.
 
@@ -110,8 +112,8 @@ class EventSequence:
         representation: "positions" emits event rows; "arrays" emits one bounded array row; default
             "positions".
         properties: Tuple of event property names to retain; () retains none.
-        label_property: Declared event label name to match; None selects events without a label
-            filter.
+        label_property: Declared label used for transition_from/transition_to when sessions are
+            enabled; None records no transition labels. It does not filter events.
         sessions: SessionSpec grouping events by elapsed gaps; None does not assign sessions.
         funnel: FunnelSpec assigning ordered label steps; None does not assign funnel steps.
 

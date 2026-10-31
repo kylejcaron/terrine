@@ -1419,20 +1419,22 @@ class Provenance:
 class Budget:
     """Limit output rows, output bytes or estimated scan bytes for a dataset.
 
+    Budget() is uncapped: all three limits default to None. The strict_scan default
+    does not enable a scan limit; it applies only when max_scan_bytes is set.
 
     Args:
-        max_rows: Nonnegative output-row limit; None imposes no row cap.
-        max_output_bytes: Nonnegative output-byte limit; None imposes no output-byte cap.
-        max_scan_bytes: Nonnegative estimated-scan-byte limit; None imposes no scan cap.
-        strict_scan: Whether unavailable scan estimates refuse a scan limit; True refuses rather
-            than guessing.
+        max_rows: Nonnegative output-row limit; default None imposes no row cap.
+        max_output_bytes: Nonnegative output-byte limit; default None imposes no output-byte cap.
+        max_scan_bytes: Nonnegative estimated-scan-byte limit; default None imposes no scan cap.
+        strict_scan: Whether an unknown estimate refuses a configured scan limit; default True
+            refuses, while False warns and proceeds.
 
     Attributes:
-        max_rows: Nonnegative output-row limit; None imposes no row cap.
-        max_output_bytes: Nonnegative output-byte limit; None imposes no output-byte cap.
-        max_scan_bytes: Nonnegative estimated-scan-byte limit; None imposes no scan cap.
-        strict_scan: Whether unavailable scan estimates refuse a scan limit; True refuses rather
-            than guessing.
+        max_rows: Nonnegative output-row limit; default None imposes no row cap.
+        max_output_bytes: Nonnegative output-byte limit; default None imposes no output-byte cap.
+        max_scan_bytes: Nonnegative estimated-scan-byte limit; default None imposes no scan cap.
+        strict_scan: Whether an unknown estimate refuses a configured scan limit; default True
+            refuses, while False warns and proceeds.
 
     Example: tr.Budget(max_rows=1000)
     """

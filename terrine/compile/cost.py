@@ -63,7 +63,7 @@ def preview(
     Args:
         design: Design describing the rows and expressions to compile.
         model: Model binding the design names to tables, metrics, attributes and completeness.
-        budget: Budget limiting output and estimated scans; None uses the ordinary default limits.
+        budget: Optional Budget; None declares no row, output-byte or scan limits.
         bounded_count: Nonnegative count bound; 0 does not query rows, positive values request a
             bounded count.
 

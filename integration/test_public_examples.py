@@ -10,6 +10,8 @@ import terrine.spec as spec
 from tests.fixtures.readme import readme_design, readme_model, readme_tables
 from tests.test_public_docstrings import _example_blocks, _public_objects
 
+_OPTIONAL_EXAMPLE_MODULES = {"Model.from_increment": "increment.semantics"}
+
 
 @pytest.fixture(scope="module")
 def example_namespace(tmp_path_factory):
@@ -34,9 +36,16 @@ def example_namespace(tmp_path_factory):
     con.disconnect()
 
 
-def test_public_examples_execute(example_namespace):
+@pytest.mark.parametrize(
+    "optional_module", [None, "increment.semantics"], ids=["core", "increment"]
+)
+def test_public_examples_execute(example_namespace, optional_module):
+    if optional_module is not None:
+        pytest.importorskip(optional_module)
     failures = []
     for name, obj in _public_objects():
+        if _OPTIONAL_EXAMPLE_MODULES.get(name) != optional_module:
+            continue
         doc = inspect.getdoc(obj) or ""
         examples = list(_example_blocks(doc))
         if not examples:

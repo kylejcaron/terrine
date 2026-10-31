@@ -310,8 +310,8 @@ class Dataset:
 
 
         Args:
-            budget: Budget limiting pinned-generation reads; None has no output cap and requests no
-                scan estimate.
+            budget: Optional limits; None uses Budget(strict_scan=False), with no row, output-byte
+                or scan cap.
 
         Returns:
             A PyArrow Table preserving completeness, reason columns and portable schema metadata.
@@ -368,8 +368,8 @@ class Dataset:
 
 
         Args:
-            budget: Budget limiting pinned-generation reads; None has no output cap and requests no
-                scan estimate.
+            budget: Optional limits; None uses Budget(strict_scan=False), with no row, output-byte
+                or scan cap.
             include_observation_metadata: Whether to retain observation-bound columns; False omits
                 them.
             values_only: Whether to omit completeness/reason columns too; False retains them;
@@ -408,8 +408,8 @@ class Dataset:
 
 
         Args:
-            budget: Budget limiting pinned-generation reads; None has no output cap and requests no
-                scan estimate.
+            budget: Optional limits; None uses Budget(strict_scan=False), with no row, output-byte
+                or scan cap.
             include_observation_metadata: Whether to retain observation-bound columns; False omits
                 them.
             values_only: Whether to omit completeness/reason columns too; False retains them;

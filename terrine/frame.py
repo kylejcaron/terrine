@@ -698,8 +698,8 @@ class Frame:
 
         Args:
             table: Destination dataset table name on the model's file-backed DuckDB connection.
-            budget: Budget limiting output and estimated scans; None uses the ordinary default
-                limits.
+            budget: Optional limits; None uses Budget(strict_scan=False), with no row, output-byte
+                or scan cap.
 
         Returns:
             A Dataset pinned to the newly published immutable generation.
@@ -714,8 +714,7 @@ class Frame:
 
 
         Args:
-            budget: Budget limiting output and estimated scans; None uses the ordinary default
-                limits.
+            budget: Optional limits; None applies no row, output-byte or scan cap.
 
         Returns:
             A MaterializedFrame containing Arrow rows, roles, column metadata and provenance.
@@ -1127,8 +1126,7 @@ class Frame:
 
 
         Args:
-            budget: Budget limiting output and estimated scans; None uses the ordinary default
-                limits.
+            budget: Optional limits; None applies no row, output-byte or scan cap.
 
         Returns:
             A PyArrow Table preserving completeness, reason columns and portable schema metadata.
@@ -1150,8 +1148,7 @@ class Frame:
 
 
         Args:
-            budget: Budget limiting output and estimated scans; None uses the ordinary default
-                limits.
+            budget: Optional limits; None applies no row, output-byte or scan cap.
             include_observation_metadata: Whether to retain observation-bound columns; False omits
                 them.
             values_only: Whether to omit completeness/reason columns too; False retains them;
@@ -1185,8 +1182,7 @@ class Frame:
 
 
         Args:
-            budget: Budget limiting output and estimated scans; None uses the ordinary default
-                limits.
+            budget: Optional limits; None applies no row, output-byte or scan cap.
             include_observation_metadata: Whether to retain observation-bound columns; False omits
                 them.
             values_only: Whether to omit completeness/reason columns too; False retains them;

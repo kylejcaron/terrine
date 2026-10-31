@@ -476,8 +476,8 @@ def event_sequence(
         max_events: Positive integer maximum number of events per anchor.
         occurrence: "first", "each" or "nth"; "first" starts at the earliest event.
         n: Positive one-based occurrence index for "nth"; None is required for other rules.
-        session_gap: Positive duration string (see `terrine.windows`); None does not group events
-            into sessions.
+        session_gap: Nonnegative duration string (see `terrine.windows`); "0s" groups only
+            simultaneous events. None does not group events into sessions.
         features: Mapping of output names to expressions or predicates; None declares no features.
         outcomes: Mapping of output names to future expressions or predicates; None declares no
             outcomes.
