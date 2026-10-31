@@ -133,6 +133,7 @@ it does not replace the completed-task observations. These are not total
 allocation, repeated-query work, or scan measurements. Unavailable scan
 observations remain `None` with a reason; legacy missing artifact observations
 remain unavailable. Observations never rewrite saved forecasts.
+Published datasets are sorted on read; runtime byte accounting describes the stored artifact, not the re-sorted table.
 
 ## Save, run, and follow runs
 

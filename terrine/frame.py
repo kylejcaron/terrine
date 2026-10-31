@@ -787,7 +787,7 @@ class Frame:
                 query = query.limit(limit)
                 chunk_size = min(chunk_size, limit)
             batches = []
-            row_count = byte_count = 0
+            row_count = 0
             stream = GatedStream(
                 context.to_arrow_batches(query, chunk_size=chunk_size),
                 final,
@@ -805,15 +805,9 @@ class Frame:
                         batch = batch.cast(schema)
                     batch = self._winsorize_output(batch)
                     row_count += batch.num_rows
-                    byte_count += batch.nbytes
                     if budget is not None and not is_life_table:
                         if budget.max_rows is not None and row_count > budget.max_rows:
                             raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
-                        if (
-                            budget.max_output_bytes is not None
-                            and byte_count > budget.max_output_bytes
-                        ):
-                            raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
                     batches.append(batch)
                 table = pa.Table.from_batches(batches, schema=output_schema)
             finally:
@@ -873,11 +867,6 @@ class Frame:
                 if budget is not None:
                     if budget.max_rows is not None and table.num_rows > budget.max_rows:
                         raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
-                    if (
-                        budget.max_output_bytes is not None
-                        and table.nbytes > budget.max_output_bytes
-                    ):
-                        raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
                 roles = Roles(
                     "unit",
                     "anchor_id",
@@ -907,9 +896,6 @@ class Frame:
             table, split_counts = self._split_output(table, compiled)
             for reason, count in split_counts.items():
                 excluded_counts[reason] = excluded_counts.get(reason, 0) + count
-            if budget is not None and budget.max_output_bytes is not None:
-                if table.nbytes > budget.max_output_bytes:
-                    raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
             treatment = self._design.treatment
             treatment_column = compiled.roles.treatment
             baseline_binary = (
@@ -997,7 +983,11 @@ class Frame:
                 cohort_operation=cohort_operation,
             )
             provenance = self._view_provenance(provenance, excluded_counts)
-            return MaterializedFrame(table, roles, columns, provenance)
+            result = MaterializedFrame(table, roles, columns, provenance)
+            if budget is not None and budget.max_output_bytes is not None:
+                if result.table.nbytes > budget.max_output_bytes:
+                    raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
+            return result
 
     def _view_provenance(self, provenance: Provenance, excluded_counts: dict[str, int]):
         model = self._model

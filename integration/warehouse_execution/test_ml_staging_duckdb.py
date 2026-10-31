@@ -2022,11 +2022,18 @@ def test_dataset_read_budget_refuses(tmp_path, interop_world):
             .build(model)
             .stage("readback", budget=Budget(strict_scan=False))
         )
+        expected = dataset.to_pyarrow()
+        bounded = dataset.to_pyarrow(
+            budget=Budget(max_output_bytes=expected.nbytes, strict_scan=False)
+        )
+        assert bounded.equals(expected, check_metadata=True)
         with pytest.raises(TerrineError) as rows_error:
             dataset.to_pyarrow(budget=Budget(max_rows=1, strict_scan=False))
         assert rows_error.value.code == "terrine.budget.rows_exceeded"
         with pytest.raises(TerrineError) as bytes_error:
-            dataset.to_pyarrow(budget=Budget(max_output_bytes=1, strict_scan=False))
+            dataset.to_pyarrow(
+                budget=Budget(max_output_bytes=expected.nbytes - 1, strict_scan=False)
+            )
         assert bytes_error.value.code == "terrine.budget.output_bytes_exceeded"
     finally:
         model.con.disconnect()

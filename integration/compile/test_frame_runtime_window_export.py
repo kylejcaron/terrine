@@ -345,6 +345,9 @@ def test_budgets_count_only_output_rows_and_bytes(con):
         Budget(max_rows=2, max_output_bytes=reference.table.nbytes)
     )
     assert bounded.table.sort_by("unit").equals(reference.table.sort_by("unit"))
+    with pytest.raises(TerrineError) as bytes_error:
+        design.build(model).materialize(Budget(max_output_bytes=reference.table.nbytes - 1))
+    assert bytes_error.value.code == "terrine.budget.output_bytes_exceeded"
     with pytest.raises(TerrineError) as error:
         design.build(model).materialize(Budget(max_rows=1, max_output_bytes=10**6))
     assert error.value.code == "terrine.budget.rows_exceeded"

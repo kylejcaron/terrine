@@ -325,16 +325,12 @@ class Dataset:
         schema = self._arrow_schema()
         batches = self._iter_arrow_batches(65_536)
         rows = 0
-        output_bytes = 0
         collected = []
         try:
             for batch in batches:
                 rows += batch.num_rows
-                output_bytes += batch.nbytes
                 if budget.max_rows is not None and rows > budget.max_rows:
                     raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
-                if budget.max_output_bytes is not None and output_bytes > budget.max_output_bytes:
-                    raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
                 collected.append(batch)
         finally:
             batches.close()
@@ -355,6 +351,8 @@ class Dataset:
         )
         if keys:
             table = table.sort_by([(name, "ascending") for name in keys], null_placement="at_end")
+        if budget.max_output_bytes is not None and table.nbytes > budget.max_output_bytes:
+            raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
         return table
 
     def to_pandas(
