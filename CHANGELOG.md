@@ -9,6 +9,8 @@
   seconds in saved designs and metadata.
 - Require source and unit roster keys to have identical dtypes when binding a model.
 
+- Accept YAML returned by `Model.to_catalog()` directly in `Model.from_catalog`.
+
 ### Performance
 
 - Run a build's integrity checks, eligibility summary and output in one

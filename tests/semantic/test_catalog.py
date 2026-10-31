@@ -111,6 +111,23 @@ def test_bound_descriptors_use_v2_names(native_inputs):
     assert metric.measures[0].event == "session"
 
 
+
+
+def test_catalog_path_string_still_loads(tmp_path: Path, native_inputs):
+    catalog, con = native_inputs
+    path = tmp_path / "catalog.yaml"
+    path.write_text(dump_catalog(catalog), encoding="utf-8")
+    model = Model.from_catalog(
+        str(path),
+        con=con,
+        readiness={
+            "events": Coverage("2025-01-01", "2025-01-31"),
+            "labels": Coverage("2025-01-01", "2025-01-31"),
+        },
+    )
+    assert model.catalog == catalog
+
+
 def test_safe_yaml_roundtrips_native_mapping(tmp_path: Path):
     catalog = Catalog.model_validate(CATALOG)
     path = tmp_path / "catalog.yaml"

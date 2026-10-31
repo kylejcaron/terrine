@@ -20,7 +20,7 @@ from terrine.errors import RefusalSpec
 from terrine.execution._metadata import metadata_operation
 from terrine.execution._native import _ascii_key
 from terrine.semantic.bind import _KEY_SCHEMA, _SCHEMA, _relation, bind_metric, normalize_source
-from terrine.semantic.io import dump_catalog, load_catalog, validate_catalog
+from terrine.semantic.io import dump_catalog, load_catalog, load_catalog_text, validate_catalog
 from terrine.semantic.models import BoundMetric, BoundSource, Catalog, RelationSpec, TableRef
 from terrine.semantic.time import boundary_timezone
 from terrine.temporal.readiness import Readiness
@@ -513,7 +513,9 @@ class Model:
         )
 
     def to_catalog(self) -> str:
-        """Return this model's event, metric and history definitions as catalog YAML.
+        """Return this model's catalog YAML, excluding its runtime bindings.
+
+        The catalog does not include units, readiness or event_ids.
 
         Example: model.to_catalog()
         """
@@ -534,19 +536,24 @@ class Model:
     ) -> Model:
         """Bind catalog definitions to a connection, unit tables and complete event times.
 
+        A string containing a newline is parsed as YAML text; a Path or a
+        single-line string is treated as a file path. The catalog does not include
+        units, readiness or event_ids.
+
         Unverified connections must have no pending writes during schema inspection.
 
         Example: tr.Model.from_catalog(model.catalog, con=model.con, **bindings)
         """
         if not isinstance(allow_unverified, bool):
             raise _INVALID.error(reason="wrong_type", field="allow_unverified")
-        catalog = (
-            path_or_catalog
-            if isinstance(path_or_catalog, Catalog)
-            else validate_catalog(path_or_catalog)
-            if isinstance(path_or_catalog, Mapping)
-            else load_catalog(path_or_catalog)
-        )
+        if isinstance(path_or_catalog, Catalog):
+            catalog = path_or_catalog
+        elif isinstance(path_or_catalog, Mapping):
+            catalog = validate_catalog(path_or_catalog)
+        elif isinstance(path_or_catalog, str) and "\n" in path_or_catalog:
+            catalog = load_catalog_text(path_or_catalog)
+        else:
+            catalog = load_catalog(path_or_catalog)
         engine = resolve_engine(con, allow_unverified=allow_unverified)
         return cls._from_catalog(
             catalog,

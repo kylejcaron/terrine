@@ -412,7 +412,7 @@ def test_event_time_with_label_equals_works_on_from_tables_model(con):
 def test_to_catalog_round_trip_has_equal_model_hash(con):
     model = rich_model(con)
     restored = Model.from_catalog(
-        yaml.safe_load(model.to_catalog()),
+        model.to_catalog(),
         con=model.con,
         units=model.units,
         readiness=model.readiness,

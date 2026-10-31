@@ -3,19 +3,19 @@
 Terrine's native `Catalog` describes source relations and their meaning without
 requiring the optional increment adapter. A catalog can be constructed from a
 Python mapping with `Catalog.model_validate(...)` or loaded from safe YAML with
-`load_catalog(path)`. Both paths use the same strict version-1 Pydantic models;
+`load_catalog(path)`. YAML text uses the same strict version-2 schema gate;
 unknown fields, duplicate YAML keys, unsafe YAML tags, and unsupported schema
 versions are rejected.
 
-Schema failures from `load_catalog` raise `TerrineError` with code
-`terrine.catalog.invalid_definition`. Inspect its immutable `context["issues"]`
-for ordered locations, stable validation categories, and package-owned recovery
-hints; the same actionable locations and corrections appear in the displayed
-error. For example, `day_boundary: UTC+14:01` points to `day_boundary`: use
-`UTC`, a signed `HH:MM` offset, or a `UTC`-prefixed fixed offset within ±14:00
-(the endpoints are limited to exactly `14:00`). Correct the YAML and load it
-again. Direct `Catalog.model_validate(...)` construction continues to use
-Pydantic's `ValidationError`.
+Schema failures from `load_catalog` and `load_catalog_text` raise `TerrineError`
+with code `terrine.catalog.invalid_definition`. Inspect its immutable
+`context["issues"]` for ordered locations, stable validation categories, and
+package-owned recovery hints; the same actionable locations and corrections
+appear in the displayed error. For example, `day_boundary: UTC+14:01` points
+to `day_boundary`: use `UTC`, a signed `HH:MM` offset, or a `UTC`-prefixed
+fixed offset within ±14:00 (the endpoints are limited to exactly `14:00`).
+Correct the YAML and load it again. Direct `Catalog.model_validate(...)`
+construction continues to use Pydantic's `ValidationError`.
 
 ## Binding event tables
 
@@ -127,11 +127,16 @@ context `kind` of `metric`, `label` or `event`, `name`, and the sorted
 `owners`, such as `("events:orders.amount", "labels:orders")`).
 
 `model.to_catalog()` writes the equivalent schema-version-2 catalog as YAML.
-`Model.from_catalog(path, con=con, units=model.units, readiness=model.readiness,
-event_ids=model.event_ids)` binds the same model with an equal `model_hash`.
-Choose `Model.from_catalog` directly for SQL relations, multi-unit sources or
-explicit catalog names; those are richer source declarations, not options
-inferred from tables.
+Pass that YAML directly to `Model.from_catalog(model.to_catalog(), con=con,
+units=model.units, readiness=model.readiness, event_ids=model.event_ids)` to
+bind the same model with an equal `model_hash`. A catalog contains only source,
+event, property, dimension, measure and metric definitions; it excludes
+`units`, `readiness` and `event_ids`, which are provided separately when
+binding.
+`Model.from_catalog` also accepts a `Path` or a single-line string as a file
+path. Choose it directly for SQL relations, multi-unit sources or explicit
+catalog names; those are richer source declarations, not options inferred from
+tables.
 
 ### Scheduled time series
 
