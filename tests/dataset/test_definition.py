@@ -110,7 +110,7 @@ def test_definition_canonical_bytes_ignore_mapping_insertion_order() -> None:
 
 def test_dataset_definition_rejects_unknown_fields_tags_and_runtime_values() -> None:
     with pytest.raises(TerrineError):
-        DatasetDefinition.from_json(b'{"schema_version":2,"base_design":{},"view":null,"extra":1}')
+        DatasetDefinition.from_json(b'{"schema_version":3,"base_design":{},"view":null,"extra":1}')
     with pytest.raises(TerrineError):
         DatasetDefinition(
             schema_version=3, base_design=design(), view={"kind": "training", "unknown": "x"}
@@ -150,6 +150,48 @@ def test_definition_bytes_load_with_same_digest() -> None:
 
 def test_v1_definition_refuses() -> None:
     serialized = files("tests.fixtures").joinpath("pre_rename_definition.json").read_bytes()
+    with pytest.raises(TerrineError) as error:
+        DatasetDefinition.from_json(serialized)
+    assert error.value.code == "terrine.dataset.invalid_definition"
+    assert error.value.context["reason"] == "unsupported_schema_version"
+    assert error.value.context["schema_version"] == 1
+
+
+def test_v2_definition_document_refuses_with_version() -> None:
+    serialized = (
+        b'{"base_design":{"administrative_cutoff":null,"anchor":{"date":{"type":"date",'
+        b'"value":"2025-01-05"},"type":"FixedDate"},"anchor_range":null,"eligibility":{},'
+        b'"features":{},"gap":0,"outcomes":{},"sample":null,"shape":"cross_section",'
+        b'"treatment":null,"unit":"user"},"schema_version":2,"view":null}'
+    )
+    with pytest.raises(TerrineError) as error:
+        DatasetDefinition.from_json(serialized)
+    assert error.value.code == "terrine.dataset.invalid_definition"
+    assert error.value.context["reason"] == "unsupported_schema_version"
+    assert error.value.context["field"] == "schema_version"
+    assert error.value.context["expected"] == 3
+    assert error.value.context["schema_version"] == 2
+
+
+@pytest.mark.parametrize("entrypoint", ["constructor", "document"])
+def test_definition_version_gate_precedes_field_decoding(entrypoint: str) -> None:
+    with pytest.raises(TerrineError) as error:
+        if entrypoint == "constructor":
+            DatasetDefinition(schema_version=cast(int, 3.0), base_design=cast(Design, None))
+        else:
+            DatasetDefinition.from_json(
+                b'{"schema_version":3.0,"base_design":null,"view":{"kind":true}}'
+            )
+    assert error.value.code == "terrine.dataset.invalid_definition"
+    assert error.value.context["reason"] == "unsupported_schema_version"
+    assert error.value.context["schema_version"] == 3.0
+
+
+def test_definition_with_v2_base_design_refuses_with_code() -> None:
+    serialized = (
+        b'{"schema_version":3,"base_design":{"unit":"user","anchor":'
+        b'{"type":"EventAnchor","event":"signup","which":"first"}},"view":null}'
+    )
     with pytest.raises(TerrineError) as error:
         DatasetDefinition.from_json(serialized)
     assert error.value.code == "terrine.dataset.invalid_definition"

@@ -48,6 +48,16 @@ def _canonical(value: Any) -> bytes:
     ).encode("utf-8")
 
 
+def _validate_schema_version(value: Any) -> None:
+    if type(value) is not int or value != SCHEMA_VERSION:
+        raise INVALID_DEFINITION.error(
+            reason="unsupported_schema_version",
+            field="schema_version",
+            expected=SCHEMA_VERSION,
+            schema_version=value,
+        )
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class DatasetDefinition:
     """Save a versioned design with its selected view and fixed transforms.
@@ -68,8 +78,7 @@ class DatasetDefinition:
         view: Any = None,
         transforms: tuple[Winsorization, ...] = (),
     ) -> None:
-        if schema_version != SCHEMA_VERSION or isinstance(schema_version, bool):
-            raise INVALID_DEFINITION.error(reason="unsupported schema version")
+        _validate_schema_version(schema_version)
         if not isinstance(base_design, Design):
             raise _INVALID_INPUT.error(reason="wrong_type", field="base_design")
         if view is not None:
@@ -179,9 +188,7 @@ class DatasetDefinition:
                 "view",
             }:
                 raise ValueError("unknown definition fields")
-            version = payload["schema_version"]
-            if version != SCHEMA_VERSION or isinstance(version, bool):
-                raise ValueError("unsupported definition version")
+            _validate_schema_version(payload["schema_version"])
             design = design_from_json(
                 _canonical(
                     {"schema_version": DESIGN_SCHEMA_VERSION, "design": payload["base_design"]}
