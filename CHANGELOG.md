@@ -28,6 +28,7 @@
   completeness, selected-instant provenance and staged dataset values.
 - Split mixed-kind event tables with `Events(where=...)`, applying typed source
   filters consistently to every event read and refusing unknown membership.
+  Preserve unordered membership sets and reject them as ordered range bounds.
 
 ### Performance
 

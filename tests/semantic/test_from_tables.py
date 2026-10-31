@@ -117,7 +117,9 @@ def _snapshot(model, anchor, **columns):
 def test_events_descriptor_normalizes_and_detaches_inputs():
     metrics = {"n": tr.count()}
     labels = ["status"]
-    where = {"status__in": ["paid", "refunded"]}
+    statuses = ["paid", "refunded"]
+    kinds = {"purchase", "refund"}
+    where = {"status__in": statuses, "kind": kinds}
     events = Events(
         "orders",
         time="ordered_at",
@@ -129,10 +131,14 @@ def test_events_descriptor_normalizes_and_detaches_inputs():
     )
     metrics["changed"] = tr.count()
     labels.append("changed")
-    where["status__in"].append("changed")
+    statuses.append("changed")
+    kinds.add("changed")
     assert dict(events.metrics) == {"n": tr.count()}
     assert events.labels == ("status",)
-    assert events.where == {"status__in": ("paid", "refunded")}
+    assert events.where == {
+        "status__in": ("paid", "refunded"),
+        "kind": frozenset({"purchase", "refund"}),
+    }
     with pytest.raises(TypeError):
         events.where["status"] = "changed"  # ty: ignore[invalid-assignment]
     assert events.unit is None
@@ -208,7 +214,8 @@ def test_where_counts_match_hand_oracles(con):
     [
         ("status__like", "x"),
         ("amount__between", (1,)),
-        ("qty__between", {2, 10}),
+        ("qty__between", {1, 10}),
+        ("qty__between", frozenset({1, 10})),
         ("qty__between", (10, 2)),
         ("qty__between", (10.5, 2)),
         ("status__in", []),
@@ -216,12 +223,15 @@ def test_where_counts_match_hand_oracles(con):
         ("a__b__gt", 1),
     ],
 )
-def test_filter_grammar_errors_are_coded(key, bad):
+@pytest.mark.parametrize("entrypoint", ("metric", "source"))
+def test_filter_grammar_errors_are_coded(con, key, bad, entrypoint):
     with pytest.raises(TerrineError) as error:
-        tr.count(where={key: bad})
+        if entrypoint == "metric":
+            tr.count(where={key: bad})
+        else:
+            Model.from_tables(con, units=UNITS, events={"orders": orders(where={key: bad})})
     assert error.value.code == "terrine.model.invalid_binding"
-    assert error.value.context["reason"] == "invalid_filter"
-    assert error.value.context["key"] == key
+    assert error.value.context == {"reason": "invalid_filter", "key": key}
 
 
 def test_label_names_may_not_contain_double_underscore():
@@ -291,8 +301,13 @@ def test_filter_value_type_is_checked_during_shared_binding(con):
 
 def test_events_where_round_trips_catalog(con):
     model = Model.from_tables(
-        con, units=UNITS, events={"orders": orders(where={"qty__between": ("2", "10")})}
+        con,
+        units=UNITS,
+        events={
+            "orders": orders(where={"qty__between": ("2", "10"), "status": {"paid", "refunded"}})
+        },
     )
+    assert model.catalog.sources["orders"].where[1].values == ("paid", "refunded")
     rebound = Model.from_catalog(
         model.to_catalog(), con=con, units=UNITS, readiness=model.readiness
     )

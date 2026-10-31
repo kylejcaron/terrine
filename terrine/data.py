@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from base64 import b64decode, b64encode
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence, Set
 from dataclasses import dataclass, fields, is_dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, date, datetime, timedelta
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 type DataFrameLike = pa.Table | pandas.DataFrame | polars.DataFrame
 type JsonScalar = None | bool | int | float | str
-type Where = Mapping[str, JsonScalar | Sequence[JsonScalar]]
+type Where = Mapping[str, JsonScalar | Sequence[JsonScalar] | Set[JsonScalar]]
 
 __all__ = [
     "ApproximationMeta",
@@ -422,7 +422,7 @@ class Events:
     unit: str | None
     metrics: Mapping[str, EventMetric | Ratio]
     labels: tuple[str, ...]
-    where: Mapping[str, JsonScalar | tuple[JsonScalar, ...]]
+    where: Mapping[str, JsonScalar | tuple[JsonScalar, ...] | frozenset[JsonScalar]]
     complete: tuple[date, date] | None
 
     def __init__(
@@ -469,7 +469,7 @@ class Events:
                 ):
                     raise _INVALID_BINDING.error(reason="wrong_type", field="where")
                 filters[name] = (
-                    tuple(sorted(values, key=repr))
+                    frozenset(values)
                     if isinstance(value, (set, frozenset))
                     else tuple(values)
                     if isinstance(value, (list, tuple))
