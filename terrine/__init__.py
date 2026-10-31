@@ -138,3 +138,6 @@ def __getattr__(name: str):
     )
     globals()[name] = value
     return value
+
+def __dir__() -> list[str]:
+    return sorted(__all__)

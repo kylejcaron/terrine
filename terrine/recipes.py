@@ -350,3 +350,7 @@ def event_sequence(
         anchor_range=anchor_range,
         gap=gap,
     )
+
+
+def __dir__() -> list[str]:
+    return sorted(__all__)

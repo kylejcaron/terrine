@@ -2,6 +2,10 @@
 
 ## 0.1.0.dev2
 
+### API
+
+- Make every package and recipe export discoverable through `dir()`.
+
 ### Performance
 
 - Run a build's integrity checks, eligibility summary and output in one
