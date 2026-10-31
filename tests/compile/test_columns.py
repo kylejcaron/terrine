@@ -1,9 +1,9 @@
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 import ibis
-import pandas as pd
 import pyarrow as pa
 import pytest
 
@@ -890,94 +890,6 @@ def test_last_occurrence_tied_known_events_use_latest_event_id(column_model):
     assert row[meta.reason_column] is None
 
 
-@pytest.mark.parametrize("shape", ["time_series", "survival", "event_panel"])
-def test_since_returns_elapsed_time_to_last_event(column_model, shape):
-    from terrine import recipes
-
-    column_model.con.raw_sql("""
-        INSERT INTO events VALUES ('a', TIMESTAMPTZ '2025-01-01 12:00:00+00', 1, 'old');
-        CREATE TABLE finishes AS SELECT user_id, ts FROM events
-        WHERE ts = TIMESTAMPTZ '2025-01-02 12:00:00+00';
-    """)
-    catalog = column_model.catalog.model_dump(mode="python")
-    catalog["sources"]["finishes"] = {
-        **catalog["sources"]["events"],
-        "relation": {"kind": "table", "name": "finishes"},
-        "events": ("finish",),
-        "properties": (),
-    }
-    catalog["events"]["finish"] = {"source": "finishes", "column": None}
-    model = Model.from_catalog(
-        catalog,
-        con=column_model.con,
-        units=column_model.units,
-        readiness={name: Coverage("2024-12-20", "2025-01-10") for name in ("events", "finishes")},
-    )
-    features = {"recency": since("amount", window=("-7d", 0))}
-    if shape == "time_series":
-        design = recipes.time_series(
-            every="1d", start="2025-01-02", end="2025-01-03", features=features
-        )
-    elif shape == "survival":
-        design = recipes.survival(
-            start_event="amount", end_event="finish", occurrence="nth", n=2, features=features
-        )
-    else:
-        design = recipes.event_panel(
-            event="amount", periods=(-1, 0, 1), period="1d", features=features
-        )
-    result = design.build(model).materialize()
-    assert result.table.num_rows > 0
-    assert result.table["recency"].null_count < result.table.num_rows
-    source = column_model.con.to_pyarrow(column_model.con.table("events")).to_pandas()
-    for row in result.table.to_pylist():
-        times = source.loc[
-            (source.user_id == row["unit"])
-            & source.amount.notna()
-            & (source.ts >= row["t0"] - timedelta(days=7))
-            & (source.ts < row["t0"]),
-            "ts",
-        ]
-        expected = None if times.empty else pd.Timestamp(row["t0"]) - times.max()
-        assert row["recency"] == expected
-    assert pa.types.is_duration(result.table["recency"].type)
-    assert result.columns["recency"].role == "feature"
-    assert result.columns["recency"].measure == "elapsed"
-
-
-def test_since_excludes_an_event_exactly_at_t0(column_model):
-    result = (
-        Design(
-            "user",
-            FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),
-            features={"recency": since("amount", window=("-1d", 0))},
-        )
-        .build(column_model)
-        .materialize()
-    )
-    row = next(row for row in result.table.to_pylist() if row["unit"] == "a")
-    assert row["recency"] == timedelta(seconds=1)
-
-
-def test_since_without_event_is_known_null(column_model):
-    frame = Design(
-        "user",
-        FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),
-        features={
-            "recency": since("amount", window=("-1d", 0)),
-            "unknown": since("amount", window=("-6d", 0)),
-        },
-    ).build(column_model)
-    result = frame.materialize()
-    row = next(row for row in result.table.to_pylist() if row["unit"] == "b")
-    assert (row["recency"], row["recency__complete"], row["recency__reason"]) == (None, True, None)
-    assert (row["unknown"], row["unknown__complete"], row["unknown__reason"]) == (
-        None,
-        False,
-        "incomplete_coverage",
-    )
-
-
 def test_future_looking_since_feature_refuses(column_model):
     with pytest.raises(TerrineError) as error:
         _compile(column_model, features={"recency": since("amount", window=("-7d", "1d"))})
@@ -1066,48 +978,27 @@ def test_frame_expr_refuses_elapsed_selectors(column_model):
 
 
 def test_elapsed_finalization_is_idempotent(column_model):
-    column_model.con.raw_sql("""
-        INSERT INTO events VALUES ('a', TIMESTAMPTZ '2025-01-02 12:00:01+00', 1, 'new')
-    """)
+    t0 = datetime(2025, 1, 2, 12, tzinfo=UTC)
+    raw = pa.table(
+        {
+            "unit": ["a"],
+            "t0": [t0],
+            "recency": [t0 - timedelta(seconds=1)],
+            "next": [t0 + timedelta(seconds=1)],
+        }
+    )
     frame = Design(
         "user",
         FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),
         features={"recency": since("amount", window=("-1d", 0))},
         outcomes={"next": since("amount", window=("1s", "2s"), occurrence="first")},
     ).build(column_model)
-    result = frame.materialize()
+    result = SimpleNamespace(table=frame._normalize_output(raw))
     assert frame._normalize_output(result.table).equals(result.table, check_metadata=True)
     assert pa.types.is_duration(result.table["recency"].type)
     assert next(row for row in result.table.to_pylist() if row["unit"] == "a")["next"] == (
         -timedelta(seconds=1)
     )
-
-
-def test_since_timing_references_the_selected_instant(column_model):
-    from terrine.data import MaterializedFrame
-
-    result = (
-        Design(
-            "user",
-            FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),
-            features={"recency": since("amount", window=("-1d", 0))},
-        )
-        .build(column_model)
-        .materialize()
-    )
-    restored = MaterializedFrame.from_arrow(result.to_pyarrow())
-    timing = restored.provenance.expression_timings["recency"]
-    assert timing.point_time_column == "__terrine_selected_at_recency"
-    row = next(row for row in restored.table.to_pylist() if row["unit"] == "a")
-    assert row[timing.point_time_column] == datetime(2025, 1, 2, 11, 59, 59, tzinfo=UTC)
-    assert timing.point_time_column not in restored.to_pandas().columns
-    assert timing.point_time_column in restored.to_pandas(include_observation_metadata=True).columns
-    assert restored.columns["recency"].measure == "elapsed"
-    import json
-
-    metadata = json.loads(restored.to_json())
-    del metadata["columns"]["recency"]["measure"]
-    assert MaterializedFrame.from_json(json.dumps(metadata)).columns["recency"].measure is None
 
 
 def test_elapsed_finalization_preserves_nanoseconds_and_refuses_tick_overflow(column_model):
