@@ -2,17 +2,46 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import ibis
+import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
 from terrine.backends.dialect import current_dialect
 
-__all__ = ["asof_join", "has_native_asof", "null_safe_equal"]
+__all__ = ["asof_join", "has_native_asof", "null_safe_equal", "union_unit_keys"]
 
 
 def has_native_asof(*values: ibis.Value) -> bool:
     """Whether the dialect selects Ibis's native ASOF lowering."""
     return current_dialect(*values).has_native_asof
+
+
+def union_unit_keys(left: ir.Value, right: ir.Value) -> tuple[ir.Value, ir.Value]:
+    """Align timeline key nullability and losslessly promote integer widths."""
+    left_type = left.type().copy(nullable=True)
+    right_type = right.type().copy(nullable=True)
+    if left_type.is_integer() and right_type.is_integer():
+        if left_type.is_signed_integer() == right_type.is_signed_integer():
+            common = dt.higher_precedence(left_type, right_type)
+        else:
+            signed, unsigned = (
+                cast(dt.Integer, left_type),
+                cast(dt.Integer, right_type),
+            )
+            if not left_type.is_signed_integer():
+                signed, unsigned = unsigned, signed
+            common = next(
+                (
+                    dtype
+                    for dtype in (dt.int16, dt.int32, dt.int64)
+                    if dtype.nbytes >= signed.nbytes and dtype.nbytes > unsigned.nbytes
+                ),
+                dt.Decimal(20, 0),
+            )
+        left_type = right_type = common
+    return left.cast(left_type), right.cast(right_type)
 
 
 def null_safe_equal(left: ir.Value, right: ir.Value) -> ir.BooleanValue:

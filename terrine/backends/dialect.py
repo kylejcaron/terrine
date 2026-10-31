@@ -631,6 +631,8 @@ class Dialect:
         left row, so duplicate requests keep their multiplicity and unmatched
         or NULL keys keep one row with NULL right columns.
         """
+        from terrine.backends.joins import union_unit_keys
+
         used = {name.casefold() for name in (*left.columns, *right.columns)}
 
         def fresh(stem: str) -> str:
@@ -645,18 +647,18 @@ class Dialect:
         )
         # At an equal key, the right row sorts first when it is admitted.
         left_kind, right_kind = (1, 0) if inclusive else (0, 1)
-        unit_type = left[left_unit].type().copy(nullable=True)
+        left_unit_key, right_unit_key = union_unit_keys(left[left_unit], right[right_unit])
         key_type = left[left_key].type().copy(nullable=True)
         requests = left.select(
             **{
-                unit: left[left_unit].cast(unit_type),
+                unit: left_unit_key,
                 key: left[left_key].cast(key_type),
                 kind: ibis.literal(left_kind),
             }
         ).distinct()
         states = right.select(
             **{
-                unit: right[right_unit].cast(right[right_unit].type().copy(nullable=True)),
+                unit: right_unit_key,
                 key: right[right_key].cast(right[right_key].type().copy(nullable=True)),
                 kind: ibis.literal(right_kind),
             }

@@ -8,7 +8,8 @@
   evaluation instead of correlated top-one scans. Anchor assembly uses
   hash/merge-joinable, null-preserving keys, retaining strict window boundaries,
   event tie ordering and duplicate request multiplicity. DuckDB's native lookup
-  path is unchanged; portable union timelines also normalize key nullability.
+  path is unchanged; portable union timelines also normalize key nullability
+  and compatible integer widths without changing output key types.
 
 ## 0.1.0.dev2
 

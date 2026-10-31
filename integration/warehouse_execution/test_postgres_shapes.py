@@ -403,3 +403,77 @@ def test_nullable_array_keys_keep_scalar_distinctness(postgres_scratch):  # noqa
     ).to_pylist()
     assert len(rows) == 16
     assert all(row["actual"] is row["expected"] for row in rows)
+
+
+@pytest.mark.parametrize("roster_type,event_type", [("BIGINT", "INTEGER"), ("INTEGER", "BIGINT")])
+@pytest.mark.parametrize("recipe", ["forecast", "first_occurrence"])
+def test_mixed_integer_unit_widths_preserve_roster_keys(
+    postgres_scratch,
+    roster_type,
+    event_type,
+    recipe,  # noqa: F811
+):
+    empty_unit = 4_294_967_297 if roster_type == "BIGINT" else 2
+    designs = {
+        "forecast": tr.recipes.time_series(
+            every="1d",
+            start="2024-01-02",
+            end="2024-01-03",
+            features={"orders_1d": tr.agg("orders", window=("-1d", "0s"))},
+            outcomes={"spend_next_1d": tr.agg("spend", window=("0s", "1d"))},
+        ),
+        "first_occurrence": tr.Design(
+            "customer",
+            tr.FixedDate("2024-01-01"),
+            shape=tr.TimeToEvent("orders"),
+            administrative_cutoff=datetime(2024, 1, 4, tzinfo=UTC),
+        ),
+    }
+    duckdb = ibis.duckdb.connect()
+    try:
+        actual = []
+        for con in (duckdb, postgres_scratch.con):
+            con.raw_sql(f"CREATE TABLE customers(customer_id {roster_type})")
+            con.raw_sql(
+                f"CREATE TABLE orders(customer_id {event_type}, "
+                "ordered_at TIMESTAMP, amount DOUBLE PRECISION)"
+            )
+            con.raw_sql(f"INSERT INTO customers VALUES (1), ({empty_unit})")
+            con.raw_sql(
+                "INSERT INTO orders VALUES "
+                "(1, '2024-01-01 12:00:00', 10), (1, '2024-01-02 12:00:00', 20)"
+            )
+            if event_type == "BIGINT":
+                con.raw_sql("INSERT INTO orders VALUES (4294967297, '2024-01-01 12:00:00', 99)")
+            model = tr.Model.from_tables(
+                con,
+                units={"customer": tr.UnitSource("customers", "customer_id")},
+                events={
+                    "orders": tr.Events(
+                        "orders",
+                        key="customer_id",
+                        time="ordered_at",
+                        metrics={"orders": tr.count(), "spend": tr.sum("amount")},
+                        complete=("2024-01-01", "2024-02-01"),
+                    )
+                },
+            )
+            frame = designs[recipe].build(model)
+            assert frame.expr.unit.type() == con.table("customers").customer_id.type()
+            table = frame.to_pyarrow(budget=_BUDGET)
+            kept = [name for name in table.column_names if name != "anchor_id"]
+            rows = sorted(table.select(kept).to_pylist(), key=lambda row: (row["unit"], row["t0"]))
+            assert {row["unit"] for row in rows} == {1, empty_unit}
+            if recipe == "forecast":
+                assert sorted(
+                    (row["orders_1d"], row["spend_next_1d"]) for row in rows if row["unit"] == 1
+                ) == [(1, 0), (1, 20)]
+            else:
+                assert sorted((row["unit"], row["event_time"], row["event"]) for row in rows) == [
+                    (1, datetime(2024, 1, 1, 12, tzinfo=UTC), True),
+                    (empty_unit, None, False),
+                ]
+            actual.append(rows)
+        assert actual[0] == actual[1]
+    finally:
+        duckdb.disconnect()
