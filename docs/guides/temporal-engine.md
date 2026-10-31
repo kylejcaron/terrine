@@ -81,6 +81,16 @@ and date; any other type, timestamps included, refuses with
 `terrine.model.invalid_binding` (`reason="unsupported_column_type"`, context
 `source`, `column`, `dtype`, `supported`).
 
+
+`UnitSource(attributes=("channel", ...))` can declare static attributes directly
+on the authoritative roster. Each name must identify a roster column and may
+not collide with an event, property, dimension or metric name. These values are
+available at every anchor, including anchors outside event-table completeness,
+and `asof("channel")` reads the roster value strictly before t0 by default.
+Roster attributes need no event-source readiness; roster observation bounds
+still apply. The declarations are part of the unit binding, not the catalog, so
+pass `units=model.units` when rebinding a catalog.
+
 `where=` is a mapping keyed by `<label>` or `<label>__<op>`; several keys are a
 conjunction. A scalar value means equality and a list, tuple or set means
 membership; `__ne`, `__in`, `__not_in`, `__gt`, `__gte`, `__lt`, `__lte` and

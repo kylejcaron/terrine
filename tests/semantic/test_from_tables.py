@@ -861,3 +861,180 @@ def test_key_mismatch_context_omits_nullability_markers():
         error.value.context["unit_type"],
         error.value.context["source_type"],
     ) == ("string", "int64")
+def test_roster_attribute_is_available_as_of_t0_outside_event_coverage(con):
+    con.create_table(
+        "customer_channels",
+        pa.table({"customer_id": ["alice", "bob"], "channel": ["web", "store"]}),
+    )
+    model = Model.from_tables(
+        con,
+        units={"customer": UnitSource("customer_channels", "customer_id", attributes=("channel",))},
+        events={"orders": orders()},
+    )
+    table = Design(
+        "customer",
+        FixedDate("2025-02-10"),
+        features={"channel": asof("channel")},
+    ).build(model).to_pyarrow().to_pydict()
+    assert dict(zip(table["unit"], table["channel"], strict=True)) == {
+        "alice": "web",
+        "bob": "store",
+    }
+    assert table["channel__complete"] == [True, True]
+
+
+def test_roster_attribute_name_collides_with_label_refuses(con):
+    con.create_table(
+        "customer_channels",
+        pa.table({"customer_id": ["alice", "bob"], "status": ["a", "b"]}),
+    )
+    events = {"orders": orders(labels=("status",))}
+    colliding_units = {
+        "customer": UnitSource("customer_channels", "customer_id", attributes=("status",))
+    }
+    with pytest.raises(TerrineError) as direct_error:
+        Model.from_tables(con, units=colliding_units, events=events)
+    assert direct_error.value.code == "terrine.model.invalid_binding"
+    assert direct_error.value.context["reason"] == "name_collision"
+
+    model = Model.from_tables(con, units=UNITS, events=events)
+    with pytest.raises(TerrineError) as catalog_error:
+        Model.from_catalog(
+            model.to_catalog(),
+            con=con,
+            units=colliding_units,
+            readiness=model.readiness,
+            event_ids=model.event_ids,
+        )
+    assert catalog_error.value.code == direct_error.value.code
+    assert catalog_error.value.context == direct_error.value.context
+
+
+def test_two_rosters_cannot_share_an_attribute_name(con):
+    con.create_table(
+        "customer_channels",
+        pa.table(
+            {"customer_id": ["alice", "bob"], "channel": ["web", "store"], "region": ["w", "e"]}
+        ),
+    )
+    con.create_table(
+        "account_regions",
+        pa.table({"account_id": ["acme"], "region": ["w"]}),
+    )
+    colliding_units = {
+        "customer": UnitSource("customer_channels", "customer_id", attributes=("region",)),
+        "account": UnitSource("account_regions", "account_id", attributes=("region",)),
+    }
+    with pytest.raises(TerrineError) as direct_error:
+        Model.from_tables(
+            con,
+            units=colliding_units,
+            events={"orders": orders(unit="customer")},
+        )
+    assert direct_error.value.code == "terrine.model.invalid_binding"
+    assert direct_error.value.context["reason"] == "name_collision"
+
+    base_units = {
+        "customer": UnitSource("customer_channels", "customer_id", attributes=("channel",)),
+        "account": UnitSource("account_regions", "account_id", attributes=("region",)),
+    }
+    model = Model.from_tables(
+        con,
+        units=base_units,
+        events={"orders": orders(unit="customer")},
+    )
+    with pytest.raises(TerrineError) as catalog_error:
+        Model.from_catalog(
+            model.to_catalog(),
+            con=con,
+            units=colliding_units,
+            readiness=model.readiness,
+            event_ids=model.event_ids,
+        )
+    assert catalog_error.value.code == direct_error.value.code
+    assert catalog_error.value.context == direct_error.value.context
+
+def test_other_units_attribute_is_not_visible(con):
+    con.create_table(
+        "customer_channels",
+        pa.table({"customer_id": ["alice", "bob"], "channel": ["web", "store"]}),
+    )
+    con.create_table("account_regions", pa.table({"account_id": ["acme"], "region": ["west"]}))
+    model = Model.from_tables(
+        con,
+        units={
+            "customer": UnitSource("customer_channels", "customer_id", attributes=("channel",)),
+            "account": UnitSource("account_regions", "account_id", attributes=("region",)),
+        },
+        events={"orders": orders(unit="customer")},
+    )
+    with pytest.raises(TerrineError) as error:
+        Design("customer", FixedDate("2025-02-10"), features={"region": asof("region")}).validate(
+            model
+        )
+    assert error.value.code == "terrine.design.missing_reference"
+    assert error.value.context["available"] == ("channel",)
+
+def test_missing_roster_attribute_column_refuses_at_bind(con):
+    with pytest.raises(TerrineError) as error:
+        Model.from_tables(
+            con,
+            units={"customer": UnitSource("customers", "customer_id", attributes=("channel",))},
+            events={"orders": orders()},
+        )
+    assert error.value.code == "terrine.semantic.schema_mismatch"
+    assert error.value.context["field"] == "unit attribute"
+    assert error.value.context["column"] == "channel"
+
+
+def test_roster_attribute_survives_catalog_rebind(con):
+    con.create_table(
+        "customer_channels",
+        pa.table({"customer_id": ["alice", "bob"], "channel": ["web", "store"]}),
+    )
+    units = {"customer": UnitSource("customer_channels", "customer_id", attributes=("channel",))}
+    model = Model.from_tables(con, units=units, events={"orders": orders()})
+    restored = Model.from_catalog(
+        model.to_catalog(),
+        con=con,
+        units=model.units,
+        readiness=model.readiness,
+        event_ids=model.event_ids,
+    )
+    design = Design(
+        "customer",
+        FixedDate("2025-02-10"),
+        features={"channel": asof("channel")},
+    )
+    assert restored.model_hash == model.model_hash
+    assert design.build(restored).to_pyarrow()["channel"].to_pylist() == ["web", "store"]
+
+
+def test_training_set_with_roster_attribute(con):
+    from terrine.frame import _feature_definition_hash
+
+    con.create_table(
+        "customer_channels",
+        pa.table({"customer_id": ["alice", "bob"], "channel": ["web", "store"]}),
+    )
+    units = {"customer": UnitSource("customer_channels", "customer_id", attributes=("channel",))}
+    events = {"orders": orders(labels=("status",), metrics={"n": tr.count()})}
+    model = Model.from_tables(con, units=units, events=events)
+    design = Design(
+        "customer",
+        FixedDate("2025-01-20"),
+        features={"channel": asof("channel")},
+        outcomes={"orders": agg("n", window=("0s", "1d"))},
+    )
+    restored = Model.from_catalog(
+        model.to_catalog(),
+        con=con,
+        units=model.units,
+        readiness=model.readiness,
+        event_ids=model.event_ids,
+    )
+    design.build(model).training_set(label="orders", features=("channel",))
+    design.build(restored).training_set(label="orders", features=("channel",))
+    assert _feature_definition_hash(design, ("channel",), model) == _feature_definition_hash(
+        design, ("channel",), restored
+    )

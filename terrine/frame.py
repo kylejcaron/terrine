@@ -167,7 +167,7 @@ def _selector_definition(selector: EventTime, model: Model) -> object:
 
 
 def _feature_definition_hash(design: Design, features: tuple[str, ...], model: Model) -> str:
-    from terrine.compile._asof import resolve_attribute
+    from terrine.semantic.attributes import resolve_attribute
     from terrine.spec.expressions import (
         ApproxMetricDistinct,
         ApproxMetricQuantile,
@@ -178,7 +178,10 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
         _output_leaves,
     )
     from terrine.spec.io import canonical_json
+    from terrine.spec.validate import resolve_unit
 
+    design = resolve_unit(design, model)
+    assert design.unit is not None
     record = json.loads(canonical_json(design))["design"]
     semantic: dict[str, object] = {}
     selected_records: dict[str, object] = {}
@@ -235,24 +238,41 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
                 if metric is not None:
                     resolved["metric"] = _metric_definition(metric, model)
             elif isinstance(leaf, AttributeAsOf):
-                source, prop, dimension = resolve_attribute(model, leaf.attribute)
-                resolved["attribute"] = {
-                    "source": source.name,
-                    "relation": _definition_record(source.relation),
-                    "unit_column": source.units.get(design.unit),
-                    "day_boundary": source.day_boundary,
-                    "time_column": source.time_column,
-                    "binding": _definition_record(prop),
-                    "dimension": None
-                    if dimension is None
-                    else {
-                        "name": dimension.name,
+                attribute = resolve_attribute(
+                    sources=model.sources,
+                    properties=model.catalog.properties,
+                    roster=model._roster_attributes(design.unit),
+                    attribute=leaf.attribute,
+                    unit=design.unit,
+                )
+                dimension = attribute.dimension
+                if attribute.owner == "roster":
+                    resolved["attribute"] = {
+                        "owner": "roster",
                         "relation": _definition_record(dimension.relation),
-                        "unit": dimension.unit,
                         "key": dimension.key,
-                        "validity": _definition_record(dimension.validity),
-                    },
-                }
+                        "binding": _definition_record(attribute.prop),
+                    }
+                else:
+                    source = attribute.source
+                    assert source is not None
+                    resolved["attribute"] = {
+                        "source": source.name,
+                        "relation": _definition_record(source.relation),
+                        "unit_column": source.units.get(design.unit),
+                        "day_boundary": source.day_boundary,
+                        "time_column": source.time_column,
+                        "binding": _definition_record(attribute.prop),
+                        "dimension": None
+                        if attribute.prop.dimension_name is None
+                        else {
+                            "name": dimension.name,
+                            "relation": _definition_record(dimension.relation),
+                            "unit": dimension.unit,
+                            "key": dimension.key,
+                            "validity": _definition_record(dimension.validity),
+                        },
+                    }
             selector = leaf if isinstance(leaf, EventTime) else getattr(leaf, "relative_to", None)
             if selector is not None:
                 resolved["selector"] = _selector_definition(selector, model)

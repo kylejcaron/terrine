@@ -455,7 +455,7 @@ def approx_distinct(
 def asof(
     attribute: str,
     *,
-    before: str | Literal[0],
+    before: str = "0s",
     relative_to: EventTime | None = None,
 ) -> AttributeAsOf:
     """Read an attribute's history strictly before a time relative to t0 or an event.

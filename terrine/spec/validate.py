@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from terrine.backends.registry import engine_supports
 from terrine.errors import RefusalSpec, TerrineError
+from terrine.semantic.attributes import resolve_attribute
 from terrine.semantic.rules import (
     UNALIGNED_CALENDAR_AVERAGE,
     UNSUPPORTED_EVENT_RESOLUTION,
@@ -346,49 +347,64 @@ def _resolve_property(
                 limit=-design.gap,
             )
         )
-    declaration = model.catalog.properties.get(expr.attribute)
-    owner = declaration.source if declaration is not None else None
-    declared_dimension = declaration.dimension if declaration is not None else None
-    candidates = []
-    for source in model.sources.values():
-        if owner is not None and source.name != owner:
-            continue
-        binding = source.properties.get(expr.attribute)
-        if binding is not None and binding.dimension_name is None and declared_dimension is None:
-            candidates.append((source, binding, None))
-        for dimension in source.dimensions:
-            prop = dimension.properties.get(expr.attribute)
-            if prop is not None and (
-                declared_dimension is None or dimension.name == declared_dimension
-            ):
-                candidates.append((source, prop, dimension))
-    if not candidates:
-        raise missing_reference("property", expr.attribute, model.catalog.properties)
-    dimension_names = {
-        dimension.name if dimension is not None else None for _, _, dimension in candidates
-    }
-    if len(dimension_names) > 1:
-        raise _AMBIGUOUS.error(name=expr.attribute)
-    # An inline binding and a dimension's concrete binding describe the same property;
-    # only the latter is retained above. Repeated uses of the same dimension are one
-    # logical dimension, with Catalog ownership selecting its source when available.
-    unique = {}
-    for source, prop, dimension in candidates:
-        key = dimension.name if dimension is not None else None
-        unique.setdefault(key, (source, prop, dimension))
-    source, prop, dimension = next(iter(unique.values()))
-    _required(model, source.name, required)
-    if dimension is None:
-        if design.unit not in source.units:
-            raise _UNIT.error(unit=design.unit, name=expr.attribute)
+    unit = design.unit
+    assert unit is not None
+    roster = model._roster_attributes(unit)
+    if roster is not None and expr.attribute in roster.attributes:
+        resolved = resolve_attribute(
+            sources=model.sources,
+            properties=model.catalog.properties,
+            roster=roster,
+            attribute=expr.attribute,
+            unit=unit,
+        )
     else:
-        unit_key = source.units.get(design.unit)
+        declaration = model.catalog.properties.get(expr.attribute)
+        owner = declaration.source if declaration is not None else None
+        declared_dimension = declaration.dimension if declaration is not None else None
+        candidates = []
+        for source in model.sources.values():
+            if owner is not None and source.name != owner:
+                continue
+            binding = source.properties.get(expr.attribute)
+            if (
+                binding is not None
+                and binding.dimension_name is None
+                and declared_dimension is None
+            ):
+                candidates.append((source, binding, None))
+            for dimension in source.dimensions:
+                prop = dimension.properties.get(expr.attribute)
+                if prop is not None and (
+                    declared_dimension is None or dimension.name == declared_dimension
+                ):
+                    candidates.append((source, prop, dimension))
+        if not candidates:
+            available = {*model.catalog.properties}
+            if roster is not None:
+                available.update(roster.attributes)
+            raise missing_reference("property", expr.attribute, available)
+        dimension_names = {
+            dimension.name if dimension is not None else None for _, _, dimension in candidates
+        }
+        if len(dimension_names) > 1:
+            raise _AMBIGUOUS.error(name=expr.attribute)
+        resolved = resolve_attribute(
+            sources=model.sources,
+            properties=model.catalog.properties,
+            roster=roster,
+            attribute=expr.attribute,
+            unit=unit,
+        )
+    source = resolved.source
+    dimension = resolved.dimension
+    if source is not None:
+        _required(model, source.name, required)
+        unit_key = source.units.get(unit)
         dimension_key = source.units.get(dimension.unit)
         if unit_key is None or dimension_key is None or unit_key != dimension_key:
-            raise _UNIT.error(unit=design.unit, name=expr.attribute)
-    temporal_property = (
-        dimension.validity is not None if dimension is not None else prop.as_of != "static"
-    )
+            raise _UNIT.error(unit=unit, name=expr.attribute)
+    temporal_property = dimension.validity is not None
     if temporal_property:
         anchors = _fixed_anchors(design, model)
         if anchors is None:
@@ -401,7 +417,7 @@ def _resolve_property(
                 == "unaligned"
                 for anchor in anchors
             )
-            if alignment and not supports_event_resolution(source.dialect):
+            if alignment and source is not None and not supports_event_resolution(source.dialect):
                 raise UNSUPPORTED_EVENT_RESOLUTION.error(dialect=source.dialect)
 
 

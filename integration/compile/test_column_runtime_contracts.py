@@ -121,7 +121,7 @@ def test_required_predicate_window_overflow_refuses_even_with_false_conjunct(
         model,
         eligibility={
             "eligible": all_of(
-                eq(asof("tier", before=0), "absent"),
+                eq(asof("tier", before="0s"), "absent"),
                 gt(total, 0.0),
             )
         },
@@ -183,8 +183,8 @@ def test_exact_attribute_predicates_do_not_narrow_large_integer_or_decimal(colum
     compiled = _compile(
         model,
         eligibility={
-            "integer": gt(asof("large", before=0), 9007199254740992),
-            "decimal": eq(asof("money", before=0), "9007199254740993.01"),
+            "integer": gt(asof("large", before="0s"), 9007199254740992),
+            "decimal": eq(asof("money", before="0s"), "9007199254740993.01"),
         },
     )
     rows = con.to_pyarrow(compiled.audit_table).to_pylist()

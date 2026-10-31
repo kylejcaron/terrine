@@ -134,8 +134,7 @@ _LEGACY_ARROW_METADATA_KEY = b"terrine.materialized_frame.v1"
 
 _RESERVED_NAME = RefusalSpec(
     "terrine.model.invalid_binding",
-    "{kind} name {name!r} contains '__', which separates a label from its where= operator; "
-    "rename the {kind}.",
+    "{kind} name {name!r} contains the reserved '__' separator; rename the {kind}.",
 )
 _HISTORY_TIME_AXIS = RefusalSpec(
     "terrine.model.invalid_binding",
@@ -305,6 +304,7 @@ class UnitSource:
     exited_at: str | None
     observed_from: str | None
     observed_until: str | None
+    attributes: tuple[str, ...]
 
     def __init__(
         self,
@@ -314,6 +314,7 @@ class UnitSource:
         exited_at: str | None = None,
         observed_from: str | None = None,
         observed_until: str | None = None,
+        attributes: Sequence[str] = (),
     ) -> None:
         bound = _table_input(table, "table")
         _binding_name(key, "key")
@@ -326,18 +327,30 @@ class UnitSource:
         for name, value in optional.items():
             if value is not None:
                 _binding_name(value, name)
+        if isinstance(attributes, str) or not isinstance(attributes, Iterable):
+            raise _INVALID_BINDING.error(reason="wrong_type", field="attributes")
+        names = tuple(attributes)
+        for name in names:
+            _binding_name(name, "attributes")
+            if "__" in name:
+                raise _RESERVED_NAME.error(reason="reserved_name", kind="unit attribute", name=name)
+        if len(set(names)) != len(names):
+            raise _INVALID_BINDING.error(reason="duplicate_names", field="attributes")
         object.__setattr__(self, "table", bound)
         object.__setattr__(self, "key", key)
         for name, value in optional.items():
             object.__setattr__(self, name, value)
+        object.__setattr__(self, "attributes", names)
 
 
     def __repr__(self) -> str:
         return (
             f"UnitSource(table={_table_repr(self.table)}, key={self.key!r}, "
             f"entered_at={self.entered_at!r}, exited_at={self.exited_at!r}, "
-            f"observed_from={self.observed_from!r}, observed_until={self.observed_until!r})"
+            f"observed_from={self.observed_from!r}, observed_until={self.observed_until!r}, "
+            f"attributes={self.attributes!r})"
         )
+
 
 def _calendar_day(value: object, field: str) -> date:
     if isinstance(value, (date, datetime)):

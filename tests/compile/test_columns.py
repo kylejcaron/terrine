@@ -124,8 +124,8 @@ def test_output_namespace_collisions_refuse_before_compilation(column_model, nam
     with pytest.raises(TerrineError) as error:
         _compile(
             column_model,
-            features={names[0]: asof("tier", before=0)},
-            eligibility={names[1]: is_null(asof("tier", before=0))},
+            features={names[0]: asof("tier", before="0s")},
+            eligibility={names[1]: is_null(asof("tier", before="0s"))},
         )
     assert error.value.code == "terrine.spec.output_name_conflict"
 
@@ -133,7 +133,7 @@ def test_output_namespace_collisions_refuse_before_compilation(column_model, nam
 @pytest.mark.parametrize("name", ["UNIT", "treatment", "__Terrine_private"])
 def test_reserved_output_names_refuse(column_model, name):
     with pytest.raises(TerrineError) as error:
-        _compile(column_model, features={name: asof("tier", before=0)})
+        _compile(column_model, features={name: asof("tier", before="0s")})
     assert error.value.code == "terrine.spec.reserved_output_name"
 
 
@@ -179,7 +179,7 @@ def test_reserved_support_suffix_refuses(field, name):
     import pickle
 
     with pytest.raises(TerrineError) as error:
-        nodes = {name: is_null(asof("tier", before=0))}
+        nodes = {name: is_null(asof("tier", before="0s"))}
         Design(
             "user",
             FixedDate("2025-01-01"),
@@ -201,7 +201,9 @@ def test_reobserved_null_is_known_and_duplicate_inline_observations_dedupe(colum
     column_model.con.raw_sql("""
         INSERT INTO events VALUES ('b', TIMESTAMPTZ '2024-12-31', 1, 'stale')
     """)
-    compiled = _compile(column_model, eligibility={"known_null": is_null(asof("tier", before=0))})
+    compiled = _compile(
+        column_model, eligibility={"known_null": is_null(asof("tier", before="0s"))}
+    )
     compiled.validate(execute=column_model.con.to_pyarrow)
     rows = column_model.con.to_pyarrow(compiled.audit_table.order_by("unit")).to_pylist()
     assert [r["known_null"] for r in rows] == [False, True]
@@ -213,7 +215,7 @@ def test_conflicting_inline_history_is_refused_even_for_false_eligibility(column
         INSERT INTO events VALUES ('a', TIMESTAMPTZ '2025-01-02 11:59:59+00', 3, 'conflict')
     """)
     compiled = _compile(
-        column_model, eligibility={"eligible": eq(asof("tier", before=0), "absent")}
+        column_model, eligibility={"eligible": eq(asof("tier", before="0s"), "absent")}
     )
     with pytest.raises(TerrineError) as error:
         compiled.validate(execute=column_model.con.to_pyarrow)
@@ -225,7 +227,7 @@ def test_row_checks_are_lifted_into_the_audit_at_their_schedule_position(column_
 
     compiled = _compile(
         column_model,
-        features={"state": asof("tier", before=0), "total": agg("total", window=("-1d", "0s"))},
+        features={"state": asof("tier", before="0s"), "total": agg("total", window=("-1d", "0s"))},
     )
     kinds = [type(check).__name__ for check in compiled._checks]
     assert kinds.index("AsOfResult") < kinds.index("RowCheckGroup")
@@ -276,7 +278,7 @@ def test_row_check_counts_survive_a_later_unvalidated_join(column_model):
         model,
         features={
             "a_weight": agg("weight_total", window=("-1d", "0s")),
-            "b_tier": asof("tier", before=0),
+            "b_tier": asof("tier", before="0s"),
         },
     )
     assert type(compiled._checks[-1]).__name__ == "AsOfResult"
@@ -313,7 +315,7 @@ def test_explicit_validity_can_cover_gap_but_derived_change_interval_cannot(
         readiness=column_model.readiness,
         units=column_model.units,
     )
-    compiled = _compile(model, features={"state": asof("tier", before=0)})
+    compiled = _compile(model, features={"state": asof("tier", before="0s")})
     compiled.validate(execute=con.to_pyarrow)
     row = con.to_pyarrow(compiled.table.filter(compiled.table.unit == "a")).to_pylist()[0]
     meta = compiled.columns["state"]
@@ -358,7 +360,7 @@ def test_dimension_admission_reads_only_the_columns_the_lookup_uses(column_model
         readiness=column_model.readiness,
         units=column_model.units,
     )
-    compiled = _compile(model, features={"state": asof("tier", before=0)})
+    compiled = _compile(model, features={"state": asof("tier", before="0s")})
     assert all(not _needs_decimal(relation) for relation in compiled.reads())
     executed = []
 
@@ -389,7 +391,7 @@ def test_static_inline_conflicts_refuse_instead_of_choosing_one_value(column_mod
         readiness=column_model.readiness,
         units=column_model.units,
     )
-    compiled = _compile(model, features={"state": asof("tier", before=0)})
+    compiled = _compile(model, features={"state": asof("tier", before="0s")})
     with pytest.raises(TerrineError) as error:
         compiled.validate(execute=column_model.con.to_pyarrow)
     assert error.value.code == "terrine.temporal.static_key_multiplicity"

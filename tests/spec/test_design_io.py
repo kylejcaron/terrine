@@ -145,7 +145,7 @@ def test_predicate_outcome_round_trips_json():
     design = Design(
         "user",
         FixedDate("2025-01-01"),
-        features={"missing": is_null(asof("tier", before=0))},
+        features={"missing": is_null(asof("tier", before="0s"))},
         outcomes={
             "converted_7d": gt(agg("orders", window=("0s", "7d")), 0),
             "churned_30d": eq(agg("orders", window=("0s", "30d")), 0),

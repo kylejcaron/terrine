@@ -20,6 +20,7 @@ from terrine.data import BoundCoverage, Coverage, EventMetric, Events, History, 
 from terrine.errors import RefusalSpec
 from terrine.execution._metadata import metadata_operation
 from terrine.execution._native import _ascii_key
+from terrine.semantic.attributes import RosterAttributes
 from terrine.semantic.bind import _KEY_SCHEMA, _SCHEMA, _relation, bind_metric, normalize_source
 from terrine.semantic.io import dump_catalog, load_catalog, load_catalog_text, validate_catalog
 from terrine.semantic.models import BoundMetric, BoundSource, Catalog, RelationSpec, TableRef
@@ -48,8 +49,8 @@ _AMBIGUOUS_UNIT = RefusalSpec(
 )
 _NAME_COLLISION = RefusalSpec(
     "terrine.model.invalid_binding",
-    "{kind} name {name!r} is declared by {owners}; event, label and history names are "
-    "shared by every Events and History of a model, so give each its own name.",
+    "{kind} name {name!r} is declared by {owners}; names are shared across a model and "
+    "must be unique.",
 )
 _UNSUPPORTED_COLUMN_TYPE = RefusalSpec(
     "terrine.model.invalid_binding",
@@ -690,18 +691,32 @@ class Model:
             for name in selected_sources
         }
         metrics = {name: bind_metric(catalog, name) for name in catalog.metrics}
+        names: dict[str, str] = {}
+        for registry, owner in (
+            (catalog.events, "events"),
+            (catalog.properties, "properties"),
+            (catalog.dimensions, "dimensions"),
+            (catalog.metrics, "metrics"),
+        ):
+            for name in registry:
+                names[name] = f"{owner}:{name}"
+        for unit_name, unit in sorted(units.items()):
+            for attribute in unit.attributes:
+                _claim_name(names, "unit attribute", attribute, f"units:{unit_name}")
         for unit in units.values():
             schema = resolver(TableRef(kind="table", name=unit.table)).schema()
-            names = set(schema.names)
+            columns = set(schema.names)
             for column in (
                 unit.key,
                 unit.entered_at,
                 unit.exited_at,
                 unit.observed_from,
                 unit.observed_until,
+                *unit.attributes,
             ):
-                if column is not None and column not in names:
-                    raise _SCHEMA.error(field="roster", column=column)
+                if column is not None and column not in columns:
+                    field = "unit attribute" if column in unit.attributes else "roster"
+                    raise _SCHEMA.error(field=field, column=column)
             for column in (
                 unit.entered_at,
                 unit.exited_at,
@@ -717,6 +732,7 @@ class Model:
                 raise _INVALID.error(reason="undeclared_name", field="event_ids", name=source_name)
             if column not in resolver(source.relation).schema().names:
                 raise _INVALID.error(reason="undeclared_name", field="event_ids", name=column)
+
         return cls(
             catalog=catalog,
             con=con,
@@ -728,6 +744,16 @@ class Model:
             resolver=resolver,
             input_binding=input_binding,
             engine=engine,
+        )
+
+    def _roster_attributes(self, unit: str) -> RosterAttributes | None:
+        roster = self.units.get(unit)
+        if roster is None or not roster.attributes:
+            return None
+        return RosterAttributes(
+            TableRef(kind="table", name=roster.table),
+            roster.key,
+            roster.attributes,
         )
 
     def _relation(self, relation: RelationSpec) -> Any:

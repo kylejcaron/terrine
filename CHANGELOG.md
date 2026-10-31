@@ -22,6 +22,8 @@
 - Include rejected values and accepted forms in input refusals, suggest close
   declared names, and direct event metric declarations to `Events(metrics=...)`.
 - Refuse filter values that do not match their label type when binding a model.
+- Declare static attributes on `UnitSource` rosters and read them as of t0,
+  independently of event-table completeness.
 
 ### Performance
 
