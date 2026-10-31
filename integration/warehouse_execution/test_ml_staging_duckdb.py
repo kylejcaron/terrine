@@ -1006,6 +1006,11 @@ def test_scoring_today_is_resolved_once_at_catalog_day_boundary(
     assert staged.manifest.definition.view["as_of"] == view.resolved_as_of.isoformat()
     assert staged.manifest.definition.view["eligibility"]["active"]
     assert staged.manifest.definition.view["parent_design_hash"] == design.spec_hash
+    pandas_snapshot = staged.to_pandas()
+    polars_snapshot = staged.to_polars()
+    assert "unit" in pandas_snapshot.columns
+    assert "unit" in polars_snapshot.columns
+    assert len(pandas_snapshot) == len(polars_snapshot)
     con.disconnect()
 
 
@@ -1623,7 +1628,9 @@ def test_reopen_accepts_resolved_owner_scoped_definition_reference(events_world,
     con.disconnect()
 
 
-def test_reopen_preserves_version_one_manifest_without_frame_metadata(events_world, tmp_path):
+def test_reopen_preserves_version_one_manifest_without_frame_metadata(
+    events_world, tmp_path, monkeypatch
+):
     import json
     from dataclasses import replace
 
@@ -1659,6 +1666,20 @@ def test_reopen_preserves_version_one_manifest_without_frame_metadata(events_wor
     restored = DatasetManifest.from_json(old)
     assert restored.to_json() == old
     reopened = Dataset.from_manifest(restored, con=con)
+    pandas_values = reopened.to_pandas(values_only=True)
+    polars_values = reopened.to_polars(values_only=True)
+    assert not any(name.endswith(("__complete", "__reason")) for name in pandas_values.columns)
+    assert not any(name.endswith(("__complete", "__reason")) for name in polars_values.columns)
+    arrow_without_metadata = reopened.to_pyarrow().replace_schema_metadata(None)
+    monkeypatch.setattr(
+        Dataset,
+        "to_pyarrow",
+        lambda self, *, budget=None: arrow_without_metadata,
+    )
+    with pytest.raises(TerrineError) as error:
+        reopened.to_pandas(values_only=True)
+    assert error.value.code == "terrine.dataset.invalid_view"
+    assert error.value.context["reason"] == "observation_metadata_unavailable"
     assert sum(batch.num_rows for batch in reopened.to_arrow_batches()) == 2
     con.disconnect()
 

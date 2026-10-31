@@ -24,7 +24,7 @@ from terrine.data import (
     dataframe_view_preflight,
 )
 from terrine.dataset.manifest import DatasetManifest, ManifestColumn, ManifestGeneration
-from terrine.errors import RefusalSpec
+from terrine.errors import INVALID_VIEW, RefusalSpec
 from terrine.execution.backend import backend_capabilities, backend_provider
 from terrine.runtime.api import RunReceipt, run_serialized_plan
 from terrine.runtime.backends.base import PublicationReceipt
@@ -340,7 +340,10 @@ class Dataset:
             library="pandas",
         )
         table = self.to_pyarrow(budget=budget)
-        materialized = self._materialized_view(table)
+        materialized = self._materialized_view(
+            table,
+            required=values_only or include_observation_metadata,
+        )
         if materialized is None:
             return table.to_pandas(types_mapper=_optional_dependency("pandas").ArrowDtype)
         return materialized.to_pandas(
@@ -365,7 +368,10 @@ class Dataset:
             library="polars",
         )
         table = self.to_pyarrow(budget=budget)
-        materialized = self._materialized_view(table)
+        materialized = self._materialized_view(
+            table,
+            required=values_only or include_observation_metadata,
+        )
         if materialized is None:
             return _optional_dependency("polars").from_arrow(table)
         return materialized.to_polars(
@@ -373,11 +379,20 @@ class Dataset:
             values_only=values_only,
         )
 
-    def _materialized_view(self, table: pa.Table) -> MaterializedFrame | None:
+    def _materialized_view(
+        self, table: pa.Table, *, required: bool = False
+    ) -> MaterializedFrame | None:
         metadata = self._manifest.frame_metadata
-        if metadata is None:
+        if metadata is not None:
+            return MaterializedFrame._from_table_metadata(table, metadata)
+        try:
+            return MaterializedFrame.from_arrow(table)
+        except ValueError as error:
+            if str(error) != "Arrow schema has no Terrine metadata":
+                raise
+            if required:
+                raise INVALID_VIEW.error(reason="observation_metadata_unavailable") from error
             return None
-        return MaterializedFrame._from_table_metadata(table, metadata)
 
 
 

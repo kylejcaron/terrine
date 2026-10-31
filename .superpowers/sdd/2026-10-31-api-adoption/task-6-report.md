@@ -28,3 +28,18 @@ RED: both tests failed as expected: `MaterializedFrame` had no `to_pandas`, and 
 - `make check TESTS="tests/test_frame.py tests/test_frame_runtime.py tests/dataset"` — Ruff, Vulture, pydoclint, Tach, and ty passed; scoped tests **104 passed**.
 
 Warnings in full test runs are existing dependency/deprecation and application warnings; no test failures remained.
+
+## Fix round 1
+
+- `_decode` now recognizes frozen `Mapping` values when decoding datetime/date metadata, fixing staged scoring snapshots to pandas and Polars.
+- When a manifest lacks `frame_metadata`, `Dataset` now restores `MaterializedFrame` metadata from the retained Arrow schema. If schema metadata is unavailable and a conversion requests metadata-sensitive filtering, it refuses with `terrine.dataset.invalid_view` and reason `observation_metadata_unavailable` rather than silently ignoring the flag.
+- Added integration regressions for scoring snapshot conversions, legacy/version-one `values_only` filtering in pandas and Polars, and the missing-metadata refusal.
+- Corrected both DoubleML examples in `docs/guides/library-handoffs.md` to call `.to_pandas()` on `checked.table`; searched remaining docs/examples conversion receivers and found no other invalid `preflight_export` receiver.
+
+Test-first evidence: the new staged-scoring and legacy metadata tests first failed as expected (frozen datetime decoded as `FrozenMap`; `values_only` retained support columns). The unavailable-schema refusal regression passes after implementation.
+
+Fix-round verification:
+- `uv run pytest tests -q` — **1995 passed**, 2687 warnings.
+- `uv run pytest integration/warehouse_execution/test_ml_staging_duckdb.py -q` — **65 passed**, 1598 warnings.
+- `uv run --group docs python -m tests.documentation --build` — succeeded.
+- `make check TESTS="tests/test_frame.py tests/test_frame_runtime.py tests/dataset"` — all linters/type checks passed; **104 tests passed**.

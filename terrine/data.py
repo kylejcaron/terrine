@@ -1516,7 +1516,7 @@ def _decode(value: Any, cls: type) -> Any:
             "bucket_origin",
             "resolved_as_of",
             "administrative_cutoff",
-        ) and isinstance(item, dict):
+        ) and isinstance(item, Mapping):
             kwargs[field.name] = datetime.fromisoformat(item["$datetime"])
         elif field.name == "window" and item is not None:
             kwargs[field.name] = Window(
@@ -1524,11 +1524,11 @@ def _decode(value: Any, cls: type) -> Any:
             )
         elif (
             field.name in ("start", "end_exclusive")
-            and isinstance(item, dict)
+            and isinstance(item, Mapping)
             and "$datetime" in item
         ):
             kwargs[field.name] = datetime.fromisoformat(item["$datetime"])
-        elif field.name in ("start", "through") and isinstance(item, dict) and "$date" in item:
+        elif field.name in ("start", "through") and isinstance(item, Mapping) and "$date" in item:
             kwargs[field.name] = date.fromisoformat(item["$date"])
         else:
             kwargs[field.name] = item
