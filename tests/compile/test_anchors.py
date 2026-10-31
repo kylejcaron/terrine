@@ -346,6 +346,21 @@ def test_duplicate_candidate_identity_refuses_without_configured_event_ids(nativ
     with pytest.raises(TerrineError) as error:
         anchors.validate(execute=lambda query: query.to_pyarrow())
     assert error.value.context["check_key"] == "ambiguous_event_identity"
+def test_first_event_anchor_refuses_tied_timestamps_without_event_ids(native_model):
+    model = Model.from_catalog(
+        native_model.catalog,
+        con=native_model.con,
+        readiness=native_model.readiness,
+        units=native_model.units,
+        event_ids={},
+    )
+    anchors = compile_anchors(Design(unit="user", anchor=EventAnchor("occurred", "first")), model)
+    with pytest.raises(TerrineError) as error:
+        anchors.validate(execute=lambda query: query.to_pyarrow())
+    assert error.value.context["check_key"] == "tied_event_timestamps"
+    assert error.value.context["event"] == "occurred"
+
+
 
 
 def test_anchor_validation_rejects_malformed_arrow_results(native_model):

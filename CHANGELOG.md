@@ -16,6 +16,9 @@
   budgets; return dataset manifests as JSON text.
 
 - Accept YAML returned by `Model.to_catalog()` directly in `Model.from_catalog`.
+- Allow tied timestamps for `EventTime` selectors, whose selected value is
+  independent of tie order; anchors and event sequences without configured
+  event IDs refuse ties with the event name and `event_ids` guidance.
 
 ### Performance
 

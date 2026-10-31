@@ -22,7 +22,6 @@ from terrine.compile._asof import compile_asof
 from terrine.compile._predicates import CompiledValue, compile_predicate
 from terrine.compile.anchors import (
     AnchorTable,
-    _integrity_check,
     _null_check,
     _precision_check,
     _unique_checks,
@@ -522,18 +521,6 @@ def compile_columns(
                 selector_identity_checks.extend(
                     _unique_checks(events, identity, "event", scope=("_unit",))
                 )
-            else:
-                keys = events.select(
-                    _selector_check_unit=events["_unit"],
-                    _selector_check_time=events["_timestamp"],
-                )
-                ties = (
-                    keys.group_by("_selector_check_unit", "_selector_check_time")
-                    .aggregate(_selector_check_count=ibis._.count())
-                    .filter(ibis._._selector_check_count > 1)
-                    .aggregate(invalid_count=ibis._.count())
-                )
-                selector_identity_checks.append(_integrity_check("tied_event_timestamps", ties))
         property_found = None
         if selector.label_property is not None:
             binding = source.properties.get(selector.label_property)

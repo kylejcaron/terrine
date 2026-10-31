@@ -573,20 +573,28 @@ def test_event_time_selector_metadata_distinguishes_known_absence_and_missing_or
     assert rows[1][amount_meta.reason_column] == "missing_selector_origin"
 
 
-def test_event_time_selector_refuses_ambiguous_timestamp_ties(column_model):
+def test_event_time_selector_admits_tied_timestamps(column_model):
     column_model.con.raw_sql("""
         INSERT INTO events VALUES
             ('a', TIMESTAMPTZ '2025-01-02 12:00:00+00', 8, 'duplicate')
     """)
     compiled = _compile(
         column_model,
-        outcomes={"selected_at": event_time("amount", window=("0s", "1s"))},
+        outcomes={
+            "last_at": event_time("amount", window=("0s", "1s"), occurrence="last"),
+            "second_at": event_time("amount", window=("0s", "1s"), occurrence="nth", n=2),
+        },
     )
-    with pytest.raises(TerrineError) as error:
-        compiled.validate(execute=column_model.con.to_pyarrow)
-    assert error.value.code == "terrine.compile.anchor_integrity"
-    assert error.value.context["check_key"] == "tied_event_timestamps"
-
+    compiled.validate(execute=column_model.con.to_pyarrow)
+    row = next(
+        row
+        for row in column_model.con.to_pyarrow(compiled.table).to_pylist()
+        if row["unit"] == "a"
+    )
+    instant = datetime(2025, 1, 2, 12, tzinfo=UTC)
+    for name in ("last_at", "second_at"):
+        assert row[name] == instant
+        assert row[f"{name}__complete"] is True
 
 def test_event_time_selector_respects_unit_observation_interval(column_model):
     con = column_model.con

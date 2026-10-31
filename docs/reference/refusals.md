@@ -106,6 +106,7 @@ Correct the named Design or timestamp constraint.
 
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
+| `terrine.compile.anchor_integrity` | <code>Event {event!r} has tied timestamps, so its occurrence order is ambiguous. Set event_ids={{event: &quot;&lt;id column&gt;&quot;}} on Model.from_tables or Model.from_catalog.</code> | `event` | [terrine/compile/anchors.py](../../terrine/compile/anchors.py) |
 | `terrine.compile.anchor_integrity` | <code>Unit and t0 rows failed check {check_key!r}. Correct missing or ambiguous unit keys, event IDs and event times before building the design.</code> | `check_key` | [terrine/compile/anchors.py](../../terrine/compile/anchors.py) |
 | `terrine.compile.anchor_timestamp_precision` | <code>Time column {column!r} contains values finer than microseconds that cannot be represented exactly as UTC. Convert those values to exact microsecond times.</code> | `column` | [terrine/compile/anchors.py](../../terrine/compile/anchors.py) |
 | `terrine.compile.anchor_utc_conversion_unsupported` | <code>Event times without a timezone cannot be converted exactly to UTC on {backend!r}. Convert the times to timezone-aware UTC before adding the table to the model.</code> | `backend` | [terrine/compile/anchors.py](../../terrine/compile/anchors.py) |

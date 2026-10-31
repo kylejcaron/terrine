@@ -483,6 +483,7 @@ def test_timestamp_identity_refuses_ties_without_configured_id(sequence_model):
         compiled.validate(execute=model_without_id.con.to_pyarrow)
     assert error.value.code == "terrine.compile.anchor_integrity"
     assert error.value.context["check_key"] == "tied_event_timestamps"
+    assert error.value.context["event"] == "signup"
 
 
 def test_sequence_arrays_support_default_empty_property_list(sequence_model):

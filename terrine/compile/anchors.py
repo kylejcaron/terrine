@@ -44,6 +44,11 @@ _INTEGRITY = RefusalSpec(
     "Unit and t0 rows failed check {check_key!r}. "
     "Correct missing or ambiguous unit keys, event IDs and event times before building the design.",
 )
+_TIED_EVENT_TIMESTAMPS = RefusalSpec(
+    "terrine.compile.anchor_integrity",
+    "Event {event!r} has tied timestamps, so its occurrence order is ambiguous. "
+    "Set event_ids={{event: \"<id column>\"}} on Model.from_tables or Model.from_catalog.",
+)
 _TIMESTAMP_PRECISION = RefusalSpec(
     "terrine.compile.anchor_timestamp_precision",
     "Time column {column!r} contains values finer than microseconds that cannot be "
@@ -97,6 +102,14 @@ class AnchorTable:
 
 def _integrity_check(key: str, query: ibis.Table) -> _AnchorCheck:
     return _AnchorCheck(query, _INTEGRITY, (("check_key", key),))
+
+
+def _tied_event_timestamps_check(event: str, query: ibis.Table) -> _AnchorCheck:
+    return _AnchorCheck(
+        query,
+        _TIED_EVENT_TIMESTAMPS,
+        (("check_key", "tied_event_timestamps"), ("event", event)),
+    )
 
 
 def _null_check(table: ibis.Table, column: str, key: str) -> _AnchorCheck:
@@ -418,12 +431,7 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
                 .filter(ibis._._anchor_check_count > 1)
                 .aggregate(invalid_count=ibis._.count())
             )
-            checks.append(
-                _integrity_check(
-                    "tied_event_timestamps",
-                    ties,
-                )
-            )
+            checks.append(_tied_event_timestamps_check(anchor.event, ties))
     base = _range_filter_raw(model, base, "_raw_t0", design.anchor_range)
     precision = _precision_check(model, base, "_raw_t0", source_column=source.time_column)
     if precision is not None:
