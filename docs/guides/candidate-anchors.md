@@ -9,9 +9,9 @@ Use `design.build(model)` to compile a lazy Frame; materialization and staging r
 ## Landmark event anchors
 
 `EventAnchor("purchase", offset="1d")` sets `t0` to the selected purchase
-instant plus one elapsed day. Offsets default to zero and accept non-negative
-integral seconds or `s`/`m`/`h`/`d`/`w` durations. Negative offsets refuse at
-construction with `terrine.design.invalid` (`reason="negative"`,
+instant plus one elapsed day. Offsets default to zero and accept unit-bearing
+duration strings such as `"1d"` or `"4w"`; bare `0` is also accepted.
+Negative offsets refuse at construction with `terrine.design.invalid` (`reason="negative"`,
 `field="offset"`). Selection and `anchor_range` use
 the **original event time**, not the landmark; the shift happens afterward.
 Roster membership and all feature/outcome windows use the resulting `t0`.

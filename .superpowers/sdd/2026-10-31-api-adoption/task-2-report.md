@@ -32,3 +32,12 @@
 - Reviewed public admission versus normalized metadata paths: only user-facing duration paths reject nonzero integers; serialization remains integer-second compatible, and internal `seconds(...)` validation continues to accept normalized seconds.
 - Coverage includes bool rejection, bare zero acceptance, prescribed recipe duration fields, decoder/clone paths, nonzero feature cutoff metadata round-trip, and examples.
 - No outstanding concerns. Full suite emitted existing deprecation and warning output; all checks completed successfully.
+
+## Review fix round 1
+
+- Changed design-document decoding to pass string durations through unchanged and use `seconds_text` only for integer seconds. This covers `SessionSpec`, `FunnelSpec.within_seconds`, `EventAnchor.offset`, schedules, trajectories, life tables, windows, treatment timing, and Design gaps.
+- Added `test_duration_strings_in_saved_design_documents_decode_like_integer_seconds`, which compares string-duration document fields (`offset`, feature window bounds, treatment timing, and gap) with their integer-second encoded form.
+- Updated the Dagster materialization example to pass `gap=seconds_text(request.design.gap)` when replacing the anchor. Searched production/example replacements; `resolve_unit` already converts its Design gap, and no other duration-bearing Design replacement caller was found.
+- Updated `docs/guides/candidate-anchors.md` to specify unit-bearing duration strings and bare zero. Remaining “integral seconds” documentation describes normalized serialization/storage or internal coverage widths, not duration input.
+- Verification: `uv run pytest tests/spec/test_design_io.py::test_duration_strings_in_saved_design_documents_decode_like_integer_seconds -q` — 1 passed; `uv run pytest tests/spec/test_design_io.py tests/spec/test_sequence.py tests/spec/test_recipes.py -q` — 115 passed; required `make check TESTS="tests/test_windows.py tests/spec tests/agent tests/compile/test_event_sequence.py tests/test_metadata.py"` — 456 passed, all quality gates passed.
+- Verification: ran `examples/orchestrators/dagster_materialization.py` through `runpy` with a valid request containing `gap="1d"`; the partition binding returned a design with normalized gap `86400` and the requested partition anchor.

@@ -412,6 +412,14 @@ def _decimal_string(value: Any) -> Decimal:
     return Decimal(value)
 
 
+def _duration_text(value: Any) -> str:
+    if type(value) is int:
+        return seconds_text(value)
+    if isinstance(value, str):
+        return value
+    raise ValueError("duration must be an integer or string")
+
+
 def _node(value: Any) -> Any:
     if not isinstance(value, dict) or not isinstance(value.get("type"), str):
         raise ValueError("expected a tagged specification node")
@@ -447,13 +455,13 @@ def _node(value: Any) -> Any:
         )
     if tag == "SessionSpec":
         item = _object(value, {"type", "gap_seconds"})
-        return SessionSpec(seconds_text(item["gap_seconds"]))
+        return SessionSpec(_duration_text(item["gap_seconds"]))
     if tag == "FunnelSpec":
         item = _object(value, {"type", "event_property", "steps", "within_seconds"})
         return FunnelSpec(
             item["event_property"],
             tuple(item["steps"]),
-            None if item["within_seconds"] is None else seconds_text(item["within_seconds"]),
+            None if item["within_seconds"] is None else _duration_text(item["within_seconds"]),
         )
     if tag == "EventAnchor":
         item = _object(value, {"type", "event", "which", "n", "offset"}, {"type", "event", "which"})
@@ -461,7 +469,7 @@ def _node(value: Any) -> Any:
             item["event"],
             item["which"],
             item.get("n"),
-            seconds_text(item.get("offset", 0)),
+            _duration_text(item.get("offset", 0)),
         )
     if tag == "Schedule":
         item = _object(value, {"type", "every", "months", "start", "end"})
@@ -475,7 +483,7 @@ def _node(value: Any) -> Any:
             if type(months) is not int or months <= 0:
                 raise ValueError("Schedule months must be a positive integer")
             return Schedule(f"{months}mo", start, end)
-        return Schedule(seconds_text(every), start, end)
+        return Schedule(_duration_text(every), start, end)
     if tag == "AnchorRange":
         item = _object(value, {"type", "start", "end"})
         start = None if item["start"] is None else _read_date(item["start"])
@@ -579,7 +587,7 @@ def _node(value: Any) -> Any:
     if tag == "Trajectory":
         item = _object(value, {"type", "metric", "period", "periods", "cumulative"})
         return Trajectory(
-            item["metric"], seconds_text(item["period"]), item["periods"], item["cumulative"]
+            item["metric"], _duration_text(item["period"]), item["periods"], item["cumulative"]
         )
     if tag == "CohortSpec":
         item = _object(value, {"type", "origin", "trajectory"})
@@ -598,11 +606,11 @@ def _node(value: Any) -> Any:
         if not isinstance(groups, list) or any(not isinstance(name, str) for name in groups):
             raise ValueError("LifeTable group_by must be a list of feature names")
         return LifeTable(
-            _node(item["time_to_event"]), seconds_text(item["interval"]), tuple(groups)
+            _node(item["time_to_event"]), _duration_text(item["interval"]), tuple(groups)
         )
     if tag == "Window":
         item = _object(value, {"type", "start", "end"})
-        return Window(seconds_text(item["start"]), seconds_text(item["end"]))
+        return Window(_duration_text(item["start"]), _duration_text(item["end"]))
     if tag == "SketchRequest":
         item = _object(value, {"type", "algorithm", "version", "rank_error"})
         return SketchRequest(
@@ -713,7 +721,7 @@ def _node(value: Any) -> Any:
             value, {"type", "attribute", "at", "known_at_t0"}, {"type", "attribute", "known_at_t0"}
         )
         return Treatment(
-            item["attribute"], seconds_text(item.get("at", 0)), item["known_at_t0"]
+            item["attribute"], _duration_text(item.get("at", 0)), item["known_at_t0"]
         )
     raise ValueError(f"unknown specification node: {tag}")
 
@@ -812,7 +820,7 @@ def _design(value: Any) -> Design:
         ),
         eligibility=named(item["eligibility"], (Gt, Eq, IsNull, And)),
         treatment=treatment,
-        gap=seconds_text(item["gap"]),
+        gap=_duration_text(item["gap"]),
         shape=item["shape"] if isinstance(item["shape"], str) else _node(item["shape"]),
         anchor_range=anchor_range,
         sample=sample,

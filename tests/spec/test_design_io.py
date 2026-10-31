@@ -117,6 +117,30 @@ def test_event_anchor_offset_preserves_saved_design_identity_and_round_trips():
         assert restored.spec_hash == shifted.spec_hash
 
 
+def test_duration_strings_in_saved_design_documents_decode_like_integer_seconds():
+    design = Design(
+        "user",
+        EventAnchor("purchase", offset="1d"),
+        features={"visits": agg("sessions", window=("-1d", "0s"))},
+        treatment=Treatment(attribute="assigned", at="1d", known_at_t0=True),
+        gap="1d",
+    )
+    integer_document = json.loads(to_json(design))
+    string_document = json.loads(json.dumps(integer_document))
+    fields = string_document["design"]
+    fields["anchor"]["offset"] = "1d"
+    fields["features"]["visits"]["window"]["start"] = "-1d"
+    fields["features"]["visits"]["window"]["end"] = "0s"
+    fields["treatment"]["at"] = "1d"
+    fields["gap"] = "1d"
+
+    integer_form = from_json(json.dumps(integer_document))
+    string_form = from_json(json.dumps(string_document))
+    assert string_form == integer_form == design
+
+
+
+
 def test_predicate_outcome_round_trips_json():
     design = Design(
         "user",
