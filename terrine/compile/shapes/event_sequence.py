@@ -62,7 +62,13 @@ def _property_binding(source, name: str):
 
 
 def _identity_checks(
-    events: ibis.Table, unit: str, identity: str, *, event_name: str = "", configured: bool
+    events: ibis.Table,
+    unit: str,
+    identity: str,
+    *,
+    event_name: str = "",
+    source_name: str = "",
+    configured: bool,
 ):
     checks = [
         _null_check(events, unit, "null_event_unit"),
@@ -77,7 +83,7 @@ def _identity_checks(
         .filter(ibis._._count > 1)
         .aggregate(invalid_count=ibis._.count())
     )
-    return [*checks, _tied_event_timestamps_check(event_name, ties)]
+    return [*checks, _tied_event_timestamps_check(event_name, source_name, ties)]
 
 
 def _validate_sequence_column_names(design: Design, sequence: EventSequence) -> None:
@@ -363,6 +369,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
             "_unit",
             event_id_column,
             event_name=sequence.event,
+            source_name=source.name,
             configured=configured_id is not None,
         )
     )
