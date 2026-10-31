@@ -44,7 +44,7 @@ def main() -> None:
                 budget=Budget(max_rows=100, max_output_bytes=1_000_000, strict_scan=False),
             )
             tools = DatasetTools(model, policy, namespace="agent_example")
-            definition = DatasetDefinition(schema_version=2, base_design=training_design(),
+            definition = DatasetDefinition(schema_version=3, base_design=training_design(),
             view={
                 "kind": "training",
                 "features": ["past_amount", "segment"],

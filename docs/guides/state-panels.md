@@ -59,7 +59,7 @@ from terrine.spec import Design, Schedule, StatePanel
 
 equivalent = Design(
     None, Schedule("1w", "2025-01-06", "2025-03-30"),
-    features=features, shape=StatePanel(state, max_periods=12),
+    features=features, shape=StatePanel(state, periods=12),
 )
 assert design == equivalent
 ```
@@ -92,7 +92,7 @@ status_panel = recipes.state_panel(
 ```python
 equivalent_status = Design(
     None, Schedule("1w", "2025-01-06", "2025-03-30"),
-    shape=StatePanel(status, max_periods=12),
+    shape=StatePanel(status, periods=12),
 )
 assert status_panel == equivalent_status
 ```

@@ -296,7 +296,7 @@ class Design:
             administrative_cutoff = _aware_instant(administrative_cutoff, "administrative_cutoff")
         if isinstance(shape, CohortSpec) and (
             not isinstance(anchor, EventAnchor)
-            or anchor.which != "first"
+            or anchor.occurrence != "first"
             or anchor.event != shape.origin
         ):
             raise _INVALID.error(reason="anchor_mismatch", field="anchor")
@@ -305,7 +305,7 @@ class Design:
         time_to_event_shape = shape.time_to_event if isinstance(shape, LifeTable) else shape
         if isinstance(time_to_event_shape, TimeToEvent) and (
             isinstance(anchor, Schedule)
-            or (isinstance(anchor, EventAnchor) and anchor.which == "each")
+            or (isinstance(anchor, EventAnchor) and anchor.occurrence == "each")
         ):
             raise _INVALID.error(reason="single_entry_required", field="anchor")
         if isinstance(time_to_event_shape, TimeToEvent) and outcomes:

@@ -98,7 +98,7 @@ def test_from_tables_ltv_cumulative_age_zero_includes_origin_event():
         model = rich_model(con)
         low_level = Design(
             "customer",
-            EventAnchor("orders", which="first"),
+            EventAnchor("orders", occurrence="first"),
             shape=CohortSpec("orders", Trajectory("spend", "7d", periods=2, cumulative=True)),
         )
         design = recipes.ltv(
@@ -210,7 +210,7 @@ def test_filtered_events_apply_to_metrics_selectors_anchors_and_label_asof(mixed
     _, bind = mixed_events
     design = Design(
         "customer",
-        tr.EventAnchor("purchase", which="first"),
+        tr.EventAnchor("purchase", occurrence="first"),
         outcomes={
             "n": agg("n", window=("0s", "5d")),
             "spend": agg("spend", window=("0s", "5d")),

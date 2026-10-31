@@ -106,7 +106,7 @@ def test_ltv_and_survival_use_the_same_suffixes():
         ltv = compile_ltv(
             Design(
                 "user",
-                EventAnchor("purchase", which="first"),
+                EventAnchor("purchase", occurrence="first"),
                 shape=CohortSpec(
                     origin="purchase",
                     trajectory=Trajectory("net_revenue", "7d", periods=2, cumulative=True),
@@ -115,7 +115,7 @@ def test_ltv_and_survival_use_the_same_suffixes():
             model,
         )
         survival = compile_time_to_event(
-            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn")),
+            Design("user", EventAnchor("signup", occurrence="first"), shape=TimeToEvent("churn")),
             survival_model,
         )
         for compiled, names in (
@@ -146,7 +146,7 @@ def test_cumulative_partitions_repeated_anchors_and_propagates_missing_period():
         )
         design = Design(
             "user",
-            EventAnchor("purchase", which="first"),
+            EventAnchor("purchase", occurrence="first"),
             shape=CohortSpec(
                 origin="purchase",
                 trajectory=Trajectory("net_revenue", "7d", periods=3, cumulative=True),
@@ -182,7 +182,7 @@ def test_cutoff_nulls_immature_float_period_value():
         frame = compile_ltv(
             Design(
                 "user",
-                EventAnchor("purchase", which="first"),
+                EventAnchor("purchase", occurrence="first"),
                 shape=CohortSpec(
                     origin="purchase",
                     trajectory=Trajectory("float_revenue", "7d", periods=2, cumulative=False),
@@ -211,7 +211,7 @@ def test_cumulative_float_overflow_refuses(monkeypatch):
 
     con, model = _trajectory_model(unit="u1")
     try:
-        base = compile_columns(Design("user", EventAnchor("purchase", which="first")), model)
+        base = compile_columns(Design("user", EventAnchor("purchase", occurrence="first")), model)
         periods = con.create_table(
             "period_values",
             base.table.mutate(
@@ -240,7 +240,7 @@ def test_cumulative_float_overflow_refuses(monkeypatch):
         frame = compile_ltv(
             Design(
                 "user",
-                EventAnchor("purchase", which="first"),
+                EventAnchor("purchase", occurrence="first"),
                 shape=CohortSpec(
                     origin="purchase",
                     trajectory=Trajectory("float_revenue", "7d", periods=2, cumulative=True),
@@ -273,7 +273,7 @@ def test_portable_cumulative_decimal_beyond_the_accumulator_refuses(monkeypatch)
 
     con, model = _trajectory_model(decimal_type="DECIMAL(38, 0)", unit="u1")
     try:
-        base = compile_columns(Design("user", EventAnchor("purchase", which="first")), model)
+        base = compile_columns(Design("user", EventAnchor("purchase", occurrence="first")), model)
         huge = ibis.literal(Decimal("6" + "0" * 37), type=dt.Decimal(38, 0))
         periods = con.create_table(
             "period_values",
@@ -304,7 +304,7 @@ def test_portable_cumulative_decimal_beyond_the_accumulator_refuses(monkeypatch)
             frame = compile_ltv(
                 Design(
                     "user",
-                    EventAnchor("purchase", which="first"),
+                    EventAnchor("purchase", occurrence="first"),
                     shape=CohortSpec(
                         origin="purchase",
                         trajectory=Trajectory("decimal_revenue", "7d", periods=3, cumulative=True),
@@ -325,7 +325,7 @@ def test_trajectory_generated_names_are_reserved_from_features():
     try:
         design = Design(
             "user",
-            EventAnchor("purchase", which="first"),
+            EventAnchor("purchase", occurrence="first"),
             features={"period_value": agg("net_revenue", window=("-7d", "0s"))},
             shape=CohortSpec(
                 origin="purchase",
@@ -349,7 +349,7 @@ def test_scale_zero_decimal_cumulative_retains_wide_values():
         frame = compile_ltv(
             Design(
                 "user",
-                EventAnchor("purchase", which="first"),
+                EventAnchor("purchase", occurrence="first"),
                 shape=CohortSpec(
                     origin="purchase",
                     trajectory=Trajectory("decimal_revenue", "7d", periods=1, cumulative=True),

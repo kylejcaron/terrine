@@ -830,7 +830,7 @@ class Frame:
                             group_supports.setdefault(column, policy)
                 table = aggregate_life_table(
                     table,
-                    interval_seconds=life_table.interval,
+                    interval_seconds=life_table.bin,
                     group_by=life_table.group_by,
                     group_supports=group_supports,
                     max_rows=None if budget is None else budget.max_rows,

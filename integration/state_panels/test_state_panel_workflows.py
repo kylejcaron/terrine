@@ -60,7 +60,7 @@ def test_baseline_is_computed_for_delayed_entry_at_panel_start(native_inputs):
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
             baseline_features={"baseline": agg("sessions", window=("-1d", "0d"))},
-            max_periods=2,
+            periods=2,
         ),
     )
     materialized = design.build(model).materialize(Budget(max_rows=10, max_output_bytes=100_000))
@@ -117,7 +117,7 @@ def test_float_metric_bin_compares_the_rounded_value_at_a_near_boundary_cut(nati
         Schedule("1d", "2025-01-03", "2025-01-03"),
         shape=StatePanel(
             BinnedMetricState("score_avg", cutpoints=(cut,), levels=("low", "high")),
-            max_periods=1,
+            periods=1,
         ),
     )
     rows = (
@@ -140,7 +140,7 @@ def test_binned_panel_retains_named_eligibility_column(panel_model):
         eligibility={"has_history": gt(agg("sessions", window=("-1d", "0d")), 0)},
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=2,
+            periods=2,
         ),
     )
     compiled = compile_design(design, panel_model)
@@ -167,7 +167,7 @@ def test_observed_panel_retains_named_eligibility_column(observed_model_factory)
         eligibility={"has_history": gt(agg("sessions", window=("-1d", "0d")), 0)},
         shape=StatePanel(
             StateObservations("state", ("active", "closed")),
-            max_periods=2,
+            periods=2,
         ),
     )
     compiled = compile_design(design, model)
@@ -186,7 +186,7 @@ def test_state_panel_enforces_output_row_and_byte_budgets(panel_model, budget, c
         Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=2,
+            periods=2,
         ),
     )
     with pytest.raises(TerrineError) as error:
@@ -201,7 +201,7 @@ def test_adjacent_binned_state_relation_pairs_response_with_successor_prior(pane
         features={"past_sessions": agg("sessions", window=("-1d", "0d"))},
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=2,
+            periods=2,
         ),
     )
     rows = (
@@ -249,7 +249,7 @@ def test_binned_response_remains_complete_at_membership_exit(native_inputs):
         Schedule("1d", "2025-01-03", "2025-01-03"),
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=1,
+            periods=1,
         ),
     )
     rows = (
@@ -298,7 +298,7 @@ def test_binned_missing_period_sides_and_unit_end_exclusivity(native_inputs):
         Schedule("1d", "2025-01-03", "2025-01-03"),
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=1,
+            periods=1,
         ),
     )
     rows = (
@@ -323,7 +323,7 @@ def test_state_panel_enforces_output_byte_budget(panel_model, budget, code):
         Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=2,
+            periods=2,
         ),
     )
     with pytest.raises(TerrineError) as error:
@@ -346,7 +346,7 @@ def test_terminal_detection_precedes_output_eligibility_filter(observed_model_fa
         eligibility={"history": gt(agg("sessions", window=("-1d", "0d")), 0)},
         shape=StatePanel(
             StateObservations("state", ("active", "closed"), absorbing=("closed",)),
-            max_periods=2,
+            periods=2,
         ),
     )
     rows = (

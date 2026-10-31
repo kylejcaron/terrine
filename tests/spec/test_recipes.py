@@ -21,7 +21,7 @@ from terrine.spec import (
     LifeTable,
     PersistentAdoption,
     Schedule,
-    Sequential,
+    SequentialSpec,
     SessionSpec,
     StateObservations,
     StatePanel,
@@ -126,12 +126,17 @@ def test_trial_panel_matches_scheduled_sequential_design(treatment):
             reference_period="-3d",
             outcomes=_OUTCOMES,
         ),
-        Sequential(
-            Design("user", Schedule(**_SCHEDULE), **_SHARED, outcomes=_OUTCOMES),
-            treatment=treatment,
-            trial_weight=weight,
-            anticipation="2d",
-            reference_period="-3d",
+        Design(
+            "user",
+            Schedule(**_SCHEDULE),
+            **_SHARED,
+            outcomes=_OUTCOMES,
+            shape=SequentialSpec(
+                treatment=treatment,
+                trial_weight=weight,
+                anticipation="2d",
+                reference_period="-3d",
+            ),
         ),
     )
 
@@ -148,9 +153,14 @@ def test_event_panel_matches_event_anchor_and_relative_period_design():
             outcomes=_OUTCOMES,
         ),
         EventPanel(
-            Design("user", EventAnchor("purchase", "nth", 2), **_SHARED, outcomes=_OUTCOMES),
+            Design(
+                "user",
+                EventAnchor(event="purchase", occurrence="nth", n=2),
+                **_SHARED,
+                outcomes=_OUTCOMES,
+            ),
             periods=(-1, 0, 2),
-            period_seconds=172_800,
+            period="2d",
             reference_period=0,
         ),
     )
@@ -189,8 +199,8 @@ def test_survival_matches_time_to_event_design_with_absolute_cutoff():
         ),
         Design(
             "user",
-            EventAnchor("signup", "nth", 3),
-            shape=TimeToEvent("churn"),
+            EventAnchor(event="signup", occurrence="nth", n=3),
+            shape=TimeToEvent(end_event="churn"),
             **_SHARED,
             treatment=_TREATMENT,
             administrative_cutoff=_CUTOFF,
@@ -212,8 +222,10 @@ def test_life_table_matches_explicit_feature_grouped_design():
         ),
         Design(
             "user",
-            EventAnchor("signup", "nth", 2),
-            shape=LifeTable(TimeToEvent("churn"), "7d", group_by=("region",)),
+            EventAnchor(event="signup", occurrence="nth", n=2),
+            shape=LifeTable(
+                time_to_event=TimeToEvent(end_event="churn"), bin="7d", group_by=("region",)
+            ),
             features=_FEATURES,
             **shared,
             administrative_cutoff=_CUTOFF,
@@ -241,7 +253,7 @@ def test_life_table_group_by_mapping_declares_its_features():
 def test_state_panel_matches_bounded_scheduled_state_design(source):
     _assert_equivalent(
         recipes.state_panel("user", **_SCHEDULE, state_source=source, periods=5, **_SHARED),
-        Design("user", Schedule(**_SCHEDULE), shape=StatePanel(source, max_periods=5), **_SHARED),
+        Design("user", Schedule(**_SCHEDULE), shape=StatePanel(source, periods=5), **_SHARED),
     )
 
 
@@ -256,7 +268,7 @@ def test_state_panel_derives_periods_from_inclusive_end(source):
     weekly: dict[str, Any] = {"state_source": source, "every": "1w", "start": "2025-01-06"}
     design = recipes.state_panel("user", **weekly, end="2025-03-30", **_SHARED)
     assert isinstance(design.shape, StatePanel)
-    assert design.shape.max_periods == 12
+    assert design.shape.periods == 12
     with pytest.raises(TerrineError) as error:
         recipes.state_panel("user", **weekly, end="2025-03-28", **_SHARED)
     assert error.value.code == "terrine.state_panel.invalid_schedule"
@@ -268,7 +280,7 @@ def test_state_panel_derives_periods_from_inclusive_end(source):
     )
     capped = recipes.state_panel("user", **weekly, end="2025-03-30", periods=10, **_SHARED)
     assert isinstance(capped.shape, StatePanel)
-    assert capped.shape.max_periods == 10
+    assert capped.shape.periods == 10
 
 
 def test_event_sequence_matches_bounded_session_design():

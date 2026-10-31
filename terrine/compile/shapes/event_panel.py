@@ -25,7 +25,7 @@ def compile_event_panel(
     parent = compile_anchors(design, model, persisted=persisted_anchors)
     expanded = []
     for period in spec.periods:
-        offset = ibis.interval(seconds=period * spec.period_seconds)
+        offset = ibis.interval(seconds=period * spec.period)
         expanded.append(
             parent.table.mutate(
                 parent_event_id=parent.table.anchor_id,

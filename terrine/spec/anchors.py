@@ -139,24 +139,28 @@ class FixedDate:
 class EventAnchor:
     """Set t0 from a unit's first, each or nth event, with an optional elapsed offset.
 
-    Example: tr.EventAnchor("orders", which="first")
+    Example: tr.EventAnchor("orders", occurrence="first")
     """
 
     event: str
-    which: str
+    occurrence: Literal["first", "each", "nth"]
     n: int | None
     offset: int
 
     def __init__(
-        self, event: str, which: str = "first", n: int | None = None, offset: str | Literal[0] = 0
+        self,
+        event: str,
+        occurrence: Literal["first", "each", "nth"] = "first",
+        n: int | None = None,
+        offset: str | Literal[0] = "0s",
     ) -> None:
         if not isinstance(event, str) or not event.strip():
             raise _INVALID.error(reason="empty_name", field="event")
-        if which not in ("first", "each", "nth"):
+        if occurrence not in ("first", "each", "nth"):
             raise _CHOICE.error(
-                reason="unsupported_value", field="which", choices=("first", "each", "nth")
+                reason="unsupported_value", field="occurrence", choices=("first", "each", "nth")
             )
-        if which == "nth":
+        if occurrence == "nth":
             if isinstance(n, bool) or not isinstance(n, int) or n < 1:
                 raise _INVALID.error(reason="not_positive_integer", field="n")
         elif n is not None:
@@ -165,7 +169,7 @@ class EventAnchor:
         if elapsed < 0:
             raise _INVALID.error(reason="negative", field="offset")
         object.__setattr__(self, "event", event)
-        object.__setattr__(self, "which", which)
+        object.__setattr__(self, "occurrence", occurrence)
         object.__setattr__(self, "n", n)
         object.__setattr__(self, "offset", elapsed)
 

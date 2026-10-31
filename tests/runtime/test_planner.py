@@ -335,7 +335,7 @@ def test_state_panel_correction_rebuilds_adjacent_terminal_and_baseline_layers()
         spec_hash="d",
         shape=StatePanel(
             StateObservations("status", ("new", "old")),
-            max_periods=3,
+            periods=3,
             baseline_features={"base": AttributeAsOf("tier", 0)},
         ),
     )
@@ -374,7 +374,7 @@ def test_state_panel_incremental_change_routes_to_clean_rebuild():
 
     design = SimpleNamespace(
         spec_hash="d",
-        shape=StatePanel(StateObservations("status", ("new", "old")), max_periods=3),
+        shape=StatePanel(StateObservations("status", ("new", "old")), periods=3),
     )
     graph = dependency_graph(
         design=design,

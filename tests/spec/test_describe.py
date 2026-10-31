@@ -294,7 +294,7 @@ def test_describe_retains_calendar_clamping_and_bounds_long_schedules(shapes_mod
 def test_describe_carries_anchor_offsets_ranges_and_signed_asof(shapes_model):
     design = Design(
         None,
-        EventAnchor("signup", which="nth", n=3, offset="2d"),
+        EventAnchor("signup", occurrence="nth", n=3, offset="2d"),
         features={"previous_plan": tr.asof("plan", before="-4d")},
         treatment=Treatment("plan", at="-3d"),
         anchor_range=AnchorRange("2025-01-05", "2025-01-31"),

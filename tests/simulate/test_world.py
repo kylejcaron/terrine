@@ -28,7 +28,7 @@ def test_same_seed_reproduces_all_tables_and_metadata():
     assert left.units["user"].key == "unit_id"
     coverage = left.readiness["world_events"]
     assert coverage.start <= (config.t0 - timedelta(seconds=config.lookback_seconds)).date()
-    assert coverage.through >= (config.t0 + timedelta(seconds=config.horizon_seconds)).date()
+    assert coverage.end >= (config.t0 + timedelta(seconds=config.horizon_seconds)).date()
     with pytest.raises(TypeError):
         left.metadata["seed"] = 4  # ty: ignore[invalid-assignment]
     with pytest.raises(TypeError):

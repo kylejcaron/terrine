@@ -59,8 +59,8 @@ CASES = [
     # anchors
     (
         "terrine.design.invalid",
-        lambda: EventAnchor("purchase", which="last"),
-        {"reason": "unsupported_value", "field": "which", "choices": ("first", "each", "nth")},
+        lambda: EventAnchor("purchase", occurrence=cast(Any, "last")),
+        {"reason": "unsupported_value", "field": "occurrence", "choices": ("first", "each", "nth")},
     ),
     (
         "terrine.design.invalid",
@@ -230,7 +230,11 @@ CASES = [
         {"reason": "not_positive", "field": "rank_error"},
     ),
     # trajectories, cohorts and time to event
-    ("terrine.design.invalid", lambda: TimeToEvent(""), {"reason": "empty_name", "field": "event"}),
+    (
+        "terrine.design.invalid",
+        lambda: TimeToEvent(""),
+        {"reason": "empty_name", "field": "end_event"},
+    ),
     (
         "terrine.design.invalid",
         lambda: Trajectory("spend", "1d", 0),
@@ -264,7 +268,7 @@ CASES = [
     ),
     (
         "terrine.design.invalid",
-        lambda: EventPanelSpec((0, 1), 86_400, -1),
+        lambda: EventPanelSpec((0, 1), "1d", -1),
         {"reason": "undeclared_name", "field": "reference_period"},
     ),
     (
@@ -298,8 +302,8 @@ CASES = [
     ),
     (
         "terrine.state_panel.invalid_state_source",
-        lambda: StatePanel(StateObservations("health", ("well", "ill")), max_periods=0),
-        {"reason": "not_positive_integer", "field": "max_periods"},
+        lambda: StatePanel(StateObservations("health", ("well", "ill")), periods=0),
+        {"reason": "not_positive_integer", "field": "periods"},
     ),
     # sequences (already coded) and dataset definitions
     (
@@ -309,14 +313,14 @@ CASES = [
     ),
     (
         "terrine.dataset.invalid_definition",
-        lambda: DatasetDefinition(schema_version=2, base_design=cast(Any, None)),
+        lambda: DatasetDefinition(schema_version=3, base_design=cast(Any, None)),
         {"reason": "wrong_type", "field": "base_design"},
     ),
     # design documents
     ("terrine.design.invalid", lambda: from_json(b"{"), {"reason": "malformed_document"}),
     (
         "terrine.design.invalid",
-        lambda: from_json('{"schema_version":2,"design":{"unit":"u","anchor":{"type":"Future"}}}'),
+        lambda: from_json('{"schema_version":3,"design":{"unit":"u","anchor":{"type":"Future"}}}'),
         {"reason": "malformed_document"},
     ),
     (
@@ -360,7 +364,7 @@ CASES = [
     (
         "terrine.model.invalid_binding",
         lambda: Coverage("2025-01-31", "2025-01-01"),
-        {"reason": "through_before_start", "field": "through"},
+        {"reason": "end_before_start", "field": "end"},
     ),
     (
         "terrine.model.invalid_binding",
@@ -400,18 +404,18 @@ CASES = [
     # the field names the parameter the caller passed, in the constructor's own order
     (
         "terrine.design.invalid",
-        lambda: EventPanelSpec((0, 1), 0, 0),
-        {"reason": "not_positive_integer", "field": "period_seconds"},
+        lambda: EventPanelSpec((0, 1), "0s", 0),
+        {"reason": "not_positive", "field": "period"},
     ),
     (
         "terrine.design.invalid",
-        lambda: SequentialSpec(_INITIATION, None, -1),
-        {"reason": "negative", "field": "anticipation_seconds"},
+        lambda: SequentialSpec(_INITIATION, None, "-1s"),
+        {"reason": "negative", "field": "anticipation"},
     ),
     (
         "terrine.design.invalid",
         lambda: LifeTable(TimeToEvent("churn"), 0),
-        {"reason": "not_positive", "field": "interval"},
+        {"reason": "not_positive", "field": "bin"},
     ),
     (
         "terrine.design.invalid",
@@ -421,7 +425,7 @@ CASES = [
     (
         "terrine.design.invalid",
         lambda: recipes.event_panel(event="purchase", periods=(-1, 0), period=0),
-        {"reason": "not_positive_integer", "field": "period"},
+        {"reason": "not_positive", "field": "period"},
     ),
     (
         "terrine.design.invalid",
@@ -442,7 +446,7 @@ CASES = [
     (
         "terrine.window.invalid_duration",
         lambda: LifeTable(TimeToEvent("churn"), "1mo"),
-        {"field": "interval", "value": "1mo"},
+        {"field": "bin", "value": "1mo"},
     ),
     (
         "terrine.design.invalid",
@@ -478,7 +482,7 @@ CASES = [
     (
         "terrine.model.invalid_binding",
         lambda: Events("orders", time="at", key="id", complete=("2025-01-31", "2025-01-01")),
-        {"reason": "through_before_start", "field": "complete"},
+        {"reason": "end_before_start", "field": "complete"},
     ),
     # a value that is not a collection where one is iterated refuses instead of a bare TypeError
     (
@@ -499,7 +503,7 @@ CASES = [
     ),
     (
         "terrine.design.invalid",
-        lambda: EventPanelSpec(cast(Any, 5), 1, 0),
+        lambda: EventPanelSpec(cast(Any, 5), "1s", 0),
         {"reason": "wrong_type", "field": "periods"},
     ),
     (
@@ -527,7 +531,7 @@ CASES = [
     (
         "terrine.dataset.invalid_definition",
         lambda: DatasetDefinition(
-            schema_version=2,
+            schema_version=3,
             base_design=Design("user", FixedDate("2025-01-01")),
             transforms=cast(Any, 5),
         ),

@@ -133,7 +133,7 @@ def test_cohort_summaries_match_duckdb(bigquery_scratch, tmp_path):  # noqa: F81
     shapes._load(duckdb, timestamp_type="TIMESTAMPTZ", amount_type="DECIMAL(10, 2)")
     design = tr.Design(
         "user",
-        tr.EventAnchor("order", which="first"),
+        tr.EventAnchor("order", occurrence="first"),
         shape=tr.CohortSpec("order", tr.Trajectory("spend", "1d", periods=2, cumulative=True)),
         administrative_cutoff=datetime(2025, 1, 6, tzinfo=UTC),
     )

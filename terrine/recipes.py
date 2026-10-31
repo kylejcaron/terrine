@@ -50,19 +50,15 @@ _CHOICE = RefusalSpec("terrine.design.invalid", "Design input {field} must be on
 _INVALID = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
 
 
-def _event_anchor(event: str, occurrence: str, n: int | None) -> EventAnchor:
-    """EventAnchor's own validation order, reported under the recipe's ``occurrence``."""
-    with parameter_names(which="occurrence"):
-        return EventAnchor(event, which=occurrence, n=n)
-
-
-def _entry_anchor(start_event: str, occurrence: str, n: int | None) -> EventAnchor:
+def _entry_anchor(
+    start_event: str, occurrence: Literal["first", "nth"], n: int | None
+) -> EventAnchor:
     if occurrence not in ("first", "nth"):
         raise _CHOICE.error(
             reason="single_entry_required", field="occurrence", choices=("first", "nth")
         )
     with parameter_names(event="start_event"):
-        return EventAnchor(start_event, which=occurrence, n=n)
+        return EventAnchor(start_event, occurrence=occurrence, n=n)
 
 
 def time_series(
@@ -155,20 +151,14 @@ def event_panel(
     """
     base = Design(
         unit,
-        _event_anchor(event, occurrence, n),
+        EventAnchor(event, occurrence=occurrence, n=n),
         features=features,
         outcomes=outcomes,
         eligibility=eligibility,
         anchor_range=anchor_range,
         gap=gap,
     )
-    with parameter_names(period_seconds="period"):
-        return EventPanel(
-            base,
-            periods=periods,
-            period_seconds=duration(period, field="period"),
-            reference_period=reference_period,
-        )
+    return EventPanel(base, periods=periods, period=period, reference_period=reference_period)
 
 
 def ltv(
@@ -228,8 +218,7 @@ def survival(
     Example: tr.recipes.survival(start_event="orders", end_event="orders")
     """
     anchor = _entry_anchor(start_event, occurrence, n)
-    with parameter_names(event="end_event"):
-        shape = TimeToEvent(end_event)
+    shape = TimeToEvent(end_event)
     return Design(
         unit,
         anchor,
@@ -265,10 +254,7 @@ def life_table(
         raise _INVALID.error(reason="wrong_type", field="group_by")
     groups = {} if group_by is None else dict(group_by)
     anchor = _entry_anchor(start_event, occurrence, n)
-    with parameter_names(event="end_event"):
-        time_to_event = TimeToEvent(end_event)
-    with parameter_names(interval="bin"):
-        shape = LifeTable(time_to_event, bin, group_by=tuple(groups))
+    shape = LifeTable(TimeToEvent(end_event), bin, group_by=tuple(groups))
     return Design(
         unit,
         anchor,
@@ -302,9 +288,9 @@ def state_panel(
     """
     schedule = Schedule(every, start, end)
     whole_periods = schedule_periods(schedule)
-    max_periods = whole_periods if periods is None else periods
-    with parameter_names(state="state_source", max_periods="periods"):
-        shape = StatePanel(state_source, max_periods=max_periods)
+    periods = whole_periods if periods is None else periods
+    with parameter_names(state="state_source"):
+        shape = StatePanel(state_source, periods=periods)
     return Design(
         unit,
         schedule,
@@ -337,7 +323,7 @@ def event_sequence(
     """
     return Design(
         unit,
-        _event_anchor(event, occurrence, n),
+        EventAnchor(event, occurrence=occurrence, n=n),
         shape=EventSequence(
             event,
             Window(0, seconds_text(duration(horizon, field="horizon"))),

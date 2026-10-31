@@ -137,7 +137,7 @@ _DESIGNS = {
     ),
     "first_event_anchor": tr.Design(
         "user",
-        tr.EventAnchor("order", which="first"),
+        tr.EventAnchor("order", occurrence="first"),
         features={},
         outcomes={
             "orders_next_day": tr.agg("orders", window=("0s", "1d")),
@@ -154,7 +154,9 @@ _DESIGNS = {
     "time_to_order_with_entry_and_exit": tr.Design(
         "user",
         tr.FixedDate("2025-01-01T12:00:00+00:00"),
-        shape=tr.TimeToEvent("order", entry="amount", delayed_entry=True, exit="amount"),
+        shape=tr.TimeToEvent(
+            "order", entry_event="amount", delayed_entry=True, exit_event="amount"
+        ),
         administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
     ),
     "observed_state_panel": tr.Design(
@@ -162,7 +164,7 @@ _DESIGNS = {
         tr.Schedule("1d", "2025-01-02", "2025-01-04"),
         shape=tr.StatePanel(
             tr.StateObservations("state", ("active", "closed"), absorbing=("closed",)),
-            max_periods=3,
+            periods=3,
         ),
     ),
 }
@@ -219,7 +221,7 @@ def test_landmark_nth_anchor_matches_original_time_oracle(postgres_scratch, tmp_
     duckdb, postgres = _both(postgres_scratch, tmp_path, naive=naive)
     design = tr.Design(
         "user",
-        tr.EventAnchor("order", which="nth", n=2, offset="1d"),
+        tr.EventAnchor("order", occurrence="nth", n=2, offset="1d"),
         anchor_range=tr.AnchorRange("2025-01-02", "2025-01-02"),
         features={"day_one_orders": tr.agg("orders", window=("-1d", "0s"))},
     )
@@ -244,7 +246,7 @@ def test_cohort_summaries_match_duckdb(postgres_scratch, tmp_path, statistic):  
     duckdb, postgres = _both(postgres_scratch, tmp_path)
     design = tr.Design(
         "user",
-        tr.EventAnchor("order", which="first"),
+        tr.EventAnchor("order", occurrence="first"),
         shape=tr.CohortSpec("order", tr.Trajectory("spend", "1d", periods=2, cumulative=True)),
         administrative_cutoff=datetime(2025, 1, 6, tzinfo=UTC),
     )

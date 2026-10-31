@@ -24,7 +24,7 @@ def test_retention_composes_with_bounded_repeated_shapes(retention_model, shape)
         design = EventPanel(
             Design("user", EventAnchor("occurrence", "first"), outcomes={"retained": expression}),
             periods=(0, 1),
-            period_seconds=86400,
+            period="1d",
             reference_period=0,
         )
     result = compile_design(design, retention_model)

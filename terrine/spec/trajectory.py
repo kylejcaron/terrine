@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from datetime import datetime
 from typing import Literal
 
@@ -105,45 +105,46 @@ class TimeToEvent:
     Example: tr.TimeToEvent("orders")
     """
 
-    event: str
-    exit: str | None = None
-    entry: str | None = None
+    end_event: str
+    _: KW_ONLY
+    exit_event: str | None = None
+    entry_event: str | None = None
     delayed_entry: bool = False
 
     def __post_init__(self) -> None:
-        _name(self.event, "event")
-        for name in ("exit", "entry"):
+        _name(self.end_event, "end_event")
+        for name in ("exit_event", "entry_event"):
             value = getattr(self, name)
             if value is not None:
                 _name(value, name)
         if not isinstance(self.delayed_entry, bool):
             raise _INVALID.error(reason="wrong_type", field="delayed_entry")
-        if self.delayed_entry and self.entry is None:
-            raise _INVALID.error(reason="entry_required", field="entry")
+        if self.delayed_entry and self.entry_event is None:
+            raise _INVALID.error(reason="entry_required", field="entry_event")
 
 
 @dataclass(frozen=True, slots=True, init=False)
 class LifeTable:
     """Summarize time-to-event follow-up in elapsed bins with risk and censor counts.
 
-    Example: tr.LifeTable(tr.TimeToEvent("orders"), interval="7d")
+    Example: tr.LifeTable(tr.TimeToEvent("orders"), bin="7d")
     """
 
     time_to_event: TimeToEvent
-    interval: int
+    bin: int
     group_by: tuple[str, ...]
 
     def __init__(
         self,
         time_to_event: TimeToEvent,
-        interval: str | Literal[0],
+        bin: str | Literal[0],
         group_by: tuple[str, ...] = (),
     ) -> None:
         if not isinstance(time_to_event, TimeToEvent):
             raise _INVALID.error(reason="wrong_type", field="time_to_event")
-        width = duration(interval, field="interval")
+        width = duration(bin, field="bin")
         if width <= 0:
-            raise _INVALID.error(reason="not_positive", field="interval")
+            raise _INVALID.error(reason="not_positive", field="bin")
         if isinstance(group_by, (str, bytes)) or not isinstance(group_by, tuple):
             raise _INVALID.error(reason="wrong_type", field="group_by")
         for name in group_by:
@@ -170,5 +171,5 @@ class LifeTable:
                 names=tuple(sorted(reserved.intersection(group_by))),
             )
         object.__setattr__(self, "time_to_event", time_to_event)
-        object.__setattr__(self, "interval", width)
+        object.__setattr__(self, "bin", width)
         object.__setattr__(self, "group_by", group_by)

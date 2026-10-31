@@ -28,7 +28,7 @@ __all__ = [
     "UNSUPPORTED_VIEW",
 ]
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 INVALID_DEFINITION = RefusalSpec(
     "terrine.dataset.invalid_definition", "Invalid dataset definition: {reason}"
@@ -52,7 +52,7 @@ def _canonical(value: Any) -> bytes:
 class DatasetDefinition:
     """Save a versioned design with its selected view and fixed transforms.
 
-    Example: tr.DatasetDefinition(schema_version=2, base_design=design)
+    Example: tr.DatasetDefinition(schema_version=3, base_design=design)
     """
 
     schema_version: int

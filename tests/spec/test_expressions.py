@@ -34,7 +34,9 @@ def test_asof_cutoff_and_predicate_constructors_are_typed_and_immutable():
     assert isinstance(metric, MetricAgg)
     assert cutoff == AttributeAsOf(attribute="plan_tier", before=0)
     assert isinstance(gt(metric, 0), Gt)
-    assert isinstance(eq(cutoff, "pro"), Eq)
+    equal = eq(expr=cutoff, value="pro")
+    assert equal == Eq(expr=cutoff, value="pro")
+    assert equal.expr == cutoff
     assert isinstance(is_null(cutoff), IsNull)
     assert all_of(gt(metric, 0), is_null(cutoff)) == And((gt(metric, 0), is_null(cutoff)))
     with pytest.raises((FrozenInstanceError, AttributeError)):

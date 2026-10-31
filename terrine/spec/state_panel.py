@@ -32,7 +32,7 @@ _PARTIAL_PERIOD = RefusalSpec(
 )
 _TOO_MANY_PERIODS = RefusalSpec(
     "terrine.state_panel.invalid_schedule",
-    "The schedule has {periods} periods, more than the {max_periods} allowed. "
+    "The schedule has {schedule_periods} periods, more than the {periods} allowed. "
     "Shorten the schedule or set periods= to include the full schedule.",
 )
 _INVALID_SOURCE = RefusalSpec(
@@ -124,18 +124,18 @@ class BinnedMetricState:
 class StatePanel:
     """Describe bounded repeated state rows for each unit over a finite schedule.
 
-    Example: tr.StatePanel(tr.BinnedMetricState("spend", (50,), ("low", "high")), max_periods=28)
+    Example: tr.StatePanel(tr.BinnedMetricState("spend", (50,), ("low", "high")), periods=28)
     """
 
     state: StateObservations | BinnedMetricState
-    max_periods: int
+    periods: int
     baseline_features: Mapping[str, Expr]
 
     def __init__(
         self,
         state: StateObservations | BinnedMetricState,
         *,
-        max_periods: int,
+        periods: int,
         baseline_features: Mapping[str, Expr] | None = None,
     ) -> None:
         from types import MappingProxyType
@@ -145,8 +145,8 @@ class StatePanel:
 
         if not isinstance(state, (StateObservations, BinnedMetricState)):
             raise _INVALID_INPUT.error(reason="wrong_type", field="state")
-        if isinstance(max_periods, bool) or not isinstance(max_periods, int) or max_periods <= 0:
-            raise _INVALID_INPUT.error(reason="not_positive_integer", field="max_periods")
+        if isinstance(periods, bool) or not isinstance(periods, int) or periods <= 0:
+            raise _INVALID_INPUT.error(reason="not_positive_integer", field="periods")
         if isinstance(baseline_features, Mapping) and any(
             isinstance(value, EventTime) and value.measure == "elapsed"
             for value in baseline_features.values()
@@ -158,7 +158,7 @@ class StatePanel:
             )
         nodes = _named_nodes(baseline_features, (MetricAgg, AttributeAsOf), "baseline_features")
         object.__setattr__(self, "state", state)
-        object.__setattr__(self, "max_periods", max_periods)
+        object.__setattr__(self, "periods", periods)
         object.__setattr__(self, "baseline_features", MappingProxyType(dict(nodes)))
 
 
@@ -256,9 +256,9 @@ def validate_state_panel(
     if not isinstance(schedule, Schedule):
         raise _INVALID_SCHEDULE.error(reason="a finite Schedule anchor is required")
     periods = schedule_periods(schedule)
-    if periods > panel.max_periods:
+    if periods > panel.periods:
         raise _TOO_MANY_PERIODS.error(
-            reason="schedule_exceeds_max_periods", periods=periods, max_periods=panel.max_periods
+            reason="schedule_exceeds_periods", schedule_periods=periods, periods=panel.periods
         )
     if design.outcomes or design.treatment is not None:
         raise _UNSUPPORTED.error(

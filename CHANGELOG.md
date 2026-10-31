@@ -4,6 +4,11 @@
 
 ### API
 
+- Use one vocabulary for recipes and low-level shapes: `occurrence`, `end_event`,
+  `entry_event`, `exit_event`, `bin`, `periods`, `period`, `anticipation`,
+  `reference_period` and predicate `expr`; name the inclusive coverage bound `end`.
+  Design and dataset definition documents now require schema version 3; catalog
+  documents remain version 2 and saved plan/manifest outer envelopes remain version 1.
 - Make every package and recipe export discoverable through `dir()`.
 - Require unit-bearing strings for nonzero elapsed durations; preserve integer
   seconds in saved designs and metadata.

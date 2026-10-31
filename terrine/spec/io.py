@@ -50,7 +50,7 @@ from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent, Trajecto
 from terrine.windows import Window, seconds_text
 
 __all__ = ["SCHEMA_VERSION", "canonical_json", "to_json", "from_json", "to_yaml", "from_yaml"]
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _INVALID = RefusalSpec("terrine.design.invalid", "Design document is invalid: {reason}.")
 _INVALID_INPUT = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
@@ -109,7 +109,7 @@ def _encode(value: Any) -> Any:
     if isinstance(value, FixedDate):
         return {"type": "FixedDate", "date": _date_value(value.date)}
     if isinstance(value, EventAnchor):
-        node = {"type": "EventAnchor", "event": value.event, "which": value.which}
+        node = {"type": "EventAnchor", "event": value.event, "occurrence": value.occurrence}
         if value.n is not None:
             node["n"] = value.n
         if value.offset:
@@ -169,7 +169,7 @@ def _encode(value: Any) -> Any:
         return {
             "type": "StatePanel",
             "state": _encode(value.state),
-            "max_periods": value.max_periods,
+            "periods": value.periods,
             "baseline_features": {
                 key: _encode(item) for key, item in value.baseline_features.items()
             },
@@ -208,14 +208,14 @@ def _encode(value: Any) -> Any:
             "type": "SequentialSpec",
             "treatment": _encode(value.treatment),
             "trial_weight": None if value.trial_weight is None else _encode(value.trial_weight),
-            "anticipation_seconds": value.anticipation_seconds,
-            "reference_period_seconds": value.reference_period_seconds,
+            "anticipation": value.anticipation,
+            "reference_period": value.reference_period,
         }
     if isinstance(value, EventPanelSpec):
         return {
             "type": "EventPanelSpec",
             "periods": list(value.periods),
-            "period_seconds": value.period_seconds,
+            "period": value.period,
             "reference_period": value.reference_period,
         }
     if isinstance(value, CalendarComparisonSpec):
@@ -236,16 +236,16 @@ def _encode(value: Any) -> Any:
     if isinstance(value, TimeToEvent):
         return {
             "type": "TimeToEvent",
-            "event": value.event,
-            "exit": value.exit,
-            "entry": value.entry,
+            "end_event": value.end_event,
+            "exit_event": value.exit_event,
+            "entry_event": value.entry_event,
             "delayed_entry": value.delayed_entry,
         }
     if isinstance(value, LifeTable):
         return {
             "type": "LifeTable",
             "time_to_event": _encode(value.time_to_event),
-            "interval": value.interval,
+            "bin": value.bin,
             "group_by": list(value.group_by),
         }
     if isinstance(value, Trajectory):
@@ -322,7 +322,7 @@ def _encode(value: Any) -> Any:
     if isinstance(value, Gt):
         return {"type": "Gt", "expr": _encode(value.expr), "value": value.value}
     if isinstance(value, Eq):
-        return {"type": "Eq", "left": _encode(value.left), "value": value.value}
+        return {"type": "Eq", "expr": _encode(value.expr), "value": value.value}
     if isinstance(value, IsNull):
         return {"type": "IsNull", "expr": _encode(value.expr), "negate": value.negate}
     if isinstance(value, And):
@@ -466,10 +466,12 @@ def _node(value: Any) -> Any:
             None if item["within_seconds"] is None else _duration_text(item["within_seconds"]),
         )
     if tag == "EventAnchor":
-        item = _object(value, {"type", "event", "which", "n", "offset"}, {"type", "event", "which"})
+        item = _object(
+            value, {"type", "event", "occurrence", "n", "offset"}, {"type", "event", "occurrence"}
+        )
         return EventAnchor(
             item["event"],
-            item["which"],
+            item["occurrence"],
             item.get("n"),
             _duration_text(item.get("offset", 0)),
         )
@@ -511,14 +513,12 @@ def _node(value: Any) -> Any:
             tuple(item["levels"]),
         )
     if tag == "StatePanel":
-        item = _object(value, {"type", "state", "max_periods", "baseline_features"})
+        item = _object(value, {"type", "state", "periods", "baseline_features"})
         raw = item["baseline_features"]
         if not isinstance(raw, dict):
             raise ValueError("baseline_features must be a mapping")
         baseline = {key: _node(node) for key, node in raw.items()}
-        return StatePanel(
-            _node(item["state"]), max_periods=item["max_periods"], baseline_features=baseline
-        )
+        return StatePanel(_node(item["state"]), periods=item["periods"], baseline_features=baseline)
     if tag == "Initiation":
         item = _object(value, {"type", "event", "history_start", "knowledge"})
         return Initiation(
@@ -551,21 +551,21 @@ def _node(value: Any) -> Any:
                 "type",
                 "treatment",
                 "trial_weight",
-                "anticipation_seconds",
-                "reference_period_seconds",
+                "anticipation",
+                "reference_period",
             },
         )
         weight = None if item["trial_weight"] is None else _node(item["trial_weight"])
         return SequentialSpec(
             _node(item["treatment"]),
             weight,
-            item["anticipation_seconds"],
-            item["reference_period_seconds"],
+            _duration_text(item["anticipation"]),
+            _duration_text(item["reference_period"]),
         )
     if tag == "EventPanelSpec":
-        item = _object(value, {"type", "periods", "period_seconds", "reference_period"})
+        item = _object(value, {"type", "periods", "period", "reference_period"})
         return EventPanelSpec(
-            tuple(item["periods"]), item["period_seconds"], item["reference_period"]
+            tuple(item["periods"]), _duration_text(item["period"]), item["reference_period"]
         )
     if tag == "CalendarComparisonSpec":
         item = _object(
@@ -595,21 +595,19 @@ def _node(value: Any) -> Any:
         item = _object(value, {"type", "origin", "trajectory"})
         return CohortSpec(item["origin"], _node(item["trajectory"]))
     if tag == "TimeToEvent":
-        item = _object(value, {"type", "event", "exit", "entry", "delayed_entry"})
+        item = _object(value, {"type", "end_event", "exit_event", "entry_event", "delayed_entry"})
         return TimeToEvent(
-            item["event"],
-            exit=item["exit"],
-            entry=item["entry"],
+            item["end_event"],
+            exit_event=item["exit_event"],
+            entry_event=item["entry_event"],
             delayed_entry=item["delayed_entry"],
         )
     if tag == "LifeTable":
-        item = _object(value, {"type", "time_to_event", "interval", "group_by"})
+        item = _object(value, {"type", "time_to_event", "bin", "group_by"})
         groups = item["group_by"]
         if not isinstance(groups, list) or any(not isinstance(name, str) for name in groups):
             raise ValueError("LifeTable group_by must be a list of feature names")
-        return LifeTable(
-            _node(item["time_to_event"]), _duration_text(item["interval"]), tuple(groups)
-        )
+        return LifeTable(_node(item["time_to_event"]), _duration_text(item["bin"]), tuple(groups))
     if tag == "Window":
         item = _object(value, {"type", "start", "end"})
         return Window(_duration_text(item["start"]), _duration_text(item["end"]))
@@ -708,8 +706,8 @@ def _node(value: Any) -> Any:
         item = _object(value, {"type", "expr", "value"})
         return Gt(_node(item["expr"]), item["value"])
     if tag == "Eq":
-        item = _object(value, {"type", "left", "value"})
-        return Eq(_node(item["left"]), item["value"])
+        item = _object(value, {"type", "expr", "value"})
+        return Eq(_node(item["expr"]), item["value"])
     if tag == "IsNull":
         item = _object(value, {"type", "expr", "negate"}, {"type", "expr"})
         return IsNull(_node(item["expr"]), item.get("negate", False))
@@ -841,6 +839,7 @@ def _load(payload: Any) -> Design:
                 reason="unsupported_schema_version",
                 field="schema_version",
                 expected=SCHEMA_VERSION,
+                schema_version=root["schema_version"],
             )
         return _design(root["design"])
     except TerrineError:

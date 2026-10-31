@@ -404,7 +404,7 @@ The immutable `CompiledStudy.range_plans` records the width, multiplier and
 derivation for each named nonadditive output; no row count is guessed.
 
 The supported candidate multiplier is at most 128. Unknown per-unit event-anchor
-multiplicity (`EventAnchor(..., which="each")`) and larger declared overlaps
+multiplicity (`EventAnchor(..., occurrence="each")`) and larger declared overlaps
 refuse before execution with `terrine.temporal.range_bound_unavailable`.
 Use first/nth event anchors, fewer event periods/anchors, a coarser schedule or
 narrower window, or an additive metric with sparse prefix lookups. Additive

@@ -12,7 +12,7 @@ from terrine.backends.extrema import greatest, least
 from terrine.data import ColumnMeta, FeatureCutoff
 from terrine.semantic.filters import lower_filter
 from terrine.semantic.models import Filter
-from terrine.spec.expressions import And, Eq, Expr, Gt, IsNull, Predicate
+from terrine.spec.expressions import And, Expr, Gt, IsNull, Predicate
 from terrine.temporal.aggregate import _Builder
 
 
@@ -68,8 +68,7 @@ def compile_predicate(
             upper = least(*(builder.col(item[3]) for item in terms))
             cutoff = conjunction_cutoff(tuple(item[4] for item in terms))
         else:
-            expression = node.left if isinstance(node, Eq) else node.expr
-            compiled = values[expression]
+            compiled = values[node.expr]
             meta = compiled.meta
             assert meta.complete_column is not None and meta.reason_column is not None
             assert meta.observed_from_column is not None and meta.observed_until_column is not None

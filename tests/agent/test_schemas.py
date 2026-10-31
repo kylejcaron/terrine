@@ -125,7 +125,7 @@ def test_discovery_schema_matches_existing_tagged_codec(variant):
             Schedule("1d", "2025-01-01", "2025-01-04"),
             shape=StatePanel(
                 BinnedMetricState("total", (1, Decimal("1.25"), 2.5), ("a", "b", "c", "d")),
-                max_periods=4,
+                periods=4,
             ),
         )
     elif variant == "calendar":

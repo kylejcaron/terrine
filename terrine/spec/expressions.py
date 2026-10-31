@@ -271,11 +271,11 @@ class Gt:
 
 @dataclass(frozen=True, slots=True)
 class Eq:
-    left: Expr
+    expr: Expr
     value: JsonScalar
 
     def __post_init__(self) -> None:
-        _require_expr(self.left, "left")
+        _require_expr(self.expr, "expr")
         object.__setattr__(self, "value", _scalar(self.value, "value"))
 
 
@@ -322,9 +322,7 @@ def _output_leaves(value: Expr | Predicate) -> Iterator[Expr]:
     if isinstance(value, And):
         for term in value.terms:
             yield from _output_leaves(term)
-    elif isinstance(value, Eq):
-        yield value.left
-    elif isinstance(value, (Gt, IsNull)):
+    elif isinstance(value, (Gt, Eq, IsNull)):
         yield value.expr
     else:
         yield value
@@ -533,12 +531,12 @@ def gt(expr: Expr, value: JsonScalar) -> Gt:
     return Gt(expr, value)
 
 
-def eq(left: Expr, value: JsonScalar) -> Eq:
+def eq(expr: Expr, value: JsonScalar) -> Eq:
     """Require an expression's value to equal a literal.
 
     Example: tr.eq(tr.agg("orders", window=("-30d", "0s")), 1)
     """
-    return Eq(left, value)
+    return Eq(expr, value)
 
 
 def is_null(expr: Expr, *, negate: bool = False) -> IsNull:

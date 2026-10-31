@@ -135,7 +135,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
     """Build an event/censor relation with explicit half-open supported history."""
     if not isinstance(design.shape, TimeToEvent):
         raise TypeError("compile_time_to_event requires a TimeToEvent design")
-    if design.shape.exit is not None and design.shape.exit == design.shape.event:
+    if design.shape.exit_event is not None and design.shape.exit_event == design.shape.end_event:
         raise _INVALID.error(reason="event_and_exit_facts_must_be_distinct")
     generated = {
         "unit",
@@ -178,14 +178,14 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
     base = compile_columns(base_design, model)
     if base.roles.unit != "unit":
         raise _INVALID.error(reason="missing_unit_role")
-    _, event_source, event_unit = _source(model, design.unit, shape.event)
+    _, event_source, event_unit = _source(model, design.unit, shape.end_event)
     if event_unit is None:
         raise _INVALID.error(reason="event_source_missing_unit")
     event_relation, event_id = _events(model, event_source, event_unit)
     source_names = [
-        shape.event,
-        *([shape.entry] if shape.entry else []),
-        *([shape.exit] if shape.exit else []),
+        shape.end_event,
+        *([shape.entry_event] if shape.entry_event else []),
+        *([shape.exit_event] if shape.exit_event else []),
     ]
     timestamp_types = [
         model._relation(model.sources[model.catalog.events[name].source].relation).schema()[
@@ -253,8 +253,8 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         supported_end = least(supported_end, cutoff)
     history_start = start
     checks = list(base._checks)
-    if shape.entry is not None:
-        _, entry_source, entry_unit = _source(model, design.unit, shape.entry)
+    if shape.entry_event is not None:
+        _, entry_source, entry_unit = _source(model, design.unit, shape.entry_event)
         if entry_unit is None:
             raise _INVALID.error(reason="entry_source_missing_unit")
         entry_events, entry_event_id = _events(model, entry_source, entry_unit)
@@ -297,8 +297,8 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         checks.append(entered)
         supported_start = greatest(supported_start, candidates._entry_time)
 
-    if shape.exit is not None:
-        _, exit_source, exit_unit = _source(model, design.unit, shape.exit)
+    if shape.exit_event is not None:
+        _, exit_source, exit_unit = _source(model, design.unit, shape.exit_event)
         if exit_unit is None:
             raise _INVALID.error(reason="exit_source_missing_unit")
         exit_coverage = model.readiness.sources.get(exit_source.name)
@@ -351,7 +351,9 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         unit=candidates.unit,
         anchor_id=candidates.anchor_id,
         lower=earliest_event,
-        upper=(candidates._followup_start if shape.entry is not None else candidates._t0_naive),
+        upper=(
+            candidates._followup_start if shape.entry_event is not None else candidates._t0_naive
+        ),
     )
     prior = first_occurrence(
         event_relation,
@@ -451,7 +453,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         )
     }
     censor_reason = ibis.literal("source_coverage")
-    if shape.exit is not None:
+    if shape.exit_event is not None:
         censor_reason = ibis.ifelse(
             retained._exit_time.notnull() & (retained._exit_time == retained._followup_end),
             ibis.literal("exit"),

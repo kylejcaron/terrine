@@ -821,7 +821,7 @@ def _validate_shape(
             raise _INVALID.error(reason="PersistentAdoption requires a value-bearing label")
         coverage = model.readiness.for_fact(source.name)
         outcome_horizons, outcome_cutoffs = _outcome_bounds(design, model)
-        anticipation = design.shape.anticipation_seconds
+        anticipation = design.shape.anticipation
         if outcome_horizons or outcome_cutoffs:
             schedule = design.anchor
             last_t0 = schedule.instant(schedule.count(model.day_boundary) - 1, model.day_boundary)
@@ -913,7 +913,7 @@ def _validate_shape(
             _required(model, source_name, required)
     elif isinstance(design.shape, (TimeToEvent, LifeTable)):
         shape = design.shape.time_to_event if isinstance(design.shape, LifeTable) else design.shape
-        for name in (shape.event, shape.exit, shape.entry):
+        for name in (shape.end_event, shape.exit_event, shape.entry_event):
             if name is None:
                 continue
             event = model.catalog.events.get(name)

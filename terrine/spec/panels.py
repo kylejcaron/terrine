@@ -10,7 +10,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
 from terrine._time import utc_instant
-from terrine.errors import RefusalSpec, parameter_names
+from terrine.errors import RefusalSpec
 from terrine.spec.anchors import EventAnchor
 from terrine.spec.design import Design
 from terrine.spec.state_panel import StatePanel
@@ -198,7 +198,7 @@ class MatchedT0Sample:
         object.__setattr__(self, "strata", strata)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class SequentialSpec:
     """Describe repeated trials with treatment history and elapsed reference times.
 
@@ -206,53 +206,62 @@ class SequentialSpec:
     """
 
     treatment: Initiation | PersistentAdoption
-    trial_weight: TrialWeight | None = None
-    anticipation_seconds: int = 0
-    reference_period_seconds: int = -86_400
+    trial_weight: TrialWeight | None
+    anticipation: int
+    reference_period: int
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.treatment, (Initiation, PersistentAdoption)):
+    def __init__(
+        self,
+        treatment: Initiation | PersistentAdoption,
+        trial_weight: TrialWeight | None = None,
+        anticipation: str | Literal[0] = "0d",
+        reference_period: str | Literal[0] = "-1d",
+    ) -> None:
+        if not isinstance(treatment, (Initiation, PersistentAdoption)):
             raise _INVALID.error(reason="wrong_type", field="treatment")
-        if self.trial_weight is not None and not isinstance(self.trial_weight, TrialWeight):
+        if trial_weight is not None and not isinstance(trial_weight, TrialWeight):
             raise _INVALID.error(reason="wrong_type", field="trial_weight")
-        if (
-            isinstance(self.anticipation_seconds, bool)
-            or not isinstance(self.anticipation_seconds, int)
-            or self.anticipation_seconds < 0
-        ):
-            raise _INVALID.error(reason="negative", field="anticipation_seconds")
+        elapsed = duration(anticipation, field="anticipation")
+        reference = duration(reference_period, field="reference_period")
+        if elapsed < 0:
+            raise _INVALID.error(reason="negative", field="anticipation")
+        object.__setattr__(self, "treatment", treatment)
+        object.__setattr__(self, "trial_weight", trial_weight)
+        object.__setattr__(self, "anticipation", elapsed)
+        object.__setattr__(self, "reference_period", reference)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class EventPanelSpec:
     """Describe elapsed periods around an event, including a named reference period.
 
-    Example: spec.EventPanelSpec(periods=(-1, 0, 1), period_seconds=86400, reference_period=-1)
+    Example: spec.EventPanelSpec(periods=(-1, 0, 1), period="1d", reference_period=-1)
     """
 
     periods: tuple[int, ...]
-    period_seconds: int
+    period: int
     reference_period: int
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.periods, Iterable):
+    def __init__(
+        self, periods: tuple[int, ...], period: str | Literal[0], reference_period: int
+    ) -> None:
+        if not isinstance(periods, Iterable):
             raise _INVALID.error(reason="wrong_type", field="periods")
-        periods = tuple(self.periods)
+        periods = tuple(periods)
         if not periods:
             raise _INVALID.error(reason="empty", field="periods")
-        if any(isinstance(period, bool) or not isinstance(period, int) for period in periods):
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in periods):
             raise _INVALID.error(reason="wrong_type", field="periods")
         if len(set(periods)) != len(periods):
             raise _INVALID.error(reason="duplicate_names", field="periods")
-        if (
-            isinstance(self.period_seconds, bool)
-            or not isinstance(self.period_seconds, int)
-            or self.period_seconds <= 0
-        ):
-            raise _INVALID.error(reason="not_positive_integer", field="period_seconds")
-        if self.reference_period not in periods:
+        width = duration(period, field="period")
+        if width <= 0:
+            raise _INVALID.error(reason="not_positive", field="period")
+        if reference_period not in periods:
             raise _INVALID.error(reason="undeclared_name", field="reference_period")
         object.__setattr__(self, "periods", periods)
+        object.__setattr__(self, "period", width)
+        object.__setattr__(self, "reference_period", reference_period)
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,13 +357,7 @@ def Sequential(
         raise _INVALID.error(reason="wrong_type", field="base")
     if base.treatment is not None:
         raise _CONFLICT.error()
-    with parameter_names(anticipation_seconds="anticipation"):
-        spec = SequentialSpec(
-            treatment,
-            trial_weight,
-            duration(anticipation, field="anticipation"),
-            duration(reference_period, field="reference_period"),
-        )
+    spec = SequentialSpec(treatment, trial_weight, anticipation, reference_period)
     return _copy_design(base, spec)
 
 
@@ -398,12 +401,12 @@ def EventPanel(
     base: Design,
     *,
     periods: tuple[int, ...],
-    period_seconds: int,
+    period: str | Literal[0],
     reference_period: int = -1,
 ) -> Design:
     """Add elapsed event-relative periods to an event-anchored design.
 
-    Example: spec.EventPanel(event_design, periods=(-1, 0, 1), period_seconds=86400)
+    Example: spec.EventPanel(event_design, periods=(-1, 0, 1), period="1d")
     """
     if not isinstance(base, Design):
         raise _INVALID.error(reason="wrong_type", field="base")
@@ -411,7 +414,7 @@ def EventPanel(
         raise _INVALID.error(reason="requires_event_anchor", field="base")
     if base.treatment is not None:
         raise _CONFLICT.error()
-    spec = EventPanelSpec(periods, period_seconds, reference_period)
+    spec = EventPanelSpec(periods, period, reference_period)
     return _copy_design(base, spec)
 
 

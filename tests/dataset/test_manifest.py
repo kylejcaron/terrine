@@ -17,7 +17,7 @@ def test_manifest_definition_reference_requires_owner_storage_and_verifies_diges
     from terrine.errors import TerrineError
 
     definition = DatasetDefinition(
-        schema_version=2, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
+        schema_version=3, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
     )
     store = DatasetDefinitionStore(tmp_path / "owner-a", owner="owner-a")
     reference = store.put(definition)
@@ -43,7 +43,7 @@ def test_manifest_definition_reference_requires_owner_storage_and_verifies_diges
 
 def test_dataset_manifest_round_trip_preserves_generation_schema_roles_and_metadata() -> None:
     definition = DatasetDefinition(
-        schema_version=2, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
+        schema_version=3, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
     )
     manifest = DatasetManifest(
         definition,
@@ -62,7 +62,7 @@ def test_dataset_manifest_round_trip_preserves_generation_schema_roles_and_metad
 
 def test_manifest_json_is_text_and_round_trips() -> None:
     definition = DatasetDefinition(
-        schema_version=2, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
+        schema_version=3, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
     )
     manifest = DatasetManifest(
         definition,
@@ -78,6 +78,7 @@ def test_manifest_json_is_text_and_round_trips() -> None:
 
     assert isinstance(serialized, str)
     assert DatasetManifest.from_json(serialized) == manifest
+
 
 @pytest.mark.parametrize(
     "damage",
@@ -100,7 +101,7 @@ def test_malformed_manifest_payload_has_coded_refusal(damage) -> None:
     from terrine.errors import TerrineError
 
     definition = DatasetDefinition(
-        schema_version=2, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
+        schema_version=3, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
     )
     manifest = DatasetManifest(
         definition,
@@ -117,9 +118,8 @@ def test_malformed_manifest_payload_has_coded_refusal(damage) -> None:
     elif damage == "envelope":
         serialized = "null"
     elif damage == "duplicate":
-        serialized = (
-            manifest.to_json()
-            .replace('"schema_version":1', '"schema_version":1,"schema_version":1', 1)
+        serialized = manifest.to_json().replace(
+            '"schema_version":1', '"schema_version":1,"schema_version":1', 1
         )
     elif damage == "nonfinite":
         payload["source_coverage"]["start"] = float("nan")
@@ -149,7 +149,7 @@ def test_malformed_manifest_payload_has_coded_refusal(damage) -> None:
 
 
 _DEFINITION = DatasetDefinition(
-    schema_version=2, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
+    schema_version=3, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
 )
 _GENERATION = ManifestGeneration("ds", "g1", ("table:g1",), ("sha256:x",), 0)
 

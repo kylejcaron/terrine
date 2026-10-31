@@ -159,7 +159,7 @@ def test_state_panel_feature_hash_includes_state_definition(native_inputs):
     model = frame._model
     state = BinnedMetricState("sessions", (0,), ("none", "some"))
     design = Design(
-        "user", Schedule("1d", "2025-01-03", "2025-01-04"), shape=StatePanel(state, max_periods=2)
+        "user", Schedule("1d", "2025-01-03", "2025-01-04"), shape=StatePanel(state, periods=2)
     )
     altered_metrics = dict(model.metrics)
     altered_metrics["sessions"] = replace(model.metrics["sessions"], kind="conversion")
@@ -193,14 +193,14 @@ def test_state_panel_feature_hash_distinguishes_baseline_evaluation(native_input
         "user",
         schedule,
         features={"sessions_at_start": expression},
-        shape=StatePanel(BinnedMetricState("sessions", (0,), ("none", "some")), max_periods=2),
+        shape=StatePanel(BinnedMetricState("sessions", (0,), ("none", "some")), periods=2),
     )
     baseline_design = Design(
         "user",
         schedule,
         shape=StatePanel(
             BinnedMetricState("sessions", (0,), ("none", "some")),
-            max_periods=2,
+            periods=2,
             baseline_features={"sessions_at_start": expression},
         ),
     )

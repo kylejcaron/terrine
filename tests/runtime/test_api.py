@@ -475,7 +475,7 @@ def test_custom_saved_plan_executor_keeps_state_panel_budget_refusal():
     design = Design(
         "user",
         Schedule("1d", "2025-01-02", "2025-01-03"),
-        shape=StatePanel(StateObservations("status", ("new", "old")), max_periods=3),
+        shape=StatePanel(StateObservations("status", ("new", "old")), periods=3),
     )
     plan = plan_refresh(
         namespace="runtime",

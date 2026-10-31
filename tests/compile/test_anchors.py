@@ -239,24 +239,24 @@ def test_nth_event_is_selected_before_range_filter(native_model):
     assert user_a["t0"] == datetime(2025, 1, 3, 12, tzinfo=UTC)
 
 
-@pytest.mark.parametrize("which,n", [("first", None), ("nth", 3), ("each", None)])
-def test_offset_shifts_selected_events_after_original_time_range(native_model, which, n):
+@pytest.mark.parametrize("occurrence,n", [("first", None), ("nth", 3), ("each", None)])
+def test_offset_shifts_selected_events_after_original_time_range(native_model, occurrence, n):
     bounds = AnchorRange(
         start=datetime(2025, 1, 2, tzinfo=UTC),
         end=datetime(2025, 1, 4, tzinfo=UTC),
     )
     original = candidate_rows(
-        Design("user", EventAnchor("occurred", which, n), anchor_range=bounds), native_model
+        Design("user", EventAnchor("occurred", occurrence, n), anchor_range=bounds), native_model
     )
     shifted = candidate_rows(
-        Design("user", EventAnchor("occurred", which, n, offset="1d"), anchor_range=bounds),
+        Design("user", EventAnchor("occurred", occurrence, n, offset="1d"), anchor_range=bounds),
         native_model,
     )
     times = (
         [datetime(2025, 1, 3, tzinfo=UTC)]
-        if which == "first"
+        if occurrence == "first"
         else [datetime(2025, 1, 4, 12, tzinfo=UTC)]
-        if which == "nth"
+        if occurrence == "nth"
         else [
             datetime(2025, 1, 3, tzinfo=UTC),
             datetime(2025, 1, 3, tzinfo=UTC),
@@ -267,7 +267,9 @@ def test_offset_shifts_selected_events_after_original_time_range(native_model, w
         ("a", instant) for instant in times
     ]
     assert {row["anchor_id"] for row in original}.isdisjoint(row["anchor_id"] for row in shifted)
-    assert {row["anchor_provenance"] for row in shifted} == {f"event:occurred:{which}:offset:86400"}
+    assert {row["anchor_provenance"] for row in shifted} == {
+        f"event:occurred:{occurrence}:offset:86400"
+    }
 
 
 def test_each_event_range_filters_selected_events(native_model):
@@ -640,6 +642,6 @@ def test_definitively_excluded_rows_with_nulls_are_allowed(native_model):
         },
         event_ids={"occurred": "event_id"},
     )
-    result = candidate_rows(Design("user", EventAnchor("occurred", which="each")), model)
+    result = candidate_rows(Design("user", EventAnchor("occurred", occurrence="each")), model)
     assert len(result) == 2
     assert {(r["unit"], r["t0"].day) for r in result} == {("a", 2), ("a", 3)}

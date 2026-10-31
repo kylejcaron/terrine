@@ -67,7 +67,6 @@ def test_validate_design_returns_a_summary(tools):
     assert tools.propose_design(serialized).output.summary == validated.summary
 
 
-
 def test_validate_design_describes_static_roster_attributes(tools):
     tools.model.con.raw_sql(
         "CREATE TABLE users_with_channel AS SELECT id, 'web'::VARCHAR AS channel FROM users"
@@ -199,7 +198,7 @@ def test_propose_design_and_definition_from_discovered_schema(tools, monkeypatch
         }
     }
     definition = {
-        "schema_version": 2,
+        "schema_version": 3,
         "base_design": document,
         "view": {
             "kind": "training",
@@ -250,7 +249,7 @@ def _scoring_record(tools):
         }
     }
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "base_design": document,
         "view": {
             "kind": "scoring",
@@ -277,7 +276,7 @@ def test_scoring_definition_refuses_inconsistent_reconstruction(tools, mutation)
         definition["base_design"]["anchor"] = {
             "type": "EventAnchor",
             "event": "event",
-            "which": "first",
+            "occurrence": "first",
         }
     result = tools.propose_definition(json.dumps(definition))
     assert result.status == "refused"

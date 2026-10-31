@@ -854,7 +854,7 @@ def test_state_panel_stage_matches_ordinary_normalization_and_support(events_wor
             Schedule("1d", "2025-01-03", "2025-01-04"),
             shape=StatePanel(
                 BinnedMetricState("sessions", (0,), ("none", "some")),
-                max_periods=2,
+                periods=2,
                 baseline_features={"baseline": agg("sessions", window=("-1d", "0s"))},
             ),
         )
@@ -1511,7 +1511,7 @@ def test_staged_batches_preserve_frame_metadata_and_verify_definition_ownership(
 def frame_definition(frame):
     from terrine.spec.dataset import DatasetDefinition
 
-    return DatasetDefinition(schema_version=2, base_design=frame._design)
+    return DatasetDefinition(schema_version=3, base_design=frame._design)
 
 
 def test_stage_renews_lease_during_snapshot_tasks(events_world, tmp_path, monkeypatch):
@@ -1783,7 +1783,7 @@ def test_state_panel_training_view_hashes_baseline_and_prior_state(native_inputs
         Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             BinnedMetricState("sessions", (Decimal("0"),), ("none", "some")),
-            max_periods=2,
+            periods=2,
             baseline_features={"baseline": agg("sessions", window=("-1d", "0d"))},
         ),
     ).build(model)
@@ -1940,7 +1940,7 @@ def test_pre_rename_owner_database_refuses_old_generation_and_stages_new(events_
     fixtures = files("tests.fixtures")
     serialized = fixtures.joinpath("pre_rename_manifest.json").read_text()
     saved = fixtures.joinpath("pre_rename_saved_plan.json").read_text()
-    definition = DatasetDefinition.from_json(fixtures.joinpath("definition_v2.json").read_bytes())
+    definition = DatasetDefinition.from_json(fixtures.joinpath("definition_v3.json").read_bytes())
     namespace = "terrine_runtime"
     try:
         raw = con.con

@@ -24,7 +24,7 @@ from terrine import Design, EventAnchor, TimeToEvent, agg
 
 landmark = Design(
     "user",
-    EventAnchor("purchase", which="first", offset="1d"),
+    EventAnchor("purchase", occurrence="first", offset="1d"),
     features={"day_one_sessions": agg("sessions", window=("-1d", "0s"))},
     shape=TimeToEvent("churn"),
 )

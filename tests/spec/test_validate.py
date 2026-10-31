@@ -155,7 +155,7 @@ def test_binned_state_metric_uses_ordinary_metric_admission():
             Schedule("1d", date(2025, 1, 1), date(2025, 1, 2)),
             shape=StatePanel(
                 BinnedMetricState("sessions", (0,), ("none", "some")),
-                max_periods=2,
+                periods=2,
             ),
         )
         with pytest.raises(TerrineError) as error:

@@ -199,7 +199,7 @@ def test_data_exports_feature_cutoff():
 
 
 def test_coverage_requires_ordered_dates_and_binds_to_utc_instants():
-    coverage = Coverage(start=date(2025, 1, 1), through=date(2025, 1, 3))
+    coverage = Coverage(start=date(2025, 1, 1), end=date(2025, 1, 3))
     bound = coverage.bind(lambda day: datetime.combine(day, datetime.min.time(), UTC))
     assert bound == BoundCoverage(
         start=datetime(2025, 1, 1, tzinfo=UTC),
@@ -347,6 +347,7 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values(stamp
         "numeric_policy",
         "approximation",
         "transformation",
+        "measure",
     }
     payload["provenance"]["unknown_policy"] = True
     with pytest.raises(ValueError):

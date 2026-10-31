@@ -180,7 +180,7 @@ def test_metric_refusal_precedes_shape_refusal():
         """)
         design = Design(
             "user",
-            EventAnchor("purchase", which="first", offset="7d"),
+            EventAnchor("purchase", occurrence="first", offset="7d"),
             features={"recent": agg("float_revenue", window=("-7d", "0s"))},
             shape=CohortSpec(
                 origin="purchase",

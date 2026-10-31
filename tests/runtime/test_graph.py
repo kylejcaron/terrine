@@ -34,7 +34,7 @@ def test_state_panel_graph_tracks_point_period_and_frame_dependencies():
 
     design = SimpleNamespace(
         spec_hash="definition",
-        shape=StatePanel(StateObservations("status", ("new", "old")), max_periods=3),
+        shape=StatePanel(StateObservations("status", ("new", "old")), periods=3),
     )
     graph = dependency_graph(design=design, sources=("events",), partitions=("p1", "p2"))
     layers = {node.layer for node in graph.nodes}

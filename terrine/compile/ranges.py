@@ -61,13 +61,13 @@ def plan_ranges(design: Design, model) -> dict[Expr, RangePlan]:
                 basis = "schedule/calendar"
             else:
                 step, basis = anchor.every, "schedule"
-        elif isinstance(anchor, EventAnchor) and anchor.which in {"first", "nth"}:
+        elif isinstance(anchor, EventAnchor) and anchor.occurrence in {"first", "nth"}:
             count, basis = 1, "single_event"
         else:
             basis = "unknown_event_multiplicity"
         if isinstance(design.shape, EventPanelSpec) and count is not None:
             count *= len(design.shape.periods)
-            step, basis = design.shape.period_seconds, "single_event_periods"
+            step, basis = design.shape.period, "single_event_periods"
         if getattr(expression, "relative_to", None) is not None:
             step = None
             basis += "/reanchored"

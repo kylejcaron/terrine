@@ -63,7 +63,7 @@ def test_calendar_panel_is_canonical_sequential_composition():
 
 def test_event_panel_emits_only_declared_relative_periods():
     base = Design("customer_id", EventAnchor("purchase", "first"))
-    panel = EventPanel(base, periods=(-1, 0, 2), period_seconds=86_400)
+    panel = EventPanel(base, periods=(-1, 0, 2), period="1d")
 
     assert isinstance(panel.shape, EventPanelSpec)
     assert panel.shape.periods == (-1, 0, 2)
@@ -156,7 +156,7 @@ def test_direct_design_construction_cannot_conflict_with_sequential_treatment():
 
 def test_design_json_without_optional_anchor_range_loads_with_sample_defaults():
     restored = from_json(
-        '{"schema_version":2,"design":{"unit":"user","anchor":'
+        '{"schema_version":3,"design":{"unit":"user","anchor":'
         '{"type":"FixedDate","date":{"type":"date","value":"2025-01-01"}}}}'
     )
 

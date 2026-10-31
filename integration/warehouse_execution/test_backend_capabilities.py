@@ -195,7 +195,7 @@ def test_cohort_collection_observes_fresh_snapshot_and_budget():
     try:
         frame = Design(
             "user",
-            EventAnchor("purchase", which="first"),
+            EventAnchor("purchase", occurrence="first"),
             shape=CohortSpec(
                 origin="purchase",
                 trajectory=Trajectory("net_revenue", "7d", periods=3, cumulative=True),
@@ -234,7 +234,7 @@ def test_cohort_table_reuses_parent_ltv_relation_and_provenance():
     try:
         frame = Design(
             "user",
-            EventAnchor("purchase", which="first"),
+            EventAnchor("purchase", occurrence="first"),
             shape=CohortSpec(
                 origin="purchase",
                 trajectory=Trajectory("net_revenue", "7d", periods=1, cumulative=False),
@@ -263,7 +263,7 @@ def test_repeated_first_entry_events_count_one_cohort_member():
         )
         frame = Design(
             "user",
-            EventAnchor("purchase", which="first"),
+            EventAnchor("purchase", occurrence="first"),
             shape=CohortSpec(
                 origin="purchase",
                 trajectory=Trajectory("net_revenue", "7d", periods=1, cumulative=False),
@@ -293,7 +293,7 @@ def test_cohort_summary_surrogate_export_retains_age_and_denominators():
         cohort = (
             Design(
                 "user",
-                EventAnchor("purchase", which="first"),
+                EventAnchor("purchase", occurrence="first"),
                 shape=CohortSpec(
                     origin="purchase",
                     trajectory=Trajectory("net_revenue", "7d", periods=2, cumulative=False),
@@ -320,7 +320,7 @@ def test_trajectory_preserves_event_feature_timing_through_arrow_round_trip():
     try:
         frame = Design(
             "user",
-            EventAnchor("purchase", which="first"),
+            EventAnchor("purchase", occurrence="first"),
             features={
                 "prior_revenue": agg("net_revenue", window=("-1d", "0s")),
                 "purchase_time": event_time("purchase", window=("-1d", "0s")),
@@ -440,9 +440,7 @@ def test_all_shapes_build_materialize_and_arrow_round_trip(native_inputs):
         treatment=treatment,
     )
     event_panel = EventPanel(
-        Design("user", EventAnchor("session", "first")),
-        periods=(-1, 0),
-        period_seconds=86_400,
+        Design("user", EventAnchor("session", "first")), periods=(-1, 0), period="1d"
     )
 
     assert from_json(to_json(sequential)) == sequential

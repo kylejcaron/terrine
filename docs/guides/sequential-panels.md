@@ -84,13 +84,13 @@ from terrine.spec import Design, EventAnchor, EventPanel
 
 equivalent_events = EventPanel(
     Design(None, EventAnchor("checkout"), outcomes=outcomes),
-    periods=(-2, -1, 0, 1), period_seconds=86_400, reference_period=-1,
+    periods=(-2, -1, 0, 1), period="1d", reference_period=-1,
 )
 assert event_rows == equivalent_events
 ```
 
 `EventPanel` remains a public transform. The row evaluation origin is
-`parent_t0 + period * period_seconds`; its typed `anchor_id` contains both the
+`parent_t0 + event_period * period`; its typed `anchor_id` contains both the
 parent event identity and relative period. Expression windows retain their
 declared widths and are evaluated relative to each row origin, so an outcome
 window does not have to equal one event period. Negative event periods are valid

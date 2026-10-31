@@ -241,7 +241,7 @@ class DatasetTools:
             from terrine.spec.state_panel import StateObservations, StatePanel
 
             ensure_runtime_shape_supported(
-                StatePanel(StateObservations("state", ("a", "b")), max_periods=2)
+                StatePanel(StateObservations("state", ("a", "b")), periods=2)
             )
             shapes.append("StatePanel")
             return CapabilityOutput(

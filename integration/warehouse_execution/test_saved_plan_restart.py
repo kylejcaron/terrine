@@ -347,7 +347,7 @@ def test_state_panel_composition_matches_full_rebuild(column_model):
         "user",
         Schedule("1d", "2025-01-02", "2025-01-02"),
         shape=StatePanel(
-            BinnedMetricState("total", cutpoints=(0,), levels=("none", "some")), max_periods=2
+            BinnedMetricState("total", cutpoints=(0,), levels=("none", "some")), periods=2
         ),
     )
     persisted = {
@@ -409,7 +409,7 @@ def test_saved_panel_publication_preserves_ordinary_provenance(column_model, tmp
                     features={"total": agg("total", window=("-1h", "0s"))},
                 ),
                 periods=(-1, 0, 1),
-                period_seconds=3600,
+                period="1h",
             )
         budget = Budget(max_rows=100, max_output_bytes=1_000_000)
         expected = design.build(model).materialize(budget)
@@ -544,7 +544,7 @@ def test_persisted_shape_matrix_preserves_panel_rows_and_metadata(column_model, 
                 features={"total": agg("total", window=("-1h", "0s"))},
             ),
             periods=(-1, 0, 1),
-            period_seconds=3600,
+            period="1h",
         )
     ordinary = compile_design(design, column_model)
     persisted = _persisted_prefixes(design, column_model)
@@ -629,7 +629,7 @@ def test_state_panel_consumes_frozen_prefixes_and_scheduled_anchors(
         features={"total": agg("total", window=("-1d", "0s"))},
         shape=StatePanel(
             state,
-            max_periods=len(totals),
+            periods=len(totals),
             baseline_features={"baseline_total": agg("total", window=("-1d", "0s"))},
         ),
     )

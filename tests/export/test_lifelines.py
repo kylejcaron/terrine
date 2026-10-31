@@ -115,7 +115,7 @@ def test_real_multibin_life_table_converts_without_individual_cluster(native_inp
     data = (
         Design(
             "user",
-            EventAnchor("session", which="first"),
+            EventAnchor("session", occurrence="first"),
             shape=LifeTable(TimeToEvent("churn"), "1d"),
             administrative_cutoff=datetime(2025, 1, 7, tzinfo=UTC),
         )

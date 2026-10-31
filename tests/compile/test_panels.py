@@ -210,9 +210,7 @@ def test_later_control_initiation_refuses_sustained_no_initiation_strategy(nativ
 def test_event_panel_emits_only_declared_relative_periods(native_inputs):
     model = _event_model(native_inputs)
     design = EventPanel(
-        Design("user", EventAnchor("session", "first")),
-        periods=(-1, 0, 2),
-        period_seconds=86_400,
+        Design("user", EventAnchor("session", "first")), periods=(-1, 0, 2), period="1d"
     )
 
     result = design.build(model)._compiled.table.to_pyarrow().to_pylist()
@@ -251,7 +249,7 @@ def test_event_period_translates_nontrivial_outcome_window(native_inputs):
             outcomes={"future_sessions": agg("sessions", window=("1d", "3d"))},
         ),
         periods=(-1, 0),
-        period_seconds=86_400,
+        period="1d",
     )
 
     compiled = design.build(model)._compiled

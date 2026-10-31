@@ -179,7 +179,7 @@ def test_runtime_layer_composition_matches_direct_state_audit(column_model):
         Schedule("1d", "2025-01-02", "2025-01-02"),
         shape=StatePanel(
             BinnedMetricState("total", cutpoints=(0,), levels=("none", "some")),
-            max_periods=1,
+            periods=1,
         ),
     )
     ordinary = compile_design(design, column_model)
@@ -266,7 +266,7 @@ def test_unsupported_runtime_shape_refusal_names_shape_and_route(column_model, s
     shapes = {
         "EventSequence": EventSequence("amount", Window("-1d", "0d"), max_events=3),
         "SequentialSpec": SequentialSpec(initiation),
-        "EventPanelSpec": EventPanelSpec((-1, 0), 86_400, -1),
+        "EventPanelSpec": EventPanelSpec((-1, 0), "1d", -1),
         "CalendarComparisonSpec": CalendarComparisonSpec(initiation, "never_treated", -2, (0,)),
         "CohortSpec": CohortSpec("amount", Trajectory("total", "1d", 2)),
         "TimeToEvent": TimeToEvent("amount"),
@@ -300,7 +300,7 @@ def test_runtime_and_frame_share_shape_budget_refusal():
         Schedule("1d", "2025-01-02", "2025-01-02"),
         shape=DerivedStatePanel(
             BinnedMetricState("total", cutpoints=(0,), levels=("none", "some")),
-            max_periods=2,
+            periods=2,
         ),
     )
     frame = object.__new__(Frame)

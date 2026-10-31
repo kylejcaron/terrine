@@ -49,7 +49,7 @@ def test_bounded_shape_matches_exact_path_and_independent_pandas(nonadditive_mod
         design = EventPanel(
             Design("user", EventAnchor("value", "first"), features=_features()),
             periods=(-1, 0, 1),
-            period_seconds=86_400,
+            period="1d",
         )
     else:
         design = Design("user", Schedule("1d", "2025-01-02", "2025-01-04"), features=_features())
@@ -210,7 +210,7 @@ def test_shape_outputs_preserve_range_bound_metadata(nonadditive_model, shape):
             features={"q": q},
             shape=StatePanel(
                 state,
-                max_periods=2,
+                periods=2,
                 baseline_features={
                     "baseline_min": agg("amount_min", window=("-1d", "0d")),
                 },

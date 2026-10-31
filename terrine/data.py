@@ -100,12 +100,12 @@ _INVALID_ELIGIBILITY = RefusalSpec(
 )
 _COVERAGE_DAY_OVERFLOW = RefusalSpec(
     "terrine.metadata.unrepresentable_coverage",
-    "Complete end day {through!r} leaves no following day to include the whole end day. "
+    "Complete end day {end!r} leaves no following day to include the whole end day. "
     "Choose an earlier last complete day.",
 )
 _COVERAGE_BOUND_OVERFLOW = RefusalSpec(
     "terrine.metadata.unrepresentable_coverage",
-    "Complete days {start!r} through {through!r} cannot be represented in the model's "
+    "Complete days {start!r} through {end!r} cannot be represented in the model's "
     "local time. Choose days farther from the calendar limits.",
 )
 _COVERAGE_UTC_OVERFLOW = RefusalSpec(
@@ -241,25 +241,25 @@ class Coverage:
     """
 
     start: date
-    through: date
+    end: date
 
-    def __init__(self, start: date | str, through: date | str) -> None:
+    def __init__(self, start: date | str, end: date | str) -> None:
         object.__setattr__(self, "start", _calendar_day(start, "start"))
-        object.__setattr__(self, "through", _calendar_day(through, "through"))
-        if self.start > self.through:
-            raise _INVALID_BINDING.error(reason="through_before_start", field="through")
-        if self.through == date.max:
-            raise _COVERAGE_DAY_OVERFLOW.error(through=self.through.isoformat())
+        object.__setattr__(self, "end", _calendar_day(end, "end"))
+        if self.start > self.end:
+            raise _INVALID_BINDING.error(reason="end_before_start", field="end")
+        if self.end == date.max:
+            raise _COVERAGE_DAY_OVERFLOW.error(end=self.end.isoformat())
 
     def bind(self, day_boundary: Callable[[date], datetime]) -> BoundCoverage:
         if not callable(day_boundary):
             raise _INVALID_BINDING.error(reason="wrong_type", field="day_boundary")
         try:
             start = day_boundary(self.start)
-            end = day_boundary(self.through + timedelta(days=1))
+            end = day_boundary(self.end + timedelta(days=1))
         except OverflowError as exc:
             raise _COVERAGE_BOUND_OVERFLOW.error(
-                start=self.start.isoformat(), through=self.through.isoformat()
+                start=self.start.isoformat(), end=self.end.isoformat()
             ) from exc
         return BoundCoverage(start, end)
 
@@ -385,9 +385,9 @@ def _complete(value: tuple[date | str, date | str] | None) -> tuple[date, date] 
         return None
     if isinstance(value, str) or not isinstance(value, Sequence) or len(value) != 2:
         raise _INVALID_BINDING.error(reason="not_a_pair", field="complete")
-    with parameter_names(start="complete", through="complete"):
+    with parameter_names(start="complete", end="complete"):
         coverage = Coverage(*value)
-    return (coverage.start, coverage.through)
+    return (coverage.start, coverage.end)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1589,7 +1589,7 @@ def _decode(value: Any, cls: type) -> Any:
             and "$datetime" in item
         ):
             kwargs[field.name] = datetime.fromisoformat(item["$datetime"])
-        elif field.name in ("start", "through") and isinstance(item, Mapping) and "$date" in item:
+        elif field.name in ("start", "end") and isinstance(item, Mapping) and "$date" in item:
             kwargs[field.name] = date.fromisoformat(item["$date"])
         else:
             kwargs[field.name] = item

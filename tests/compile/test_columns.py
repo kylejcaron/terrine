@@ -940,7 +940,7 @@ def test_since_refuses_in_state_panel_baseline_and_ltv(column_model, shape):
         if shape == "StatePanel.baseline_features":
             panel = StatePanel(
                 StateObservations("tier", ("old", "new")),
-                max_periods=2,
+                periods=2,
                 baseline_features={"recency": elapsed},
             )
             design = Design("user", Schedule("1d", "2025-01-01", "2025-01-02"), shape=panel)
@@ -1099,7 +1099,7 @@ def test_property_state_identity_includes_source_membership(column_model):
     design = Design(
         "user",
         Schedule("1d", "2025-01-01", "2025-01-02"),
-        shape=StatePanel(StateObservations("tier", ("old", "new")), max_periods=2),
+        shape=StatePanel(StateObservations("tier", ("old", "new")), periods=2),
     )
     assert _feature_definition_hash(design, ("from_state",), column_model) != (
         _feature_definition_hash(design, ("from_state",), filtered)

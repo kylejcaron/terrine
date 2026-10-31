@@ -411,14 +411,14 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
         anchor_id=identity,
         _raw_t0=raw_timestamp,
         _event_id=event_id,
-        anchor_provenance=ibis.literal(f"event:{anchor.event}:{anchor.which}"),
+        anchor_provenance=ibis.literal(f"event:{anchor.event}:{anchor.occurrence}"),
     )
-    if anchor.which in ("first", "nth"):
+    if anchor.occurrence in ("first", "nth"):
         rank = (
             ibis.row_number().over(group_by=[base.unit], order_by=[base._raw_t0, base._event_id])
             + 1
         )
-        selected = 1 if anchor.which == "first" else anchor.n
+        selected = 1 if anchor.occurrence == "first" else anchor.n
         base = base.mutate(_anchor_ordinal=rank)
         base = base.filter(base._anchor_ordinal == selected)
         if event_id_column is None:

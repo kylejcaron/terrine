@@ -77,7 +77,7 @@ def test_observed_state_panel_compiles_point_lookup_contract(observed_panel_mode
         Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             StateObservations("state", ("active", "closed"), absorbing=("closed",)),
-            max_periods=2,
+            periods=2,
         ),
     )
     from terrine.compile.dispatch import compile_design
@@ -108,7 +108,7 @@ def test_observed_panel_baseline_preserves_event_origin_timing(observed_panel_mo
         Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             StateObservations("state", ("active", "closed"), absorbing=("closed",)),
-            max_periods=2,
+            periods=2,
             baseline_features={
                 "event_origin": agg("sessions", window=("-1d", "0d"), relative_to=origin)
             },
@@ -198,7 +198,7 @@ def test_binned_state_panel_compiles_bounded_period_pairing(panel_model):
         features={"panel_metric": agg("sessions", window=("-1d", "0d"))},
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=2,
+            periods=2,
         ),
     )
     from terrine.compile.dispatch import compile_design
@@ -230,7 +230,7 @@ def test_panel_baseline_preserves_event_origin_timing_references(panel_model):
         Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=2,
+            periods=2,
             baseline_features={
                 "event_origin": agg("sessions", window=("-1d", "0d"), relative_to=origin)
             },
@@ -254,7 +254,7 @@ def test_panel_baseline_and_per_origin_feature_cutoffs_are_distinct(panel_model)
         },
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=2,
+            periods=2,
             baseline_features={"baseline": agg("sessions", window=("-1d", "0d"))},
         ),
     )
@@ -277,7 +277,7 @@ def test_binned_state_periods_ignore_covariate_gap(panel_model):
         gap="1d",
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=2,
+            periods=2,
         ),
     )
     compiled = compile_state_panel(design, panel_model)
@@ -307,7 +307,7 @@ def test_state_panel_rejects_generated_status_name_collisions(panel_model, name)
             features={name: agg("sessions", window=("-1d", "0d"))},
             shape=StatePanel(
                 BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-                max_periods=1,
+                periods=1,
             ),
         ).build(panel_model)
     assert error.value.code == "terrine.spec.reserved_output_name"
@@ -341,7 +341,7 @@ def test_state_panel_refuses_partial_schedule_and_unsupported_designs(panel_mode
 
     panel = StatePanel(
         BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-        max_periods=2,
+        periods=2,
     )
     schedule = (
         Schedule("36h", "2025-01-03", "2025-01-04")
@@ -382,7 +382,7 @@ def test_observed_state_property_must_be_source_owned(panel_model):
         Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             StateObservations("not_a_property", ("active", "closed")),
-            max_periods=2,
+            periods=2,
         ),
     )
     with pytest.raises(TerrineError) as error:
@@ -404,8 +404,8 @@ def test_state_panel_rejects_schedule_over_explicit_period_cap(panel_model):
     with pytest.raises(TerrineError) as error:
         design.validate(panel_model)
     assert error.value.code == "terrine.state_panel.invalid_schedule"
-    assert error.value.context["reason"] == "schedule_exceeds_max_periods"
-    assert (error.value.context["periods"], error.value.context["max_periods"]) == (3, 2)
+    assert error.value.context["reason"] == "schedule_exceeds_periods"
+    assert (error.value.context["schedule_periods"], error.value.context["periods"]) == (3, 2)
 
 
 def test_state_panel_validation_refuses_month_schedules(panel_model):
@@ -414,7 +414,7 @@ def test_state_panel_validation_refuses_month_schedules(panel_model):
         Schedule("1y", "2025-01-03", "2025-01-03"),
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=2,
+            periods=2,
         ),
     )
     with pytest.raises(TerrineError) as error:
@@ -439,7 +439,7 @@ def test_state_panel_materialization_requires_positive_row_and_byte_budgets(pane
         Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             BinnedMetricState("sessions", cutpoints=(0,), levels=("none", "some")),
-            max_periods=2,
+            periods=2,
         ),
     )
     with pytest.raises(TerrineError) as error:
@@ -455,7 +455,7 @@ def _observed_design(*, absorbing=("closed",)):
         Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             StateObservations("state", ("active", "closed"), absorbing=absorbing),
-            max_periods=2,
+            periods=2,
         ),
     )
 
@@ -594,7 +594,7 @@ def test_float_metric_refuses_decimal_cutpoints(native_inputs):
         Schedule("1d", "2025-01-03", "2025-01-03"),
         shape=StatePanel(
             BinnedMetricState("score_avg", cutpoints=(Decimal("0.1"),), levels=("low", "high")),
-            max_periods=1,
+            periods=1,
         ),
     )
     with pytest.raises(TerrineError) as error:

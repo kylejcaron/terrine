@@ -302,7 +302,7 @@ class _Renderer:
         if isinstance(expr, Gt):
             return f"{self._expression(expr.expr, origin)} > {_scalar(expr.value)}"
         if isinstance(expr, Eq):
-            return f"{self._expression(expr.left, origin)} == {_scalar(expr.value)}"
+            return f"{self._expression(expr.expr, origin)} == {_scalar(expr.value)}"
         if isinstance(expr, IsNull):
             state = "not null" if expr.negate else "null"
             return f"{self._expression(expr.expr, origin)} is {state}"
@@ -330,11 +330,11 @@ class _Renderer:
             value = anchor.date
             instant = value if isinstance(value, datetime) else self.model.day_boundary(value)
             return f"at {_instant(instant)}"
-        if anchor.which == "each":
+        if anchor.occurrence == "each":
             phrase = f"at each {anchor.event} event"
         else:
-            which = _ordinal(anchor.n) if anchor.which == "nth" else "first"
-            phrase = f"at its {which} {anchor.event} event"
+            occurrence = _ordinal(anchor.n) if anchor.occurrence == "nth" else "first"
+            phrase = f"at its {occurrence} {anchor.event} event"
         if anchor.offset:
             phrase += f", shifted by +{_duration(anchor.offset)}"
         return phrase
@@ -345,7 +345,7 @@ class _Renderer:
             groups = f" per {_names(shape.group_by)}" if shape.group_by else ""
             yield (
                 "",
-                f"One row per {_duration(shape.interval)} time bin{groups}, counting "
+                f"One row per {_duration(shape.bin)} time bin{groups}, counting "
                 f"{self._who()} entries {self._at_anchor()}.",
             )
         elif isinstance(shape, EventSequence):
@@ -471,10 +471,10 @@ class _Renderer:
         if isinstance(shape, SequentialSpec):
             parts = [
                 f"Trials: each snapshot is a trial; treated = {self._initiation(shape.treatment)}",
-                f"reference period {_offset(shape.reference_period_seconds, 't0')}",
+                f"reference period {_offset(shape.reference_period, 't0')}",
             ]
-            if shape.anticipation_seconds:
-                parts.append(f"anticipation {_duration(shape.anticipation_seconds)}")
+            if shape.anticipation:
+                parts.append(f"anticipation {_duration(shape.anticipation)}")
             if shape.trial_weight is not None:
                 parts.append(f"{shape.trial_weight.kind.replace('_', ' ')} weights")
             yield "", "; ".join(parts) + "."
@@ -484,7 +484,7 @@ class _Renderer:
             periods = ", ".join(str(period) for period in shape.periods)
             yield (
                 "",
-                f"Panel: event_period values {periods} of {_duration(shape.period_seconds)} "
+                f"Panel: event_period values {periods} of {_duration(shape.period)} "
                 f"around parent_t0 (the selected {anchor.event} anchor), "
                 f"reference period {shape.reference_period}.",
             )
@@ -505,8 +505,8 @@ class _Renderer:
 
     def _censoring(self, shape: TimeToEvent) -> str:
         reasons = []
-        if shape.exit is not None:
-            reasons.append(f"the {shape.exit} event")
+        if shape.exit_event is not None:
+            reasons.append(f"the {shape.exit_event} event")
         reasons.append("the end of complete coverage")
         roster = self.model.units.get(self.unit)
         if roster is not None and roster.observed_until is not None:
@@ -517,9 +517,9 @@ class _Renderer:
             reasons[0] if len(reasons) == 1 else f"{', '.join(reasons[:-1])} or {reasons[-1]}"
         )
         entry = ""
-        if shape.entry is not None:
+        if shape.entry_event is not None:
             delayed = " (delayed entry)" if shape.delayed_entry else ""
-            entry = f"; entry at the {shape.entry} event{delayed}"
+            entry = f"; entry at the {shape.entry_event} event{delayed}"
         return f"censored by {censored}{entry}"
 
     def _shape(self) -> Iterator[Line]:
@@ -537,7 +537,7 @@ class _Renderer:
         elif isinstance(shape, TimeToEvent):
             yield (
                 "",
-                f"Time to event: the first {shape.event} event in [entry_time, censor_time), "
+                f"Time to event: the first {shape.end_event} event in [entry_time, censor_time), "
                 f"measured from t0, {self._censoring(shape)}. With an explicit entry selector, "
                 "events before entry exclude the record. Without one, only events before t0 "
                 "exclude it; coverage beginning after t0 keeps the row incomplete with reason "
@@ -548,8 +548,8 @@ class _Renderer:
             groups = f", grouped by {_names(shape.group_by)}" if shape.group_by else ""
             yield (
                 "",
-                f"Life table: time from t0 to the first {inner.event} in "
-                f"[entry_time, censor_time), binned by {_duration(shape.interval)}{groups}, "
+                f"Life table: time from t0 to the first {inner.end_event} in "
+                f"[entry_time, censor_time), binned by {_duration(shape.bin)}{groups}, "
                 f"{self._censoring(inner)}.",
             )
         elif isinstance(shape, StatePanel):
@@ -570,7 +570,7 @@ class _Renderer:
                 "",
                 f"State panel: {' / '.join(state.levels)} from {origin}, observed every "
                 f"{_duration(schedule.every, weeks=True)} for up to "
-                f"{_plural(shape.max_periods, 'period')}"
+                f"{_plural(shape.periods, 'period')}"
                 f"{qualifiers}.",
             )
         elif isinstance(shape, EventSequence):
@@ -642,7 +642,7 @@ class _Renderer:
         if isinstance(shape, (TimeToEvent, LifeTable)):
             inner = shape.time_to_event if isinstance(shape, LifeTable) else shape
             reasons = ["source_coverage"]
-            if inner.exit is not None:
+            if inner.exit_event is not None:
                 reasons.append("exit")
             if self.design.administrative_cutoff is not None:
                 reasons.append("administrative_cutoff")
