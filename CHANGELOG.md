@@ -1,65 +1,151 @@
 # Changelog
 
-## 0.1.0.dev2
+## Unreleased
 
-### API
+### Breaking changes
 
-- Document public parameters, defaults and constructed attributes with runnable
-  examples; expose closed choices to type checkers. Explain strict as-of cutoffs
-  and demonstrate leakage-safe training and validation splits in the README.
-- Clarify session transition labels, zero-length session gaps, funnel step counts,
-  split duration syntax and open training fractions. Document uncapped budget
-  defaults and keep Increment examples optional.
+- Bare nonzero integer durations are refused: use unit-bearing strings such as
+  `"30d"` and `"0s"` instead of integer seconds; bare `0` remains accepted.
+- `MaterializedFrame.to_arrow()` is removed: use `.to_pyarrow()`.
+- `DatasetManifest.to_json()` returns JSON text, not a mapping: use
+  `json.loads(manifest.to_json())` when a dictionary is needed.
+- `EventAnchor(which=...)` becomes `EventAnchor(occurrence=...)`: rename the keyword.
+- `TimeToEvent(event=..., exit=..., entry=...)` becomes
+  `TimeToEvent(end_event=..., exit_event=..., entry_event=...)`: rename the keywords.
+- `LifeTable(interval=...)` becomes `LifeTable(bin=...)`: rename the keyword.
+- `StatePanel(max_periods=...)` becomes `StatePanel(periods=...)`: rename the keyword.
+- `EventPanel` and `EventPanelSpec` take `period` instead of `period_seconds`:
+  use a duration string such as `period="7d"`.
+- `SequentialSpec` takes `anticipation` and `reference_period` instead of
+  `anticipation_seconds` and `reference_period_seconds`: use duration strings
+  such as `anticipation="0s"` and `reference_period="-1d"`.
+- `eq(left=...)` and `Eq.left` become `eq(expr=...)` and `Eq.expr`:
+  rename the keyword and attribute.
+- `Coverage(through=...)` becomes `Coverage(end=...)`: rename the keyword;
+  both calendar-day bounds remain inclusive.
+- Design and dataset-definition documents require `schema_version: 3`; version 2
+  and older documents refuse: reconstruct and save the design or definition.
+  Catalog documents stay at version 2; manifest and saved-plan outer envelopes
+  stay at version 1, with version-3 nested designs and definitions.
+- The package root is limited to the everyday workflow: import
+  `DatasetDefinition`, `EventSequence`, `EventTime`, `FunnelSpec`, `SessionSpec`,
+  `Treatment`, `retention`, `quantile`, `approx_quantile`, `approx_distinct`,
+  `BinnedMetricState`, `StateObservations`, `StatePanel`, `CohortGrouping`,
+  `CohortSpec`, `LifeTable`, `Trajectory` and `TimeToEvent` from `terrine.spec`.
+  Import `Window` from `terrine.windows` and `Frame` from `terrine.frame`;
+  create frames with `design.build(model)`.
+- `SketchRequest` and `approx_quantile(sketch=...)` are removed: call
+  `terrine.spec.approx_quantile(metric, probability, window=...)` without sketch
+  settings. Approximate quantiles use the installed DataSketches t-digest with
+  fixed compression 200; metadata records its version and empirical error model,
+  not a guaranteed rank-error bound.
+- Direct `Model(...)` construction is private: use `Model.from_tables(...)` or
+  `Model.from_catalog(...)`.
+- `DatasetDefinition` no longer accepts `schema_version`: omit it when constructing
+  the record; serialization supplies the version.
+- Records store normalized durations as integer seconds: when cloning with
+  `dataclasses.replace`, pass duration fields back through
+  `terrine.windows.seconds_text`, for example
+  `replace(design, gap=seconds_text(design.gap), unit="customer")`.
+- Catalog documents require version 2: rebuild version-1 catalogs with source
+  `time`, `units` and `events`, root `events`, dimension `unit` and `key`,
+  measure `event`, and metric `unit`. Version 1 refuses with
+  `terrine.catalog.invalid_definition`.
+- `Events` replaces `keys=` and `values=` with one `key=` and named `metrics=`:
+  declare each metric explicitly; generated metric names are removed. Labels,
+  histories and events share a namespace, and `__` and `<source>_<column>`
+  value-event names are reserved against conflicting declarations.
+- `Model.from_tables` no longer accepts `readiness=`: declare completeness on
+  each `Events.complete` and `History.complete`; `Model.from_catalog` retains
+  `readiness=`.
+- Event selectors and sequence metadata use `event`, not `fact`: rename the
+  field. `Initiation` and `PersistentAdoption` no longer take `source`: pass
+  the declared event or label name, whose source is resolved from the model.
+- Calendar-date `Schedule.end` and `AnchorRange.end` are inclusive: account for
+  the final day's anchors. Aware datetime ends remain exact exclusive instants;
+  relative windows and `TimeSplit` are unchanged.
+- Normalized `Schedule.every` is `int | None`, and calendar schedules use
+  `months`: read the non-null field when inspecting or decoding a schedule.
+- `life_table(features=...)` becomes `life_table(group_by=...)`: rename the
+  keyword. `state_panel(periods=None)` derives whole periods from the schedule;
+  use an explicit count only as a cap, not permission to truncate.
+- Bound descriptors and definition hashes use `time_column`, `units`, `events`,
+  `unit`, `unit_columns`, `event` and `key`: update descriptor readers and
+  regenerate stored feature-definition hashes and `Model.model_hash` identities.
+- `terrine.model.generated_metric_collision` and
+  `terrine.model.multiple_event_units` are removed: declare named metrics and
+  one unit key per event source instead of relying on generated metrics or
+  multi-unit event declarations.
+- Invalid constructor inputs raise coded `TerrineError`, still a `ValueError`:
+  catch it and inspect immutable `code` and `context` rather than relying on
+  bare `TypeError`, `RuntimeError` or `FileExistsError`. Pydantic records retain
+  `ValidationError`.
+- DuckDB runtime prefix layers store counts as Arrow `decimal128(38, 0)`:
+  read newly written layers with this version or newer; older layers still
+  restore and compose.
 
-- List every shape's dataframe columns in `Design.describe` and publish
-  `terrine.reasons.REASONS` and `terrine.errors.REFUSAL_CODES` for interpreting
-  missing values and coded refusals. Internal baseline and panel-start timestamp
-  columns no longer leak into state-panel dataframes.
+### Additions
 
-- Return materialized frames and dataset reads in deterministic identity order,
-  with life tables ordered by grouping columns and time bin and event-sequence
-  headers after their events. A user feature named `time_bin` does not change
-  ordinary identity ordering. Document naive source timestamps as UTC instants
-  in source declarations and design completeness summaries.
-- Keep the package root focused on binding, Design, everyday expressions, recipes,
-  results and errors. Import specialized study inputs and quantiles from
-  `terrine.spec`, windows from `terrine.windows`, and the Frame type from
-  `terrine.frame`. Bind Models with `from_tables` or `from_catalog`; dataset
-  definitions no longer take a schema version. Approximate quantiles use the
-  installed DataSketches t-digest with fixed compression 200, record its version
-  and empirical error model, and require no sketch settings.
-- Use one vocabulary for recipes and low-level shapes: `occurrence`, `end_event`,
-  `entry_event`, `exit_event`, `bin`, `periods`, `period`, `anticipation`,
-  `reference_period` and predicate `expr`; name the inclusive coverage bound `end`.
-  Design and dataset definition documents now require schema version 3; catalog
-  documents remain version 2 and saved plan/manifest outer envelopes remain version 1.
-  Unsupported definition versions report `unsupported_schema_version` and the
-  supplied version in structured refusal context.
-- Make every package and recipe export discoverable through `dir()`.
-- Require unit-bearing strings for nonzero elapsed durations; preserve integer
-  seconds in saved designs and metadata.
-- Require source and unit roster keys to have identical dtypes when binding a model.
-- Give models, frames, datasets and table inputs concise representations, and
-  format windows with readable elapsed units.
-
-- Provide `to_pyarrow`, `to_pandas` and `to_polars` on frames, materialized
-  frames and staged datasets, with consistent dataframe views and dataset read
-  budgets; return dataset manifests as JSON text.
-
-- Accept YAML returned by `Model.to_catalog()` directly in `Model.from_catalog`.
-- Allow tied timestamps for `EventTime` selectors, whose selected value is
-  independent of tie order; anchors and event sequences without configured
-  event IDs refuse ties with the event name and `event_ids` guidance.
-- Include rejected values and accepted forms in input refusals, suggest close
-  declared names, and direct event metric declarations to `Events(metrics=...)`.
-- Refuse filter values that do not match their label type when binding a model.
-- Declare static attributes on `UnitSource` rosters and read them as of t0,
-  independently of event-table completeness.
-- Add `tr.since` for elapsed durations since a selected event, preserving
-  completeness, selected-instant provenance and staged dataset values.
-- Split mixed-kind event tables with `Events(where=...)`, applying typed source
-  filters consistently to every event read and refusing unknown membership.
-  Preserve unordered membership sets and reject them as ordered range bounds.
+- Discover every package and recipe export through `dir()`. Models, frames,
+  datasets and table inputs have concise representations; windows display
+  readable elapsed units.
+- Read frames, `MaterializedFrame` results and `Dataset` objects with
+  `to_pyarrow`, `to_pandas` and `to_polars`, with consistent dataframe views and
+  dataset read budgets. `values_only=True` on pandas and Polars readers retains
+  identity, role and structural values while omitting completeness, reason and
+  bookkeeping columns; incomplete values remain null and Arrow stays lossless.
+  Output-byte limits on collected reads apply to the final identity-ordered
+  table; runtime byte observations continue to describe stored task artifacts.
+- Declare static roster attributes with `UnitSource(attributes=...)` and read
+  them as of t0, independently of event-table completeness.
+- Use `tr.since` for elapsed time since a selected event, preserving completeness,
+  selected-instant provenance and staged dataset values.
+- Split mixed-kind event tables with `Events(where=...)`. Typed source filters
+  apply to every event read and refuse unknown membership; unordered membership
+  sets are preserved and refused as ordered range bounds.
+- Model binding refuses source and roster keys with different dtypes, and
+  filter values that do not match their declared label type.
+- Pass the YAML text returned by `Model.to_catalog()` directly to
+  `Model.from_catalog()` for an equivalent catalog round trip.
+- `EventTime` selectors accept tied timestamps when the selected value is
+  independent of tie order. Anchors and event sequences without event IDs refuse
+  ties with the event name and guidance to declare `event_ids`.
+- Input refusals include rejected values, accepted forms, close declared-name
+  suggestions and routes forward, including `Events(metrics=...)` for event
+  metrics. Structured context identifies the parameter and stable reason;
+  unsupported document versions include the supplied version.
+  New codes cover ambiguous units (`terrine.model.ambiguous_unit`), invalid splits
+  (`terrine.dataset.invalid_split`), budgets (`terrine.budget.invalid_limit`),
+  runtime settings (`terrine.runtime.invalid_configuration`), exports
+  (`terrine.export.invalid_input`) and simulations (`terrine.simulate.invalid_config`).
+- Materialized frames and dataset reads use deterministic identity order: unit,
+  snapshot time and anchor ID, followed by shape positions or periods. Life
+  tables use grouping columns and time bin; event-sequence headers follow their
+  events. A feature named `time_bin` does not change ordinary identity ordering.
+- `Design.describe(model)` lists every shape's dataframe columns and summarizes
+  rows, anchors, expressions, treatment and completeness without querying source
+  rows. Internal baseline and panel-start timestamps no longer leak into
+  state-panel dataframes; naive source timestamps are documented as UTC instants.
+- Interpret missing values through `terrine.reasons.REASONS` and discover
+  package-wide refusal codes through `terrine.errors.REFUSAL_CODES`.
+- Declare metrics with `tr.count`, `tr.sum`, `tr.mean` (per event or `per="day"`),
+  `tr.min`, `tr.max`, `tr.count_distinct` and `tr.ratio`. Their `where=` mappings
+  accept declared labels, equality, membership and ordered comparisons;
+  multiple keys are a conjunction.
+- Bind event-time properties with `Events(labels=...)` for filtering,
+  `event_time`, `asof` and treatment. Bind as-of history with `History` using
+  validity ranges or a change log.
+- Bind pandas or Polars DataFrames and Arrow tables with `UnitSource`, `Events`
+  and `History`. With no connection, tables stay in a private in-process DuckDB
+  for materialization; durable staging, reopening and refresh require a
+  file-backed DuckDB.
+- Omit `unit` from recipes and `Design` for a single-unit model. Multiple units
+  require an explicit choice; inferred and explicit units share dataset identity.
+- Use calendar `"1mo"`, `"3mo"` and `"1y"` steps with `Schedule`, `time_series`
+  and `trial_panel`. Anchors advance from the original start, clamping to
+  month-end without cumulative drift. Other elapsed fields retain fixed units;
+  state and calendar-comparison panels require fixed elapsed cadence.
+- Warehouse exports retain scoring rows when there are no outcome windows.
 
 ### Performance
 
@@ -96,127 +182,23 @@
   change only in the gate shape, the pruned state columns and integer count
   literals.
 
-### Breaking changes
-
-- Catalog documents are `schema_version: 2`. Sources use `time`, `units` and
-  `events`; the root event mapping is `events`; dimensions use `unit` and `key`,
-  measures use `event`, and metrics use `unit`. Version 1 catalogs refuse with
-  `terrine.catalog.invalid_definition` before other field diagnostics.
-- Design and `DatasetDefinition` documents are version 2. Older saved designs,
-  definitions, and manifests or saved plans embedding them refuse; reconstruct
-  and save the design again. Manifest and saved-plan envelope versions stay 1.
-- `Events(table, *, time, key, unit=None, metrics=None, labels=(), complete=None)`
-  replaces `keys=` and `values=` with one unit key and user-named metrics.
-  Generated metric names are removed; without `metrics=`, only the event is
-  declared. Labels, histories and events share a namespace, `__` is reserved
-  in labels, and `<source>_<column>` value-event names are reserved against
-  event, label and history declarations.
-- `Model.from_tables` drops `readiness=` and takes completeness from each
-  `Events.complete` and `History.complete`; `con` is optional for in-memory
-  tables. `Model.from_catalog` retains `readiness=`.
-- Event selectors and returned sequence metadata use `event`, not `fact`.
-  `Initiation` and `PersistentAdoption` take an event or label name without
-  `source`; its declaring source is resolved from the model.
-- Calendar-date `Schedule.end` and `AnchorRange.end` are inclusive, so the same
-  literal bounds can produce additional anchors. Aware datetime ends remain
-  exact exclusive instants; relative windows and `TimeSplit` are unchanged.
-- `Schedule.every` is `int | None`; calendar schedules set `months` instead.
-  Serialized schedules carry both fields with exactly one non-null value.
-- Every recipe and `Design` can omit `unit` for a single-unit model.
-  `life_table(group_by={name: expression})` replaces `features=`.
-  `state_panel(periods=None)` derives whole periods from the schedule; an
-  explicit period count is a cap, not permission to truncate.
-- Bound descriptors use `time_column`, `units`, `events`, `unit`,
-  `unit_columns`, `event` and `key`. Definition-hash payloads use the same
-  vocabulary, changing feature definition hashes and `Model.model_hash`.
-- The refusal codes `terrine.model.generated_metric_collision` and
-  `terrine.model.multiple_event_units` are removed.
-- Invalid constructor inputs now raise coded `TerrineError` (still a
-  `ValueError`) rather than bare `ValueError`, `TypeError`, `RuntimeError` or
-  `FileExistsError`. Context names the caller's parameter in `field` and uses
-  stable `reason` tokens; document decoders preserve a reconstructed record's
-  refusal. Pydantic records retain `ValidationError`. Agent tools expose the
-  same design and split refusal codes as direct callers.
-- DuckDB output order may differ from anchor order for small studies; row
-  order is not a dataset contract. Sort explicitly when needed.
-- New DuckDB runtime prefix layers store counts as Arrow `decimal128(38, 0)`
-  and cannot be read by older versions; older layers still restore and compose.
-
-### Public API
-
-- Declare metrics with `tr.count`, `tr.sum`, `tr.mean` (per event or
-  `per="day"`), `tr.min`, `tr.max`, `tr.count_distinct` and `tr.ratio`.
-  Their `where=` mappings accept declared labels, scalar equality, list
-  membership, and `__ne`, `__in`, `__not_in`, `__gt`, `__gte`, `__lt`,
-  `__lte` and `__between`; multiple keys are a conjunction.
-- `Events(labels=...)` binds typed event-time properties for filters,
-  `event_time`, `asof` and treatment. `History` binds as-of attributes through
-  range validity (`valid_from`, optional `valid_to`) or a change log
-  (`changed_at`) in `Model.from_tables(history=...)`.
-- `UnitSource`, `Events` and `History` accept pandas/Polars DataFrames and
-  Arrow tables. Without a connection, `Model.from_tables` registers them in a
-  private in-process DuckDB under their mapping names; nothing is uploaded.
-  These models materialize only. Durable staging, reopening and refresh need
-  a file-backed DuckDB; refusals provide that route.
-  DataFrame detection accepts classes exposed from the public package module
-  as well as submodules, including pandas 3.1.
-- `Model.to_catalog()` writes equivalent version-2 YAML for reuse with
-  `Model.from_catalog`.
-- Unit inference applies wherever a Design meets a Model, including validation,
-  preview, build, snapshot, planning, staging and agent tools. Multiple units
-  require an explicit choice; inferred and explicit units share resolved dataset
-  identity.
-- `Schedule`, `time_series` and `trial_panel` accept `"1mo"`, `"3mo"` and
-  `"1y"` calendar steps. Anchors advance from the original start and clamp to
-  month-end without cumulative drift. `count`, `instant` and `instants` expose
-  this arithmetic. Windows and other elapsed fields still require seconds,
-  minutes, hours, days or weeks; state and calendar-comparison panels require
-  a fixed elapsed cadence.
-  Normalized calendar steps must fit in 19 decimal digits, so accepted year
-  steps remain readable from their serialized month representation.
-- `Frame.to_pandas(values_only=True)` and `to_polars(values_only=True)` retain
-  identity, role and structural value columns while dropping completeness,
-  reason and bookkeeping columns. Incomplete values remain null.
-  `training_set(...).to_pandas(values_only=True)` yields the in-memory feature
-  and label table. Observation metadata cannot be requested with this flag;
-  Arrow conversions remain lossless.
-- `Design.describe(model)` validates and summarizes rows, anchors, expressions,
-  shape, treatment, completeness and output columns without querying source
-  rows. Agent design validation/proposal responses include the same summary.
-- Unknown-name refusals include sorted `available` declarations, including
-  `model.metrics` for unknown metrics. Refusal messages identify the user's
-  input and a route forward; temporal errors identify the output and offending
-  bounds. New codes are `terrine.model.ambiguous_unit`,
-  `terrine.dataset.invalid_split`, `terrine.budget.invalid_limit`,
-  `terrine.runtime.invalid_configuration`, `terrine.export.invalid_input` and
-  `terrine.simulate.invalid_config`.
-- Public constructors, recipes and conversion methods include concise
-  docstrings ending in an executable one-line example.
-- Warehouse exports retain scoring rows when there are no outcome windows.
-
 ### Documentation
 
+- Public constructors, recipes and readers document parameters, defaults, closed
+  choices and returned attributes with runnable examples. Duration syntax,
+  strict as-of cutoffs, session transitions, zero-length gaps, funnel step counts,
+  split fractions and uncapped budgets are explicit.
 - The README builds a customer spend forecasting table directly from DataFrames,
-  with user-named metrics, inclusive monthly snapshots, `describe` and executed
-  printed output; in-memory materialization and file-backed staging are distinct.
-- The library hand-off guide builds a catalog-backed treatment/outcome grid of
-  trial panels for DoubleML, preserving repeated-unit clusters and distinct
-  nullable event labels; DoWhy's one-row-per-unit and weight restrictions remain
-  explicit. Terrine makes no causal claims.
-- Guides cover `History`, metric constructors, catalog export, unit inference,
-  inclusive date bounds, calendar schedules, values-only views, training sets
-  and coded refusals.
+  shows its identity-ordered output, and demonstrates leakage-safe training and
+  validation splits. In-memory materialization and file-backed staging are distinct.
+- Guides cover static and historical attributes, metric and filter declarations,
+  catalog text round trips, calendar schedules, values-only readers, training
+  sets and coded refusals.
+- The library hand-off guide builds catalog-backed trial-panel grids for DoubleML,
+  preserving repeated-unit clusters and distinct nullable event labels. DoWhy's
+  one-row-per-unit and weight restrictions remain explicit; Terrine makes no
+  causal claims.
 
-### Tests
-
-- Catalog/design round trips, date-bound and calendar arithmetic oracles,
-  DataFrame/timezone parity, metric/filter/history contracts, inferred-unit
-  identity, values-only columns, metadata-only summaries, coded constructor
-  refusals and public docstring examples cover the API.
-- Acceptance tests execute the README and file-backed staging tutorial and all
-  four causal-grid pairs, check distinct treated populations and outcome values,
-  and construct clustered `DoubleMLData` when the extra is installed.
-- Refresh unit and integration duration records for balanced CI groups.
 
 ## 0.1.0.dev1
 

@@ -109,6 +109,8 @@ carol 2025-03-01           0        0.0            <NA>    incomplete_coverage
 Rows are returned in ascending unit, snapshot time and anchor-ID order, followed
 by each shape's position or period columns; life tables use their grouping
 columns and time bin. Naive source timestamps are interpreted as UTC instants.
+In the printed example, each customer's February snapshot is followed by their
+March snapshot, rather than grouping all customers by snapshot date.
 
 Reading the output:
 
