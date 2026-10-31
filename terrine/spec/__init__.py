@@ -21,6 +21,7 @@ from terrine.spec.expressions import (
     is_null,
     quantile,
     retention,
+    since,
 )
 from terrine.spec.io import from_json, from_yaml, to_json, to_yaml
 from terrine.spec.panels import (
@@ -92,5 +93,6 @@ __all__ = [
     "is_null",
     "matched_t0",
     "to_json",
+    "since",
     "to_yaml",
 ]

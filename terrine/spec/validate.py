@@ -27,6 +27,7 @@ from terrine.semantic.rules import (
 from terrine.spec.anchors import EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.expressions import (
+    _ELAPSED_SELECTOR,
     _SKETCH_UNAVAILABLE,
     And,
     ApproxMetricDistinct,
@@ -125,6 +126,7 @@ def missing_reference(kind: str, name: str, declared: Iterable[str]) -> TerrineE
             kind=kind, name=name, available=available, suggestions=suggestions
         )
     return _MISSING.error(kind=kind, name=name, available=available)
+
 
 _AMBIGUOUS = RefusalSpec(
     "terrine.design.ambiguous_dimension",
@@ -493,6 +495,18 @@ def _check_expression_timing(
     if role in {"feature", "eligibility"} and (
         support[1] > -design.gap or any(dependency[1] > -design.gap for dependency in dependencies)
     ):
+        if isinstance(expr, EventTime) and expr.measure == "elapsed" and expr.relative_to is None:
+            raise _GAP.error(
+                **_timing_context(
+                    name,
+                    role,
+                    design,
+                    start=support[0],
+                    end=support[1],
+                    bound="end",
+                    limit=-design.gap,
+                )
+            )
         if getattr(expr, "relative_to", None) is not None or isinstance(expr, EventTime):
             raise _REANCHOR_LEAK.error(
                 **_timing_context(
@@ -953,6 +967,23 @@ def resolve_unit(design: Design, model: Model) -> Design:
 
 
 def validate_design(design: Design, model: Model) -> ValidationReport:
+    for expressions in (design.features, design.outcomes):
+        for name, value in expressions.items():
+            for leaf in _output_leaves(value):
+                if (
+                    isinstance(leaf, EventTime)
+                    and leaf.measure == "elapsed"
+                    and (
+                        isinstance(design.shape, CohortSpec)
+                        or isinstance(design.shape, LifeTable)
+                        and name in design.shape.group_by
+                    )
+                ):
+                    raise _ELAPSED_SELECTOR.error(
+                        reason="elapsed_selector_unsupported_shape",
+                        shape=type(design.shape).__name__,
+                        route="Use since() where output rows retain their evaluated t0.",
+                    )
     design = resolve_unit(design, model)
     required: set[str] = set()
     obligations: list[str] = []

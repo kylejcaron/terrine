@@ -24,6 +24,8 @@
 - Refuse filter values that do not match their label type when binding a model.
 - Declare static attributes on `UnitSource` rosters and read them as of t0,
   independently of event-table completeness.
+- Add `tr.since` for elapsed durations since a selected event, preserving
+  completeness, selected-instant provenance and staged dataset values.
 
 ### Performance
 

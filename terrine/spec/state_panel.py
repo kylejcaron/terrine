@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from terrine.model import Model
     from terrine.spec.design import Design
     from terrine.spec.expressions import Expr
@@ -142,12 +141,21 @@ class StatePanel:
         from types import MappingProxyType
 
         from terrine.spec.design import _named_nodes
-        from terrine.spec.expressions import AttributeAsOf, MetricAgg
+        from terrine.spec.expressions import _ELAPSED_SELECTOR, AttributeAsOf, EventTime, MetricAgg
 
         if not isinstance(state, (StateObservations, BinnedMetricState)):
             raise _INVALID_INPUT.error(reason="wrong_type", field="state")
         if isinstance(max_periods, bool) or not isinstance(max_periods, int) or max_periods <= 0:
             raise _INVALID_INPUT.error(reason="not_positive_integer", field="max_periods")
+        if isinstance(baseline_features, Mapping) and any(
+            isinstance(value, EventTime) and value.measure == "elapsed"
+            for value in baseline_features.values()
+        ):
+            raise _ELAPSED_SELECTOR.error(
+                reason="elapsed_selector_unsupported_shape",
+                shape="StatePanel.baseline_features",
+                route="Put since() in the design's per-row features instead of baseline_features.",
+            )
         nodes = _named_nodes(baseline_features, (MetricAgg, AttributeAsOf), "baseline_features")
         object.__setattr__(self, "state", state)
         object.__setattr__(self, "max_periods", max_periods)

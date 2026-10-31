@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import ibis
 import pytest
@@ -125,9 +125,8 @@ _DESIGNS = {
         "user",
         tr.FixedDate("2025-01-04T00:00:00+00:00"),
         features={
-            "last_order_at": tr.event_time(
-                "order", window=("-4d", "0s"), occurrence="last"
-            )
+            "last_order_at": tr.event_time("order", window=("-4d", "0s"), occurrence="last"),
+            "recency": tr.since("order", window=("-4d", "0s")),
         },
     ),
     "schedule": tr.Design(
@@ -192,7 +191,7 @@ def _both(postgres_scratch, tmp_path, *, naive=False, **model_options):
 
 
 # Naive source timestamps denote UTC and take each backend's UTC conversion path.
-_NAIVE_DESIGNS = ("first_event_anchor", "observed_state_panel", "schedule")
+_NAIVE_DESIGNS = ("first_event_anchor", "observed_state_panel", "schedule", "last_event_time")
 
 
 @pytest.mark.parametrize(
@@ -206,6 +205,13 @@ def test_design_matches_duckdb(postgres_scratch, tmp_path, name, naive):  # noqa
     actual = _rows(postgres, design)
     assert expected, "the DuckDB reference produced no rows"
     assert actual == expected
+    if name == "last_event_time":
+        assert [(row["unit"], row["recency"]) for row in actual] == [
+            ("a", timedelta(hours=12)),
+            ("b", timedelta(hours=42)),
+            ("c", timedelta(microseconds=1)),
+            ("d", None),
+        ]
 
 
 @pytest.mark.parametrize("naive", [False, True])

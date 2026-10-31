@@ -296,6 +296,8 @@ class _Renderer:
             )
             own = _window(expr.window, "selected time" if expr.relative_to is not None else origin)
             relative = self._relative(expr.relative_to, origin)
+            if expr.measure == "elapsed":
+                return f"time since {occurrence} {expr.event}{label} in {own}{relative}"
             return f"time of the {occurrence} {expr.event} event{label} in {own}{relative}"
         if isinstance(expr, Gt):
             return f"{self._expression(expr.expr, origin)} > {_scalar(expr.value)}"
@@ -605,8 +607,9 @@ class _Renderer:
             yield from design.shape.baseline_features.items()
         elif isinstance(design.shape, CohortSpec):
             trajectory = design.shape.trajectory
-            yield "period_value", MetricAgg(
-                trajectory.metric, Window(0, seconds_text(trajectory.period))
+            yield (
+                "period_value",
+                MetricAgg(trajectory.metric, Window(0, seconds_text(trajectory.period))),
             )
 
     def _empty_windows(self) -> Iterator[Line]:

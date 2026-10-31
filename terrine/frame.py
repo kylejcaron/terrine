@@ -458,6 +458,13 @@ class Frame:
     @property
     def expr(self):
         """Return the Ibis graph; direct execution bypasses all export safeguards."""
+        if any(meta.measure == "elapsed" for meta in self.columns.values()):
+            from terrine.spec.expressions import _ELAPSED_SELECTOR
+
+            raise _ELAPSED_SELECTOR.error(
+                reason="elapsed_selector_in_expr",
+                route="Use materialize(), stage(), to_pyarrow(), to_pandas(), or to_polars().",
+            )
         if self._winsorizations:
             raise RefusalSpec(
                 "terrine.transform.winsorization_expr_unsupported",
@@ -1014,6 +1021,24 @@ class Frame:
         )
 
     def _normalize_output(self, table: pa.Table) -> pa.Table:
+        for name, meta in self._compiled.columns.items():
+            if meta.measure != "elapsed" or name not in table.column_names:
+                continue
+            selected = table[name]
+            if not pa.types.is_timestamp(selected.type):
+                continue
+            selected_at = f"__terrine_selected_at_{name}"
+            if selected_at not in table.column_names:
+                table = table.append_column(selected_at, selected)
+            origin = table[self._compiled.roles.t0].cast(selected.type)
+            elapsed = pc.subtract_checked(  # ty: ignore[unresolved-attribute]
+                origin.cast(pa.int64()), selected.cast(pa.int64())
+            )
+            table = table.set_column(
+                table.schema.get_field_index(name),
+                name,
+                elapsed.cast(pa.duration(selected.type.unit)),
+            )
         shape = self._design.shape
         if isinstance(shape, LifeTable):
             shape = shape.time_to_event
@@ -1111,6 +1136,7 @@ class Frame:
             include_observation_metadata=include_observation_metadata,
             values_only=values_only,
         )
+
     def cohorts(self, *, grouping: CohortGrouping, value_column: str) -> CohortTable:
         """Group a trajectory frame's values by units' origin-time buckets.
 

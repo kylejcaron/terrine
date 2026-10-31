@@ -25,6 +25,7 @@ from terrine.errors import RefusalSpec
 from terrine.execution._metadata import metadata_operation
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule, _aware_instant
 from terrine.spec.expressions import (
+    _ELAPSED_SELECTOR,
     And,
     ApproxMetricDistinct,
     ApproxMetricQuantile,
@@ -80,11 +81,20 @@ def _named_nodes(
         if not isinstance(key, str) or not key.strip():
             raise _INVALID.error(reason="empty_name", field=field_name)
         _validate_support_name(key)
+        if (
+            field_name == "eligibility"
+            and isinstance(value, EventTime)
+            and value.measure == "elapsed"
+        ):
+            raise _ELAPSED_SELECTOR.error(
+                reason="elapsed_selector_in_predicate",
+                route="Output since() as a feature or outcome, then filter the returned dataframe.",
+            )
         if not isinstance(value, allowed):
-            if (
-                type(value).__module__ == "terrine.data"
-                and type(value).__name__ in {"EventMetric", "Ratio"}
-            ):
+            if type(value).__module__ == "terrine.data" and type(value).__name__ in {
+                "EventMetric",
+                "Ratio",
+            }:
                 raise _NAMED.error(
                     reason="metric_declaration",
                     field=field_name,

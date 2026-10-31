@@ -130,20 +130,25 @@ attribute_rows = tr.recipes.time_series(
 
 ## Recency from the last event
 
-Use `occurrence="last"` for the most recent event in a bounded lookback.
-Subtract its timestamp from t0 in the compact pandas view to obtain an elapsed
-duration. Preserve the selector's support columns: no event is not zero recency.
-This derived pandas column is not a new Terrine expression or saved definition.
+Use `tr.since` to return an Arrow duration from the most recent event to t0.
+Its default `occurrence="last"` searches a half-open lookback, excluding events
+exactly at t0. No event in a complete window is a known null (`__complete=True`,
+`__reason` null); incomplete coverage remains null with `incomplete_coverage`.
+The selected timestamp is retained in Arrow observation metadata.
 
 ```python
 recency_rows = tr.recipes.time_series(
     every="1d", start="2025-02-01", end="2025-02-01",
-    features={"last_seen": tr.event_time(
-        "activity", window=("-30d", "0s"), occurrence="last",
-    )},
+    features={"recency": tr.since("activity", window=("-30d", "0s"))},
 ).build(model).to_pandas()
-recency_rows["recency"] = recency_rows["t0"] - recency_rows["last_seen"]
 ```
+
+Filter recency thresholds on the returned dataframe, not in `eligibility` or
+other Terrine predicates. Elapsed selectors cannot be relative origins.
+Frames containing them refuse `.expr`, because the warehouse graph still holds
+selected timestamps: use `.materialize()`, `.stage()` or the dataframe readers.
+Use per-row features rather than state-panel baseline features; cohort
+trajectories and life-table grouping do not retain the required output-row t0.
 
 ## True/false labels
 

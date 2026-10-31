@@ -92,8 +92,6 @@ def dataframe_view_preflight(
     _optional_dependency(library)
 
 
-
-
 _INVALID_ELIGIBILITY = RefusalSpec(
     "terrine.metadata.invalid_eligibility_summary",
     "Eligibility counts must be nonnegative and reconcile",
@@ -341,7 +339,6 @@ class UnitSource:
         for name, value in optional.items():
             object.__setattr__(self, name, value)
         object.__setattr__(self, "attributes", names)
-
 
     def __repr__(self) -> str:
         return (
@@ -616,6 +613,7 @@ class ColumnMeta:
     numeric_policy: Literal["exact"] | None = None
     approximation: ApproximationMeta | None = None
     transformation: Mapping[str, Any] | None = None
+    measure: Literal["time", "elapsed"] | None = None
 
     def __post_init__(self) -> None:
         if self.window is not None and not isinstance(self.window, Window):
@@ -632,6 +630,8 @@ class ColumnMeta:
                 _nonempty(value, name)
         if self.numeric_policy not in (None, "exact"):
             raise ValueError("unsupported numeric policy")
+        if self.measure not in (None, "time", "elapsed"):
+            raise ValueError("unsupported event measure")
         if self.transformation is not None:
             object.__setattr__(
                 self, "transformation", _mapping(self.transformation, "transformation")
@@ -1699,9 +1699,7 @@ class MaterializedFrame:
         metadata[_ARROW_METADATA_KEY] = encoded
         return table.replace_schema_metadata(metadata)
 
-    def to_pandas(
-        self, *, include_observation_metadata: bool = False, values_only: bool = False
-    ):
+    def to_pandas(self, *, include_observation_metadata: bool = False, values_only: bool = False):
         """Return pandas data without observation metadata by default.
 
         Example: materialized.to_pandas(values_only=True)
@@ -1715,9 +1713,7 @@ class MaterializedFrame:
         table = self._dataframe_table(include_observation_metadata, values_only)
         return table.to_pandas(types_mapper=module.ArrowDtype)
 
-    def to_polars(
-        self, *, include_observation_metadata: bool = False, values_only: bool = False
-    ):
+    def to_polars(self, *, include_observation_metadata: bool = False, values_only: bool = False):
         """Return Polars data without observation metadata by default.
 
         Example: materialized.to_polars(values_only=True)
@@ -1730,6 +1726,7 @@ class MaterializedFrame:
         module = _optional_dependency("polars")
         table = self._dataframe_table(include_observation_metadata, values_only)
         return module.from_arrow(table)
+
     def _dataframe_table(self, include_observation_metadata: bool, values_only: bool) -> pa.Table:
         if include_observation_metadata:
             return self.table
@@ -1747,9 +1744,7 @@ class MaterializedFrame:
         return _support_columns(self.table.column_names, self.columns)
 
     @classmethod
-    def _from_table_metadata(
-        cls, table: pa.Table, payload: Mapping[str, Any]
-    ) -> MaterializedFrame:
+    def _from_table_metadata(cls, table: pa.Table, payload: Mapping[str, Any]) -> MaterializedFrame:
         roles = _decode(payload["roles"], Roles)
         columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
         provenance = _decode(payload["provenance"], Provenance)

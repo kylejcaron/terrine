@@ -806,6 +806,7 @@ def compile_columns(
                 selector_meta["observed_until"],
                 selector_meta["complete"],
                 selector_meta["reason"],
+                measure=node.measure,
             )
             selector_support, _ = selector_timing(node)
             cutoff = FeatureCutoff(selector_support[1], True, "retrospective_effective_time")
@@ -1201,7 +1202,11 @@ def compile_columns(
             support, dependency_supports = selector_timing(node)
             selector_ref = repr(node)
             offsets = None
-            point_column = output or values[node].name
+            point_column = (
+                f"__terrine_selected_at_{output}"
+                if node.measure == "elapsed" and output is not None
+                else output or values[node].name
+            )
             kind = "event_time"
         elif relative is not None and not isinstance(node, RetentionMetric):
             origin, dependency_supports = selector_timing(relative)
@@ -1309,6 +1314,8 @@ def compile_columns(
                 if any(value.name in sidecar.outputs for sidecar in sketches):
                     sketch_aliases.setdefault(value.name, []).append(name)
                 columns[name] = replace(value.meta, role=role)
+                if isinstance(node, EventTime) and node.measure == "elapsed":
+                    table = table.mutate(**{f"__terrine_selected_at_{name}": table[value.name]})
                 expression_timings[name] = expression_timing(node, output=name)
                 strategies[name] = strategies[value.name]
                 cutoff = value.cutoff

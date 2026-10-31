@@ -6,7 +6,7 @@ import subprocess
 import sys
 import weakref
 from dataclasses import FrozenInstanceError, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from importlib.resources import files
 from pathlib import Path
@@ -30,6 +30,7 @@ from terrine.runtime.changes import Change, ChangeSet
 from terrine.runtime.saved_plan import SavedPlan
 from terrine.spec import BinnedMetricState, Design, EventAnchor, FixedDate, Schedule, StatePanel, gt
 from terrine.spec.dataset import DatasetDefinition
+from terrine.spec.expressions import since
 from tests import _worlds
 from tests._timing import HANG_GUARD_SECONDS
 from tests.dataset.test_staging import _durable_frame
@@ -2001,12 +2002,10 @@ def test_dataset_reads_match_materialized_rows(common_frame):
         .to_pylist()
         == expected.to_pylist()
     )
-    expected_pandas = common_frame.to_pandas().sort_values(
-        ["unit", "anchor_id"]
-    ).reset_index(drop=True)
-    actual_pandas = dataset.to_pandas().sort_values(
-        ["unit", "anchor_id"]
-    ).reset_index(drop=True)
+    expected_pandas = (
+        common_frame.to_pandas().sort_values(["unit", "anchor_id"]).reset_index(drop=True)
+    )
+    actual_pandas = dataset.to_pandas().sort_values(["unit", "anchor_id"]).reset_index(drop=True)
     assert actual_pandas.equals(expected_pandas)
     pytest.importorskip("polars")
     expected_polars = common_frame.to_polars(values_only=True).sort(["unit", "anchor_id"])
@@ -2017,8 +2016,10 @@ def test_dataset_reads_match_materialized_rows(common_frame):
 def test_dataset_read_budget_refuses(tmp_path, interop_world):
     model = _worlds.bind_model(interop_world, tmp_path)
     try:
-        dataset = interop_design(full=False).build(model).stage(
-            "readback", budget=Budget(strict_scan=False)
+        dataset = (
+            interop_design(full=False)
+            .build(model)
+            .stage("readback", budget=Budget(strict_scan=False))
         )
         with pytest.raises(TerrineError) as rows_error:
             dataset.to_pyarrow(budget=Budget(max_rows=1, strict_scan=False))
@@ -2055,3 +2056,40 @@ def test_conflicting_dataset_view_flags_refuse_before_read(common_frame, monkeyp
         dataset.to_pandas(values_only=True, include_observation_metadata=True)
     assert error.value.code == "terrine.dataset.invalid_view"
     assert error.value.context["reason"] == "values_only_excludes_observation_metadata"
+
+
+@pytest.mark.parametrize("training", [False, True])
+def test_since_staged_read_preserves_elapsed_values_and_selected_instants(
+    events_world, tmp_path, training
+):
+    initial, con = _durable_frame(events_world, tmp_path)
+    try:
+        frame = Design(
+            "user",
+            FixedDate("2025-01-05"),
+            features={"recency": since("session", window=("-3d", 0))},
+            outcomes={"churn": agg("churned", window=(0, "1d"))},
+        ).build(initial._model)
+        if training:
+            frame = frame.training_set(
+                label="churn",
+                incomplete_labels="keep",
+                split=TimeSplit(train_until="2025-01-07T00:00:00Z"),
+            )
+        expected = frame.materialize(Budget(strict_scan=False))
+        dataset = frame.stage("recency", budget=Budget(strict_scan=False))
+        actual = MaterializedFrame.from_arrow(dataset.to_pyarrow())
+        assert pa.types.is_duration(actual.table["recency"].type)
+        assert actual.table["recency"].to_pylist() == [timedelta(days=2)] * 2
+        assert actual.table.sort_by("unit").equals(expected.table.sort_by("unit"))
+        assert actual.columns["recency"].measure == "elapsed"
+        timing = actual.provenance.expression_timings["recency"]
+        assert timing == expected.provenance.expression_timings["recency"]
+        assert pa.types.is_timestamp(actual.table[timing.point_time_column].type)
+        assert (
+            actual.table[timing.point_time_column].to_pylist()
+            == [datetime(2025, 1, 3, tzinfo=UTC)] * 2
+        )
+        assert timing.point_time_column not in dataset.to_pandas().columns
+    finally:
+        con.disconnect()

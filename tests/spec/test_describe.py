@@ -235,6 +235,7 @@ def test_describe_reads_expression_metadata_and_only_required_sources(shapes_mod
             "distinct": tr.approx_distinct("spend", window=("-30d", "-1d")),
             "plan_before": tr.asof("plan", before="-2d"),
             "relative": tr.agg("spend", window=("-3d", "0s"), relative_to=selector),
+            "recency": tr.since("purchase", window=("-180d", "-1d")),
             "checked": tr.event_time(
                 "checkups",
                 window=("-8d", "-1d"),
@@ -272,6 +273,9 @@ def test_describe_reads_expression_metadata_and_only_required_sources(shapes_mod
         "- 3d",
         "- 5d",
         "- 9d",
+        "since",
+        "last",
+        "- 180d",
         "> 4",
         "==",
     ):

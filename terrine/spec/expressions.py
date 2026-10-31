@@ -33,6 +33,7 @@ __all__ = [
     "approx_distinct",
     "asof",
     "event_time",
+    "since",
     "gt",
     "eq",
     "is_null",
@@ -46,6 +47,10 @@ _SKETCH_UNAVAILABLE = RefusalSpec(
 )
 _INVALID = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
 _CHOICE = RefusalSpec("terrine.design.invalid", "Design input {field} must be one of {choices}.")
+_ELAPSED_SELECTOR = RefusalSpec(
+    "terrine.design.invalid",
+    "Elapsed event selectors cannot be used here ({reason}). {route}",
+)
 
 
 def _probability(value: Decimal | str, field: str) -> Decimal:
@@ -77,6 +82,11 @@ def _window(value: object) -> None:
 def _relative_to(value: object) -> None:
     if value is not None and not isinstance(value, EventTime):
         raise _INVALID.error(reason="wrong_type", field="relative_to")
+    if isinstance(value, EventTime) and value.measure == "elapsed":
+        raise _ELAPSED_SELECTOR.error(
+            reason="elapsed_selector_as_origin",
+            route="Use event_time() for an origin and since() only as a feature or outcome.",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,8 +234,11 @@ class EventTime:
     occurrence: str = "first"
     n: int | None = None
     relative_to: EventTime | None = None
+    measure: Literal["time", "elapsed"] = "time"
 
     def __post_init__(self) -> None:
+        if self.measure not in ("time", "elapsed"):
+            raise _INVALID.error(reason="unsupported_measure", field="measure")
         object.__setattr__(self, "event", _name(self.event, "event"))
         _window(self.window)
         if (self.label_property is None) != (self.equals is None):
@@ -358,6 +371,11 @@ def _require_expr(value: object, field: str) -> None:
         ),
     ):
         raise _INVALID.error(reason="wrong_type", field=field)
+    if isinstance(value, EventTime) and value.measure == "elapsed":
+        raise _ELAPSED_SELECTOR.error(
+            reason="elapsed_selector_in_predicate",
+            route="Output since() as a feature or outcome, then filter the returned dataframe.",
+        )
 
 
 def _window_pair(value: object) -> tuple[str | Literal[0], str | Literal[0]]:
@@ -481,6 +499,30 @@ def event_time(
     """
     start, end = _window_pair(window)
     return EventTime(event, Window(start, end), label_property, equals, occurrence, n, relative_to)
+
+
+def since(
+    event: str,
+    *,
+    window: tuple[str | Literal[0], str | Literal[0]],
+    label_property: str | None = None,
+    equals: JsonScalar = None,
+    occurrence: Literal["first", "last", "nth"] = "last",
+    n: int | None = None,
+) -> EventTime:
+    """Measure elapsed time from the selected event to t0.
+
+    Returns an Arrow duration after materialization. Filter recency thresholds on
+    the returned dataframe; elapsed selectors cannot be predicate operands or
+    relative origins. Frame.expr is unavailable: use materialize(), stage(), or
+    the dataframe readers instead.
+
+    Example: tr.since("purchases", window=("-180d", "0s"))
+    """
+    start, end = _window_pair(window)
+    return EventTime(
+        event, Window(start, end), label_property, equals, occurrence, n, measure="elapsed"
+    )
 
 
 def gt(expr: Expr, value: JsonScalar) -> Gt:

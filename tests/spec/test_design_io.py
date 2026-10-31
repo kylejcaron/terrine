@@ -8,7 +8,7 @@ import pytest
 from terrine.errors import TerrineError
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
-from terrine.spec.expressions import agg, all_of, asof, eq, gt, is_null
+from terrine.spec.expressions import agg, all_of, asof, eq, event_time, gt, is_null, since
 from terrine.spec.io import from_json, from_yaml, to_json, to_yaml
 from terrine.spec.trajectory import CohortGrouping, CohortSpec, Trajectory
 
@@ -137,8 +137,6 @@ def test_duration_strings_in_saved_design_documents_decode_like_integer_seconds(
     integer_form = from_json(json.dumps(integer_document))
     string_form = from_json(json.dumps(string_document))
     assert string_form == integer_form == design
-
-
 
 
 def test_predicate_outcome_round_trips_json():
@@ -410,3 +408,35 @@ def test_microsecond_datetime_subclass_is_normalized_for_round_trip():
     assert from_json(to_json(design)) == design
     grouping = CohortGrouping("1d", bucket_origin=cast(datetime, value))
     assert type(grouping.bucket_origin) is datetime
+
+
+def test_since_round_trips_design_documents():
+    import terrine as tr
+
+    design = Design(
+        "user",
+        FixedDate("2025-01-01"),
+        features={
+            "recency": since("purchases", window=("-180d", 0)),
+            "selected": event_time("purchases", window=("-180d", 0), occurrence="last"),
+        },
+    )
+    payload = json.loads(to_json(design))
+    assert payload["design"]["features"]["recency"]["measure"] == "elapsed"
+    assert "measure" not in payload["design"]["features"]["selected"]
+    for restored in (from_json(to_json(design)), from_yaml(to_yaml(design))):
+        assert restored == design
+        assert restored.spec_hash == design.spec_hash
+    assert tr.since("purchases", window=("-180d", 0)) == design.features["recency"]
+    assert "since" in tr.__all__
+    assert (
+        design.spec_hash
+        != Design(
+            "user",
+            design.anchor,
+            features={
+                "recency": design.features["selected"],
+                "selected": design.features["selected"],
+            },
+        ).spec_hash
+    )

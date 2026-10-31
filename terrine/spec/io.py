@@ -316,6 +316,8 @@ def _encode(value: Any) -> Any:
         }
         if value.relative_to is not None:
             node["relative_to"] = _encode(value.relative_to)
+        if value.measure != "time":
+            node["measure"] = value.measure
         return node
     if isinstance(value, Gt):
         return {"type": "Gt", "expr": _encode(value.expr), "value": value.value}
@@ -652,9 +654,7 @@ def _node(value: Any) -> Any:
             item["label_property"],
             item["target_event"],
             tuple(item["count_thresholds"]),
-            None
-            if item["finite_horizon_seconds"] is None
-            else item["finite_horizon_seconds"],
+            None if item["finite_horizon_seconds"] is None else item["finite_horizon_seconds"],
         )
     if tag == "MetricAgg":
         item = _object(
@@ -690,6 +690,7 @@ def _node(value: Any) -> Any:
                 "occurrence",
                 "n",
                 "relative_to",
+                "measure",
             },
             {"type", "event", "window", "label_property", "equals", "occurrence", "n"},
         )
@@ -701,6 +702,7 @@ def _node(value: Any) -> Any:
             item["occurrence"],
             item["n"],
             None if item.get("relative_to") is None else _node(item["relative_to"]),
+            measure=item.get("measure", "time"),
         )
     if tag == "Gt":
         item = _object(value, {"type", "expr", "value"})
@@ -720,9 +722,7 @@ def _node(value: Any) -> Any:
         item = _object(
             value, {"type", "attribute", "at", "known_at_t0"}, {"type", "attribute", "known_at_t0"}
         )
-        return Treatment(
-            item["attribute"], _duration_text(item.get("at", 0)), item["known_at_t0"]
-        )
+        return Treatment(item["attribute"], _duration_text(item.get("at", 0)), item["known_at_t0"])
     raise ValueError(f"unknown specification node: {tag}")
 
 

@@ -103,7 +103,7 @@ def test_discovery_schema_accepts_boolean_features_and_outcomes():
     Draft202012Validator(design_schema()).validate(json.loads(to_json(design)))
 
 
-@pytest.mark.parametrize("variant", ["binned", "calendar", "funnel", "event_time"])
+@pytest.mark.parametrize("variant", ["binned", "calendar", "funnel", "event_time", "elapsed"])
 def test_discovery_schema_matches_existing_tagged_codec(variant):
     from datetime import UTC, datetime
     from decimal import Decimal
@@ -152,7 +152,14 @@ def test_discovery_schema_matches_existing_tagged_codec(variant):
         design = Design(
             "user",
             FixedDate("2025-01-01"),
-            features={"when": EventTime("value", Window("-10s", 0), occurrence="last")},
+            features={
+                "when": EventTime(
+                    "value",
+                    Window("-10s", 0),
+                    occurrence="last",
+                    measure="elapsed" if variant == "elapsed" else "time",
+                )
+            },
         )
     payload = json.loads(to_json(design))
     validator = Draft202012Validator(design_schema())

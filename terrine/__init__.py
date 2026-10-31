@@ -48,6 +48,7 @@ if TYPE_CHECKING:
         is_null,
         quantile,
         retention,
+        since,
         to_yaml,
     )
 
@@ -104,6 +105,7 @@ __all__ = [
     "TimeToEvent",
     "to_yaml",
     "quantile",
+    "since",
     "recipes",
 ]
 
@@ -138,6 +140,7 @@ def __getattr__(name: str):
     )
     globals()[name] = value
     return value
+
 
 def __dir__() -> list[str]:
     return sorted(__all__)

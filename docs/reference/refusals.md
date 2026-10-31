@@ -199,6 +199,7 @@ Repair temporal/history contracts; do not zero-fill unknowns.
 | `terrine.design.invalid` | <code>Design input {field} must be one of {choices}.</code> | `choices`, `field` | [terrine/spec/panels.py](../../terrine/spec/panels.py) |
 | `terrine.design.invalid` | <code>Design input {field} must be one of {choices}.</code> | `choices`, `field` | [terrine/spec/trajectory.py](../../terrine/spec/trajectory.py) |
 | `terrine.design.invalid` | <code>Design input {field}[{name!r}] is invalid ({reason}, got {got}; expected {expected}).</code> | `expected`, `field`, `got`, `name`, `reason` | [terrine/spec/design.py](../../terrine/spec/design.py) |
+| `terrine.design.invalid` | <code>Elapsed event selectors cannot be used here ({reason}). {route}</code> | `reason`, `route` | [terrine/spec/expressions.py](../../terrine/spec/expressions.py) |
 | `terrine.design.invalid` | <code>End day {end!r} is before start day {start!r}. The end is the last included day; choose an end on or after the start.</code> | `end`, `start` | [terrine/spec/anchors.py](../../terrine/spec/anchors.py) |
 | `terrine.design.invalid` | <code>End day {end!r} leaves no following day to include the whole end day. Choose an earlier end day.</code> | `end` | [terrine/spec/anchors.py](../../terrine/spec/anchors.py) |
 | `terrine.design.invalid` | <code>End time {end!r} is not after start time {start!r}. Choose a later end time; the end time itself is excluded.</code> | `end`, `start` | [terrine/spec/anchors.py](../../terrine/spec/anchors.py) |
