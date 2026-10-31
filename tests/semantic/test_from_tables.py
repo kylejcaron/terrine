@@ -1038,3 +1038,21 @@ def test_training_set_with_roster_attribute(con):
     assert _feature_definition_hash(design, ("channel",), model) == _feature_definition_hash(
         design, ("channel",), restored
     )
+
+def test_cross_unit_source_property_refuses_with_incompatible_unit(con):
+    model = Model.from_tables(
+        con,
+        units={
+            "customer": UnitSource("customers", "customer_id"),
+            "account": UnitSource("accounts", "account_id"),
+        },
+        events={"orders": orders(unit="customer", labels=("status",))},
+    )
+    with pytest.raises(TerrineError) as error:
+        Design(
+            "account",
+            FixedDate("2025-01-15"),
+            features={"status": asof("status")},
+        ).validate(model)
+    assert error.value.code == "terrine.design.incompatible_unit"
+    assert error.value.context == {"unit": "account", "name": "status"}

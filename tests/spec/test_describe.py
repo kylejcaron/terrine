@@ -356,3 +356,32 @@ def test_describe_approximate_quantile_names_the_declared_sketch(shapes_model):
     text = design.describe(shapes_model)
     for value in ("upper", "purchase.amount", "tdigest", sketch.version, "0.01", "0.9"):
         assert value in text
+
+
+def test_describe_names_roster_attribute_and_needs_no_event_coverage():
+    model = tr.Model.from_tables(
+        units={
+            "user": tr.UnitSource(
+                pd.DataFrame({"user_id": ["u1"], "channel": ["web"]}),
+                "user_id",
+                attributes=("channel",),
+            )
+        },
+        events={
+            "activity": tr.Events(
+                pd.DataFrame({"user_id": ["u1"], "occurred_at": pd.to_datetime(["2025-01-10"])}),
+                time="occurred_at",
+                key="user_id",
+                complete=_COMPLETE,
+            )
+        },
+    )
+    design = Design(
+        "user",
+        FixedDate("2025-04-01"),
+        features={"channel": tr.asof("channel")},
+    )
+    text = design.describe(model)
+    assert "static unit attribute" in text
+    assert "channel" in text
+    assert "activity" not in text

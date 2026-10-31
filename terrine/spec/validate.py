@@ -349,7 +349,8 @@ def _resolve_property(
         )
     unit = design.unit
     assert unit is not None
-    roster = model._roster_attributes(unit)
+    roster_attributes = getattr(model, "_roster_attributes", None)
+    roster = roster_attributes(unit) if callable(roster_attributes) else None
     if roster is not None and expr.attribute in roster.attributes:
         resolved = resolve_attribute(
             sources=model.sources,
@@ -389,6 +390,11 @@ def _resolve_property(
         }
         if len(dimension_names) > 1:
             raise _AMBIGUOUS.error(name=expr.attribute)
+        if any(
+            candidate_dimension is None and unit not in candidate_source.units
+            for candidate_source, _, candidate_dimension in candidates
+        ):
+            raise _UNIT.error(unit=unit, name=expr.attribute)
         resolved = resolve_attribute(
             sources=model.sources,
             properties=model.catalog.properties,

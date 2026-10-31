@@ -8,7 +8,8 @@ from terrine.data import Coverage, UnitSource
 from terrine.dataset.splits import GroupSplit
 from terrine.model import Model
 from terrine.runtime.saved_plan import ModelReference
-from terrine.spec.io import from_json
+from terrine.spec import Design, FixedDate, asof
+from terrine.spec.io import from_json, to_json
 
 
 def test_inspect_catalog_returns_only_allowed_semantic_metadata(tools):
@@ -64,6 +65,34 @@ def test_validate_design_returns_a_summary(tools):
     assert validated.spec_hash and "events" in validated.summary
     assert "recent_total" in validated.summary
     assert tools.propose_design(serialized).output.summary == validated.summary
+
+
+
+def test_validate_design_describes_static_roster_attributes(tools):
+    tools.model.con.raw_sql(
+        "CREATE TABLE users_with_channel AS SELECT id, 'web'::VARCHAR AS channel FROM users"
+    )
+    model = Model.from_catalog(
+        tools.model.catalog,
+        con=tools.model.con,
+        readiness=tools.model.readiness,
+        units={"user": UnitSource("users_with_channel", "id", attributes=("channel",))},
+    )
+    reference = ModelReference.from_model(
+        model,
+        owner_key=tools.policy.model_reference.owner_key,
+    )
+    policy = replace(
+        tools.policy,
+        model_reference=reference,
+        allowed_catalogs=frozenset({reference.catalog_hash}),
+    )
+    agent = DatasetTools(model, policy, namespace="agent")
+    design = Design("user", FixedDate("2025-01-15"), features={"channel": asof("channel")})
+    result = agent.validate_design(to_json(design))
+    assert result.status == "ok"
+    assert result.output is not None
+    assert "static unit attribute" in result.output.summary
 
 
 def test_validation_uses_existing_metadata_contracts(tools, monkeypatch):

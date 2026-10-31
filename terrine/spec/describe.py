@@ -208,7 +208,13 @@ class _Renderer:
             return "0", "no_observations"
         return "null", "no_observations"
 
+    def _is_roster_attribute(self, attribute: str) -> bool:
+        roster = self.model._roster_attributes(self.unit)
+        return roster is not None and attribute in roster.attributes
+
     def _property_source(self, attribute: str) -> str:
+        if self._is_roster_attribute(attribute):
+            return "unit roster"
         declaration = self.model.catalog.properties.get(attribute)
         if declaration is not None:
             return declaration.source
@@ -217,7 +223,7 @@ class _Renderer:
                 attribute in dimension.properties for dimension in source.dimensions
             ):
                 return source.name
-        raise AssertionError("validation resolves every property to a source")
+        raise AssertionError("validation resolves every property to a source or roster")
 
     def _coverage(self, source: str) -> str:
         coverage = self.model.readiness.for_fact(source)
@@ -274,9 +280,13 @@ class _Renderer:
             )
         if isinstance(expr, AttributeAsOf):
             at = _offset(expr.before, "selected time" if expr.relative_to is not None else origin)
-            source = self._property_source(expr.attribute)
             relative = self._relative(expr.relative_to, origin)
-            return f"{expr.attribute} as of just before {at} (history {source}){relative}"
+            owner = (
+                f"static unit attribute on the {self.unit} roster"
+                if self._is_roster_attribute(expr.attribute)
+                else f"history {self._property_source(expr.attribute)}"
+            )
+            return f"{expr.attribute} as of just before {at} ({owner}){relative}"
         if isinstance(expr, EventTime):
             occurrence = _ordinal(expr.n) if expr.occurrence == "nth" else expr.occurrence
             label = (
@@ -431,6 +441,13 @@ class _Renderer:
         if treatment is None:
             return
         at = _offset(treatment.at, "t0")
+        if self._is_roster_attribute(treatment.attribute):
+            yield (
+                "",
+                f"Treatment: {treatment.attribute} is a static unit attribute on the {self.unit} "
+                f"roster, evaluated as of {at}.",
+            )
+            return
         source = self._property_source(treatment.attribute)
         yield (
             "",

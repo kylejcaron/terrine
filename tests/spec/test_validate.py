@@ -7,7 +7,7 @@ import pytest
 
 from terrine.data import BoundCoverage
 from terrine.errors import TerrineError
-from terrine.semantic.models import BoundMeasure, BoundMetric
+from terrine.semantic.models import BoundMeasure, BoundMetric, TableRef
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import EventTime, agg, asof, gt, quantile
@@ -49,6 +49,14 @@ def model(
     source.events = {"session": None}
     source.properties, source.dimensions = properties or {}, dimensions or []
     source.units = units or {"user": "user_id", "workspace": "workspace_id"}
+    source.relation, source.time_column = TableRef(kind="table", name="events"), "ts"
+    for dimension in source.dimensions:
+        if not hasattr(dimension, "unit"):
+            dimension.unit = "workspace"
+        if not hasattr(dimension, "key"):
+            dimension.key = source.units[dimension.unit]
+        if not hasattr(dimension, "relation"):
+            dimension.relation = source.relation
     metric = BoundMetric(
         "sessions",
         "user",
