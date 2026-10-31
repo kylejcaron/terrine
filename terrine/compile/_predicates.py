@@ -10,10 +10,10 @@ import ibis
 
 from terrine.backends.extrema import greatest, least
 from terrine.data import ColumnMeta, FeatureCutoff
-from terrine.semantic.models import BoundFilter
+from terrine.semantic.filters import lower_filter
+from terrine.semantic.models import Filter
 from terrine.spec.expressions import And, Eq, Expr, Gt, IsNull, Predicate
 from terrine.temporal.aggregate import _Builder
-from terrine.temporal.daily import _filter_comparison
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,8 +87,10 @@ def compile_predicate(
                 reason = complete.ifelse(ibis.null().cast("string"), cause)
             else:
                 op = "gt" if isinstance(node, Gt) else "equals"
-                comparison = _filter_comparison(
-                    value, BoundFilter(compiled.name, op, (node.value,))
+                comparison = lower_filter(
+                    builder.table,
+                    Filter(property=compiled.name, op=op, values=(node.value,)),
+                    value,
                 )
                 comparison = complete.ifelse(comparison, ibis.null().cast("boolean"))
                 reason = ibis.cases(

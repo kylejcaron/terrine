@@ -117,6 +117,7 @@ class Source(_Record):
     events: tuple[StrictStr, ...]
     properties: tuple[StrictStr, ...]
     dimensions: tuple[StrictStr, ...]
+    where: tuple[Filter, ...] = ()
 
 
 class Event(_Record):
@@ -329,6 +330,7 @@ class BoundSource:
     dimensions: tuple[BoundDimension, ...]
     dialect: str
     day_boundary: str
+    where: tuple[Filter, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

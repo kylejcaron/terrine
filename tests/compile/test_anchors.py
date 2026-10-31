@@ -346,6 +346,8 @@ def test_duplicate_candidate_identity_refuses_without_configured_event_ids(nativ
     with pytest.raises(TerrineError) as error:
         anchors.validate(execute=lambda query: query.to_pyarrow())
     assert error.value.context["check_key"] == "ambiguous_event_identity"
+
+
 def test_first_event_anchor_refuses_tied_timestamps_without_event_ids(native_model):
     model = Model.from_catalog(
         native_model.catalog,
@@ -371,8 +373,6 @@ def test_first_event_anchor_refuses_tied_timestamps_without_event_ids(native_mod
         Design(unit="user", anchor=EventAnchor("occurred", "first")), configured_model
     )
     configured_anchors.validate(execute=lambda query: query.to_pyarrow())
-
-
 
 
 def test_anchor_validation_rejects_malformed_arrow_results(native_model):
@@ -582,3 +582,64 @@ def test_aware_timestamp_identity_is_timezone_and_unrelated_column_independent(n
         event_ids=model.event_ids,
     )
     assert candidate_rows(design, rebound)[0]["anchor_id"] == identities[-1]
+
+
+@pytest.mark.parametrize("anchor", [FixedDate("2025-01-03"), EventAnchor("occurred")])
+@pytest.mark.parametrize("value", [None, float("nan")])
+def test_unknown_filter_membership_refuses(native_model, anchor, value):
+    from terrine.data import Events
+
+    con = native_model.con
+    con.raw_sql("ALTER TABLE events ADD COLUMN score DOUBLE DEFAULT 1")
+    con.raw_sql(
+        "UPDATE events SET score = "
+        + ("NULL" if value is None else "'NaN'::DOUBLE")
+        + " WHERE event_id = 'a'"
+    )
+    model = Model.from_tables(
+        con,
+        units=native_model.units,
+        events={
+            "occurred": Events(
+                "events",
+                time="ts",
+                key="user_id",
+                where={"score__gt": 0},
+                complete=("2025-01-01", "2025-01-31"),
+            )
+        },
+        event_ids={"occurred": "event_id"},
+    )
+    anchors = compile_anchors(Design("user", anchor), model)
+    with pytest.raises(TerrineError) as error:
+        anchors.validate(execute=con.to_pyarrow)
+    assert error.value.code == "terrine.compile.anchor_integrity"
+    assert error.value.context["check_key"] == "unknown_event_filter_value"
+
+
+def test_definitively_excluded_rows_with_nulls_are_allowed(native_model):
+    from terrine.data import Events
+
+    con = native_model.con
+    con.raw_sql("""
+        ALTER TABLE events ADD COLUMN kind VARCHAR DEFAULT 'purchase';
+        ALTER TABLE events ADD COLUMN status VARCHAR DEFAULT 'paid';
+        UPDATE events SET kind = 'signup', status = NULL WHERE event_id = 'a';
+    """)
+    model = Model.from_tables(
+        con,
+        units=native_model.units,
+        events={
+            "occurred": Events(
+                "events",
+                time="ts",
+                key="user_id",
+                where={"kind": "purchase", "status": "paid"},
+                complete=("2025-01-01", "2025-01-31"),
+            )
+        },
+        event_ids={"occurred": "event_id"},
+    )
+    result = candidate_rows(Design("user", EventAnchor("occurred", which="each")), model)
+    assert len(result) == 2
+    assert {(r["unit"], r["t0"].day) for r in result} == {("a", 2), ("a", 3)}

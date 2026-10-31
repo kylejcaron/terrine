@@ -117,18 +117,24 @@ def _snapshot(model, anchor, **columns):
 def test_events_descriptor_normalizes_and_detaches_inputs():
     metrics = {"n": tr.count()}
     labels = ["status"]
+    where = {"status__in": ["paid", "refunded"]}
     events = Events(
         "orders",
         time="ordered_at",
         key="customer_id",
         metrics=metrics,
         labels=labels,
+        where=where,
         complete=COMPLETE,
     )
     metrics["changed"] = tr.count()
     labels.append("changed")
+    where["status__in"].append("changed")
     assert dict(events.metrics) == {"n": tr.count()}
     assert events.labels == ("status",)
+    assert events.where == {"status__in": ("paid", "refunded")}
+    with pytest.raises(TypeError):
+        events.where["status"] = "changed"  # ty: ignore[invalid-assignment]
     assert events.unit is None
     assert events.complete == (date(2025, 1, 1), date(2025, 1, 31))
     with pytest.raises(TypeError):
@@ -148,6 +154,9 @@ def test_events_descriptor_normalizes_and_detaches_inputs():
         ({"metrics": {"n": "count"}}, "wrong_type", "metrics"),
         ({"metrics": {"": tr.count()}}, "wrong_type", "metrics"),
         ({"labels": "status"}, "wrong_type", "labels"),
+        ({"where": ["paid"]}, "wrong_type", "where"),
+        ({"where": {1: "paid"}}, "wrong_type", "where"),
+        ({"where": {"status": {"nested": "paid"}}}, "wrong_type", "where"),
         ({"complete": (datetime(2025, 1, 1), date(2025, 1, 31))}, "invalid_date", "complete"),
         ({"complete": ("04/01/2025", "2025-01-31")}, "invalid_date", "complete"),
     ],
@@ -235,8 +244,6 @@ def test_null_filter_literal_refuses_at_build_not_zero(con):
     assert error.value.code == "terrine.filter.unknown"
 
 
-
-
 def test_filter_value_type_is_checked_during_shared_binding(con):
     valid = orders(labels=("status",), metrics={"n": tr.count(where={"status": "refunded"})})
     valid_model = Model.from_tables(con, units=UNITS, events={"orders": valid})
@@ -246,10 +253,12 @@ def test_filter_value_type_is_checked_during_shared_binding(con):
         {"property": "status", "op": "equals", "values": (1,)},
     )
     event = orders(labels=("status",), metrics={"n": tr.count(where={"status": 1})})
+
     def invalid_catalog():
         return Model.from_catalog(
             raw_catalog, con=con, readiness={"orders": tr.Coverage(*COMPLETE)}, units=UNITS
         )
+
     for bind in (
         lambda: Model.from_tables(con, units=UNITS, events={"orders": event}),
         invalid_catalog,
@@ -280,14 +289,62 @@ def test_filter_value_type_is_checked_during_shared_binding(con):
     Model.from_tables(con, units=UNITS, events={"decimal_orders": decimal_event})
 
 
-@pytest.mark.parametrize(
-    "threshold", (1.5, "1e999999999999999999999999999")
-)
-def test_numeric_filter_thresholds_are_admitted_during_shared_binding(con, threshold):
-    event = orders(
-        labels=("qty",), metrics={"n": tr.count(where={"qty__gt": threshold})}
+def test_events_where_round_trips_catalog(con):
+    model = Model.from_tables(
+        con, units=UNITS, events={"orders": orders(where={"qty__between": ("2", "10")})}
     )
+    rebound = Model.from_catalog(
+        model.to_catalog(), con=con, units=UNITS, readiness=model.readiness
+    )
+    assert rebound.catalog.schema_version == 2
+    assert rebound.catalog.sources["orders"].where == model.catalog.sources["orders"].where
+    assert rebound.sources["orders"].where == model.sources["orders"].where
+    assert rebound.model_hash == model.model_hash
+
+
+def test_source_filter_value_type_uses_shared_binding_refusal(con):
+    model = Model.from_tables(con, units=UNITS, events={"orders": orders()})
+    catalog = model.catalog.model_dump(mode="python")
+    catalog["sources"]["orders"]["where"] = (
+        {"property": "status", "op": "equals", "values": (1,)},
+    )
+    for bind in (
+        lambda: Model.from_tables(con, units=UNITS, events={"orders": orders(where={"status": 1})}),
+        lambda: Model.from_catalog(catalog, con=con, units=UNITS, readiness=model.readiness),
+    ):
+        with pytest.raises(TerrineError) as error:
+            bind()
+        assert error.value.code == "terrine.semantic.schema_mismatch"
+        assert error.value.context == {
+            "field": "where",
+            "label": "status",
+            "value": 1,
+            "label_type": "string",
+        }
+        for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
+            assert restored.context == error.value.context
+
+
+@pytest.mark.parametrize("threshold", (1.5, "10.50", "1e999999999999999999999999999"))
+def test_source_numeric_thresholds_bind_without_narrowing(con, threshold):
+    model = Model.from_tables(
+        con, units=UNITS, events={"orders": orders(where={"qty__gt": threshold})}
+    )
+    assert model.catalog.sources["orders"].where[0].values == (threshold,)
+
+
+def test_source_filter_requires_existing_column(con):
+    with pytest.raises(TerrineError) as error:
+        Model.from_tables(con, units=UNITS, events={"orders": orders(where={"missing": 1})})
+    assert error.value.code == "terrine.semantic.schema_mismatch"
+    assert error.value.context == {"field": "where", "column": "missing"}
+
+
+@pytest.mark.parametrize("threshold", (1.5, "1e999999999999999999999999999"))
+def test_numeric_filter_thresholds_are_admitted_during_shared_binding(con, threshold):
+    event = orders(labels=("qty",), metrics={"n": tr.count(where={"qty__gt": threshold})})
     Model.from_tables(con, units=UNITS, events={"orders": event})
+
 
 def test_undeclared_label_and_ratio_operand_refuse_missing_reference(con):
 
@@ -747,6 +804,8 @@ def test_pandas_nullable_and_categorical_columns_survive_conversion():
     assert rows["last_flag"] == {"alice": None, "bob": True}
     assert rows["last_flag__reason"] == {"alice": "all_values_null", "bob": None}
     assert rows["last_qty"] == {"alice": None, "bob": 4}
+
+
 def test_string_unit_key_with_integer_event_key_refuses_at_bind(con):
     con.create_table(
         "integer_orders",
@@ -861,6 +920,8 @@ def test_key_mismatch_context_omits_nullability_markers():
         error.value.context["unit_type"],
         error.value.context["source_type"],
     ) == ("string", "int64")
+
+
 def test_roster_attribute_is_available_as_of_t0_outside_event_coverage(con):
     con.create_table(
         "customer_channels",
@@ -871,11 +932,16 @@ def test_roster_attribute_is_available_as_of_t0_outside_event_coverage(con):
         units={"customer": UnitSource("customer_channels", "customer_id", attributes=("channel",))},
         events={"orders": orders()},
     )
-    table = Design(
-        "customer",
-        FixedDate("2025-02-10"),
-        features={"channel": asof("channel")},
-    ).build(model).to_pyarrow().to_pydict()
+    table = (
+        Design(
+            "customer",
+            FixedDate("2025-02-10"),
+            features={"channel": asof("channel")},
+        )
+        .build(model)
+        .to_pyarrow()
+        .to_pydict()
+    )
     assert dict(zip(table["unit"], table["channel"], strict=True)) == {
         "alice": "web",
         "bob": "store",
@@ -954,6 +1020,7 @@ def test_two_rosters_cannot_share_an_attribute_name(con):
     assert catalog_error.value.code == direct_error.value.code
     assert catalog_error.value.context == direct_error.value.context
 
+
 def test_other_units_attribute_is_not_visible(con):
     con.create_table(
         "customer_channels",
@@ -974,6 +1041,7 @@ def test_other_units_attribute_is_not_visible(con):
         )
     assert error.value.code == "terrine.design.missing_reference"
     assert error.value.context["available"] == ("channel",)
+
 
 def test_missing_roster_attribute_column_refuses_at_bind(con):
     with pytest.raises(TerrineError) as error:
@@ -1038,6 +1106,7 @@ def test_training_set_with_roster_attribute(con):
     assert _feature_definition_hash(design, ("channel",), model) == _feature_definition_hash(
         design, ("channel",), restored
     )
+
 
 def test_cross_unit_source_property_refuses_with_incompatible_unit(con):
     model = Model.from_tables(

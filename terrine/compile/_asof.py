@@ -14,6 +14,7 @@ from terrine.backends.extrema import greatest, least
 from terrine.backends.timestamps import compare_timestamps
 from terrine.data import ColumnMeta
 from terrine.semantic.attributes import resolve_attribute
+from terrine.semantic.bind import filter_source_rows
 from terrine.semantic.models import BoundDimension
 from terrine.temporal.attributes import attribute_asof, history_checks, validate_history
 
@@ -34,8 +35,6 @@ class AsOfResult:
 
     def validate(self, execute: Callable[[ibis.Table], pa.Table]) -> None:
         validate_history(self.history, self.dimension, execute=execute)
-
-
 
 
 def compile_asof(
@@ -59,6 +58,8 @@ def compile_asof(
     )
     dimension = resolved.dimension
     raw = model._relation(dimension.relation)
+    if resolved.source is not None and resolved.prop.dimension_name is None:
+        raw = filter_source_rows(raw, resolved.source)
     if resolved.owner == "roster" or resolved.prop.dimension_name is None:
         fields = [dimension.key, resolved.prop.column]
         if dimension.validity is not None and dimension.validity.changed_at is not None:

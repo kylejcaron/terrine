@@ -20,6 +20,7 @@ from terrine.data import BoundCoverage, Coverage, EventMetric, Events, History, 
 from terrine.errors import RefusalSpec
 from terrine.execution._metadata import metadata_operation
 from terrine.execution._native import _ascii_key
+from terrine.metrics import _filters
 from terrine.semantic.attributes import RosterAttributes
 from terrine.semantic.bind import _KEY_SCHEMA, _SCHEMA, _relation, bind_metric, normalize_source
 from terrine.semantic.io import dump_catalog, load_catalog, load_catalog_text, validate_catalog
@@ -69,15 +70,15 @@ _MISSING_REFERENCE_SUGGESTION = RefusalSpec(
 )
 
 
-def _missing_reference(
-    *, kind: str, name: str, owner: str, available: tuple[str, ...]
-):
+def _missing_reference(*, kind: str, name: str, owner: str, available: tuple[str, ...]):
     suggestions = tuple(get_close_matches(name, available, n=3, cutoff=0.6))
     spec = _MISSING_REFERENCE_SUGGESTION if suggestions else _MISSING_REFERENCE
     context = dict(kind=kind, name=name, owner=owner, available=available)
     if suggestions:
         context["suggestions"] = suggestions
     return spec.error(**context)
+
+
 _IN_MEMORY_WITH_CONNECTION = RefusalSpec(
     "terrine.model.invalid_binding",
     "{inputs} are in-memory tables but a connection was given; Terrine never uploads "
@@ -492,6 +493,7 @@ class Model:
                 "events": [name, *value_events.values()],
                 "properties": list(event.labels),
                 "dimensions": [],
+                "where": _filters(event.where),
             }
         for name, item in attributes.items():
             unit = history_units[name]

@@ -26,6 +26,8 @@
   independently of event-table completeness.
 - Add `tr.since` for elapsed durations since a selected event, preserving
   completeness, selected-instant provenance and staged dataset values.
+- Split mixed-kind event tables with `Events(where=...)`, applying typed source
+  filters consistently to every event read and refusing unknown membership.
 
 ### Performance
 

@@ -65,6 +65,38 @@ required when the model declares several (omitting it refuses with
 An `Events` with no `metrics` declares the event alone: anchors, `event_time`,
 survival and sequences still work, and nothing is named for you.
 
+Use `Events(where=...)` to split a mixed-kind table into event sources without
+copying or prefiltering it. Each declaration has its own event membership:
+
+```python
+events = {
+    kind: Events(
+        activity,
+        time="occurred_at",
+        key="customer_id",
+        where={"kind": kind},
+        complete=("2025-01-01", "2025-01-31"),
+    )
+    for kind in ("signup", "purchase")
+}
+```
+
+Source filters use the same operators and typed comparisons as metric filters,
+but their keys name physical columns; those columns need not be in `labels=`.
+They apply before metrics, event selectors, anchors, survival, sequences and
+event-backed `asof` lookups. `Events` detaches the mapping and freezes collection
+values, and source filters round-trip in the version-2 catalog. Changing a source
+filter also changes its features' definition identities, so fitted transforms
+cannot be reused with a different event population.
+
+A source filter must determine membership for every raw row. An unknown combined
+predicate (including a null or nonfinite numeric value) refuses with
+`terrine.compile.anchor_integrity`, `check_key="unknown_event_filter_value"`.
+Conjunction follows SQL three-valued logic: a row definitively excluded by one
+term is allowed even if another term is unknown. Filter columns and literal
+types are checked at model binding, without reading rows; mismatched values
+refuse with `terrine.semantic.schema_mismatch`, `field="where"`.
+
 Metrics are named by you and built with `tr.count()`, `tr.sum(column)`,
 `tr.mean(column)` (per event; `per="day"` divides by the window's calendar
 days), `tr.min`, `tr.max`, `tr.count_distinct(column)` and
@@ -73,7 +105,7 @@ Metric names are unique across the model; a metric may share its event's name.
 Consume them with ordinary `agg` expressions.
 
 `labels=` names event columns that become event-time properties with the same
-name, usable in `where=`, in `event_time(..., label_property=, equals=)`, in
+name, usable in metric `where=`, in `event_time(..., label_property=, equals=)`, in
 `asof(label, before=)` (the last value strictly before the cutoff, carried from
 the event log) and in `Treatment(label)`. The dtype is read from the bound
 column: string, integer (or scale-zero decimal), float (or decimal), boolean
@@ -91,7 +123,7 @@ Roster attributes need no event-source readiness; roster observation bounds
 still apply. The declarations are part of the unit binding, not the catalog, so
 pass `units=model.units` when rebinding a catalog.
 
-`where=` is a mapping keyed by `<label>` or `<label>__<op>`; several keys are a
+Metric `where=` is a mapping keyed by `<label>` or `<label>__<op>`; several keys are a
 conjunction. A scalar value means equality and a list, tuple or set means
 membership; `__ne`, `__in`, `__not_in`, `__gt`, `__gte`, `__lt`, `__lte` and
 `__between` are the other operators. `__between` takes an ordered `(low, high)`
@@ -101,7 +133,8 @@ are exact literals ordered by the label's type when the filter compiles.
 `__` is reserved for that split: a label name containing it refuses at
 `Events(...)` with `reason="reserved_name"`, and a key with an unknown
 operator, a second `__`, the wrong number of values or a non-scalar refuses
-at the constructor with `reason="invalid_filter"` and the `key`. A `where=`
+at metric construction (or at model binding for source filters) with
+`reason="invalid_filter"` and the `key`. A metric `where=`
 label the `Events` does not declare, or a ratio operand that is not another
 non-ratio metric of
 the same `Events`, refuses at `from_tables` with

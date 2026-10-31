@@ -23,6 +23,7 @@ from terrine.backends.timestamps import (
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
+from terrine.semantic.bind import filter_source_rows
 from terrine.spec.anchors import FixedDate
 from terrine.spec.design import Design
 from terrine.spec.trajectory import TimeToEvent
@@ -77,7 +78,7 @@ def _source(model: Model, unit: str, event_name: str):
 
 
 def _events(model: Model, source, unit_column: str):
-    raw = model._relation(source.relation)
+    raw = filter_source_rows(model._relation(source.relation), source)
     columns = {
         "unit": raw[unit_column],
         "_timestamp": raw[source.time_column],

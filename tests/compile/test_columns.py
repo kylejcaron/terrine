@@ -1026,3 +1026,81 @@ def test_elapsed_finalization_preserves_nanoseconds_and_refuses_tick_overflow(co
     )
     with pytest.raises(pa.ArrowInvalid):
         frame._normalize_output(overflow)
+
+
+def test_filter_lowering_parity(column_model):
+    from terrine.compile._predicates import CompiledValue, compile_predicate
+    from terrine.data import ColumnMeta, FeatureCutoff
+    from terrine.semantic.bind import source_filter_predicate
+    from terrine.semantic.filters import lower_filter
+    from terrine.semantic.models import BoundFilter, Filter, PropertyBinding
+    from terrine.temporal.daily import _predicate
+
+    table = column_model.con.sql("""
+        SELECT i, money::DECIMAL(10,2) AS money, score::DOUBLE AS score,
+            true AS complete, NULL::VARCHAR AS reason,
+            TIMESTAMPTZ '2025-01-01' AS observed_from,
+            TIMESTAMPTZ '2025-01-03' AS observed_until
+        FROM (VALUES (1, 10.49, 9), (2, 10.50, 11), (3, NULL, 'NaN'::DOUBLE))
+            t(i, money, score)
+    """)
+    source = replace(
+        column_model.sources["events"],
+        properties={
+            name: PropertyBinding(name, name, "float", "event_time", None)
+            for name in ("money", "score")
+        },
+    )
+    measure = column_model.metrics["total"].measures[0]
+    meta = ColumnMeta(None, "feature", "observed_from", "observed_until", "complete", "reason")
+    for column, threshold, expected in (
+        ("money", "10.50", [False, True, None]),
+        ("score", 11.0, [False, True, None]),
+    ):
+        filt = Filter(property=column, op="equals", values=(threshold,))
+        lowered = lower_filter(table, filt, table[column])
+        membership = source_filter_predicate(table, replace(source, where=(filt,)))
+        metric = _predicate(
+            table, replace(measure, filters=(BoundFilter(column, "equals", (threshold,)),)), source
+        )[0]
+        expression = asof(column)
+        predicate = compile_predicate(
+            table,
+            eq(expression, threshold),
+            {expression: CompiledValue(column, meta, FeatureCutoff(0, True, "recorded_at"))},
+            output="eligible",
+            role="eligibility",
+        )
+        rows = column_model.con.to_pyarrow(
+            table.select("i", lowered=lowered, metric=metric, source=membership).order_by("i")
+        ).to_pylist()
+        assert [r["lowered"] for r in rows] == [r["metric"] for r in rows] == expected
+        assert [r["source"] for r in rows] == expected
+        assert (
+            column_model.con.to_pyarrow(predicate.table.order_by("i"))["eligible"].to_pylist()
+            == expected
+        )
+
+
+def test_property_state_identity_includes_source_membership(column_model):
+    from terrine.frame import _feature_definition_hash
+    from terrine.spec import StateObservations, StatePanel
+
+    definition = column_model.catalog.model_dump(mode="python")
+    definition["sources"]["events"]["where"] = (
+        {"property": "user_id", "op": "equals", "values": ("a",)},
+    )
+    filtered = Model.from_catalog(
+        definition,
+        con=column_model.con,
+        units=column_model.units,
+        readiness=column_model.readiness,
+    )
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-01", "2025-01-02"),
+        shape=StatePanel(StateObservations("tier", ("old", "new")), max_periods=2),
+    )
+    assert _feature_definition_hash(design, ("from_state",), column_model) != (
+        _feature_definition_hash(design, ("from_state",), filtered)
+    )

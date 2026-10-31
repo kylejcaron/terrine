@@ -7,7 +7,10 @@ import re
 from collections.abc import Callable, Mapping
 from datetime import date
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
+
+import ibis
+import ibis.expr.types as ir
 
 from terrine.backends.registry import Engine, expression_dialect, resolve_engine
 from terrine.errors import RefusalSpec, freeze
@@ -27,7 +30,14 @@ from terrine.semantic.rules import UNSUPPORTED_TEMPORAL_KIND
 from terrine.semantic.sql import DIALECT_MISMATCH
 from terrine.semantic.time import boundary_timezone
 
-__all__ = ["normalize_source", "bind_metric", "normalize_events", "validate_filter_values"]
+__all__ = [
+    "normalize_source",
+    "bind_metric",
+    "normalize_events",
+    "validate_filter_values",
+    "source_filter_predicate",
+    "filter_source_rows",
+]
 
 _SCHEMA = RefusalSpec(
     "terrine.semantic.schema_mismatch",
@@ -187,6 +197,22 @@ def normalize_source(
     for name, column in source.units.items():
         if column not in columns:
             raise _SCHEMA.error(field=f"unit {name}", column=column)
+    for filt in source.where:
+        column = filt.property
+        if column not in columns:
+            raise _SCHEMA.error(field="where", column=column)
+        dtype = next(
+            (
+                name
+                for name in ("string", "int", "float", "bool", "date")
+                if _dtype_ok(columns[column], name)
+            ),
+            None,
+        )
+        if dtype is None:
+            raise _SCHEMA.error(field="where", column=column)
+        _require_exact_type(provider, execution_dialect, columns[column], column, engine)
+        validate_filter_values(filt, dtype)
     events = {}
     for name in source.events:
         event = _reference(catalog.events, name, "event")
@@ -280,6 +306,7 @@ def normalize_source(
         tuple(dimensions),
         expression_dialect(engine),
         catalog.day_boundary,
+        source.where,
     )
 
 
@@ -345,6 +372,21 @@ def bind_metric(catalog: Catalog, metric_name: str) -> BoundMetric:
     )
 
 
+def source_filter_predicate(table: ibis.Table, source: BoundSource) -> ir.BooleanValue:
+    """Preserve unknown membership until the source-integrity check decides it."""
+    from terrine.semantic.filters import lower_filter
+
+    predicate = cast(ir.BooleanValue, ibis.literal(True))
+    for filt in source.where:
+        predicate &= lower_filter(table, filt, table[filt.property])
+    return predicate
+
+
+def filter_source_rows(table: ibis.Table, source: BoundSource) -> ibis.Table:
+    """Select source members before projecting away undeclared filter columns."""
+    return table.filter(source_filter_predicate(table, source)) if source.where else table
+
+
 def normalize_events(
     source_table: Any,
     source: BoundSource,
@@ -353,6 +395,7 @@ def normalize_events(
     extra_columns: Mapping[str, str] | None = None,
 ):
     """Project normalized timestamps, units, declared columns and requested identities."""
+    source_table = filter_source_rows(source_table, source)
     if unit_column not in source.units.values():
         raise _MISSING.error(reference=f"physical unit column:{unit_column}")
     physical = list(source.units.values())

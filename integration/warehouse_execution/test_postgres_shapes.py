@@ -272,3 +272,54 @@ def test_late_timestamp_outside_the_window_leaves_results_unchanged(postgres_scr
         "'00000000-0000-0000-0000-999999999999')"
     ).close()
     assert _rows(model, design) == before
+
+
+def test_source_filters_match_duckdb_and_refuse_unknown_membership(postgres_scratch, tmp_path):  # noqa: F811
+    from terrine.errors import TerrineError
+
+    duckdb, postgres = _both(postgres_scratch, tmp_path)
+
+    def bind(model):
+        return tr.Model.from_tables(
+            model.con,
+            units=model.units,
+            events={
+                "order": tr.Events(
+                    "events",
+                    time="occurred_at",
+                    key="user_id",
+                    labels=("tier",),
+                    where={"amount__gte": "2.50"},
+                    metrics={"orders": tr.count(), "spend": tr.sum("amount")},
+                    complete=("2025-01-01", "2025-01-10"),
+                )
+            },
+        )
+
+    design = tr.Design(
+        "user",
+        tr.FixedDate("2025-01-05"),
+        features={
+            "orders": tr.agg("orders", window=("-4d", "0s")),
+            "spend": tr.agg("spend", window=("-4d", "0s")),
+            "tier": tr.asof("tier"),
+            "last": tr.event_time("order", window=("-4d", "0s"), occurrence="last"),
+        },
+    )
+    try:
+        actual = _rows(bind(postgres), design)
+        assert actual == _rows(bind(duckdb), design)
+        assert [(r["unit"], r["orders"]) for r in actual] == [
+            ("a", 2),
+            ("b", 2),
+            ("c", 1),
+            ("d", 0),
+        ]
+        for model in (duckdb, postgres):
+            model.con.raw_sql("UPDATE events SET amount = NULL WHERE user_id = 'c'")
+            with pytest.raises(TerrineError) as error:
+                design.build(bind(model)).materialize(_BUDGET)
+            assert error.value.code == "terrine.compile.anchor_integrity"
+            assert error.value.context["check_key"] == "unknown_event_filter_value"
+    finally:
+        duckdb.con.disconnect()

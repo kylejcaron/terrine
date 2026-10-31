@@ -213,6 +213,7 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
                                 "relation": _definition_record(source.relation),
                                 "day_boundary": source.day_boundary,
                                 "time_column": source.time_column,
+                                "where": _definition_record(source.where),
                                 "binding": _definition_record(source.properties[state.property]),
                             }
                             for source_name, source in sorted(model.sources.items())
@@ -262,6 +263,7 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
                         "unit_column": source.units.get(design.unit),
                         "day_boundary": source.day_boundary,
                         "time_column": source.time_column,
+                        "where": _definition_record(source.where),
                         "binding": _definition_record(attribute.prop),
                         "dimension": None
                         if attribute.prop.dimension_name is None

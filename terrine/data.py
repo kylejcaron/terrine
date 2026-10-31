@@ -26,6 +26,8 @@ if TYPE_CHECKING:
     from terrine.semantic.models import Filter
 
 type DataFrameLike = pa.Table | pandas.DataFrame | polars.DataFrame
+type JsonScalar = None | bool | int | float | str
+type Where = Mapping[str, JsonScalar | Sequence[JsonScalar]]
 
 __all__ = [
     "ApproximationMeta",
@@ -409,7 +411,7 @@ class Ratio:
 
 @dataclass(frozen=True, slots=True, init=False, repr=False)
 class Events:
-    """Declare an event table's time, unit key, named metrics, labels and complete days.
+    """Declare an event table's time, unit key, metrics, labels, row filters and complete days.
 
     Example: tr.Events(orders, time="ordered_at", key="customer_id", complete=complete)
     """
@@ -420,6 +422,7 @@ class Events:
     unit: str | None
     metrics: Mapping[str, EventMetric | Ratio]
     labels: tuple[str, ...]
+    where: Mapping[str, JsonScalar | tuple[JsonScalar, ...]]
     complete: tuple[date, date] | None
 
     def __init__(
@@ -431,6 +434,7 @@ class Events:
         unit: str | None = None,
         metrics: Mapping[str, EventMetric | Ratio] | None = None,
         labels: Sequence[str] = (),
+        where: Where | None = None,
         complete: tuple[date | str, date | str] | None = None,
     ) -> None:
         bound = _table_input(table, "table")
@@ -453,19 +457,38 @@ class Events:
                 raise _RESERVED_NAME.error(reason="reserved_name", kind="label", name=label)
         if len(set(names)) != len(names):
             raise _INVALID_BINDING.error(reason="duplicate_names", field="labels")
+        filters = {}
+        if where is not None:
+            if not isinstance(where, Mapping):
+                raise _INVALID_BINDING.error(reason="wrong_type", field="where")
+            for name, value in where.items():
+                values = value if isinstance(value, (list, tuple, set, frozenset)) else (value,)
+                if not isinstance(name, str) or any(
+                    item is not None and not isinstance(item, (str, bool, int, float))
+                    for item in values
+                ):
+                    raise _INVALID_BINDING.error(reason="wrong_type", field="where")
+                filters[name] = (
+                    tuple(sorted(values, key=repr))
+                    if isinstance(value, (set, frozenset))
+                    else tuple(values)
+                    if isinstance(value, (list, tuple))
+                    else value
+                )
         object.__setattr__(self, "table", bound)
         object.__setattr__(self, "time", time)
         object.__setattr__(self, "key", key)
         object.__setattr__(self, "unit", unit)
         object.__setattr__(self, "metrics", MappingProxyType(dict(declared)))
         object.__setattr__(self, "labels", names)
+        object.__setattr__(self, "where", MappingProxyType(filters))
         object.__setattr__(self, "complete", _complete(complete))
 
     def __repr__(self) -> str:
         return (
             f"Events(table={_table_repr(self.table)}, time={self.time!r}, key={self.key!r}, "
             f"unit={self.unit!r}, metrics={tuple(self.metrics)!r}, labels={self.labels!r}, "
-            f"complete={self.complete!r})"
+            f"where={dict(self.where)!r}, complete={self.complete!r})"
         )
 
 

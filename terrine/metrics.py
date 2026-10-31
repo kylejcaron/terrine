@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import ValidationError
 
-from terrine.data import EventMetric, Ratio
+from terrine.data import EventMetric, Ratio, Where
 from terrine.errors import RefusalSpec
 from terrine.semantic.models import Filter
 
 __all__ = ["count", "sum", "mean", "min", "max", "count_distinct", "ratio"]
 
-type JsonScalar = None | bool | int | float | str
-type Where = Mapping[str, JsonScalar | Sequence[JsonScalar]]
 type _Op = Literal["equals", "not_equals", "in", "not_in", "gt", "gte", "lt", "lte", "between"]
 
 _INVALID_FILTER = RefusalSpec(
