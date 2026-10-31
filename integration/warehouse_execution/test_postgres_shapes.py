@@ -124,11 +124,7 @@ _DESIGNS = {
     "last_event_time": tr.Design(
         "user",
         tr.FixedDate("2025-01-04T00:00:00+00:00"),
-        features={
-            "last_order_at": tr.event_time(
-                "order", window=("-4d", "0s"), occurrence="last"
-            )
-        },
+        features={"last_order_at": tr.event_time("order", window=("-4d", "0s"), occurrence="last")},
     ),
     "schedule": tr.Design(
         "user",
@@ -228,9 +224,48 @@ def test_landmark_nth_anchor_matches_original_time_oracle(postgres_scratch, tmp_
 
 
 def test_uuid_event_ids_break_first_event_ties(postgres_scratch, tmp_path):  # noqa: F811
+    from terrine.temporal.first import first_occurrence
+
     duckdb, postgres = _both(postgres_scratch, tmp_path, event_ids={"orders": "event_id"})
     design = _DESIGNS["time_to_first_order"]
     assert _rows(postgres, design) == _rows(duckdb, design)
+    for model in (duckdb, postgres):
+        con = model.con
+        con.raw_sql("ALTER TABLE events ALTER COLUMN user_id SET NOT NULL")
+        con.raw_sql(
+            "INSERT INTO events VALUES ('a', '2025-01-02 00:00:00+00', 2.50, 'gold', "
+            "'00000000-0000-0000-0000-000000000100')"
+        )
+        candidates = con.sql(
+            "SELECT user_id, 'anchor' AS anchor_id, TIMESTAMPTZ '2025-01-02' AS lower, "
+            "TIMESTAMPTZ '2025-01-03' AS upper FROM (VALUES ('a'), ('a')) AS r(user_id)"
+        )
+        result = first_occurrence(
+            con.table("events"),
+            candidates,
+            unit="user_id",
+            timestamp="occurred_at",
+            lower="lower",
+            upper="upper",
+            event_id="event_id",
+        )
+        result.validate(con.to_pyarrow)
+        rows = con.to_pyarrow(
+            result.table.select(
+                "first_timestamp", event_id=result.table.first_event_id.cast("string")
+            )
+        ).to_pylist()
+        assert (
+            rows
+            == [
+                {
+                    "first_timestamp": datetime(2025, 1, 2, tzinfo=UTC),
+                    "event_id": "00000000-0000-0000-0000-000000000002",
+                }
+            ]
+            * 2
+        )
+        assert "LATERAL" not in con.compile(result.table).upper()
 
 
 @pytest.mark.parametrize("statistic", ["total", "mean"])
@@ -266,3 +301,105 @@ def test_late_timestamp_outside_the_window_leaves_results_unchanged(postgres_scr
         "'00000000-0000-0000-0000-999999999999')"
     ).close()
     assert _rows(model, design) == before
+
+
+@pytest.mark.parametrize("recipe,anchor_join_count", [("forecast", 3), ("ltv", 4)])
+def test_forecast_and_ltv_use_set_based_lookups_and_anchor_joins(
+    postgres_scratch,
+    recipe,
+    anchor_join_count,  # noqa: F811
+):
+    con = postgres_scratch.con
+    con.raw_sql(
+        "CREATE TABLE customers AS SELECT i::bigint AS customer_id "
+        "FROM generate_series(0, 999) AS s(i)"
+    ).close()
+    con.raw_sql(
+        "CREATE TABLE orders AS SELECT (i % 1000)::bigint AS customer_id, "
+        "TIMESTAMP '2024-01-01' + (i * 1009 % 31536000) * INTERVAL '1 second' AS ordered_at, "
+        "(i % 10000)::double precision / 100 AS amount FROM generate_series(0, 29999) AS s(i)"
+    ).close()
+    con.raw_sql("ALTER TABLE customers ALTER COLUMN customer_id SET NOT NULL").close()
+    con.raw_sql("ALTER TABLE orders ALTER COLUMN customer_id SET NOT NULL").close()
+    con.raw_sql("ALTER TABLE orders ALTER COLUMN ordered_at SET NOT NULL").close()
+    for name in ("customers", "orders"):
+        con.raw_sql(f"ANALYZE {name}").close()
+    model = tr.Model.from_tables(
+        con,
+        units={"customer": tr.UnitSource("customers", "customer_id")},
+        events={
+            "orders": tr.Events(
+                "orders",
+                time="ordered_at",
+                key="customer_id",
+                metrics={"orders": tr.count(), "spend": tr.sum("amount")},
+                complete=("2024-01-01", "2024-12-31"),
+            )
+        },
+    )
+    design = {
+        "forecast": tr.recipes.time_series(
+            every="28d",
+            start="2024-03-01",
+            end="2024-12-01",
+            features={
+                "orders_30d": tr.agg("orders", window=("-30d", "0s")),
+                "spend_30d": tr.agg("spend", window=("-30d", "0s")),
+            },
+            outcomes={"spend_next_30d": tr.agg("spend", window=("0s", "30d"))},
+        ),
+        "ltv": tr.recipes.ltv(start_event="orders", metric="spend", period="30d", periods=4),
+    }[recipe]
+    sql = con.compile(design.build(model).expr)
+    if recipe == "ltv":
+        # Prove equijoin plans are available even when start-event cardinality
+        # estimates favor nested loops. The forecast uses default planner settings.
+        con.raw_sql("SET enable_nestloop = off").close()
+    with con.raw_sql(f"EXPLAIN (FORMAT JSON) {sql}") as cursor:
+        plan = cursor.fetchone()[0][0]["Plan"]
+
+    def nodes(node):
+        yield node
+        for child in node.get("Plans", ()):
+            yield from nodes(child)
+
+    anchor_joins = [
+        node
+        for node in nodes(plan)
+        if any(
+            "anchor_id" in node.get(condition, "") or "schedule:" in node.get(condition, "")
+            for condition in ("Join Filter", "Hash Cond", "Merge Cond")
+        )
+    ]
+    problems = []
+    if "LATERAL" in sql.upper():
+        problems.append("prefix lookups contain correlated LATERAL subqueries")
+    if len(anchor_joins) != anchor_join_count or any(
+        node["Node Type"] not in {"Hash Join", "Merge Join"} for node in anchor_joins
+    ):
+        problems.append(
+            f"anchor assembly is not {anchor_join_count} equijoins: "
+            f"{[n['Node Type'] for n in anchor_joins]}"
+        )
+    assert not problems, problems
+
+
+def test_nullable_array_keys_keep_scalar_distinctness(postgres_scratch):  # noqa: F811
+    from terrine.backends.joins import null_safe_equal
+
+    con = postgres_scratch.con
+    keys = con.sql(
+        "SELECT k FROM (VALUES (NULL::bigint[]), (ARRAY[]::bigint[]), "
+        "(ARRAY[0]::bigint[]), (ARRAY[NULL]::bigint[])) AS keys(k)"
+    )
+    left = keys.select(a=keys.k)
+    right = keys.select(b=keys.k).view()
+    pairs = left.cross_join(right)
+    rows = con.to_pyarrow(
+        pairs.select(
+            expected=pairs.a.identical_to(pairs.b),
+            actual=null_safe_equal(pairs.a, pairs.b),
+        )
+    ).to_pylist()
+    assert len(rows) == 16
+    assert all(row["actual"] is row["expected"] for row in rows)

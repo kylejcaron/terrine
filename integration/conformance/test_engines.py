@@ -346,3 +346,95 @@ def test_asof_at_t0_uses_previous_change(engine):
     assert row["point_id"] == 7
     assert row["__terrine_attribute_value"] == "silver"
     assert row["__terrine_attribute_found"] is True
+
+
+def test_null_safe_keys_preserve_nulls_and_duplicate_matches(engine):
+    from terrine.backends.joins import null_safe_equal
+
+    left = engine.create_table(
+        "left_keys",
+        pa.table(
+            {
+                "left_id": list(range(6)),
+                "unit": [None, 0, 1, 1, 0, 1],
+                "anchor": [None, "", "a", "a", None, ""],
+            }
+        ),
+    )
+    right = engine.create_table(
+        "right_keys",
+        pa.table(
+            {
+                "right_id": list(range(6)),
+                "right_unit": [None, 0, 1, 1, 0, 1],
+                "right_anchor": [None, "", "a", "a", None, ""],
+            }
+        ),
+    )
+    joined = left.left_join(
+        right,
+        [
+            null_safe_equal(left.unit, right.right_unit),
+            null_safe_equal(left.anchor, right.right_anchor),
+        ],
+    )
+    rows = engine.to_pyarrow(joined.select("left_id", "right_id")).to_pylist()
+    assert sorted((row["left_id"], row["right_id"]) for row in rows) == [
+        (0, 0),
+        (1, 1),
+        (2, 2),
+        (2, 3),
+        (3, 2),
+        (3, 3),
+        (4, 4),
+        (5, 5),
+    ]
+
+
+def test_prefix_lookup_keeps_strict_cutoffs_and_duplicate_requests(engine):
+    from terrine.temporal.lookup import lookup_prefix
+
+    prefix = engine.create_table(
+        "prefix_states",
+        pa.table(
+            {
+                "_unit": ["u", "u"],
+                "_timestamp": [_ORIGIN, _ORIGIN + timedelta(hours=1)],
+                "n": pa.array([None, 7], pa.int64()),
+            }
+        ),
+    )
+    points = engine.create_table(
+        "prefix_requests",
+        pa.table(
+            {
+                "request": [1, 2, 2, 3, 4, 5, 6],
+                "unit": ["u"] * 6 + ["missing"],
+                "cutoff": [
+                    _ORIGIN,
+                    _ORIGIN + timedelta(microseconds=1),
+                    _ORIGIN + timedelta(microseconds=1),
+                    _ORIGIN + timedelta(hours=1),
+                    _ORIGIN + timedelta(hours=1, microseconds=1),
+                    None,
+                    _ORIGIN,
+                ],
+            }
+        ),
+    )
+    result = lookup_prefix(points, prefix, unit_column="unit", timestamp_column="cutoff")
+    table = result.table
+    rows = engine.to_pyarrow(
+        table.select(
+            "request", n=table[result.columns["n"]], found=table[result.matched_column]
+        ).order_by("request")
+    ).to_pylist()
+    assert [(row["request"], row["n"], row["found"]) for row in rows] == [
+        (1, 0, False),
+        (2, None, True),
+        (2, None, True),
+        (3, None, True),
+        (4, 7, True),
+        (5, 0, False),
+        (6, 0, False),
+    ]

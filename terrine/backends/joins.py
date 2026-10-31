@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import ibis
+import ibis.expr.types as ir
 
 from terrine.backends.dialect import current_dialect
 
-__all__ = ["asof_join", "has_native_asof"]
+__all__ = ["asof_join", "has_native_asof", "null_safe_equal"]
 
 
 def has_native_asof(*values: ibis.Value) -> bool:
-    """Whether Ibis lowers ``asof_join`` to valid SQL on this backend."""
+    """Whether the dialect selects Ibis's native ASOF lowering."""
     return current_dialect(*values).has_native_asof
+
+
+def null_safe_equal(left: ir.Value, right: ir.Value) -> ir.BooleanValue:
+    """Equate keys including two NULLs, using the dialect's joinable representation."""
+    return current_dialect(left, right).null_safe_equal(left, right)
 
 
 def asof_join(

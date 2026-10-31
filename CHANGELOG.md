@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Performance
+
+- PostgreSQL prefix and first-occurrence lookups use set-based union/window
+  evaluation instead of correlated top-one scans. Anchor assembly uses
+  hash/merge-joinable, null-preserving keys, retaining strict window boundaries,
+  event tie ordering and duplicate request multiplicity. DuckDB's native lookup
+  path is unchanged; portable union timelines also normalize key nullability.
+
 ## 0.1.0.dev2
 
 ### Performance

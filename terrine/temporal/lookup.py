@@ -121,9 +121,10 @@ def lookup_prefix(
             ],
         )
     else:
+        unit_type = left[point_unit].type().copy(nullable=True)
         states = right.select(
             **{
-                point_unit: right[state_unit],
+                point_unit: right[state_unit].cast(right[state_unit].type().copy(nullable=True)),
                 point_time: right[state_time],
                 kind_name: ibis.literal(1).cast("int8"),
                 **{
@@ -134,7 +135,7 @@ def lookup_prefix(
         )
         requests = left.select(
             **{
-                point_unit: left[point_unit],
+                point_unit: left[point_unit].cast(unit_type),
                 point_time: left[point_time],
                 kind_name: ibis.literal(0).cast("int8"),
                 **{timeline_points[name]: left[name] for name in points.columns},
