@@ -8,6 +8,8 @@
 - Require unit-bearing strings for nonzero elapsed durations; preserve integer
   seconds in saved designs and metadata.
 - Require source and unit roster keys to have identical dtypes when binding a model.
+- Give models, frames, datasets and table inputs concise representations, and
+  format windows with readable elapsed units.
 
 - Accept YAML returned by `Model.to_catalog()` directly in `Model.from_catalog`.
 

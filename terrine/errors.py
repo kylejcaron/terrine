@@ -42,6 +42,9 @@ class FrozenMap(Mapping[str, Any]):
     def __reduce__(self):
         return FrozenMap, (dict(self._values),)
 
+    def __repr__(self) -> str:
+        return f"FrozenMap({dict(self._values)!r})"
+
 
 def freeze(value: Any) -> Any:
     """Detach JSON-compatible input and recursively make it read-only."""

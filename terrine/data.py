@@ -170,6 +170,12 @@ def _table_input(value: str | DataFrameLike, field: str) -> str | pa.Table:
     return table
 
 
+def _table_repr(table: str | pa.Table) -> str:
+    if isinstance(table, str):
+        return repr(table)
+    return f"<pyarrow.Table {table.num_rows} rows × {table.num_columns} columns>"
+
+
 def _count(value: int | None, field: str) -> None:
     if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
         raise ValueError(f"{field} must be a nonnegative integer or None")
@@ -252,7 +258,7 @@ class BoundCoverage:
         object.__setattr__(self, "end_exclusive", end)
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True, init=False, repr=False)
 class UnitSource:
     """Declare a unit's table and key, using a table name or an in-memory table.
 
@@ -291,6 +297,13 @@ class UnitSource:
         for name, value in optional.items():
             object.__setattr__(self, name, value)
 
+
+    def __repr__(self) -> str:
+        return (
+            f"UnitSource(table={_table_repr(self.table)}, key={self.key!r}, "
+            f"entered_at={self.entered_at!r}, exited_at={self.exited_at!r}, "
+            f"observed_from={self.observed_from!r}, observed_until={self.observed_until!r})"
+        )
 
 def _calendar_day(value: object, field: str) -> date:
     if isinstance(value, str):
@@ -332,7 +345,7 @@ class Ratio:
     denominator: str
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True, init=False, repr=False)
 class Events:
     """Declare an event table's time, unit key, named metrics, labels and complete days.
 
@@ -386,8 +399,15 @@ class Events:
         object.__setattr__(self, "labels", names)
         object.__setattr__(self, "complete", _complete(complete))
 
+    def __repr__(self) -> str:
+        return (
+            f"Events(table={_table_repr(self.table)}, time={self.time!r}, key={self.key!r}, "
+            f"unit={self.unit!r}, metrics={tuple(self.metrics)!r}, labels={self.labels!r}, "
+            f"complete={self.complete!r})"
+        )
 
-@dataclass(frozen=True, slots=True, init=False)
+
+@dataclass(frozen=True, slots=True, init=False, repr=False)
 class History:
     """Declare an attribute's history by unit key and validity times or change time.
 
@@ -442,6 +462,14 @@ class History:
         object.__setattr__(self, "valid_to", valid_to)
         object.__setattr__(self, "changed_at", changed_at)
         object.__setattr__(self, "complete", _complete(complete))
+
+    def __repr__(self) -> str:
+        return (
+            f"History(table={_table_repr(self.table)}, key={self.key!r}, "
+            f"column={self.column!r}, unit={self.unit!r}, valid_from={self.valid_from!r}, "
+            f"valid_to={self.valid_to!r}, changed_at={self.changed_at!r}, "
+            f"complete={self.complete!r})"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1550,7 +1578,7 @@ def _ordered_columns(
     return (*ordered, *bookkeeping)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class MaterializedFrame:
     table: pa.Table
     roles: Roles
@@ -1578,6 +1606,12 @@ class MaterializedFrame:
                     self.provenance.expression_timings,
                 )
             ),
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"MaterializedFrame(rows={self.table.num_rows}, "
+            f"columns={tuple(self.table.column_names)!r}, roles={self.roles!r})"
         )
 
     def to_metadata(self) -> dict[str, Any]:

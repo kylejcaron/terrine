@@ -6,7 +6,7 @@ from typing import Literal
 
 from terrine.errors import RefusalSpec
 
-__all__ = ["Window", "duration", "seconds", "seconds_text"]
+__all__ = ["Window", "duration", "seconds", "seconds_text", "format_duration"]
 
 _INVALID_DURATION = RefusalSpec(
     "terrine.window.invalid_duration",
@@ -66,6 +66,17 @@ def seconds_text(n: int) -> str:
     return f"{n}s"
 
 
+def format_duration(seconds: int) -> str:
+    """Format elapsed seconds using the largest exact unit.
+
+    Example: format_duration(-2_592_000)
+    """
+    formatted = _duration(abs(seconds), weeks=True)
+    return f"-{formatted}" if seconds < 0 else formatted
+
+
+
+
 
 
 def _duration(value: int, *, weeks: bool = False, signed: bool = False) -> str:
@@ -103,4 +114,8 @@ class Window:
                 end_offset=_duration(end_seconds, signed=True),
             )
         object.__setattr__(self, "start", start_seconds)
+
         object.__setattr__(self, "end", end_seconds)
+
+    def __repr__(self) -> str:
+        return f"Window({format_duration(self.start)!r}, {format_duration(self.end)!r})"

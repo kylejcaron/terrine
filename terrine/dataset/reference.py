@@ -159,6 +159,13 @@ class Dataset:
         self._namespace, self._manifest = namespace, manifest
         self._verify_publication()
 
+    def __repr__(self) -> str:
+        generation = self._manifest.generation
+        return (
+            f"Dataset(name={generation.dataset_id!r}, generation={generation.generation_id!r}, "
+            f"columns={len(self._manifest.columns)})"
+        )
+
     @property
     def manifest(self) -> DatasetManifest:
         return self._manifest

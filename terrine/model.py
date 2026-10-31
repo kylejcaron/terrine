@@ -345,6 +345,13 @@ class Model:
         object.__setattr__(self, "model_hash", hashlib.sha256(payload.encode()).hexdigest())
         object.__setattr__(self, "day_boundary", _boundary_function(catalog.day_boundary))
 
+    def __repr__(self) -> str:
+        return (
+            f"Model(units={tuple(self.units)!r}, events={tuple(self.event_ids)!r}, "
+            f"history={tuple(self.catalog.properties)!r}, metrics={tuple(self.metrics)!r}, "
+            f"dialect={self.catalog.dialect!r})"
+        )
+
     @classmethod
     def from_tables(
         cls,

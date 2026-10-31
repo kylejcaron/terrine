@@ -411,6 +411,13 @@ class Frame:
         object.__setattr__(self, "_scoring_view", None)
         object.__setattr__(self, "_winsorizations", ())
 
+    def __repr__(self) -> str:
+        roles = self._compiled.roles
+        return (
+            f"Frame(unit={roles.unit!r}, features={roles.features!r}, "
+            f"outcomes={roles.outcomes!r}, columns={len(self._compiled.columns)})"
+        )
+
     def _active_compiled(self, compiled: CompiledStudy | None = None) -> CompiledStudy:
         active = self._compiled if compiled is None else compiled
         if self._training_view is not None:
