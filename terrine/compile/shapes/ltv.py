@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast
 import ibis
 import ibis.expr.types as ir
 
+import terrine.reasons as reason_codes
 from terrine.backends.numeric import (
     EXACT_OVERFLOW,
     exact_literal,
@@ -18,6 +19,7 @@ from terrine.backends.numeric import (
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.data import ColumnMeta, Roles, RowCheck
 from terrine.errors import RefusalSpec
+from terrine.spec._columns import TRAJECTORY
 from terrine.spec.design import Design
 from terrine.spec.expressions import MetricAgg
 from terrine.spec.trajectory import CohortSpec
@@ -104,25 +106,33 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
             immature = end_time > ibis.literal(design.administrative_cutoff)
             value = immature.ifelse(ibis.null().cast(value.type()), value)
             complete = complete & ~immature
-            reason = immature.ifelse("administrative_cutoff", reason)
+            reason = immature.ifelse(reason_codes.ADMINISTRATIVE_CUTOFF, reason)
         mature = (
             ibis.literal(True)
             if design.administrative_cutoff is None
             else source.t0 + ibis.interval(seconds=age * trajectory.period)
             < ibis.literal(design.administrative_cutoff)
         )
-        projection = {
-            "unit": source.unit,
-            "anchor_id": source.anchor_id,
-            "cohort_time": source.t0,
-            "age": ibis.literal(age).cast("int64"),
-            "period_value": value,
-            "period_value_complete": complete,
-            "period_value_reason": reason,
-            "period_value_observed_from": source[meta.observed_from_column],
-            "period_value_observed_until": source[meta.observed_until_column],
-            "period_value_mature": mature,
-        }
+        projection = dict(
+            zip(
+                TRAJECTORY,
+                (
+                    source.unit,
+                    source.anchor_id,
+                    source.t0,
+                    ibis.literal(age).cast("int64"),
+                    value,
+                    mature,
+                ),
+                strict=True,
+            )
+        )
+        projection.update(
+            period_value_complete=complete,
+            period_value_reason=reason,
+            period_value_observed_from=source[meta.observed_from_column],
+            period_value_observed_until=source[meta.observed_until_column],
+        )
         for feature in (*compiled.roles.features, *design.eligibility):
             feature_meta = compiled.columns[feature]
             for column in (
@@ -272,7 +282,7 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         table = table.mutate(
             cumulative_value_reason=ibis.ifelse(
                 missing,
-                first_reason.fill_null(ibis.literal("incomplete_contribution")),
+                first_reason.fill_null(ibis.literal(reason_codes.INCOMPLETE_CONTRIBUTION)),
                 ibis.null().cast("string"),
             )
         )

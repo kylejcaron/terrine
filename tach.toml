@@ -10,6 +10,14 @@ depends_on = ["terrine.errors", "terrine.spec", "terrine.windows"]
 
 [[modules]]
 path = "terrine.errors"
+depends_on = ["terrine._refusal_codes"]
+
+[[modules]]
+path = "terrine._refusal_codes"
+depends_on = []
+
+[[modules]]
+path = "terrine.reasons"
 depends_on = []
 
 [[modules]]
@@ -39,7 +47,7 @@ depends_on = ["terrine.backends", "terrine._time", "terrine.errors", "terrine.wi
 
 [[modules]]
 path = "terrine.temporal"
-depends_on = ["terrine.backends", "terrine.data", "terrine.errors", "terrine.semantic", "terrine.windows"]
+depends_on = ["terrine.backends", "terrine.data", "terrine.errors", "terrine.reasons", "terrine.semantic", "terrine.spec", "terrine.windows"]
 
 [[modules]]
 path = "terrine.model"
@@ -56,7 +64,7 @@ depends_on = ["terrine.errors", "terrine.semantic"]
 
 [[modules]]
 path = "terrine.compile"
-depends_on = ["terrine.backends", "terrine.errors", "terrine.execution", "terrine.model", "terrine.spec", "terrine.data", "terrine.semantic", "terrine.temporal", "terrine.windows"]
+depends_on = ["terrine.backends", "terrine.errors", "terrine.reasons", "terrine.execution", "terrine.model", "terrine.spec", "terrine.data", "terrine.semantic", "terrine.temporal", "terrine.windows"]
 
 [[modules]]
 path = "terrine.compile.cost"
@@ -64,7 +72,7 @@ depends_on = ["terrine.compile", "terrine.compile.dispatch", "terrine.data", "te
 
 [[modules]]
 path = "terrine.compile.shapes"
-depends_on = ["terrine.backends", "terrine.compile", "terrine.data", "terrine.errors", "terrine.model", "terrine.semantic", "terrine.spec", "terrine.temporal", "terrine.windows"]
+depends_on = ["terrine.backends", "terrine.compile", "terrine.data", "terrine.errors", "terrine.reasons", "terrine.model", "terrine.semantic", "terrine.spec", "terrine.temporal", "terrine.windows"]
 
 [[modules]]
 path = "terrine.compile.dispatch"
@@ -77,7 +85,7 @@ depends_on = ["terrine.compile", "terrine.compile.dispatch", "terrine.data", "te
 
 [[modules]]
 path = "terrine.dataset"
-depends_on = ["terrine.errors", "terrine.semantic", "terrine.spec", "terrine.data", "terrine.compile.cost", "terrine.compile.dispatch", "terrine.execution", "terrine.runtime", "terrine.export", "terrine.temporal"]
+depends_on = ["terrine.errors", "terrine.reasons", "terrine.semantic", "terrine.spec", "terrine.data", "terrine.compile.cost", "terrine.compile.dispatch", "terrine.execution", "terrine.runtime", "terrine.export", "terrine.temporal"]
 [[modules]]
 path = "terrine.runtime.materialize"
 depends_on = ["terrine.compile", "terrine.compile.cost", "terrine.compile.materialize", "terrine.data", "terrine.errors", "terrine.execution", "terrine.model", "terrine.spec"]
@@ -102,7 +110,7 @@ depends_on = ["terrine.errors", "terrine.runtime"]
 
 [[modules]]
 path = "terrine.export"
-depends_on = ["terrine.backends", "terrine.data", "terrine.errors", "terrine.spec"]
+depends_on = ["terrine.backends", "terrine.data", "terrine.errors", "terrine.reasons", "terrine.spec"]
 
 [[modules]]
 path = "terrine.agent"

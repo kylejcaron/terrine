@@ -8,6 +8,7 @@ import ibis
 
 from terrine.compile.anchors import AnchorTable, compile_anchors
 from terrine.compile.columns import CompiledStudy, compile_columns
+from terrine.spec._columns import EVENT_PANEL
 from terrine.spec.design import Design
 from terrine.spec.panels import EventPanelSpec
 
@@ -28,9 +29,13 @@ def compile_event_panel(
         offset = ibis.interval(seconds=period * spec.period)
         expanded.append(
             parent.table.mutate(
-                parent_event_id=parent.table.anchor_id,
-                parent_t0=parent.table.t0,
-                event_period=ibis.literal(period),
+                **dict(
+                    zip(
+                        EVENT_PANEL,
+                        (parent.table.anchor_id, parent.table.t0, ibis.literal(period)),
+                        strict=True,
+                    )
+                ),
                 anchor_id=ibis.struct(
                     {"event_id": parent.table.anchor_id, "period": ibis.literal(period)}
                 ),

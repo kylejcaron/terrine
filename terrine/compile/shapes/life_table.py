@@ -8,7 +8,9 @@ from typing import Any, TypedDict
 
 import pyarrow as pa
 
+import terrine.reasons as reason_codes
 from terrine.errors import RefusalSpec
+from terrine.spec._columns import IDENTITY, LIFE_TABLE_VALUES
 
 __all__ = ["aggregate_life_table"]
 
@@ -100,7 +102,7 @@ def aggregate_life_table(
     for index, origin in enumerate(t0):
         key = tuple(column[index] for column in groups)
         if complete[index] is not True:
-            incomplete_by_group[key].add(record_reasons[index] or "reason_unavailable")
+            incomplete_by_group[key].add(record_reasons[index] or reason_codes.REASON_UNAVAILABLE)
         terminal_elapsed = duration[index]
         entered = entry[index]
         if origin is None or terminal_elapsed is None or entered is None:
@@ -141,7 +143,7 @@ def aggregate_life_table(
             terminal_row["censored"] += 1
             reason = (
                 record_reasons[index] if not is_complete else censor_reasons[index]
-            ) or "unknown"
+            ) or reason_codes.UNKNOWN
             reason_counts = terminal_row["reasons"]
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
     reduced_support_by_group = {}
@@ -206,21 +208,11 @@ def aggregate_life_table(
             )
             rows.append(row)
     table = pa.Table.from_pylist(rows, schema=schema)
-    values = (
-        "at_risk",
-        "events",
-        "censored",
-        "censored_by_reason",
-        "delayed_entries",
-        "event_rate",
-        "censor_rate",
-    )
+    values = LIFE_TABLE_VALUES
     projection = []
     names = []
     for name in (
-        "unit",
-        "anchor_id",
-        "t0",
+        *IDENTITY,
         *(
             item
             for value in group_by

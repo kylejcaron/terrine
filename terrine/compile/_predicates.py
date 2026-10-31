@@ -8,6 +8,7 @@ from typing import Literal
 
 import ibis
 
+import terrine.reasons as reason_codes
 from terrine.backends.extrema import greatest, least
 from terrine.data import ColumnMeta, FeatureCutoff
 from terrine.semantic.filters import lower_filter
@@ -94,8 +95,8 @@ def compile_predicate(
                 comparison = complete.ifelse(comparison, ibis.null().cast("boolean"))
                 reason = ibis.cases(
                     (~complete, cause),
-                    (value.isnull(), cause.fill_null("all_values_null")),
-                    (comparison.isnull(), "null_comparison"),
+                    (value.isnull(), cause.fill_null(reason_codes.ALL_VALUES_NULL)),
+                    (comparison.isnull(), reason_codes.NULL_COMPARISON),
                     else_=ibis.null().cast("string"),
                 )
             status_name = builder.put("predicate", comparison)

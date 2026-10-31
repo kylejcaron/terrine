@@ -9,6 +9,7 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+import terrine.reasons as reason_codes
 from terrine.backends.timestamps import compare_timestamps
 from terrine.errors import RefusalSpec
 from terrine.temporal.ranges import (
@@ -164,9 +165,9 @@ def retention_threshold_bands(
             anchor._ret_observed_until, end, "ge", right_offset_seconds=end_offset
         )
     reason = ibis.cases(
-        (~anchor_valid, ibis.literal("horizon_unavailable")),
-        (~source_history, ibis.literal("incomplete_coverage")),
-        (~has_followup, ibis.literal("insufficient_followup")),
+        (~anchor_valid, ibis.literal(reason_codes.HORIZON_UNAVAILABLE)),
+        (~source_history, ibis.literal(reason_codes.INCOMPLETE_COVERAGE)),
+        (~has_followup, ibis.literal(reason_codes.INSUFFICIENT_FOLLOWUP)),
         else_=ibis.null().cast("string"),
     )
     complete = reason.isnull()
@@ -207,7 +208,7 @@ def retention_threshold_bands(
     )
     reason = ibis.cases(
         (reason.notnull(), reason),
-        (joined._ret_unknown.fill_null(False), "incomplete_label_history"),
+        (joined._ret_unknown.fill_null(False), reason_codes.INCOMPLETE_LABEL_HISTORY),
         else_=ibis.null().cast("string"),
     )
     complete = reason.isnull()

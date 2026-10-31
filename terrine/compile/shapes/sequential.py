@@ -17,6 +17,7 @@ from terrine.compile.shapes.matched_t0 import sample_risk_sets
 from terrine.data import ColumnMeta, Roles, RowCheck
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
+from terrine.spec._columns import TRIAL_PANEL
 from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
 from terrine.spec.panels import Initiation, PersistentAdoption, SequentialSpec
@@ -287,8 +288,8 @@ def compile_sequential(
         table, check = sample_risk_sets(table, sample)
         checks.append(check)
     columns = dict(compiled.columns)
-    columns["treatment"] = ColumnMeta(None, "treatment", None, None, None, None)
-    columns["trial_id"] = ColumnMeta(None, "trial", None, None, None, None)
+    for name, role in zip(TRIAL_PANEL, ("treatment", "trial"), strict=True):
+        columns[name] = ColumnMeta(None, role, None, None, None, None)
     roles = Roles(
         "unit",
         "anchor_id",

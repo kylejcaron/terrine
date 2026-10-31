@@ -7,6 +7,7 @@ from typing import cast
 import ibis
 import ibis.expr.types as ir
 
+import terrine.reasons as reason_codes
 from terrine.backends.dialect import current_dialect, dialect_scope
 from terrine.backends.numeric import (
     EXACT_OVERFLOW,
@@ -214,14 +215,16 @@ def _compile_cohorts(
         at_risk=mature.ifelse(joined.at_risk, ibis.null().cast("int64")),
         observable=mature.ifelse(joined.observable, ibis.null().cast("int64")),
         denominators_complete=mature,
-        denominators_reason=mature.ifelse(ibis.null().cast("string"), "administrative_cutoff"),
+        denominators_reason=mature.ifelse(
+            ibis.null().cast("string"), reason_codes.ADMINISTRATIVE_CUTOFF
+        ),
         complete=complete,
         reason=complete.ifelse(
             ibis.null().cast("string"),
             ibis.ifelse(
                 mature,
-                joined._reason.fill_null("incomplete_observation"),
-                "administrative_cutoff",
+                joined._reason.fill_null(reason_codes.INCOMPLETE_OBSERVATION),
+                reason_codes.ADMINISTRATIVE_CUTOFF,
             ),
         ),
     )

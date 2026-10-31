@@ -4,6 +4,11 @@
 
 ### API
 
+- List every shape's dataframe columns in `Design.describe` and publish
+  `terrine.reasons.REASONS` and `terrine.errors.REFUSAL_CODES` for interpreting
+  missing values and coded refusals. Internal baseline timestamp columns no
+  longer leak into state-panel dataframes.
+
 - Return materialized frames and dataset reads in deterministic identity order,
   with life tables ordered by grouping columns and time bin and event-sequence
   headers after their events. A user feature named `time_bin` does not change

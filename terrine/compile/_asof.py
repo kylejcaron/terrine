@@ -10,6 +10,7 @@ import ibis
 import ibis.expr.types as ir
 import pyarrow as pa
 
+import terrine.reasons as reason_codes
 from terrine.backends.extrema import greatest, least
 from terrine.backends.timestamps import compare_timestamps
 from terrine.data import ColumnMeta
@@ -128,10 +129,10 @@ def compile_asof(
     available = (source_ready & found & source_continuous & unit_ready).fill_null(False)
     value = table.__terrine_attribute_value
     reason = ibis.cases(
-        (~source_ready, "incomplete_coverage"),
-        (~found | ~source_continuous, "missing_history"),
-        (~unit_ready, "incomplete_observation"),
-        (value.isnull(), "all_values_null"),
+        (~source_ready, reason_codes.INCOMPLETE_COVERAGE),
+        (~found | ~source_continuous, reason_codes.MISSING_HISTORY),
+        (~unit_ready, reason_codes.INCOMPLETE_OBSERVATION),
+        (value.isnull(), reason_codes.ALL_VALUES_NULL),
         else_=ibis.null().cast("string"),
     )
     from_name, until_name = name("observed_from"), name("observed_until")

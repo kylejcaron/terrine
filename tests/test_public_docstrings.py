@@ -6,15 +6,25 @@ import pytest
 import terrine
 import terrine.dataset
 import terrine.export
+import terrine.reasons
 import terrine.recipes
 import terrine.spec
 from terrine.frame import Frame
 
 
 def _public_objects() -> Iterator[tuple[str, object]]:
-    for module in (terrine, terrine.recipes, terrine.spec, terrine.dataset, terrine.export):
+    for module in (
+        terrine,
+        terrine.recipes,
+        terrine.spec,
+        terrine.dataset,
+        terrine.export,
+        terrine.reasons,
+    ):
         for name in module.__all__:
-            yield f"{module.__name__}.{name}", getattr(module, name)
+            obj = getattr(module, name)
+            if callable(obj):
+                yield f"{module.__name__}.{name}", obj
     for owner, names in (
         (terrine.Model, ("from_tables", "from_catalog", "from_increment", "to_catalog")),
         (terrine.Design, ("validate", "build", "describe", "snapshot")),

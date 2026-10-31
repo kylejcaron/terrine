@@ -8,6 +8,7 @@ from textwrap import fill
 from typing import TYPE_CHECKING
 
 from terrine.semantic.time import boundary_timezone
+from terrine.spec._columns import design_columns
 from terrine.spec.anchors import EventAnchor, FixedDate, Schedule
 from terrine.spec.expressions import (
     And,
@@ -66,17 +67,6 @@ _OPERATORS = {
     "lt": "<",
     "lte": "<=",
 }
-_PANEL_SHAPES = (SequentialSpec, EventPanelSpec, CalendarComparisonSpec)
-_SHAPE_LABELS = (
-    (SequentialSpec, "trial panel"),
-    (EventPanelSpec, "event panel"),
-    (CalendarComparisonSpec, "calendar comparison"),
-    (CohortSpec, "trajectory"),
-    (TimeToEvent, "time-to-event"),
-    (LifeTable, "life table"),
-    (StatePanel, "state panel"),
-    (EventSequence, "event sequence"),
-)
 
 type Line = tuple[str, str]
 
@@ -704,29 +694,7 @@ class _Renderer:
         yield from self._empty_windows()
 
     def _columns(self) -> Iterator[Line]:
-        design, shape = self.design, self.design.shape
-        if shape != "cross_section" and not isinstance(shape, _PANEL_SHAPES):
-            label = next(label for kind, label in _SHAPE_LABELS if isinstance(shape, kind))
-            yield "", f"Columns: the {label} columns (see roles after build)."
-            return
-        columns = ["unit", "anchor_id", "t0"]
-        named = []
-        if design.treatment is not None or isinstance(shape, SequentialSpec):
-            named.append("treatment")
-        elif isinstance(shape, CalendarComparisonSpec):
-            columns.append("treatment")
-        named.extend((*design.features, *design.outcomes, *design.eligibility))
-        for name in named:
-            columns.extend((name, f"{name}__complete", f"{name}__reason"))
-        if shape == "cross_section":
-            yield "", f"Columns: {', '.join(columns)}."
-            return
-        label = next(label for kind, label in _SHAPE_LABELS if isinstance(shape, kind))
-        owned = f"the {label} columns (see roles after build)"
-        yield (
-            "",
-            f"Columns: {', '.join(columns)}, and {owned}." if columns else f"Columns: {owned}.",
-        )
+        yield "", f"Columns: {', '.join(design_columns(self.design))}."
 
     def render(self) -> str:
         shape = self.design.shape

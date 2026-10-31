@@ -11,6 +11,7 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+import terrine.reasons as reason_codes
 from terrine.backends.extrema import greatest, least
 from terrine.backends.timestamps import compare_timestamps
 from terrine.data import ColumnMeta, RowCheck
@@ -335,10 +336,13 @@ def aggregate_nonadditive_window(
         value = joined[output]
     complete_name = names["complete"]
     reason = ibis.cases(
-        (~joined[complete_name] & ~joined[names["source_complete"]], "incomplete_coverage"),
-        (~joined[complete_name], "incomplete_observation"),
-        (event_count == 0, "no_observations"),
-        ((event_count > 0) & (nonnull_count == 0), "all_values_null"),
+        (
+            ~joined[complete_name] & ~joined[names["source_complete"]],
+            reason_codes.INCOMPLETE_COVERAGE,
+        ),
+        (~joined[complete_name], reason_codes.INCOMPLETE_OBSERVATION),
+        (event_count == 0, reason_codes.NO_OBSERVATIONS),
+        ((event_count > 0) & (nonnull_count == 0), reason_codes.ALL_VALUES_NULL),
         else_=ibis.null().cast("string"),
     )
     reason_name = names["reason"]

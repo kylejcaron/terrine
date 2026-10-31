@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal, cast
 
 import pyarrow as pa
 
+import terrine.reasons as reason_codes
 from terrine.backends.registry import engine_supports
 from terrine.data import ColumnMeta, MaterializedFrame, Provenance, Roles
 from terrine.errors import RefusalSpec
@@ -138,13 +139,13 @@ def _complete_outcomes(
                 continue
             reason = reasons[index]
             if complete_name is None:
-                row_reasons = ["completeness_evidence_missing"]
+                row_reasons = [reason_codes.COMPLETENESS_EVIDENCE_MISSING]
             elif isinstance(reason, list):
                 row_reasons = [item for item in reason if isinstance(item, str) and item]
             else:
                 row_reasons = [reason] if isinstance(reason, str) and reason else []
             excluded_rows.add(index)
-            for exact_reason in row_reasons or ["reason_unavailable"]:
+            for exact_reason in row_reasons or [reason_codes.REASON_UNAVAILABLE]:
                 reason_rows[exact_reason].add(index)
     excluded = {reason: len(rows) for reason, rows in reason_rows.items()}
     _check_exclusions(excluded, drop=drop_incomplete)
@@ -227,9 +228,9 @@ def preflight_warehouse(
             )
             keep.append(cast("ir.BooleanValue", complete))
             if complete_name is None:
-                reason = ibis.array(["completeness_evidence_missing"])
+                reason = ibis.array([reason_codes.COMPLETENESS_EVIDENCE_MISSING])
             elif reason_name is None:
-                reason = ibis.array(["reason_unavailable"])
+                reason = ibis.array([reason_codes.REASON_UNAVAILABLE])
             else:
                 value = table[reason_name]
                 if value.type().is_array():
@@ -237,11 +238,19 @@ def preflight_warehouse(
                         lambda item: item.notnull() & (item != "")
                     )
                     reason = ibis.ifelse(
-                        values.isnull() | (values.length() == 0), ["reason_unavailable"], values
+                        values.isnull() | (values.length() == 0),
+                        [reason_codes.REASON_UNAVAILABLE],
+                        values,
                     )
                 else:
                     reason = ibis.array(
-                        [ibis.ifelse(value.isnull() | (value == ""), "reason_unavailable", value)]
+                        [
+                            ibis.ifelse(
+                                value.isnull() | (value == ""),
+                                reason_codes.REASON_UNAVAILABLE,
+                                value,
+                            )
+                        ]
                     )
             reasons.append(ibis.ifelse(complete, ibis.literal([], type="array<string>"), reason))
         excluded = {}

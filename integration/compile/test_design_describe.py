@@ -16,6 +16,7 @@ from terrine.spec import (
 )
 from terrine.spec.expressions import Expr
 from terrine.windows import Window
+from tests.fixtures.readme import readme_design, readme_model
 
 
 @pytest.fixture(scope="module")
@@ -32,6 +33,7 @@ def description_model():
                     }
                 ),
                 "id",
+                attributes=("until_at",),
             )
         },
         events={
@@ -90,6 +92,7 @@ def description_model():
                         "id": ["a", "a"],
                         "at": pd.to_datetime(["2025-01-06", "2025-01-13"], utc=True),
                         "health": ["well", "ill"],
+                        "event_id": ["c1", "c2"],
                     }
                 ),
                 time="at",
@@ -98,8 +101,17 @@ def description_model():
                 complete=complete,
             ),
         },
-        event_ids={"purchase": "event_id", "signup": "event_id"},
+        event_ids={"purchase": "event_id", "signup": "event_id", "checkup": "event_id"},
     )
+    try:
+        yield model
+    finally:
+        model.con.disconnect()
+
+
+@pytest.fixture(scope="module")
+def readme_bound_model():
+    model = readme_model()
     try:
         yield model
     finally:
@@ -305,3 +317,155 @@ def test_description_event_panel_uses_selected_anchor_times(description_model):
         row["t0"] == row["parent_t0"] + timedelta(days=2 * row["event_period"]) for row in rows
     )
     assert {"parent_t0", "event_period"} <= _tokens(design.describe(description_model))
+
+
+@pytest.mark.parametrize(
+    "design",
+    [
+        pytest.param(None, id="readme"),
+        pytest.param(
+            tr.Design(
+                None,
+                tr.FixedDate("2025-01-06"),
+                features={"recency": tr.since("purchase", window=("-5d", "0s"))},
+                eligibility={"eligible": tr.eq(tr.agg("count", window=("-1d", "0s")), 0)},
+                treatment=tr.spec.Treatment("until_at"),
+            ),
+            id="cross-section",
+        ),
+        pytest.param(
+            tr.recipes.survival(
+                start_event="signup",
+                end_event="churn",
+                features={"prior": tr.agg("count", window=("-1d", "0s"))},
+                treatment=tr.spec.Treatment("until_at"),
+            ),
+            id="survival",
+        ),
+        pytest.param(
+            tr.recipes.ltv(start_event="signup", metric="total", period="2d", periods=3),
+            id="ltv",
+        ),
+        pytest.param(
+            tr.recipes.life_table(
+                start_event="signup",
+                end_event="churn",
+                bin="5d",
+                group_by={"until": tr.asof("until_at")},
+            ),
+            id="life-table",
+        ),
+        *[
+            pytest.param(
+                tr.Design(
+                    None,
+                    tr.Schedule("1w", "2025-01-06", "2025-01-19"),
+                    features={"recent": tr.agg("count", window=("-1d", "0s"))},
+                    eligibility={"eligible": tr.eq(tr.agg("count", window=("-1d", "0s")), 0)},
+                    shape=tr.spec.StatePanel(
+                        state,
+                        periods=2,
+                        baseline_features={"prior": tr.agg("count", window=("-5d", "0s"))},
+                    ),
+                ),
+                id=name,
+            )
+            for name, state in (
+                ("state-panel", StateObservations("health", ("well", "ill"))),
+                ("binned-state-panel", tr.spec.BinnedMetricState("total", (5,), ("low", "high"))),
+            )
+        ],
+        pytest.param(
+            tr.recipes.trial_panel(
+                every="1w",
+                start="2025-01-06",
+                end="2025-01-20",
+                treatment=Initiation("upgrade", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+                outcomes={"future": tr.agg("total", window=("0s", "1d"))},
+                trial_weight=tr.spec.TrialWeight("equal_trial"),
+            ),
+            id="trial-panel",
+        ),
+        pytest.param(
+            tr.recipes.event_panel(
+                event="upgrade",
+                periods=(-1, 0, 1),
+                period="2d",
+                outcomes={"future": tr.agg("total", window=("0s", "1d"))},
+            ),
+            id="event-panel",
+        ),
+        pytest.param(
+            tr.Design(
+                None,
+                tr.Schedule("1w", "2024-12-30", "2025-01-20"),
+                outcomes={"future": tr.agg("total", window=("0s", "1d"))},
+                shape=CalendarComparisonSpec(
+                    Initiation("upgrade", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+                    control="not_yet_treated",
+                    reference_period=-1,
+                    comparison_periods=(0, 1),
+                ),
+            ),
+            id="calendar-comparison",
+        ),
+        *[
+            pytest.param(
+                tr.Design(
+                    None,
+                    tr.EventAnchor("signup"),
+                    features={"prior": tr.agg("count", window=("-1d", "0s"))},
+                    shape=EventSequence(
+                        "checkup",
+                        Window("0s", "14d"),
+                        max_events=5,
+                        representation=representation,
+                        properties=("health",),
+                        label_property="health",
+                        sessions=tr.spec.SessionSpec("2d"),
+                        funnel=tr.spec.FunnelSpec("health", ("well", "ill")),
+                    ),
+                ),
+                id=f"sequence-{representation}",
+            )
+            for representation in ("positions", "arrays")
+        ],
+    ],
+)
+def test_describe_columns_match_built_columns(design, description_model, readme_bound_model):
+    model = description_model
+    if design is None:
+        design, model = readme_design(), readme_bound_model
+    listed = design.describe(model).rsplit("Columns:", 1)[1]
+    columns = [name.strip() for name in " ".join(listed.split()).removesuffix(".").split(",")]
+    budget = tr.Budget(max_rows=100, max_output_bytes=1_000_000, strict_scan=False)
+    assert columns == list(design.build(model).to_pandas(budget=budget).columns)
+    assert not any(name.startswith("__terrine_baseline_") for name in columns)
+
+
+def test_every_emitted_reason_is_registered(description_model, readme_bound_model):
+    from terrine.dataset import TimeSplit
+    from terrine.reasons import REASONS
+
+    model = readme_bound_model
+    frame = readme_design().build(model)
+    results = [
+        frame.to_pandas(),
+        tr.recipes.survival(start_event="signup", end_event="churn")
+        .build(description_model)
+        .to_pandas(),
+        frame.training_set(
+            label="spend_next_30d",
+            incomplete_labels="keep",
+            split=TimeSplit(train_until="2025-02-15"),
+        ).to_pandas(),
+    ]
+    emitted = {
+        reason
+        for result in results
+        for name in result.columns
+        if name.endswith("__reason") or name in ("censor_reason", "__terrine_split_reason")
+        for reason in result[name].dropna()
+    }
+    assert {"incomplete_coverage", "source_coverage", "label_overlap"} <= emitted
+    assert emitted <= REASONS.keys()

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, cast
 import ibis
 import ibis.expr.types as ir
 
+import terrine.reasons as reason_codes
 from terrine.backends.extrema import greatest, least
 from terrine.backends.timestamps import compare_timestamps
 from terrine.data import ColumnMeta
@@ -91,8 +92,8 @@ def compile_retention(
         anchors.t0, anchors._observed_from, "ge"
     )
     reason = ibis.cases(
-        (~source_ready, "incomplete_coverage"),
-        (~unit_ready, "incomplete_observation"),
+        (~source_ready, reason_codes.INCOMPLETE_COVERAGE),
+        (~unit_ready, reason_codes.INCOMPLETE_OBSERVATION),
         else_=joined.reason,
     )
     complete = reason.isnull()

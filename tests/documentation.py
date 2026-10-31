@@ -176,6 +176,19 @@ def render_refusals(declarations: tuple[RefusalDeclaration, ...]) -> str:
     return "\n".join(lines)
 
 
+def render_refusal_codes(declarations: tuple[RefusalDeclaration, ...]) -> str:
+    codes = sorted({item.code for item in declarations})
+    entries = "".join(f'        "{code}",\n' for code in codes)
+    return (
+        '"""Stable package-wide refusal codes."""\n\n'
+        "CODES: frozenset[str] = frozenset(\n"
+        "    {\n"
+        f"{entries}"
+        "    }\n"
+        ")\n"
+    )
+
+
 def broken_links(root: Path) -> list[str]:
     sources = [
         root / "README.md",
@@ -230,6 +243,9 @@ def main() -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     declarations = refusal_declarations(root / "terrine")
     destination.write_text(render_refusals(declarations), encoding="utf-8")
+    (root / "terrine/_refusal_codes.py").write_text(
+        render_refusal_codes(declarations), encoding="utf-8"
+    )
     print(
         f"Documented {len({item.code for item in declarations})} codes "
         f"from {len(declarations)} declarations"

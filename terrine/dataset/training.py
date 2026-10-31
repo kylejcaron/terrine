@@ -7,6 +7,7 @@ from typing import Any
 
 import pyarrow as pa
 
+import terrine.reasons as reason_codes
 from terrine.dataset.splits import (
     GroupSplit,
     SplitAssignment,
@@ -65,7 +66,7 @@ def assign_training_splits(
             if isinstance(policy, TimeSplit):
                 available = available and end is not None
             support[label] = {"available": available, "end": end, "point": point}
-            reasons[label] = row.get(metadata.reason_column) or "label_unavailable"
+            reasons[label] = row.get(metadata.reason_column) or reason_codes.LABEL_UNAVAILABLE
             if isinstance(policy, TimeSplit) and timing is not None:
                 for reference, bounds in timing.selector_support_seconds.items():
                     dependency = (label, "selector_interval", reference)
@@ -82,7 +83,7 @@ def assign_training_splits(
                         "end": selector_time,
                         "point": True,
                     }
-                    reasons[dependency] = "label_unavailable"
+                    reasons[dependency] = reason_codes.LABEL_UNAVAILABLE
         records.append(
             {
                 **row,

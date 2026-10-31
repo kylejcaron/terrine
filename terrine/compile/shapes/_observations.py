@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import ibis
 import pyarrow as pa
 
+import terrine.reasons as reason_codes
 from terrine.compile.anchors import (
     AnchorTable,
     _precision_check,
@@ -20,6 +21,7 @@ from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.data import ColumnMeta, Roles
 from terrine.semantic.bind import normalize_events
 from terrine.semantic.models import TableRef
+from terrine.spec._columns import IDENTITY, STATE_PANEL
 from terrine.spec.anchors import FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.state_panel import _INVALID_OBSERVATIONS, StateObservations, StatePanel
@@ -203,10 +205,10 @@ def _status(table, point, *, time, coverage):
     complete = source_ready & unit_ready & found
     value = ibis.ifelse(complete, point.point_state, ibis.null().cast("string"))
     reason = ibis.cases(
-        (~source_ready, "incomplete_coverage"),
-        (~unit_ready, "incomplete_observation"),
-        (~found, "missing_state_observation"),
-        (point.point_state.isnull(), "state_value_null"),
+        (~source_ready, reason_codes.INCOMPLETE_COVERAGE),
+        (~unit_ready, reason_codes.INCOMPLETE_OBSERVATION),
+        (~found, reason_codes.MISSING_STATE_OBSERVATION),
+        (point.point_state.isnull(), reason_codes.STATE_VALUE_NULL),
         else_=ibis.null().cast("string"),
     )
     return value, complete, reason
@@ -379,6 +381,8 @@ def compile_observed_state_panel(
                     "end_bound_column",
                 ):
                     original = getattr(timing, field)
+                    if field == "point_time_column" and timing.kind == "fixed_t0":
+                        continue
                     if original is not None:
                         alias = f"__terrine_baseline_{index}_{field}"
                         projection[alias] = base[original]
@@ -421,17 +425,8 @@ def compile_observed_state_panel(
         prior_state="from_state",
     )
     projection_names = [
-        "unit",
-        "anchor_id",
-        "t0",
-        "from_time",
-        "to_time",
-        "scheduled_to",
-        "period_index",
-        "gap",
-        "from_state",
-        "to_state",
-        "terminal",
+        *IDENTITY,
+        *STATE_PANEL,
         *design.eligibility,
         *feature_names,
         "from_state_complete",

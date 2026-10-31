@@ -11,9 +11,11 @@ from typing import TYPE_CHECKING
 import ibis
 import ibis.expr.datatypes as dt
 
+import terrine.reasons as reason_codes
 from terrine.compile.anchors import AnchorTable
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.data import ColumnMeta, Roles
+from terrine.spec._columns import IDENTITY, STATE_PANEL
 from terrine.spec.anchors import FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.expressions import MetricAgg
@@ -115,11 +117,13 @@ def _state_value(relation, state: BinnedMetricState):
     reason = ibis.cases(
         (
             ~available,
-            relation.__terrine_state_reason.fill_null(ibis.literal("incomplete_observation")),
+            relation.__terrine_state_reason.fill_null(
+                ibis.literal(reason_codes.INCOMPLETE_OBSERVATION)
+            ),
         ),
         (
             available & raw.isnull(),
-            relation.__terrine_state_reason.fill_null("state_value_null"),
+            relation.__terrine_state_reason.fill_null(reason_codes.STATE_VALUE_NULL),
         ),
         else_=ibis.null().cast("string"),
     )
@@ -269,6 +273,8 @@ def _binned(
                     "end_bound_column",
                 ):
                     original = getattr(timing, field)
+                    if field == "point_time_column" and timing.kind == "fixed_t0":
+                        continue
                     if original is not None:
                         alias = f"__terrine_baseline_{index}_{field}"
                         baseline_projection[alias] = raw_baseline[original]
@@ -330,17 +336,8 @@ def _binned(
         prior_state="from_state",
     )
     required_columns = [
-        "unit",
-        "anchor_id",
-        "t0",
-        "from_time",
-        "to_time",
-        "scheduled_to",
-        "period_index",
-        "gap",
-        "from_state",
-        "to_state",
-        "terminal",
+        *IDENTITY,
+        *STATE_PANEL,
         *feature_names,
         *design.eligibility,
         "from_state_complete",

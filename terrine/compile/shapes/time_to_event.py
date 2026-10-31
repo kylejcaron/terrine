@@ -10,6 +10,7 @@ import ibis
 import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 
+import terrine.reasons as reason_codes
 from terrine.backends.dialect import current_dialect
 from terrine.backends.extrema import greatest, least
 from terrine.backends.timestamps import _UNSUPPORTED as _TIMESTAMP_ORDER_UNSUPPORTED
@@ -24,6 +25,7 @@ from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import filter_source_rows
+from terrine.spec._columns import IDENTITY, SURVIVAL, SURVIVAL_VALUES
 from terrine.spec.anchors import FixedDate
 from terrine.spec.design import Design
 from terrine.spec.trajectory import TimeToEvent
@@ -39,7 +41,6 @@ _INVALID = RefusalSpec(
     "terrine.survival.invalid_compilation",
     "Time-to-event compilation failed ({reason}).",
 )
-_INCOMPLETE_HISTORY = "incomplete_initial_history"
 
 
 def _bounded_nanoseconds(scale: int | None) -> bool:
@@ -418,11 +419,11 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
     )
     reason = ibis.ifelse(
         initial_gap,
-        _INCOMPLETE_HISTORY,
+        reason_codes.INCOMPLETE_INITIAL_HISTORY,
         ibis.ifelse(
             entry_missing,
-            "missing_delayed_entry",
-            ibis.ifelse(no_followup, "no_eligible_followup", ibis.null().cast("string")),
+            reason_codes.MISSING_DELAYED_ENTRY,
+            ibis.ifelse(no_followup, reason_codes.NO_ELIGIBLE_FOLLOWUP, ibis.null().cast("string")),
         ),
     )
     prevalent = result._prior_event_time.notnull()
@@ -452,11 +453,11 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
             *support_columns,
         )
     }
-    censor_reason = ibis.literal("source_coverage")
+    censor_reason = ibis.literal(reason_codes.SOURCE_COVERAGE)
     if shape.exit_event is not None:
         censor_reason = ibis.ifelse(
             retained._exit_time.notnull() & (retained._exit_time == retained._followup_end),
-            ibis.literal("exit"),
+            ibis.literal(reason_codes.EXIT),
             censor_reason,
         )
     if design.administrative_cutoff is not None:
@@ -465,7 +466,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         )
         censor_reason = ibis.ifelse(
             retained._followup_end == cutoff,
-            ibis.literal("administrative_cutoff"),
+            ibis.literal(reason_codes.ADMINISTRATIVE_CUTOFF),
             censor_reason,
         )
     censor_reason = ibis.ifelse(
@@ -474,17 +475,25 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         ibis.ifelse(retained._event_time.notnull(), ibis.null().cast("string"), censor_reason),
     )
     output_projection.update(
-        unit=retained.unit,
-        anchor_id=retained.anchor_id,
-        t0=retained.t0,
-        event_time=retained._event_time,
-        censor_time=retained._followup_end,
-        duration=ibis.coalesce(retained._event_time, retained._followup_end),
-        event=retained._event_time.notnull(),
-        entry_time=retained._followup_start,
+        dict(
+            zip(
+                (*IDENTITY, *SURVIVAL),
+                (
+                    retained.unit,
+                    retained.anchor_id,
+                    retained.t0,
+                    retained._event_time,
+                    retained._followup_end,
+                    ibis.coalesce(retained._event_time, retained._followup_end),
+                    retained._event_time.notnull(),
+                    retained._followup_start,
+                    censor_reason,
+                ),
+                strict=True,
+            )
+        ),
         complete=complete,
         reason=reason,
-        censor_reason=censor_reason,
     )
     for timing in base.expression_timings.values():
         for column in (
@@ -501,7 +510,7 @@ def compile_time_to_event(design: Design, model: Model) -> CompiledStudy:
         {
             **{
                 name: ColumnMeta(None, "outcome", None, None, "complete", "reason")
-                for name in ("event", "event_time", "duration")
+                for name in SURVIVAL_VALUES[:-1]
             },
             "censor_reason": ColumnMeta(None, "outcome", None, None, None, None),
         }

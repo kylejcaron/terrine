@@ -15,6 +15,7 @@ import ibis
 import ibis.expr.types as ir
 import pyarrow as pa
 
+import terrine.reasons as reason_codes
 from terrine.backends.dialect import dialect_scope
 from terrine.backends.extrema import greatest, least
 from terrine.backends.registry import expression_dialect
@@ -576,10 +577,13 @@ def compile_columns(
             False
         )
         reason = ibis.cases(
-            (~parent_complete, parent_reason.fill_null(ibis.literal("incomplete_selector"))),
-            (~origin_present, "missing_selector_origin"),
-            (~source_ready, "incomplete_coverage"),
-            (~unit_observed, "incomplete_observation"),
+            (
+                ~parent_complete,
+                parent_reason.fill_null(ibis.literal(reason_codes.INCOMPLETE_SELECTOR)),
+            ),
+            (~origin_present, reason_codes.MISSING_SELECTOR_ORIGIN),
+            (~source_ready, reason_codes.INCOMPLETE_COVERAGE),
+            (~unit_observed, reason_codes.INCOMPLETE_OBSERVATION),
             else_=ibis.null().cast("string"),
         )
         observed_from = ibis.literal(coverage.start)
@@ -713,7 +717,7 @@ def compile_columns(
                         candidates_with_uncertainty[metadata["complete"]] & ~unknown_label
                     ),
                     metadata["reason"]: ibis.cases(
-                        (unresolved, "incomplete_label_history"),
+                        (unresolved, reason_codes.INCOMPLETE_LABEL_HISTORY),
                         else_=candidates_with_uncertainty[metadata["reason"]],
                     ),
                 }
@@ -1142,7 +1146,7 @@ def compile_columns(
                 ),
                 combined_reason: ibis.cases(
                     (~origin_complete, result_table[origin_reason_name]),
-                    (~has_origin, "missing_selector_origin"),
+                    (~has_origin, reason_codes.MISSING_SELECTOR_ORIGIN),
                     else_=result_reason,
                 ),
             }

@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-__all__ = ["TerrineError", "RefusalSpec", "UnverifiedBackendWarning"]
+from terrine._refusal_codes import CODES
+
+__all__ = ["TerrineError", "RefusalSpec", "UnverifiedBackendWarning", "REFUSAL_CODES"]
+
+REFUSAL_CODES = CODES
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 

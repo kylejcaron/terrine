@@ -11,6 +11,7 @@ from decimal import Decimal
 from fractions import Fraction
 from typing import Any, Literal
 
+import terrine.reasons as reason_codes
 from terrine.errors import RefusalSpec, TerrineError
 from terrine.semantic.time import instant
 
@@ -287,7 +288,7 @@ def assign_group_splits(
         identity = row["id"]
         key = row.get(field)
         if key is None:
-            assignments[identity] = SplitAssignment("unassigned", "group_missing")
+            assignments[identity] = SplitAssignment("unassigned", reason_codes.GROUP_MISSING)
         else:
             assignments[identity] = SplitAssignment(group_bucket(key, policy))
     return assignments
@@ -339,7 +340,7 @@ def assign_splits(
         elif policy.validation_until is None and origin >= policy.train_until + policy.embargo:
             bucket, boundary = "validation", None
         else:
-            output[key] = SplitAssignment("unassigned", "embargo")
+            output[key] = SplitAssignment("unassigned", reason_codes.EMBARGO)
             continue
         support = row.get("label_support")
         if isinstance(support, dict):
@@ -349,15 +350,17 @@ def assign_splits(
             if unavailable:
                 reasons = row.get("label_reasons", {})
                 name, _ = unavailable[0]
-                output[key] = SplitAssignment("unassigned", reasons.get(name, "label_unavailable"))
+                output[key] = SplitAssignment(
+                    "unassigned", reasons.get(name, reason_codes.LABEL_UNAVAILABLE)
+                )
                 continue
         elif row.get("label_available", row.get("label_end") is not None) is False:
             output[key] = SplitAssignment(
-                "unassigned", row.get("label_reason", "label_unavailable")
+                "unassigned", row.get("label_reason", reason_codes.LABEL_UNAVAILABLE)
             )
             continue
         elif "label_end" not in row:
-            output[key] = SplitAssignment("unassigned", "label_unavailable")
+            output[key] = SplitAssignment("unassigned", reason_codes.LABEL_UNAVAILABLE)
             continue
         ends: list[tuple[Any, bool]] = []
         if isinstance(support, dict):
@@ -370,22 +373,22 @@ def assign_splits(
             for end_value, point in ends:
                 if end_value is None:
                     output[key] = SplitAssignment(
-                        "unassigned", row.get("label_reason", "label_unavailable")
+                        "unassigned", row.get("label_reason", reason_codes.LABEL_UNAVAILABLE)
                     )
                     break
                 end = _instant(end_value, "label_end")
                 if not (end < boundary if point else end <= boundary):
-                    output[key] = SplitAssignment("unassigned", "label_overlap")
+                    output[key] = SplitAssignment("unassigned", reason_codes.LABEL_OVERLAP)
                     break
             if key in output:
                 continue
         if policy.groups is not None:
             group = (group_keys or {}).get(key, row.get(policy.groups.group))
             if group is None:
-                output[key] = SplitAssignment("unassigned", "group_missing")
+                output[key] = SplitAssignment("unassigned", reason_codes.GROUP_MISSING)
                 continue
             if group_bucket(group, policy.groups) != bucket:
-                output[key] = SplitAssignment("unassigned", "split_mismatch")
+                output[key] = SplitAssignment("unassigned", reason_codes.SPLIT_MISMATCH)
                 continue
         output[key] = SplitAssignment(bucket)
     return output

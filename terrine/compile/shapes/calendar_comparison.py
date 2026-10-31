@@ -16,6 +16,7 @@ from terrine.compile.columns import CompiledStudy, _validate_names, compile_colu
 from terrine.data import ColumnMeta, Roles, RowCheck
 from terrine.errors import RefusalSpec
 from terrine.semantic.bind import normalize_events
+from terrine.spec._columns import CALENDAR_COMPARISON
 from terrine.spec.anchors import Schedule
 from terrine.spec.design import Design
 from terrine.spec.panels import CalendarComparisonSpec
@@ -268,12 +269,20 @@ def _stack(
         "unit": with_values.unit,
         "anchor_id": ibis.struct({"cohort": with_values.focal_cohort, "period": with_values.t0}),
         "t0": with_values.t0,
-        "cohort": with_values.focal_cohort,
-        "period": with_values.t0,
-        "event_period": with_values.period,
-        "treatment": treated,
-        "control_eligible": control,
-        "__terrine_treatment_initiation_time": with_values.__terrine_initiation_time,
+        **dict(
+            zip(
+                CALENDAR_COMPARISON,
+                (
+                    with_values.focal_cohort,
+                    with_values.t0,
+                    with_values.period,
+                    treated,
+                    control,
+                    with_values.__terrine_initiation_time,
+                ),
+                strict=True,
+            )
+        ),
         **columns,
     }
     if "__terrine_eligible" in table.columns:
