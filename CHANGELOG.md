@@ -6,7 +6,8 @@
 
 - Return materialized frames and dataset reads in deterministic identity order,
   with life tables ordered by grouping columns and time bin and event-sequence
-  headers after their events. Document naive source timestamps as UTC instants
+  headers after their events. A user feature named `time_bin` does not change
+  ordinary identity ordering. Document naive source timestamps as UTC instants
   in source declarations and design completeness summaries.
 - Keep the package root focused on binding, Design, everyday expressions, recipes,
   results and errors. Import specialized study inputs and quantiles from

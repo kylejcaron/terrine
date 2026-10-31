@@ -5,18 +5,18 @@ import pyarrow as pa
 import pytest
 
 import terrine as tr
-from terrine.spec import Design, EventAnchor
+from terrine.spec import Design, EventAnchor, FixedDate
 from tests.fixtures.readme import readme_design, readme_tables
 
 
 @pytest.fixture
-def shuffled_model():
+def shuffled_model(tmp_path):
     tables = readme_tables()
     orders = tables["orders"].append_column("event_id", pa.array(["z", "b", "c", "d", "e"]))
     orders = pa.concat_tables(
         [orders, orders.slice(0, 1).set_column(3, "event_id", pa.array(["a"]))]
     )
-    con = ibis.duckdb.connect()
+    con = ibis.duckdb.connect(str(tmp_path / "ordering.duckdb"))
     con.create_table(
         "customers", pa.table({"customer_id": ["carol", "bob", "alice"], "segment": [10, 2, 10]})
     )
@@ -68,6 +68,20 @@ def test_rows_are_ordered_by_identity_columns(shuffled_model):
     keys = tied.to_pandas()[["unit", "t0", "anchor_id"]]
     assert keys.duplicated(["unit", "t0"]).any()
     assert keys.equals(keys.sort_values(list(keys.columns)).reset_index(drop=True))
+
+
+@pytest.mark.parametrize("reader", ["frame", "dataset"])
+def test_time_bin_feature_keeps_identity_order(shuffled_model, reader):
+    frame = Design(
+        "customer",
+        FixedDate("2025-02-01"),
+        features={"time_bin": tr.agg("orders", window=("-30d", "0s"))},
+    ).build(shuffled_model)
+    result = (
+        frame if reader == "frame" else frame.stage("ordering", budget=tr.Budget(strict_scan=False))
+    )
+    table = result.to_pyarrow()
+    assert table["unit"].to_pylist() == ["alice", "bob", "carol"]
 
 
 def test_life_table_rows_are_ordered_by_group_and_bin(shuffled_model):

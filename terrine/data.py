@@ -1666,12 +1666,13 @@ def _ordered_columns(
     return (*ordered, *bookkeeping)
 
 
-def output_sort_keys(schema: pa.Schema, roles: Roles) -> tuple[str, ...]:
-    """Return the stable identity and shape-specific ordering columns."""
+def output_sort_keys(schema: pa.Schema, roles: Roles, *, life_table: bool) -> tuple[str, ...]:
+    """Return present ordering columns for the declared output shape."""
     names = set(schema.names)
-    if "time_bin" in names:
+    if life_table:
         ordered = [name for name in roles.features if name in names and name != "time_bin"]
-        ordered.append("time_bin")
+        if "time_bin" in names:
+            ordered.append("time_bin")
     else:
         ordered = [
             name
@@ -1715,7 +1716,9 @@ class MaterializedFrame:
                 self.provenance.expression_timings,
             )
         )
-        keys = output_sort_keys(table.schema, self.roles)
+        keys = output_sort_keys(
+            table.schema, self.roles, life_table=self.provenance.shape == "life_table"
+        )
         if keys:
             table = table.sort_by([(name, "ascending") for name in keys], null_placement="at_end")
         object.__setattr__(self, "table", table)
