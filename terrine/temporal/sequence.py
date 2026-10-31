@@ -15,7 +15,7 @@ import pyarrow as pa
 from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
 from terrine.temporal.sessionize import sessionize
-from terrine.windows import Window
+from terrine.windows import Window, seconds_text
 
 _MAX_EVENTS_EXCEEDED = RefusalSpec(
     "terrine.sequence.max_events_exceeded",
@@ -890,7 +890,7 @@ def event_sequence(
                 }
             )
         columns[name] = ColumnMeta(
-            Window(window_start, window_end),
+            Window(seconds_text(window_start), seconds_text(window_end)),
             "event_property",
             None,
             None,

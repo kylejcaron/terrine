@@ -43,7 +43,7 @@ from terrine.spec.expressions import (
 )
 from terrine.spec.sequence import EventSequence
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
-from terrine.windows import Window, _duration
+from terrine.windows import Window, _duration, seconds_text
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -257,10 +257,10 @@ def _fixed_anchors(design: Design, model: Model) -> tuple[datetime, ...] | None:
 
 def _retention_window(expr: RetentionMetric, model: Model) -> Window:
     if expr.finite_horizon_seconds is not None:
-        return Window(0, expr.finite_horizon_seconds)
+        return Window(0, seconds_text(expr.finite_horizon_seconds))
     coverage = model.readiness.for_fact(model.catalog.events[expr.event].source)
     span = coverage.end_exclusive - coverage.start
-    return Window(0, span.days * 86_400 + span.seconds + bool(span.microseconds))
+    return Window(0, seconds_text(span.days * 86_400 + span.seconds + bool(span.microseconds)))
 
 
 def _outcome_bounds(design: Design, model: Model) -> tuple[tuple[int, ...], tuple[datetime, ...]]:
@@ -913,7 +913,7 @@ def resolve_unit(design: Design, model: Model) -> Design:
         return design
     choices = tuple(sorted(model.units))
     if len(choices) == 1:
-        return replace(design, unit=choices[0])
+        return replace(design, unit=choices[0], gap=seconds_text(design.gap))
     if not choices:
         raise _INVALID.error(reason="no_unit_source")
     raise _AMBIGUOUS_UNIT.error(owner="design", choices=choices, parameter="unit")

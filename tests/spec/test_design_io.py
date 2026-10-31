@@ -110,7 +110,7 @@ def test_event_anchor_offset_preserves_saved_design_identity_and_round_trips():
     assert isinstance(shifted.anchor, EventAnchor)
     assert shifted.anchor.offset == 86_400
     assert shifted.spec_hash != original.spec_hash
-    assert shifted == Design("user", EventAnchor("purchase", "nth", 2, offset=86_400))
+    assert shifted == Design("user", EventAnchor("purchase", "nth", 2, offset="86400s"))
     assert json.loads(to_json(shifted))["design"]["anchor"]["offset"] == 86_400
     for restored in (from_json(to_json(shifted)), from_yaml(to_yaml(shifted))):
         assert restored == shifted

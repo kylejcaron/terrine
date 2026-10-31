@@ -392,7 +392,7 @@ def test_funnel_dependency_generated_name_does_not_overwrite_event_values(
             Window("0s", "2h"),
             max_events=5,
             properties=(selected_property,) if selected_property is not None else (),
-            sessions=SessionSpec(3600) if with_sessions else None,
+            sessions=SessionSpec("1h") if with_sessions else None,
             funnel=FunnelSpec(property_name, ("view", "purchase")),
         ),
     )
@@ -648,7 +648,7 @@ def test_session_output_names_are_reserved_from_event_properties():
             Window("0s", "1d"),
             max_events=5,
             properties=("sessions",),
-            sessions=SessionSpec(3600),
+            sessions=SessionSpec("1h"),
         )
     assert error.value.code == "terrine.sequence.invalid_spec"
 

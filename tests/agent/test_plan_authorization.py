@@ -94,7 +94,7 @@ def test_prepare_uses_owner_planner_and_refuses_without_reopenable_snapshot(owne
     assert owner_tools.policy.snapshot_authority.find_retained(
         invocation["snapshot_id"], namespace="agent"
     )
-    changed = replace(definition, base_design=replace(definition.base_design, gap=1))
+    changed = replace(definition, base_design=replace(definition.base_design, gap="1s"))
     assert (
         owner_tools.prepare_dataset(changed, destination=destination, invocation_id="first").code
         == "terrine.runtime.plan_invocation_conflict"

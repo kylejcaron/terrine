@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from terrine._time import utc_instant
 
@@ -42,7 +42,7 @@ from terrine.spec.expressions import (
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import StatePanel
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
-from terrine.windows import seconds
+from terrine.windows import duration, seconds_text
 
 _RESERVED_OUTPUT_NAME = RefusalSpec(
     "terrine.spec.reserved_output_name",
@@ -96,13 +96,15 @@ class Treatment:
     at: int
     known_at_t0: bool
 
-    def __init__(self, attribute: str, at: str | int = "0d", known_at_t0: bool = False) -> None:
+    def __init__(
+        self, attribute: str, at: str | Literal[0] = "0d", known_at_t0: bool = False
+    ) -> None:
         if not isinstance(attribute, str) or not attribute.strip():
             raise _INVALID.error(reason="empty_name", field="attribute")
         if not isinstance(known_at_t0, bool):
             raise _INVALID.error(reason="wrong_type", field="known_at_t0")
         object.__setattr__(self, "attribute", attribute)
-        object.__setattr__(self, "at", seconds(at, field="at"))
+        object.__setattr__(self, "at", duration(at, field="at"))
         object.__setattr__(self, "known_at_t0", known_at_t0)
 
 
@@ -144,7 +146,7 @@ class Design:
         outcomes: Mapping[str, Expr | Predicate] | None = None,
         eligibility: Mapping[str, Predicate] | None = None,
         treatment: Treatment | None = None,
-        gap: str | int = "0d",
+        gap: str | Literal[0] = "0d",
         shape: str
         | StatePanel
         | EventSequence
@@ -199,7 +201,7 @@ class Design:
             from terrine.spec.panels import _CONFLICT
 
             raise _CONFLICT.error()
-        gap_seconds = seconds(gap, field="gap")
+        gap_seconds = duration(gap, field="gap")
         if gap_seconds < 0:
             raise _INVALID.error(reason="negative", field="gap")
         object.__setattr__(self, "unit", unit)
@@ -381,7 +383,7 @@ class Design:
             FixedDate(resolved),
             features={name: parent.features[name] for name in selected},
             eligibility=eligibility,
-            gap=parent.gap,
+            gap=seconds_text(parent.gap),
         )
         frame = scoring_design.build(model)
         from terrine.frame import _ScoringView

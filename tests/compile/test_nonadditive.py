@@ -247,7 +247,7 @@ def test_quantile_probability_extends_over_nonadditive_measure_facts(nonadditive
     assert rows[0]["q"] == Decimal("1.75")
 
 
-def test_reanchored_nonadditive_feature_cutoff_uses_absolute_selector_support(nonadditive_model):
+def test_nonzero_feature_cutoff_survives_build_and_arrow_metadata(nonadditive_model):
     from terrine.spec import event_time
 
     selector = event_time("value", window=("-3d", "-2d"))
@@ -256,8 +256,10 @@ def test_reanchored_nonadditive_feature_cutoff_uses_absolute_selector_support(no
         FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),
         features={"minimum": agg("amount_min", window=("0d", "1d"), relative_to=selector)},
     )
-    frame = design.build(nonadditive_model)
-    assert frame._compiled.feature_cutoffs["minimum"].latest_seconds == -86_400
+    materialized = design.build(nonadditive_model).materialize()
+    assert materialized.provenance.feature_cutoffs["minimum"].latest_seconds == -86_400
+    restored = type(materialized).from_arrow(materialized.to_arrow())
+    assert restored.provenance.feature_cutoffs["minimum"].latest_seconds == -86_400
 
 
 def test_quantile_refuses_probability_scale_exceeding_exact_rank_budget(nonadditive_model):

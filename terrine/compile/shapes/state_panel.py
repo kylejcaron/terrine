@@ -23,7 +23,7 @@ from terrine.spec.state_panel import (
     StateObservations,
     StatePanel,
 )
-from terrine.windows import Window
+from terrine.windows import Window, seconds_text
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -44,7 +44,7 @@ def _state_panel_design(
         anchor,
         features=features,
         eligibility=design.eligibility if filter_population else None,
-        gap=design.gap if gap is None else gap,
+        gap=seconds_text(design.gap if gap is None else gap),
         shape="cross_section",
         anchor_range=design.anchor_range if filter_population else None,
     )
@@ -135,7 +135,7 @@ def _union_state_periods(
 ):
     schedule = design.anchor
     assert isinstance(schedule, Schedule) and schedule.every is not None
-    period = Window(-schedule.every, 0)
+    period = Window(seconds_text(-schedule.every), 0)
     node = MetricAgg(metric, period)
     state_design = _state_panel_design(
         design, anchor=schedule, features={"_state_period": node}, gap=0
@@ -292,7 +292,7 @@ def _binned(
         )
     state_columns = {
         "from_state": ColumnMeta(
-            Window(-every, 0),
+            Window(seconds_text(-every), 0),
             "prior_state",
             None,
             None,
@@ -300,7 +300,7 @@ def _binned(
             "from_state_reason",
         ),
         "to_state": ColumnMeta(
-            Window(0, every),
+            Window(0, seconds_text(every)),
             "outcome",
             None,
             None,

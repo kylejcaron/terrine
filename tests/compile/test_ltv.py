@@ -226,7 +226,7 @@ def test_cumulative_float_overflow_refuses(monkeypatch):
         period = 7 * 24 * 60 * 60
         metadata = {
             f"__trajectory_age_{age}": ColumnMeta(
-                Window(age * period, (age + 1) * period),
+                Window(f"{age * period}s", f"{(age + 1) * period}s"),
                 "outcome",
                 "observed_from",
                 "observed_until",
@@ -288,7 +288,7 @@ def test_portable_cumulative_decimal_beyond_the_accumulator_refuses(monkeypatch)
         period = 7 * 24 * 60 * 60
         metadata = {
             f"__trajectory_age_{age}": ColumnMeta(
-                Window(age * period, (age + 1) * period),
+                Window(f"{age * period}s", f"{(age + 1) * period}s"),
                 "outcome",
                 "observed_from",
                 "observed_until",

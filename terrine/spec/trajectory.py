@@ -8,7 +8,7 @@ from typing import Literal
 
 from terrine.errors import RefusalSpec
 from terrine.spec.anchors import _aware_instant
-from terrine.windows import seconds
+from terrine.windows import duration
 
 __all__ = ["Trajectory", "CohortSpec", "CohortGrouping", "TimeToEvent", "LifeTable"]
 
@@ -34,18 +34,18 @@ class Trajectory:
     cumulative: bool
 
     def __init__(
-        self, metric: str, period: str | int, periods: int, cumulative: bool = False
+        self, metric: str, period: str | Literal[0], periods: int, cumulative: bool = False
     ) -> None:
         _name(metric, "metric")
-        duration = seconds(period, field="period")
-        if duration <= 0:
+        period_seconds = duration(period, field="period")
+        if period_seconds <= 0:
             raise _INVALID.error(reason="not_positive", field="period")
         if isinstance(periods, bool) or not isinstance(periods, int) or periods <= 0:
             raise _INVALID.error(reason="not_positive_integer", field="periods")
         if not isinstance(cumulative, bool):
             raise _INVALID.error(reason="wrong_type", field="cumulative")
         object.__setattr__(self, "metric", metric)
-        object.__setattr__(self, "period", duration)
+        object.__setattr__(self, "period", period_seconds)
         object.__setattr__(self, "periods", periods)
         object.__setattr__(self, "cumulative", cumulative)
 
@@ -79,12 +79,12 @@ class CohortGrouping:
 
     def __init__(
         self,
-        bucket: str | int,
+        bucket: str | Literal[0],
         bucket_origin: datetime,
         statistic: Literal["total", "mean"] = "mean",
     ) -> None:
-        duration = seconds(bucket, field="bucket")
-        if duration <= 0:
+        bucket_seconds = duration(bucket, field="bucket")
+        if bucket_seconds <= 0:
             raise _INVALID.error(reason="not_positive", field="bucket")
         if not isinstance(bucket_origin, datetime):
             raise _INVALID.error(reason="wrong_type", field="bucket_origin")
@@ -93,7 +93,7 @@ class CohortGrouping:
             raise _CHOICE.error(
                 reason="unsupported_value", field="statistic", choices=("total", "mean")
             )
-        object.__setattr__(self, "bucket", duration)
+        object.__setattr__(self, "bucket", bucket_seconds)
         object.__setattr__(self, "bucket_origin", origin)
         object.__setattr__(self, "statistic", statistic)
 
@@ -136,12 +136,12 @@ class LifeTable:
     def __init__(
         self,
         time_to_event: TimeToEvent,
-        interval: str | int,
+        interval: str | Literal[0],
         group_by: tuple[str, ...] = (),
     ) -> None:
         if not isinstance(time_to_event, TimeToEvent):
             raise _INVALID.error(reason="wrong_type", field="time_to_event")
-        width = seconds(interval, field="interval")
+        width = duration(interval, field="interval")
         if width <= 0:
             raise _INVALID.error(reason="not_positive", field="interval")
         if isinstance(group_by, (str, bytes)) or not isinstance(group_by, tuple):

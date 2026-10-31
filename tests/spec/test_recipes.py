@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -487,13 +487,47 @@ def test_elapsed_count_is_arithmetic(monkeypatch):
                 "user", event="purchase", horizon="7d", max_events=3, session_gap="1mo"
             ),
         ),
+        (
+            "period",
+            86400,
+            lambda: recipes.ltv(
+                "user", start_event="purchase", metric="spend", period=cast(Any, 86400), periods=3
+            ),
+        ),
+        ("gap", 3600, lambda: Design("user", FixedDate("2025-01-01"), gap=cast(Any, 3600))),
+        (
+            "bin",
+            604800,
+            lambda: recipes.life_table(
+                "user", start_event="signup", end_event="churn", bin=cast(Any, 604800)
+            ),
+        ),
+        (
+            "horizon",
+            86400,
+            lambda: recipes.event_sequence(
+                "user", event="purchase", horizon=cast(Any, 86400), max_events=3
+            ),
+        ),
+        (
+            "session_gap",
+            60,
+            lambda: recipes.event_sequence(
+                "user", event="purchase", horizon="7d", max_events=3, session_gap=cast(Any, 60)
+            ),
+        ),
+        ("before", -1, lambda: asof("region", before=cast(Any, -1))),
+        ("offset", 60, lambda: EventAnchor("purchase", offset=cast(Any, 60))),
     ],
 )
 def test_elapsed_fields_refuse_calendar_units_with_a_route(field, value, build):
     with pytest.raises(TerrineError) as error:
         build()
     assert error.value.code == "terrine.window.invalid_duration"
-    assert error.value.context == {"field": field, "value": value}
+    assert error.value.context["field"] == field
+    assert error.value.context["value"] == str(value)
+    if isinstance(value, int):
+        assert error.value.context["reason"] == "bare_integer"
 
 
 @pytest.mark.parametrize("periods", [None, 3])

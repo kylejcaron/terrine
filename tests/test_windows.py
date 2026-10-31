@@ -1,7 +1,42 @@
+from typing import Any, cast
+
 import pytest
 
 from terrine.errors import TerrineError
-from terrine.windows import Window, seconds
+from terrine.windows import Window, duration, seconds, seconds_text
+
+
+def test_bare_integer_durations_refuse_except_zero():
+    with pytest.raises(TerrineError) as error:
+        Window(cast(Any, -30), 0)
+    assert error.value.code == "terrine.window.invalid_duration"
+    assert error.value.context == {
+        "field": "window",
+        "reason": "bare_integer",
+        "value": "-30",
+    }
+    assert Window("-30d", 0) == Window("-30d", "0s")
+    assert duration(0, field="window") == 0
+    assert seconds(-30, field="window") == -30
+    assert seconds_text(-86_400) == "-86400s"
+
+
+def test_suggested_duration_correction_is_accepted():
+    assert Window("-30s", "0s").start == -30
+    assert Window("-30d", "0s").start == -30 * 86_400
+    assert Window("0s", "4w").end == 4 * 7 * 86_400
+
+
+def test_saved_integer_second_documents_still_decode():
+    import terrine as tr
+
+    design = tr.recipes.time_series(
+        every="7d",
+        start="2025-01-06",
+        end="2025-02-03",
+        features={"x": tr.agg("orders", window=("-30d", "0s"))},
+    )
+    assert tr.from_yaml(tr.to_yaml(design)) == design
 
 
 def test_equivalent_durations_and_half_open_windows():

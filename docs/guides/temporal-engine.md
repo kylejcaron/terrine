@@ -770,6 +770,9 @@ equivalent = Design(
 assert sequence == equivalent
 ```
 
+Elapsed duration inputs are strings with a unit; only bare `0` is accepted
+without one. Normalized integer seconds remain in saved metadata and documents.
+
 Use the low-level shape when the selected events differ from the anchor event,
 or when specifying properties, funnels, or the array representation.
 

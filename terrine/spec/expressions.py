@@ -6,9 +6,10 @@ import math
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from typing import Literal
 
 from terrine.errors import RefusalSpec, parameter_names
-from terrine.windows import Window, seconds
+from terrine.windows import Window, duration, seconds
 
 __all__ = [
     "Expr",
@@ -359,7 +360,7 @@ def _require_expr(value: object, field: str) -> None:
         raise _INVALID.error(reason="wrong_type", field=field)
 
 
-def _window_pair(value: object) -> tuple[str | int, str | int]:
+def _window_pair(value: object) -> tuple[str | Literal[0], str | Literal[0]]:
     if not isinstance(value, (tuple, list)) or len(value) != 2:
         raise _INVALID.error(reason="not_a_pair", field="window")
     return value[0], value[1]
@@ -368,7 +369,7 @@ def _window_pair(value: object) -> tuple[str | int, str | int]:
 def agg(
     metric: str,
     *,
-    window: tuple[str | int, str | int],
+    window: tuple[str | Literal[0], str | Literal[0]],
     relative_to: EventTime | None = None,
 ) -> MetricAgg:
     """Aggregate a named metric over a half-open window relative to t0 or an event time.
@@ -385,7 +386,7 @@ def retention(
     label_property: str,
     target_event: str,
     thresholds: tuple[int, ...],
-    horizon: str | int,
+    horizon: str | Literal[0, "open_ended"],
 ) -> RetentionMetric:
     """Return the highest threshold band reached by distinct target events.
 
@@ -399,7 +400,7 @@ def retention(
             label_property,
             target_event,
             thresholds,
-            None if horizon == "open_ended" else seconds(horizon, field="horizon"),
+            None if horizon == "open_ended" else duration(horizon, field="horizon"),
         )
 
 
@@ -407,7 +408,7 @@ def quantile(
     metric: str,
     probability: Decimal | str,
     *,
-    window: tuple[str | int, str | int],
+    window: tuple[str | Literal[0], str | Literal[0]],
     interpolation: str = "linear_type7",
 ) -> MetricQuantile:
     """Request an exact quantile over a window of a metric's integer or Decimal event values.
@@ -424,7 +425,7 @@ def approx_quantile(
     metric: str,
     probability: Decimal | str,
     *,
-    window: tuple[str | int, str | int],
+    window: tuple[str | Literal[0], str | Literal[0]],
     sketch: SketchRequest,
 ) -> ApproxMetricQuantile:
     """Request an approximate event-value quantile over a window with a declared sketch.
@@ -440,7 +441,9 @@ def approx_quantile(
     )
 
 
-def approx_distinct(metric: str, *, window: tuple[str | int, str | int]) -> ApproxMetricDistinct:
+def approx_distinct(
+    metric: str, *, window: tuple[str | Literal[0], str | Literal[0]]
+) -> ApproxMetricDistinct:
     """Request an approximate distinct-value count for a metric over a window.
 
     Example: tr.approx_distinct("spend", window=("-30d", "0s"))
@@ -452,20 +455,20 @@ def approx_distinct(metric: str, *, window: tuple[str | int, str | int]) -> Appr
 def asof(
     attribute: str,
     *,
-    before: str | int,
+    before: str | Literal[0],
     relative_to: EventTime | None = None,
 ) -> AttributeAsOf:
     """Read an attribute's history strictly before a time relative to t0 or an event.
 
     Example: tr.asof("plan", before="0s")
     """
-    return AttributeAsOf(attribute, seconds(before, field="before"), relative_to)
+    return AttributeAsOf(attribute, duration(before, field="before"), relative_to)
 
 
 def event_time(
     event: str,
     *,
-    window: tuple[str | int, str | int],
+    window: tuple[str | Literal[0], str | Literal[0]],
     label_property: str | None = None,
     equals: JsonScalar = None,
     occurrence: str = "first",

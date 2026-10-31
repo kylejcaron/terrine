@@ -1102,3 +1102,30 @@ def test_resolve_unit_fills_the_only_unit_and_refuses_otherwise(native_inputs):
     with pytest.raises(TerrineError) as error:
         design.validate(two)
     assert error.value.code == "terrine.model.ambiguous_unit"
+
+
+def test_unit_inference_and_panels_keep_a_nonzero_gap(native_inputs):
+    from terrine import recipes
+    from terrine.spec.panels import Initiation
+    from terrine.spec.validate import resolve_unit
+
+    one = _bound_units(native_inputs, {"user": "user_id"})
+    design = recipes.time_series(
+        every="1d",
+        start="2025-01-02",
+        end="2025-01-03",
+        gap="1d",
+        features={"past": agg("sessions", window=("-2d", "-1d"))},
+    )
+    resolved_frame = resolve_unit(design, one).build(one)
+    assert resolved_frame._design.gap == 86_400
+
+    panel = recipes.trial_panel(
+        every="1d",
+        start="2025-01-02",
+        end="2025-01-03",
+        treatment=Initiation("session", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        gap="1d",
+    )
+    panel_frame = panel.build(one)
+    assert panel_frame._design.gap == 86_400

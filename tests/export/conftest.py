@@ -38,7 +38,7 @@ def frame():
         {
             "x": ColumnMeta(None, "feature", None, None, None, None),
             "a": ColumnMeta(None, "treatment", None, None, None, None),
-            "y": ColumnMeta(Window(0, 28), "outcome", None, None, "complete", "reason"),
+            "y": ColumnMeta(Window(0, "28s"), "outcome", None, None, "complete", "reason"),
         },
         Provenance(
             {"x": cutoff},

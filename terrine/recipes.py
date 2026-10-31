@@ -33,7 +33,7 @@ from terrine.spec import (
 )
 from terrine.spec.expressions import Expr, Predicate
 from terrine.spec.state_panel import schedule_periods
-from terrine.windows import Window, seconds
+from terrine.windows import Window, duration, seconds_text
 
 __all__ = [
     "time_series",
@@ -68,7 +68,7 @@ def _entry_anchor(start_event: str, occurrence: str, n: int | None) -> EventAnch
 def time_series(
     unit: str | None = None,
     *,
-    every: str | int,
+    every: str | Literal[0],
     start: date | str,
     end: date | str,
     features: Mapping[str, Expr | Predicate] | None = None,
@@ -76,7 +76,7 @@ def time_series(
     eligibility: Mapping[str, Predicate] | None = None,
     treatment: Treatment | None = None,
     anchor_range: AnchorRange | None = None,
-    gap: str | int = "0d",
+    gap: str | Literal[0] = "0d",
 ) -> Design:
     """Build one row per unit and scheduled t0, including the schedule's end day.
 
@@ -99,18 +99,18 @@ def time_series(
 def trial_panel(
     unit: str | None = None,
     *,
-    every: str | int,
+    every: str | Literal[0],
     start: date | str,
     end: date | str,
     treatment: Initiation | PersistentAdoption,
     trial_weight: TrialWeight | None = None,
-    anticipation: str = "0d",
-    reference_period: str = "-1d",
+    anticipation: str | Literal[0] = "0d",
+    reference_period: str | Literal[0] = "-1d",
     features: Mapping[str, Expr | Predicate] | None = None,
     outcomes: Mapping[str, Expr | Predicate] | None = None,
     eligibility: Mapping[str, Predicate] | None = None,
     anchor_range: AnchorRange | None = None,
-    gap: str | int = "0d",
+    gap: str | Literal[0] = "0d",
 ) -> Design:
     """Build repeated trials at scheduled t0 times with an event or adoption treatment.
 
@@ -139,7 +139,7 @@ def event_panel(
     *,
     event: str,
     periods: tuple[int, ...],
-    period: str | int,
+    period: str | Literal[0],
     occurrence: Literal["first", "each", "nth"] = "first",
     n: int | None = None,
     reference_period: int = -1,
@@ -147,7 +147,7 @@ def event_panel(
     outcomes: Mapping[str, Expr | Predicate] | None = None,
     eligibility: Mapping[str, Predicate] | None = None,
     anchor_range: AnchorRange | None = None,
-    gap: str | int = "0d",
+    gap: str | Literal[0] = "0d",
 ) -> Design:
     """Build rows at elapsed periods relative to each unit's selected event time.
 
@@ -166,7 +166,7 @@ def event_panel(
         return EventPanel(
             base,
             periods=periods,
-            period_seconds=seconds(period, field="period"),
+            period_seconds=duration(period, field="period"),
             reference_period=reference_period,
         )
 
@@ -176,13 +176,13 @@ def ltv(
     *,
     start_event: str,
     metric: str,
-    period: str | int,
+    period: str | Literal[0],
     periods: int,
     features: Mapping[str, Expr | Predicate] | None = None,
     eligibility: Mapping[str, Predicate] | None = None,
     treatment: Treatment | None = None,
     anchor_range: AnchorRange | None = None,
-    gap: str | int = "0d",
+    gap: str | Literal[0] = "0d",
     administrative_cutoff: datetime | None = None,
 ) -> Design:
     """Build a cumulative metric trajectory starting at each unit's first origin event.
@@ -220,7 +220,7 @@ def survival(
     eligibility: Mapping[str, Predicate] | None = None,
     treatment: Treatment | None = None,
     anchor_range: AnchorRange | None = None,
-    gap: str | int = "0d",
+    gap: str | Literal[0] = "0d",
     administrative_cutoff: datetime | None = None,
 ) -> Design:
     """Build follow-up from a unit's first or nth start event until an end event or cutoff.
@@ -248,13 +248,13 @@ def life_table(
     *,
     start_event: str,
     end_event: str,
-    bin: str | int,
+    bin: str | Literal[0],
     group_by: Mapping[str, Expr | Predicate] | None = None,
     occurrence: Literal["first", "nth"] = "first",
     n: int | None = None,
     eligibility: Mapping[str, Predicate] | None = None,
     anchor_range: AnchorRange | None = None,
-    gap: str | int = "0d",
+    gap: str | Literal[0] = "0d",
     administrative_cutoff: datetime | None = None,
 ) -> Design:
     """Build elapsed-bin risk and censor counts, optionally grouped by named expressions.
@@ -285,14 +285,14 @@ def state_panel(
     unit: str | None = None,
     *,
     state_source: StateObservations | BinnedMetricState,
-    every: str | int,
+    every: str | Literal[0],
     start: date | str,
     end: date | str,
     periods: int | None = None,
     features: Mapping[str, Expr | Predicate] | None = None,
     eligibility: Mapping[str, Predicate] | None = None,
     anchor_range: AnchorRange | None = None,
-    gap: str | int = "0d",
+    gap: str | Literal[0] = "0d",
 ) -> Design:
     """Build repeated unit states over whole elapsed periods from start through end.
 
@@ -320,16 +320,16 @@ def event_sequence(
     unit: str | None = None,
     *,
     event: str,
-    horizon: str | int,
+    horizon: str | Literal[0],
     max_events: int,
     occurrence: Literal["first", "each", "nth"] = "first",
     n: int | None = None,
-    session_gap: str | int | None = None,
+    session_gap: str | Literal[0] | None = None,
     features: Mapping[str, Expr | Predicate] | None = None,
     outcomes: Mapping[str, Expr | Predicate] | None = None,
     eligibility: Mapping[str, Predicate] | None = None,
     anchor_range: AnchorRange | None = None,
-    gap: str | int = "0d",
+    gap: str | Literal[0] = "0d",
 ) -> Design:
     """Build each unit's event sequence over [t0, t0 + horizon), with optional sessions.
 
@@ -340,7 +340,7 @@ def event_sequence(
         _event_anchor(event, occurrence, n),
         shape=EventSequence(
             event,
-            Window(0, seconds(horizon, field="horizon")),
+            Window(0, seconds_text(duration(horizon, field="horizon"))),
             max_events=max_events,
             sessions=None if session_gap is None else SessionSpec(session_gap),
         ),

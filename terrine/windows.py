@@ -2,16 +2,17 @@
 
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 from terrine.errors import RefusalSpec
 
-__all__ = ["Window"]
+__all__ = ["Window", "duration", "seconds", "seconds_text"]
 
 _INVALID_DURATION = RefusalSpec(
     "terrine.window.invalid_duration",
-    "{field}={value!r} is not an elapsed duration: use integral seconds or a signed "
-    's/m/h/d/w string such as "30d" or "4w". Calendar months ("1mo", "1y") are '
-    "accepted only by a Schedule's every.",
+    "{field}={value!r} is not an elapsed duration: use a signed integer with a unit "
+    'such as "-30s", "-30d", or "4w"; bare 0 is allowed. Calendar months ("1mo", "1y") '
+    "are accepted only by a Schedule's every.",
 )
 _INVALID_WINDOW = RefusalSpec(
     "terrine.window.invalid_window",
@@ -24,17 +25,28 @@ _MIN = -(2**63)
 _MAX = 2**63 - 1
 
 
-def seconds(value: str | int, *, field: str) -> int:
-    """Normalize an elapsed duration without coercion or calendar arithmetic.
+def duration(value: str | Literal[0], *, field: str) -> int:
+    """Normalize a public elapsed-duration input; only bare zero is accepted.
 
-    ``field`` names the caller's parameter in the refusal context.
+    Example: duration("-30d", field="window")
+    """
+    if isinstance(value, bool):
+        raise _INVALID_DURATION.error(field=field, value=str(value), reason="bare_integer")
+    if isinstance(value, int) and value != 0:
+        raise _INVALID_DURATION.error(field=field, value=str(value), reason="bare_integer")
+    return seconds(value, field=field)
+
+
+def seconds(value: str | int, *, field: str) -> int:
+    """Normalize elapsed seconds, including trusted normalized integer metadata.
+
+    Example: seconds(-86400, field="latest_seconds")
     """
     if isinstance(value, bool):
         raise _INVALID_DURATION.error(field=field, value=str(value))
     if isinstance(value, int):
         result = value
     elif isinstance(value, str) and (match := _PATTERN.fullmatch(value)):
-        # Bound digit count before int conversion to reject hostile giant values.
         digits = match[1].lstrip("+-").lstrip("0") or "0"
         if len(digits) > 19:
             raise _INVALID_DURATION.error(field=field, value=value)
@@ -44,6 +56,16 @@ def seconds(value: str | int, *, field: str) -> int:
     if not _MIN <= result <= _MAX:
         raise _INVALID_DURATION.error(field=field, value=str(value))
     return result
+
+
+def seconds_text(n: int) -> str:
+    """Return the canonical elapsed-duration spelling for normalized seconds.
+
+    Example: seconds_text(-86400)
+    """
+    return f"{n}s"
+
+
 
 
 def _duration(value: int, *, weeks: bool = False, signed: bool = False) -> str:
@@ -71,8 +93,8 @@ class Window:
     start: int
     end: int
 
-    def __init__(self, start: str | int, end: str | int) -> None:
-        start_seconds, end_seconds = seconds(start, field="window"), seconds(end, field="window")
+    def __init__(self, start: str | Literal[0], end: str | Literal[0]) -> None:
+        start_seconds, end_seconds = duration(start, field="window"), duration(end, field="window")
         if start_seconds >= end_seconds:
             raise _INVALID_WINDOW.error(
                 start=start_seconds,

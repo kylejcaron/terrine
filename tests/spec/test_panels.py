@@ -42,7 +42,7 @@ def test_matched_t0_policy_is_serialized_and_in_design_hash():
 
 
 def test_sequential_schedule_spec_round_trips_canonically():
-    design = Design("customer_id", Schedule(7, "2025-01-01", "2025-01-14"))
+    design = Design("customer_id", Schedule("7s", "2025-01-01", "2025-01-14"))
     treatment = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
     sequential = Sequential(design, treatment=treatment)
 
@@ -53,7 +53,7 @@ def test_sequential_schedule_spec_round_trips_canonically():
 def test_calendar_panel_is_canonical_sequential_composition():
     from terrine.spec import CalendarPanel
 
-    design = Design("customer_id", Schedule(7, "2025-01-01", "2025-01-14"))
+    design = Design("customer_id", Schedule("7s", "2025-01-01", "2025-01-14"))
     treatment = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
 
     assert CalendarPanel(Sequential(design, treatment=treatment)) == Sequential(
@@ -86,7 +86,7 @@ def test_conflicting_design_inputs_refuse_before_hash():
     from terrine.spec import Treatment
 
     base = Design(
-        "customer_id", Schedule(7, "2025-01-01", "2025-01-14"), treatment=Treatment("started")
+        "customer_id", Schedule("7s", "2025-01-01", "2025-01-14"), treatment=Treatment("started")
     )
     with pytest.raises(TerrineError) as error:
         Sequential(

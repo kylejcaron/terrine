@@ -23,7 +23,7 @@ from terrine.spec.expressions import MetricAgg
 from terrine.spec.trajectory import CohortSpec
 from terrine.temporal.aggregate import _Check, narrow_exact
 from terrine.temporal.prefix import FLOAT64_PRECISION
-from terrine.windows import Window
+from terrine.windows import Window, seconds_text
 
 _INVALID = RefusalSpec(
     "terrine.trajectory.invalid_compilation",
@@ -66,7 +66,10 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
     outcomes = {
         name: MetricAgg(
             trajectory.metric,
-            Window(age * trajectory.period, (age + 1) * trajectory.period),
+            Window(
+                seconds_text(age * trajectory.period),
+                seconds_text((age + 1) * trajectory.period),
+            ),
         )
         for age, name in enumerate(names)
     }
@@ -77,7 +80,7 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         outcomes=outcomes,
         eligibility=design.eligibility,
         treatment=design.treatment,
-        gap=design.gap,
+        gap=seconds_text(design.gap),
         shape="cross_section",
         anchor_range=design.anchor_range,
     )
@@ -167,7 +170,7 @@ def compile_ltv(design: Design, model: Model) -> CompiledStudy:
         or name == compiled.roles.treatment
     }
     output_columns["period_value"] = ColumnMeta(
-        Window(0, trajectory.period),
+        Window(0, seconds_text(trajectory.period)),
         "outcome",
         "period_value_observed_from",
         "period_value_observed_until",

@@ -36,7 +36,7 @@ from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import BinnedMetricState, StatePanel
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
 from terrine.spec.validate import resolve_unit, validate_design
-from terrine.windows import Window, _duration
+from terrine.windows import Window, _duration, seconds_text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -265,7 +265,7 @@ class _Renderer:
             horizon = (
                 f"from {origin} until the end of complete coverage (exclusive)"
                 if expr.finite_horizon_seconds is None
-                else f"in {_window(Window(0, expr.finite_horizon_seconds), origin)}"
+                else f"in {_window(Window(0, seconds_text(expr.finite_horizon_seconds)), origin)}"
             )
             thresholds = ", ".join(str(value) for value in expr.count_thresholds)
             return (
@@ -588,7 +588,9 @@ class _Renderer:
             yield from design.shape.baseline_features.items()
         elif isinstance(design.shape, CohortSpec):
             trajectory = design.shape.trajectory
-            yield "period_value", MetricAgg(trajectory.metric, Window(0, trajectory.period))
+            yield "period_value", MetricAgg(
+                trajectory.metric, Window(0, seconds_text(trajectory.period))
+            )
 
     def _empty_windows(self) -> Iterator[Line]:
         rows = []

@@ -21,6 +21,7 @@ from terrine.spec.design import Design
 from terrine.spec.panels import CalendarComparisonSpec
 from terrine.spec.validate import _outcome_bounds, resolve_selector_source
 from terrine.temporal.aggregate import _Check
+from terrine.windows import seconds_text
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -299,7 +300,7 @@ def compile_calendar_comparison(design: Design, model: Model) -> CompiledStudy:
         features=design.features,
         outcomes=design.outcomes,
         eligibility=design.eligibility,
-        gap=design.gap,
+        gap=seconds_text(design.gap),
         anchor_range=design.anchor_range,
     )
     compiled = compile_columns(base, model)

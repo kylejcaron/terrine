@@ -1,5 +1,5 @@
 import json
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -101,7 +101,7 @@ def test_funnel_steps_require_distinct_declared_string_values():
 def test_session_gap_normalizes_to_integral_seconds():
     assert SessionSpec("30m").gap_seconds == 1800
     with pytest.raises(TerrineError):
-        SessionSpec(True)
+        SessionSpec(cast(Any, True))
 
 
 def test_sequence_property_names_cannot_collide_with_generated_columns():

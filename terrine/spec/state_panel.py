@@ -240,7 +240,7 @@ def validate_state_panel(
     """Validate schedule shape and state-source references without reading rows."""
     from terrine.spec.expressions import MetricAgg
     from terrine.spec.validate import _expression, _required
-    from terrine.windows import Window
+    from terrine.windows import Window, seconds_text
 
     panel = design.shape
     assert isinstance(panel, StatePanel)
@@ -278,7 +278,7 @@ def validate_state_panel(
     else:
         assert schedule.every is not None
         _expression(
-            MetricAgg(panel.state.metric, Window(-schedule.every, 0)),
+            MetricAgg(panel.state.metric, Window(seconds_text(-schedule.every), 0)),
             "state",
             design,
             model,

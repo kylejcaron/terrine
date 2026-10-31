@@ -103,7 +103,7 @@ def test_sequence_metadata_round_trips_arrow_as_typed_provenance():
         shape="event_sequence",
         sequence_meta=SequenceMeta(
             event="signup",
-            window=Window(0, 3600),
+            window=Window(0, "1h"),
             max_events=10,
             representation="positions",
             event_fields=("kind", "amount"),
@@ -149,7 +149,7 @@ def test_array_sequence_transition_references_survive_arrow_roundtrip():
 
     sequence_meta = SequenceMeta(
         event="signup",
-        window=Window(0, 3600),
+        window=Window(0, "1h"),
         max_events=10,
         representation="arrays",
         event_fields=("event_values",),
@@ -308,7 +308,7 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values(stamp
                 ),
             ),
             "spend": ColumnMeta(
-                Window(-86400, 0),
+                Window("-1d", 0),
                 "feature",
                 "spend_observed_from",
                 "spend_observed_until",

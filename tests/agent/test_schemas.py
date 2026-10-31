@@ -145,14 +145,14 @@ def test_discovery_schema_matches_existing_tagged_codec(variant):
             "user",
             FixedDate("2025-01-01"),
             shape=EventSequence(
-                "value", Window(-10, 0), max_events=5, funnel=FunnelSpec("action", ("a", "b"))
+                "value", Window("-10s", 0), max_events=5, funnel=FunnelSpec("action", ("a", "b"))
             ),
         )
     else:
         design = Design(
             "user",
             FixedDate("2025-01-01"),
-            features={"when": EventTime("value", Window(-10, 0), occurrence="last")},
+            features={"when": EventTime("value", Window("-10s", 0), occurrence="last")},
         )
     payload = json.loads(to_json(design))
     validator = Draft202012Validator(design_schema())

@@ -29,6 +29,7 @@ from terrine.spec.design import Design
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE, EventSequence
 from terrine.temporal.attributes import _enriched_property_columns, enrich_events
 from terrine.temporal.sequence import SequenceResult, event_sequence
+from terrine.windows import seconds_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -136,7 +137,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         features=design.features,
         outcomes=design.outcomes,
         eligibility=design.eligibility,
-        gap=design.gap,
+        gap=seconds_text(design.gap),
         anchor_range=design.anchor_range,
     )
     base = compile_columns(base_design, model)

@@ -16,7 +16,7 @@ import pyarrow as pa
 
 from terrine.backends.registry import get_engine
 from terrine.errors import RefusalSpec, freeze, parameter_names, thaw
-from terrine.windows import Window, seconds
+from terrine.windows import Window, seconds, seconds_text
 
 if TYPE_CHECKING:
     import pandas
@@ -1360,7 +1360,7 @@ def _decode_engine_stamp(
 
 def _decode(value: Any, cls: type) -> Any:
     if cls is Window:
-        return Window(*value["$window"])
+        return Window(*(seconds_text(seconds_value) for seconds_value in value["$window"]))
     if not is_dataclass(cls):
         raise TypeError("metadata target must be a dataclass")
     kwargs: dict[str, Any] = {}
@@ -1464,7 +1464,9 @@ def _decode(value: Any, cls: type) -> Any:
         ) and isinstance(item, dict):
             kwargs[field.name] = datetime.fromisoformat(item["$datetime"])
         elif field.name == "window" and item is not None:
-            kwargs[field.name] = Window(*item["$window"])
+            kwargs[field.name] = Window(
+                *(seconds_text(seconds_value) for seconds_value in item["$window"])
+            )
         elif (
             field.name in ("start", "end_exclusive")
             and isinstance(item, dict)

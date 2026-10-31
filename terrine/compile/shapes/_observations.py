@@ -23,6 +23,7 @@ from terrine.semantic.models import TableRef
 from terrine.spec.anchors import FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.state_panel import _INVALID_OBSERVATIONS, StateObservations, StatePanel
+from terrine.windows import seconds_text
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -68,7 +69,7 @@ def _period_design(
         anchor,
         features=features,
         eligibility=design.eligibility if filter_population else None,
-        gap=design.gap,
+        gap=seconds_text(design.gap),
         shape="cross_section",
         anchor_range=design.anchor_range if filter_population else None,
     )

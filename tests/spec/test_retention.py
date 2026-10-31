@@ -32,7 +32,7 @@ def test_retention_thresholds_require_ordered_positive_int64_counts(thresholds, 
     ("horizon", "code"),
     [
         (0, "terrine.design.invalid"),
-        (-1, "terrine.design.invalid"),
+        ("-1s", "terrine.design.invalid"),
         (True, "terrine.window.invalid_duration"),
         (1.25, "terrine.window.invalid_duration"),
         ("unknown", "terrine.window.invalid_duration"),

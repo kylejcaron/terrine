@@ -5,6 +5,8 @@
 ### API
 
 - Make every package and recipe export discoverable through `dir()`.
+- Require unit-bearing strings for nonzero elapsed durations; preserve integer
+  seconds in saved designs and metadata.
 
 ### Performance
 

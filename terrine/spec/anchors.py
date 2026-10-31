@@ -7,10 +7,11 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from typing import Literal
 
 from terrine._time import utc_instant
 from terrine.errors import RefusalSpec
-from terrine.windows import seconds
+from terrine.windows import duration
 
 __all__ = ["FixedDate", "EventAnchor", "Schedule", "AnchorRange"]
 
@@ -101,7 +102,7 @@ class EventAnchor:
     offset: int
 
     def __init__(
-        self, event: str, which: str = "first", n: int | None = None, offset: str | int = 0
+        self, event: str, which: str = "first", n: int | None = None, offset: str | Literal[0] = 0
     ) -> None:
         if not isinstance(event, str) or not event.strip():
             raise _INVALID.error(reason="empty_name", field="event")
@@ -114,7 +115,7 @@ class EventAnchor:
                 raise _INVALID.error(reason="not_positive_integer", field="n")
         elif n is not None:
             raise _INVALID.error(reason="n_requires_nth", field="n")
-        elapsed = seconds(offset, field="offset")
+        elapsed = duration(offset, field="offset")
         if elapsed < 0:
             raise _INVALID.error(reason="negative", field="offset")
         object.__setattr__(self, "event", event)
@@ -160,14 +161,14 @@ class Schedule:
     start: date
     end: date
 
-    def __init__(self, every: str | int, start: date | str, end: date | str) -> None:
+    def __init__(self, every: str | Literal[0], start: date | str, end: date | str) -> None:
         if isinstance(every, str) and (match := _CALENDAR_STEP.fullmatch(every)):
             step = int(match[1]) * (12 if match[2] == "y" else 1)
             if step > 10**19 - 1:
                 raise _INVALID.error(reason="out_of_range", field="every")
             interval, months = None, step
         else:
-            step = seconds(every, field="every")
+            step = duration(every, field="every")
             interval, months = step, None
         if step <= 0:
             raise _INVALID.error(reason="not_positive", field="every")

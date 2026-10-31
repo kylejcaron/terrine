@@ -14,7 +14,7 @@ from terrine.errors import RefusalSpec, parameter_names
 from terrine.spec.anchors import EventAnchor
 from terrine.spec.design import Design
 from terrine.spec.state_panel import StatePanel
-from terrine.windows import seconds
+from terrine.windows import duration, seconds_text
 
 if TYPE_CHECKING:
     from terrine.frame import Frame
@@ -325,7 +325,7 @@ def _copy_design(
         features=base.features,
         outcomes=base.outcomes,
         eligibility=base.eligibility,
-        gap=base.gap,
+        gap=seconds_text(base.gap),
         shape=shape,
         anchor_range=base.anchor_range,
         sample=base.sample,
@@ -337,8 +337,8 @@ def Sequential(
     *,
     treatment: Initiation | PersistentAdoption,
     trial_weight: TrialWeight | None = None,
-    anticipation: str = "0d",
-    reference_period: str = "-1d",
+    anticipation: str | Literal[0] = "0d",
+    reference_period: str | Literal[0] = "-1d",
 ) -> Design:
     """Add repeated-trial treatment history to a scheduled design.
 
@@ -352,8 +352,8 @@ def Sequential(
         spec = SequentialSpec(
             treatment,
             trial_weight,
-            seconds(anticipation, field="anticipation"),
-            seconds(reference_period, field="reference_period"),
+            duration(anticipation, field="anticipation"),
+            duration(reference_period, field="reference_period"),
         )
     return _copy_design(base, spec)
 
@@ -432,7 +432,7 @@ def matched_t0(base: Design, model: Model, *, sample: MatchedT0Sample) -> Frame:
         features=base.features,
         outcomes=base.outcomes,
         eligibility=base.eligibility,
-        gap=base.gap,
+        gap=seconds_text(base.gap),
         shape=base.shape,
         anchor_range=base.anchor_range,
         sample=sample,

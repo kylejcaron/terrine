@@ -46,7 +46,7 @@ def test_materialized_baseline_has_typed_honest_causal_metadata(weighted):
         "world_attributes",
     }
     meta = frame.columns["net_revenue"]
-    assert meta.window == Window(0, world.config.horizon_seconds)
+    assert meta.window == Window(0, "4w")
     assert meta.numeric_policy is None
     assert frame.table[meta.complete_column].to_pylist() == [True] * 8
     assert frame.table[meta.reason_column].to_pylist() == [None] * 8

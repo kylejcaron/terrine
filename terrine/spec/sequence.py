@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from terrine.errors import RefusalSpec
-from terrine.windows import Window, seconds
+from terrine.windows import Window, duration
 
 _UNSUPPORTED_SHAPE = RefusalSpec(
     "terrine.sequence.unsupported_shape",
@@ -32,8 +32,8 @@ class SessionSpec:
 
     gap_seconds: int
 
-    def __init__(self, gap: str | int) -> None:
-        normalized = seconds(gap, field="session_gap")
+    def __init__(self, gap: str | Literal[0]) -> None:
+        normalized = duration(gap, field="session_gap")
         if normalized < 0:
             raise _INVALID.error(reason="session gap must be non-negative")
         object.__setattr__(self, "gap_seconds", normalized)
@@ -51,7 +51,7 @@ class FunnelSpec:
     within_seconds: int | None
 
     def __init__(
-        self, event_property: str, steps: tuple[str, ...], within: str | int | None = None
+        self, event_property: str, steps: tuple[str, ...], within: str | Literal[0] | None = None
     ) -> None:
         event_property = _name(event_property, "funnel event_property")
         if not isinstance(steps, (tuple, list)):
@@ -61,7 +61,7 @@ class FunnelSpec:
             raise _INVALID.error(reason="funnel steps must contain distinct non-empty strings")
         if len(set(normalized)) != len(normalized):
             raise _INVALID.error(reason="funnel steps must be distinct")
-        within_seconds = None if within is None else seconds(within, field="within")
+        within_seconds = None if within is None else duration(within, field="within")
         if within_seconds is not None and within_seconds <= 0:
             raise _INVALID.error(reason="funnel within must be positive")
         object.__setattr__(self, "event_property", event_property)

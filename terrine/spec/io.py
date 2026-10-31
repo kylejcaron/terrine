@@ -47,7 +47,7 @@ from terrine.spec.state_panel import (
     encode_cutpoint,
 )
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent, Trajectory
-from terrine.windows import Window
+from terrine.windows import Window, seconds_text
 
 __all__ = ["SCHEMA_VERSION", "canonical_json", "to_json", "from_json", "to_yaml", "from_yaml"]
 SCHEMA_VERSION = 2
@@ -447,13 +447,22 @@ def _node(value: Any) -> Any:
         )
     if tag == "SessionSpec":
         item = _object(value, {"type", "gap_seconds"})
-        return SessionSpec(item["gap_seconds"])
+        return SessionSpec(seconds_text(item["gap_seconds"]))
     if tag == "FunnelSpec":
         item = _object(value, {"type", "event_property", "steps", "within_seconds"})
-        return FunnelSpec(item["event_property"], tuple(item["steps"]), item["within_seconds"])
+        return FunnelSpec(
+            item["event_property"],
+            tuple(item["steps"]),
+            None if item["within_seconds"] is None else seconds_text(item["within_seconds"]),
+        )
     if tag == "EventAnchor":
         item = _object(value, {"type", "event", "which", "n", "offset"}, {"type", "event", "which"})
-        return EventAnchor(item["event"], item["which"], item.get("n"), item.get("offset", 0))
+        return EventAnchor(
+            item["event"],
+            item["which"],
+            item.get("n"),
+            seconds_text(item.get("offset", 0)),
+        )
     if tag == "Schedule":
         item = _object(value, {"type", "every", "months", "start", "end"})
         start, end = _read_date(item["start"]), _read_date(item["end"])
@@ -466,7 +475,7 @@ def _node(value: Any) -> Any:
             if type(months) is not int or months <= 0:
                 raise ValueError("Schedule months must be a positive integer")
             return Schedule(f"{months}mo", start, end)
-        return Schedule(every, start, end)
+        return Schedule(seconds_text(every), start, end)
     if tag == "AnchorRange":
         item = _object(value, {"type", "start", "end"})
         start = None if item["start"] is None else _read_date(item["start"])
@@ -569,7 +578,9 @@ def _node(value: Any) -> Any:
         )
     if tag == "Trajectory":
         item = _object(value, {"type", "metric", "period", "periods", "cumulative"})
-        return Trajectory(item["metric"], item["period"], item["periods"], item["cumulative"])
+        return Trajectory(
+            item["metric"], seconds_text(item["period"]), item["periods"], item["cumulative"]
+        )
     if tag == "CohortSpec":
         item = _object(value, {"type", "origin", "trajectory"})
         return CohortSpec(item["origin"], _node(item["trajectory"]))
@@ -586,10 +597,12 @@ def _node(value: Any) -> Any:
         groups = item["group_by"]
         if not isinstance(groups, list) or any(not isinstance(name, str) for name in groups):
             raise ValueError("LifeTable group_by must be a list of feature names")
-        return LifeTable(_node(item["time_to_event"]), item["interval"], tuple(groups))
+        return LifeTable(
+            _node(item["time_to_event"]), seconds_text(item["interval"]), tuple(groups)
+        )
     if tag == "Window":
         item = _object(value, {"type", "start", "end"})
-        return Window(item["start"], item["end"])
+        return Window(seconds_text(item["start"]), seconds_text(item["end"]))
     if tag == "SketchRequest":
         item = _object(value, {"type", "algorithm", "version", "rank_error"})
         return SketchRequest(
@@ -631,7 +644,9 @@ def _node(value: Any) -> Any:
             item["label_property"],
             item["target_event"],
             tuple(item["count_thresholds"]),
-            item["finite_horizon_seconds"],
+            None
+            if item["finite_horizon_seconds"] is None
+            else item["finite_horizon_seconds"],
         )
     if tag == "MetricAgg":
         item = _object(
@@ -697,7 +712,9 @@ def _node(value: Any) -> Any:
         item = _object(
             value, {"type", "attribute", "at", "known_at_t0"}, {"type", "attribute", "known_at_t0"}
         )
-        return Treatment(item["attribute"], item.get("at", 0), item["known_at_t0"])
+        return Treatment(
+            item["attribute"], seconds_text(item.get("at", 0)), item["known_at_t0"]
+        )
     raise ValueError(f"unknown specification node: {tag}")
 
 
@@ -795,7 +812,7 @@ def _design(value: Any) -> Design:
         ),
         eligibility=named(item["eligibility"], (Gt, Eq, IsNull, And)),
         treatment=treatment,
-        gap=item["gap"],
+        gap=seconds_text(item["gap"]),
         shape=item["shape"] if isinstance(item["shape"], str) else _node(item["shape"]),
         anchor_range=anchor_range,
         sample=sample,
