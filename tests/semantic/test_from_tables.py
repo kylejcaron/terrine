@@ -764,3 +764,37 @@ def test_integer_key_width_mismatch_in_history_refuses_at_bind(con):
         "unit_type": "int32",
         "source_type": "int64",
     }
+
+
+def test_key_mismatch_context_omits_nullability_markers():
+    units = pa.Table.from_pylist(
+        [{"user_id": "u"}],
+        schema=pa.schema([pa.field("user_id", pa.string(), nullable=False)]),
+    )
+    orders = pa.Table.from_pylist(
+        [{"user_id": 1, "at": datetime(2025, 1, 2)}],
+        schema=pa.schema(
+            [
+                pa.field("user_id", pa.int64(), nullable=False),
+                pa.field("at", pa.timestamp("us")),
+            ]
+        ),
+    )
+    with pytest.raises(TerrineError) as error:
+        Model.from_tables(
+            units={"user": UnitSource(units, "user_id")},
+            events={
+                "orders": Events(
+                    orders,
+                    time="at",
+                    key="user_id",
+                    metrics={"orders": tr.count()},
+                    complete=COMPLETE,
+                )
+            },
+        )
+    assert error.value.code == "terrine.semantic.schema_mismatch"
+    assert (
+        error.value.context["unit_type"],
+        error.value.context["source_type"],
+    ) == ("string", "int64")

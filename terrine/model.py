@@ -107,8 +107,8 @@ def _check_key_types(
                 unit=unit_name,
                 source=source_name,
                 column=column,
-                unit_type=str(unit_type),
-                source_type=str(source_type),
+                unit_type=str(unit_type.copy(nullable=True)),
+                source_type=str(source_type.copy(nullable=True)),
             )
 
     for source_name, source in sources.items():
