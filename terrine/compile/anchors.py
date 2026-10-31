@@ -47,7 +47,7 @@ _INTEGRITY = RefusalSpec(
 _TIED_EVENT_TIMESTAMPS = RefusalSpec(
     "terrine.compile.anchor_integrity",
     "Event {event!r} has tied timestamps, so its occurrence order is ambiguous. "
-    "Set event_ids={{source: \"<id column>\"}} on Model.from_tables or Model.from_catalog.",
+    "Set event_ids={{{source!r}: \"<id column>\"}} on Model.from_tables or Model.from_catalog.",
 )
 _TIMESTAMP_PRECISION = RefusalSpec(
     "terrine.compile.anchor_timestamp_precision",
