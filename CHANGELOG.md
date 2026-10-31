@@ -58,6 +58,14 @@
 - `Model.from_tables` no longer accepts `readiness=`: declare completeness on
   each `Events.complete` and `History.complete`; `Model.from_catalog` retains
   `readiness=`.
+- Unit, event and history key dtypes must match exactly: cast all keys to one
+  type before binding (`terrine.semantic.schema_mismatch`, `field="unit key"`).
+- Metric and source filter values must match their label or column type: use
+  correctly typed comparison values or cast the column before binding
+  (`terrine.semantic.schema_mismatch`, `field="where"`).
+- Roster attribute names must be unique and not collide with labels, events or
+  history: rename conflicting declarations before binding
+  (`terrine.model.invalid_binding`, `reason="name_collision"`).
 - Event selectors and sequence metadata use `event`, not `fact`: rename the
   field. `Initiation` and `PersistentAdoption` no longer take `source`: pass
   the declared event or label name, whose source is resolved from the model.
