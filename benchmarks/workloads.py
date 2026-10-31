@@ -25,7 +25,6 @@ from terrine.spec import (
     Initiation,
     Schedule,
     Sequential,
-    SketchRequest,
     agg,
     approx_distinct,
     approx_quantile,
@@ -157,7 +156,6 @@ def designs(config: ScaleConfig) -> dict[str, Design]:
                 "value",
                 "0.25",
                 window=window,
-                sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
             ),
         },
     )

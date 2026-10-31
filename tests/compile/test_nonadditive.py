@@ -291,7 +291,7 @@ def test_persisted_quantile_uses_raw_events_without_prefix_layer(nonadditive_mod
 
 
 def test_approximate_distinct_executes_in_duckdb_and_marks_column_metadata(nonadditive_model):
-    from terrine import Frame
+    from terrine.frame import Frame
     from terrine.spec import approx_distinct
 
     design = Design(
@@ -317,20 +317,13 @@ def test_approximate_quantile_frame_matches_type7_tolerance_and_is_reproducible(
     nonadditive_model,
 ):
     pytest.importorskip("datasketches")
-    from terrine import Frame
-    from terrine.spec import SketchRequest, approx_quantile
+    from terrine.frame import Frame
+    from terrine.spec import approx_quantile
 
     design = Design(
         "user",
         FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),
-        features={
-            "q": approx_quantile(
-                "amount",
-                "0.5",
-                window=("-1d", "0d"),
-                sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
-            )
-        },
+        features={"q": approx_quantile("amount", "0.5", window=("-1d", "0d"))},
     )
     first = Frame(design, nonadditive_model).materialize()
     second = Frame(design, nonadditive_model).materialize()
@@ -351,20 +344,13 @@ def test_approximate_quantile_frame_matches_type7_tolerance_and_is_reproducible(
 
 def test_approximate_quantile_preserves_incomplete_window_nulls(nonadditive_model):
     pytest.importorskip("datasketches")
-    from terrine import Frame
-    from terrine.spec import SketchRequest, approx_quantile
+    from terrine.frame import Frame
+    from terrine.spec import approx_quantile
 
     design = Design(
         "user",
         FixedDate("2025-01-04"),
-        features={
-            "q": approx_quantile(
-                "amount",
-                "0.5",
-                window=("-2d", "0d"),
-                sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
-            )
-        },
+        features={"q": approx_quantile("amount", "0.5", window=("-2d", "0d"))},
     )
     frame = Frame(design, nonadditive_model).materialize()
     meta = frame.columns["q"]
@@ -376,15 +362,10 @@ def test_approximate_quantile_preserves_incomplete_window_nulls(nonadditive_mode
 
 def test_approximate_quantile_populates_reused_expression_aliases(nonadditive_model):
     pytest.importorskip("datasketches")
-    from terrine import Frame
-    from terrine.spec import SketchRequest, approx_quantile
+    from terrine.frame import Frame
+    from terrine.spec import approx_quantile
 
-    expression = approx_quantile(
-        "amount",
-        "0.5",
-        window=("-1d", "0d"),
-        sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
-    )
+    expression = approx_quantile("amount", "0.5", window=("-1d", "0d"))
     design = Design(
         "user",
         FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),

@@ -327,8 +327,12 @@ class Model:
     _engine: Engine
     _resolver: Callable[[RelationSpec], Any]
 
-    def __init__(
-        self,
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError("Use Model.from_tables() or Model.from_catalog() to bind a model.")
+
+    @classmethod
+    def _assemble(
+        cls,
         *,
         catalog: Catalog,
         con: Any,
@@ -340,7 +344,8 @@ class Model:
         resolver: Callable[[RelationSpec], Any],
         input_binding: VerifiedInputBinding | None,
         engine: Engine,
-    ) -> None:
+    ) -> Model:
+        self = object.__new__(cls)
         object.__setattr__(self, "catalog", catalog)
         object.__setattr__(self, "con", con)
         object.__setattr__(self, "readiness", readiness)
@@ -363,6 +368,7 @@ class Model:
         payload = json.dumps(declarations, sort_keys=True, separators=(",", ":"))
         object.__setattr__(self, "model_hash", hashlib.sha256(payload.encode()).hexdigest())
         object.__setattr__(self, "day_boundary", _boundary_function(catalog.day_boundary))
+        return self
 
     def __repr__(self) -> str:
         events = tuple(name for name, source in self.catalog.sources.items() if source.events)
@@ -735,7 +741,7 @@ class Model:
             if column not in resolver(source.relation).schema().names:
                 raise _INVALID.error(reason="undeclared_name", field="event_ids", name=column)
 
-        return cls(
+        return cls._assemble(
             catalog=catalog,
             con=con,
             readiness=readiness,

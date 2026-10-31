@@ -117,7 +117,7 @@ def _named_nodes(
 class Treatment:
     """Read a treatment attribute at an elapsed time relative to t0.
 
-    Example: tr.Treatment("plan", at="0s", known_at_t0=True)
+    Example: Treatment("plan", at="0s", known_at_t0=True)
     """
 
     attribute: str

@@ -64,7 +64,6 @@ from terrine.spec.expressions import (
     MetricQuantile,
     Predicate,
     RetentionMetric,
-    SketchRequest,
     _output_leaves,
 )
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE
@@ -181,7 +180,6 @@ class SketchSidecar:
     outputs: tuple[str, ...]
     rows: ibis.Table
     probability: Decimal
-    request: SketchRequest
 
 
 @dataclass(frozen=True, slots=True)
@@ -356,7 +354,6 @@ def resolve_sketch_sidecars(table: pa.Table, compiled: CompiledStudy, con) -> pa
             estimates, _ = approximate_quantiles_by_key(
                 reader,
                 sidecar.probability,
-                sidecar.request,
             )
         finally:
             reader.close()
@@ -932,12 +929,11 @@ def compile_columns(
                         range_plan=range_plans[node],
                     ),
                     node.probability,
-                    node.sketch,
                 )
             )
             from terrine.temporal.sketches import quantile_request_metadata
 
-            sketch_metadata = quantile_request_metadata(node.sketch)
+            sketch_metadata = quantile_request_metadata()
             meta = replace(
                 summary.columns[output],
                 numeric_policy=None,

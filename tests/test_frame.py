@@ -216,14 +216,19 @@ def test_cohort_requests_refuse_with_codes(readme_con, build, value_column, cont
         frame.cohorts(grouping=grouping, value_column=value_column)
     assert error.value.code == "terrine.cohort.invalid_operation"
     assert {key: error.value.context[key] for key in context} == context
+
+
 def test_materialized_frame_dataframes_match_frame_dataframes(readme_con):
     frame = readme_design().build(readme_model(readme_con))
     materialized = frame.materialize()
 
     keys = ["unit", "anchor_id"]
-    assert materialized.to_pandas(values_only=True).sort_values(keys).reset_index(
-        drop=True
-    ).equals(frame.to_pandas(values_only=True).sort_values(keys).reset_index(drop=True))
+    assert (
+        materialized.to_pandas(values_only=True)
+        .sort_values(keys)
+        .reset_index(drop=True)
+        .equals(frame.to_pandas(values_only=True).sort_values(keys).reset_index(drop=True))
+    )
     pytest.importorskip("polars")
     materialized_polars = materialized.to_polars(values_only=True).sort(keys)
     frame_polars = frame.to_polars(values_only=True).sort(keys)

@@ -111,8 +111,6 @@ def test_bound_descriptors_use_v2_names(native_inputs):
     assert metric.measures[0].event == "session"
 
 
-
-
 def test_catalog_path_string_still_loads(tmp_path: Path, native_inputs):
     catalog, con = native_inputs
     path = tmp_path / "catalog.yaml"

@@ -75,10 +75,6 @@ def format_duration(seconds: int) -> str:
     return f"-{formatted}" if seconds < 0 else formatted
 
 
-
-
-
-
 def _duration(value: int, *, weeks: bool = False, signed: bool = False) -> str:
     """Use the largest exact elapsed unit, with optional weeks and an explicit sign."""
     magnitude = abs(value)
@@ -98,7 +94,7 @@ def _duration(value: int, *, weeks: bool = False, signed: bool = False) -> str:
 class Window:
     """Describe an elapsed [start, end) window relative to t0 or a selected event time.
 
-    Example: tr.Window("-30d", "0s")
+    Example: Window("-30d", "0s")
     """
 
     start: int

@@ -1,7 +1,7 @@
 import pytest
 
-from terrine import Design, retention
-from terrine.spec import EventAnchor, EventPanel, Schedule
+from terrine import Design
+from terrine.spec import EventAnchor, EventPanel, Schedule, retention
 from tests.compile.test_retention import retention_model as retention_model  # noqa: F401
 
 

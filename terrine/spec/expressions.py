@@ -16,7 +16,6 @@ __all__ = [
     "Predicate",
     "MetricAgg",
     "MetricQuantile",
-    "SketchRequest",
     "ApproxMetricDistinct",
     "ApproxMetricQuantile",
     "RetentionMetric",
@@ -107,38 +106,15 @@ class MetricQuantile:
 
 
 @dataclass(frozen=True, slots=True)
-class SketchRequest:
-    """Request a versioned quantile sketch with an explicit rank-error limit.
-
-    Example: tr.SketchRequest("tdigest", version("datasketches"), Decimal("0.01"))
-    """
-
-    algorithm: str
-    version: str
-    rank_error: Decimal
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "algorithm", _name(self.algorithm, "algorithm"))
-        object.__setattr__(self, "version", _name(self.version, "version"))
-        error = _probability(self.rank_error, "rank_error")
-        if error == 0:
-            raise _INVALID.error(reason="not_positive", field="rank_error")
-        object.__setattr__(self, "rank_error", error)
-
-
-@dataclass(frozen=True, slots=True)
 class ApproxMetricQuantile:
     metric: str
     probability: Decimal
     window: Window
-    sketch: SketchRequest
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "metric", _name(self.metric, "metric"))
         object.__setattr__(self, "probability", _probability(self.probability, "probability"))
         _window(self.window)
-        if not isinstance(self.sketch, SketchRequest):
-            raise _INVALID.error(reason="wrong_type", field="sketch")
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,7 +200,7 @@ class AttributeAsOf:
 class EventTime:
     """Select an event time within a window relative to t0 or another event time.
 
-    Example: tr.EventTime("orders", tr.Window("-30d", "0s"))
+    Example: EventTime("orders", Window("-30d", "0s"))
     """
 
     event: str
@@ -408,7 +384,7 @@ def retention(
 
     Follow-up ends at the horizon or, for ``"open_ended"``, the last complete event time.
 
-    Example: tr.retention("orders", label_property="customer_id", **followup)
+    Example: retention("orders", label_property="customer_id", **followup)
     """
     with parameter_names(count_thresholds="thresholds", finite_horizon_seconds="horizon"):
         return RetentionMetric(
@@ -429,7 +405,7 @@ def quantile(
 ) -> MetricQuantile:
     """Request an exact quantile over a window of a metric's integer or Decimal event values.
 
-    Example: tr.quantile("spend", "0.5", window=("-30d", "0s"))
+    Example: quantile("spend", "0.5", window=("-30d", "0s"))
     """
     start, end = _window_pair(window)
     return MetricQuantile(
@@ -442,18 +418,16 @@ def approx_quantile(
     probability: Decimal | str,
     *,
     window: tuple[str | Literal[0], str | Literal[0]],
-    sketch: SketchRequest,
 ) -> ApproxMetricQuantile:
-    """Request an approximate event-value quantile over a window with a declared sketch.
+    """Request an approximate event-value quantile using the installed t-digest package.
 
-    Example: tr.approx_quantile("spend", "0.5", window=("-30d", "0s"), sketch=sketch)
+    Example: approx_quantile("spend", "0.5", window=("-30d", "0s"))
     """
     start, end = _window_pair(window)
     return ApproxMetricQuantile(
         _name(metric, "metric"),
         _probability(probability, "probability"),
         Window(start, end),
-        sketch,
     )
 
 
@@ -462,7 +436,7 @@ def approx_distinct(
 ) -> ApproxMetricDistinct:
     """Request an approximate distinct-value count for a metric over a window.
 
-    Example: tr.approx_distinct("spend", window=("-30d", "0s"))
+    Example: approx_distinct("spend", window=("-30d", "0s"))
     """
     start, end = _window_pair(window)
     return ApproxMetricDistinct(_name(metric, "metric"), Window(start, end))

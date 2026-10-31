@@ -27,7 +27,9 @@ from terrine.backends.numeric import exact_float, float_scale
 from terrine.backends.registry import ENGINES
 from terrine.backends.timestamps import day_start, utc_instant, utc_wall_clock
 from terrine.semantic.models import BoundDimension, BoundValidity, PropertyBinding, TableRef
+from terrine.spec import EventSequence, TimeToEvent
 from terrine.temporal.attributes import attribute_asof, validate_history
+from terrine.windows import Window
 
 _ENGINE_FIXTURES = {
     "duckdb": "duckdb_connection",
@@ -290,7 +292,7 @@ def test_sequence_uses_configured_event_id_for_timestamp_ties(engine):
         tr.Design(
             "user",
             tr.EventAnchor("events"),
-            shape=tr.EventSequence("events", tr.Window("0s", "2h"), max_events=5),
+            shape=EventSequence("events", Window("0s", "2h"), max_events=5),
         ),
     )
     children = sorted(
@@ -303,7 +305,7 @@ def test_censor_time_survives_null_observed_until(engine):
     """Catch a NULL roster observation bound erasing the source-coverage censor time."""
     model = _model(engine, _events([], []))
     (row,) = _rows(
-        model, tr.Design("user", tr.FixedDate("2025-01-01"), shape=tr.TimeToEvent("events"))
+        model, tr.Design("user", tr.FixedDate("2025-01-01"), shape=TimeToEvent("events"))
     )
     assert row["event_time"] is None
     assert row["censor_time"] == datetime(2025, 2, 1, tzinfo=UTC)

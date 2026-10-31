@@ -1511,7 +1511,7 @@ def test_staged_batches_preserve_frame_metadata_and_verify_definition_ownership(
 def frame_definition(frame):
     from terrine.spec.dataset import DatasetDefinition
 
-    return DatasetDefinition(schema_version=3, base_design=frame._design)
+    return DatasetDefinition(base_design=frame._design)
 
 
 def test_stage_renews_lease_during_snapshot_tasks(events_world, tmp_path, monkeypatch):

@@ -20,7 +20,8 @@ For survival from the day after purchase, with baseline features covering that
 first day, use the low-level Design:
 
 ```python
-from terrine import Design, EventAnchor, TimeToEvent, agg
+from terrine import Design, EventAnchor, agg
+from terrine.spec import TimeToEvent
 
 landmark = Design(
     "user",

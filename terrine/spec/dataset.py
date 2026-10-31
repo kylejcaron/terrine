@@ -7,7 +7,7 @@ import json
 import os
 import tempfile
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -62,10 +62,10 @@ def _validate_schema_version(value: Any) -> None:
 class DatasetDefinition:
     """Save a versioned design with its selected view and fixed transforms.
 
-    Example: tr.DatasetDefinition(schema_version=3, base_design=design)
+    Example: DatasetDefinition(base_design=design)
     """
 
-    schema_version: int
+    schema_version: int = field(init=False, default=SCHEMA_VERSION)
     base_design: Design
     view: Any
     transforms: tuple[Winsorization, ...]
@@ -73,12 +73,10 @@ class DatasetDefinition:
     def __init__(
         self,
         *,
-        schema_version: int,
         base_design: Design,
         view: Any = None,
         transforms: tuple[Winsorization, ...] = (),
     ) -> None:
-        _validate_schema_version(schema_version)
         if not isinstance(base_design, Design):
             raise _INVALID_INPUT.error(reason="wrong_type", field="base_design")
         if view is not None:
@@ -135,7 +133,6 @@ class DatasetDefinition:
         if design is self.base_design:
             return self
         return DatasetDefinition(
-            schema_version=SCHEMA_VERSION,
             base_design=design,
             view=thaw(self.view),
             transforms=self.transforms,
@@ -195,7 +192,6 @@ class DatasetDefinition:
                 )
             )
             return cls(
-                schema_version=SCHEMA_VERSION,
                 base_design=design,
                 view=payload["view"],
                 transforms=tuple(

@@ -198,17 +198,11 @@ def test_runtime_layer_composition_matches_direct_state_audit(column_model):
 def test_runtime_composition_keeps_approximate_value_and_predicate_refusals_distinct(
     column_model, role
 ):
-    from decimal import Decimal
 
     from terrine.runtime.materialize import compose_runtime_frame
-    from terrine.spec import SketchRequest, approx_quantile, gt
+    from terrine.spec import approx_quantile, gt
 
-    value = approx_quantile(
-        "total",
-        "0.5",
-        window=("-1d", "0d"),
-        sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
-    )
+    value = approx_quantile("total", "0.5", window=("-1d", "0d"))
     predicate = {"q": gt(value, 0)}
     design = Design(
         "user",

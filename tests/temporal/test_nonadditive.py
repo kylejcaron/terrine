@@ -5,6 +5,7 @@ import pytest
 from terrine.errors import TerrineError
 from terrine.spec.expressions import MetricQuantile, quantile
 from terrine.temporal.nonadditive import exact_quantile
+from terrine.windows import Window
 
 
 def test_quantile_declares_type7_rank_and_exact_interpolation():
@@ -54,13 +55,12 @@ def test_empty_and_all_null_quantiles_are_unavailable():
 
 
 def test_approximate_quantile_expression_is_explicit_and_constructor_is_data_only():
-    from terrine.spec.expressions import ApproxMetricQuantile, SketchRequest, approx_quantile
+    from terrine.spec.expressions import ApproxMetricQuantile, approx_quantile
 
     node = approx_quantile(
         "revenue",
         Decimal("0.5"),
         window=("-7d", "0d"),
-        sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
     )
     assert isinstance(node, ApproxMetricQuantile)
-    assert node.sketch.algorithm == "tdigest"
+    assert node == ApproxMetricQuantile("revenue", Decimal("0.5"), Window("-7d", "0d"))

@@ -14,7 +14,7 @@ from terrine.spec.dataset import (
 
 
 def test_definition_reference_resolves_only_from_configured_owner_store(tmp_path) -> None:
-    definition = DatasetDefinition(schema_version=3, base_design=design())
+    definition = DatasetDefinition(base_design=design())
     store = DatasetDefinitionStore(tmp_path / "owner-a", owner="owner-a")
     reference = store.put(definition)
     assert reference == DatasetDefinitionReference("owner-a", definition.digest)
@@ -25,7 +25,7 @@ def test_definition_reference_resolves_only_from_configured_owner_store(tmp_path
 
 
 def test_definition_reference_store_refuses_corrupt_content(tmp_path) -> None:
-    definition = DatasetDefinition(schema_version=3, base_design=design())
+    definition = DatasetDefinition(base_design=design())
     store = DatasetDefinitionStore(tmp_path / "owner-a", owner="owner-a")
     reference = store.put(definition)
     (tmp_path / "owner-a" / f"{definition.digest}.json").write_bytes(b"corrupt")
@@ -34,7 +34,7 @@ def test_definition_reference_store_refuses_corrupt_content(tmp_path) -> None:
 
 
 def test_definition_reference_missing_object_uses_invalid_definition_refusal(tmp_path) -> None:
-    definition = DatasetDefinition(schema_version=3, base_design=design())
+    definition = DatasetDefinition(base_design=design())
     store = DatasetDefinitionStore(tmp_path / "owner-a", owner="owner-a")
     reference = store.put(definition)
     (store.root / f"{definition.digest}.json").unlink()
@@ -53,7 +53,7 @@ def test_concurrent_identical_definition_puts_publish_complete_content(tmp_path)
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
 
-    definition = DatasetDefinition(schema_version=3, base_design=design())
+    definition = DatasetDefinition(base_design=design())
     store = DatasetDefinitionStore(tmp_path / "owner-a", owner="owner-a")
     barrier = Barrier(2)
 
@@ -73,7 +73,6 @@ def design() -> Design:
 
 def test_dataset_definition_round_trip_reconstructs_base_design_and_view() -> None:
     definition = DatasetDefinition(
-        schema_version=3,
         base_design=design(),
         view={"kind": "training", "features": ["x"], "labels": ["y"]},
     )
@@ -85,7 +84,6 @@ def test_dataset_definition_round_trip_reconstructs_base_design_and_view() -> No
 
 def test_definition_canonical_bytes_ignore_mapping_insertion_order() -> None:
     first = DatasetDefinition(
-        schema_version=3,
         base_design=design(),
         view={
             "kind": "scoring",
@@ -95,7 +93,6 @@ def test_definition_canonical_bytes_ignore_mapping_insertion_order() -> None:
         },
     )
     second = DatasetDefinition(
-        schema_version=3,
         base_design=design(),
         view={
             "as_of": "2025-01-01T00:00:00+00:00",
@@ -112,12 +109,9 @@ def test_dataset_definition_rejects_unknown_fields_tags_and_runtime_values() -> 
     with pytest.raises(TerrineError):
         DatasetDefinition.from_json(b'{"schema_version":3,"base_design":{},"view":null,"extra":1}')
     with pytest.raises(TerrineError):
-        DatasetDefinition(
-            schema_version=3, base_design=design(), view={"kind": "training", "unknown": "x"}
-        )
+        DatasetDefinition(base_design=design(), view={"kind": "training", "unknown": "x"})
     with pytest.raises(TerrineError):
         DatasetDefinition(
-            schema_version=3,
             base_design=design(),
             view={"kind": "training", "features": [object()]},
         )
@@ -126,7 +120,7 @@ def test_dataset_definition_rejects_unknown_fields_tags_and_runtime_values() -> 
 def test_definition_put_removes_temporary_file_after_io_failure(tmp_path, monkeypatch) -> None:
     import os
 
-    definition = DatasetDefinition(schema_version=3, base_design=design())
+    definition = DatasetDefinition(base_design=design())
     store = DatasetDefinitionStore(tmp_path / "owner-a", owner="owner-a")
 
     failure = OSError("injected fsync failure")
@@ -173,15 +167,11 @@ def test_v2_definition_document_refuses_with_version() -> None:
     assert error.value.context["schema_version"] == 2
 
 
-@pytest.mark.parametrize("entrypoint", ["constructor", "document"])
-def test_definition_version_gate_precedes_field_decoding(entrypoint: str) -> None:
+def test_definition_version_gate_precedes_field_decoding() -> None:
     with pytest.raises(TerrineError) as error:
-        if entrypoint == "constructor":
-            DatasetDefinition(schema_version=cast(int, 3.0), base_design=cast(Design, None))
-        else:
-            DatasetDefinition.from_json(
-                b'{"schema_version":3.0,"base_design":null,"view":{"kind":true}}'
-            )
+        DatasetDefinition.from_json(
+            b'{"schema_version":3.0,"base_design":null,"view":{"kind":true}}'
+        )
     assert error.value.code == "terrine.dataset.invalid_definition"
     assert error.value.context["reason"] == "unsupported_schema_version"
     assert error.value.context["schema_version"] == 3.0

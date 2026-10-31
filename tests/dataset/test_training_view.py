@@ -125,7 +125,7 @@ def test_boolean_feature_hash_includes_each_operand_definition(native_inputs):
     )
     original = _feature_definition_hash(design, ("active",), bound)
     for metric_name in ("sessions", "churned"):
-        altered = Model(
+        altered = Model._assemble(
             catalog=bound.catalog,
             con=bound.con,
             readiness=bound.readiness,
@@ -163,7 +163,7 @@ def test_state_panel_feature_hash_includes_state_definition(native_inputs):
     )
     altered_metrics = dict(model.metrics)
     altered_metrics["sessions"] = replace(model.metrics["sessions"], kind="conversion")
-    altered_model = Model(
+    altered_model = Model._assemble(
         catalog=model.catalog,
         con=model.con,
         readiness=model.readiness,
@@ -313,7 +313,7 @@ def test_asof_feature_hash_tracks_resolved_dimension_definition(native_inputs, f
         sources["events"] = replace(
             sources["events"], dimensions=(ignored, selected), properties={"tier": prop}
         )
-        return Model(
+        return Model._assemble(
             catalog=catalog,
             con=model.con,
             readiness=model.readiness,

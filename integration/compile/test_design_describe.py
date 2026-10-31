@@ -6,8 +6,16 @@ import pandas as pd
 import pytest
 
 import terrine as tr
-from terrine.spec import CalendarComparisonSpec, Initiation, StateObservations, TimeToEvent
+from terrine.spec import (
+    CalendarComparisonSpec,
+    EventSequence,
+    Initiation,
+    StateObservations,
+    TimeToEvent,
+    quantile,
+)
 from terrine.spec.expressions import Expr
+from terrine.windows import Window
 
 
 @pytest.fixture(scope="module")
@@ -139,7 +147,7 @@ def test_description_empty_results_match_bound_aggregations(description_model):
             "ratio",
         )
     }
-    expressions["median"] = tr.quantile("total", "0.5", window=("-2d", "0s"))
+    expressions["median"] = quantile("total", "0.5", window=("-2d", "0s"))
     design = tr.Design(None, tr.FixedDate("2025-01-06"), features=expressions)
     result = _materialize(design, description_model)
     row = next(row for row in result.table.to_pylist() if row["unit"] == "quiet")
@@ -171,8 +179,8 @@ def test_description_sequence_grain_and_reasons_match_materialization(
     design = tr.Design(
         None,
         tr.EventAnchor("signup", offset="1d"),
-        shape=tr.EventSequence(
-            "purchase", tr.Window("0s", "2d"), max_events=5, representation=representation
+        shape=EventSequence(
+            "purchase", Window("0s", "2d"), max_events=5, representation=representation
         ),
     )
     result = _materialize(design, model)

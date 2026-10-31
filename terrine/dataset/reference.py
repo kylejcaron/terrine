@@ -41,7 +41,7 @@ from terrine.runtime.saved_plan import (
 )
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
-from terrine.spec.dataset import SCHEMA_VERSION, DatasetDefinition
+from terrine.spec.dataset import DatasetDefinition
 
 __all__ = ["Dataset", "stage_frame", "dataset_from_run"]
 
@@ -117,7 +117,6 @@ def _definition_for(frame: Any, *, include_transforms: bool = True) -> DatasetDe
             "parent_design_hash": scoring.parent_design_hash,
         }
     return DatasetDefinition(
-        schema_version=SCHEMA_VERSION,
         base_design=frame._design,
         view=view,
         transforms=frame._winsorizations if include_transforms else (),
@@ -393,9 +392,6 @@ class Dataset:
             if required:
                 raise INVALID_VIEW.error(reason="observation_metadata_unavailable") from error
             return None
-
-
-
 
     def _iter_arrow_batches(self, batch_size: int) -> Generator[pa.RecordBatch]:
         backend = DuckDBBackend(self._raw, namespace=self._namespace)

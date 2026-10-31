@@ -12,7 +12,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from terrine import retention
 from terrine.data import Budget, Coverage, MaterializedFrame, UnitSource
 from terrine.errors import TerrineError, thaw
 from terrine.execution.backend import backend_capabilities
@@ -32,6 +31,7 @@ from terrine.spec import (
     event_time,
     from_json,
     quantile,
+    retention,
     to_json,
 )
 from terrine.spec.expressions import RetentionMetric

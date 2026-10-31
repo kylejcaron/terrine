@@ -1,5 +1,4 @@
 from datetime import UTC, datetime
-from decimal import Decimal
 
 import pandas as pd
 import pytest
@@ -15,6 +14,10 @@ from terrine.spec import (
     Initiation,
     StateObservations,
     Treatment,
+    approx_distinct,
+    approx_quantile,
+    quantile,
+    retention,
 )
 from terrine.spec.anchors import Schedule
 from terrine.spec.panels import CalendarComparisonSpec
@@ -231,8 +234,8 @@ def test_describe_reads_expression_metadata_and_only_required_sources(shapes_mod
         FixedDate("2025-02-01"),
         features={
             "paid": tr.agg("paid_spend", window=("-30d", "-1d")),
-            "median": tr.quantile("spend", "0.5", window=("-30d", "-1d")),
-            "distinct": tr.approx_distinct("spend", window=("-30d", "-1d")),
+            "median": quantile("spend", "0.5", window=("-30d", "-1d")),
+            "distinct": approx_distinct("spend", window=("-30d", "-1d")),
             "plan_before": tr.asof("plan", before="-2d"),
             "relative": tr.agg("spend", window=("-3d", "0s"), relative_to=selector),
             "recency": tr.since("purchase", window=("-180d", "-1d")),
@@ -329,7 +332,7 @@ def test_describe_retention_names_identity_bands_and_horizon(shapes_model):
         None,
         FixedDate("2025-02-01"),
         outcomes={
-            "followup": tr.retention(
+            "followup": retention(
                 "checkups",
                 label_property="health",
                 target_event="well",
@@ -343,22 +346,15 @@ def test_describe_retention_names_identity_bands_and_horizon(shapes_model):
         assert value in text
 
 
-def test_describe_approximate_quantile_names_the_declared_sketch(shapes_model):
-    from importlib.metadata import version
-
-    from terrine.spec import SketchRequest
-
+def test_describe_approximate_quantile_names_the_fixed_policy(shapes_model):
     pytest.importorskip("datasketches")
-    sketch = SketchRequest("tdigest", version("datasketches"), Decimal("0.01"))
     design = Design(
         None,
         FixedDate("2025-02-01"),
-        features={
-            "upper": tr.approx_quantile("spend", "0.9", window=("-30d", "0s"), sketch=sketch)
-        },
+        features={"upper": approx_quantile("spend", "0.9", window=("-30d", "0s"))},
     )
-    text = design.describe(shapes_model)
-    for value in ("upper", "purchase.amount", "tdigest", sketch.version, "0.01", "0.9"):
+    text = " ".join(design.describe(shapes_model).split())
+    for value in ("upper", "purchase.amount", "tdigest", "200", "no guaranteed rank bound", "0.9"):
         assert value in text
 
 

@@ -5,7 +5,8 @@ from datetime import UTC, datetime
 import ibis
 import pyarrow as pa
 
-from terrine import Coverage, Design, FixedDate, Model, UnitSource, retention
+from terrine import Coverage, Design, FixedDate, Model, UnitSource
+from terrine.spec import retention
 
 
 def main() -> None:

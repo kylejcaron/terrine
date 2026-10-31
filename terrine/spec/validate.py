@@ -628,15 +628,9 @@ def _expression(
             from importlib import import_module
 
             import_module("datasketches")
-            installed_version = package_version("datasketches")
+            package_version("datasketches")
         except (ImportError, PackageNotFoundError) as exc:
-            raise _SKETCH_UNAVAILABLE.error(
-                algorithm=expr.sketch.algorithm, version=expr.sketch.version
-            ) from exc
-        if expr.sketch.algorithm != "tdigest" or expr.sketch.version != installed_version:
-            raise _SKETCH_UNAVAILABLE.error(
-                algorithm=expr.sketch.algorithm, version=expr.sketch.version
-            )
+            raise _SKETCH_UNAVAILABLE.error(algorithm="tdigest", version="installed") from exc
     if isinstance(expr, MetricAgg):
         _check_expression_timing(expr, role, design, name=name)
     metric = _metric(model, expr.metric)

@@ -370,10 +370,13 @@ DuckDB's native HLL aggregate and records its algorithm, engine version and
 relative-error description in the output column metadata. Exact distinct
 remains the default when requested through `agg`; approximation is explicit.
 
-`approx_quantile(metric, probability, window=..., sketch=SketchRequest(...))`
-uses DataSketches t-digest on `cross_section` designs only. It is available with
-the optional `terrine[sketches]` extra; otherwise the request refuses before
-source queries and points to `uv add 'terrine[sketches]'` or exact `quantile`.
+Import `quantile`, `approx_distinct` and `approx_quantile` from `terrine.spec`.
+`approx_quantile(metric, probability, window=...)` uses DataSketches t-digest
+on `cross_section` designs only, at the installed package version with fixed
+compression `k=200`. No sketch settings or requested rank error are study inputs.
+It is available with the optional `terrine[sketches]` extra; otherwise the
+request refuses before source queries and points to `terrine[sketches]` or
+exact `quantile`.
 The compiler streams canonical `(unit, anchor, event time, value)` Arrow batches
 to the client, updating t-digests in sorted anchor order. This transfers all
 matched window values out of DuckDB and can cost more than in-database exact
@@ -434,7 +437,8 @@ cutoff. Missing target labels preserve `incomplete_label_history`, not zero.
 Use the ordinary immutable Design expression:
 
 ```python
-from terrine import Design, FixedDate, retention
+from terrine import Design, FixedDate
+from terrine.spec import retention
 
 design = Design(
     "user",
@@ -807,7 +811,9 @@ sequence = recipes.event_sequence(
 ### Under the hood
 
 ```python
-from terrine import Design, EventAnchor, EventSequence, SessionSpec, Window
+from terrine import Design, EventAnchor
+from terrine.spec import EventSequence, SessionSpec
+from terrine.windows import Window
 
 equivalent = Design(
     None, EventAnchor("activity"),

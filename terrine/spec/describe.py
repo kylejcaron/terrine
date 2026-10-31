@@ -260,8 +260,8 @@ class _Renderer:
             )
         if isinstance(expr, ApproxMetricQuantile):
             return (
-                f"approximate {expr.probability} quantile ({expr.sketch.algorithm} "
-                f"{expr.sketch.version}, requested rank error {expr.sketch.rank_error}) "
+                f"approximate {expr.probability} quantile (tdigest, compression k=200, "
+                "empirical with no guaranteed rank bound) "
                 f"of {self._values(expr.metric)} in {_window(expr.window, origin)}"
             )
         if isinstance(expr, ApproxMetricDistinct):

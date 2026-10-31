@@ -27,7 +27,6 @@ from terrine.spec.expressions import (
     MetricAgg,
     MetricQuantile,
     RetentionMetric,
-    SketchRequest,
 )
 from terrine.spec.panels import (
     CalendarComparisonSpec,
@@ -270,7 +269,6 @@ def _encode(value: Any) -> Any:
             "metric": value.metric,
             "probability": str(value.probability),
             "window": _encode(value.window),
-            "sketch": _encode(value.sketch),
         }
     if isinstance(value, ApproxMetricDistinct):
         return {
@@ -286,13 +284,6 @@ def _encode(value: Any) -> Any:
             "target_event": value.target_event,
             "count_thresholds": list(value.count_thresholds),
             "finite_horizon_seconds": value.finite_horizon_seconds,
-        }
-    if isinstance(value, SketchRequest):
-        return {
-            "type": "SketchRequest",
-            "algorithm": value.algorithm,
-            "version": value.version,
-            "rank_error": str(value.rank_error),
         }
     if isinstance(value, MetricAgg):
         node = {"type": "MetricAgg", "metric": value.metric, "window": _encode(value.window)}
@@ -611,11 +602,6 @@ def _node(value: Any) -> Any:
     if tag == "Window":
         item = _object(value, {"type", "start", "end"})
         return Window(_duration_text(item["start"]), _duration_text(item["end"]))
-    if tag == "SketchRequest":
-        item = _object(value, {"type", "algorithm", "version", "rank_error"})
-        return SketchRequest(
-            item["algorithm"], item["version"], _decimal_string(item["rank_error"])
-        )
     if tag == "MetricQuantile":
         item = _object(value, {"type", "metric", "probability", "window", "interpolation"})
         return MetricQuantile(
@@ -625,12 +611,11 @@ def _node(value: Any) -> Any:
             item["interpolation"],
         )
     if tag == "ApproxMetricQuantile":
-        item = _object(value, {"type", "metric", "probability", "window", "sketch"})
+        item = _object(value, {"type", "metric", "probability", "window"})
         return ApproxMetricQuantile(
             item["metric"],
             _decimal_string(item["probability"]),
             _node(item["window"]),
-            _node(item["sketch"]),
         )
     if tag == "ApproxMetricDistinct":
         item = _object(value, {"type", "metric", "window"})

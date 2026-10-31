@@ -81,9 +81,7 @@ def test_dataset_repr_names_generation_and_column_count_without_addresses():
 
 
 def test_large_descriptor_and_materialized_frame_reprs_are_bounded():
-    table = pd.DataFrame(
-        {"k": [str(i) for i in range(10_000)], "t": pd.Timestamp("2025-01-01")}
-    )
+    table = pd.DataFrame({"k": [str(i) for i in range(10_000)], "t": pd.Timestamp("2025-01-01")})
     event = tr.Events(table, time="t", key="k", complete=("2025-01-01", "2025-01-02"))
     assert len(repr(event)) < 400
 
@@ -103,7 +101,6 @@ def test_large_descriptor_and_materialized_frame_reprs_are_bounded():
 def test_frozen_map_and_window_reprs_show_values():
     assert "incomplete_coverage" in repr(FrozenMap({"reason": "incomplete_coverage"}))
     assert "-30d" in repr(Window("-30d", "0s"))
-
 
 
 def test_format_duration_uses_largest_exact_elapsed_unit():

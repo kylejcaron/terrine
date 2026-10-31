@@ -25,7 +25,7 @@ def _name(value: object, field: str) -> None:
 class Trajectory:
     """Describe a metric over elapsed periods after t0, optionally accumulated from t0.
 
-    Example: tr.Trajectory("spend", period="30d", periods=2, cumulative=True)
+    Example: Trajectory("spend", period="30d", periods=2, cumulative=True)
     """
 
     metric: str
@@ -54,7 +54,7 @@ class Trajectory:
 class CohortSpec:
     """Pair a unit's origin event with a metric trajectory.
 
-    Example: tr.CohortSpec("orders", tr.Trajectory("spend", "30d", 2))
+    Example: CohortSpec("orders", Trajectory("spend", "30d", 2))
     """
 
     origin: str
@@ -70,7 +70,7 @@ class CohortSpec:
 class CohortGrouping:
     """Group units by origin-time buckets and summarize their trajectory values.
 
-    Example: tr.CohortGrouping("30d", datetime(2025, 1, 1, tzinfo=UTC))
+    Example: CohortGrouping("30d", datetime(2025, 1, 1, tzinfo=UTC))
     """
 
     bucket: int
@@ -102,7 +102,7 @@ class CohortGrouping:
 class TimeToEvent:
     """Describe follow-up from t0 until an event, exit or the end of complete history.
 
-    Example: tr.TimeToEvent("orders")
+    Example: TimeToEvent("orders")
     """
 
     end_event: str
@@ -127,7 +127,7 @@ class TimeToEvent:
 class LifeTable:
     """Summarize time-to-event follow-up in elapsed bins with risk and censor counts.
 
-    Example: tr.LifeTable(tr.TimeToEvent("orders"), bin="7d")
+    Example: LifeTable(TimeToEvent("orders"), bin="7d")
     """
 
     time_to_event: TimeToEvent

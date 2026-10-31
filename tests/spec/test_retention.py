@@ -1,7 +1,7 @@
 import pytest
 
-from terrine import retention
 from terrine.errors import TerrineError
+from terrine.spec import retention
 
 
 @pytest.mark.parametrize(

@@ -24,6 +24,7 @@ from integration.warehouse_execution.snowflake_fixtures import (
     snowflake_scratch as snowflake_scratch,  # noqa: F401
 )
 from terrine.errors import TerrineError
+from terrine.spec import CohortGrouping, CohortSpec, TimeToEvent, Trajectory
 
 pytestmark = pytest.mark.snowflake
 
@@ -280,7 +281,7 @@ def test_time_to_event_duration_outside_nanosecond_range_refuses(snowflake_scrat
     design = tr.Design(
         "user",
         tr.FixedDate("1700-01-01"),
-        shape=tr.TimeToEvent("order"),
+        shape=TimeToEvent("order"),
         administrative_cutoff=datetime(2201, 1, 1, tzinfo=UTC),
     )
     with pytest.raises(TerrineError) as error:
@@ -304,12 +305,12 @@ def test_cohort_summaries_match_duckdb(snowflake_scratch, tmp_path):  # noqa: F8
     design = tr.Design(
         "user",
         tr.EventAnchor("order", occurrence="first"),
-        shape=tr.CohortSpec("order", tr.Trajectory("spend", "1d", periods=2, cumulative=True)),
+        shape=CohortSpec("order", Trajectory("spend", "1d", periods=2, cumulative=True)),
         administrative_cutoff=datetime(2025, 1, 6, tzinfo=UTC),
     )
 
     def summary(model, statistic):
-        grouping = tr.CohortGrouping("1d", datetime(2025, 1, 1, tzinfo=UTC), statistic=statistic)
+        grouping = CohortGrouping("1d", datetime(2025, 1, 1, tzinfo=UTC), statistic=statistic)
         cohorts = design.build(model).cohorts(grouping=grouping, value_column="cumulative_value")
         rows = cohorts.to_pyarrow(budget=shapes._BUDGET).to_pylist()
         return sorted(rows, key=lambda row: tuple(str(value) for value in row.values()))

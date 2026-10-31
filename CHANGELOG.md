@@ -4,6 +4,13 @@
 
 ### API
 
+- Keep the package root focused on binding, Design, everyday expressions, recipes,
+  results and errors. Import specialized study inputs and quantiles from
+  `terrine.spec`, windows from `terrine.windows`, and the Frame type from
+  `terrine.frame`. Bind Models with `from_tables` or `from_catalog`; dataset
+  definitions no longer take a schema version. Approximate quantiles use the
+  installed DataSketches t-digest with fixed compression 200, record its version
+  and empirical error model, and require no sketch settings.
 - Use one vocabulary for recipes and low-level shapes: `occurrence`, `end_event`,
   `entry_event`, `exit_event`, `bin`, `periods`, `period`, `anticipation`,
   `reference_period` and predicate `expr`; name the inclusive coverage bound `end`.

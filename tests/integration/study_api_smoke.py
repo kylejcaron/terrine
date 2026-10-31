@@ -28,6 +28,7 @@ import terrine as tr  # noqa: E402
 from terrine.data import MaterializedFrame  # noqa: E402
 from terrine.execution import publish_native_inputs  # noqa: E402
 from terrine.execution.inputs import ExecutionContext  # noqa: E402
+from terrine.spec import Treatment  # noqa: E402
 
 
 def _definitions():
@@ -146,7 +147,7 @@ def main():
         },
         outcomes={"post": tr.agg("sessions", window=("0s", "1h"))},
         eligibility={"history": tr.gt(tr.agg("sessions", window=("-1h", "0s")), 0)},
-        treatment=tr.Treatment("adopted", known_at_t0=True),
+        treatment=Treatment("adopted", known_at_t0=True),
     )
     units = {"user": tr.UnitSource("users", "user_id")}
     readiness = {"events": tr.Coverage("2025-01-01", "2025-01-31")}

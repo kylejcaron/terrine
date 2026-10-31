@@ -79,7 +79,8 @@ the same suffixes immediately after each value.
 `StateObservations` reads the declared string property only at its exact source timestamp; it never carries a prior value forward. Missing assessments remain missing on both adjacent transitions. A known-null assessment is complete but has no usable state label. Readiness and unit observation bounds are half-open, so the exclusive endpoint is unavailable.
 
 ```python
-from terrine import StateObservations, recipes
+from terrine import recipes
+from terrine.spec import StateObservations
 
 status = StateObservations("status", levels=("active", "closed"), absorbing=("closed",))
 status_panel = recipes.state_panel(

@@ -68,7 +68,7 @@ def _levels(levels: tuple[str, ...]) -> tuple[str, ...]:
 class StateObservations:
     """Describe an event label's observed states without carrying a state between events.
 
-    Example: tr.StateObservations("status", levels=("placed", "paid"))
+    Example: StateObservations("status", levels=("placed", "paid"))
     """
 
     property: str
@@ -95,7 +95,7 @@ class StateObservations:
 class BinnedMetricState:
     """Map a metric's period value to ordered states with right-closed intervals.
 
-    Example: tr.BinnedMetricState("spend", cutpoints=(50,), levels=("low", "high"))
+    Example: BinnedMetricState("spend", cutpoints=(50,), levels=("low", "high"))
     """
 
     metric: str
@@ -124,7 +124,7 @@ class BinnedMetricState:
 class StatePanel:
     """Describe bounded repeated state rows for each unit over a finite schedule.
 
-    Example: tr.StatePanel(tr.BinnedMetricState("spend", (50,), ("low", "high")), periods=28)
+    Example: StatePanel(BinnedMetricState("spend", (50,), ("low", "high")), periods=28)
     """
 
     state: StateObservations | BinnedMetricState

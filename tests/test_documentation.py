@@ -36,9 +36,10 @@ def test_refusal_discovery_retains_inline_and_duplicate_code_variants(tmp_path):
 
 
 def test_emitted_refusals_have_documented_interpolation_fields_and_routes():
-    from terrine import Coverage, Window
+    from terrine import Coverage
     from terrine.backends.capabilities import UNVERIFIED_CAPABILITIES
     from terrine.errors import TerrineError
+    from terrine.windows import Window
     from tests.documentation import recovery_guide, refusal_declarations
 
     declared = refusal_declarations(Path(__file__).resolve().parents[1] / "terrine")

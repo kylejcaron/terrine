@@ -9,7 +9,6 @@ from terrine.spec.dataset import (
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import (
     EventTime,
-    SketchRequest,
     agg,
     all_of,
     approx_distinct,
@@ -66,7 +65,6 @@ __all__ = [
     "Initiation",
     "MatchedT0Sample",
     "retention",
-    "SketchRequest",
     "PersistentAdoption",
     "Schedule",
     "Sequential",

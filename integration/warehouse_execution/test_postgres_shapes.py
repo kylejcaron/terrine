@@ -11,6 +11,14 @@ import terrine as tr
 from integration.warehouse_execution.postgres_fixtures import (
     postgres_scratch as postgres_scratch,  # noqa: F401
 )
+from terrine.spec import (
+    CohortGrouping,
+    CohortSpec,
+    StateObservations,
+    StatePanel,
+    TimeToEvent,
+    Trajectory,
+)
 
 pytestmark = pytest.mark.postgres
 
@@ -147,23 +155,21 @@ _DESIGNS = {
     "time_to_first_order": tr.Design(
         "user",
         tr.FixedDate("2025-01-01T12:00:00+00:00"),
-        shape=tr.TimeToEvent("order"),
+        shape=TimeToEvent("order"),
         administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
     ),
     # Entry and exit coverages are narrowed against the backend's timestamp range.
     "time_to_order_with_entry_and_exit": tr.Design(
         "user",
         tr.FixedDate("2025-01-01T12:00:00+00:00"),
-        shape=tr.TimeToEvent(
-            "order", entry_event="amount", delayed_entry=True, exit_event="amount"
-        ),
+        shape=TimeToEvent("order", entry_event="amount", delayed_entry=True, exit_event="amount"),
         administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
     ),
     "observed_state_panel": tr.Design(
         "user",
         tr.Schedule("1d", "2025-01-02", "2025-01-04"),
-        shape=tr.StatePanel(
-            tr.StateObservations("state", ("active", "closed"), absorbing=("closed",)),
+        shape=StatePanel(
+            StateObservations("state", ("active", "closed"), absorbing=("closed",)),
             periods=3,
         ),
     ),
@@ -247,10 +253,10 @@ def test_cohort_summaries_match_duckdb(postgres_scratch, tmp_path, statistic):  
     design = tr.Design(
         "user",
         tr.EventAnchor("order", occurrence="first"),
-        shape=tr.CohortSpec("order", tr.Trajectory("spend", "1d", periods=2, cumulative=True)),
+        shape=CohortSpec("order", Trajectory("spend", "1d", periods=2, cumulative=True)),
         administrative_cutoff=datetime(2025, 1, 6, tzinfo=UTC),
     )
-    grouping = tr.CohortGrouping("1d", datetime(2025, 1, 1, tzinfo=UTC), statistic=statistic)
+    grouping = CohortGrouping("1d", datetime(2025, 1, 1, tzinfo=UTC), statistic=statistic)
 
     def summary(model):
         cohorts = design.build(model).cohorts(grouping=grouping, value_column="cumulative_value")

@@ -8,7 +8,7 @@ import pyarrow as pa
 import terrine as tr
 from terrine import recipes
 from terrine.data import MaterializedFrame
-from terrine.spec import BinnedMetricState, agg
+from terrine.spec import BinnedMetricState, StateObservations, agg
 
 
 def main() -> None:
@@ -130,7 +130,7 @@ def main() -> None:
         print(restored.table.select(["unit", "period_index", "from_state", "to_state", "terminal"]))
         status_design = recipes.state_panel(
             "user",
-            state_source=tr.StateObservations(
+            state_source=StateObservations(
                 "status", levels=("active", "closed"), absorbing=("closed",)
             ),
             every="1w",

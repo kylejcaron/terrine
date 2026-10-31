@@ -30,7 +30,6 @@ from terrine.spec import (
     Schedule,
     Sequential,
     SequentialSpec,
-    SketchRequest,
     StateObservations,
     StatePanel,
     TimeToEvent,
@@ -224,11 +223,6 @@ CASES = [
         {"reason": "not_json_scalar", "field": "value"},
     ),
     ("terrine.design.invalid", lambda: all_of(), {"reason": "empty", "field": "terms"}),
-    (
-        "terrine.design.invalid",
-        lambda: SketchRequest("tdigest", "1", Decimal(0)),
-        {"reason": "not_positive", "field": "rank_error"},
-    ),
     # trajectories, cohorts and time to event
     (
         "terrine.design.invalid",
@@ -313,7 +307,7 @@ CASES = [
     ),
     (
         "terrine.dataset.invalid_definition",
-        lambda: DatasetDefinition(schema_version=3, base_design=cast(Any, None)),
+        lambda: DatasetDefinition(base_design=cast(Any, None)),
         {"reason": "wrong_type", "field": "base_design"},
     ),
     # design documents
@@ -531,7 +525,6 @@ CASES = [
     (
         "terrine.dataset.invalid_definition",
         lambda: DatasetDefinition(
-            schema_version=3,
             base_design=Design("user", FixedDate("2025-01-01")),
             transforms=cast(Any, 5),
         ),

@@ -27,7 +27,7 @@ def _name(value: object, field: str) -> str:
 class SessionSpec:
     """Group a unit's consecutive events into sessions separated by more than ``gap``.
 
-    Example: tr.SessionSpec(gap="30m")
+    Example: SessionSpec(gap="30m")
     """
 
     gap_seconds: int
@@ -43,7 +43,7 @@ class SessionSpec:
 class FunnelSpec:
     """Describe ordered event-label steps with an optional time limit.
 
-    Example: tr.FunnelSpec("status", ("placed", "paid"), within="7d")
+    Example: FunnelSpec("status", ("placed", "paid"), within="7d")
     """
 
     event_property: str
@@ -73,7 +73,7 @@ class FunnelSpec:
 class EventSequence:
     """Describe a bounded sequence of a unit's events within a window.
 
-    Example: tr.EventSequence("orders", tr.Window("0s", "30d"), max_events=10)
+    Example: EventSequence("orders", Window("0s", "30d"), max_events=10)
     """
 
     event: str
