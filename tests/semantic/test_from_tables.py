@@ -149,13 +149,17 @@ def test_events_descriptor_normalizes_and_detaches_inputs():
         ({"metrics": {"": tr.count()}}, "wrong_type", "metrics"),
         ({"labels": "status"}, "wrong_type", "labels"),
         ({"complete": (datetime(2025, 1, 1), date(2025, 1, 31))}, "invalid_date", "complete"),
+        ({"complete": ("04/01/2025", "2025-01-31")}, "invalid_date", "complete"),
     ],
 )
 def test_events_descriptor_rejects_invalid_fields(changes, reason, field):
     with pytest.raises(TerrineError) as error:
         orders(**changes)
     assert error.value.code == "terrine.model.invalid_binding"
-    assert error.value.context == {"reason": reason, "field": field}
+    assert error.value.context.get("reason") == reason
+    assert error.value.context.get("field") == field
+    if reason == "invalid_date":
+        assert error.value.context["expected"] == ("YYYY-MM-DD",)
 
 
 def test_where_counts_match_hand_oracles(con):
@@ -231,21 +235,70 @@ def test_null_filter_literal_refuses_at_build_not_zero(con):
     assert error.value.code == "terrine.filter.unknown"
 
 
+
+
+def test_filter_value_type_is_checked_during_shared_binding(con):
+    valid = orders(labels=("status",), metrics={"n": tr.count(where={"status": "refunded"})})
+    valid_model = Model.from_tables(con, units=UNITS, events={"orders": valid})
+    raw_catalog = valid_model.catalog.model_dump(mode="python")
+    measure_name = raw_catalog["metrics"]["n"]["measure"]
+    raw_catalog["measures"][measure_name]["filters"] = (
+        {"property": "status", "op": "equals", "values": (1,)},
+    )
+    event = orders(labels=("status",), metrics={"n": tr.count(where={"status": 1})})
+    def invalid_catalog():
+        return Model.from_catalog(
+            raw_catalog, con=con, readiness={"orders": tr.Coverage(*COMPLETE)}, units=UNITS
+        )
+    for bind in (
+        lambda: Model.from_tables(con, units=UNITS, events={"orders": event}),
+        invalid_catalog,
+    ):
+        with pytest.raises(TerrineError) as error:
+            bind()
+        assert error.value.code == "terrine.semantic.schema_mismatch"
+        assert error.value.context["field"] == "where"
+        assert error.value.context["label"] == "status"
+        assert error.value.context["value"] == 1
+        assert error.value.context["label_type"] == "string"
+        for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
+            assert restored.code == error.value.code
+            assert restored.context == error.value.context
+
+    con.raw_sql("""
+        CREATE TABLE decimal_orders AS
+        SELECT customer_id, ordered_at, amount::DECIMAL(10, 2) AS amount FROM orders
+    """)
+    decimal_event = Events(
+        "decimal_orders",
+        time="ordered_at",
+        key="customer_id",
+        complete=COMPLETE,
+        labels=("amount",),
+        metrics={"n": tr.count(where={"amount": "10.50"})},
+    )
+    Model.from_tables(con, units=UNITS, events={"decimal_orders": decimal_event})
+
 def test_undeclared_label_and_ratio_operand_refuse_missing_reference(con):
+
     with pytest.raises(TerrineError) as error:
         Model.from_tables(
             con,
             units=UNITS,
             events={
                 "orders": orders(
-                    labels=("status",), metrics={"n": tr.count(where={"region": "eu"})}
+                    labels=("status",), metrics={"n": tr.count(where={"stauts": "eu"})}
                 )
             },
         )
     assert error.value.code == "terrine.semantic.missing_reference"
     assert error.value.context["kind"] == "label"
-    assert error.value.context["name"] == "region"
+    assert error.value.context["name"] == "stauts"
     assert error.value.context["available"] == ("status",)
+    assert error.value.context["suggestions"] == ("status",)
+    for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
+        assert restored.code == error.value.code
+        assert restored.context == error.value.context
     with pytest.raises(TerrineError) as error:
         Model.from_tables(
             con,

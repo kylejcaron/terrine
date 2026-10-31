@@ -1,3 +1,5 @@
+import copy
+import pickle
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
@@ -131,8 +133,13 @@ def test_values_only_keeps_roles_and_values_and_drops_support(readme_con):
         frame.to_pandas(values_only=True, include_observation_metadata=True)
     assert error.value.code == "terrine.dataset.invalid_view"
     assert error.value.context["reason"] == "values_only_excludes_observation_metadata"
+    for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
+        assert restored.code == error.value.code
+        assert restored.context == error.value.context
+    assert error.value.context["conflicts"] == ("values_only", "include_observation_metadata")
     with pytest.raises(TerrineError) as error:
         frame.to_polars(values_only=True, include_observation_metadata=True)
+    assert error.value.context["conflicts"] == ("values_only", "include_observation_metadata")
     assert error.value.code == "terrine.dataset.invalid_view"
     assert error.value.context["reason"] == "values_only_excludes_observation_metadata"
 

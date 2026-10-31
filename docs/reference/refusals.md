@@ -161,6 +161,7 @@ Use pinned manifests, valid definitions and owned destinations.
 | `terrine.dataset.invalid_selection` | <code>Unknown training label selection: {names}</code> | `names` | [terrine/frame.py](../../terrine/frame.py) |
 | `terrine.dataset.invalid_split` | <code>Split input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/dataset/splits.py](../../terrine/dataset/splits.py) |
 | `terrine.dataset.invalid_split` | <code>Split input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/frame.py](../../terrine/frame.py) |
+| `terrine.dataset.invalid_view` | <code>Dataset view flags {conflicts!r} conflict ({reason}); choose one view.</code> | `conflicts`, `reason` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.dataset.invalid_view` | <code>Invalid dataset view: {reason}.</code> | `reason` | [terrine/errors.py](../../terrine/errors.py) |
 | `terrine.dataset.stale_generation` | <code>Refresh requires the pinned generation to remain the current publication.</code> | None | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
 | `terrine.dataset.unsupported_view` | <code>Unsupported dataset view: {reason}.</code> | `reason` | [terrine/spec/dataset.py](../../terrine/spec/dataset.py) |
@@ -197,7 +198,7 @@ Repair temporal/history contracts; do not zero-fill unknowns.
 | `terrine.design.invalid` | <code>Design input {field} must be one of {choices}.</code> | `choices`, `field` | [terrine/spec/expressions.py](../../terrine/spec/expressions.py) |
 | `terrine.design.invalid` | <code>Design input {field} must be one of {choices}.</code> | `choices`, `field` | [terrine/spec/panels.py](../../terrine/spec/panels.py) |
 | `terrine.design.invalid` | <code>Design input {field} must be one of {choices}.</code> | `choices`, `field` | [terrine/spec/trajectory.py](../../terrine/spec/trajectory.py) |
-| `terrine.design.invalid` | <code>Design input {field}[{name!r}] is invalid: {reason}.</code> | `field`, `name`, `reason` | [terrine/spec/design.py](../../terrine/spec/design.py) |
+| `terrine.design.invalid` | <code>Design input {field}[{name!r}] is invalid ({reason}, got {got}; expected {expected}).</code> | `expected`, `field`, `got`, `name`, `reason` | [terrine/spec/design.py](../../terrine/spec/design.py) |
 | `terrine.design.invalid` | <code>End day {end!r} is before start day {start!r}. The end is the last included day; choose an end on or after the start.</code> | `end`, `start` | [terrine/spec/anchors.py](../../terrine/spec/anchors.py) |
 | `terrine.design.invalid` | <code>End day {end!r} leaves no following day to include the whole end day. Choose an earlier end day.</code> | `end` | [terrine/spec/anchors.py](../../terrine/spec/anchors.py) |
 | `terrine.design.invalid` | <code>End time {end!r} is not after start time {start!r}. Choose a later end time; the end time itself is excluded.</code> | `end`, `start` | [terrine/spec/anchors.py](../../terrine/spec/anchors.py) |
@@ -209,6 +210,7 @@ Repair temporal/history contracts; do not zero-fill unknowns.
 | `terrine.design.invalid_trial_weight` | <code>Trial weights do not name every scheduled trial exactly once. Provide one weight for each trial in the schedule.</code> | None | [terrine/compile/shapes/sequential.py](../../terrine/compile/shapes/sequential.py) |
 | `terrine.design.invalid_window` | <code>Metric {name!r} for output {output!r} has window start {start!r} and end {end!r} seconds relative to t0. Set window=(earlier_time, later_time).</code> | `end`, `name`, `output`, `start` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 | `terrine.design.metric_window_conflict` | <code>Metric {metric!r} requires a different window length from the design. Match the design window to the metric&#x27;s declared window_days.</code> | `metric` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
+| `terrine.design.missing_reference` | <code>{kind} {name!r} is not declared in the model; available names are {available!r}. Did you mean {suggestions!r}?</code> | `available`, `kind`, `name`, `suggestions` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 | `terrine.design.missing_reference` | <code>{kind} {name!r} is not declared in the model; available names are {available!r}. Use one of these names or add the missing {kind} to the model.</code> | `available`, `kind`, `name` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 
 ## diff_diff
@@ -422,7 +424,9 @@ Correct native semantics or use an admitted staged table.
 | `terrine.semantic.decimal_scale_required` | <code>Decimal column {column!r} has no fixed precision and scale up to 38 digits (declared {declared}). Cast it to an explicit numeric(p, s) with p &lt;= 38 in the relation SQL.</code> | `column`, `declared` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
 | `terrine.semantic.dialect_mismatch` | <code>The model uses SQL dialect {declared!r}, but the connection uses {execution!r}. Set the model dialect to match the connection and use SQL for that dialect.</code> | `declared`, `execution` | [terrine/semantic/sql.py](../../terrine/semantic/sql.py) |
 | `terrine.semantic.missing_reference` | <code>The model does not declare {reference!r}. Add the missing declaration or use a name already declared in the model.</code> | `reference` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
+| `terrine.semantic.missing_reference` | <code>{owner!r} uses {kind} {name!r}, which is not declared; available names are {available!r}. Did you mean {suggestions!r}?</code> | `available`, `kind`, `name`, `owner`, `suggestions` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.semantic.missing_reference` | <code>{owner!r} uses {kind} {name!r}, which is not declared; available names are {available!r}. Use one of these names or add the missing {kind} to the model.</code> | `available`, `kind`, `name`, `owner` | [terrine/model.py](../../terrine/model.py) |
+| `terrine.semantic.schema_mismatch` | <code>Filter value {value!r} for label {label!r} has the wrong type for {label_type}; use a value matching the declared label type.</code> | `label`, `label_type`, `value` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
 | `terrine.semantic.schema_mismatch` | <code>The {field!r} column {column!r} for unit {unit!r} has type {source_type}, but the unit roster key has type {unit_type}. Use matching key types in the source and roster.</code> | `column`, `field`, `source_type`, `unit`, `unit_type` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
 | `terrine.semantic.schema_mismatch` | <code>The {field!r} column {column!r} is missing or has the wrong type. Choose an existing column with the required type, or correct the table before adding it to the model.</code> | `column`, `field` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
 

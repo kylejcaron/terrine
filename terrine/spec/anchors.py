@@ -35,25 +35,58 @@ _REVERSED_INSTANTS = RefusalSpec(
 _CALENDAR_STEP = re.compile(r"([0-9]{1,19})(mo|y)", re.ASCII)
 
 
+def _context_value(value: object) -> object:
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    return type(value).__name__
+
+
 def _date(value: date | str, field: str) -> date:
     if isinstance(value, datetime) or not isinstance(value, (date, str)):
-        raise _INVALID.error(reason="invalid_date", field=field)
+        raise _INVALID.error(
+            reason="invalid_date",
+            field=field,
+            value=_context_value(value),
+            expected=("YYYY-MM-DD",),
+        )
     try:
         return date.fromisoformat(value) if isinstance(value, str) else value
     except ValueError as error:
-        raise _INVALID.error(reason="invalid_date", field=field) from error
+        raise _INVALID.error(
+            reason="invalid_date",
+            field=field,
+            value=value,
+            expected=("YYYY-MM-DD",),
+        ) from error
 
 
 def _aware_instant(value: object, field: str) -> datetime:
     """An aware datetime or ISO instant as exact UTC, or a coded design refusal."""
     if isinstance(value, datetime) and (value.tzinfo is None or value.utcoffset() is None):
-        raise _INVALID.error(reason="naive_datetime", field=field)
+        raise _INVALID.error(
+            reason="naive_datetime",
+            field=field,
+            value=_context_value(value),
+            expected=("timezone-aware datetime",),
+        )
     if not isinstance(value, (datetime, str)):
-        raise _INVALID.error(reason="wrong_type", field=field)
+        raise _INVALID.error(
+            reason="wrong_type",
+            field=field,
+            value=_context_value(value),
+            expected=("timezone-aware datetime",),
+        )
     try:
         return utc_instant(value)
     except (ValueError, OverflowError) as error:
-        raise _INVALID.error(reason="invalid_instant", field=field) from error
+        raise _INVALID.error(
+            reason="invalid_instant",
+            field=field,
+            value=_context_value(value),
+            expected=("timezone-aware datetime",),
+        ) from error
 
 
 def _range_bound(value: date | datetime | str | None, field: str) -> date | datetime | None:
@@ -65,12 +98,22 @@ def _range_bound(value: date | datetime | str | None, field: str) -> date | date
         try:
             return date.fromisoformat(value)
         except ValueError as error:
-            raise _INVALID.error(reason="invalid_date", field=field) from error
+            raise _INVALID.error(
+                reason="invalid_date",
+                field=field,
+                value=value,
+                expected=("YYYY-MM-DD", "timezone-aware datetime"),
+            ) from error
     if isinstance(value, datetime):
         return _aware_instant(value, field)
     if isinstance(value, date):
         return value
-    raise _INVALID.error(reason="wrong_type", field=field)
+    raise _INVALID.error(
+        reason="wrong_type",
+        field=field,
+        value=_context_value(value),
+        expected=("YYYY-MM-DD", "timezone-aware datetime"),
+    )
 
 
 @dataclass(frozen=True, slots=True, init=False)

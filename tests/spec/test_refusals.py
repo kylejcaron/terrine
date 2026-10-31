@@ -10,7 +10,7 @@ import pyarrow as pa
 import pytest
 
 from terrine import recipes
-from terrine.data import BoundCoverage, Budget, Coverage, Events, History, UnitSource
+from terrine.data import BoundCoverage, Budget, Coverage, EventMetric, Events, History, UnitSource
 from terrine.dataset import GroupSplit, TimeSplit
 from terrine.errors import TerrineError
 from terrine.spec import (
@@ -69,8 +69,23 @@ CASES = [
     ),
     (
         "terrine.design.invalid",
+        lambda: FixedDate("04/01/2025"),
+        {
+            "reason": "invalid_date",
+            "field": "date",
+            "value": "04/01/2025",
+            "expected": ("YYYY-MM-DD", "timezone-aware datetime"),
+        },
+    ),
+    (
+        "terrine.design.invalid",
         lambda: Schedule("1d", "2025-01-01T00:00:00Z", "2025-02-01"),
-        {"reason": "invalid_date", "field": "start"},
+        {
+            "reason": "invalid_date",
+            "field": "start",
+            "value": "2025-01-01T00:00:00Z",
+            "expected": ("YYYY-MM-DD",),
+        },
     ),
     (
         "terrine.design.invalid",
@@ -81,7 +96,22 @@ CASES = [
     (
         "terrine.design.invalid",
         lambda: AnchorRange(start=datetime(2025, 1, 1)),
-        {"reason": "naive_datetime", "field": "start"},
+        {
+            "reason": "naive_datetime",
+            "field": "start",
+            "value": "2025-01-01T00:00:00",
+            "expected": ("timezone-aware datetime",),
+        },
+    ),
+    (
+        "terrine.model.invalid_binding",
+        lambda: Coverage("04/01/2025", "2025-01-02"),
+        {
+            "reason": "invalid_date",
+            "field": "start",
+            "value": "04/01/2025",
+            "expected": ("YYYY-MM-DD",),
+        },
     ),
     # design and treatment
     (
@@ -96,8 +126,41 @@ CASES = [
     ),
     (
         "terrine.design.invalid",
+        lambda: Design(
+            "user",
+            FixedDate("2025-01-01"),
+            features={"x": cast(Any, EventMetric("count", None, ()))},
+        ),
+        {
+            "reason": "metric_declaration",
+            "field": "features",
+            "name": "x",
+            "got": "EventMetric",
+            "expected": "Events(metrics=...) + tr.agg",
+        },
+    ),
+    (
+        "terrine.design.invalid",
         lambda: Design("user", FixedDate("2025-01-01"), features={"x": cast(Any, "orders")}),
-        {"reason": "wrong_type", "field": "features", "name": "x"},
+        {
+            "reason": "wrong_type",
+            "field": "features",
+            "name": "x",
+            "got": "str",
+            "expected": (
+                "MetricAgg",
+                "MetricQuantile",
+                "ApproxMetricQuantile",
+                "ApproxMetricDistinct",
+                "RetentionMetric",
+                "AttributeAsOf",
+                "EventTime",
+                "Gt",
+                "Eq",
+                "IsNull",
+                "And",
+            ),
+        },
     ),
     (
         "terrine.design.invalid",
@@ -475,3 +538,36 @@ def test_missing_reference_lists_available_names(readme_con):
         design.validate(readme_model(readme_con))
     assert caught.value.code == "terrine.design.missing_reference"
     assert caught.value.context["available"] == ("orders", "spend")
+    for restored in (copy.deepcopy(caught.value), pickle.loads(pickle.dumps(caught.value))):
+        assert restored.context == caught.value.context
+
+
+def test_misspelled_metric_suggests_the_close_name(readme_con):
+    design = Design(
+        "customer",
+        FixedDate("2025-02-01"),
+        features={"x": agg("spned", window=("-1d", "0s"))},
+    )
+    with pytest.raises(TerrineError) as caught:
+        design.validate(readme_model(readme_con))
+    assert caught.value.context["suggestions"] == ("spend",)
+    for restored in (copy.deepcopy(caught.value), pickle.loads(pickle.dumps(caught.value))):
+        assert restored.context == caught.value.context
+
+
+def test_advertised_date_forms_are_accepted():
+    from datetime import date
+
+    aware = datetime(2025, 1, 1, tzinfo=UTC)
+    assert FixedDate("2025-01-01").date == date(2025, 1, 1)
+    assert FixedDate("2025-01-01T00:00:00Z").date == aware
+    assert AnchorRange(start="2025-01-01T00:00:00Z").start == aware
+    assert Schedule("1d", "2025-01-01", "2025-01-02").start == date(2025, 1, 1)
+    assert Coverage("2025-01-01", "2025-01-02").start == date(2025, 1, 1)
+    assert FixedDate(date(2025, 1, 1)).date == date(2025, 1, 1)
+    assert AnchorRange(start=date(2025, 1, 1)).start == date(2025, 1, 1)
+    assert FixedDate(aware).date == aware
+    assert AnchorRange(start=aware).start == aware
+    assert AnchorRange(start="2025-01-01").start == date(2025, 1, 1)
+    assert Schedule("1d", date(2025, 1, 1), date(2025, 1, 2)).start == date(2025, 1, 1)
+    assert Coverage(date(2025, 1, 1), date(2025, 1, 2)).start == date(2025, 1, 1)

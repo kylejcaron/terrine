@@ -7,6 +7,7 @@ import json
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
+from difflib import get_close_matches
 from importlib import import_module
 from pathlib import Path
 from types import MappingProxyType
@@ -60,6 +61,22 @@ _MISSING_REFERENCE = RefusalSpec(
     "{owner!r} uses {kind} {name!r}, which is not declared; available names are {available!r}. "
     "Use one of these names or add the missing {kind} to the model.",
 )
+_MISSING_REFERENCE_SUGGESTION = RefusalSpec(
+    "terrine.semantic.missing_reference",
+    "{owner!r} uses {kind} {name!r}, which is not declared; available names are {available!r}. "
+    "Did you mean {suggestions!r}?",
+)
+
+
+def _missing_reference(
+    *, kind: str, name: str, owner: str, available: tuple[str, ...]
+):
+    suggestions = tuple(get_close_matches(name, available, n=3, cutoff=0.6))
+    spec = _MISSING_REFERENCE_SUGGESTION if suggestions else _MISSING_REFERENCE
+    context = dict(kind=kind, name=name, owner=owner, available=available)
+    if suggestions:
+        context["suggestions"] = suggestions
+    return spec.error(**context)
 _IN_MEMORY_WITH_CONNECTION = RefusalSpec(
     "terrine.model.invalid_binding",
     "{inputs} are in-memory tables but a connection was given; Terrine never uploads "
@@ -195,13 +212,13 @@ def _check_references(name: str, event: Events) -> None:
         if isinstance(metric, Ratio):
             for operand in (metric.numerator, metric.denominator):
                 if operand not in plain:
-                    raise _MISSING_REFERENCE.error(
+                    raise _missing_reference(
                         kind="metric", name=operand, owner=owner, available=plain
                     )
         else:
             for filt in metric.filters:
                 if filt.property not in event.labels:
-                    raise _MISSING_REFERENCE.error(
+                    raise _missing_reference(
                         kind="label", name=filt.property, owner=owner, available=labels
                     )
 
@@ -209,7 +226,7 @@ def _check_references(name: str, event: Events) -> None:
 def _resolve_unit(owner: str, declared: str | None, units: Mapping[str, UnitSource]) -> str:
     if declared is not None:
         if declared not in units:
-            raise _MISSING_REFERENCE.error(
+            raise _missing_reference(
                 kind="unit", name=declared, owner=owner, available=tuple(sorted(units))
             )
         return declared

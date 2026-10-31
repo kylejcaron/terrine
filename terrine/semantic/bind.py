@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping
+from datetime import date
+from decimal import Decimal, InvalidOperation
 from types import MappingProxyType
 from typing import Any
 
@@ -16,6 +19,7 @@ from terrine.semantic.models import (
     BoundSource,
     BoundValidity,
     Catalog,
+    Filter,
     PropertyBinding,
     RelationSpec,
 )
@@ -23,7 +27,7 @@ from terrine.semantic.rules import UNSUPPORTED_TEMPORAL_KIND
 from terrine.semantic.sql import DIALECT_MISMATCH
 from terrine.semantic.time import boundary_timezone
 
-__all__ = ["normalize_source", "bind_metric", "normalize_events"]
+__all__ = ["normalize_source", "bind_metric", "normalize_events", "validate_filter_values"]
 
 _SCHEMA = RefusalSpec(
     "terrine.semantic.schema_mismatch",
@@ -35,6 +39,12 @@ _KEY_SCHEMA = RefusalSpec(
     "terrine.semantic.schema_mismatch",
     "The {field!r} column {column!r} for unit {unit!r} has type {source_type}, but the "
     "unit roster key has type {unit_type}. Use matching key types in the source and roster.",
+)
+
+_FILTER_VALUE_SCHEMA = RefusalSpec(
+    "terrine.semantic.schema_mismatch",
+    "Filter value {value!r} for label {label!r} has the wrong type for {label_type}; "
+    "use a value matching the declared label type.",
 )
 _MISSING = RefusalSpec(
     "terrine.semantic.missing_reference",
@@ -84,6 +94,47 @@ def _dtype_ok(dtype: Any, expected: str) -> bool:
     if expected == "date":
         return dtype.is_date()
     return False
+
+
+def validate_filter_values(filt: Filter, dtype: str) -> None:
+    """Refuse filter literals incompatible with their bound property dtype."""
+    for value in filt.values:
+        if value is None:
+            continue
+        if dtype == "string":
+            valid = isinstance(value, str)
+        elif dtype == "bool":
+            valid = isinstance(value, bool)
+        elif dtype == "date":
+            if not isinstance(value, str):
+                valid = False
+            else:
+                try:
+                    valid = date.fromisoformat(value).isoformat() == value
+                except ValueError:
+                    valid = False
+        elif dtype in {"int", "float"}:
+            valid = not isinstance(value, bool)
+            if valid and isinstance(value, (int, float)):
+                valid = math.isfinite(value)
+                if valid and dtype == "int":
+                    valid = isinstance(value, int) or value.is_integer()
+            elif valid and isinstance(value, str):
+                try:
+                    number = Decimal(value)
+                    valid = number.is_finite() and (
+                        dtype != "int" or number == number.to_integral_value()
+                    )
+                except InvalidOperation:
+                    valid = False
+            else:
+                valid = False
+        else:
+            valid = False
+        if not valid:
+            raise _FILTER_VALUE_SCHEMA.error(
+                field="where", label=filt.property, value=value, label_type=dtype
+            )
 
 
 def _require_exact_type(
@@ -274,6 +325,7 @@ def bind_metric(catalog: Catalog, metric_name: str) -> BoundMetric:
                 raise _MISSING.error(
                     reference=f"filter property {filt.property} on source {event.source}"
                 )
+            validate_filter_values(filt, prop.dtype)
             filters.append(BoundFilter(filt.property, filt.op, tuple(filt.values)))
         bound_measures.append(
             BoundMeasure(

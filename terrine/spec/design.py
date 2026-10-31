@@ -51,7 +51,8 @@ _RESERVED_OUTPUT_NAME = RefusalSpec(
 )
 _INVALID = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
 _NAMED = RefusalSpec(
-    "terrine.design.invalid", "Design input {field}[{name!r}] is invalid: {reason}."
+    "terrine.design.invalid",
+    "Design input {field}[{name!r}] is invalid ({reason}, got {got}; expected {expected}).",
 )
 
 
@@ -80,7 +81,24 @@ def _named_nodes(
             raise _INVALID.error(reason="empty_name", field=field_name)
         _validate_support_name(key)
         if not isinstance(value, allowed):
-            raise _NAMED.error(reason="wrong_type", field=field_name, name=key)
+            if (
+                type(value).__module__ == "terrine.data"
+                and type(value).__name__ in {"EventMetric", "Ratio"}
+            ):
+                raise _NAMED.error(
+                    reason="metric_declaration",
+                    field=field_name,
+                    name=key,
+                    got=type(value).__name__,
+                    expected="Events(metrics=...) + tr.agg",
+                )
+            raise _NAMED.error(
+                reason="wrong_type",
+                field=field_name,
+                name=key,
+                got=type(value).__name__,
+                expected=tuple(kind.__name__ for kind in allowed),
+            )
         copied[key] = value
     return MappingProxyType({key: copied[key] for key in sorted(copied)})
 

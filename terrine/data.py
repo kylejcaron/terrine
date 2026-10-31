@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import pyarrow as pa
 
 from terrine.backends.registry import get_engine
-from terrine.errors import INVALID_VIEW, RefusalSpec, freeze, parameter_names, thaw
+from terrine.errors import RefusalSpec, freeze, parameter_names, thaw
 from terrine.windows import Window, seconds, seconds_text
 
 if TYPE_CHECKING:
@@ -65,6 +65,10 @@ _MISSING_DEPENDENCY = RefusalSpec(
     "terrine.convert.missing_dependency",
     "Conversion requires the optional {extra!r} dependency; install terrine[{extra}].",
 )
+_INVALID_VIEW_FLAGS = RefusalSpec(
+    "terrine.dataset.invalid_view",
+    "Dataset view flags {conflicts!r} conflict ({reason}); choose one view.",
+)
 
 
 def _optional_dependency(name: str):
@@ -81,7 +85,10 @@ def dataframe_view_preflight(
     library: Literal["pandas", "polars"],
 ) -> None:
     if values_only and include_observation_metadata:
-        raise INVALID_VIEW.error(reason="values_only_excludes_observation_metadata")
+        raise _INVALID_VIEW_FLAGS.error(
+            reason="values_only_excludes_observation_metadata",
+            conflicts=("values_only", "include_observation_metadata"),
+        )
     _optional_dependency(library)
 
 
@@ -333,13 +340,24 @@ class UnitSource:
         )
 
 def _calendar_day(value: object, field: str) -> date:
+    context_value = value.isoformat() if isinstance(value, (date, datetime)) else value
     if isinstance(value, str):
         try:
             return date.fromisoformat(value)
         except ValueError as error:
-            raise _INVALID_BINDING.error(reason="invalid_date", field=field) from error
+            raise _INVALID_BINDING.error(
+                reason="invalid_date",
+                field=field,
+                value=context_value,
+                expected=("YYYY-MM-DD",),
+            ) from error
     if not isinstance(value, date) or isinstance(value, datetime):
-        raise _INVALID_BINDING.error(reason="invalid_date", field=field)
+        raise _INVALID_BINDING.error(
+            reason="invalid_date",
+            field=field,
+            value=context_value,
+            expected=("YYYY-MM-DD",),
+        )
     return value
 
 

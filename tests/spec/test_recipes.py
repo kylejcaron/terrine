@@ -372,7 +372,13 @@ def test_schedules_accept_calendar_dates_not_timestamps(name):
         for timestamp in (datetime(2025, 1, 10, tzinfo=UTC), "2025-01-10T00:00:00Z"):
             with pytest.raises(TerrineError) as error:
                 constructor("user", **{**_REQUIRED[name], bound: timestamp})
-            assert error.value.context == {"reason": "invalid_date", "field": bound}
+            value = timestamp.isoformat() if isinstance(timestamp, datetime) else timestamp
+            assert error.value.context == {
+                "reason": "invalid_date",
+                "field": bound,
+                "value": value,
+                "expected": ("YYYY-MM-DD",),
+            }
 
 
 @pytest.mark.parametrize(

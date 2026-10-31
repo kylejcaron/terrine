@@ -19,6 +19,9 @@
 - Allow tied timestamps for `EventTime` selectors, whose selected value is
   independent of tie order; anchors and event sequences without configured
   event IDs refuse ties with the event name and `event_ids` guidance.
+- Include rejected values and accepted forms in input refusals, suggest close
+  declared names, and direct event metric declarations to `Events(metrics=...)`.
+- Refuse filter values that do not match their label type when binding a model.
 
 ### Performance
 

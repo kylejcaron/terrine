@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
+from difflib import get_close_matches
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from typing import TYPE_CHECKING
@@ -107,12 +108,22 @@ _MISSING = RefusalSpec(
     "{kind} {name!r} is not declared in the model; available names are {available!r}. "
     "Use one of these names or add the missing {kind} to the model.",
 )
+_MISSING_SUGGESTION = RefusalSpec(
+    "terrine.design.missing_reference",
+    "{kind} {name!r} is not declared in the model; available names are {available!r}. "
+    "Did you mean {suggestions!r}?",
+)
 
 
 def missing_reference(kind: str, name: str, declared: Iterable[str]) -> TerrineError:
-    """The unknown-reference refusal listing the declared names of the same kind, sorted."""
-    return _MISSING.error(kind=kind, name=name, available=tuple(sorted(declared)))
-
+    """The unknown-reference refusal listing declared names and close matches."""
+    available = tuple(sorted(declared))
+    suggestions = tuple(get_close_matches(name, available, n=3, cutoff=0.6))
+    if suggestions:
+        return _MISSING_SUGGESTION.error(
+            kind=kind, name=name, available=available, suggestions=suggestions
+        )
+    return _MISSING.error(kind=kind, name=name, available=available)
 
 _AMBIGUOUS = RefusalSpec(
     "terrine.design.ambiguous_dimension",
