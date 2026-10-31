@@ -365,15 +365,18 @@ def test_description_event_panel_uses_selected_anchor_times(description_model):
                     shape=tr.spec.StatePanel(
                         state,
                         periods=2,
-                        baseline_features={"prior": tr.agg("count", window=("-5d", "0s"))},
+                        baseline_features=(
+                            {"prior": tr.agg("count", window=("-5d", "0s"))} if baseline else {}
+                        ),
                     ),
                 ),
-                id=name,
+                id=f"{name}{'-baseline' if baseline else ''}",
             )
             for name, state in (
                 ("state-panel", StateObservations("health", ("well", "ill"))),
                 ("binned-state-panel", tr.spec.BinnedMetricState("total", (5,), ("low", "high"))),
             )
+            for baseline in (False, True)
         ],
         pytest.param(
             tr.recipes.trial_panel(

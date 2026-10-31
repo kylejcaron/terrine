@@ -1613,7 +1613,12 @@ def _bookkeeping_columns(
     columns: Mapping[str, ColumnMeta],
     timings: Mapping[str, ExpressionTiming],
 ) -> tuple[str, ...]:
-    bookkeeping = {"_observed_from", "_observed_until", "anchor_provenance"}
+    bookkeeping = {
+        "_observed_from",
+        "_observed_until",
+        "anchor_provenance",
+        "__terrine_panel_start",
+    }
     for meta in columns.values():
         bookkeeping.update(
             name
