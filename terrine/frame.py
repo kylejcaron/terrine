@@ -37,6 +37,7 @@ from terrine.execution.gates import (
     run_schedule,
 )
 from terrine.spec.anchors import FixedDate
+from terrine.spec.design import _output_shape_name
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import BinnedMetricState, StatePanel
 from terrine.spec.trajectory import CohortGrouping, CohortSpec, LifeTable, TimeToEvent
@@ -910,24 +911,6 @@ class Frame:
             calendar_comparison = _provenance.calendar_comparison_metadata(self._design, model)
             panel = _provenance.panel_metadata(self._design, model)
 
-            if isinstance(self._design.shape, StatePanel):
-                shape_name = "state_panel"
-            elif isinstance(self._design.shape, EventSequence):
-                shape_name = "event_sequence"
-            elif calendar_comparison is not None:
-                shape_name = "calendar_comparison"
-            elif panel is not None:
-                shape_name = panel.shape
-            elif isinstance(self._design.shape, CohortSpec):
-                shape_name = "ltv"
-            elif isinstance(self._design.shape, LifeTable):
-                shape_name = "life_table"
-            elif isinstance(self._design.shape, TimeToEvent):
-                shape_name = "time_to_event"
-            else:
-                shape_name = (
-                    self._design.shape if isinstance(self._design.shape, str) else "cross_section"
-                )
             feature_cutoffs = compiled.feature_cutoffs
             expression_timings = compiled.expression_timings
             if isinstance(self._design.shape, LifeTable):
@@ -955,7 +938,7 @@ class Frame:
                 model_hash=model.model_hash,
                 source_generations=context.snapshot.source_generations,
                 execution_snapshot=context.snapshot,
-                shape=shape or shape_name,
+                shape=shape or _output_shape_name(self._design),
                 treatment_design="baseline_binary" if baseline_binary else None,
                 engine_name=context.snapshot.backend,
                 dialect=expression_policy(model),

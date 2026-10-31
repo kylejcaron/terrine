@@ -5,7 +5,7 @@ import pyarrow as pa
 import pytest
 
 import terrine as tr
-from terrine.spec import Design, EventAnchor, FixedDate
+from terrine.spec import Design, EventAnchor
 from tests.fixtures.readme import readme_design, readme_tables
 
 
@@ -18,7 +18,14 @@ def shuffled_model(tmp_path):
     )
     con = ibis.duckdb.connect(str(tmp_path / "ordering.duckdb"))
     con.create_table(
-        "customers", pa.table({"customer_id": ["carol", "bob", "alice"], "segment": [10, 2, 10]})
+        "customers",
+        pa.table(
+            {
+                "customer_id": ["carol", "bob", "alice"],
+                "segment": [10, 2, 10],
+                "ages": [[], [2], [10, 20]],
+            }
+        ),
     )
     con.create_table("orders", orders.take([3, 5, 4, 1, 2, 0]))
     con.create_table(
@@ -32,7 +39,9 @@ def shuffled_model(tmp_path):
     )
     model = tr.Model.from_tables(
         con,
-        units={"customer": tr.UnitSource("customers", "customer_id", attributes=("segment",))},
+        units={
+            "customer": tr.UnitSource("customers", "customer_id", attributes=("segment", "ages"))
+        },
         events={
             "orders": tr.Events(
                 "orders",
@@ -71,17 +80,31 @@ def test_rows_are_ordered_by_identity_columns(shuffled_model):
 
 
 @pytest.mark.parametrize("reader", ["frame", "dataset"])
-def test_time_bin_feature_keeps_identity_order(shuffled_model, reader):
+def test_shape_named_features_keep_identity_order(shuffled_model, reader):
     frame = Design(
         "customer",
-        FixedDate("2025-02-01"),
-        features={"time_bin": tr.agg("orders", window=("-30d", "0s"))},
+        EventAnchor("orders", occurrence="each"),
+        features={
+            "time_bin": tr.agg("orders", window=("-30d", "0s")),
+            **{
+                name: tr.asof("ages")
+                for name in ("age", "event_period", "period_index", "trial_id", "sequence_position")
+            },
+        },
     ).build(shuffled_model)
     result = (
         frame if reader == "frame" else frame.stage("ordering", budget=tr.Budget(strict_scan=False))
     )
     table = result.to_pyarrow()
-    assert table["unit"].to_pylist() == ["alice", "bob", "carol"]
+    identities = [
+        (row["unit"], row["t0"], row["anchor_id"])
+        for row in table.select(["unit", "t0", "anchor_id"]).to_pylist()
+    ]
+    assert identities == sorted(identities)
+    assert len({(unit, t0) for unit, t0, _ in identities}) < len(identities)
+    assert table["unit"].to_pylist() == ["alice"] * 5 + ["bob"]
+    for name in ("age", "event_period", "period_index", "trial_id", "sequence_position"):
+        assert table[name].to_pylist() == [[10, 20]] * 5 + [[2]]
 
 
 def test_life_table_rows_are_ordered_by_group_and_bin(shuffled_model):

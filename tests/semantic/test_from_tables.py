@@ -937,33 +937,6 @@ def test_key_mismatch_context_omits_nullability_markers():
     ) == ("string", "int64")
 
 
-def test_roster_attribute_is_available_as_of_t0_outside_event_coverage(con):
-    con.create_table(
-        "customer_channels",
-        pa.table({"customer_id": ["alice", "bob"], "channel": ["web", "store"]}),
-    )
-    model = Model.from_tables(
-        con,
-        units={"customer": UnitSource("customer_channels", "customer_id", attributes=("channel",))},
-        events={"orders": orders()},
-    )
-    table = (
-        Design(
-            "customer",
-            FixedDate("2025-02-10"),
-            features={"channel": asof("channel")},
-        )
-        .build(model)
-        .to_pyarrow()
-        .to_pydict()
-    )
-    assert dict(zip(table["unit"], table["channel"], strict=True)) == {
-        "alice": "web",
-        "bob": "store",
-    }
-    assert table["channel__complete"] == [True, True]
-
-
 def test_roster_attribute_name_collides_with_label_refuses(con):
     con.create_table(
         "customer_channels",
@@ -1084,13 +1057,8 @@ def test_roster_attribute_survives_catalog_rebind(con):
         readiness=model.readiness,
         event_ids=model.event_ids,
     )
-    design = Design(
-        "customer",
-        FixedDate("2025-02-10"),
-        features={"channel": asof("channel")},
-    )
     assert restored.model_hash == model.model_hash
-    assert design.build(restored).to_pyarrow()["channel"].to_pylist() == ["web", "store"]
+    assert restored.units["customer"].attributes == ("channel",)
 
 
 def test_training_set_with_roster_attribute(con):

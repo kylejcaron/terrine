@@ -44,7 +44,7 @@ from terrine.runtime.saved_plan import (
 from terrine.runtime.snapshot import SnapshotAuthority
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.dataset import DatasetDefinition
-from terrine.spec.trajectory import LifeTable
+from terrine.spec.design import _output_shape_name
 
 __all__ = ["Dataset", "stage_frame", "dataset_from_run"]
 
@@ -347,7 +347,7 @@ class Dataset:
         keys = output_sort_keys(
             table.schema,
             roles,
-            life_table=isinstance(self._manifest.definition.base_design.shape, LifeTable),
+            shape=_output_shape_name(self._manifest.definition.base_design),
         )
         if keys:
             table = table.sort_by([(name, "ascending") for name in keys], null_placement="at_end")

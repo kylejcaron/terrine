@@ -3,11 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import ibis
+import pyarrow as pa
 import pytest
 import yaml
 
 import terrine as tr
 from terrine import recipes
+from terrine.data import UnitSource
 from terrine.model import Model
 from terrine.spec import (
     CohortSpec,
@@ -20,7 +22,8 @@ from terrine.spec import (
     event_time,
 )
 from terrine.spec.trajectory import Trajectory
-from tests.semantic.test_from_tables import WINDOW, create_tables, rich_model
+from tests.semantic.test_from_tables import WINDOW, create_tables, orders, rich_model
+from tests.semantic.test_from_tables import con as con
 
 
 def _rebound(model: Model) -> Model:
@@ -36,6 +39,33 @@ def _rebound(model: Model) -> Model:
 def _table(model, design):
     frame = design.build(model)
     return model.con.to_pyarrow(frame.expr.order_by("unit"))
+
+
+def test_roster_attribute_is_available_as_of_t0_outside_event_coverage(con):
+    con.create_table(
+        "customer_channels",
+        pa.table({"customer_id": ["alice", "bob"], "channel": ["web", "store"]}),
+    )
+    model = Model.from_tables(
+        con,
+        units={"customer": UnitSource("customer_channels", "customer_id", attributes=("channel",))},
+        events={"orders": orders()},
+    )
+    table = (
+        Design(
+            "customer",
+            FixedDate("2025-02-10"),
+            features={"channel": asof("channel")},
+        )
+        .build(model)
+        .to_pyarrow()
+        .to_pydict()
+    )
+    assert dict(zip(table["unit"], table["channel"], strict=True)) == {
+        "alice": "web",
+        "bob": "store",
+    }
+    assert table["channel__complete"] == [True, True]
 
 
 def test_to_catalog_round_trip_builds_equal_dataset():
@@ -284,3 +314,19 @@ def test_changing_a_source_filter_changes_feature_identity(mixed_events):
     with pytest.raises(TerrineError) as error:
         design.build(changed).winsorize(fitted)
     assert error.value.code == "terrine.transform.winsorization_identity_mismatch"
+
+
+def test_roster_attribute_survives_catalog_rebind(con):
+    con.create_table(
+        "customer_channels",
+        pa.table({"customer_id": ["alice", "bob"], "channel": ["web", "store"]}),
+    )
+    units = {"customer": tr.UnitSource("customer_channels", "customer_id", attributes=("channel",))}
+    model = Model.from_tables(con, units=units, events={"orders": orders()})
+    restored = _rebound(model)
+    design = Design(
+        "customer",
+        FixedDate("2025-02-10"),
+        features={"channel": asof("channel")},
+    )
+    assert design.build(restored).to_pyarrow()["channel"].to_pylist() == ["web", "store"]

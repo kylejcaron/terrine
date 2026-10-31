@@ -504,3 +504,28 @@ class Design:
         from terrine.spec.io import canonical_json
 
         return hashlib.sha256(canonical_json(self)).hexdigest()
+
+
+def _output_shape_name(design: Design) -> str:
+    """Return the output shape's portable metadata name."""
+    from terrine.spec.panels import CalendarComparisonSpec, EventPanelSpec, SequentialSpec
+
+    shape = design.shape
+    if isinstance(shape, str):
+        return shape
+    if isinstance(shape, StatePanel):
+        return "state_panel"
+    if isinstance(shape, EventSequence):
+        return "event_sequence"
+    if isinstance(shape, CalendarComparisonSpec):
+        return "calendar_comparison"
+    if isinstance(shape, SequentialSpec):
+        return "sequential"
+    if isinstance(shape, EventPanelSpec):
+        return "event_panel"
+    if isinstance(shape, CohortSpec):
+        return "ltv"
+    if isinstance(shape, LifeTable):
+        return "life_table"
+    assert isinstance(shape, TimeToEvent)
+    return "time_to_event"

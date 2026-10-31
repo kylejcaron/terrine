@@ -130,6 +130,10 @@
   snapshot time and anchor ID, followed by shape positions or periods. Life
   tables use grouping columns and time bin; event-sequence headers follow their
   events. A feature named `time_bin` does not change ordinary identity ordering.
+- Supplementary output ordering follows the declared shape, so ordinary features
+  named `age`, `event_period`, `period_index`, `trial_id` or `sequence_position`
+  remain values rather than sorting keys, including list-valued roster attributes
+  in materialized frames and staged dataset reads.
 - `Design.describe(model)` lists every shape's dataframe columns and summarizes
   rows, anchors, expressions, treatment and completeness without querying source
   rows. Internal baseline and panel-start timestamps no longer leak into

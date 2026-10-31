@@ -1780,28 +1780,26 @@ def _ordered_columns(
     return (*ordered, *bookkeeping)
 
 
-def output_sort_keys(schema: pa.Schema, roles: Roles, *, life_table: bool) -> tuple[str, ...]:
+def output_sort_keys(schema: pa.Schema, roles: Roles, *, shape: str) -> tuple[str, ...]:
     """Return present ordering columns for the declared output shape."""
     names = set(schema.names)
-    if life_table:
+    if shape == "life_table":
         ordered = [name for name in roles.features if name in names and name != "time_bin"]
         if "time_bin" in names:
             ordered.append("time_bin")
     else:
-        ordered = [
-            name
-            for name in (
-                roles.unit,
-                roles.t0,
-                roles.anchor,
-                "period_index",
-                "event_period",
-                "trial_id",
-                "age",
-                "sequence_position",
-            )
-            if name in names
-        ]
+        position = {
+            "state_panel": "period_index",
+            "event_panel": "event_period",
+            "calendar_comparison": "event_period",
+            "sequential": "trial_id",
+            "ltv": "age",
+            "cohort_table": "age",
+            "event_sequence": "sequence_position",
+        }.get(shape)
+        ordered = [name for name in (roles.unit, roles.t0, roles.anchor) if name in names]
+        if position is not None and position in names:
+            ordered.append(position)
     return tuple(dict.fromkeys(ordered))
 
 
@@ -1830,9 +1828,7 @@ class MaterializedFrame:
                 self.provenance.expression_timings,
             )
         )
-        keys = output_sort_keys(
-            table.schema, self.roles, life_table=self.provenance.shape == "life_table"
-        )
+        keys = output_sort_keys(table.schema, self.roles, shape=self.provenance.shape)
         if keys:
             table = table.sort_by([(name, "ascending") for name in keys], null_placement="at_end")
         object.__setattr__(self, "table", table)

@@ -24,7 +24,7 @@ from tests.fixtures.readme import readme_design, readme_model
 
 
 @pytest.mark.parametrize(
-    ("names", "roles", "life_table", "expected"),
+    ("names", "roles", "shape", "expected"),
     [
         (
             (
@@ -39,55 +39,44 @@ from tests.fixtures.readme import readme_design, readme_model
                 "value",
             ),
             Roles("unit", "anchor_id", "t0", None, ("value",), ()),
-            False,
-            (
-                "unit",
-                "t0",
-                "anchor_id",
-                "period_index",
-                "event_period",
-                "trial_id",
-                "age",
-                "sequence_position",
-            ),
+            "cross_section",
+            ("unit", "t0", "anchor_id"),
         ),
         (
             ("unit", "cohort_time", "age"),
             Roles("unit", "anchor_id", "cohort_time", None, (), ()),
-            False,
+            "ltv",
             ("unit", "cohort_time", "age"),
         ),
         (
             ("unit", "anchor_id", "t0", "region", "segment", "time_bin", "events"),
             Roles("unit", "anchor_id", "t0", None, ("region", "segment", "time_bin"), ("events",)),
-            True,
+            "life_table",
             ("region", "segment", "time_bin"),
         ),
         (
             ("unit", "anchor_id", "t0", "time_bin"),
             Roles("unit", "anchor_id", "t0", None, ("time_bin",), ()),
-            True,
+            "life_table",
             ("time_bin",),
         ),
         (
             ("unit", "anchor_id", "t0", "time_bin"),
             Roles("unit", "anchor_id", "t0", None, ("time_bin",), ()),
-            False,
+            "cross_section",
             ("unit", "t0", "anchor_id"),
         ),
         (
             ("value",),
             Roles("identity", "identity", "origin", None, (), ("value",)),
-            False,
+            "cross_section",
             (),
         ),
     ],
 )
-def test_output_sort_keys_use_present_identity_or_life_table_group_columns(
-    names, roles, life_table, expected
-):
+def test_output_sort_keys_use_present_identity_or_shape_columns(names, roles, shape, expected):
     table = pa.table({name: pa.array([], type=pa.int64()) for name in names})
-    assert output_sort_keys(table.schema, roles, life_table=life_table) == expected
+    assert output_sort_keys(table.schema, roles, shape=shape) == expected
 
 
 def test_unused_label_source_readiness_is_not_a_model_requirement(native_inputs):

@@ -321,7 +321,7 @@ class Model:
         con: Admitted Ibis connection used to resolve and execute relations.
         readiness: Declared source completeness, bound to absolute instants.
         units: Immutable mapping of unit names to roster declarations.
-        event_ids: Immutable event-name to occurrence-ID-column mapping.
+        event_ids: Immutable source-name to occurrence-ID-column mapping.
         sources: Immutable mapping of validated bound sources.
         metrics: Immutable mapping of validated bound metrics.
         model_hash: Content digest of catalog and runtime binding declarations.
@@ -441,8 +441,8 @@ class Model:
             dialect: Catalog dialect name; None infers it from the admitted connection.
             day_boundary: "UTC" or an IANA timezone name defining local calendar-day boundaries;
                 default "UTC".
-            event_ids: Mapping of event names to unique occurrence-ID column names; None supplies no
-                tie breaker.
+            event_ids: Mapping of source names (the keys in events) to unique occurrence-ID column
+                names; None supplies no tie breaker.
             allow_unverified: Whether to allow read-only use of unverified Ibis backends; False
                 refuses them.
 
@@ -645,6 +645,9 @@ class Model:
 
         Unverified connections must have no pending writes during schema inspection.
 
+        Occurrence IDs are keyed by source: an event named ``occurred`` backed by source
+        ``events`` uses ``event_ids={"events": "event_id"}``.
+
 
         Args:
             path_or_catalog: Catalog, definition mapping, YAML text containing a newline, or path as
@@ -654,8 +657,8 @@ class Model:
             readiness: Readiness or mapping of source names to Coverage/BoundCoverage declaring
                 complete times.
             units: Mapping of unit names to UnitSource rosters; None declares no rosters.
-            event_ids: Mapping of event names to unique occurrence-ID column names; None supplies no
-                tie breaker.
+            event_ids: Mapping of source names to unique occurrence-ID column names; None supplies
+                no tie breaker.
             input_binding: VerifiedInputBinding for retained inputs; None reads the supplied
                 connection directly.
             allow_unverified: Whether to allow read-only use of unverified Ibis backends; False
@@ -924,8 +927,8 @@ class Model:
             readiness: Readiness or mapping of source names to Coverage/BoundCoverage declaring
                 complete times.
             units: Mapping of unit names to UnitSource rosters; None declares no rosters.
-            event_ids: Mapping of event names to unique occurrence-ID column names; None supplies no
-                tie breaker.
+            event_ids: Mapping of source names to unique occurrence-ID column names; None supplies
+                no tie breaker.
             input_binding: VerifiedInputBinding for retained inputs; None reads the supplied
                 connection directly.
             allow_unverified: Whether to allow read-only use of unverified Ibis backends; False
