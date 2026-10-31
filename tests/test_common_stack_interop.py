@@ -18,14 +18,14 @@ def test_missing_dataframe_extra_refuses_before_execution(native_inputs, monkeyp
         )
     )
     con.con.execute("DROP TABLE events")
-    original = __import__("terrine.frame", fromlist=["import_module"]).import_module
+    original = __import__("terrine.data", fromlist=["import_module"]).import_module
 
     def unavailable(name):
         if name == extra:
             raise ImportError("optional dataframe unavailable")
         return original(name)
 
-    monkeypatch.setattr("terrine.frame.import_module", unavailable)
+    monkeypatch.setattr("terrine.data.import_module", unavailable)
     with pytest.raises(TerrineError) as error:
         getattr(frame, f"to_{extra}")()
     assert error.value.code == "terrine.convert.missing_dependency"

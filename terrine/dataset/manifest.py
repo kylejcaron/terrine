@@ -137,7 +137,7 @@ class DatasetManifest:
             raise _INVALID_INPUT.error(reason="wrong_type", field="columns")
         object.__setattr__(self, "columns", tuple(self.columns))
 
-    def to_json(self) -> bytes:
+    def to_json(self) -> str:
         payload = {
             "schema_version": 1,
             "definition": json.loads(self.definition.canonical_json()),
@@ -174,11 +174,11 @@ class DatasetManifest:
                 "owner": self.definition_reference.owner,
                 "digest": self.definition_reference.digest,
             }
-        return _canonical(payload)
+        return _canonical(payload).decode("utf-8")
 
     @property
     def digest(self) -> str:
-        return hashlib.sha256(self.to_json()).hexdigest()
+        return hashlib.sha256(self.to_json().encode("utf-8")).hexdigest()
 
     @classmethod
     def from_json(

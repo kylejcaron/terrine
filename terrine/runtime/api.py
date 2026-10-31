@@ -697,7 +697,7 @@ class DesignExecutor:
                     metadata.columns,
                     self._frame._view_provenance(metadata.provenance, excluded_counts),
                 )
-                .to_arrow()
+                .to_pyarrow()
                 .schema
             )
 

@@ -91,8 +91,8 @@ def test_saved_plan_materializes_retained_model_and_design_in_fresh_process(tmp_
     expected = design.build(model).materialize(Budget())
     expected_path = tmp_path / "expected.arrow"
     with pa.OSFile(str(expected_path), "wb") as sink:
-        with pa.ipc.new_file(sink, expected.to_arrow().schema) as writer:
-            writer.write_table(expected.to_arrow())
+        with pa.ipc.new_file(sink, expected.to_pyarrow().schema) as writer:
+            writer.write_table(expected.to_pyarrow())
     owner = RuntimeOwner(state_path=state_path, snapshot_root=snapshot_root)
     snapshot = SnapshotAuthority(owner).capture(
         model, design=design, con=con, namespace="runtime", run_id="planned", budget=Budget()

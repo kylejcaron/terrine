@@ -7,13 +7,22 @@ import json
 import os
 import re
 import uuid
+import warnings
 from collections.abc import Generator
 from dataclasses import replace
 from typing import Any
 
 import pyarrow as pa
 
-from terrine.data import Budget, MaterializedFrame
+from terrine.compile.cost import _scan_policy
+from terrine.data import (
+    _OUTPUT_BYTES_EXCEEDED,
+    _ROWS_EXCEEDED,
+    Budget,
+    MaterializedFrame,
+    _optional_dependency,
+    dataframe_view_preflight,
+)
 from terrine.dataset.manifest import DatasetManifest, ManifestColumn, ManifestGeneration
 from terrine.errors import RefusalSpec
 from terrine.execution.backend import backend_capabilities, backend_provider
@@ -234,7 +243,8 @@ class Dataset:
         if (
             record is None
             or record[2] != "succeeded"
-            or record[0].encode() != replace(self._manifest, definition_reference=None).to_json()
+            or record[0].encode("utf-8")
+            != replace(self._manifest, definition_reference=None).to_json().encode("utf-8")
         ):
             raise _GENERATION_INVALID.error()
         self._receipt = PublicationReceipt(
@@ -285,6 +295,92 @@ class Dataset:
             raise _INVALID_BATCH.error()
         self._require_arrow_batches()
         return self._iter_arrow_batches(batch_size)
+
+    def to_pyarrow(self, *, budget: Budget | None = None) -> pa.Table:
+        """Read the pinned dataset generation into a lossless Arrow table.
+
+        Example: dataset.to_pyarrow()
+        """
+        self._require_arrow_batches()
+        budget = budget if budget is not None else Budget(strict_scan=False)
+        for warning in _scan_policy(budget):
+            warnings.warn(warning, RuntimeWarning, stacklevel=2)
+        schema = self._arrow_schema()
+        batches = self._iter_arrow_batches(65_536)
+        rows = 0
+        output_bytes = 0
+        collected = []
+        try:
+            for batch in batches:
+                rows += batch.num_rows
+                output_bytes += batch.nbytes
+                if budget.max_rows is not None and rows > budget.max_rows:
+                    raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
+                if budget.max_output_bytes is not None and output_bytes > budget.max_output_bytes:
+                    raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
+                collected.append(batch)
+        finally:
+            batches.close()
+        return pa.Table.from_batches(collected, schema=schema)
+
+    def to_pandas(
+        self,
+        *,
+        budget: Budget | None = None,
+        include_observation_metadata: bool = False,
+        values_only: bool = False,
+    ):
+        """Return the pinned dataset as a pandas dataframe.
+
+        Example: dataset.to_pandas(values_only=True)
+        """
+        dataframe_view_preflight(
+            include_observation_metadata=include_observation_metadata,
+            values_only=values_only,
+            library="pandas",
+        )
+        table = self.to_pyarrow(budget=budget)
+        materialized = self._materialized_view(table)
+        if materialized is None:
+            return table.to_pandas(types_mapper=_optional_dependency("pandas").ArrowDtype)
+        return materialized.to_pandas(
+            include_observation_metadata=include_observation_metadata,
+            values_only=values_only,
+        )
+
+    def to_polars(
+        self,
+        *,
+        budget: Budget | None = None,
+        include_observation_metadata: bool = False,
+        values_only: bool = False,
+    ):
+        """Return the pinned dataset as a Polars dataframe.
+
+        Example: dataset.to_polars(values_only=True)
+        """
+        dataframe_view_preflight(
+            include_observation_metadata=include_observation_metadata,
+            values_only=values_only,
+            library="polars",
+        )
+        table = self.to_pyarrow(budget=budget)
+        materialized = self._materialized_view(table)
+        if materialized is None:
+            return _optional_dependency("polars").from_arrow(table)
+        return materialized.to_polars(
+            include_observation_metadata=include_observation_metadata,
+            values_only=values_only,
+        )
+
+    def _materialized_view(self, table: pa.Table) -> MaterializedFrame | None:
+        metadata = self._manifest.frame_metadata
+        if metadata is None:
+            return None
+        return MaterializedFrame._from_table_metadata(table, metadata)
+
+
+
 
     def _iter_arrow_batches(self, batch_size: int) -> Generator[pa.RecordBatch]:
         backend = DuckDBBackend(self._raw, namespace=self._namespace)
@@ -607,7 +703,7 @@ def dataset_from_run(
             receipt.published_generation,
             saved.to_json(),
             request_key,
-            manifest.to_json().decode(),
+            manifest.to_json(),
         ],
     )
     return Dataset(manifest, con=model.con, namespace=namespace)

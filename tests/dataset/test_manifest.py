@@ -60,6 +60,25 @@ def test_dataset_manifest_round_trip_preserves_generation_schema_roles_and_metad
     assert reopened.source_snapshots["source"]["status"] == "unknown"
 
 
+def test_manifest_json_is_text_and_round_trips() -> None:
+    definition = DatasetDefinition(
+        schema_version=2, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
+    )
+    manifest = DatasetManifest(
+        definition,
+        ManifestGeneration("ds", "g1", ("table:g1",), ("sha256:x",), 2),
+        (ManifestColumn("y", "int64", "outcome", {"numeric_policy": "exact"}),),
+        "design",
+        "model",
+        {"source": "coverage"},
+        {"source": {"status": "unknown", "snapshot_id": "snapshot"}},
+    )
+
+    serialized = manifest.to_json()
+
+    assert isinstance(serialized, str)
+    assert DatasetManifest.from_json(serialized) == manifest
+
 @pytest.mark.parametrize(
     "damage",
     (
@@ -100,7 +119,6 @@ def test_malformed_manifest_payload_has_coded_refusal(damage) -> None:
     elif damage == "duplicate":
         serialized = (
             manifest.to_json()
-            .decode()
             .replace('"schema_version":1', '"schema_version":1,"schema_version":1', 1)
         )
     elif damage == "nonfinite":

@@ -220,7 +220,7 @@ def test_cohort_collection_observes_fresh_snapshot_and_budget():
         assert operation is not None
         assert operation.parent_design_hash == frame._design.spec_hash
         assert operation.value_column == "cumulative_value"
-        restored = MaterializedFrame.from_arrow(result.to_arrow())
+        restored = MaterializedFrame.from_arrow(result.to_pyarrow())
         assert restored.provenance.cohort_operation == operation
         with pytest.raises(TerrineError) as error:
             cohorts.materialize(budget=Budget(max_rows=1, max_output_bytes=100_000))
@@ -375,7 +375,7 @@ def test_sequential_anticipation_extends_control_risk_horizon(native_inputs):
     panel = frame.provenance.panel
     assert panel is not None
     assert panel.anticipation_seconds == 2 * 86_400
-    restored_panel = type(frame).from_arrow(frame.to_arrow()).provenance.panel
+    restored_panel = type(frame).from_arrow(frame.to_pyarrow()).provenance.panel
     assert restored_panel is not None
     assert restored_panel.anticipation_seconds == 2 * 86_400
 
@@ -450,7 +450,7 @@ def test_all_shapes_build_materialize_and_arrow_round_trip(native_inputs):
         materialized = design.build(model).materialize(
             Budget(max_rows=20, max_output_bytes=100_000)
         )
-        restored = MaterializedFrame.from_arrow(materialized.to_arrow())
+        restored = MaterializedFrame.from_arrow(materialized.to_pyarrow())
         assert restored.table.equals(materialized.table)
         assert restored.provenance.shape == (
             "sequential" if design is sequential else "event_panel"
@@ -506,7 +506,7 @@ def test_named_retention_roundtrip_frame_matches_independent_occurrences(retenti
     assert from_json(to_json(design)) == from_yaml(to_yaml(design)) == design
     assert from_json(to_json(design)).spec_hash == design.spec_hash
     result = design.build(retention_model).materialize()
-    table = result.to_arrow()
+    table = result.to_pyarrow()
     meta = result.columns["retained"]
     rows = {row["unit"]: row for row in table.to_pylist()}
     events = (

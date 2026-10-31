@@ -11,6 +11,10 @@
 - Give models, frames, datasets and table inputs concise representations, and
   format windows with readable elapsed units.
 
+- Provide `to_pyarrow`, `to_pandas` and `to_polars` on frames, materialized
+  frames and staged datasets, with consistent dataframe views and dataset read
+  budgets; return dataset manifests as JSON text.
+
 - Accept YAML returned by `Model.to_catalog()` directly in `Model.from_catalog`.
 
 ### Performance

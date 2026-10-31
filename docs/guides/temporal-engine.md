@@ -848,7 +848,7 @@ shape. A missing or incomplete origin keeps its null and reason.
 
 Materialized provenance records the sequence schema and each expression's
 selector references, conservative support intervals, and resolved time-column
-references. `MaterializedFrame.to_arrow()` writes these typed values into
+references. `MaterializedFrame.to_pyarrow()` writes these typed values into
 Arrow schema metadata, and `MaterializedFrame.from_arrow()` restores them with
 the original nested event values.
 

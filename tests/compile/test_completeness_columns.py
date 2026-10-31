@@ -74,7 +74,7 @@ def test_null_reason_round_trips_arrow_and_manifest_under_new_names():
         },
         _provenance(),
     )
-    arrow = frame.to_arrow()
+    arrow = frame.to_pyarrow()
     assert arrow.column_names == table.column_names
     restored = MaterializedFrame.from_arrow(arrow)
     assert restored.table.equals(table)
@@ -147,7 +147,7 @@ def test_lossless_arrow_keeps_observation_evidence_with_sorted_filtered_rows():
             },
         ),
     )
-    arrow = frame.to_arrow()
+    arrow = frame.to_pyarrow()
     sorted_frame = MaterializedFrame.from_arrow(arrow.sort_by("unit"))
     assert sorted_frame.table.to_pylist() == table.sort_by("unit").to_pylist()
     changed = arrow.filter(pa.array([True, True, False])).sort_by("unit")
@@ -175,7 +175,7 @@ def test_compact_arrow_refuses_missing_bookkeeping_with_pickle_safe_context():
         {"value": ColumnMeta(None, "outcome", "value__observed_from", None, None, None)},
         _provenance(),
     )
-    arrow = frame.to_arrow().select(["unit", "value"])
+    arrow = frame.to_pyarrow().select(["unit", "value"])
     with pytest.raises(TerrineError) as error:
         MaterializedFrame.from_arrow(arrow)
     for refusal in (

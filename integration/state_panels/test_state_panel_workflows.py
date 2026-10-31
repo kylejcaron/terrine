@@ -64,7 +64,7 @@ def test_baseline_is_computed_for_delayed_entry_at_panel_start(native_inputs):
         ),
     )
     materialized = design.build(model).materialize(Budget(max_rows=10, max_output_bytes=100_000))
-    restored = type(materialized).from_arrow(materialized.to_arrow())
+    restored = type(materialized).from_arrow(materialized.to_pyarrow())
     rows = materialized.table.to_pylist()
     entrant = next(row for row in rows if row["unit"] == "b" and row["period_index"] == 1)
     assert entrant["baseline"] == 1

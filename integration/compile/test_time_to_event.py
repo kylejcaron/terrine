@@ -63,7 +63,7 @@ def test_prevalent_events_are_excluded_and_cutoff_equality_is_censored():
             administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
         )
         frame = design.build(model).materialize()
-        restored = MaterializedFrame.from_arrow(frame.to_arrow())
+        restored = MaterializedFrame.from_arrow(frame.to_pyarrow())
         rows = restored.table.to_pylist()
         assert sorted(
             (row["unit"], row["event_time"], row["event"], row["treatment"]) for row in rows
@@ -108,7 +108,7 @@ def test_landmark_features_and_survival_followup_use_shifted_entry(shape):
             shape=shape,
         )
         frame = design.build(model).materialize()
-        restored = MaterializedFrame.from_arrow(frame.to_arrow())
+        restored = MaterializedFrame.from_arrow(frame.to_pyarrow())
         rows = {row["unit"]: row for row in restored.table.to_pylist()}
         assert restored.provenance.design_hash == design.spec_hash
         assert rows["u2"]["t0"] == datetime(2025, 1, 3, tzinfo=UTC)

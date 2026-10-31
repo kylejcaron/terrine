@@ -60,7 +60,7 @@ def test_matched_t0_samples_controls_without_replacement_and_records_probability
     assert roles.assignment_probability == "assignment_probability"
     assert roles.target_weight is None
     materialized = design.build(model).materialize()
-    restored = type(materialized).from_arrow(materialized.to_arrow())
+    restored = type(materialized).from_arrow(materialized.to_pyarrow())
     assert restored.roles == roles
     assert restored.provenance.sampling is not None
     assert restored.provenance.sampling.strata == ()

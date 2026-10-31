@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from terrine.errors import RefusalSpec, freeze, parameter_names, thaw
+from terrine.errors import INVALID_VIEW, RefusalSpec, freeze, parameter_names, thaw
 from terrine.spec.design import Design
 from terrine.spec.io import SCHEMA_VERSION as DESIGN_SCHEMA_VERSION
 from terrine.spec.io import canonical_json as design_json
@@ -36,7 +36,6 @@ INVALID_DEFINITION = RefusalSpec(
 _INVALID_INPUT = RefusalSpec(
     "terrine.dataset.invalid_definition", "Dataset definition input {field} is invalid: {reason}."
 )
-INVALID_VIEW = RefusalSpec("terrine.dataset.invalid_view", "Invalid dataset view: {reason}.")
 UNSUPPORTED_VIEW = RefusalSpec(
     "terrine.dataset.unsupported_view",
     "Unsupported dataset view: {reason}.",

@@ -147,7 +147,7 @@ def test_time_series_columns_are_values_with_named_support(column_model):
         .build(column_model)
         .materialize()
     )
-    full = frame.to_arrow()
+    full = frame.to_pyarrow()
     compact = full.drop(frame._bookkeeping_columns())
     assert compact.column_names == [
         "unit",

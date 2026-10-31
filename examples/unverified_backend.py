@@ -130,7 +130,7 @@ def main() -> None:
         )
 
         # The stamp survives Arrow; a result cannot become verified later.
-        restored = MaterializedFrame.from_arrow(roster.to_arrow())
+        restored = MaterializedFrame.from_arrow(roster.to_pyarrow())
         assert restored.provenance == stamp
         assert restored.table.equals(roster.table)
 

@@ -104,7 +104,7 @@ def main() -> None:
         budget = Budget(max_rows=20, max_output_bytes=100_000)
         for design in (sequential, events):
             frame = design.build(model).materialize(budget)
-            restored = MaterializedFrame.from_arrow(frame.to_arrow())
+            restored = MaterializedFrame.from_arrow(frame.to_pyarrow())
             assert restored.table.equals(frame.table)
             rows = restored.table.to_pylist()
             if design == sequential:

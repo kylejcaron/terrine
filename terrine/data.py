@@ -9,13 +9,14 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, date, datetime, timedelta
+from importlib import import_module
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
 from terrine.backends.registry import get_engine
-from terrine.errors import RefusalSpec, freeze, parameter_names, thaw
+from terrine.errors import INVALID_VIEW, RefusalSpec, freeze, parameter_names, thaw
 from terrine.windows import Window, seconds, seconds_text
 
 if TYPE_CHECKING:
@@ -60,6 +61,32 @@ _ROWS_EXCEEDED = RefusalSpec(
 _OUTPUT_BYTES_EXCEEDED = RefusalSpec(
     "terrine.budget.output_bytes_exceeded", "Output exceeds the configured byte limit {limit}."
 )
+_MISSING_DEPENDENCY = RefusalSpec(
+    "terrine.convert.missing_dependency",
+    "Conversion requires the optional {extra!r} dependency; install terrine[{extra}].",
+)
+
+
+def _optional_dependency(name: str):
+    try:
+        return import_module(name)
+    except ImportError as exc:
+        raise _MISSING_DEPENDENCY.error(extra=name) from exc
+
+
+def dataframe_view_preflight(
+    *,
+    include_observation_metadata: bool,
+    values_only: bool,
+    library: Literal["pandas", "polars"],
+) -> None:
+    if values_only and include_observation_metadata:
+        raise INVALID_VIEW.error(reason="values_only_excludes_observation_metadata")
+    _optional_dependency(library)
+
+
+
+
 _INVALID_ELIGIBILITY = RefusalSpec(
     "terrine.metadata.invalid_eligibility_summary",
     "Eligibility counts must be nonnegative and reconcile",
@@ -1618,8 +1645,11 @@ class MaterializedFrame:
         """Return a detached JSON-compatible metadata value."""
         return thaw(freeze(_metadata_payload(self.roles, self.columns, self.provenance)))
 
-    def to_arrow(self) -> pa.Table:
-        """Return lossless Arrow with value/support triples before observation columns."""
+    def to_pyarrow(self) -> pa.Table:
+        """Return lossless Arrow with value/support triples before observation columns.
+
+        Example: materialized.to_pyarrow()
+        """
         payload = self.to_metadata()
         payload["version"] = 2
         payload["bookkeeping_columns"] = list(self._bookkeeping_columns())
@@ -1631,6 +1661,45 @@ class MaterializedFrame:
         metadata[_ARROW_METADATA_KEY] = encoded
         return table.replace_schema_metadata(metadata)
 
+    def to_pandas(
+        self, *, include_observation_metadata: bool = False, values_only: bool = False
+    ):
+        """Return pandas data without observation metadata by default.
+
+        Example: materialized.to_pandas(values_only=True)
+        """
+        dataframe_view_preflight(
+            include_observation_metadata=include_observation_metadata,
+            values_only=values_only,
+            library="pandas",
+        )
+        module = _optional_dependency("pandas")
+        table = self._dataframe_table(include_observation_metadata, values_only)
+        return table.to_pandas(types_mapper=module.ArrowDtype)
+
+    def to_polars(
+        self, *, include_observation_metadata: bool = False, values_only: bool = False
+    ):
+        """Return Polars data without observation metadata by default.
+
+        Example: materialized.to_polars(values_only=True)
+        """
+        dataframe_view_preflight(
+            include_observation_metadata=include_observation_metadata,
+            values_only=values_only,
+            library="polars",
+        )
+        module = _optional_dependency("polars")
+        table = self._dataframe_table(include_observation_metadata, values_only)
+        return module.from_arrow(table)
+    def _dataframe_table(self, include_observation_metadata: bool, values_only: bool) -> pa.Table:
+        if include_observation_metadata:
+            return self.table
+        dropped = self._bookkeeping_columns()
+        if values_only:
+            dropped += self._support_columns()
+        return self.table.drop(dropped)
+
     def _bookkeeping_columns(self) -> tuple[str, ...]:
         return _bookkeeping_columns(
             self.table.column_names, self.roles, self.columns, self.provenance.expression_timings
@@ -1638,6 +1707,15 @@ class MaterializedFrame:
 
     def _support_columns(self) -> tuple[str, ...]:
         return _support_columns(self.table.column_names, self.columns)
+
+    @classmethod
+    def _from_table_metadata(
+        cls, table: pa.Table, payload: Mapping[str, Any]
+    ) -> MaterializedFrame:
+        roles = _decode(payload["roles"], Roles)
+        columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
+        provenance = _decode(payload["provenance"], Provenance)
+        return cls(table, roles, columns, provenance)
 
     @classmethod
     def from_arrow(cls, table: pa.Table) -> MaterializedFrame:

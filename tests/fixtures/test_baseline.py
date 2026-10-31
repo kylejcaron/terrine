@@ -50,7 +50,7 @@ def test_materialized_baseline_has_typed_honest_causal_metadata(weighted):
     assert meta.numeric_policy is None
     assert frame.table[meta.complete_column].to_pylist() == [True] * 8
     assert frame.table[meta.reason_column].to_pylist() == [None] * 8
-    assert MaterializedFrame.from_arrow(frame.to_arrow()).table.equals(frame.table)
+    assert MaterializedFrame.from_arrow(frame.to_pyarrow()).table.equals(frame.table)
 
 
 def test_fixture_preserves_incomplete_rows_and_null_reasons():
@@ -67,5 +67,5 @@ def test_fixture_preserves_incomplete_rows_and_null_reasons():
     assert row[meta.complete_column] is False
     assert row[meta.reason_column] == "incomplete_observation"
     assert row[meta.observed_until_column] == until
-    restored = MaterializedFrame.from_arrow(frame.to_arrow())
+    restored = MaterializedFrame.from_arrow(frame.to_pyarrow())
     assert restored.table.to_pylist()[0][meta.reason_column] == "incomplete_observation"

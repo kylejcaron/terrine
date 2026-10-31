@@ -42,6 +42,10 @@ ltv = recipes.ltv(
 )
 ```
 
+Read materialized values directly with `frame.to_pandas(values_only=True)` or
+`frame.to_polars(values_only=True)`; use `frame.to_pyarrow()` when completeness,
+null reasons, and the lossless schema metadata are needed.
+
 ### Under the hood
 
 ```python

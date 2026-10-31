@@ -26,6 +26,7 @@ from terrine.data import (
     Provenance,
     Roles,
     SamplingMeta,
+    dataframe_view_preflight,
 )
 from terrine.errors import RefusalSpec
 from terrine.execution.gates import (
@@ -49,10 +50,6 @@ if TYPE_CHECKING:
 
 __all__ = ["Frame", "CohortTable"]
 
-_MISSING_DEPENDENCY = RefusalSpec(
-    "terrine.convert.missing_dependency",
-    "Conversion requires the optional {extra!r} dependency; install terrine[{extra}].",
-)
 _INVALID_SPLIT = RefusalSpec(
     "terrine.dataset.invalid_split", "Split input {field} is invalid: {reason}."
 )
@@ -65,13 +62,6 @@ _INVALID_COHORTS = RefusalSpec(
 _COHORT_CHOICE = RefusalSpec(
     "terrine.cohort.invalid_operation", "Cohort input {field} must be one of {choices}."
 )
-
-
-def _optional_dependency(name: str):
-    try:
-        return import_module(name)
-    except ImportError as exc:
-        raise _MISSING_DEPENDENCY.error(extra=name) from exc
 
 
 class _SplitPolicy(Protocol):
@@ -1054,28 +1044,7 @@ class Frame:
 
         Example: frame.to_pyarrow()
         """
-        return self.materialize(budget).to_arrow()
-
-    def _dataframe_table(
-        self,
-        library: str,
-        budget: Budget | None,
-        include_observation_metadata: bool,
-        values_only: bool,
-    ) -> tuple[Any, pa.Table]:
-        """Refuse an invalid column selection, import ``library``, then materialize once."""
-        if values_only and include_observation_metadata:
-            from terrine.spec.dataset import INVALID_VIEW
-
-            raise INVALID_VIEW.error(reason="values_only_excludes_observation_metadata")
-        module = _optional_dependency(library)
-        materialized = self.materialize(budget)
-        if include_observation_metadata:
-            return module, materialized.table
-        dropped = materialized._bookkeeping_columns()
-        if values_only:
-            dropped += materialized._support_columns()
-        return module, materialized.table.drop(dropped)
+        return self.materialize(budget).to_pyarrow()
 
     def to_pandas(
         self,
@@ -1090,10 +1059,15 @@ class Frame:
 
         Example: frame.to_pandas(values_only=True)
         """
-        pandas, table = self._dataframe_table(
-            "pandas", budget, include_observation_metadata, values_only
+        dataframe_view_preflight(
+            include_observation_metadata=include_observation_metadata,
+            values_only=values_only,
+            library="pandas",
         )
-        return table.to_pandas(types_mapper=pandas.ArrowDtype)
+        return self.materialize(budget).to_pandas(
+            include_observation_metadata=include_observation_metadata,
+            values_only=values_only,
+        )
 
     def to_polars(
         self,
@@ -1108,11 +1082,15 @@ class Frame:
 
         Example: frame.to_polars(values_only=True)
         """
-        polars, table = self._dataframe_table(
-            "polars", budget, include_observation_metadata, values_only
+        dataframe_view_preflight(
+            include_observation_metadata=include_observation_metadata,
+            values_only=values_only,
+            library="polars",
         )
-        return polars.from_arrow(table)
-
+        return self.materialize(budget).to_polars(
+            include_observation_metadata=include_observation_metadata,
+            values_only=values_only,
+        )
     def cohorts(self, *, grouping: CohortGrouping, value_column: str) -> CohortTable:
         """Group a trajectory frame's values by units' origin-time buckets.
 
@@ -1176,4 +1154,4 @@ class CohortTable:
         )
 
     def to_pyarrow(self, *, budget: Budget | None = None) -> pa.Table:
-        return self.materialize(budget=budget).to_arrow()
+        return self.materialize(budget=budget).to_pyarrow()

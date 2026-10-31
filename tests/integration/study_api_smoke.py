@@ -94,7 +94,7 @@ def _assert_result(result):
         == "retrospective_effective_time"
     )
     assert result.provenance.execution_snapshot.replay_equivalence == "unverified"
-    restored = MaterializedFrame.from_arrow(result.to_arrow())
+    restored = MaterializedFrame.from_arrow(result.to_pyarrow())
     assert restored.table.equals(result.table)
     assert restored.provenance == result.provenance
 

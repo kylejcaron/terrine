@@ -125,9 +125,9 @@ Install the conversion extra; retain Arrow metadata.
 
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
+| `terrine.convert.missing_dependency` | <code>Conversion requires the optional {extra!r} dependency; install terrine[{extra}].</code> | `extra` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.convert.missing_dependency` | <code>Conversion requires the optional {extra!r} dependency; install terrine[{extra}].</code> | `extra` | [terrine/export/diff_diff.py](../../terrine/export/diff_diff.py) |
 | `terrine.convert.missing_dependency` | <code>Conversion requires the optional {extra!r} dependency; install terrine[{extra}].</code> | `extra` | [terrine/export/lifelines.py](../../terrine/export/lifelines.py) |
-| `terrine.convert.missing_dependency` | <code>Conversion requires the optional {extra!r} dependency; install terrine[{extra}].</code> | `extra` | [terrine/frame.py](../../terrine/frame.py) |
 | `terrine.convert.missing_dependency` | <code>In-memory tables run on the optional {extra!r} dependency; {route}, or bind the tables by name on a connection.</code> | `extra`, `route` | [terrine/model.py](../../terrine/model.py) |
 
 ## dataset
@@ -160,7 +160,7 @@ Use pinned manifests, valid definitions and owned destinations.
 | `terrine.dataset.invalid_selection` | <code>Unknown training label selection: {names}</code> | `names` | [terrine/frame.py](../../terrine/frame.py) |
 | `terrine.dataset.invalid_split` | <code>Split input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/dataset/splits.py](../../terrine/dataset/splits.py) |
 | `terrine.dataset.invalid_split` | <code>Split input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/frame.py](../../terrine/frame.py) |
-| `terrine.dataset.invalid_view` | <code>Invalid dataset view: {reason}.</code> | `reason` | [terrine/spec/dataset.py](../../terrine/spec/dataset.py) |
+| `terrine.dataset.invalid_view` | <code>Invalid dataset view: {reason}.</code> | `reason` | [terrine/errors.py](../../terrine/errors.py) |
 | `terrine.dataset.stale_generation` | <code>Refresh requires the pinned generation to remain the current publication.</code> | None | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
 | `terrine.dataset.unsupported_view` | <code>Unsupported dataset view: {reason}.</code> | `reason` | [terrine/spec/dataset.py](../../terrine/spec/dataset.py) |
 

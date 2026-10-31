@@ -78,7 +78,7 @@ def main() -> None:
                 "distinct": agg("distinct", window=("-1d", "0d")),
             },
         )
-        print(design.build(model).materialize().to_arrow().to_pylist())
+        print(design.build(model).materialize().to_pyarrow().to_pylist())
     finally:
         con.disconnect()
 

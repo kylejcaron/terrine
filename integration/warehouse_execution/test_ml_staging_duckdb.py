@@ -91,7 +91,7 @@ def test_fresh_process_manifest_refresh_matches_independent_build_and_parquet(tm
     model = create_model(tmp_path / "owner.duckdb")
     dataset = _training(model).stage("training", budget=Budget(strict_scan=False))
     manifest_path = tmp_path / "dataset.json"
-    manifest_path.write_bytes(dataset.manifest.to_json())
+    manifest_path.write_bytes(dataset.manifest.to_json().encode("utf-8"))
     model.con.disconnect()
     report = _run(
         r"""
@@ -1654,7 +1654,7 @@ def test_reopen_preserves_version_one_manifest_without_frame_metadata(events_wor
     con.con.execute(
         "UPDATE terrine_runtime.runtime_dataset_recipes SET manifest_json=? "
         "WHERE dataset=? AND generation=?",
-        [old.decode(), "training", dataset.manifest.generation.generation_id],
+        [old, "training", dataset.manifest.generation.generation_id],
     )
     restored = DatasetManifest.from_json(old)
     assert restored.to_json() == old
@@ -1821,7 +1821,7 @@ def common_frame(request, tmp_path, interop_world):
 
 def test_local_arrow_preserves_exact_temporal_values_and_semantic_metadata(common_frame):
     materialized = common_frame.materialize(Budget(max_rows=3))
-    arrow = materialized.to_arrow().sort_by("unit")
+    arrow = materialized.to_pyarrow().sort_by("unit")
     assert arrow.schema.field("amount").type == pa.decimal128(38, 2)
     assert arrow.schema.field("t0").type == pa.timestamp("us", tz="UTC")
     restored = MaterializedFrame.from_arrow(arrow)
@@ -1848,7 +1848,7 @@ def test_local_arrow_preserves_exact_temporal_values_and_semantic_metadata(commo
             {b"consumer": b"kept", b"terrine.materialized_frame.v2": b"stale"}
         ),
     )
-    transported = decorated.to_arrow()
+    transported = decorated.to_pyarrow()
     assert transported.schema.metadata[b"consumer"] == b"kept"
     assert MaterializedFrame.from_arrow(transported).to_metadata() == decorated.to_metadata()
 
@@ -1966,3 +1966,71 @@ def test_pre_rename_owner_database_refuses_old_generation_and_stages_new(events_
         )
     finally:
         con.disconnect()
+
+
+def test_dataset_reads_match_materialized_rows(common_frame):
+    dataset = common_frame.stage("readback", budget=Budget(strict_scan=False))
+
+    expected = common_frame.to_pyarrow().sort_by(
+        [("unit", "ascending"), ("anchor_id", "ascending")]
+    )
+    assert (
+        dataset.to_pyarrow()
+        .sort_by([("unit", "ascending"), ("anchor_id", "ascending")])
+        .to_pylist()
+        == expected.to_pylist()
+    )
+    expected_pandas = common_frame.to_pandas().sort_values(
+        ["unit", "anchor_id"]
+    ).reset_index(drop=True)
+    actual_pandas = dataset.to_pandas().sort_values(
+        ["unit", "anchor_id"]
+    ).reset_index(drop=True)
+    assert actual_pandas.equals(expected_pandas)
+    pytest.importorskip("polars")
+    expected_polars = common_frame.to_polars(values_only=True).sort(["unit", "anchor_id"])
+    actual_polars = dataset.to_polars(values_only=True).sort(["unit", "anchor_id"])
+    assert actual_polars.to_dicts() == expected_polars.to_dicts()
+
+
+def test_dataset_read_budget_refuses(tmp_path, interop_world):
+    model = _worlds.bind_model(interop_world, tmp_path)
+    try:
+        dataset = interop_design(full=False).build(model).stage(
+            "readback", budget=Budget(strict_scan=False)
+        )
+        with pytest.raises(TerrineError) as rows_error:
+            dataset.to_pyarrow(budget=Budget(max_rows=1, strict_scan=False))
+        assert rows_error.value.code == "terrine.budget.rows_exceeded"
+        with pytest.raises(TerrineError) as bytes_error:
+            dataset.to_pyarrow(budget=Budget(max_output_bytes=1, strict_scan=False))
+        assert bytes_error.value.code == "terrine.budget.output_bytes_exceeded"
+    finally:
+        model.con.disconnect()
+
+
+def test_dataset_read_strict_scan_matches_export(common_frame, tmp_path):
+    dataset = common_frame.stage("strict_read", budget=Budget(strict_scan=False))
+    budget = Budget(max_scan_bytes=1, strict_scan=True)
+    codes = []
+    for read in (
+        lambda: dataset.to_pyarrow(budget=budget),
+        lambda: dataset.export_parquet(destination=str(tmp_path / "strict"), budget=budget),
+    ):
+        with pytest.raises(TerrineError) as error:
+            read()
+        codes.append(error.value.code)
+    assert codes == ["terrine.budget.scan_unknown", "terrine.budget.scan_unknown"]
+
+
+def test_conflicting_dataset_view_flags_refuse_before_read(common_frame, monkeypatch):
+    dataset = common_frame.stage("view_conflict", budget=Budget(strict_scan=False))
+
+    def fail_read(*args, **kwargs):
+        raise AssertionError("dataset read should not run")
+
+    monkeypatch.setattr(Dataset, "to_pyarrow", fail_read)
+    with pytest.raises(TerrineError) as error:
+        dataset.to_pandas(values_only=True, include_observation_metadata=True)
+    assert error.value.code == "terrine.dataset.invalid_view"
+    assert error.value.context["reason"] == "values_only_excludes_observation_metadata"

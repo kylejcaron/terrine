@@ -762,7 +762,7 @@ class DatasetTools:
             generation=manifest.generation.generation_id,
             definition_hash=manifest.design_hash,
             model_hash=manifest.model_hash,
-            manifest_hash=hashlib.sha256(manifest.to_json()).hexdigest(),
+            manifest_hash=hashlib.sha256(manifest.to_json().encode("utf-8")).hexdigest(),
             definition_reference=manifest.definition.digest,
             row_count=manifest.generation.row_count,
             columns=tuple(

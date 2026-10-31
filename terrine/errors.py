@@ -114,6 +114,7 @@ class RefusalSpec:
         error._spec = self
         return error
 
+INVALID_VIEW = RefusalSpec("terrine.dataset.invalid_view", "Invalid dataset view: {reason}.")
 
 @contextmanager
 def parameter_names(**names: str) -> Generator[None]:

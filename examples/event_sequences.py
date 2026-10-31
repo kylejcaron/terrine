@@ -149,7 +149,7 @@ def main() -> None:
         assert empty_header["event_count"] == 0 and empty_header["event_count__complete"]
         null_child = next(row for row in children if row["unit"] == "u2")
         assert null_child["kind"] is None and null_child["kind__reason"] == "known_null"
-        reopened = type(positions).from_arrow(positions.to_arrow())
+        reopened = type(positions).from_arrow(positions.to_pyarrow())
         assert reopened.provenance.sequence_meta == positions.provenance.sequence_meta
 
         limited_model = tr.Model.from_catalog(

@@ -85,7 +85,7 @@ def main() -> None:
             },
         )
         result = design.build(model).materialize()
-        rows = result.to_arrow().sort_by("unit").to_pylist()
+        rows = result.to_pyarrow().sort_by("unit").to_pylist()
         assert [(row["retained_two_days"], row["retained_open"]) for row in rows] == [
             (1, 2),
             (None, None),

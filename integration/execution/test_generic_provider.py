@@ -297,7 +297,7 @@ def test_generic_materialization_round_trips_unverified_stamp(sqlite):
         "generic",
         "unverified",
     )
-    stamped = result.to_arrow()
+    stamped = result.to_pyarrow()
     sink = pa.BufferOutputStream()
     with pa.ipc.new_stream(sink, stamped.schema) as writer:
         writer.write_table(stamped)

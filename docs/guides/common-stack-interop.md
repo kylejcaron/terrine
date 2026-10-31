@@ -62,7 +62,7 @@ This includes boolean features/outcomes, treatment and eligibility. Output
 names ending in `__complete` or `__reason` are reserved.
 Single-underscore names such as `kind_complete` remain ordinary value names.
 
-`Frame.to_pyarrow()` and `MaterializedFrame.to_arrow()` are lossless. Identity
+`Frame.to_pyarrow()` and `MaterializedFrame.to_pyarrow()` are lossless. Identity
 columns come first, value/support triples stay adjacent, and observation bounds,
 resolved times and anchor provenance appear last as real columns. Filtering or
 sorting Arrow carries this evidence with the rows; there is no row-valued payload

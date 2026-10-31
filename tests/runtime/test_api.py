@@ -219,7 +219,7 @@ def test_published_frame_reader_roundtrips_exact_generation_metadata():
 
     class Publisher(_Executor):
         def run_task(self, task, dependencies):
-            return clean.to_arrow()
+            return clean.to_pyarrow()
 
         def publish(self, plan, outputs, lease, run_id):
             return DuckDBBackend(con, namespace="owner").publish_generation(

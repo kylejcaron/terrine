@@ -54,7 +54,7 @@ from terrine.export import preflight_export
 checked = preflight_export(materialized)
 r = materialized.roles
 consumer = DoubleMLData(
-    checked.table.to_pandas(),
+    checked.to_pandas(),
     y_col=r.outcomes[0],       # explicitly choose one outcome
     d_cols=r.treatment,
     x_cols=list(r.features),  # never infer predictors from support/identity columns
@@ -177,7 +177,7 @@ try:
         r = materialized.roles
         materialized_frames[event, metric] = materialized
         datasets[event, metric] = DoubleMLData(
-            checked.table.to_pandas(), y_col="y", d_cols=r.treatment,
+            checked.to_pandas(), y_col="y", d_cols=r.treatment,
             x_cols=list(r.features), cluster_cols=r.cluster_unit,
         )
 finally:
