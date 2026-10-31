@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import calendar
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -38,9 +39,11 @@ _CALENDAR_STEP = re.compile(r"([0-9]{1,19})(mo|y)", re.ASCII)
 def _context_value(value: object) -> object:
     if isinstance(value, (date, datetime)):
         return value.isoformat()
+    if isinstance(value, float) and not math.isfinite(value):
+        return repr(value)
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
-    return type(value).__name__
+    return repr(value)
 
 
 def _date(value: date | str, field: str) -> date:

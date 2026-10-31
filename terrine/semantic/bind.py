@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable, Mapping
 from datetime import date
-from decimal import Decimal, InvalidOperation
 from types import MappingProxyType
 from typing import Any
 
@@ -46,6 +46,7 @@ _FILTER_VALUE_SCHEMA = RefusalSpec(
     "Filter value {value!r} for label {label!r} has the wrong type for {label_type}; "
     "use a value matching the declared label type.",
 )
+_JSON_NUMBER = re.compile(r"(-?)(0|[1-9][0-9]*)(?:\.([0-9]+))?(?:[eE]([+-]?)([0-9]+))?")
 _MISSING = RefusalSpec(
     "terrine.semantic.missing_reference",
     "The model does not declare {reference!r}. "
@@ -114,19 +115,14 @@ def validate_filter_values(filt: Filter, dtype: str) -> None:
                 except ValueError:
                     valid = False
         elif dtype in {"int", "float"}:
-            valid = not isinstance(value, bool)
-            if valid and isinstance(value, (int, float)):
+            if isinstance(value, bool):
+                valid = False
+            elif isinstance(value, int):
+                valid = True
+            elif isinstance(value, float):
                 valid = math.isfinite(value)
-                if valid and dtype == "int":
-                    valid = isinstance(value, int) or value.is_integer()
-            elif valid and isinstance(value, str):
-                try:
-                    number = Decimal(value)
-                    valid = number.is_finite() and (
-                        dtype != "int" or number == number.to_integral_value()
-                    )
-                except InvalidOperation:
-                    valid = False
+            elif isinstance(value, str):
+                valid = _JSON_NUMBER.fullmatch(value) is not None
             else:
                 valid = False
         else:

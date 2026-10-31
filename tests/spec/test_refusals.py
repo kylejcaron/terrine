@@ -113,6 +113,36 @@ CASES = [
             "expected": ("YYYY-MM-DD",),
         },
     ),
+    (
+        "terrine.model.invalid_binding",
+        lambda: Coverage(cast(Any, Decimal("1")), "2025-01-02"),
+        {
+            "reason": "invalid_date",
+            "field": "start",
+            "value": "Decimal('1')",
+            "expected": ("YYYY-MM-DD",),
+        },
+    ),
+    (
+        "terrine.model.invalid_binding",
+        lambda: Coverage(cast(Any, float("nan")), "2025-01-02"),
+        {
+            "reason": "invalid_date",
+            "field": "start",
+            "value": "nan",
+            "expected": ("YYYY-MM-DD",),
+        },
+    ),
+    (
+        "terrine.design.invalid",
+        lambda: FixedDate(cast(Any, float("nan"))),
+        {
+            "reason": "wrong_type",
+            "field": "date",
+            "value": "nan",
+            "expected": ("YYYY-MM-DD", "timezone-aware datetime"),
+        },
+    ),
     # design and treatment
     (
         "terrine.design.invalid",

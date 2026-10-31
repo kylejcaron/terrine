@@ -340,7 +340,14 @@ class UnitSource:
         )
 
 def _calendar_day(value: object, field: str) -> date:
-    context_value = value.isoformat() if isinstance(value, (date, datetime)) else value
+    if isinstance(value, (date, datetime)):
+        context_value = value.isoformat()
+    elif isinstance(value, float) and not math.isfinite(value):
+        context_value = repr(value)
+    elif value is None or isinstance(value, (str, bool, int, float)):
+        context_value = value
+    else:
+        context_value = repr(value)
     if isinstance(value, str):
         try:
             return date.fromisoformat(value)

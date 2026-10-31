@@ -279,6 +279,17 @@ def test_filter_value_type_is_checked_during_shared_binding(con):
     )
     Model.from_tables(con, units=UNITS, events={"decimal_orders": decimal_event})
 
+
+def test_numeric_filter_thresholds_are_admitted_during_shared_binding(con):
+    event = orders(
+        labels=("qty",),
+        metrics={
+            "fractional": tr.count(where={"qty__gt": 1.5}),
+            "large_exponent": tr.count(where={"qty__gt": "1e999999999999999999999999999"}),
+        },
+    )
+    Model.from_tables(con, units=UNITS, events={"orders": event})
+
 def test_undeclared_label_and_ratio_operand_refuse_missing_reference(con):
 
     with pytest.raises(TerrineError) as error:
