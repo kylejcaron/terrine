@@ -37,3 +37,4 @@ jobs:
           path: |
             tests/.test_durations
             integration/.test_durations
+          include-hidden-files: true

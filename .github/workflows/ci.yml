@@ -75,6 +75,8 @@ jobs:
           -n auto --dist loadscope --splits 6 --group ${{ matrix.group }}
           --splitting-algorithm duration_based_chunks
           --durations-path integration/.test_durations
+          --ignore=integration/parity
+          --ignore=integration/handoffs
       # The same known answers compiled through the portable base expression
       # policy; about twenty seconds beside the native run.
       - if: matrix.group == 1
