@@ -1,3 +1,5 @@
+# Saved artifacts are stored exactly as written; whitespace fixers must not rewrite them.
+exclude: ^tests/artifacts/
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.11.13
