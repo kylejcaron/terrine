@@ -27,3 +27,19 @@ Moved DuckDB serialization and JSON token extraction outside `_NATIVE_FUNCTION_N
 **RED** — `uv run pytest -n 0 integration/execution/test_native_admission.py` failed the new test at the patched `_rows` assertion: `assert not _native._NATIVE_FUNCTION_NAMES_LOCK.locked()`; observed the lock was `True`.
 
 **GREEN** — `uv run pytest -n 0 integration/execution/test_native_admission.py`: 3 passed. Step 4 selection, `uv run pytest -n 0 tests/execution/test_inputs.py tests/test_frame_runtime.py -k "shadow or macro or function or revalidates or changed_view"`: 9 passed, 35 deselected. `make lint`: passed.
+## Regex performance review follow-up
+
+Replaced per-token regex iteration and per-key decoding with one compiled `finditer` pattern capturing the complete JSON string literal for each matching `function_name`, `function`, or `operator_name` field; each captured value is decoded with `json.loads` and case-folded. The cache key, LRU behavior, and lock boundaries from the prior fix remain unchanged. The soundness comment documents why escaped quotes inside JSON strings cannot hide a structural pair; a possible match in an object-key string can only add a conservative name and cannot consume a real structural pair.
+
+Expanded the string-content test with a 512-literal statement and the recursive-walk oracle. The compiled-study parity, macro/string literal, and lock-release tests all pass.
+
+**Verification**
+
+- `uv run --no-sync pytest -n 0 integration/execution/test_native_admission.py` — 3 passed.
+- `uv run --no-sync pytest -n 0 tests/execution/test_inputs.py tests/test_frame_runtime.py -k "shadow or macro or function or revalidates or changed_view"` — 9 passed, 35 deselected.
+- `uv run --no-sync ty check terrine/execution/_native.py integration/execution/test_native_admission.py` — passed.
+- `make lint` — passed.
+
+**Uncached micro-timing**
+
+Captured the largest README compiled-statement SQL during a build and compared the prior recursive `json.loads` walker (including DuckDB serialization) against `_function_names` with its cache cleared before every sample. Both returned the same 23 names for the 76,629-character statement / 670,550-byte serialized JSON. Across 30 alternating samples, median old-walk time was 23.398 ms and regex extraction was 12.683 ms (10.715 ms, 45.8% lower). Timing is local and observational.

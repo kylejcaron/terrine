@@ -34,7 +34,9 @@ from terrine.semantic.sql import (
 
 _NATIVE_FUNCTION_NAMES_CACHE: OrderedDict[tuple[str, str], frozenset[str]] = OrderedDict()
 _NATIVE_FUNCTION_NAMES_LOCK = threading.Lock()
-_JSON_TOKEN = re.compile(r'"(?:\\.|[^"\\])*"|[{}\[\]:,]')
+_FUNCTION_NAME = re.compile(
+    r'"(?i:function_name|function|operator_name)"\s*:\s*("(?:[^"\\]|\\.)*")'
+)
 
 _CONNECTION_LOCKS: weakref.WeakKeyDictionary[Any, threading.RLock] = weakref.WeakKeyDictionary()
 _CONNECTION_LOCKS_GUARD = threading.Lock()
@@ -540,28 +542,15 @@ def _function_names(raw: Any, statement: str) -> frozenset[str]:
             "SELECT system.main.json_serialize_sql(" + _quote_literal(statement) + ")",
         )[0][0]
         serialized = payload if isinstance(payload, str) else json.dumps(payload)
-        tokens = iter(_JSON_TOKEN.finditer(serialized))
-        current = next(tokens, None)
-        following = next(tokens, None)
-        after = next(tokens, None)
-        names: set[str] = set()
-        while current is not None:
-            if current.group().startswith('"'):
-                key = json.loads(current.group())
-                if (
-                    isinstance(key, str)
-                    and key.casefold() in {"function_name", "function", "operator_name"}
-                    and following is not None
-                    and following.group() == ":"
-                    and after is not None
-                    and after.group().startswith('"')
-                ):
-                    # JSON quotes inside string literals are escaped, so this
-                    # token walk cannot mistake string contents for structure.
-                    value = json.loads(after.group())
-                    names.add(value.casefold())
-            current, following, after = following, after, next(tokens, None)
-        result = frozenset(names)
+        # Quotes inside JSON strings are escaped, so matching needs the
+        # unescaped quote after the key. A match can start within a string only
+        # at an object-key suffix ending in an escaped quote plus this key name;
+        # that only adds a conservative name, and the match ends at its value,
+        # so it cannot swallow a real structural pair or miss one.
+        result = frozenset(
+            json.loads(match.group(1)).casefold()
+            for match in _FUNCTION_NAME.finditer(serialized)
+        )
     except Exception as exc:
         raise _binding_error("native parser could not certify function ownership") from exc
     with _NATIVE_FUNCTION_NAMES_LOCK:

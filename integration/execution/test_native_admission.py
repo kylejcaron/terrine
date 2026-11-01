@@ -113,6 +113,11 @@ def test_function_names_keep_macro_body_names_but_ignore_string_contents():
         assert names == _walk_names(raw, statement)
         assert "x" not in names
         assert "upper" in names
+        literals = ", ".join(f"'{index}'" for index in range(512))
+        statement = f"""SELECT {literals}, '{{"function_name":"x"}}'"""
+        names = _function_names(raw, statement)
+        assert names == _walk_names(raw, statement)
+        assert "x" not in names
     finally:
         raw.close()
 
