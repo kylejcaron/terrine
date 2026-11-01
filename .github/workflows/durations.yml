@@ -1,0 +1,39 @@
+name: durations
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --group dev --all-extras
+      - name: Store unit test durations
+        run: >-
+          /usr/bin/time -f "terrine-pytest-cpu %U %S" uv run pytest tests -n auto
+          --store-durations --durations-path tests/.test_durations
+          --ignore=tests/temporal/test_sketches.py
+          --ignore=tests/spec/test_sketch_refusal.py
+          --ignore=tests/compile/test_nonadditive.py
+          --ignore=tests/compat --ignore=tests/parity
+      - name: Store integration test durations
+        run: >-
+          /usr/bin/time -f "terrine-pytest-cpu %U %S" uv run pytest integration -n auto
+          --store-durations --durations-path integration/.test_durations
+          --ignore=integration/parity --ignore=integration/handoffs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stored-test-durations
+          path: |
+            tests/.test_durations
+            integration/.test_durations

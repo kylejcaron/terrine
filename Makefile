@@ -6,10 +6,13 @@ MUTATION_CORES ?= 2
 MUTATION_SAMPLE ?= 1
 MUTATION_SEED ?= 20261025
 PYTEST_TIME ?=
+PYTEST_WORKERS ?= $(if $(filter tests,$(TESTS)),auto,0)
+WAREHOUSE_WORKERS ?= auto
 
-# Ordinary suite; scale checks are deselected by default.
+# Ordinary suite; scale checks are deselected by default. Focused selections
+# run in one process; the complete unit tier uses xdist.
 test:
-	uv run pytest $(TESTS)
+	$(PYTEST_TIME) uv run pytest -n $(PYTEST_WORKERS) $(TESTS)
 
 # Local, on-demand campaigns; keep mutants/ until kill attribution is finished.
 # MUTATION_TESTS names the module's own tests: the whole tree is too slow per
@@ -31,21 +34,21 @@ test-scale:
 # and the DuckDB reference backend. The second run compiles the same conformance
 # known answers through the portable base expression policy on the server.
 test-postgres:
-	$(PYTEST_TIME) uv run --extra duckdb --extra postgres pytest integration -m postgres
-	$(PYTEST_TIME) uv run --extra duckdb --extra postgres pytest integration/conformance --generic-dialect -m postgres
+	$(PYTEST_TIME) uv run --extra duckdb --extra postgres pytest integration -n $(WAREHOUSE_WORKERS) -m postgres
+	$(PYTEST_TIME) uv run --extra duckdb --extra postgres pytest integration/conformance --generic-dialect -n $(WAREHOUSE_WORKERS) -m postgres
 
 # Live BigQuery probes; requires TERRINE_TEST_BIGQUERY_PROJECT/_DATASET and
 # credentials (GOOGLE_APPLICATION_CREDENTIALS, application-default, or
 # TERRINE_TEST_BIGQUERY_ACCESS_TOKEN="$(gcloud auth print-access-token)"), and
 # fails without them. Each probe creates and drops its own dataset.
 test-bigquery:
-	$(PYTEST_TIME) uv run --extra duckdb --extra bigquery pytest integration -m bigquery
+	$(PYTEST_TIME) uv run --extra duckdb --extra bigquery pytest integration -n $(WAREHOUSE_WORKERS) -m bigquery
 
 # Live Snowflake probes; requires TERRINE_TEST_SNOWFLAKE_{ACCOUNT,USER,PRIVATE_KEY,
 # WAREHOUSE,DATABASE,SCHEMA} (key-pair service user) and fails without them. Each
 # probe creates and drops its own schema in the test database.
 test-snowflake:
-	$(PYTEST_TIME) uv run --extra duckdb --extra snowflake pytest integration -m snowflake
+	$(PYTEST_TIME) uv run --extra duckdb --extra snowflake pytest integration -n $(WAREHOUSE_WORKERS) -m snowflake
 
 lint:
 	uv run ruff check terrine tests integration
