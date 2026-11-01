@@ -517,7 +517,7 @@ and native unload `False`; read primitives, scan bounds and cancellation
 
 ## Python and dependency support
 
-The package supports CPython 3.12 or newer. Native dataset execution requires
+The package supports CPython 3.12 to 3.14. Native dataset execution requires
 `terrine[duckdb]`; base Terrine has no mandatory backend, dataframe, orchestration
 or modeling library. The local engine is pinned to DuckDB **1.5.6**, matching
 the exact arithmetic capability check, rather than advertising unverified engine
@@ -538,7 +538,7 @@ Apache-2.0 `LICENSE` and `NOTICE`, and the direct-dependency notice inventory;
 wheels retain the same license files and declare `License-Expression:
 Apache-2.0`.
 
-CI runs this command for both Python versions with highest and lowest direct
+CI runs this command on Python 3.12, 3.13, and 3.14 with highest and lowest direct
 dependency resolution. Lowest resolution uses `uv pip compile --resolution
 lowest-direct --only-binary :all:`: the floor is the lowest compatible **wheel**
 combination for that interpreter/platform, not an assurance that older dependency
@@ -546,13 +546,13 @@ sdists can be built on new Python versions. Source-building third-party native
 libraries is not the supported installation path. Transitive dependencies are
 resolved normally; the job does not claim a lowest-transitive combination.
 
-Run either resolution locally after building (replace `3.13` with `3.14` for the
-other interpreter):
+Run either resolution locally after building; use `3.12`, `3.13`, or `3.14` to
+match the interpreter in the distribution matrix:
 
 ```sh
 uv build
 uv run python -m tests.integration.distribution_smoke \
-  --wheel dist/*.whl --sdist dist/*.tar.gz --python 3.13 \
+  --wheel dist/*.whl --sdist dist/*.tar.gz --python 3.12 \
   --resolution lowest-direct
 ```
 
@@ -566,7 +566,7 @@ tutorial (`a`: one feature/two outcomes; `b`: zero/zero):
 | 3.14.5 | Highest | 12.0.0 | 1.5.6 | 2.14.1 | 6.0.3 | 29.0.1 | 23.0.1 | 2.5.4 |
 | 3.14.5 | Lowest direct wheels | 11.0.0 | 1.5.6 | 2.12.0 | 6.0.3 | 29.0.0 | 22.0.0 | 2.3.2 |
 
-The 3.13 floor also passed 186 spec, metadata, error, window and column-compilation
+Python 3.13.5 also passed 186 spec, metadata, error, window and column-compilation
 tests with `python -m pytest -q -n 4 tests/spec tests/test_metadata.py
 tests/test_errors.py tests/test_windows.py tests/compile/test_columns.py`.
 The wheel matrix is narrower than the full operation and optional-adapter suites;
@@ -575,7 +575,7 @@ do not infer warehouse or downstream-library support from the tutorial.
 ### Optional extras
 
 Each extra is separately declared; none is loaded by base/facade imports.
-The locked Python 3.13 checks install all extras and run the integration suites.
+The locked Python 3.12 checks install all extras and run the integration suites.
 The Python 3.14 native wheel checks do **not** establish that all optional
 orchestration or modeling libraries support that interpreter.
 

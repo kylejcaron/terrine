@@ -22,7 +22,7 @@ Because Terrine knows each row's snapshot time, features can only look backwards
 
 ## Example: a customer spend forecasting table
 
-Requires Python 3.12 or newer.
+Requires Python 3.12 to 3.14.
 
 ```sh
 pip install --pre "terrine[duckdb,pandas]"

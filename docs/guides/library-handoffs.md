@@ -15,8 +15,8 @@ uv sync --group dev --extra duckdb --extra doubleml --extra dowhy --extra duckre
 uv run pytest -q integration/handoffs
 ```
 
-DoWhy 0.14 supports Python 3.13 but not 3.14; its extra is inactive on 3.14.
-The other extras remain independently selectable. CI runs all five on 3.13.
+DoWhy 0.14 supports Python 3.12 and 3.13 but not 3.14; its extra is inactive on 3.14.
+The other extras remain independently selectable. CI runs all five on 3.12.
 Increment remains an independent optional [semantic adapter](increment-compatibility.md),
 never a requirement for these workflows. sklearn/Arrow keeps the existing ML
 staging boundary: these workflows are not a replacement for labeled training exports.
@@ -193,7 +193,7 @@ and checks distinct treated populations, complete outcomes and cluster identity.
 The loop is ordinary Python, not a Terrine helper: change the pairs to match
 your study. DoWhy's preflight refuses repeated units even with a cluster role,
 and every weight role; use a one-row-per-unit unweighted design for that library.
-The `dowhy` extra is Python 3.13 only; `doubleml` has no Python 3.14 cap.
+The `dowhy` extra is for Python 3.12 and 3.13 only; `doubleml` has no Python 3.14 cap.
 Neither preflight nor constructing `DoubleMLData` establishes identification or
 valid inference, and `x_cols`/`common_causes` remain modeling choices.
 
