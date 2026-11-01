@@ -91,6 +91,12 @@ before returning status or applying cancellation. A grant for another dataset in
 the same runtime namespace is insufficient. Runs without matching owner-prepared
 invocations are refused.
 
+An owner namespace whose runtime metadata this release cannot read refuses every
+run, receipt and dataset lookup with `terrine.runtime.schema_unsupported` before
+anything is written. Its context carries `namespace`, `reason` (`unversioned` for
+a namespace from an earlier pre-release, `newer` for one written by a later
+release), `found_version` and `supported_version`.
+
 Status projects lifecycle state, phase, stable error code, pinned result and
 event cursor only. Events are cursor-bounded by `batch_cap` and expose lifecycle
 or phase fields, not arbitrary runtime payloads. Cancellation returns the

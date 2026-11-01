@@ -1,9 +1,13 @@
 import json
 from dataclasses import replace
 
+import pytest
+
 from terrine.agent import DatasetTools
+from terrine.agent.schemas import AgentDatasetReference, PlanReceipt
 from terrine.data import Budget
 from terrine.runtime.saved_plan import DestinationRef, SavedPlan
+from terrine.runtime.schema import ensure_runtime_schema
 from terrine.spec.dataset import DatasetDefinition
 from terrine.spec.io import from_json
 
@@ -122,6 +126,42 @@ def test_plan_and_run_recheck_destination_source_and_budget_grants(owner_tools):
     )
     runs = owner_tools.model.con.con.execute("SELECT count(*) FROM agent.runtime_runs")
     assert runs.fetchone() == (0,)
+
+
+@pytest.mark.parametrize("reason", ["unversioned", "newer"])
+def test_unsupported_runtime_namespace_refuses_agents_with_its_reason(owner_tools, reason):
+    raw = owner_tools.model.con.con
+    if reason == "newer":
+        ensure_runtime_schema(raw, "agent")
+        raw.execute("UPDATE agent.runtime_schema_version SET version=2")
+    else:
+        raw.execute("CREATE SCHEMA agent")
+        raw.execute("CREATE TABLE agent.runtime_runs (run_id VARCHAR)")
+    receipt = PlanReceipt(receipt_id="0" * 64, design_hash="0" * 64, plan_hash="0" * 64)
+    reference = AgentDatasetReference(
+        dataset="study",
+        generation="generation",
+        definition_hash="0" * 64,
+        definition_reference="0" * 64,
+        model_hash="0" * 64,
+        manifest_hash="0" * 64,
+        row_count=0,
+        columns=(),
+    )
+    for response in (
+        owner_tools.get_run_status("run"),
+        owner_tools.execute_plan(receipt, request_key="key"),
+        owner_tools.refresh(reference, receipt, request_key="key"),
+    ):
+        assert response.status == "refused"
+        assert response.code == "terrine.runtime.schema_unsupported"
+        assert response.context == {
+            "namespace": "agent",
+            "reason": reason,
+            "found_version": 2 if reason == "newer" else None,
+            "supported_version": 1,
+        }
+        assert response.suggested_route
 
 
 def test_prepare_refuses_invalid_group_identity_without_leaking_exception(owner_tools):

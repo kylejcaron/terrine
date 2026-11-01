@@ -27,6 +27,7 @@ from terrine.execution.inputs import (
 )
 from terrine.model import Model
 from terrine.runtime.owner import RuntimeOwner
+from terrine.runtime.schema import check_runtime_schema
 from terrine.runtime.state import RuntimeStore
 from terrine.semantic.io import catalog_payload
 from terrine.semantic.models import Catalog
@@ -269,6 +270,7 @@ class SnapshotAuthority:
             route="Materialize a Frame without saving it, or use verified retained local inputs.",
         )
         _assert_owner_connection(self.owner, con)
+        check_runtime_schema(_native.raw_connection(con), namespace)
         snapshot_id = uuid.uuid4().hex
         directory = self.owner.snapshot_root / namespace / f"{run_id}-{snapshot_id}"
         source_names, dimension_names, unit_names = _design_root_names(model, design)
