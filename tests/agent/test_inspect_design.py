@@ -39,7 +39,7 @@ def test_propose_design_from_discovered_schema(tools):
     document["design"]["features"]["history"] = {
         "type": "MetricAgg",
         "metric": metric,
-        "window": {"type": "Window", "start": -86400, "end": 0},
+        "window": {"type": "Window", "start": "-1d", "end": "0s"},
     }
     proposed = tools.propose_design(json.dumps(document), base=example.serialized)
     assert proposed.status == "ok"
@@ -57,7 +57,7 @@ def test_validate_design_returns_a_summary(tools):
         "recent_total": {
             "type": "MetricAgg",
             "metric": "total",
-            "window": {"type": "Window", "start": -86400, "end": 0},
+            "window": {"type": "Window", "start": "-1d", "end": "0s"},
         }
     }
     serialized = json.dumps(example)
@@ -106,12 +106,12 @@ def test_validation_uses_existing_metadata_contracts(tools, monkeypatch):
         "bad": {
             "type": "MetricAgg",
             "metric": "unknown",
-            "window": {"type": "Window", "start": -10, "end": 0},
+            "window": {"type": "Window", "start": "-10s", "end": "0s"},
         }
     }
     missing = tools.validate_design(json.dumps(payload))
     assert missing.code == "terrine.design.missing_reference" and missing.suggested_route
-    payload["design"]["features"]["bad"]["window"]["start"] = 10
+    payload["design"]["features"]["bad"]["window"]["start"] = "10s"
     assert tools.validate_design(json.dumps(payload)).status == "refused"
     payload["design"]["sql"] = "SELECT secret"
     smuggled = tools.propose_design(json.dumps(payload))
@@ -187,18 +187,18 @@ def test_propose_design_and_definition_from_discovered_schema(tools, monkeypatch
         "history": {
             "type": "MetricAgg",
             "metric": metric,
-            "window": {"type": "Window", "start": -86400, "end": 0},
+            "window": {"type": "Window", "start": "-1d", "end": "0s"},
         }
     }
     document["outcomes"] = {
         "future": {
             "type": "MetricAgg",
             "metric": metric,
-            "window": {"type": "Window", "start": 0, "end": 86400},
+            "window": {"type": "Window", "start": "0s", "end": "1d"},
         }
     }
     definition = {
-        "schema_version": 3,
+        "schema_version": 4,
         "base_design": document,
         "view": {
             "kind": "training",
@@ -245,11 +245,11 @@ def _scoring_record(tools):
         "history": {
             "type": "MetricAgg",
             "metric": tools.inspect_catalog().output.metrics[0].name,
-            "window": {"type": "Window", "start": -86400, "end": 0},
+            "window": {"type": "Window", "start": "-1d", "end": "0s"},
         }
     }
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "base_design": document,
         "view": {
             "kind": "scoring",

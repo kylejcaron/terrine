@@ -46,7 +46,7 @@ from terrine.spec.expressions import (
 )
 from terrine.spec.sequence import EventSequence
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
-from terrine.windows import Duration, Months, Window, _duration
+from terrine.windows import Months, Window, _duration, _elapsed
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -93,7 +93,7 @@ def ensure_runtime_shape_supported(shape: object, *, anchor: object = None) -> N
     from terrine.spec.panels import EventPanelSpec, SequentialSpec
     from terrine.spec.state_panel import StatePanel
 
-    if isinstance(anchor, EventAnchor) and anchor.offset:
+    if isinstance(anchor, EventAnchor) and anchor.offset.seconds != 0:
         raise _RUNTIME_SHAPE_UNSUPPORTED.error(
             shape="EventAnchor.offset", route="ordinary Frame materialization or a full rebuild"
         )
@@ -274,7 +274,8 @@ def _retention_window(expr: RetentionMetric, model: Model) -> Window:
         return Window(0, expr.horizon)
     coverage = model.readiness.for_fact(model.catalog.events[expr.event].source)
     span = coverage.end_exclusive - coverage.start
-    return Window(0, Duration(span.days * 86_400 + span.seconds + bool(span.microseconds)))
+    span_seconds = span.days * 86_400 + span.seconds + bool(span.microseconds)
+    return Window(0, _elapsed(span_seconds, field="window"))
 
 
 def _outcome_bounds(design: Design, model: Model) -> tuple[tuple[int, ...], tuple[datetime, ...]]:

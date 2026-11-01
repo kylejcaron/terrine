@@ -24,6 +24,7 @@ from terrine.spec import (
     gt,
     since,
 )
+from terrine.windows import Duration
 from tests.compile.test_columns import _compile
 from tests.compile.test_columns import column_model as column_model  # noqa: F401
 
@@ -57,7 +58,7 @@ def test_named_windows_asof_treatment_and_independent_completeness(column_model_
     assert [r["x); DROP TABLE events; --"] for r in rows] == ["old", None]
     assert compiled.roles.outcomes == ("after", "unavailable")
     assert compiled.roles.treatment == "treatment"
-    assert compiled.columns["after"].window.end == 1
+    assert compiled.columns["after"].window.end == Duration(1)
     assert compiled.expression_timings["after"].kind == "fixed_t0"
     assert compiled.expression_timings["after"].support_seconds == (0, 1)
     assert compiled.feature_cutoffs["tier"].strict is True

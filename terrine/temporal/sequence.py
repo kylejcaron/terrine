@@ -17,7 +17,7 @@ from terrine.data import ColumnMeta, Roles
 from terrine.errors import RefusalSpec
 from terrine.spec._columns import IDENTITY, SEQUENCE, SESSION_VALUES, TRANSITION_LABELS
 from terrine.temporal.sessionize import sessionize
-from terrine.windows import Duration, Window
+from terrine.windows import Window, _elapsed
 
 _MAX_EVENTS_EXCEEDED = RefusalSpec(
     "terrine.sequence.max_events_exceeded",
@@ -891,7 +891,7 @@ def event_sequence(
                 }
             )
         columns[name] = ColumnMeta(
-            Window(Duration(window_start), Duration(window_end)),
+            Window(_elapsed(window_start, field="window"), _elapsed(window_end, field="window")),
             "event_property",
             None,
             None,

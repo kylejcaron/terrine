@@ -44,7 +44,7 @@ def test_restricted_metadata_evaluations(case, tmp_path):
             "history": {
                 "type": "MetricAgg",
                 "metric": "total",
-                "window": {"type": "Window", "start": -10, "end": 0},
+                "window": {"type": "Window", "start": "-10s", "end": "0s"},
             }
         }
         payload["design"].update(case.get("edit", {}))

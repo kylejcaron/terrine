@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 
@@ -11,22 +12,16 @@ from terrine.orchestration.dagster import build_materialization_asset
 from terrine.runtime import PlanRequest
 from terrine.runtime.control import ControlEndpoint
 from terrine.spec import FixedDate
-from terrine.windows import seconds_text
 
 
-def plan_request(context: dict[str, str]) -> PlanRequest:
+def plan_request(context: Mapping[str, str]) -> PlanRequest:
     """Load reviewed intent and bind its design anchor to the requested partition."""
     payload = json.loads(os.environ["TERRINE_PLAN_REQUEST"])
     if not isinstance(payload, dict):
         raise ValueError("TERRINE_PLAN_REQUEST must contain a PlanRequest JSON object")
     request = PlanRequest.from_dict(payload)
     return replace(
-        request,
-        design=replace(
-            request.design,
-            anchor=FixedDate(context["partition_key"]),
-            gap=seconds_text(request.design.gap),
-        ),
+        request, design=replace(request.design, anchor=FixedDate(context["partition_key"]))
     )
 
 

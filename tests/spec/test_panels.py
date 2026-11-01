@@ -156,7 +156,7 @@ def test_direct_design_construction_cannot_conflict_with_sequential_treatment():
 
 def test_design_json_without_optional_anchor_range_loads_with_sample_defaults():
     restored = from_json(
-        '{"schema_version":3,"design":{"unit":"user","anchor":'
+        '{"schema_version":4,"design":{"unit":"user","anchor":'
         '{"type":"FixedDate","date":{"type":"date","value":"2025-01-01"}}}}'
     )
 

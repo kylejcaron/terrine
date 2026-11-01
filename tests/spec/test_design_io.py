@@ -207,7 +207,9 @@ def test_month_schedule_round_trips_months():
         assert isinstance(restored.anchor, Schedule)
         assert restored.anchor.every == Months(3)
         assert restored.spec_hash == design.spec_hash
-    assert Schedule(Months(12), "2025-01-31", "2025-12-31") == Schedule("1y", "2025-01-31", "2025-12-31")
+    assert Schedule(Months(12), "2025-01-31", "2025-12-31") == Schedule(
+        "1y", "2025-01-31", "2025-12-31"
+    )
     document = json.loads(to_json(design))
     anchor = document["design"]["anchor"]
     assert anchor["every"] == "3mo"

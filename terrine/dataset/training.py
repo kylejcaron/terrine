@@ -50,7 +50,7 @@ def assign_training_splits(
                 end = row[timing.point_time_column]
                 point = True
             elif metadata.window is not None:
-                end = origin + timedelta(seconds=metadata.window.end)
+                end = origin + timedelta(seconds=metadata.window.end.seconds)
             elif timing is not None:
                 if timing.relative_offsets is not None and timing.point_time_column is not None:
                     reference_time = row[timing.point_time_column]

@@ -23,10 +23,11 @@
   rename the keyword and attribute.
 - `Coverage(through=...)` becomes `Coverage(end=...)`: rename the keyword;
   both calendar-day bounds remain inclusive.
-- Design and dataset-definition documents require `schema_version: 3`; version 2
-  and older documents refuse: reconstruct and save the design or definition.
+- Design and dataset-definition documents require `schema_version: 4` and write
+  durations as canonical text such as `gap: 1w` and `every: 1mo`; version 3 and
+  older documents refuse: reconstruct and save the design or definition.
   Catalog documents stay at version 2; manifest and saved-plan outer envelopes
-  stay at version 1, with version-3 nested designs and definitions.
+  stay at version 1, with version-4 nested designs and definitions.
 - The package root is limited to the everyday workflow: import
   `DatasetDefinition`, `EventSequence`, `EventTime`, `FunnelSpec`, `SessionSpec`,
   `Treatment`, `retention`, `quantile`, `approx_quantile`, `approx_distinct`,
@@ -43,10 +44,15 @@
   `Model.from_catalog(...)`.
 - `DatasetDefinition` no longer accepts `schema_version`: omit it when constructing
   the record; serialization supplies the version.
-- Records store normalized durations as integer seconds: when cloning with
-  `dataclasses.replace`, pass duration fields back through
-  `terrine.windows.seconds_text`, for example
-  `replace(design, gap=seconds_text(design.gap), unit="customer")`.
+- Records store durations as `terrine.windows.Duration` values and calendar
+  steps as `terrine.windows.Months`, so `dataclasses.replace(design, unit="customer")`
+  round-trips without re-encoding: read `.seconds` or `.months` for integers and
+  `str()` for canonical text. Every duration parameter also accepts a `Duration`.
+  `Schedule.months` is removed (`Schedule.every` is a `Duration` or `Months`), and
+  `SessionSpec.gap_seconds`, `FunnelSpec.within_seconds` and
+  `RetentionMetric.finite_horizon_seconds` become `gap`, `within` and `horizon`.
+  `terrine.windows.seconds`, `seconds_text` and `format_duration` are removed;
+  `terrine.windows.duration` returns a `Duration`.
 - Catalog documents require version 2: rebuild version-1 catalogs with source
   `time`, `units` and `events`, root `events`, dimension `unit` and `key`,
   measure `event`, and metric `unit`. Version 1 refuses with

@@ -314,7 +314,7 @@ CASES = [
     ("terrine.design.invalid", lambda: from_json(b"{"), {"reason": "malformed_document"}),
     (
         "terrine.design.invalid",
-        lambda: from_json('{"schema_version":3,"design":{"unit":"u","anchor":{"type":"Future"}}}'),
+        lambda: from_json('{"schema_version":4,"design":{"unit":"u","anchor":{"type":"Future"}}}'),
         {"reason": "malformed_document"},
     ),
     (

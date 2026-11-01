@@ -14,6 +14,7 @@ from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import EventTime, agg, asof, gt, quantile
 from terrine.spec.sequence import EventSequence
 from terrine.temporal.readiness import Readiness
+from terrine.windows import Duration
 
 
 class NoQuery:
@@ -1127,7 +1128,7 @@ def test_unit_inference_and_panels_keep_a_nonzero_gap(native_inputs):
         features={"past": agg("sessions", window=("-2d", "-1d"))},
     )
     resolved_frame = resolve_unit(design, one).build(one)
-    assert resolved_frame._design.gap == 86_400
+    assert resolved_frame._design.gap == Duration(86_400)
 
     panel = recipes.trial_panel(
         every="1d",
@@ -1137,4 +1138,4 @@ def test_unit_inference_and_panels_keep_a_nonzero_gap(native_inputs):
         gap="1d",
     )
     panel_frame = panel.build(one)
-    assert panel_frame._design.gap == 86_400
+    assert panel_frame._design.gap == Duration(86_400)

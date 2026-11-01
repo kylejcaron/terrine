@@ -339,6 +339,25 @@ def test_trajectory_generated_names_are_reserved_from_features():
         con.disconnect()
 
 
+def test_trajectory_ages_beyond_int64_seconds_refuse_under_window():
+    con, model = _trajectory_model()
+    days = -(-(2**62) // 86_400)  # one period fits in int64 seconds; two do not
+    try:
+        design = Design(
+            "user",
+            EventAnchor("purchase", occurrence="first"),
+            shape=CohortSpec(
+                origin="purchase", trajectory=Trajectory("net_revenue", f"{days}d", periods=2)
+            ),
+        )
+        with pytest.raises(TerrineError) as error:
+            compile_ltv(design, model)
+        assert error.value.code == "terrine.window.invalid_duration"
+        assert error.value.context["field"] == "window"
+    finally:
+        con.disconnect()
+
+
 def test_scale_zero_decimal_cumulative_retains_wide_values():
     con, model = _trajectory_model(decimal_type="DECIMAL(38, 0)")
     try:

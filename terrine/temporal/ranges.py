@@ -113,11 +113,7 @@ def blocked_range_join(
     if event_time in anchors.columns:
         event_time += "_right"
     matched = candidates.filter(
-        compare_timestamps(
-            candidates[event_time], candidates.t0, "ge", right_offset_seconds=start
-        )
-        & compare_timestamps(
-            candidates[event_time], candidates.t0, "lt", right_offset_seconds=end
-        )
+        compare_timestamps(candidates[event_time], candidates.t0, "ge", right_offset_seconds=start)
+        & compare_timestamps(candidates[event_time], candidates.t0, "lt", right_offset_seconds=end)
     )
     return RangeJoin(requests, candidates, matched)

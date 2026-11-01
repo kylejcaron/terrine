@@ -36,7 +36,14 @@ def test_equivalent_durations_and_half_open_windows():
 
 @pytest.mark.parametrize(
     ("seconds", "text"),
-    [(0, "0s"), (90, "90s"), (-2_592_000, "-30d"), (604_800, "1w"), (2**63 - 1, None), (-(2**63), None)],
+    [
+        (0, "0s"),
+        (90, "90s"),
+        (-2_592_000, "-30d"),
+        (604_800, "1w"),
+        (2**63 - 1, None),
+        (-(2**63), None),
+    ],
 )
 def test_duration_text_is_the_largest_exact_unit_and_parses_back(seconds, text):
     value = Duration(seconds)
@@ -64,7 +71,19 @@ def test_months_text_uses_years_when_whole():
 
 @pytest.mark.parametrize(
     "value",
-    [" 1d", "1d ", "1.5h", "1h30m", "1M", "1mo", "1y", 1.5, "１d", "9223372036854775808s", Months(1)],
+    [
+        " 1d",
+        "1d ",
+        "1.5h",
+        "1h30m",
+        "1M",
+        "1mo",
+        "1y",
+        1.5,
+        "１d",
+        "9223372036854775808s",
+        Months(1),
+    ],
 )
 def test_invalid_duration_refuses_without_coercion(value):
     with pytest.raises(TerrineError) as error:

@@ -204,7 +204,7 @@ def _compile_cohorts(
     )
     bucket_origin = cast(ir.TimestampValue, ibis.literal(grouping.bucket_origin))
     # Integer-seconds interval; see compile/anchors.py for the BigQuery lowering.
-    bucket_start = bucket_origin + (joined.bucket_index * grouping.bucket).as_interval("s")
+    bucket_start = bucket_origin + (joined.bucket_index * grouping.bucket.seconds).as_interval("s")
     result = joined.select(
         bucket_start=bucket_start,
         bucket_index=joined.bucket_index,

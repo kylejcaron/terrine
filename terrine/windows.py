@@ -120,7 +120,7 @@ def duration(value: str | Duration | Literal[0], *, field: str) -> Duration:
     Returns:
         The exact Duration; malformed, calendar and nonzero bare integer inputs refuse.
 
-    Example: duration("-30d", field="window")
+    Example: from terrine.windows import duration; duration("-30d", field="window")
     """
     if isinstance(value, Duration):
         return value
@@ -157,6 +157,13 @@ def _seconds(value: str | int, *, field: str) -> int:
     if not _MIN <= result <= _MAX:
         raise _INVALID_DURATION.error(field=field, value=str(value))
     return result
+
+
+def _elapsed(value: int, *, field: str) -> Duration:
+    """Hold computed whole seconds; a value outside int64 refuses under the caller's field."""
+    if isinstance(value, bool) or not isinstance(value, int) or not _MIN <= value <= _MAX:
+        raise _INVALID_DURATION.error(field=field, value=f"{value}s")
+    return Duration(value)
 
 
 def _duration(value: int, *, weeks: bool = False, signed: bool = False) -> str:

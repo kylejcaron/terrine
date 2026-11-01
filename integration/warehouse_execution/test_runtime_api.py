@@ -609,7 +609,10 @@ def test_direct_and_staged_provenance_agree_for_treatment_offsets(tmp_path, at, 
         assert frame.materialize().provenance.treatment_design == expected
         staged = frame.stage("treated")
         reopened = tr.Dataset.open_generation(
-            "treated", staged.manifest.generation.generation_id, con=con, namespace="terrine_runtime"
+            "treated",
+            staged.manifest.generation.generation_id,
+            con=con,
+            namespace="terrine_runtime",
         )
         assert reopened.manifest.frame_metadata["provenance"]["treatment_design"] == expected
     finally:
