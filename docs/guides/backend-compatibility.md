@@ -517,7 +517,7 @@ and native unload `False`; read primitives, scan bounds and cancellation
 
 ## Python and dependency support
 
-The package supports CPython 3.13 and 3.14. Native dataset execution requires
+The package supports CPython 3.12 or newer. Native dataset execution requires
 `terrine[duckdb]`; base Terrine has no mandatory backend, dataframe, orchestration
 or modeling library. The local engine is pinned to DuckDB **1.5.6**, matching
 the exact arithmetic capability check, rather than advertising unverified engine

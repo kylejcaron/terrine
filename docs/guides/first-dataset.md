@@ -1,6 +1,6 @@
 # Your first dataset
 
-Requires CPython 3.13 or 3.14 and the `duckdb,pandas` extras for this example.
+Requires CPython 3.12 or newer and the `duckdb,pandas` extras for this example.
 For an installed distribution:
 
 ```sh
