@@ -130,9 +130,29 @@ def canonical_digest(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(_canonical_bytes(payload)).hexdigest()
 
 
+def _is_default(item: Any, default: Any) -> bool:
+    """Compare with type-exact equality, recursively, so ``False`` or ``0.0`` never equals ``0``."""
+    if type(item) is not type(default):
+        return False
+    if isinstance(default, dict):
+        return item.keys() == default.keys() and all(
+            _is_default(item[key], value) for key, value in default.items()
+        )
+    if isinstance(default, (list, tuple)):
+        return len(item) == len(default) and all(map(_is_default, item, default))
+    return item == default
+
+
 def _drop_defaults(node: Mapping[str, Any], defaults: Mapping[str, Any]) -> dict[str, Any]:
-    """Omit every field of an encoded record whose value equals its encoded default."""
-    return {key: item for key, item in node.items() if key not in defaults or item != defaults[key]}
+    """Omit every field of an encoded record whose value is its encoded default.
+
+    A wrongly typed value is kept, so its decoder refuses it instead of supplying the default.
+    """
+    return {
+        key: item
+        for key, item in node.items()
+        if key not in defaults or not _is_default(item, defaults[key])
+    }
 
 
 def _omit_defaults(name: str, node: dict[str, Any]) -> dict[str, Any]:

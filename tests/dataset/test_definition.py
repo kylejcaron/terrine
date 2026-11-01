@@ -146,6 +146,24 @@ def test_definition_nested_records_omit_default_fields() -> None:
     )
 
 
+@pytest.mark.parametrize("seed", [False, 0.0])
+def test_wrongly_typed_split_default_is_kept_and_refused(native_inputs, seed) -> None:
+    from tests.dataset.test_training_view import _frame
+
+    frame = _frame(native_inputs)
+    view = {
+        "kind": "training",
+        "features": ["past_sessions"],
+        "labels": ["churn"],
+        "split": {"kind": "group", "seed": seed, "codec": "terrine.group.v1"},
+    }
+    stored = DatasetDefinition(base_design=frame._design, view=view).canonical_json()
+    with pytest.raises(TerrineError) as error:
+        DatasetDefinition.from_json(stored).build(frame._model)
+    assert error.value.code == "terrine.dataset.invalid_split"
+    assert (error.value.context["reason"], error.value.context["field"]) == ("wrong_type", "seed")
+
+
 def test_edited_definition_has_new_digest() -> None:
     loaded = from_yaml(to_yaml(design()))
     definition = DatasetDefinition.from_json(DatasetDefinition(base_design=loaded).canonical_json())

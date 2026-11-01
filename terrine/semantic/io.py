@@ -147,12 +147,16 @@ def load_catalog_text(text: str) -> Catalog:
 
 
 def _normalized(value: Any) -> Any:
-    """Compare sealed record values with declared defaults: sequences as tuples, maps as dicts."""
+    """Compare sealed record values with declared defaults type-exactly.
+
+    Sequences become tuples and maps dicts, and every other value is paired with its type, so
+    ``False`` or ``0.0`` never equals a default of ``0``.
+    """
     if isinstance(value, Mapping):
         return {key: _normalized(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return tuple(_normalized(item) for item in value)
-    return value
+    return (type(value), value)
 
 
 def _prune_defaults(value: Any, payload: Any) -> Any:
