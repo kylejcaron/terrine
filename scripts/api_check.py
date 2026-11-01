@@ -94,15 +94,20 @@ def stable_breakages(old: griffe.Module, new: griffe.Module) -> list[str]:
             reports.append(f"{name}: removed from the stable API")
             continue
         # A stable facade exported as a module is checked through its own names.
-        if target in compared or target in STABLE_FACADES:
+        if target in STABLE_FACADES:
             continue
-        compared.add(target)
-        released = _resolved(_require(old, name))
         replacement = _lookup(new, name)
         if replacement is None or _resolved(replacement).is_alias:
             reports.append(f"{name}: no longer resolves to a definition")
             continue
-        for breakage in _signature_breakages(released, _resolved(replacement)):
+        replacement = _resolved(replacement)
+        # Exports that shared a definition may now point to different ones;
+        # each pair of released and current definitions is compared once.
+        if (target, replacement.path) in compared:
+            continue
+        compared.add((target, replacement.path))
+        released = _resolved(_require(old, name))
+        for breakage in _signature_breakages(released, replacement):
             if not _within(_paths(breakage.obj), provisional):
                 explanation = breakage.explain(style=griffe.ExplanationStyle.MARKDOWN)
                 reports.append(f"{name}: {explanation.removeprefix('- ')}")

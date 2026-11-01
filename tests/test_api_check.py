@@ -103,6 +103,27 @@ def test_stable_breakages_report_only_the_stable_exported_surface(path, old, new
     assert [line.split(":", 1)[0] for line in breakages] == reported
 
 
+def test_formerly_shared_exports_are_compared_with_their_own_current_targets():
+    current = {
+        **_RELEASE,
+        "__init__.py": _RELEASE["__init__.py"].replace(
+            "from terrine.spec import agg, approx_distinct",
+            "from terrine.compat import agg\nfrom terrine.spec import approx_distinct",
+        ),
+        "compat.py": "def agg(metric, window):\n    pass\n",
+        "spec/expressions.py": _RELEASE["spec/expressions.py"].replace(
+            "agg(metric, window)", "agg(metric)"
+        ),
+    }
+    with (
+        griffe.temporary_visited_package("terrine", _RELEASE) as release,
+        griffe.temporary_visited_package("terrine", current) as changed,
+    ):
+        breakages = stable_breakages(release, changed)
+
+    assert [line.split(":", 1)[0] for line in breakages] == ["terrine.spec.agg"]
+
+
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
         ["git", "-c", "user.name=terrine", "-c", "user.email=terrine@example.com", *args],
