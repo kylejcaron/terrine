@@ -234,12 +234,12 @@ def test_exact_instants_half_open_boundaries_and_named_results(con, strategy):
         ],
     )
     anchors = _anchors(con, time=t0.isoformat(), units=("a", "a"))
-    pre = _result(anchors, [pair], window=Window(-3600, 0), strategy=strategy, output="pre")
-    post = _result(pre.table, [pair], window=Window(0, 3600), strategy=strategy, output="post")
+    pre = _result(anchors, [pair], window=Window("-1h", 0), strategy=strategy, output="pre")
+    post = _result(pre.table, [pair], window=Window(0, "1h"), strategy=strategy, output="post")
     rows = _rows(con, post)
     assert len(rows) == 2
     assert [(r["pre"], r["post"], r["t0"]) for r in rows] == [(Decimal(1), Decimal(6), t0)] * 2
-    assert post.columns["post"].window == Window(0, 3600)
+    assert post.columns["post"].window == Window(0, "1h")
     assert post.columns["post"].role == "outcome"
 
 
@@ -284,10 +284,10 @@ def test_public_window_preserves_ns_events_around_utc_microsecond_anchor(con, st
     )
     anchors = _anchors(con, time="2025-01-02 12:00:00+00")
     before = _result(
-        anchors, [(measure, state)], kind="mean", window=Window(-1, 0), strategy=strategy
+        anchors, [(measure, state)], kind="mean", window=Window("-1s", 0), strategy=strategy
     )
     after = _result(
-        anchors, [(measure, state)], kind="mean", window=Window(0, 1), strategy=strategy
+        anchors, [(measure, state)], kind="mean", window=Window(0, "1s"), strategy=strategy
     )
     assert _rows(con, before)[0]["requested"] == 1
     assert _rows(con, after)[0]["requested"] == 6

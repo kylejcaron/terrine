@@ -22,6 +22,7 @@ from terrine.backends.timestamps import (
 )
 from terrine.errors import RefusalSpec
 from terrine.model import Model
+from terrine.semantic.bind import filter_source_rows, source_filter_predicate
 from terrine.semantic.models import TableRef
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
@@ -43,6 +44,11 @@ _INTEGRITY = RefusalSpec(
     "terrine.compile.anchor_integrity",
     "Unit and t0 rows failed check {check_key!r}. "
     "Correct missing or ambiguous unit keys, event IDs and event times before building the design.",
+)
+_TIED_EVENT_TIMESTAMPS = RefusalSpec(
+    "terrine.compile.anchor_integrity",
+    "Event {event!r} has tied timestamps, so its occurrence order is ambiguous. "
+    'Set event_ids={{{source!r}: "<id column>"}} on Model.from_tables or Model.from_catalog.',
 )
 _TIMESTAMP_PRECISION = RefusalSpec(
     "terrine.compile.anchor_timestamp_precision",
@@ -99,6 +105,14 @@ def _integrity_check(key: str, query: ibis.Table) -> _AnchorCheck:
     return _AnchorCheck(query, _INTEGRITY, (("check_key", key),))
 
 
+def _tied_event_timestamps_check(event: str, source: str, query: ibis.Table) -> _AnchorCheck:
+    return _AnchorCheck(
+        query,
+        _TIED_EVENT_TIMESTAMPS,
+        (("check_key", "tied_event_timestamps"), ("event", event), ("source", source)),
+    )
+
+
 def _null_check(table: ibis.Table, column: str, key: str) -> _AnchorCheck:
     query = table.filter(table[column].isnull()).aggregate(invalid_count=ibis._.count())
     return _integrity_check(key, query)
@@ -128,7 +142,7 @@ def _unique_checks(
 
 
 def _relation(model: Model, source: Any) -> Any:
-    return model._relation(source.relation)
+    return filter_source_rows(model._relation(source.relation), source)
 
 
 def _bound(model: Model, value: date | datetime | None) -> datetime | None:
@@ -397,14 +411,14 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
         anchor_id=identity,
         _raw_t0=raw_timestamp,
         _event_id=event_id,
-        anchor_provenance=ibis.literal(f"event:{anchor.event}:{anchor.which}"),
+        anchor_provenance=ibis.literal(f"event:{anchor.event}:{anchor.occurrence}"),
     )
-    if anchor.which in ("first", "nth"):
+    if anchor.occurrence in ("first", "nth"):
         rank = (
             ibis.row_number().over(group_by=[base.unit], order_by=[base._raw_t0, base._event_id])
             + 1
         )
-        selected = 1 if anchor.which == "first" else anchor.n
+        selected = 1 if anchor.occurrence == "first" else anchor.n
         base = base.mutate(_anchor_ordinal=rank)
         base = base.filter(base._anchor_ordinal == selected)
         if event_id_column is None:
@@ -418,12 +432,7 @@ def _event_anchors(model: Model, design: Design) -> tuple[ibis.Table, list[_Anch
                 .filter(ibis._._anchor_check_count > 1)
                 .aggregate(invalid_count=ibis._.count())
             )
-            checks.append(
-                _integrity_check(
-                    "tied_event_timestamps",
-                    ties,
-                )
-            )
+            checks.append(_tied_event_timestamps_check(anchor.event, source.name, ties))
     base = _range_filter_raw(model, base, "_raw_t0", design.anchor_range)
     precision = _precision_check(model, base, "_raw_t0", source_column=source.time_column)
     if precision is not None:
@@ -479,6 +488,16 @@ def compile_anchors(
         route="Use verified native timestamp semantics before compiling dataset anchors.",
         allow_unverified=model._engine.status == "unverified",
     )
+    filter_checks = []
+    for source in model.sources.values():
+        if source.where:
+            raw = model._relation(source.relation)
+            unknown = raw.filter(source_filter_predicate(raw, source).isnull())
+            filter_checks.append(
+                _integrity_check(
+                    "unknown_event_filter_value", unknown.aggregate(invalid_count=ibis._.count())
+                )
+            )
     if persisted is not None:
         if isinstance(design.anchor, (FixedDate, Schedule)):
             _, source_checks = _roster_anchors(model, design, include_membership=include_membership)
@@ -502,7 +521,7 @@ def compile_anchors(
         timestamp_type = persisted.schema()["t0"]
         if not isinstance(timestamp_type, dt.Timestamp) or timestamp_type.timezone != "UTC":
             raise ValueError("persisted anchor timestamp must be UTC")
-        checks = list(source_checks)
+        checks = [*filter_checks, *source_checks]
         checks.extend(_unique_checks(persisted, "anchor_id", "event", scope=("unit",)))
         checks.extend(
             (
@@ -517,4 +536,4 @@ def compile_anchors(
         table, checks = _event_anchors(model, design)
     else:
         raise _INVALID.error(reason="unsupported anchor variant")
-    return AnchorTable(table=table, _checks=tuple(checks))
+    return AnchorTable(table=table, _checks=tuple([*filter_checks, *checks]))

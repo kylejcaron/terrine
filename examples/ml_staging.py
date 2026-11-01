@@ -128,9 +128,9 @@ def main() -> None:
             dataset = training.stage("training", budget=budget)
             original = amounts(dataset)
             manifest_path = root / "dataset.json"
-            manifest_path.write_bytes(dataset.manifest.to_json())
+            manifest_path.write_text(dataset.manifest.to_json(), encoding="utf-8")
             reopened = Dataset.from_manifest(
-                DatasetManifest.from_json(manifest_path.read_bytes()),
+                DatasetManifest.from_json(manifest_path.read_text(encoding="utf-8")),
                 con=model.con,
             )
             export = reopened.export_parquet(

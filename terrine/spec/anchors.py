@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import calendar
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from typing import Literal
 
 from terrine._time import utc_instant
 from terrine.errors import RefusalSpec
-from terrine.windows import seconds
+from terrine.windows import duration
 
 __all__ = ["FixedDate", "EventAnchor", "Schedule", "AnchorRange"]
 
@@ -34,25 +36,60 @@ _REVERSED_INSTANTS = RefusalSpec(
 _CALENDAR_STEP = re.compile(r"([0-9]{1,19})(mo|y)", re.ASCII)
 
 
+def _context_value(value: object) -> object:
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, float) and not math.isfinite(value):
+        return repr(value)
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    return repr(value)
+
+
 def _date(value: date | str, field: str) -> date:
     if isinstance(value, datetime) or not isinstance(value, (date, str)):
-        raise _INVALID.error(reason="invalid_date", field=field)
+        raise _INVALID.error(
+            reason="invalid_date",
+            field=field,
+            value=_context_value(value),
+            expected=("YYYY-MM-DD",),
+        )
     try:
         return date.fromisoformat(value) if isinstance(value, str) else value
     except ValueError as error:
-        raise _INVALID.error(reason="invalid_date", field=field) from error
+        raise _INVALID.error(
+            reason="invalid_date",
+            field=field,
+            value=value,
+            expected=("YYYY-MM-DD",),
+        ) from error
 
 
 def _aware_instant(value: object, field: str) -> datetime:
     """An aware datetime or ISO instant as exact UTC, or a coded design refusal."""
     if isinstance(value, datetime) and (value.tzinfo is None or value.utcoffset() is None):
-        raise _INVALID.error(reason="naive_datetime", field=field)
+        raise _INVALID.error(
+            reason="naive_datetime",
+            field=field,
+            value=_context_value(value),
+            expected=("timezone-aware datetime",),
+        )
     if not isinstance(value, (datetime, str)):
-        raise _INVALID.error(reason="wrong_type", field=field)
+        raise _INVALID.error(
+            reason="wrong_type",
+            field=field,
+            value=_context_value(value),
+            expected=("timezone-aware datetime",),
+        )
     try:
         return utc_instant(value)
     except (ValueError, OverflowError) as error:
-        raise _INVALID.error(reason="invalid_instant", field=field) from error
+        raise _INVALID.error(
+            reason="invalid_instant",
+            field=field,
+            value=_context_value(value),
+            expected=("timezone-aware datetime",),
+        ) from error
 
 
 def _range_bound(value: date | datetime | str | None, field: str) -> date | datetime | None:
@@ -64,17 +101,34 @@ def _range_bound(value: date | datetime | str | None, field: str) -> date | date
         try:
             return date.fromisoformat(value)
         except ValueError as error:
-            raise _INVALID.error(reason="invalid_date", field=field) from error
+            raise _INVALID.error(
+                reason="invalid_date",
+                field=field,
+                value=value,
+                expected=("YYYY-MM-DD", "timezone-aware datetime"),
+            ) from error
     if isinstance(value, datetime):
         return _aware_instant(value, field)
     if isinstance(value, date):
         return value
-    raise _INVALID.error(reason="wrong_type", field=field)
+    raise _INVALID.error(
+        reason="wrong_type",
+        field=field,
+        value=_context_value(value),
+        expected=("YYYY-MM-DD", "timezone-aware datetime"),
+    )
 
 
 @dataclass(frozen=True, slots=True, init=False)
 class FixedDate:
     """Set t0 to one calendar date or an exact timezone-aware time.
+
+
+    Args:
+        date: Calendar date/ISO date string or timezone-aware datetime/ISO instant string for t0.
+
+    Attributes:
+        date: Calendar date/ISO date string or timezone-aware datetime/ISO instant string for t0.
 
     Example: tr.FixedDate("2025-02-01")
     """
@@ -92,33 +146,50 @@ class FixedDate:
 class EventAnchor:
     """Set t0 from a unit's first, each or nth event, with an optional elapsed offset.
 
-    Example: tr.EventAnchor("orders", which="first")
+
+    Args:
+        event: Name of an event declared in the model.
+        occurrence: "first", "each" or "nth"; "first" makes one anchor at the earliest event.
+        n: Positive one-based occurrence index for "nth"; None is required for other rules.
+        offset: Elapsed duration string (see `terrine.windows`); "0s" anchors at the selected event.
+
+    Attributes:
+        event: Name of an event declared in the model.
+        occurrence: "first", "each" or "nth"; "first" makes one anchor at the earliest event.
+        n: Positive one-based occurrence index for "nth"; None is required for other rules.
+        offset: Exact elapsed offset stored as integer seconds.
+
+    Example: tr.EventAnchor("orders", occurrence="first")
     """
 
     event: str
-    which: str
+    occurrence: Literal["first", "each", "nth"]
     n: int | None
     offset: int
 
     def __init__(
-        self, event: str, which: str = "first", n: int | None = None, offset: str | int = 0
+        self,
+        event: str,
+        occurrence: Literal["first", "each", "nth"] = "first",
+        n: int | None = None,
+        offset: str | Literal[0] = "0s",
     ) -> None:
         if not isinstance(event, str) or not event.strip():
             raise _INVALID.error(reason="empty_name", field="event")
-        if which not in ("first", "each", "nth"):
+        if occurrence not in ("first", "each", "nth"):
             raise _CHOICE.error(
-                reason="unsupported_value", field="which", choices=("first", "each", "nth")
+                reason="unsupported_value", field="occurrence", choices=("first", "each", "nth")
             )
-        if which == "nth":
+        if occurrence == "nth":
             if isinstance(n, bool) or not isinstance(n, int) or n < 1:
                 raise _INVALID.error(reason="not_positive_integer", field="n")
         elif n is not None:
             raise _INVALID.error(reason="n_requires_nth", field="n")
-        elapsed = seconds(offset, field="offset")
+        elapsed = duration(offset, field="offset")
         if elapsed < 0:
             raise _INVALID.error(reason="negative", field="offset")
         object.__setattr__(self, "event", event)
-        object.__setattr__(self, "which", which)
+        object.__setattr__(self, "occurrence", occurrence)
         object.__setattr__(self, "n", n)
         object.__setattr__(self, "offset", elapsed)
 
@@ -152,6 +223,19 @@ class Schedule:
     Elapsed steps use durations; calendar steps such as ``"1mo"`` clamp each date
     independently to its month's last day.
 
+
+    Args:
+        every: Positive duration string (see `terrine.windows`) or calendar step such as "1mo" or
+            "1y".
+        start: First scheduled calendar day, as a date or ISO YYYY-MM-DD string, included.
+        end: Last scheduled calendar day, as a date or ISO YYYY-MM-DD string, included in full.
+
+    Attributes:
+        every: Elapsed step in integer seconds, or None for a calendar schedule.
+        months: Calendar step in whole months, or None for an elapsed schedule.
+        start: First scheduled calendar day, as a date or ISO YYYY-MM-DD string, included.
+        end: Last scheduled calendar day, as a date or ISO YYYY-MM-DD string, included in full.
+
     Example: tr.Schedule("1mo", "2025-02-01", "2025-03-01")
     """
 
@@ -160,14 +244,14 @@ class Schedule:
     start: date
     end: date
 
-    def __init__(self, every: str | int, start: date | str, end: date | str) -> None:
+    def __init__(self, every: str | Literal[0], start: date | str, end: date | str) -> None:
         if isinstance(every, str) and (match := _CALENDAR_STEP.fullmatch(every)):
             step = int(match[1]) * (12 if match[2] == "y" else 1)
             if step > 10**19 - 1:
                 raise _INVALID.error(reason="out_of_range", field="every")
             interval, months = None, step
         else:
-            step = seconds(every, field="every")
+            step = duration(every, field="every")
             interval, months = step, None
         if step <= 0:
             raise _INVALID.error(reason="not_positive", field="every")
@@ -214,6 +298,17 @@ class Schedule:
 @dataclass(frozen=True, slots=True, init=False)
 class AnchorRange:
     """Limit t0 to a time range, including the whole end day when ``end`` is a date.
+
+
+    Args:
+        start: Date, aware datetime or ISO string lower bound, included; None is unbounded.
+        end: Date, aware datetime or ISO string upper bound; dates include the whole day, instants
+            exclude equality; None is unbounded.
+
+    Attributes:
+        start: Date, aware datetime or ISO string lower bound, included; None is unbounded.
+        end: Date, aware datetime or ISO string upper bound; dates include the whole day, instants
+            exclude equality; None is unbounded.
 
     Example: tr.AnchorRange(start="2025-02-01", end="2025-03-01")
     """

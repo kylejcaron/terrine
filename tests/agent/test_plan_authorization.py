@@ -10,7 +10,7 @@ from terrine.spec.io import from_json
 
 def definition_for(tools):
     return DatasetDefinition(
-        schema_version=2, base_design=from_json(tools.design_example().output.serialized), view=None
+        base_design=from_json(tools.design_example().output.serialized), view=None
     )
 
 
@@ -94,7 +94,7 @@ def test_prepare_uses_owner_planner_and_refuses_without_reopenable_snapshot(owne
     assert owner_tools.policy.snapshot_authority.find_retained(
         invocation["snapshot_id"], namespace="agent"
     )
-    changed = replace(definition, base_design=replace(definition.base_design, gap=1))
+    changed = replace(definition, base_design=replace(definition.base_design, gap="1s"))
     assert (
         owner_tools.prepare_dataset(changed, destination=destination, invocation_id="first").code
         == "terrine.runtime.plan_invocation_conflict"
@@ -141,7 +141,6 @@ def test_prepare_refuses_invalid_group_identity_without_leaking_exception(owner_
         outcomes={"label": agg(metric, window=("0s", "1d"))},
     )
     definition = DatasetDefinition(
-        schema_version=2,
         base_design=design,
         view={
             "kind": "training",

@@ -239,24 +239,24 @@ def test_nth_event_is_selected_before_range_filter(native_model):
     assert user_a["t0"] == datetime(2025, 1, 3, 12, tzinfo=UTC)
 
 
-@pytest.mark.parametrize("which,n", [("first", None), ("nth", 3), ("each", None)])
-def test_offset_shifts_selected_events_after_original_time_range(native_model, which, n):
+@pytest.mark.parametrize("occurrence,n", [("first", None), ("nth", 3), ("each", None)])
+def test_offset_shifts_selected_events_after_original_time_range(native_model, occurrence, n):
     bounds = AnchorRange(
         start=datetime(2025, 1, 2, tzinfo=UTC),
         end=datetime(2025, 1, 4, tzinfo=UTC),
     )
     original = candidate_rows(
-        Design("user", EventAnchor("occurred", which, n), anchor_range=bounds), native_model
+        Design("user", EventAnchor("occurred", occurrence, n), anchor_range=bounds), native_model
     )
     shifted = candidate_rows(
-        Design("user", EventAnchor("occurred", which, n, offset="1d"), anchor_range=bounds),
+        Design("user", EventAnchor("occurred", occurrence, n, offset="1d"), anchor_range=bounds),
         native_model,
     )
     times = (
         [datetime(2025, 1, 3, tzinfo=UTC)]
-        if which == "first"
+        if occurrence == "first"
         else [datetime(2025, 1, 4, 12, tzinfo=UTC)]
-        if which == "nth"
+        if occurrence == "nth"
         else [
             datetime(2025, 1, 3, tzinfo=UTC),
             datetime(2025, 1, 3, tzinfo=UTC),
@@ -267,7 +267,9 @@ def test_offset_shifts_selected_events_after_original_time_range(native_model, w
         ("a", instant) for instant in times
     ]
     assert {row["anchor_id"] for row in original}.isdisjoint(row["anchor_id"] for row in shifted)
-    assert {row["anchor_provenance"] for row in shifted} == {f"event:occurred:{which}:offset:86400"}
+    assert {row["anchor_provenance"] for row in shifted} == {
+        f"event:occurred:{occurrence}:offset:86400"
+    }
 
 
 def test_each_event_range_filters_selected_events(native_model):
@@ -346,6 +348,33 @@ def test_duplicate_candidate_identity_refuses_without_configured_event_ids(nativ
     with pytest.raises(TerrineError) as error:
         anchors.validate(execute=lambda query: query.to_pyarrow())
     assert error.value.context["check_key"] == "ambiguous_event_identity"
+
+
+def test_first_event_anchor_refuses_tied_timestamps_without_event_ids(native_model):
+    model = Model.from_catalog(
+        native_model.catalog,
+        con=native_model.con,
+        readiness=native_model.readiness,
+        units=native_model.units,
+        event_ids={},
+    )
+    anchors = compile_anchors(Design(unit="user", anchor=EventAnchor("occurred", "first")), model)
+    with pytest.raises(TerrineError) as error:
+        anchors.validate(execute=lambda query: query.to_pyarrow())
+    assert error.value.context["check_key"] == "tied_event_timestamps"
+    assert error.value.context["event"] == "occurred"
+    assert error.value.context["source"] == "events"
+    configured_model = Model.from_catalog(
+        native_model.catalog,
+        con=native_model.con,
+        readiness=native_model.readiness,
+        units=native_model.units,
+        event_ids={"events": "event_id"},
+    )
+    configured_anchors = compile_anchors(
+        Design(unit="user", anchor=EventAnchor("occurred", "first")), configured_model
+    )
+    configured_anchors.validate(execute=lambda query: query.to_pyarrow())
 
 
 def test_anchor_validation_rejects_malformed_arrow_results(native_model):
@@ -555,3 +584,64 @@ def test_aware_timestamp_identity_is_timezone_and_unrelated_column_independent(n
         event_ids=model.event_ids,
     )
     assert candidate_rows(design, rebound)[0]["anchor_id"] == identities[-1]
+
+
+@pytest.mark.parametrize("anchor", [FixedDate("2025-01-03"), EventAnchor("occurred")])
+@pytest.mark.parametrize("value", [None, float("nan")])
+def test_unknown_filter_membership_refuses(native_model, anchor, value):
+    from terrine.data import Events
+
+    con = native_model.con
+    con.raw_sql("ALTER TABLE events ADD COLUMN score DOUBLE DEFAULT 1")
+    con.raw_sql(
+        "UPDATE events SET score = "
+        + ("NULL" if value is None else "'NaN'::DOUBLE")
+        + " WHERE event_id = 'a'"
+    )
+    model = Model.from_tables(
+        con,
+        units=native_model.units,
+        events={
+            "occurred": Events(
+                "events",
+                time="ts",
+                key="user_id",
+                where={"score__gt": 0},
+                complete=("2025-01-01", "2025-01-31"),
+            )
+        },
+        event_ids={"occurred": "event_id"},
+    )
+    anchors = compile_anchors(Design("user", anchor), model)
+    with pytest.raises(TerrineError) as error:
+        anchors.validate(execute=con.to_pyarrow)
+    assert error.value.code == "terrine.compile.anchor_integrity"
+    assert error.value.context["check_key"] == "unknown_event_filter_value"
+
+
+def test_definitively_excluded_rows_with_nulls_are_allowed(native_model):
+    from terrine.data import Events
+
+    con = native_model.con
+    con.raw_sql("""
+        ALTER TABLE events ADD COLUMN kind VARCHAR DEFAULT 'purchase';
+        ALTER TABLE events ADD COLUMN status VARCHAR DEFAULT 'paid';
+        UPDATE events SET kind = 'signup', status = NULL WHERE event_id = 'a';
+    """)
+    model = Model.from_tables(
+        con,
+        units=native_model.units,
+        events={
+            "occurred": Events(
+                "events",
+                time="ts",
+                key="user_id",
+                where={"kind": "purchase", "status": "paid"},
+                complete=("2025-01-01", "2025-01-31"),
+            )
+        },
+        event_ids={"occurred": "event_id"},
+    )
+    result = candidate_rows(Design("user", EventAnchor("occurred", occurrence="each")), model)
+    assert len(result) == 2
+    assert {(r["unit"], r["t0"].day) for r in result} == {("a", 2), ("a", 3)}

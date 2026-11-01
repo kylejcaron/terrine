@@ -6,7 +6,7 @@ import subprocess
 import sys
 import weakref
 from dataclasses import FrozenInstanceError, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from importlib.resources import files
 from pathlib import Path
@@ -30,6 +30,7 @@ from terrine.runtime.changes import Change, ChangeSet
 from terrine.runtime.saved_plan import SavedPlan
 from terrine.spec import BinnedMetricState, Design, EventAnchor, FixedDate, Schedule, StatePanel, gt
 from terrine.spec.dataset import DatasetDefinition
+from terrine.spec.expressions import since
 from tests import _worlds
 from tests._timing import HANG_GUARD_SECONDS
 from tests.dataset.test_staging import _durable_frame
@@ -91,7 +92,7 @@ def test_fresh_process_manifest_refresh_matches_independent_build_and_parquet(tm
     model = create_model(tmp_path / "owner.duckdb")
     dataset = _training(model).stage("training", budget=Budget(strict_scan=False))
     manifest_path = tmp_path / "dataset.json"
-    manifest_path.write_bytes(dataset.manifest.to_json())
+    manifest_path.write_bytes(dataset.manifest.to_json().encode("utf-8"))
     model.con.disconnect()
     report = _run(
         r"""
@@ -853,7 +854,7 @@ def test_state_panel_stage_matches_ordinary_normalization_and_support(events_wor
             Schedule("1d", "2025-01-03", "2025-01-04"),
             shape=StatePanel(
                 BinnedMetricState("sessions", (0,), ("none", "some")),
-                max_periods=2,
+                periods=2,
                 baseline_features={"baseline": agg("sessions", window=("-1d", "0s"))},
             ),
         )
@@ -1006,6 +1007,11 @@ def test_scoring_today_is_resolved_once_at_catalog_day_boundary(
     assert staged.manifest.definition.view["as_of"] == view.resolved_as_of.isoformat()
     assert staged.manifest.definition.view["eligibility"]["active"]
     assert staged.manifest.definition.view["parent_design_hash"] == design.spec_hash
+    pandas_snapshot = staged.to_pandas()
+    polars_snapshot = staged.to_polars()
+    assert "unit" in pandas_snapshot.columns
+    assert "unit" in polars_snapshot.columns
+    assert len(pandas_snapshot) == len(polars_snapshot)
     con.disconnect()
 
 
@@ -1505,7 +1511,7 @@ def test_staged_batches_preserve_frame_metadata_and_verify_definition_ownership(
 def frame_definition(frame):
     from terrine.spec.dataset import DatasetDefinition
 
-    return DatasetDefinition(schema_version=2, base_design=frame._design)
+    return DatasetDefinition(base_design=frame._design)
 
 
 def test_stage_renews_lease_during_snapshot_tasks(events_world, tmp_path, monkeypatch):
@@ -1623,7 +1629,9 @@ def test_reopen_accepts_resolved_owner_scoped_definition_reference(events_world,
     con.disconnect()
 
 
-def test_reopen_preserves_version_one_manifest_without_frame_metadata(events_world, tmp_path):
+def test_reopen_preserves_version_one_manifest_without_frame_metadata(
+    events_world, tmp_path, monkeypatch
+):
     import json
     from dataclasses import replace
 
@@ -1654,11 +1662,25 @@ def test_reopen_preserves_version_one_manifest_without_frame_metadata(events_wor
     con.con.execute(
         "UPDATE terrine_runtime.runtime_dataset_recipes SET manifest_json=? "
         "WHERE dataset=? AND generation=?",
-        [old.decode(), "training", dataset.manifest.generation.generation_id],
+        [old, "training", dataset.manifest.generation.generation_id],
     )
     restored = DatasetManifest.from_json(old)
     assert restored.to_json() == old
     reopened = Dataset.from_manifest(restored, con=con)
+    pandas_values = reopened.to_pandas(values_only=True)
+    polars_values = reopened.to_polars(values_only=True)
+    assert not any(name.endswith(("__complete", "__reason")) for name in pandas_values.columns)
+    assert not any(name.endswith(("__complete", "__reason")) for name in polars_values.columns)
+    arrow_without_metadata = reopened.to_pyarrow().replace_schema_metadata(None)
+    monkeypatch.setattr(
+        Dataset,
+        "to_pyarrow",
+        lambda self, *, budget=None: arrow_without_metadata,
+    )
+    with pytest.raises(TerrineError) as error:
+        reopened.to_pandas(values_only=True)
+    assert error.value.code == "terrine.dataset.invalid_view"
+    assert error.value.context["reason"] == "observation_metadata_unavailable"
     assert sum(batch.num_rows for batch in reopened.to_arrow_batches()) == 2
     con.disconnect()
 
@@ -1761,7 +1783,7 @@ def test_state_panel_training_view_hashes_baseline_and_prior_state(native_inputs
         Schedule("1d", "2025-01-03", "2025-01-04"),
         shape=StatePanel(
             BinnedMetricState("sessions", (Decimal("0"),), ("none", "some")),
-            max_periods=2,
+            periods=2,
             baseline_features={"baseline": agg("sessions", window=("-1d", "0d"))},
         ),
     ).build(model)
@@ -1821,7 +1843,7 @@ def common_frame(request, tmp_path, interop_world):
 
 def test_local_arrow_preserves_exact_temporal_values_and_semantic_metadata(common_frame):
     materialized = common_frame.materialize(Budget(max_rows=3))
-    arrow = materialized.to_arrow().sort_by("unit")
+    arrow = materialized.to_pyarrow().sort_by("unit")
     assert arrow.schema.field("amount").type == pa.decimal128(38, 2)
     assert arrow.schema.field("t0").type == pa.timestamp("us", tz="UTC")
     restored = MaterializedFrame.from_arrow(arrow)
@@ -1848,7 +1870,7 @@ def test_local_arrow_preserves_exact_temporal_values_and_semantic_metadata(commo
             {b"consumer": b"kept", b"terrine.materialized_frame.v2": b"stale"}
         ),
     )
-    transported = decorated.to_arrow()
+    transported = decorated.to_pyarrow()
     assert transported.schema.metadata[b"consumer"] == b"kept"
     assert MaterializedFrame.from_arrow(transported).to_metadata() == decorated.to_metadata()
 
@@ -1918,7 +1940,7 @@ def test_pre_rename_owner_database_refuses_old_generation_and_stages_new(events_
     fixtures = files("tests.fixtures")
     serialized = fixtures.joinpath("pre_rename_manifest.json").read_text()
     saved = fixtures.joinpath("pre_rename_saved_plan.json").read_text()
-    definition = DatasetDefinition.from_json(fixtures.joinpath("definition_v2.json").read_bytes())
+    definition = DatasetDefinition.from_json(fixtures.joinpath("definition_v3.json").read_bytes())
     namespace = "terrine_runtime"
     try:
         raw = con.con
@@ -1964,5 +1986,118 @@ def test_pre_rename_owner_database_refuses_old_generation_and_stages_new(events_
             ).fetchone()[0]
             == serialized
         )
+    finally:
+        con.disconnect()
+
+
+def test_dataset_reads_match_materialized_rows(common_frame, monkeypatch):
+    dataset = common_frame.stage("readback", budget=Budget(strict_scan=False))
+
+    expected = common_frame.to_pyarrow()
+    expected_schema = dataset._arrow_schema()
+    original = Dataset._iter_arrow_batches
+
+    def reversed_batches(self, batch_size):
+        table = pa.Table.from_batches(list(original(self, batch_size)), schema=self._arrow_schema())
+        table = table.take(pa.array(range(table.num_rows - 1, -1, -1), type=pa.int64()))
+        yield from table.to_batches(max_chunksize=1)
+
+    monkeypatch.setattr(Dataset, "_iter_arrow_batches", reversed_batches)
+    actual = dataset.to_pyarrow()
+    assert actual.to_pylist() == expected.to_pylist()
+    assert actual.schema.equals(expected_schema, check_metadata=True)
+    assert dataset.to_pandas().equals(common_frame.to_pandas())
+    pytest.importorskip("polars")
+    assert (
+        dataset.to_polars(values_only=True).to_dicts()
+        == common_frame.to_polars(values_only=True).to_dicts()
+    )
+
+
+def test_dataset_read_budget_refuses(tmp_path, interop_world):
+    model = _worlds.bind_model(interop_world, tmp_path)
+    try:
+        dataset = (
+            interop_design(full=False)
+            .build(model)
+            .stage("readback", budget=Budget(strict_scan=False))
+        )
+        expected = dataset.to_pyarrow()
+        bounded = dataset.to_pyarrow(
+            budget=Budget(max_output_bytes=expected.nbytes, strict_scan=False)
+        )
+        assert bounded.equals(expected, check_metadata=True)
+        with pytest.raises(TerrineError) as rows_error:
+            dataset.to_pyarrow(budget=Budget(max_rows=1, strict_scan=False))
+        assert rows_error.value.code == "terrine.budget.rows_exceeded"
+        with pytest.raises(TerrineError) as bytes_error:
+            dataset.to_pyarrow(
+                budget=Budget(max_output_bytes=expected.nbytes - 1, strict_scan=False)
+            )
+        assert bytes_error.value.code == "terrine.budget.output_bytes_exceeded"
+    finally:
+        model.con.disconnect()
+
+
+def test_dataset_read_strict_scan_matches_export(common_frame, tmp_path):
+    dataset = common_frame.stage("strict_read", budget=Budget(strict_scan=False))
+    budget = Budget(max_scan_bytes=1, strict_scan=True)
+    codes = []
+    for read in (
+        lambda: dataset.to_pyarrow(budget=budget),
+        lambda: dataset.export_parquet(destination=str(tmp_path / "strict"), budget=budget),
+    ):
+        with pytest.raises(TerrineError) as error:
+            read()
+        codes.append(error.value.code)
+    assert codes == ["terrine.budget.scan_unknown", "terrine.budget.scan_unknown"]
+
+
+def test_conflicting_dataset_view_flags_refuse_before_read(common_frame, monkeypatch):
+    dataset = common_frame.stage("view_conflict", budget=Budget(strict_scan=False))
+
+    def fail_read(*args, **kwargs):
+        raise AssertionError("dataset read should not run")
+
+    monkeypatch.setattr(Dataset, "to_pyarrow", fail_read)
+    with pytest.raises(TerrineError) as error:
+        dataset.to_pandas(values_only=True, include_observation_metadata=True)
+    assert error.value.code == "terrine.dataset.invalid_view"
+    assert error.value.context["reason"] == "values_only_excludes_observation_metadata"
+
+
+@pytest.mark.parametrize("training", [False, True])
+def test_since_staged_read_preserves_elapsed_values_and_selected_instants(
+    events_world, tmp_path, training
+):
+    initial, con = _durable_frame(events_world, tmp_path)
+    try:
+        frame = Design(
+            "user",
+            FixedDate("2025-01-05"),
+            features={"recency": since("session", window=("-3d", 0))},
+            outcomes={"churn": agg("churned", window=(0, "1d"))},
+        ).build(initial._model)
+        if training:
+            frame = frame.training_set(
+                label="churn",
+                incomplete_labels="keep",
+                split=TimeSplit(train_until="2025-01-07T00:00:00Z"),
+            )
+        expected = frame.materialize(Budget(strict_scan=False))
+        dataset = frame.stage("recency", budget=Budget(strict_scan=False))
+        actual = MaterializedFrame.from_arrow(dataset.to_pyarrow())
+        assert pa.types.is_duration(actual.table["recency"].type)
+        assert actual.table["recency"].to_pylist() == [timedelta(days=2)] * 2
+        assert actual.table.sort_by("unit").equals(expected.table.sort_by("unit"))
+        assert actual.columns["recency"].measure == "elapsed"
+        timing = actual.provenance.expression_timings["recency"]
+        assert timing == expected.provenance.expression_timings["recency"]
+        assert pa.types.is_timestamp(actual.table[timing.point_time_column].type)
+        assert (
+            actual.table[timing.point_time_column].to_pylist()
+            == [datetime(2025, 1, 3, tzinfo=UTC)] * 2
+        )
+        assert timing.point_time_column not in dataset.to_pandas().columns
     finally:
         con.disconnect()

@@ -15,6 +15,7 @@ import ibis
 import ibis.expr.types as ir
 import pyarrow as pa
 
+import terrine.reasons as reason_codes
 from terrine.backends.dialect import dialect_scope
 from terrine.backends.extrema import greatest, least
 from terrine.backends.joins import null_safe_equal
@@ -23,7 +24,6 @@ from terrine.compile._asof import compile_asof
 from terrine.compile._predicates import CompiledValue, compile_predicate
 from terrine.compile.anchors import (
     AnchorTable,
-    _integrity_check,
     _null_check,
     _precision_check,
     _unique_checks,
@@ -66,7 +66,6 @@ from terrine.spec.expressions import (
     MetricQuantile,
     Predicate,
     RetentionMetric,
-    SketchRequest,
     _output_leaves,
 )
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE
@@ -183,7 +182,6 @@ class SketchSidecar:
     outputs: tuple[str, ...]
     rows: ibis.Table
     probability: Decimal
-    request: SketchRequest
 
 
 @dataclass(frozen=True, slots=True)
@@ -358,7 +356,6 @@ def resolve_sketch_sidecars(table: pa.Table, compiled: CompiledStudy, con) -> pa
             estimates, _ = approximate_quantiles_by_key(
                 reader,
                 sidecar.probability,
-                sidecar.request,
             )
         finally:
             reader.close()
@@ -523,18 +520,6 @@ def compile_columns(
                 selector_identity_checks.extend(
                     _unique_checks(events, identity, "event", scope=("_unit",))
                 )
-            else:
-                keys = events.select(
-                    _selector_check_unit=events["_unit"],
-                    _selector_check_time=events["_timestamp"],
-                )
-                ties = (
-                    keys.group_by("_selector_check_unit", "_selector_check_time")
-                    .aggregate(_selector_check_count=ibis._.count())
-                    .filter(ibis._._selector_check_count > 1)
-                    .aggregate(invalid_count=ibis._.count())
-                )
-                selector_identity_checks.append(_integrity_check("tied_event_timestamps", ties))
         property_found = None
         if selector.label_property is not None:
             binding = source.properties.get(selector.label_property)
@@ -593,10 +578,13 @@ def compile_columns(
             False
         )
         reason = ibis.cases(
-            (~parent_complete, parent_reason.fill_null(ibis.literal("incomplete_selector"))),
-            (~origin_present, "missing_selector_origin"),
-            (~source_ready, "incomplete_coverage"),
-            (~unit_observed, "incomplete_observation"),
+            (
+                ~parent_complete,
+                parent_reason.fill_null(ibis.literal(reason_codes.INCOMPLETE_SELECTOR)),
+            ),
+            (~origin_present, reason_codes.MISSING_SELECTOR_ORIGIN),
+            (~source_ready, reason_codes.INCOMPLETE_COVERAGE),
+            (~unit_observed, reason_codes.INCOMPLETE_OBSERVATION),
             else_=ibis.null().cast("string"),
         )
         observed_from = ibis.literal(coverage.start)
@@ -730,7 +718,7 @@ def compile_columns(
                         candidates_with_uncertainty[metadata["complete"]] & ~unknown_label
                     ),
                     metadata["reason"]: ibis.cases(
-                        (unresolved, "incomplete_label_history"),
+                        (unresolved, reason_codes.INCOMPLETE_LABEL_HISTORY),
                         else_=candidates_with_uncertainty[metadata["reason"]],
                     ),
                 }
@@ -820,6 +808,7 @@ def compile_columns(
                 selector_meta["observed_until"],
                 selector_meta["complete"],
                 selector_meta["reason"],
+                measure=node.measure,
             )
             selector_support, _ = selector_timing(node)
             cutoff = FeatureCutoff(selector_support[1], True, "retrospective_effective_time")
@@ -945,12 +934,11 @@ def compile_columns(
                         range_plan=range_plans[node],
                     ),
                     node.probability,
-                    node.sketch,
                 )
             )
             from terrine.temporal.sketches import quantile_request_metadata
 
-            sketch_metadata = quantile_request_metadata(node.sketch)
+            sketch_metadata = quantile_request_metadata()
             meta = replace(
                 summary.columns[output],
                 numeric_policy=None,
@@ -1159,7 +1147,7 @@ def compile_columns(
                 ),
                 combined_reason: ibis.cases(
                     (~origin_complete, result_table[origin_reason_name]),
-                    (~has_origin, "missing_selector_origin"),
+                    (~has_origin, reason_codes.MISSING_SELECTOR_ORIGIN),
                     else_=result_reason,
                 ),
             }
@@ -1215,7 +1203,11 @@ def compile_columns(
             support, dependency_supports = selector_timing(node)
             selector_ref = repr(node)
             offsets = None
-            point_column = output or values[node].name
+            point_column = (
+                f"__terrine_selected_at_{output}"
+                if node.measure == "elapsed" and output is not None
+                else output or values[node].name
+            )
             kind = "event_time"
         elif relative is not None and not isinstance(node, RetentionMetric):
             origin, dependency_supports = selector_timing(relative)
@@ -1323,6 +1315,8 @@ def compile_columns(
                 if any(value.name in sidecar.outputs for sidecar in sketches):
                     sketch_aliases.setdefault(value.name, []).append(name)
                 columns[name] = replace(value.meta, role=role)
+                if isinstance(node, EventTime) and node.measure == "elapsed":
+                    table = table.mutate(**{f"__terrine_selected_at_{name}": table[value.name]})
                 expression_timings[name] = expression_timing(node, output=name)
                 strategies[name] = strategies[value.name]
                 cutoff = value.cutoff

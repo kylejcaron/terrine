@@ -27,7 +27,6 @@ from terrine.spec.expressions import (
     MetricAgg,
     MetricQuantile,
     RetentionMetric,
-    SketchRequest,
 )
 from terrine.spec.panels import (
     CalendarComparisonSpec,
@@ -47,10 +46,10 @@ from terrine.spec.state_panel import (
     encode_cutpoint,
 )
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent, Trajectory
-from terrine.windows import Window
+from terrine.windows import Window, seconds_text
 
 __all__ = ["SCHEMA_VERSION", "canonical_json", "to_json", "from_json", "to_yaml", "from_yaml"]
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _INVALID = RefusalSpec("terrine.design.invalid", "Design document is invalid: {reason}.")
 _INVALID_INPUT = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
@@ -109,7 +108,7 @@ def _encode(value: Any) -> Any:
     if isinstance(value, FixedDate):
         return {"type": "FixedDate", "date": _date_value(value.date)}
     if isinstance(value, EventAnchor):
-        node = {"type": "EventAnchor", "event": value.event, "which": value.which}
+        node = {"type": "EventAnchor", "event": value.event, "occurrence": value.occurrence}
         if value.n is not None:
             node["n"] = value.n
         if value.offset:
@@ -169,7 +168,7 @@ def _encode(value: Any) -> Any:
         return {
             "type": "StatePanel",
             "state": _encode(value.state),
-            "max_periods": value.max_periods,
+            "periods": value.periods,
             "baseline_features": {
                 key: _encode(item) for key, item in value.baseline_features.items()
             },
@@ -208,14 +207,14 @@ def _encode(value: Any) -> Any:
             "type": "SequentialSpec",
             "treatment": _encode(value.treatment),
             "trial_weight": None if value.trial_weight is None else _encode(value.trial_weight),
-            "anticipation_seconds": value.anticipation_seconds,
-            "reference_period_seconds": value.reference_period_seconds,
+            "anticipation": value.anticipation,
+            "reference_period": value.reference_period,
         }
     if isinstance(value, EventPanelSpec):
         return {
             "type": "EventPanelSpec",
             "periods": list(value.periods),
-            "period_seconds": value.period_seconds,
+            "period": value.period,
             "reference_period": value.reference_period,
         }
     if isinstance(value, CalendarComparisonSpec):
@@ -236,16 +235,16 @@ def _encode(value: Any) -> Any:
     if isinstance(value, TimeToEvent):
         return {
             "type": "TimeToEvent",
-            "event": value.event,
-            "exit": value.exit,
-            "entry": value.entry,
+            "end_event": value.end_event,
+            "exit_event": value.exit_event,
+            "entry_event": value.entry_event,
             "delayed_entry": value.delayed_entry,
         }
     if isinstance(value, LifeTable):
         return {
             "type": "LifeTable",
             "time_to_event": _encode(value.time_to_event),
-            "interval": value.interval,
+            "bin": value.bin,
             "group_by": list(value.group_by),
         }
     if isinstance(value, Trajectory):
@@ -270,7 +269,6 @@ def _encode(value: Any) -> Any:
             "metric": value.metric,
             "probability": str(value.probability),
             "window": _encode(value.window),
-            "sketch": _encode(value.sketch),
         }
     if isinstance(value, ApproxMetricDistinct):
         return {
@@ -286,13 +284,6 @@ def _encode(value: Any) -> Any:
             "target_event": value.target_event,
             "count_thresholds": list(value.count_thresholds),
             "finite_horizon_seconds": value.finite_horizon_seconds,
-        }
-    if isinstance(value, SketchRequest):
-        return {
-            "type": "SketchRequest",
-            "algorithm": value.algorithm,
-            "version": value.version,
-            "rank_error": str(value.rank_error),
         }
     if isinstance(value, MetricAgg):
         node = {"type": "MetricAgg", "metric": value.metric, "window": _encode(value.window)}
@@ -316,11 +307,13 @@ def _encode(value: Any) -> Any:
         }
         if value.relative_to is not None:
             node["relative_to"] = _encode(value.relative_to)
+        if value.measure != "time":
+            node["measure"] = value.measure
         return node
     if isinstance(value, Gt):
         return {"type": "Gt", "expr": _encode(value.expr), "value": value.value}
     if isinstance(value, Eq):
-        return {"type": "Eq", "left": _encode(value.left), "value": value.value}
+        return {"type": "Eq", "expr": _encode(value.expr), "value": value.value}
     if isinstance(value, IsNull):
         return {"type": "IsNull", "expr": _encode(value.expr), "negate": value.negate}
     if isinstance(value, And):
@@ -368,6 +361,12 @@ def canonical_json(design: Design) -> bytes:
 def to_json(design: Design) -> str:
     """Return a design's versioned JSON document.
 
+    Args:
+        design: Design describing the rows and expressions to compile.
+
+    Returns:
+        Versioned JSON document text describing the Design.
+
     Example: spec.to_json(design)
     """
     return canonical_json(design).decode("utf-8")
@@ -375,6 +374,13 @@ def to_json(design: Design) -> str:
 
 def to_yaml(design: Design) -> str:
     """Return a design's versioned YAML document.
+
+
+    Args:
+        design: Design describing the rows and expressions to compile.
+
+    Returns:
+        Versioned YAML document text describing this Design.
 
     Example: tr.to_yaml(design)
     """
@@ -412,6 +418,14 @@ def _decimal_string(value: Any) -> Decimal:
     return Decimal(value)
 
 
+def _duration_text(value: Any) -> str:
+    if type(value) is int:
+        return seconds_text(value)
+    if isinstance(value, str):
+        return value
+    raise ValueError("duration must be an integer or string")
+
+
 def _node(value: Any) -> Any:
     if not isinstance(value, dict) or not isinstance(value.get("type"), str):
         raise ValueError("expected a tagged specification node")
@@ -447,13 +461,24 @@ def _node(value: Any) -> Any:
         )
     if tag == "SessionSpec":
         item = _object(value, {"type", "gap_seconds"})
-        return SessionSpec(item["gap_seconds"])
+        return SessionSpec(_duration_text(item["gap_seconds"]))
     if tag == "FunnelSpec":
         item = _object(value, {"type", "event_property", "steps", "within_seconds"})
-        return FunnelSpec(item["event_property"], tuple(item["steps"]), item["within_seconds"])
+        return FunnelSpec(
+            item["event_property"],
+            tuple(item["steps"]),
+            None if item["within_seconds"] is None else _duration_text(item["within_seconds"]),
+        )
     if tag == "EventAnchor":
-        item = _object(value, {"type", "event", "which", "n", "offset"}, {"type", "event", "which"})
-        return EventAnchor(item["event"], item["which"], item.get("n"), item.get("offset", 0))
+        item = _object(
+            value, {"type", "event", "occurrence", "n", "offset"}, {"type", "event", "occurrence"}
+        )
+        return EventAnchor(
+            item["event"],
+            item["occurrence"],
+            item.get("n"),
+            _duration_text(item.get("offset", 0)),
+        )
     if tag == "Schedule":
         item = _object(value, {"type", "every", "months", "start", "end"})
         start, end = _read_date(item["start"]), _read_date(item["end"])
@@ -466,7 +491,7 @@ def _node(value: Any) -> Any:
             if type(months) is not int or months <= 0:
                 raise ValueError("Schedule months must be a positive integer")
             return Schedule(f"{months}mo", start, end)
-        return Schedule(every, start, end)
+        return Schedule(_duration_text(every), start, end)
     if tag == "AnchorRange":
         item = _object(value, {"type", "start", "end"})
         start = None if item["start"] is None else _read_date(item["start"])
@@ -492,14 +517,12 @@ def _node(value: Any) -> Any:
             tuple(item["levels"]),
         )
     if tag == "StatePanel":
-        item = _object(value, {"type", "state", "max_periods", "baseline_features"})
+        item = _object(value, {"type", "state", "periods", "baseline_features"})
         raw = item["baseline_features"]
         if not isinstance(raw, dict):
             raise ValueError("baseline_features must be a mapping")
         baseline = {key: _node(node) for key, node in raw.items()}
-        return StatePanel(
-            _node(item["state"]), max_periods=item["max_periods"], baseline_features=baseline
-        )
+        return StatePanel(_node(item["state"]), periods=item["periods"], baseline_features=baseline)
     if tag == "Initiation":
         item = _object(value, {"type", "event", "history_start", "knowledge"})
         return Initiation(
@@ -532,21 +555,21 @@ def _node(value: Any) -> Any:
                 "type",
                 "treatment",
                 "trial_weight",
-                "anticipation_seconds",
-                "reference_period_seconds",
+                "anticipation",
+                "reference_period",
             },
         )
         weight = None if item["trial_weight"] is None else _node(item["trial_weight"])
         return SequentialSpec(
             _node(item["treatment"]),
             weight,
-            item["anticipation_seconds"],
-            item["reference_period_seconds"],
+            _duration_text(item["anticipation"]),
+            _duration_text(item["reference_period"]),
         )
     if tag == "EventPanelSpec":
-        item = _object(value, {"type", "periods", "period_seconds", "reference_period"})
+        item = _object(value, {"type", "periods", "period", "reference_period"})
         return EventPanelSpec(
-            tuple(item["periods"]), item["period_seconds"], item["reference_period"]
+            tuple(item["periods"]), _duration_text(item["period"]), item["reference_period"]
         )
     if tag == "CalendarComparisonSpec":
         item = _object(
@@ -569,32 +592,29 @@ def _node(value: Any) -> Any:
         )
     if tag == "Trajectory":
         item = _object(value, {"type", "metric", "period", "periods", "cumulative"})
-        return Trajectory(item["metric"], item["period"], item["periods"], item["cumulative"])
+        return Trajectory(
+            item["metric"], _duration_text(item["period"]), item["periods"], item["cumulative"]
+        )
     if tag == "CohortSpec":
         item = _object(value, {"type", "origin", "trajectory"})
         return CohortSpec(item["origin"], _node(item["trajectory"]))
     if tag == "TimeToEvent":
-        item = _object(value, {"type", "event", "exit", "entry", "delayed_entry"})
+        item = _object(value, {"type", "end_event", "exit_event", "entry_event", "delayed_entry"})
         return TimeToEvent(
-            item["event"],
-            exit=item["exit"],
-            entry=item["entry"],
+            item["end_event"],
+            exit_event=item["exit_event"],
+            entry_event=item["entry_event"],
             delayed_entry=item["delayed_entry"],
         )
     if tag == "LifeTable":
-        item = _object(value, {"type", "time_to_event", "interval", "group_by"})
+        item = _object(value, {"type", "time_to_event", "bin", "group_by"})
         groups = item["group_by"]
         if not isinstance(groups, list) or any(not isinstance(name, str) for name in groups):
             raise ValueError("LifeTable group_by must be a list of feature names")
-        return LifeTable(_node(item["time_to_event"]), item["interval"], tuple(groups))
+        return LifeTable(_node(item["time_to_event"]), _duration_text(item["bin"]), tuple(groups))
     if tag == "Window":
         item = _object(value, {"type", "start", "end"})
-        return Window(item["start"], item["end"])
-    if tag == "SketchRequest":
-        item = _object(value, {"type", "algorithm", "version", "rank_error"})
-        return SketchRequest(
-            item["algorithm"], item["version"], _decimal_string(item["rank_error"])
-        )
+        return Window(_duration_text(item["start"]), _duration_text(item["end"]))
     if tag == "MetricQuantile":
         item = _object(value, {"type", "metric", "probability", "window", "interpolation"})
         return MetricQuantile(
@@ -604,12 +624,11 @@ def _node(value: Any) -> Any:
             item["interpolation"],
         )
     if tag == "ApproxMetricQuantile":
-        item = _object(value, {"type", "metric", "probability", "window", "sketch"})
+        item = _object(value, {"type", "metric", "probability", "window"})
         return ApproxMetricQuantile(
             item["metric"],
             _decimal_string(item["probability"]),
             _node(item["window"]),
-            _node(item["sketch"]),
         )
     if tag == "ApproxMetricDistinct":
         item = _object(value, {"type", "metric", "window"})
@@ -631,7 +650,7 @@ def _node(value: Any) -> Any:
             item["label_property"],
             item["target_event"],
             tuple(item["count_thresholds"]),
-            item["finite_horizon_seconds"],
+            None if item["finite_horizon_seconds"] is None else item["finite_horizon_seconds"],
         )
     if tag == "MetricAgg":
         item = _object(
@@ -667,6 +686,7 @@ def _node(value: Any) -> Any:
                 "occurrence",
                 "n",
                 "relative_to",
+                "measure",
             },
             {"type", "event", "window", "label_property", "equals", "occurrence", "n"},
         )
@@ -678,13 +698,14 @@ def _node(value: Any) -> Any:
             item["occurrence"],
             item["n"],
             None if item.get("relative_to") is None else _node(item["relative_to"]),
+            measure=item.get("measure", "time"),
         )
     if tag == "Gt":
         item = _object(value, {"type", "expr", "value"})
         return Gt(_node(item["expr"]), item["value"])
     if tag == "Eq":
-        item = _object(value, {"type", "left", "value"})
-        return Eq(_node(item["left"]), item["value"])
+        item = _object(value, {"type", "expr", "value"})
+        return Eq(_node(item["expr"]), item["value"])
     if tag == "IsNull":
         item = _object(value, {"type", "expr", "negate"}, {"type", "expr"})
         return IsNull(_node(item["expr"]), item.get("negate", False))
@@ -697,7 +718,7 @@ def _node(value: Any) -> Any:
         item = _object(
             value, {"type", "attribute", "at", "known_at_t0"}, {"type", "attribute", "known_at_t0"}
         )
-        return Treatment(item["attribute"], item.get("at", 0), item["known_at_t0"])
+        return Treatment(item["attribute"], _duration_text(item.get("at", 0)), item["known_at_t0"])
     raise ValueError(f"unknown specification node: {tag}")
 
 
@@ -795,7 +816,7 @@ def _design(value: Any) -> Design:
         ),
         eligibility=named(item["eligibility"], (Gt, Eq, IsNull, And)),
         treatment=treatment,
-        gap=item["gap"],
+        gap=_duration_text(item["gap"]),
         shape=item["shape"] if isinstance(item["shape"], str) else _node(item["shape"]),
         anchor_range=anchor_range,
         sample=sample,
@@ -816,6 +837,7 @@ def _load(payload: Any) -> Design:
                 reason="unsupported_schema_version",
                 field="schema_version",
                 expected=SCHEMA_VERSION,
+                schema_version=root["schema_version"],
             )
         return _design(root["design"])
     except TerrineError:
@@ -840,6 +862,12 @@ def _reject_constant(item: str) -> Any:
 def from_json(value: str | bytes) -> Design:
     """Read a design from a supported versioned JSON document.
 
+    Args:
+        value: Versioned JSON document text or UTF-8 bytes, not a filesystem path.
+
+    Returns:
+        A validated reconstructed Design.
+
     Example: spec.from_json(spec.to_json(design))
     """
     try:
@@ -851,6 +879,13 @@ def from_json(value: str | bytes) -> Design:
 
 def from_yaml(value: str | bytes) -> Design:
     """Read a design from a supported versioned YAML document.
+
+
+    Args:
+        value: YAML document text or UTF-8 bytes returned by to_yaml(), not a filesystem path.
+
+    Returns:
+        The reconstructed Design after document validation.
 
     Example: tr.from_yaml(tr.to_yaml(design))
     """

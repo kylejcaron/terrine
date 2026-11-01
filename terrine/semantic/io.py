@@ -11,7 +11,7 @@ from yaml.resolver import BaseResolver
 from terrine.errors import RefusalSpec
 from terrine.semantic.models import Catalog
 
-__all__ = ["load_catalog", "dump_catalog"]
+__all__ = ["load_catalog", "load_catalog_text", "dump_catalog"]
 
 _DUPLICATE = RefusalSpec(
     "terrine.catalog.duplicate_yaml_key",
@@ -132,6 +132,15 @@ def load_catalog(path: str | Path) -> Catalog:
     try:
         with Path(path).open(encoding="utf-8") as stream:
             value = yaml.load(stream, Loader=_UniqueSafeLoader)
+    except yaml.YAMLError as exc:
+        raise _INVALID_YAML.error(reason="unsafe tag or malformed YAML") from exc
+    return validate_catalog(value)
+
+
+def load_catalog_text(text: str) -> Catalog:
+    """Parse and validate a Catalog from safe YAML text."""
+    try:
+        value = yaml.load(text, Loader=_UniqueSafeLoader)
     except yaml.YAMLError as exc:
         raise _INVALID_YAML.error(reason="unsafe tag or malformed YAML") from exc
     return validate_catalog(value)

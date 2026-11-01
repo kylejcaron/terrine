@@ -9,7 +9,6 @@ from terrine.spec.dataset import (
 from terrine.spec.design import Design, Treatment
 from terrine.spec.expressions import (
     EventTime,
-    SketchRequest,
     agg,
     all_of,
     approx_distinct,
@@ -21,6 +20,7 @@ from terrine.spec.expressions import (
     is_null,
     quantile,
     retention,
+    since,
 )
 from terrine.spec.io import from_json, from_yaml, to_json, to_yaml
 from terrine.spec.panels import (
@@ -65,7 +65,6 @@ __all__ = [
     "Initiation",
     "MatchedT0Sample",
     "retention",
-    "SketchRequest",
     "PersistentAdoption",
     "Schedule",
     "Sequential",
@@ -92,5 +91,6 @@ __all__ = [
     "is_null",
     "matched_t0",
     "to_json",
+    "since",
     "to_yaml",
 ]

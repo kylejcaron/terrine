@@ -150,6 +150,10 @@ for batch in reopened.to_arrow_batches():
     consume(batch)
 ```
 
+For an in-memory dataframe instead of incremental batches, use
+`reopened.to_pandas()` or `reopened.to_polars()`; `values_only=True` removes
+completeness/reason support columns as well as observation bookkeeping.
+
 The manifest binds the canonical construction definition, selected view, generation, schema, and output checksums. Reopening verifies the committed publication, partition checksums, physical schema, and row count before returning the reference. `DatasetDefinitionStore` stores a `DatasetDefinition`, not the manifest; restore a serialized manifest with `DatasetManifest.from_json()` and pass it to `Dataset.from_manifest()`. Credentials, live connections, SQL, and row payloads are not stored in the definition.
 
 Serialized manifests carry `definition` or an owner-bound `definition_reference`,

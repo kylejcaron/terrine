@@ -1,9 +1,12 @@
+import copy
+import pickle
 from datetime import UTC, datetime, timedelta, timezone
 
+import pyarrow as pa
 import pytest
 
 from terrine import recipes
-from terrine.data import BoundCoverage, Budget, Coverage, UnitSource
+from terrine.data import BoundCoverage, Budget, Coverage, Roles, UnitSource, output_sort_keys
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.spec import (
@@ -18,6 +21,62 @@ from terrine.spec import (
 )
 from terrine.windows import Window
 from tests.fixtures.readme import readme_design, readme_model
+
+
+@pytest.mark.parametrize(
+    ("names", "roles", "shape", "expected"),
+    [
+        (
+            (
+                "age",
+                "trial_id",
+                "event_period",
+                "period_index",
+                "sequence_position",
+                "t0",
+                "anchor_id",
+                "unit",
+                "value",
+            ),
+            Roles("unit", "anchor_id", "t0", None, ("value",), ()),
+            "cross_section",
+            ("unit", "t0", "anchor_id"),
+        ),
+        (
+            ("unit", "cohort_time", "age"),
+            Roles("unit", "anchor_id", "cohort_time", None, (), ()),
+            "ltv",
+            ("unit", "cohort_time", "age"),
+        ),
+        (
+            ("unit", "anchor_id", "t0", "region", "segment", "time_bin", "events"),
+            Roles("unit", "anchor_id", "t0", None, ("region", "segment", "time_bin"), ("events",)),
+            "life_table",
+            ("region", "segment", "time_bin"),
+        ),
+        (
+            ("unit", "anchor_id", "t0", "time_bin"),
+            Roles("unit", "anchor_id", "t0", None, ("time_bin",), ()),
+            "life_table",
+            ("time_bin",),
+        ),
+        (
+            ("unit", "anchor_id", "t0", "time_bin"),
+            Roles("unit", "anchor_id", "t0", None, ("time_bin",), ()),
+            "cross_section",
+            ("unit", "t0", "anchor_id"),
+        ),
+        (
+            ("value",),
+            Roles("identity", "identity", "origin", None, (), ("value",)),
+            "cross_section",
+            (),
+        ),
+    ],
+)
+def test_output_sort_keys_use_present_identity_or_shape_columns(names, roles, shape, expected):
+    table = pa.table({name: pa.array([], type=pa.int64()) for name in names})
+    assert output_sort_keys(table.schema, roles, shape=shape) == expected
 
 
 def test_unused_label_source_readiness_is_not_a_model_requirement(native_inputs):
@@ -131,8 +190,13 @@ def test_values_only_keeps_roles_and_values_and_drops_support(readme_con):
         frame.to_pandas(values_only=True, include_observation_metadata=True)
     assert error.value.code == "terrine.dataset.invalid_view"
     assert error.value.context["reason"] == "values_only_excludes_observation_metadata"
+    for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
+        assert restored.code == error.value.code
+        assert restored.context == error.value.context
+    assert error.value.context["conflicts"] == ("values_only", "include_observation_metadata")
     with pytest.raises(TerrineError) as error:
         frame.to_polars(values_only=True, include_observation_metadata=True)
+    assert error.value.context["conflicts"] == ("values_only", "include_observation_metadata")
     assert error.value.code == "terrine.dataset.invalid_view"
     assert error.value.context["reason"] == "values_only_excludes_observation_metadata"
 
@@ -209,3 +273,17 @@ def test_cohort_requests_refuse_with_codes(readme_con, build, value_column, cont
         frame.cohorts(grouping=grouping, value_column=value_column)
     assert error.value.code == "terrine.cohort.invalid_operation"
     assert {key: error.value.context[key] for key in context} == context
+
+
+def test_conflicting_view_flags_refuse_before_frame_materialization(readme_con, monkeypatch):
+    frame = readme_design().build(readme_model(readme_con))
+
+    def fail_materialization(*args, **kwargs):
+        raise AssertionError("materialization should not run")
+
+    monkeypatch.setattr(type(frame), "materialize", fail_materialization)
+    with pytest.raises(TerrineError) as error:
+        frame.to_pandas(values_only=True, include_observation_metadata=True)
+
+    assert error.value.code == "terrine.dataset.invalid_view"
+    assert error.value.context["reason"] == "values_only_excludes_observation_metadata"

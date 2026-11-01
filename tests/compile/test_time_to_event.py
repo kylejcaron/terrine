@@ -209,7 +209,7 @@ def test_nanosecond_source_refuses_administrative_cutoff_beyond_ns_range():
         with pytest.raises(TerrineError) as error:
             Design(
                 "user",
-                EventAnchor("signup", which="first"),
+                EventAnchor("signup", occurrence="first"),
                 shape=TimeToEvent("churn"),
                 administrative_cutoff=datetime(2500, 1, 1, tzinfo=UTC),
             ).build(model)
@@ -224,7 +224,7 @@ def test_internal_timestamp_aliases_are_reserved_feature_names():
         with pytest.raises(TerrineError) as error:
             Design(
                 "user",
-                EventAnchor("signup", which="first"),
+                EventAnchor("signup", occurrence="first"),
                 features={"_t0_naive": agg("signup", window=("-1d", "0d"))},
                 shape=TimeToEvent("churn"),
             ).build(model)
@@ -239,7 +239,7 @@ def test_internal_survival_columns_cannot_overwrite_features():
     try:
         design = Design(
             "user",
-            EventAnchor("signup", which="first"),
+            EventAnchor("signup", occurrence="first"),
             features={"_followup_start": agg("missing", window=("-1d", "0d"))},
             shape=TimeToEvent("churn"),
         )
@@ -255,7 +255,7 @@ def test_survival_generated_columns_cannot_overwrite_features():
     try:
         design = Design(
             "user",
-            EventAnchor("signup", which="first"),
+            EventAnchor("signup", occurrence="first"),
             features={"duration": agg("missing", window=("-1d", "0d"))},
             shape=TimeToEvent("churn"),
         )
@@ -386,7 +386,7 @@ def test_duration_is_elapsed_from_t0_for_event_and_censored_rows():
         con.raw_sql("INSERT INTO outcomes VALUES ('u1', TIMESTAMPTZ '2025-01-11 00:00:00+00')")
         design = Design(
             "user",
-            EventAnchor("signup", which="first"),
+            EventAnchor("signup", occurrence="first"),
             shape=TimeToEvent("churn"),
             administrative_cutoff=datetime(2025, 1, 23, tzinfo=UTC),
         )
@@ -411,8 +411,8 @@ def test_duration_with_delayed_entry_is_measured_from_t0():
         )
         design = Design(
             "user",
-            EventAnchor("signup", which="first"),
-            shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
+            EventAnchor("signup", occurrence="first"),
+            shape=TimeToEvent("churn", entry_event="enrolled", delayed_entry=True),
         )
         frame = design.build(model).materialize()
         result = frame.table
@@ -439,7 +439,9 @@ def test_nanosecond_duration_keeps_submicrosecond_elapsed():
         con.raw_sql(
             "INSERT INTO outcomes VALUES ('u1', TIMESTAMP_NS '2025-01-02 00:00:00.000000001')"
         )
-        design = Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
+        design = Design(
+            "user", EventAnchor("signup", occurrence="first"), shape=TimeToEvent("churn")
+        )
         frame = design.build(model).materialize()
         result = frame.table
         row_index = result["unit"].to_pylist().index("u1")

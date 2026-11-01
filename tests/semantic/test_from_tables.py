@@ -117,18 +117,30 @@ def _snapshot(model, anchor, **columns):
 def test_events_descriptor_normalizes_and_detaches_inputs():
     metrics = {"n": tr.count()}
     labels = ["status"]
+    statuses = ["paid", "refunded"]
+    kinds = {"purchase", "refund"}
+    where = {"status__in": statuses, "kind": kinds}
     events = Events(
         "orders",
         time="ordered_at",
         key="customer_id",
         metrics=metrics,
         labels=labels,
+        where=where,
         complete=COMPLETE,
     )
     metrics["changed"] = tr.count()
     labels.append("changed")
+    statuses.append("changed")
+    kinds.add("changed")
     assert dict(events.metrics) == {"n": tr.count()}
     assert events.labels == ("status",)
+    assert events.where == {
+        "status__in": ("paid", "refunded"),
+        "kind": frozenset({"purchase", "refund"}),
+    }
+    with pytest.raises(TypeError):
+        events.where["status"] = "changed"  # ty: ignore[invalid-assignment]
     assert events.unit is None
     assert events.complete == (date(2025, 1, 1), date(2025, 1, 31))
     with pytest.raises(TypeError):
@@ -148,14 +160,21 @@ def test_events_descriptor_normalizes_and_detaches_inputs():
         ({"metrics": {"n": "count"}}, "wrong_type", "metrics"),
         ({"metrics": {"": tr.count()}}, "wrong_type", "metrics"),
         ({"labels": "status"}, "wrong_type", "labels"),
+        ({"where": ["paid"]}, "wrong_type", "where"),
+        ({"where": {1: "paid"}}, "wrong_type", "where"),
+        ({"where": {"status": {"nested": "paid"}}}, "wrong_type", "where"),
         ({"complete": (datetime(2025, 1, 1), date(2025, 1, 31))}, "invalid_date", "complete"),
+        ({"complete": ("04/01/2025", "2025-01-31")}, "invalid_date", "complete"),
     ],
 )
 def test_events_descriptor_rejects_invalid_fields(changes, reason, field):
     with pytest.raises(TerrineError) as error:
         orders(**changes)
     assert error.value.code == "terrine.model.invalid_binding"
-    assert error.value.context == {"reason": reason, "field": field}
+    assert error.value.context.get("reason") == reason
+    assert error.value.context.get("field") == field
+    if reason == "invalid_date":
+        assert error.value.context["expected"] == ("YYYY-MM-DD",)
 
 
 def test_where_counts_match_hand_oracles(con):
@@ -195,7 +214,8 @@ def test_where_counts_match_hand_oracles(con):
     [
         ("status__like", "x"),
         ("amount__between", (1,)),
-        ("qty__between", {2, 10}),
+        ("qty__between", {1, 10}),
+        ("qty__between", frozenset({1, 10})),
         ("qty__between", (10, 2)),
         ("qty__between", (10.5, 2)),
         ("status__in", []),
@@ -203,12 +223,15 @@ def test_where_counts_match_hand_oracles(con):
         ("a__b__gt", 1),
     ],
 )
-def test_filter_grammar_errors_are_coded(key, bad):
+@pytest.mark.parametrize("entrypoint", ("metric", "source"))
+def test_filter_grammar_errors_are_coded(con, key, bad, entrypoint):
     with pytest.raises(TerrineError) as error:
-        tr.count(where={key: bad})
+        if entrypoint == "metric":
+            tr.count(where={key: bad})
+        else:
+            Model.from_tables(con, units=UNITS, events={"orders": orders(where={key: bad})})
     assert error.value.code == "terrine.model.invalid_binding"
-    assert error.value.context["reason"] == "invalid_filter"
-    assert error.value.context["key"] == key
+    assert error.value.context == {"reason": "invalid_filter", "key": key}
 
 
 def test_label_names_may_not_contain_double_underscore():
@@ -231,21 +254,133 @@ def test_null_filter_literal_refuses_at_build_not_zero(con):
     assert error.value.code == "terrine.filter.unknown"
 
 
+def test_filter_value_type_is_checked_during_shared_binding(con):
+    valid = orders(labels=("status",), metrics={"n": tr.count(where={"status": "refunded"})})
+    valid_model = Model.from_tables(con, units=UNITS, events={"orders": valid})
+    raw_catalog = valid_model.catalog.model_dump(mode="python")
+    measure_name = raw_catalog["metrics"]["n"]["measure"]
+    raw_catalog["measures"][measure_name]["filters"] = (
+        {"property": "status", "op": "equals", "values": (1,)},
+    )
+    event = orders(labels=("status",), metrics={"n": tr.count(where={"status": 1})})
+
+    def invalid_catalog():
+        return Model.from_catalog(
+            raw_catalog, con=con, readiness={"orders": tr.Coverage(*COMPLETE)}, units=UNITS
+        )
+
+    for bind in (
+        lambda: Model.from_tables(con, units=UNITS, events={"orders": event}),
+        invalid_catalog,
+    ):
+        with pytest.raises(TerrineError) as error:
+            bind()
+        assert error.value.code == "terrine.semantic.schema_mismatch"
+        assert error.value.context["field"] == "where"
+        assert error.value.context["label"] == "status"
+        assert error.value.context["value"] == 1
+        assert error.value.context["label_type"] == "string"
+        for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
+            assert restored.code == error.value.code
+            assert restored.context == error.value.context
+
+    con.raw_sql("""
+        CREATE TABLE decimal_orders AS
+        SELECT customer_id, ordered_at, amount::DECIMAL(10, 2) AS amount FROM orders
+    """)
+    decimal_event = Events(
+        "decimal_orders",
+        time="ordered_at",
+        key="customer_id",
+        complete=COMPLETE,
+        labels=("amount",),
+        metrics={"n": tr.count(where={"amount": "10.50"})},
+    )
+    Model.from_tables(con, units=UNITS, events={"decimal_orders": decimal_event})
+
+
+def test_events_where_round_trips_catalog(con):
+    model = Model.from_tables(
+        con,
+        units=UNITS,
+        events={
+            "orders": orders(where={"qty__between": ("2", "10"), "status": {"paid", "refunded"}})
+        },
+    )
+    assert model.catalog.sources["orders"].where[1].values == ("paid", "refunded")
+    rebound = Model.from_catalog(
+        model.to_catalog(), con=con, units=UNITS, readiness=model.readiness
+    )
+    assert rebound.catalog.schema_version == 2
+    assert rebound.catalog.sources["orders"].where == model.catalog.sources["orders"].where
+    assert rebound.sources["orders"].where == model.sources["orders"].where
+    assert rebound.model_hash == model.model_hash
+
+
+def test_source_filter_value_type_uses_shared_binding_refusal(con):
+    model = Model.from_tables(con, units=UNITS, events={"orders": orders()})
+    catalog = model.catalog.model_dump(mode="python")
+    catalog["sources"]["orders"]["where"] = (
+        {"property": "status", "op": "equals", "values": (1,)},
+    )
+    for bind in (
+        lambda: Model.from_tables(con, units=UNITS, events={"orders": orders(where={"status": 1})}),
+        lambda: Model.from_catalog(catalog, con=con, units=UNITS, readiness=model.readiness),
+    ):
+        with pytest.raises(TerrineError) as error:
+            bind()
+        assert error.value.code == "terrine.semantic.schema_mismatch"
+        assert error.value.context == {
+            "field": "where",
+            "label": "status",
+            "value": 1,
+            "label_type": "string",
+        }
+        for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
+            assert restored.context == error.value.context
+
+
+@pytest.mark.parametrize("threshold", (1.5, "10.50", "1e999999999999999999999999999"))
+def test_source_numeric_thresholds_bind_without_narrowing(con, threshold):
+    model = Model.from_tables(
+        con, units=UNITS, events={"orders": orders(where={"qty__gt": threshold})}
+    )
+    assert model.catalog.sources["orders"].where[0].values == (threshold,)
+
+
+def test_source_filter_requires_existing_column(con):
+    with pytest.raises(TerrineError) as error:
+        Model.from_tables(con, units=UNITS, events={"orders": orders(where={"missing": 1})})
+    assert error.value.code == "terrine.semantic.schema_mismatch"
+    assert error.value.context == {"field": "where", "column": "missing"}
+
+
+@pytest.mark.parametrize("threshold", (1.5, "1e999999999999999999999999999"))
+def test_numeric_filter_thresholds_are_admitted_during_shared_binding(con, threshold):
+    event = orders(labels=("qty",), metrics={"n": tr.count(where={"qty__gt": threshold})})
+    Model.from_tables(con, units=UNITS, events={"orders": event})
+
+
 def test_undeclared_label_and_ratio_operand_refuse_missing_reference(con):
+
     with pytest.raises(TerrineError) as error:
         Model.from_tables(
             con,
             units=UNITS,
             events={
                 "orders": orders(
-                    labels=("status",), metrics={"n": tr.count(where={"region": "eu"})}
+                    labels=("status",), metrics={"n": tr.count(where={"stauts": "eu"})}
                 )
             },
         )
     assert error.value.code == "terrine.semantic.missing_reference"
     assert error.value.context["kind"] == "label"
-    assert error.value.context["name"] == "region"
+    assert error.value.context["name"] == "stauts"
     assert error.value.context["available"] == ("status",)
+    assert error.value.context["suggestions"] == ("status",)
+    for restored in (copy.deepcopy(error.value), pickle.loads(pickle.dumps(error.value))):
+        assert restored.code == error.value.code
+        assert restored.context == error.value.context
     with pytest.raises(TerrineError) as error:
         Model.from_tables(
             con,
@@ -412,7 +547,7 @@ def test_event_time_with_label_equals_works_on_from_tables_model(con):
 def test_to_catalog_round_trip_has_equal_model_hash(con):
     model = rich_model(con)
     restored = Model.from_catalog(
-        yaml.safe_load(model.to_catalog()),
+        model.to_catalog(),
         con=model.con,
         units=model.units,
         readiness=model.readiness,
@@ -684,3 +819,240 @@ def test_pandas_nullable_and_categorical_columns_survive_conversion():
     assert rows["last_flag"] == {"alice": None, "bob": True}
     assert rows["last_flag__reason"] == {"alice": "all_values_null", "bob": None}
     assert rows["last_qty"] == {"alice": None, "bob": 4}
+
+
+def test_string_unit_key_with_integer_event_key_refuses_at_bind(con):
+    con.create_table(
+        "integer_orders",
+        schema=ibis.schema({"user_id": "int64", "at": "timestamp"}),
+    )
+    with pytest.raises(TerrineError) as error:
+        Model.from_tables(
+            con,
+            units={"user": UnitSource("customers", "customer_id")},
+            events={
+                "orders": Events(
+                    "integer_orders",
+                    time="at",
+                    key="user_id",
+                    metrics={"orders": tr.count()},
+                    complete=COMPLETE,
+                )
+            },
+        )
+    assert error.value.code == "terrine.semantic.schema_mismatch"
+    assert error.value.context == {
+        "field": "unit key",
+        "unit": "user",
+        "source": "orders",
+        "column": "user_id",
+        "unit_type": "string",
+        "source_type": "int64",
+    }
+
+
+def test_key_mismatch_context_omits_nullability_markers():
+    units = pa.Table.from_pylist(
+        [{"user_id": "u"}],
+        schema=pa.schema([pa.field("user_id", pa.string(), nullable=False)]),
+    )
+    orders = pa.Table.from_pylist(
+        [{"user_id": 1, "at": datetime(2025, 1, 2)}],
+        schema=pa.schema(
+            [
+                pa.field("user_id", pa.int64(), nullable=False),
+                pa.field("at", pa.timestamp("us")),
+            ]
+        ),
+    )
+    with pytest.raises(TerrineError) as error:
+        Model.from_tables(
+            units={"user": UnitSource(units, "user_id")},
+            events={
+                "orders": Events(
+                    orders,
+                    time="at",
+                    key="user_id",
+                    metrics={"orders": tr.count()},
+                    complete=COMPLETE,
+                )
+            },
+        )
+    assert error.value.code == "terrine.semantic.schema_mismatch"
+    assert (
+        error.value.context["unit_type"],
+        error.value.context["source_type"],
+    ) == ("string", "int64")
+
+
+def test_roster_attribute_name_collides_with_label_refuses(con):
+    con.create_table(
+        "customer_channels",
+        pa.table({"customer_id": ["alice", "bob"], "status": ["a", "b"]}),
+    )
+    events = {"orders": orders(labels=("status",))}
+    colliding_units = {
+        "customer": UnitSource("customer_channels", "customer_id", attributes=("status",))
+    }
+    with pytest.raises(TerrineError) as direct_error:
+        Model.from_tables(con, units=colliding_units, events=events)
+    assert direct_error.value.code == "terrine.model.invalid_binding"
+    assert direct_error.value.context["reason"] == "name_collision"
+
+    model = Model.from_tables(con, units=UNITS, events=events)
+    with pytest.raises(TerrineError) as catalog_error:
+        Model.from_catalog(
+            model.to_catalog(),
+            con=con,
+            units=colliding_units,
+            readiness=model.readiness,
+            event_ids=model.event_ids,
+        )
+    assert catalog_error.value.code == direct_error.value.code
+    assert catalog_error.value.context == direct_error.value.context
+
+
+def test_two_rosters_cannot_share_an_attribute_name(con):
+    con.create_table(
+        "customer_channels",
+        pa.table(
+            {"customer_id": ["alice", "bob"], "channel": ["web", "store"], "region": ["w", "e"]}
+        ),
+    )
+    con.create_table(
+        "account_regions",
+        pa.table({"account_id": ["acme"], "region": ["w"]}),
+    )
+    colliding_units = {
+        "customer": UnitSource("customer_channels", "customer_id", attributes=("region",)),
+        "account": UnitSource("account_regions", "account_id", attributes=("region",)),
+    }
+    with pytest.raises(TerrineError) as direct_error:
+        Model.from_tables(
+            con,
+            units=colliding_units,
+            events={"orders": orders(unit="customer")},
+        )
+    assert direct_error.value.code == "terrine.model.invalid_binding"
+    assert direct_error.value.context["reason"] == "name_collision"
+
+    base_units = {
+        "customer": UnitSource("customer_channels", "customer_id", attributes=("channel",)),
+        "account": UnitSource("account_regions", "account_id", attributes=("region",)),
+    }
+    model = Model.from_tables(
+        con,
+        units=base_units,
+        events={"orders": orders(unit="customer")},
+    )
+    with pytest.raises(TerrineError) as catalog_error:
+        Model.from_catalog(
+            model.to_catalog(),
+            con=con,
+            units=colliding_units,
+            readiness=model.readiness,
+            event_ids=model.event_ids,
+        )
+    assert catalog_error.value.code == direct_error.value.code
+    assert catalog_error.value.context == direct_error.value.context
+
+
+def test_other_units_attribute_is_not_visible(con):
+    con.create_table(
+        "customer_channels",
+        pa.table({"customer_id": ["alice", "bob"], "channel": ["web", "store"]}),
+    )
+    con.create_table("account_regions", pa.table({"account_id": ["acme"], "region": ["west"]}))
+    model = Model.from_tables(
+        con,
+        units={
+            "customer": UnitSource("customer_channels", "customer_id", attributes=("channel",)),
+            "account": UnitSource("account_regions", "account_id", attributes=("region",)),
+        },
+        events={"orders": orders(unit="customer")},
+    )
+    with pytest.raises(TerrineError) as error:
+        Design("customer", FixedDate("2025-02-10"), features={"region": asof("region")}).validate(
+            model
+        )
+    assert error.value.code == "terrine.design.missing_reference"
+    assert error.value.context["available"] == ("channel",)
+
+
+def test_missing_roster_attribute_column_refuses_at_bind(con):
+    with pytest.raises(TerrineError) as error:
+        Model.from_tables(
+            con,
+            units={"customer": UnitSource("customers", "customer_id", attributes=("channel",))},
+            events={"orders": orders()},
+        )
+    assert error.value.code == "terrine.semantic.schema_mismatch"
+    assert error.value.context["field"] == "unit attribute"
+    assert error.value.context["column"] == "channel"
+
+
+def test_roster_attribute_survives_catalog_rebind(con):
+    con.create_table(
+        "customer_channels",
+        pa.table({"customer_id": ["alice", "bob"], "channel": ["web", "store"]}),
+    )
+    units = {"customer": UnitSource("customer_channels", "customer_id", attributes=("channel",))}
+    model = Model.from_tables(con, units=units, events={"orders": orders()})
+    restored = Model.from_catalog(
+        model.to_catalog(),
+        con=con,
+        units=model.units,
+        readiness=model.readiness,
+        event_ids=model.event_ids,
+    )
+    assert restored.model_hash == model.model_hash
+    assert restored.units["customer"].attributes == ("channel",)
+
+
+def test_training_set_with_roster_attribute(con):
+    from terrine.frame import _feature_definition_hash
+
+    con.create_table(
+        "customer_channels",
+        pa.table({"customer_id": ["alice", "bob"], "channel": ["web", "store"]}),
+    )
+    units = {"customer": UnitSource("customer_channels", "customer_id", attributes=("channel",))}
+    events = {"orders": orders(labels=("status",), metrics={"n": tr.count()})}
+    model = Model.from_tables(con, units=units, events=events)
+    design = Design(
+        "customer",
+        FixedDate("2025-01-20"),
+        features={"channel": asof("channel")},
+        outcomes={"orders": agg("n", window=("0s", "1d"))},
+    )
+    restored = Model.from_catalog(
+        model.to_catalog(),
+        con=con,
+        units=model.units,
+        readiness=model.readiness,
+        event_ids=model.event_ids,
+    )
+    design.build(model).training_set(label="orders", features=("channel",))
+    design.build(restored).training_set(label="orders", features=("channel",))
+    assert _feature_definition_hash(design, ("channel",), model) == _feature_definition_hash(
+        design, ("channel",), restored
+    )
+
+
+def test_cross_unit_source_property_refuses_with_incompatible_unit(con):
+    model = Model.from_tables(
+        con,
+        units={
+            "customer": UnitSource("customers", "customer_id"),
+            "account": UnitSource("accounts", "account_id"),
+        },
+        events={"orders": orders(unit="customer", labels=("status",))},
+    )
+    with pytest.raises(TerrineError) as error:
+        Design(
+            "account",
+            FixedDate("2025-01-15"),
+            features={"status": asof("status")},
+        ).validate(model)
+    assert error.value.code == "terrine.design.incompatible_unit"
+    assert error.value.context == {"unit": "account", "name": "status"}

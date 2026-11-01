@@ -111,6 +111,21 @@ def test_bound_descriptors_use_v2_names(native_inputs):
     assert metric.measures[0].event == "session"
 
 
+def test_catalog_path_string_still_loads(tmp_path: Path, native_inputs):
+    catalog, con = native_inputs
+    path = tmp_path / "catalog.yaml"
+    path.write_text(dump_catalog(catalog), encoding="utf-8")
+    model = Model.from_catalog(
+        str(path),
+        con=con,
+        readiness={
+            "events": Coverage("2025-01-01", "2025-01-31"),
+            "labels": Coverage("2025-01-01", "2025-01-31"),
+        },
+    )
+    assert model.catalog == catalog
+
+
 def test_safe_yaml_roundtrips_native_mapping(tmp_path: Path):
     catalog = Catalog.model_validate(CATALOG)
     path = tmp_path / "catalog.yaml"
@@ -278,3 +293,79 @@ def test_safe_yaml_rejects_duplicate_keys_and_python_tags(tmp_path: Path):
         path.write_text(text)
         with pytest.raises(ValueError):
             load_catalog(path)
+
+
+def test_from_catalog_mapping_rejects_unit_key_dtype_mismatch():
+    import ibis
+
+    con = ibis.duckdb.connect()
+    con.create_table(
+        "events",
+        schema=ibis.schema({"ts": "timestamp", "user_id": "int64", "workspace_id": "int64"}),
+    )
+    con.create_table(
+        "accounts", schema=ibis.schema({"workspace_id": "int64", "changed_at": "timestamp"})
+    )
+    con.create_table("users", schema=ibis.schema({"user_id": "string"}))
+    with pytest.raises(TerrineError) as error:
+        Model.from_catalog(
+            CATALOG,
+            con=con,
+            units={"user": UnitSource("users", "user_id")},
+            readiness={"events": Coverage("2025-01-01", "2025-02-01")},
+        )
+    assert error.value.code == "terrine.semantic.schema_mismatch"
+    assert error.value.context == {
+        "field": "unit key",
+        "unit": "user",
+        "source": "events",
+        "column": "user_id",
+        "unit_type": "string",
+        "source_type": "int64",
+    }
+
+
+def test_from_catalog_rejects_dimension_key_dtype_mismatch():
+    import ibis
+
+    con = ibis.duckdb.connect()
+    con.create_table(
+        "events",
+        schema=ibis.schema({"ts": "timestamp", "user_id": "int64", "workspace_id": "int32"}),
+    )
+    con.create_table(
+        "accounts", schema=ibis.schema({"workspace_id": "string", "changed_at": "timestamp"})
+    )
+    con.create_table("users", schema=ibis.schema({"user_id": "int64"}))
+    con.create_table("workspaces", schema=ibis.schema({"workspace_id": "int32"}))
+    catalog_sources = cast(Any, CATALOG["sources"])
+    catalog_event_source = catalog_sources["events"]
+    definition = {
+        **CATALOG,
+        "sources": {
+            **catalog_sources,
+            "events": {
+                **catalog_event_source,
+                "units": {"user": "user_id", "workspace": "workspace_id"},
+            },
+        },
+    }
+    with pytest.raises(TerrineError) as error:
+        Model.from_catalog(
+            definition,
+            con=con,
+            units={
+                "user": UnitSource("users", "user_id"),
+                "workspace": UnitSource("workspaces", "workspace_id"),
+            },
+            readiness={"events": Coverage("2025-01-01", "2025-02-01")},
+        )
+    assert error.value.code == "terrine.semantic.schema_mismatch"
+    assert error.value.context == {
+        "field": "unit key",
+        "unit": "workspace",
+        "source": "accounts",
+        "column": "workspace_id",
+        "unit_type": "int32",
+        "source_type": "string",
+    }

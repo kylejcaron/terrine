@@ -4,7 +4,6 @@ from importlib import import_module
 from typing import TYPE_CHECKING
 
 from terrine.errors import TerrineError
-from terrine.windows import Window
 
 if TYPE_CHECKING:
     from terrine import recipes as recipes
@@ -12,105 +11,65 @@ if TYPE_CHECKING:
     from terrine.data import Budget, Coverage, Events, History, UnitSource
     from terrine.dataset.reference import Dataset
     from terrine.errors import UnverifiedBackendWarning
-    from terrine.frame import Frame
     from terrine.metrics import count, count_distinct, max, mean, min, ratio, sum
     from terrine.model import Model
     from terrine.spec import (
         AnchorRange,
-        BinnedMetricState,
-        CohortGrouping,
-        CohortSpec,
-        DatasetDefinition,
         Design,
         EventAnchor,
-        EventSequence,
-        EventTime,
         FixedDate,
-        FunnelSpec,
-        LifeTable,
         Schedule,
-        SessionSpec,
-        SketchRequest,
-        StateObservations,
-        StatePanel,
-        TimeToEvent,
-        Trajectory,
-        Treatment,
         agg,
         all_of,
-        approx_distinct,
-        approx_quantile,
         asof,
         eq,
         event_time,
         from_yaml,
         gt,
         is_null,
-        quantile,
-        retention,
+        since,
         to_yaml,
     )
 
 __all__ = [
-    "Dataset",
-    "DatasetDefinition",
-    "AnchorRange",
-    "Budget",
-    "EventSequence",
-    "EventTime",
-    "FunnelSpec",
-    "SessionSpec",
-    "Coverage",
+    "Model",
+    "UnitSource",
     "Events",
     "History",
-    "Design",
-    "EventAnchor",
-    "FixedDate",
-    "Frame",
-    "retention",
-    "Model",
-    "Schedule",
-    "SketchRequest",
-    "Treatment",
-    "UnitSource",
-    "Window",
-    "TerrineError",
-    "UnverifiedBackendWarning",
-    "agg",
+    "Coverage",
     "count",
-    "count_distinct",
-    "max",
+    "sum",
     "mean",
     "min",
+    "max",
+    "count_distinct",
     "ratio",
-    "sum",
-    "all_of",
-    "approx_quantile",
-    "approx_distinct",
+    "Design",
+    "FixedDate",
+    "EventAnchor",
+    "Schedule",
+    "AnchorRange",
+    "agg",
     "asof",
-    "eq",
-    "from_yaml",
     "event_time",
+    "since",
+    "eq",
     "gt",
     "is_null",
-    "preview",
-    "BinnedMetricState",
-    "StateObservations",
-    "StatePanel",
-    "CohortGrouping",
-    "CohortSpec",
-    "LifeTable",
-    "Trajectory",
-    "TimeToEvent",
-    "to_yaml",
-    "quantile",
+    "all_of",
     "recipes",
+    "Dataset",
+    "Budget",
+    "preview",
+    "to_yaml",
+    "from_yaml",
+    "TerrineError",
+    "UnverifiedBackendWarning",
 ]
 
 _LAZY_MODULES = {
     "Dataset": "terrine.dataset.reference",
     "Budget": "terrine.data",
-    "Frame": "terrine.frame",
     "preview": "terrine.compile.cost",
     "Coverage": "terrine.data",
     "Events": "terrine.data",
@@ -138,3 +97,7 @@ def __getattr__(name: str):
     )
     globals()[name] = value
     return value
+
+
+def __dir__() -> list[str]:
+    return sorted(__all__)

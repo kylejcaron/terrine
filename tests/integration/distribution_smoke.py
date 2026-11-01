@@ -41,9 +41,7 @@ def check_artifacts(wheel: Path, sdist: Path) -> None:
         wheel_names = set(archive.namelist())
         required = {"terrine/__init__.py", "terrine/py.typed", "terrine/simulate/baseline.yaml"}
         assert required <= wheel_names, f"Missing wheel files: {required - wheel_names}"
-        license_files = {
-            PurePosixPath(name).name for name in wheel_names if "/licenses/" in name
-        }
+        license_files = {PurePosixPath(name).name for name in wheel_names if "/licenses/" in name}
         expected_licenses = {"LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.txt"}
         assert expected_licenses <= license_files, "Wheel must retain license and notices"
         notices = [

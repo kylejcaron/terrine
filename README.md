@@ -67,7 +67,7 @@ print(design.describe(model))
 
 data = design.build(model).to_pandas()
 columns = ["unit", "t0", "orders_30d", "spend_30d", "spend_next_30d", "spend_next_30d__reason"]
-print(data[columns].assign(t0=data["t0"].dt.date).sort_values(["t0", "unit"]).to_string(index=False))
+print(data[columns].assign(t0=data["t0"].dt.date).to_string(index=False))
 ```
 <!-- --8<-- [end:first-dataset] -->
 
@@ -85,6 +85,7 @@ Features (before t0):
 Outcomes (after t0):
   spend_next_30d: sum of orders.amount in [t0, t0 + 30d)
 Completeness: orders is declared complete for 2025-01-01 through 2025-03-20 (UTC days).
+  Naive source timestamps are read as UTC instants.
   A metric window outside declared source coverage is null with reason incomplete_coverage; unit
     observation bounds use incomplete_observation.
 Empty complete metric windows (no matching events):
@@ -96,14 +97,20 @@ Columns: unit, anchor_id, t0, orders_30d, orders_30d__complete, orders_30d__reas
   spend_next_30d__reason.
  unit         t0  orders_30d  spend_30d  spend_next_30d spend_next_30d__reason
 alice 2025-02-01           2       75.0            25.0                   <NA>
-  bob 2025-02-01           1       80.0             0.0                   <NA>
-carol 2025-02-01           0        0.0             0.0                   <NA>
 alice 2025-03-01           1       25.0            <NA>    incomplete_coverage
+  bob 2025-02-01           1       80.0             0.0                   <NA>
   bob 2025-03-01           0        0.0            <NA>    incomplete_coverage
+carol 2025-02-01           0        0.0             0.0                   <NA>
 carol 2025-03-01           0        0.0            <NA>    incomplete_coverage
 ```
 
 (Only some columns are printed; `t0` is shown as a date.)
+
+Rows are returned in ascending unit, snapshot time and anchor-ID order, followed
+by each shape's position or period columns; life tables use their grouping
+columns and time bin. Naive source timestamps are interpreted as UTC instants.
+In the printed example, each customer's February snapshot is followed by their
+March snapshot, rather than grouping all customers by snapshot date.
 
 Reading the output:
 
@@ -112,6 +119,33 @@ Reading the output:
 - **The March targets are unknown.** Their 30-day window runs past March 20, where the orders data ends. Drop them, keep them for scoring, or handle them however suits your model.
 
 You name the metrics: `tr.count()` counts events, `tr.sum("amount")` adds a column, and `tr.count(where={"status": "refunded"})` counts only matching events once `status` is declared in `labels=`. Every value has a `<name>__complete` flag and a `<name>__reason` column, so you can filter or impute deliberately.
+
+## Train and validate
+
+Continue the example with an explicit time split from `terrine.dataset`:
+
+<!-- --8<-- [start:train-validate] -->
+```python
+from terrine.dataset import TimeSplit
+
+frame = design.build(model)
+split = TimeSplit(train_until="2025-03-03", validation_until="2025-04-01")
+training = frame.training_set(label="spend_next_30d", split=split)
+modeling = training.to_pandas(values_only=True)
+train = modeling.loc[modeling["__terrine_split"].eq("train")]
+validation = modeling.loc[modeling["__terrine_split"].eq("validation")]
+```
+<!-- --8<-- [end:train-validate] -->
+
+Rows are split by `t0`, but a label window that crosses its split cutoff is
+`unassigned` with `__terrine_split_reason="label_overlap"`: training never uses a future
+label from across the cutoff. For example, a March 1 cutoff would leave the
+February rows unassigned because their 30-day labels end on March 3.
+Incomplete labels are dropped by default. This tiny example has three training
+rows and no validation rows because its March labels are incomplete; extend the
+complete history to validate a model. Inspect completeness and `__terrine_split_reason`
+before using `.to_pandas(values_only=True)` to omit completeness/reason columns
+from modeling inputs.
 
 ## The four ideas
 

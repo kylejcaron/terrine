@@ -1,7 +1,7 @@
 import pytest
 
-from terrine import retention
 from terrine.errors import TerrineError
+from terrine.spec import retention
 
 
 @pytest.mark.parametrize(
@@ -32,7 +32,7 @@ def test_retention_thresholds_require_ordered_positive_int64_counts(thresholds, 
     ("horizon", "code"),
     [
         (0, "terrine.design.invalid"),
-        (-1, "terrine.design.invalid"),
+        ("-1s", "terrine.design.invalid"),
         (True, "terrine.window.invalid_duration"),
         (1.25, "terrine.window.invalid_duration"),
         ("unknown", "terrine.window.invalid_duration"),

@@ -95,16 +95,13 @@ def main() -> None:
             Design("user", Schedule("14d", "2025-01-01", "2025-01-29")),
             treatment=treatment,
         )
-        assert events == EventPanel(
-            Design("user", EventAnchor("purchase")),
-            periods=(-1, 0, 1), period_seconds=86_400,
-        )
+        assert events == EventPanel(Design("user", EventAnchor("purchase")), periods=(-1, 0, 1), period="1d")
         assert from_json(to_json(sequential)) == sequential
 
         budget = Budget(max_rows=20, max_output_bytes=100_000)
         for design in (sequential, events):
             frame = design.build(model).materialize(budget)
-            restored = MaterializedFrame.from_arrow(frame.to_arrow())
+            restored = MaterializedFrame.from_arrow(frame.to_pyarrow())
             assert restored.table.equals(frame.table)
             rows = restored.table.to_pylist()
             if design == sequential:

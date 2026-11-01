@@ -20,9 +20,14 @@ was recorded or known.
 `tr.History("plans", key="customer_id", column="plan", valid_from="starts",
 valid_to="ends", complete=...)` on `Model.from_tables(history={"plan": ...})`
 declares the range form, and `changed_at="changed_at"` alone declares the
-change-log form; `asof("plan", before=...)` and `Treatment("plan")` then use
-exactly the semantics above. An `Events` label is the change-log form over the
-event log itself: each event's value holds until the unit's next event.
+change-log form. `tr.asof("plan", before="0s")` reads the **value in effect just
+before the cutoff**, which defaults to t0 (or a selected event-time origin).
+A change effective exactly at t0 is invisible to that row by design: strict
+selection protects against leakage. There is no inclusive public as-of form.
+Positive cutoffs are refused outside treatment with
+`terrine.design.gap_violation`; `spec.Treatment("plan")` is the explicit treatment
+declaration. An `Events` label is the change-log form over the event log itself:
+each event's value holds until the unit's next event.
 
 `enrich_events(events, source, dimension_relations)` applies event-time
 selection and retains event columns. It resolves each dimension's

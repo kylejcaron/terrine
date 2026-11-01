@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import math
+import re
 from collections.abc import Callable, Mapping
+from datetime import date
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
+
+import ibis
+import ibis.expr.types as ir
 
 from terrine.backends.registry import Engine, expression_dialect, resolve_engine
 from terrine.errors import RefusalSpec, freeze
@@ -16,6 +22,7 @@ from terrine.semantic.models import (
     BoundSource,
     BoundValidity,
     Catalog,
+    Filter,
     PropertyBinding,
     RelationSpec,
 )
@@ -23,7 +30,14 @@ from terrine.semantic.rules import UNSUPPORTED_TEMPORAL_KIND
 from terrine.semantic.sql import DIALECT_MISMATCH
 from terrine.semantic.time import boundary_timezone
 
-__all__ = ["normalize_source", "bind_metric", "normalize_events"]
+__all__ = [
+    "normalize_source",
+    "bind_metric",
+    "normalize_events",
+    "validate_filter_values",
+    "source_filter_predicate",
+    "filter_source_rows",
+]
 
 _SCHEMA = RefusalSpec(
     "terrine.semantic.schema_mismatch",
@@ -31,6 +45,18 @@ _SCHEMA = RefusalSpec(
     "Choose an existing column with the required type, or correct the table before "
     "adding it to the model.",
 )
+_KEY_SCHEMA = RefusalSpec(
+    "terrine.semantic.schema_mismatch",
+    "The {field!r} column {column!r} for unit {unit!r} has type {source_type}, but the "
+    "unit roster key has type {unit_type}. Use matching key types in the source and roster.",
+)
+
+_FILTER_VALUE_SCHEMA = RefusalSpec(
+    "terrine.semantic.schema_mismatch",
+    "Filter value {value!r} for label {label!r} has the wrong type for {label_type}; "
+    "use a value matching the declared label type.",
+)
+_JSON_NUMBER = re.compile(r"(-?)(0|[1-9][0-9]*)(?:\.([0-9]+))?(?:[eE]([+-]?)([0-9]+))?")
 _MISSING = RefusalSpec(
     "terrine.semantic.missing_reference",
     "The model does not declare {reference!r}. "
@@ -79,6 +105,42 @@ def _dtype_ok(dtype: Any, expected: str) -> bool:
     if expected == "date":
         return dtype.is_date()
     return False
+
+
+def validate_filter_values(filt: Filter, dtype: str) -> None:
+    """Refuse filter literals incompatible with their bound property dtype."""
+    for value in filt.values:
+        if value is None:
+            continue
+        if dtype == "string":
+            valid = isinstance(value, str)
+        elif dtype == "bool":
+            valid = isinstance(value, bool)
+        elif dtype == "date":
+            if not isinstance(value, str):
+                valid = False
+            else:
+                try:
+                    valid = date.fromisoformat(value).isoformat() == value
+                except ValueError:
+                    valid = False
+        elif dtype in {"int", "float"}:
+            if isinstance(value, bool):
+                valid = False
+            elif isinstance(value, int):
+                valid = True
+            elif isinstance(value, float):
+                valid = math.isfinite(value)
+            elif isinstance(value, str):
+                valid = _JSON_NUMBER.fullmatch(value) is not None
+            else:
+                valid = False
+        else:
+            valid = False
+        if not valid:
+            raise _FILTER_VALUE_SCHEMA.error(
+                field="where", label=filt.property, value=value, label_type=dtype
+            )
 
 
 def _require_exact_type(
@@ -135,6 +197,22 @@ def normalize_source(
     for name, column in source.units.items():
         if column not in columns:
             raise _SCHEMA.error(field=f"unit {name}", column=column)
+    for filt in source.where:
+        column = filt.property
+        if column not in columns:
+            raise _SCHEMA.error(field="where", column=column)
+        dtype = next(
+            (
+                name
+                for name in ("string", "int", "float", "bool", "date")
+                if _dtype_ok(columns[column], name)
+            ),
+            None,
+        )
+        if dtype is None:
+            raise _SCHEMA.error(field="where", column=column)
+        _require_exact_type(provider, execution_dialect, columns[column], column, engine)
+        validate_filter_values(filt, dtype)
     events = {}
     for name in source.events:
         event = _reference(catalog.events, name, "event")
@@ -228,6 +306,7 @@ def normalize_source(
         tuple(dimensions),
         expression_dialect(engine),
         catalog.day_boundary,
+        source.where,
     )
 
 
@@ -269,6 +348,7 @@ def bind_metric(catalog: Catalog, metric_name: str) -> BoundMetric:
                 raise _MISSING.error(
                     reference=f"filter property {filt.property} on source {event.source}"
                 )
+            validate_filter_values(filt, prop.dtype)
             filters.append(BoundFilter(filt.property, filt.op, tuple(filt.values)))
         bound_measures.append(
             BoundMeasure(
@@ -292,6 +372,21 @@ def bind_metric(catalog: Catalog, metric_name: str) -> BoundMetric:
     )
 
 
+def source_filter_predicate(table: ibis.Table, source: BoundSource) -> ir.BooleanValue:
+    """Preserve unknown membership until the source-integrity check decides it."""
+    from terrine.semantic.filters import lower_filter
+
+    predicate = cast(ir.BooleanValue, ibis.literal(True))
+    for filt in source.where:
+        predicate &= lower_filter(table, filt, table[filt.property])
+    return predicate
+
+
+def filter_source_rows(table: ibis.Table, source: BoundSource) -> ibis.Table:
+    """Select source members before projecting away undeclared filter columns."""
+    return table.filter(source_filter_predicate(table, source)) if source.where else table
+
+
 def normalize_events(
     source_table: Any,
     source: BoundSource,
@@ -300,6 +395,7 @@ def normalize_events(
     extra_columns: Mapping[str, str] | None = None,
 ):
     """Project normalized timestamps, units, declared columns and requested identities."""
+    source_table = filter_source_rows(source_table, source)
     if unit_column not in source.units.values():
         raise _MISSING.error(reference=f"physical unit column:{unit_column}")
     physical = list(source.units.values())

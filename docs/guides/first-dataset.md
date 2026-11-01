@@ -125,11 +125,9 @@ with TemporaryDirectory(prefix="terrine-first-") as directory:
     )
     dataset = design.build(local_model).stage("spend_forecast", budget=budget)
     reopened = tr.Dataset.from_manifest(dataset.manifest, con=local)
-    rows = [
-        row
-        for batch in reopened.to_arrow_batches(batch_size=2)
-        for row in batch.select(["unit", "orders_30d"]).to_pylist()
-    ]
+    rows = reopened.to_pandas(values_only=True)[["unit", "orders_30d"]].to_dict(
+        orient="records"
+    )
     local.disconnect()
 assert sorted(rows, key=lambda row: (row["unit"], row["orders_30d"])) == [
     {"unit": "alice", "orders_30d": 1}, {"unit": "alice", "orders_30d": 2},

@@ -59,7 +59,7 @@ from terrine.spec import Design, Schedule, StatePanel
 
 equivalent = Design(
     None, Schedule("1w", "2025-01-06", "2025-03-30"),
-    features=features, shape=StatePanel(state, max_periods=12),
+    features=features, shape=StatePanel(state, periods=12),
 )
 assert design == equivalent
 ```
@@ -79,7 +79,8 @@ the same suffixes immediately after each value.
 `StateObservations` reads the declared string property only at its exact source timestamp; it never carries a prior value forward. Missing assessments remain missing on both adjacent transitions. A known-null assessment is complete but has no usable state label. Readiness and unit observation bounds are half-open, so the exclusive endpoint is unavailable.
 
 ```python
-from terrine import StateObservations, recipes
+from terrine import recipes
+from terrine.spec import StateObservations
 
 status = StateObservations("status", levels=("active", "closed"), absorbing=("closed",))
 status_panel = recipes.state_panel(
@@ -92,7 +93,7 @@ status_panel = recipes.state_panel(
 ```python
 equivalent_status = Design(
     None, Schedule("1w", "2025-01-06", "2025-03-30"),
-    shape=StatePanel(status, max_periods=12),
+    shape=StatePanel(status, periods=12),
 )
 assert status_panel == equivalent_status
 ```

@@ -19,6 +19,7 @@ from integration.warehouse_execution import test_postgres_windows as windows
 from integration.warehouse_execution.bigquery_fixtures import (
     bigquery_scratch as bigquery_scratch,  # noqa: F401
 )
+from terrine.spec import CohortGrouping, CohortSpec, Trajectory
 
 pytestmark = pytest.mark.bigquery
 
@@ -133,13 +134,13 @@ def test_cohort_summaries_match_duckdb(bigquery_scratch, tmp_path):  # noqa: F81
     shapes._load(duckdb, timestamp_type="TIMESTAMPTZ", amount_type="DECIMAL(10, 2)")
     design = tr.Design(
         "user",
-        tr.EventAnchor("order", which="first"),
-        shape=tr.CohortSpec("order", tr.Trajectory("spend", "1d", periods=2, cumulative=True)),
+        tr.EventAnchor("order", occurrence="first"),
+        shape=CohortSpec("order", Trajectory("spend", "1d", periods=2, cumulative=True)),
         administrative_cutoff=datetime(2025, 1, 6, tzinfo=UTC),
     )
 
     def summary(model, statistic):
-        grouping = tr.CohortGrouping("1d", datetime(2025, 1, 1, tzinfo=UTC), statistic=statistic)
+        grouping = CohortGrouping("1d", datetime(2025, 1, 1, tzinfo=UTC), statistic=statistic)
         cohorts = design.build(model).cohorts(grouping=grouping, value_column="cumulative_value")
         rows = cohorts.to_pyarrow(budget=shapes._BUDGET).to_pylist()
         return sorted(rows, key=lambda row: tuple(str(value) for value in row.values()))

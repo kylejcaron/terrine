@@ -81,7 +81,6 @@ def test_saved_plan_reconstructs_design_and_verifies_owner_model_in_fresh_resolv
             ),
         )
         dataset_definition = DatasetDefinition(
-            schema_version=2,
             base_design=design,
             view={
                 "kind": "training",
@@ -157,21 +156,13 @@ def test_saved_plan_reconstructs_design_and_verifies_owner_model_in_fresh_resolv
 
 
 def test_saved_plan_creation_refuses_approximate_quantile_design():
-    from decimal import Decimal
 
-    from terrine.spec import SketchRequest, approx_quantile
+    from terrine.spec import approx_quantile
 
     design = Design(
         "user",
         FixedDate("2025-01-15"),
-        features={
-            "q": approx_quantile(
-                "total",
-                "0.5",
-                window=("-1d", "0d"),
-                sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
-            )
-        },
+        features={"q": approx_quantile("total", "0.5", window=("-1d", "0d"))},
     )
     plan = plan_refresh(
         namespace="runtime",
@@ -380,7 +371,7 @@ def test_saved_plan_round_trips_typed_dataset_view():
                 "parent_design_hash": design.spec_hash,
             },
         ):
-            typed = DatasetDefinition(schema_version=2, base_design=design, view=view)
+            typed = DatasetDefinition(base_design=design, view=view)
             saved = SavedPlan.create(
                 plan_json=plan.serialize(),
                 design=design,

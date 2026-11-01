@@ -1,5 +1,4 @@
 from datetime import UTC, datetime
-from decimal import Decimal
 
 import pandas as pd
 import pytest
@@ -15,6 +14,10 @@ from terrine.spec import (
     Initiation,
     StateObservations,
     Treatment,
+    approx_distinct,
+    approx_quantile,
+    quantile,
+    retention,
 )
 from terrine.spec.anchors import Schedule
 from terrine.spec.panels import CalendarComparisonSpec
@@ -164,6 +167,28 @@ def test_describe_names_every_part_of_the_readme_design(readme_con):
         assert f"{column}__reason" in text
 
 
+def test_describe_states_naive_times_are_utc(shapes_model):
+    model = tr.Model.from_catalog(
+        shapes_model.catalog.model_copy(update={"day_boundary": "UTC+05:30"}),
+        con=shapes_model.con,
+        units=shapes_model.units,
+        readiness={name: tr.Coverage(*_COMPLETE) for name in shapes_model.sources},
+    )
+    design = Design(
+        None,
+        FixedDate("2025-02-01"),
+        features={
+            "spend_before": tr.agg("spend", window=("-30d", "0s")),
+            "baseline_plan": tr.asof("plan"),
+        },
+    )
+    completeness = design.describe(model).split("Completeness:", 1)[1].split("Columns:", 1)[0]
+    facts = [" ".join(line.split()) for line in completeness.splitlines()]
+    assert any("naive" in line.lower() and "UTC" in line for line in facts)
+    assert any("purchase" in line for line in facts)
+    assert any("plan" in line for line in facts)
+
+
 @pytest.mark.parametrize("name", ["readme", *_DESIGNS])
 def test_describe_runs_no_query(name, shapes_model, readme_con, monkeypatch):
     model = readme_model(readme_con) if name == "readme" else shapes_model
@@ -231,10 +256,11 @@ def test_describe_reads_expression_metadata_and_only_required_sources(shapes_mod
         FixedDate("2025-02-01"),
         features={
             "paid": tr.agg("paid_spend", window=("-30d", "-1d")),
-            "median": tr.quantile("spend", "0.5", window=("-30d", "-1d")),
-            "distinct": tr.approx_distinct("spend", window=("-30d", "-1d")),
+            "median": quantile("spend", "0.5", window=("-30d", "-1d")),
+            "distinct": approx_distinct("spend", window=("-30d", "-1d")),
             "plan_before": tr.asof("plan", before="-2d"),
             "relative": tr.agg("spend", window=("-3d", "0s"), relative_to=selector),
+            "recency": tr.since("purchase", window=("-180d", "-1d")),
             "checked": tr.event_time(
                 "checkups",
                 window=("-8d", "-1d"),
@@ -272,6 +298,9 @@ def test_describe_reads_expression_metadata_and_only_required_sources(shapes_mod
         "- 3d",
         "- 5d",
         "- 9d",
+        "since",
+        "last",
+        "- 180d",
         "> 4",
         "==",
     ):
@@ -290,7 +319,7 @@ def test_describe_retains_calendar_clamping_and_bounds_long_schedules(shapes_mod
 def test_describe_carries_anchor_offsets_ranges_and_signed_asof(shapes_model):
     design = Design(
         None,
-        EventAnchor("signup", which="nth", n=3, offset="2d"),
+        EventAnchor("signup", occurrence="nth", n=3, offset="2d"),
         features={"previous_plan": tr.asof("plan", before="-4d")},
         treatment=Treatment("plan", at="-3d"),
         anchor_range=AnchorRange("2025-01-05", "2025-01-31"),
@@ -325,7 +354,7 @@ def test_describe_retention_names_identity_bands_and_horizon(shapes_model):
         None,
         FixedDate("2025-02-01"),
         outcomes={
-            "followup": tr.retention(
+            "followup": retention(
                 "checkups",
                 label_property="health",
                 target_event="well",
@@ -339,20 +368,42 @@ def test_describe_retention_names_identity_bands_and_horizon(shapes_model):
         assert value in text
 
 
-def test_describe_approximate_quantile_names_the_declared_sketch(shapes_model):
-    from importlib.metadata import version
-
-    from terrine.spec import SketchRequest
-
+def test_describe_approximate_quantile_names_the_fixed_policy(shapes_model):
     pytest.importorskip("datasketches")
-    sketch = SketchRequest("tdigest", version("datasketches"), Decimal("0.01"))
     design = Design(
         None,
         FixedDate("2025-02-01"),
-        features={
-            "upper": tr.approx_quantile("spend", "0.9", window=("-30d", "0s"), sketch=sketch)
+        features={"upper": approx_quantile("spend", "0.9", window=("-30d", "0s"))},
+    )
+    text = " ".join(design.describe(shapes_model).split())
+    for value in ("upper", "purchase.amount", "tdigest", "200", "no guaranteed rank bound", "0.9"):
+        assert value in text
+
+
+def test_describe_names_roster_attribute_and_needs_no_event_coverage():
+    model = tr.Model.from_tables(
+        units={
+            "user": tr.UnitSource(
+                pd.DataFrame({"user_id": ["u1"], "channel": ["web"]}),
+                "user_id",
+                attributes=("channel",),
+            )
+        },
+        events={
+            "activity": tr.Events(
+                pd.DataFrame({"user_id": ["u1"], "occurred_at": pd.to_datetime(["2025-01-10"])}),
+                time="occurred_at",
+                key="user_id",
+                complete=_COMPLETE,
+            )
         },
     )
-    text = design.describe(shapes_model)
-    for value in ("upper", "purchase.amount", "tdigest", sketch.version, "0.01", "0.9"):
-        assert value in text
+    design = Design(
+        "user",
+        FixedDate("2025-04-01"),
+        features={"channel": tr.asof("channel")},
+    )
+    text = design.describe(model)
+    assert "static unit attribute" in text
+    assert "channel" in text
+    assert "activity" not in text

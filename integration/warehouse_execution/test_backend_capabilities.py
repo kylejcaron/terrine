@@ -12,7 +12,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from terrine import retention
 from terrine.data import Budget, Coverage, MaterializedFrame, UnitSource
 from terrine.errors import TerrineError, thaw
 from terrine.execution.backend import backend_capabilities
@@ -32,6 +31,7 @@ from terrine.spec import (
     event_time,
     from_json,
     quantile,
+    retention,
     to_json,
 )
 from terrine.spec.expressions import RetentionMetric
@@ -195,7 +195,7 @@ def test_cohort_collection_observes_fresh_snapshot_and_budget():
     try:
         frame = Design(
             "user",
-            EventAnchor("purchase", which="first"),
+            EventAnchor("purchase", occurrence="first"),
             shape=CohortSpec(
                 origin="purchase",
                 trajectory=Trajectory("net_revenue", "7d", periods=3, cumulative=True),
@@ -220,7 +220,7 @@ def test_cohort_collection_observes_fresh_snapshot_and_budget():
         assert operation is not None
         assert operation.parent_design_hash == frame._design.spec_hash
         assert operation.value_column == "cumulative_value"
-        restored = MaterializedFrame.from_arrow(result.to_arrow())
+        restored = MaterializedFrame.from_arrow(result.to_pyarrow())
         assert restored.provenance.cohort_operation == operation
         with pytest.raises(TerrineError) as error:
             cohorts.materialize(budget=Budget(max_rows=1, max_output_bytes=100_000))
@@ -234,7 +234,7 @@ def test_cohort_table_reuses_parent_ltv_relation_and_provenance():
     try:
         frame = Design(
             "user",
-            EventAnchor("purchase", which="first"),
+            EventAnchor("purchase", occurrence="first"),
             shape=CohortSpec(
                 origin="purchase",
                 trajectory=Trajectory("net_revenue", "7d", periods=1, cumulative=False),
@@ -263,7 +263,7 @@ def test_repeated_first_entry_events_count_one_cohort_member():
         )
         frame = Design(
             "user",
-            EventAnchor("purchase", which="first"),
+            EventAnchor("purchase", occurrence="first"),
             shape=CohortSpec(
                 origin="purchase",
                 trajectory=Trajectory("net_revenue", "7d", periods=1, cumulative=False),
@@ -293,7 +293,7 @@ def test_cohort_summary_surrogate_export_retains_age_and_denominators():
         cohort = (
             Design(
                 "user",
-                EventAnchor("purchase", which="first"),
+                EventAnchor("purchase", occurrence="first"),
                 shape=CohortSpec(
                     origin="purchase",
                     trajectory=Trajectory("net_revenue", "7d", periods=2, cumulative=False),
@@ -320,7 +320,7 @@ def test_trajectory_preserves_event_feature_timing_through_arrow_round_trip():
     try:
         frame = Design(
             "user",
-            EventAnchor("purchase", which="first"),
+            EventAnchor("purchase", occurrence="first"),
             features={
                 "prior_revenue": agg("net_revenue", window=("-1d", "0s")),
                 "purchase_time": event_time("purchase", window=("-1d", "0s")),
@@ -375,7 +375,7 @@ def test_sequential_anticipation_extends_control_risk_horizon(native_inputs):
     panel = frame.provenance.panel
     assert panel is not None
     assert panel.anticipation_seconds == 2 * 86_400
-    restored_panel = type(frame).from_arrow(frame.to_arrow()).provenance.panel
+    restored_panel = type(frame).from_arrow(frame.to_pyarrow()).provenance.panel
     assert restored_panel is not None
     assert restored_panel.anticipation_seconds == 2 * 86_400
 
@@ -440,9 +440,7 @@ def test_all_shapes_build_materialize_and_arrow_round_trip(native_inputs):
         treatment=treatment,
     )
     event_panel = EventPanel(
-        Design("user", EventAnchor("session", "first")),
-        periods=(-1, 0),
-        period_seconds=86_400,
+        Design("user", EventAnchor("session", "first")), periods=(-1, 0), period="1d"
     )
 
     assert from_json(to_json(sequential)) == sequential
@@ -450,7 +448,7 @@ def test_all_shapes_build_materialize_and_arrow_round_trip(native_inputs):
         materialized = design.build(model).materialize(
             Budget(max_rows=20, max_output_bytes=100_000)
         )
-        restored = MaterializedFrame.from_arrow(materialized.to_arrow())
+        restored = MaterializedFrame.from_arrow(materialized.to_pyarrow())
         assert restored.table.equals(materialized.table)
         assert restored.provenance.shape == (
             "sequential" if design is sequential else "event_panel"
@@ -506,7 +504,7 @@ def test_named_retention_roundtrip_frame_matches_independent_occurrences(retenti
     assert from_json(to_json(design)) == from_yaml(to_yaml(design)) == design
     assert from_json(to_json(design)).spec_hash == design.spec_hash
     result = design.build(retention_model).materialize()
-    table = result.to_arrow()
+    table = result.to_pyarrow()
     meta = result.columns["retained"]
     rows = {row["unit"]: row for row in table.to_pylist()}
     events = (

@@ -10,7 +10,7 @@ import pyarrow as pa
 import pytest
 
 from terrine import recipes
-from terrine.data import BoundCoverage, Budget, Coverage, Events, History, UnitSource
+from terrine.data import BoundCoverage, Budget, Coverage, EventMetric, Events, History, UnitSource
 from terrine.dataset import GroupSplit, TimeSplit
 from terrine.errors import TerrineError
 from terrine.spec import (
@@ -30,7 +30,6 @@ from terrine.spec import (
     Schedule,
     Sequential,
     SequentialSpec,
-    SketchRequest,
     StateObservations,
     StatePanel,
     TimeToEvent,
@@ -59,8 +58,8 @@ CASES = [
     # anchors
     (
         "terrine.design.invalid",
-        lambda: EventAnchor("purchase", which="last"),
-        {"reason": "unsupported_value", "field": "which", "choices": ("first", "each", "nth")},
+        lambda: EventAnchor("purchase", occurrence=cast(Any, "last")),
+        {"reason": "unsupported_value", "field": "occurrence", "choices": ("first", "each", "nth")},
     ),
     (
         "terrine.design.invalid",
@@ -69,8 +68,23 @@ CASES = [
     ),
     (
         "terrine.design.invalid",
+        lambda: FixedDate("04/01/2025"),
+        {
+            "reason": "invalid_date",
+            "field": "date",
+            "value": "04/01/2025",
+            "expected": ("YYYY-MM-DD", "timezone-aware datetime"),
+        },
+    ),
+    (
+        "terrine.design.invalid",
         lambda: Schedule("1d", "2025-01-01T00:00:00Z", "2025-02-01"),
-        {"reason": "invalid_date", "field": "start"},
+        {
+            "reason": "invalid_date",
+            "field": "start",
+            "value": "2025-01-01T00:00:00Z",
+            "expected": ("YYYY-MM-DD",),
+        },
     ),
     (
         "terrine.design.invalid",
@@ -81,7 +95,52 @@ CASES = [
     (
         "terrine.design.invalid",
         lambda: AnchorRange(start=datetime(2025, 1, 1)),
-        {"reason": "naive_datetime", "field": "start"},
+        {
+            "reason": "naive_datetime",
+            "field": "start",
+            "value": "2025-01-01T00:00:00",
+            "expected": ("timezone-aware datetime",),
+        },
+    ),
+    (
+        "terrine.model.invalid_binding",
+        lambda: Coverage("04/01/2025", "2025-01-02"),
+        {
+            "reason": "invalid_date",
+            "field": "start",
+            "value": "04/01/2025",
+            "expected": ("YYYY-MM-DD",),
+        },
+    ),
+    (
+        "terrine.model.invalid_binding",
+        lambda: Coverage(cast(Any, Decimal("1")), "2025-01-02"),
+        {
+            "reason": "invalid_date",
+            "field": "start",
+            "value": "Decimal('1')",
+            "expected": ("YYYY-MM-DD",),
+        },
+    ),
+    (
+        "terrine.model.invalid_binding",
+        lambda: Coverage(cast(Any, float("nan")), "2025-01-02"),
+        {
+            "reason": "invalid_date",
+            "field": "start",
+            "value": "nan",
+            "expected": ("YYYY-MM-DD",),
+        },
+    ),
+    (
+        "terrine.design.invalid",
+        lambda: FixedDate(cast(Any, float("nan"))),
+        {
+            "reason": "wrong_type",
+            "field": "date",
+            "value": "nan",
+            "expected": ("YYYY-MM-DD", "timezone-aware datetime"),
+        },
     ),
     # design and treatment
     (
@@ -96,8 +155,41 @@ CASES = [
     ),
     (
         "terrine.design.invalid",
+        lambda: Design(
+            "user",
+            FixedDate("2025-01-01"),
+            features={"x": cast(Any, EventMetric("count", None, ()))},
+        ),
+        {
+            "reason": "metric_declaration",
+            "field": "features",
+            "name": "x",
+            "got": "EventMetric",
+            "expected": "Events(metrics=...) + tr.agg",
+        },
+    ),
+    (
+        "terrine.design.invalid",
         lambda: Design("user", FixedDate("2025-01-01"), features={"x": cast(Any, "orders")}),
-        {"reason": "wrong_type", "field": "features", "name": "x"},
+        {
+            "reason": "wrong_type",
+            "field": "features",
+            "name": "x",
+            "got": "str",
+            "expected": (
+                "MetricAgg",
+                "MetricQuantile",
+                "ApproxMetricQuantile",
+                "ApproxMetricDistinct",
+                "RetentionMetric",
+                "AttributeAsOf",
+                "EventTime",
+                "Gt",
+                "Eq",
+                "IsNull",
+                "And",
+            ),
+        },
     ),
     (
         "terrine.design.invalid",
@@ -131,13 +223,12 @@ CASES = [
         {"reason": "not_json_scalar", "field": "value"},
     ),
     ("terrine.design.invalid", lambda: all_of(), {"reason": "empty", "field": "terms"}),
+    # trajectories, cohorts and time to event
     (
         "terrine.design.invalid",
-        lambda: SketchRequest("tdigest", "1", Decimal(0)),
-        {"reason": "not_positive", "field": "rank_error"},
+        lambda: TimeToEvent(""),
+        {"reason": "empty_name", "field": "end_event"},
     ),
-    # trajectories, cohorts and time to event
-    ("terrine.design.invalid", lambda: TimeToEvent(""), {"reason": "empty_name", "field": "event"}),
     (
         "terrine.design.invalid",
         lambda: Trajectory("spend", "1d", 0),
@@ -171,7 +262,7 @@ CASES = [
     ),
     (
         "terrine.design.invalid",
-        lambda: EventPanelSpec((0, 1), 86_400, -1),
+        lambda: EventPanelSpec((0, 1), "1d", -1),
         {"reason": "undeclared_name", "field": "reference_period"},
     ),
     (
@@ -205,8 +296,8 @@ CASES = [
     ),
     (
         "terrine.state_panel.invalid_state_source",
-        lambda: StatePanel(StateObservations("health", ("well", "ill")), max_periods=0),
-        {"reason": "not_positive_integer", "field": "max_periods"},
+        lambda: StatePanel(StateObservations("health", ("well", "ill")), periods=0),
+        {"reason": "not_positive_integer", "field": "periods"},
     ),
     # sequences (already coded) and dataset definitions
     (
@@ -216,14 +307,14 @@ CASES = [
     ),
     (
         "terrine.dataset.invalid_definition",
-        lambda: DatasetDefinition(schema_version=2, base_design=cast(Any, None)),
+        lambda: DatasetDefinition(base_design=cast(Any, None)),
         {"reason": "wrong_type", "field": "base_design"},
     ),
     # design documents
     ("terrine.design.invalid", lambda: from_json(b"{"), {"reason": "malformed_document"}),
     (
         "terrine.design.invalid",
-        lambda: from_json('{"schema_version":2,"design":{"unit":"u","anchor":{"type":"Future"}}}'),
+        lambda: from_json('{"schema_version":3,"design":{"unit":"u","anchor":{"type":"Future"}}}'),
         {"reason": "malformed_document"},
     ),
     (
@@ -267,7 +358,7 @@ CASES = [
     (
         "terrine.model.invalid_binding",
         lambda: Coverage("2025-01-31", "2025-01-01"),
-        {"reason": "through_before_start", "field": "through"},
+        {"reason": "end_before_start", "field": "end"},
     ),
     (
         "terrine.model.invalid_binding",
@@ -307,18 +398,18 @@ CASES = [
     # the field names the parameter the caller passed, in the constructor's own order
     (
         "terrine.design.invalid",
-        lambda: EventPanelSpec((0, 1), 0, 0),
-        {"reason": "not_positive_integer", "field": "period_seconds"},
+        lambda: EventPanelSpec((0, 1), "0s", 0),
+        {"reason": "not_positive", "field": "period"},
     ),
     (
         "terrine.design.invalid",
-        lambda: SequentialSpec(_INITIATION, None, -1),
-        {"reason": "negative", "field": "anticipation_seconds"},
+        lambda: SequentialSpec(_INITIATION, None, "-1s"),
+        {"reason": "negative", "field": "anticipation"},
     ),
     (
         "terrine.design.invalid",
         lambda: LifeTable(TimeToEvent("churn"), 0),
-        {"reason": "not_positive", "field": "interval"},
+        {"reason": "not_positive", "field": "bin"},
     ),
     (
         "terrine.design.invalid",
@@ -328,7 +419,7 @@ CASES = [
     (
         "terrine.design.invalid",
         lambda: recipes.event_panel(event="purchase", periods=(-1, 0), period=0),
-        {"reason": "not_positive_integer", "field": "period"},
+        {"reason": "not_positive", "field": "period"},
     ),
     (
         "terrine.design.invalid",
@@ -349,7 +440,7 @@ CASES = [
     (
         "terrine.window.invalid_duration",
         lambda: LifeTable(TimeToEvent("churn"), "1mo"),
-        {"field": "interval", "value": "1mo"},
+        {"field": "bin", "value": "1mo"},
     ),
     (
         "terrine.design.invalid",
@@ -385,7 +476,7 @@ CASES = [
     (
         "terrine.model.invalid_binding",
         lambda: Events("orders", time="at", key="id", complete=("2025-01-31", "2025-01-01")),
-        {"reason": "through_before_start", "field": "complete"},
+        {"reason": "end_before_start", "field": "complete"},
     ),
     # a value that is not a collection where one is iterated refuses instead of a bare TypeError
     (
@@ -406,7 +497,7 @@ CASES = [
     ),
     (
         "terrine.design.invalid",
-        lambda: EventPanelSpec(cast(Any, 5), 1, 0),
+        lambda: EventPanelSpec(cast(Any, 5), "1s", 0),
         {"reason": "wrong_type", "field": "periods"},
     ),
     (
@@ -434,7 +525,6 @@ CASES = [
     (
         "terrine.dataset.invalid_definition",
         lambda: DatasetDefinition(
-            schema_version=2,
             base_design=Design("user", FixedDate("2025-01-01")),
             transforms=cast(Any, 5),
         ),
@@ -475,3 +565,36 @@ def test_missing_reference_lists_available_names(readme_con):
         design.validate(readme_model(readme_con))
     assert caught.value.code == "terrine.design.missing_reference"
     assert caught.value.context["available"] == ("orders", "spend")
+    for restored in (copy.deepcopy(caught.value), pickle.loads(pickle.dumps(caught.value))):
+        assert restored.context == caught.value.context
+
+
+def test_misspelled_metric_suggests_the_close_name(readme_con):
+    design = Design(
+        "customer",
+        FixedDate("2025-02-01"),
+        features={"x": agg("spned", window=("-1d", "0s"))},
+    )
+    with pytest.raises(TerrineError) as caught:
+        design.validate(readme_model(readme_con))
+    assert caught.value.context["suggestions"] == ("spend",)
+    for restored in (copy.deepcopy(caught.value), pickle.loads(pickle.dumps(caught.value))):
+        assert restored.context == caught.value.context
+
+
+def test_advertised_date_forms_are_accepted():
+    from datetime import date
+
+    aware = datetime(2025, 1, 1, tzinfo=UTC)
+    assert FixedDate("2025-01-01").date == date(2025, 1, 1)
+    assert FixedDate("2025-01-01T00:00:00Z").date == aware
+    assert AnchorRange(start="2025-01-01T00:00:00Z").start == aware
+    assert Schedule("1d", "2025-01-01", "2025-01-02").start == date(2025, 1, 1)
+    assert Coverage("2025-01-01", "2025-01-02").start == date(2025, 1, 1)
+    assert FixedDate(date(2025, 1, 1)).date == date(2025, 1, 1)
+    assert AnchorRange(start=date(2025, 1, 1)).start == date(2025, 1, 1)
+    assert FixedDate(aware).date == aware
+    assert AnchorRange(start=aware).start == aware
+    assert AnchorRange(start="2025-01-01").start == date(2025, 1, 1)
+    assert Schedule("1d", date(2025, 1, 1), date(2025, 1, 2)).start == date(2025, 1, 1)
+    assert Coverage(date(2025, 1, 1), date(2025, 1, 2)).start == date(2025, 1, 1)

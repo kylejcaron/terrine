@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import ibis
+import pyarrow as pa
+import pytest
 import yaml
 
+import terrine as tr
 from terrine import recipes
+from terrine.data import UnitSource
 from terrine.model import Model
 from terrine.spec import (
     CohortSpec,
@@ -16,7 +22,8 @@ from terrine.spec import (
     event_time,
 )
 from terrine.spec.trajectory import Trajectory
-from tests.semantic.test_from_tables import WINDOW, create_tables, rich_model
+from tests.semantic.test_from_tables import WINDOW, create_tables, orders, rich_model
+from tests.semantic.test_from_tables import con as con
 
 
 def _rebound(model: Model) -> Model:
@@ -32,6 +39,33 @@ def _rebound(model: Model) -> Model:
 def _table(model, design):
     frame = design.build(model)
     return model.con.to_pyarrow(frame.expr.order_by("unit"))
+
+
+def test_roster_attribute_is_available_as_of_t0_outside_event_coverage(con):
+    con.create_table(
+        "customer_channels",
+        pa.table({"customer_id": ["alice", "bob"], "channel": ["web", "store"]}),
+    )
+    model = Model.from_tables(
+        con,
+        units={"customer": UnitSource("customer_channels", "customer_id", attributes=("channel",))},
+        events={"orders": orders()},
+    )
+    table = (
+        Design(
+            "customer",
+            FixedDate("2025-02-10"),
+            features={"channel": asof("channel")},
+        )
+        .build(model)
+        .to_pyarrow()
+        .to_pydict()
+    )
+    assert dict(zip(table["unit"], table["channel"], strict=True)) == {
+        "alice": "web",
+        "bob": "store",
+    }
+    assert table["channel__complete"] == [True, True]
 
 
 def test_to_catalog_round_trip_builds_equal_dataset():
@@ -94,7 +128,7 @@ def test_from_tables_ltv_cumulative_age_zero_includes_origin_event():
         model = rich_model(con)
         low_level = Design(
             "customer",
-            EventAnchor("orders", which="first"),
+            EventAnchor("orders", occurrence="first"),
             shape=CohortSpec("orders", Trajectory("spend", "7d", periods=2, cumulative=True)),
         )
         design = recipes.ltv(
@@ -121,3 +155,238 @@ def test_from_tables_ltv_cumulative_age_zero_includes_origin_event():
         }
     finally:
         con.disconnect()
+
+
+@pytest.fixture
+def mixed_events():
+    con = ibis.duckdb.connect()
+    con.raw_sql("""
+        CREATE TABLE customers AS SELECT * FROM (VALUES ('a'), ('b')) c(id);
+        CREATE TABLE events AS
+        SELECT id, ts::TIMESTAMPTZ AS ts, kind, status, amount::BIGINT AS amount, tier
+        FROM (VALUES
+            ('a', '2025-01-01 00:00:00+00', 'signup', NULL, 0, 'excluded'),
+            ('a', '2025-01-03 00:00:00+00', 'purchase', 'paid', 10, 'basic'),
+            ('a', '2025-01-04 00:00:00+00', 'purchase', 'paid', 20, 'pro'),
+            ('a', '2025-01-05 00:00:00+00', 'signup', NULL, 1000, 'excluded'),
+            ('b', '2025-01-02 00:00:00+00', 'signup', NULL, 0, 'excluded'),
+            ('b', '2025-01-05 00:00:00+00', 'purchase', 'paid', 30, 'basic')
+        ) e(id, ts, kind, status, amount, tier);
+        CREATE TABLE signups AS SELECT * FROM events WHERE kind = 'signup';
+        CREATE TABLE purchases AS SELECT * FROM events WHERE kind = 'purchase';
+    """)
+
+    def bind(*, separated=False, kind="purchase"):
+        return tr.Model.from_tables(
+            con,
+            units={"customer": tr.UnitSource("customers", "id")},
+            events={
+                "signup": tr.Events(
+                    "signups" if separated else "events",
+                    time="ts",
+                    key="id",
+                    complete=("2025-01-01", "2025-01-10"),
+                    where=None if separated else {"kind": "signup"},
+                ),
+                "purchase": tr.Events(
+                    "purchases" if separated else "events",
+                    time="ts",
+                    key="id",
+                    complete=("2025-01-01", "2025-01-10"),
+                    labels=("tier",),
+                    metrics={"n": tr.count(), "spend": tr.sum("amount")},
+                    where=None if separated else {"kind": kind, "status": "paid"},
+                ),
+            },
+        )
+
+    try:
+        yield con, bind
+    finally:
+        con.disconnect()
+
+
+def test_filtered_events_split_one_table_into_event_kinds(mixed_events):
+    con, bind = mixed_events
+    events = con.to_pyarrow(con.table("events"))
+    model = tr.Model.from_tables(
+        units={"customer": tr.UnitSource(con.to_pyarrow(con.table("customers")), "id")},
+        events={
+            kind: tr.Events(
+                events,
+                time="ts",
+                key="id",
+                where={"kind": kind},
+                complete=("2025-01-01", "2025-01-10"),
+            )
+            for kind in ("signup", "purchase")
+        },
+    )
+    try:
+        design = recipes.survival(start_event="signup", end_event="purchase")
+        filtered = design.build(model).materialize().table.sort_by("unit")
+        separated = design.build(bind(separated=True)).materialize().table.sort_by("unit")
+        assert filtered.equals(separated)
+        assert filtered["duration"].cast("int64").to_pylist() == [
+            2 * 86400_000000,
+            3 * 86400_000000,
+        ]
+        assert filtered["event"].to_pylist() == [True, True]
+    finally:
+        model.con.disconnect()
+
+
+def test_filtered_events_apply_to_metrics_selectors_anchors_and_label_asof(mixed_events):
+    _, bind = mixed_events
+    design = Design(
+        "customer",
+        tr.EventAnchor("purchase", occurrence="first"),
+        outcomes={
+            "n": agg("n", window=("0s", "5d")),
+            "spend": agg("spend", window=("0s", "5d")),
+            "last": event_time("purchase", window=("0s", "5d"), occurrence="last"),
+        },
+    )
+    filtered = design.build(bind()).materialize().table.sort_by("unit")
+    separated = design.build(bind(separated=True)).materialize().table.sort_by("unit")
+    assert filtered.equals(separated)
+    rows = filtered.to_pylist()
+    assert [(r["t0"].day, r["n"], r["spend"]) for r in rows] == [(3, 2, 30), (5, 1, 30)]
+    assert [r["last"] for r in rows] == [
+        datetime(2025, 1, 4, tzinfo=UTC),
+        datetime(2025, 1, 5, tzinfo=UTC),
+    ]
+    label_design = Design("customer", FixedDate("2025-01-06"), features={"tier": asof("tier")})
+    filtered_labels = label_design.build(bind()).materialize().table.sort_by("unit")
+    separated_labels = label_design.build(bind(separated=True)).materialize().table.sort_by("unit")
+    assert filtered_labels.equals(separated_labels)
+    assert filtered_labels["tier"].to_pylist() == ["pro", "basic"]
+
+
+def test_undeclared_filter_column_reaches_daily_and_prefix_metrics(mixed_events):
+    _, bind = mixed_events
+    design = recipes.time_series(
+        every="1d",
+        start="2025-01-04",
+        end="2025-01-06",
+        features={
+            "daily": agg("spend", window=("-1d", "0s")),
+            "prefix": agg("spend", window=("-3d", "0s")),
+            "count": agg("n", window=("-3d", "0s")),
+        },
+    )
+    order = [("unit", "ascending"), ("t0", "ascending")]
+    filtered = design.build(bind()).materialize().table.sort_by(order)
+    separated = design.build(bind(separated=True)).materialize().table.sort_by(order)
+    assert filtered.equals(separated)
+    assert filtered["daily"].to_pylist() == [10, 20, 0, 0, 0, 30]
+    assert filtered["prefix"].to_pylist() == [10, 30, 30, 0, 0, 30]
+
+
+def test_changing_a_source_filter_changes_feature_identity(mixed_events):
+    from terrine.dataset import TimeSplit
+    from terrine.errors import TerrineError
+    from terrine.frame import _feature_definition_hash
+
+    _, bind = mixed_events
+    original, changed = bind(), bind(kind="signup")
+    design = recipes.time_series(
+        every="1d",
+        start="2025-01-04",
+        end="2025-01-06",
+        features={
+            "spend": agg("spend", window=("-1d", "0s")),
+            "tier": asof("tier", before="0s"),
+            "last": event_time("purchase", window=("-3d", "0s")),
+        },
+        outcomes={"label": agg("n", window=("0s", "1d"))},
+    )
+    for feature in ("spend", "tier", "last"):
+        assert _feature_definition_hash(design, (feature,), original) != (
+            _feature_definition_hash(design, (feature,), changed)
+        )
+    frame = design.build(original).training_set(
+        label="label",
+        features=("spend",),
+        split=TimeSplit(train_until="2025-01-05", validation_until="2025-01-06"),
+    )
+    fitted = frame.fit_winsorization("spend", lower="0", upper="1")
+    with pytest.raises(TerrineError) as error:
+        design.build(changed).winsorize(fitted)
+    assert error.value.code == "terrine.transform.winsorization_identity_mismatch"
+
+
+def test_roster_attribute_survives_catalog_rebind(con):
+    con.create_table(
+        "customer_channels",
+        pa.table({"customer_id": ["alice", "bob"], "channel": ["web", "store"]}),
+    )
+    units = {"customer": tr.UnitSource("customer_channels", "customer_id", attributes=("channel",))}
+    model = Model.from_tables(con, units=units, events={"orders": orders()})
+    restored = _rebound(model)
+    design = Design(
+        "customer",
+        FixedDate("2025-02-10"),
+        features={"channel": asof("channel")},
+    )
+    assert design.build(restored).to_pyarrow()["channel"].to_pylist() == ["web", "store"]
+
+
+def test_integer_key_widths_join_events_and_history(con):
+    con.create_table("int_users", pa.table({"user_id": pa.array([1, 2], pa.int32())}))
+    con.create_table(
+        "integer_orders",
+        pa.table(
+            {
+                "user_id": pa.array([1, 1, 2], pa.int64()),
+                "at": pa.array(
+                    [datetime(2025, 1, 2), datetime(2025, 1, 3), datetime(2025, 1, 3)],
+                    pa.timestamp("us"),
+                ),
+            }
+        ),
+    )
+    con.create_table(
+        "integer_plans",
+        pa.table(
+            {
+                "user_id": pa.array([1, 2], pa.int64()),
+                "plan": ["pro", "free"],
+                "starts": pa.array([datetime(2025, 1, 1)] * 2, pa.timestamp("us")),
+                "ends": pa.array([datetime(2025, 2, 1)] * 2, pa.timestamp("us")),
+            }
+        ),
+    )
+    model = Model.from_tables(
+        con,
+        units={"user": UnitSource("int_users", "user_id")},
+        events={
+            "orders": tr.Events(
+                "integer_orders",
+                time="at",
+                key="user_id",
+                metrics={"orders": tr.count()},
+                complete=("2025-01-01", "2025-01-31"),
+            )
+        },
+        history={
+            "plan": tr.History(
+                "integer_plans",
+                key="user_id",
+                column="plan",
+                valid_from="starts",
+                valid_to="ends",
+                complete=("2025-01-01", "2025-01-31"),
+            )
+        },
+    )
+    design = Design(
+        "user",
+        FixedDate("2025-01-10"),
+        features={"orders": agg("orders", window=("-9d", "0s")), "plan": asof("plan")},
+    )
+    rows = design.build(model).to_pyarrow().select(["unit", "orders", "plan"]).to_pylist()
+    assert rows == [
+        {"unit": 1, "orders": 2, "plan": "pro"},
+        {"unit": 2, "orders": 1, "plan": "free"},
+    ]

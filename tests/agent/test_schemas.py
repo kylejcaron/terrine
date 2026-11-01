@@ -103,7 +103,7 @@ def test_discovery_schema_accepts_boolean_features_and_outcomes():
     Draft202012Validator(design_schema()).validate(json.loads(to_json(design)))
 
 
-@pytest.mark.parametrize("variant", ["binned", "calendar", "funnel", "event_time"])
+@pytest.mark.parametrize("variant", ["binned", "calendar", "funnel", "event_time", "elapsed"])
 def test_discovery_schema_matches_existing_tagged_codec(variant):
     from datetime import UTC, datetime
     from decimal import Decimal
@@ -125,7 +125,7 @@ def test_discovery_schema_matches_existing_tagged_codec(variant):
             Schedule("1d", "2025-01-01", "2025-01-04"),
             shape=StatePanel(
                 BinnedMetricState("total", (1, Decimal("1.25"), 2.5), ("a", "b", "c", "d")),
-                max_periods=4,
+                periods=4,
             ),
         )
     elif variant == "calendar":
@@ -145,14 +145,21 @@ def test_discovery_schema_matches_existing_tagged_codec(variant):
             "user",
             FixedDate("2025-01-01"),
             shape=EventSequence(
-                "value", Window(-10, 0), max_events=5, funnel=FunnelSpec("action", ("a", "b"))
+                "value", Window("-10s", 0), max_events=5, funnel=FunnelSpec("action", ("a", "b"))
             ),
         )
     else:
         design = Design(
             "user",
             FixedDate("2025-01-01"),
-            features={"when": EventTime("value", Window(-10, 0), occurrence="last")},
+            features={
+                "when": EventTime(
+                    "value",
+                    Window("-10s", 0),
+                    occurrence="last",
+                    measure="elapsed" if variant == "elapsed" else "time",
+                )
+            },
         )
     payload = json.loads(to_json(design))
     validator = Draft202012Validator(design_schema())

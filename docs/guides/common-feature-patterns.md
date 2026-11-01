@@ -19,7 +19,7 @@ import terrine as tr
 
 scratch = TemporaryDirectory(prefix="terrine-patterns-")
 con = ibis.duckdb.connect(f"{scratch.name}/patterns.duckdb")
-con.raw_sql("CREATE TABLE users AS SELECT * FROM (VALUES ('a'), ('b'), ('c')) t(user_id)")
+con.raw_sql("CREATE TABLE users AS SELECT * FROM (VALUES ('a', 'web'), ('b', 'store'), ('c', 'referral')) t(user_id, channel)")
 con.raw_sql("""
     CREATE TABLE events AS SELECT * FROM (VALUES
         ('a', TIMESTAMP '2025-01-15 12:00:00', 'visit', 'bronze'),
@@ -31,7 +31,7 @@ con.raw_sql("""
 """)
 model = tr.Model.from_tables(
     con,
-    units={"user": tr.UnitSource("users", "user_id")},
+    units={"user": tr.UnitSource("users", "user_id", attributes=("channel",))},
     events={"activity": tr.Events(
         "events", time="occurred_at", key="user_id",
         labels=("kind", "tier"),
@@ -102,10 +102,23 @@ eligible_rows = tr.recipes.time_series(
 
 ## Attributes at t0
 
-`asof(..., before="0s")` selects the last known attribute strictly before t0,
-not an arbitrary current value. The setup declares `tier` as a label, so its
-value is carried from the event log: the last event before t0 supplies it. For
-authoritative validity intervals, bind a history table with `tr.History`
+Roster attributes are authoritative static values, available even when event
+tables have no complete coverage at the anchor. `asof` uses a strict-before-t0
+cutoff by default; `before="0s"` therefore does not leak a change at t0. The
+`tier` example below remains an event-time label, while `channel` comes from
+the roster:
+
+```python
+attribute_rows = tr.recipes.time_series(
+    every="1d", start="2025-02-01", end="2025-02-01",
+    features={
+        "tier_at_t0": tr.asof("tier"),
+        "channel_at_t0": tr.asof("channel"),
+    },
+).build(model).to_pandas()
+```
+
+For authoritative validity intervals, bind a history table with `tr.History`
 ([effective-time semantics](temporal-attributes.md)).
 
 ```python
@@ -117,20 +130,25 @@ attribute_rows = tr.recipes.time_series(
 
 ## Recency from the last event
 
-Use `occurrence="last"` for the most recent event in a bounded lookback.
-Subtract its timestamp from t0 in the compact pandas view to obtain an elapsed
-duration. Preserve the selector's support columns: no event is not zero recency.
-This derived pandas column is not a new Terrine expression or saved definition.
+Use `tr.since` to return an Arrow duration from the most recent event to t0.
+Its default `occurrence="last"` searches a half-open lookback, excluding events
+exactly at t0. No event in a complete window is a known null (`__complete=True`,
+`__reason` null); incomplete coverage remains null with `incomplete_coverage`.
+The selected timestamp is retained in Arrow observation metadata.
 
 ```python
 recency_rows = tr.recipes.time_series(
     every="1d", start="2025-02-01", end="2025-02-01",
-    features={"last_seen": tr.event_time(
-        "activity", window=("-30d", "0s"), occurrence="last",
-    )},
+    features={"recency": tr.since("activity", window=("-30d", "0s"))},
 ).build(model).to_pandas()
-recency_rows["recency"] = recency_rows["t0"] - recency_rows["last_seen"]
 ```
+
+Filter recency thresholds on the returned dataframe, not in `eligibility` or
+other Terrine predicates. Elapsed selectors cannot be relative origins.
+Frames containing them refuse `.expr`, because the warehouse graph still holds
+selected timestamps: use `.materialize()`, `.stage()` or the dataframe readers.
+Use per-row features rather than state-panel baseline features; cohort
+trajectories and life-table grouping do not retain the required output-row t0.
 
 ## True/false labels
 

@@ -143,7 +143,7 @@ def test_quantile_frame_matches_independent_numpy_type7_and_null_reasons(nonaddi
         features={"p25": quantile("amount", "0.25", window=("-1d", "0d"))},
     )
     result = design.build(nonadditive_model).materialize()
-    rows = result.to_arrow().sort_by("unit").to_pylist()
+    rows = result.to_pyarrow().sort_by("unit").to_pylist()
     oracle = numpy_type7([1, 2, 2, 8], 0.25)
     assert rows[0]["p25"] == Decimal("1.75")
     assert float(rows[0]["p25"]) == oracle
@@ -162,7 +162,7 @@ def test_nonadditive_window_is_half_open_at_intraday_anchor(nonadditive_model):
         features={"p50": quantile("amount", "0.5", window=("-1h", "0h"))},
     )
     result = design.build(nonadditive_model).materialize()
-    rows = result.to_arrow().sort_by("unit").to_pylist()
+    rows = result.to_pyarrow().sort_by("unit").to_pylist()
     assert [row["p50"] for row in rows] == [Decimal("1.00"), None, None]
     reason_column = result.columns["p50"].reason_column
     assert [row[reason_column] for row in rows] == [None, "no_observations", "no_observations"]
@@ -174,7 +174,7 @@ def test_exact_probability_scale_is_not_narrowed_to_backend_default(nonadditive_
         FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),
         features={"q": quantile("amount", "0.0001", window=("-1d", "0d"))},
     )
-    rows = design.build(nonadditive_model).materialize().to_arrow().sort_by("unit").to_pylist()
+    rows = design.build(nonadditive_model).materialize().to_pyarrow().sort_by("unit").to_pylist()
     assert rows[0]["q"] == Decimal("1.0003")
 
 
@@ -184,7 +184,7 @@ def test_decimal_quantile_preserves_interpolation_digits(nonadditive_model):
         FixedDate(datetime(2025, 1, 2, 11, 30, tzinfo=UTC)),
         features={"q": quantile("decimal_amount", "0.5", window=("-2h", "0h"))},
     )
-    rows = design.build(nonadditive_model).materialize().to_arrow().sort_by("unit").to_pylist()
+    rows = design.build(nonadditive_model).materialize().to_pyarrow().sort_by("unit").to_pylist()
     assert rows[0]["q"] == Decimal("1.005")
 
 
@@ -194,7 +194,7 @@ def test_uint64_quantile_reserves_twenty_integer_digits(nonadditive_model):
         FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),
         features={"q": quantile("wide_amount", "0.5", window=("-1d", "0d"))},
     )
-    rows = design.build(nonadditive_model).materialize().to_arrow().sort_by("unit").to_pylist()
+    rows = design.build(nonadditive_model).materialize().to_pyarrow().sort_by("unit").to_pylist()
     assert rows[0]["q"] == Decimal("4.0")
 
 
@@ -204,7 +204,7 @@ def test_nonadditive_fact_alias_does_not_collide_with_analysis_unit(nonadditive_
         FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),
         features={"distinct": agg("collision_distinct", window=("-1d", "0d"))},
     )
-    rows = design.build(nonadditive_model).materialize().to_arrow().sort_by("unit").to_pylist()
+    rows = design.build(nonadditive_model).materialize().to_pyarrow().sort_by("unit").to_pylist()
     assert [row["distinct"] for row in rows] == [3, 1, 0]
 
 
@@ -215,7 +215,7 @@ def test_naive_utc_source_timestamp_is_not_shifted_by_session_timezone(nonadditi
         FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),
         features={"q": quantile("naive_amount", "0.25", window=("-1d", "0d"))},
     )
-    rows = design.build(nonadditive_model).materialize().to_arrow().sort_by("unit").to_pylist()
+    rows = design.build(nonadditive_model).materialize().to_pyarrow().sort_by("unit").to_pylist()
     assert rows[0]["q"] == Decimal("1.75")
 
 
@@ -229,7 +229,7 @@ def test_min_max_and_distinct_windows_preserve_empty_and_null_rows(nonadditive_m
             "distinct": agg("amount_distinct", window=("-1d", "0d")),
         },
     )
-    rows = design.build(nonadditive_model).materialize().to_arrow().sort_by("unit").to_pylist()
+    rows = design.build(nonadditive_model).materialize().to_pyarrow().sort_by("unit").to_pylist()
     assert [(row["minimum"], row["maximum"], row["distinct"]) for row in rows] == [
         (1, 8, 3),
         (None, None, 0),
@@ -243,11 +243,11 @@ def test_quantile_probability_extends_over_nonadditive_measure_facts(nonadditive
         FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),
         features={"q": quantile("amount_min", "0.25", window=("-1d", "0d"))},
     )
-    rows = design.build(nonadditive_model).materialize().to_arrow().sort_by("unit").to_pylist()
+    rows = design.build(nonadditive_model).materialize().to_pyarrow().sort_by("unit").to_pylist()
     assert rows[0]["q"] == Decimal("1.75")
 
 
-def test_reanchored_nonadditive_feature_cutoff_uses_absolute_selector_support(nonadditive_model):
+def test_nonzero_feature_cutoff_survives_build_and_arrow_metadata(nonadditive_model):
     from terrine.spec import event_time
 
     selector = event_time("value", window=("-3d", "-2d"))
@@ -256,8 +256,10 @@ def test_reanchored_nonadditive_feature_cutoff_uses_absolute_selector_support(no
         FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),
         features={"minimum": agg("amount_min", window=("0d", "1d"), relative_to=selector)},
     )
-    frame = design.build(nonadditive_model)
-    assert frame._compiled.feature_cutoffs["minimum"].latest_seconds == -86_400
+    materialized = design.build(nonadditive_model).materialize()
+    assert materialized.provenance.feature_cutoffs["minimum"].latest_seconds == -86_400
+    restored = type(materialized).from_arrow(materialized.to_pyarrow())
+    assert restored.provenance.feature_cutoffs["minimum"].latest_seconds == -86_400
 
 
 def test_quantile_refuses_probability_scale_exceeding_exact_rank_budget(nonadditive_model):
@@ -289,7 +291,7 @@ def test_persisted_quantile_uses_raw_events_without_prefix_layer(nonadditive_mod
 
 
 def test_approximate_distinct_executes_in_duckdb_and_marks_column_metadata(nonadditive_model):
-    from terrine import Frame
+    from terrine.frame import Frame
     from terrine.spec import approx_distinct
 
     design = Design(
@@ -315,20 +317,13 @@ def test_approximate_quantile_frame_matches_type7_tolerance_and_is_reproducible(
     nonadditive_model,
 ):
     pytest.importorskip("datasketches")
-    from terrine import Frame
-    from terrine.spec import SketchRequest, approx_quantile
+    from terrine.frame import Frame
+    from terrine.spec import approx_quantile
 
     design = Design(
         "user",
         FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),
-        features={
-            "q": approx_quantile(
-                "amount",
-                "0.5",
-                window=("-1d", "0d"),
-                sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
-            )
-        },
+        features={"q": approx_quantile("amount", "0.5", window=("-1d", "0d"))},
     )
     first = Frame(design, nonadditive_model).materialize()
     second = Frame(design, nonadditive_model).materialize()
@@ -343,26 +338,19 @@ def test_approximate_quantile_frame_matches_type7_tolerance_and_is_reproducible(
     assert metadata.error_description == "t-digest empirical, no guaranteed bound"
     from terrine.data import MaterializedFrame
 
-    assert MaterializedFrame.from_arrow(first.to_arrow()).columns == first.columns
+    assert MaterializedFrame.from_arrow(first.to_pyarrow()).columns == first.columns
     assert metadata.version == "5.2.0"
 
 
 def test_approximate_quantile_preserves_incomplete_window_nulls(nonadditive_model):
     pytest.importorskip("datasketches")
-    from terrine import Frame
-    from terrine.spec import SketchRequest, approx_quantile
+    from terrine.frame import Frame
+    from terrine.spec import approx_quantile
 
     design = Design(
         "user",
         FixedDate("2025-01-04"),
-        features={
-            "q": approx_quantile(
-                "amount",
-                "0.5",
-                window=("-2d", "0d"),
-                sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
-            )
-        },
+        features={"q": approx_quantile("amount", "0.5", window=("-2d", "0d"))},
     )
     frame = Frame(design, nonadditive_model).materialize()
     meta = frame.columns["q"]
@@ -374,15 +362,10 @@ def test_approximate_quantile_preserves_incomplete_window_nulls(nonadditive_mode
 
 def test_approximate_quantile_populates_reused_expression_aliases(nonadditive_model):
     pytest.importorskip("datasketches")
-    from terrine import Frame
-    from terrine.spec import SketchRequest, approx_quantile
+    from terrine.frame import Frame
+    from terrine.spec import approx_quantile
 
-    expression = approx_quantile(
-        "amount",
-        "0.5",
-        window=("-1d", "0d"),
-        sketch=SketchRequest("tdigest", "5.2.0", Decimal("0.01")),
-    )
+    expression = approx_quantile("amount", "0.5", window=("-1d", "0d"))
     design = Design(
         "user",
         FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),

@@ -7,11 +7,11 @@ import json
 import os
 import tempfile
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from terrine.errors import RefusalSpec, freeze, parameter_names, thaw
+from terrine.errors import INVALID_VIEW, RefusalSpec, freeze, parameter_names, thaw
 from terrine.spec.design import Design
 from terrine.spec.io import SCHEMA_VERSION as DESIGN_SCHEMA_VERSION
 from terrine.spec.io import canonical_json as design_json
@@ -28,7 +28,7 @@ __all__ = [
     "UNSUPPORTED_VIEW",
 ]
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 INVALID_DEFINITION = RefusalSpec(
     "terrine.dataset.invalid_definition", "Invalid dataset definition: {reason}"
@@ -36,7 +36,6 @@ INVALID_DEFINITION = RefusalSpec(
 _INVALID_INPUT = RefusalSpec(
     "terrine.dataset.invalid_definition", "Dataset definition input {field} is invalid: {reason}."
 )
-INVALID_VIEW = RefusalSpec("terrine.dataset.invalid_view", "Invalid dataset view: {reason}.")
 UNSUPPORTED_VIEW = RefusalSpec(
     "terrine.dataset.unsupported_view",
     "Unsupported dataset view: {reason}.",
@@ -49,14 +48,35 @@ def _canonical(value: Any) -> bytes:
     ).encode("utf-8")
 
 
+def _validate_schema_version(value: Any) -> None:
+    if type(value) is not int or value != SCHEMA_VERSION:
+        raise INVALID_DEFINITION.error(
+            reason="unsupported_schema_version",
+            field="schema_version",
+            expected=SCHEMA_VERSION,
+            schema_version=value,
+        )
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class DatasetDefinition:
     """Save a versioned design with its selected view and fixed transforms.
 
-    Example: tr.DatasetDefinition(schema_version=2, base_design=design)
+    Args:
+        base_design: Design whose rows and expressions are saved in the dataset definition.
+        view: Recorded training/scoring view mapping; None saves the full design.
+        transforms: Tuple of fixed or training-fitted Winsorization declarations; () applies none.
+
+    Attributes:
+        schema_version: Current version of the portable dataset-definition format.
+        base_design: Design whose rows and expressions are saved in the dataset definition.
+        view: Recorded training/scoring view mapping; None saves the full design.
+        transforms: Tuple of fixed or training-fitted Winsorization declarations; () applies none.
+
+    Example: spec.DatasetDefinition(base_design=design)
     """
 
-    schema_version: int
+    schema_version: int = field(init=False, default=SCHEMA_VERSION)
     base_design: Design
     view: Any
     transforms: tuple[Winsorization, ...]
@@ -64,13 +84,10 @@ class DatasetDefinition:
     def __init__(
         self,
         *,
-        schema_version: int,
         base_design: Design,
         view: Any = None,
         transforms: tuple[Winsorization, ...] = (),
     ) -> None:
-        if schema_version != SCHEMA_VERSION or isinstance(schema_version, bool):
-            raise INVALID_DEFINITION.error(reason="unsupported schema version")
         if not isinstance(base_design, Design):
             raise _INVALID_INPUT.error(reason="wrong_type", field="base_design")
         if view is not None:
@@ -127,7 +144,6 @@ class DatasetDefinition:
         if design is self.base_design:
             return self
         return DatasetDefinition(
-            schema_version=SCHEMA_VERSION,
             base_design=design,
             view=thaw(self.view),
             transforms=self.transforms,
@@ -180,16 +196,13 @@ class DatasetDefinition:
                 "view",
             }:
                 raise ValueError("unknown definition fields")
-            version = payload["schema_version"]
-            if version != SCHEMA_VERSION or isinstance(version, bool):
-                raise ValueError("unsupported definition version")
+            _validate_schema_version(payload["schema_version"])
             design = design_from_json(
                 _canonical(
                     {"schema_version": DESIGN_SCHEMA_VERSION, "design": payload["base_design"]}
                 )
             )
             return cls(
-                schema_version=SCHEMA_VERSION,
                 base_design=design,
                 view=payload["view"],
                 transforms=tuple(
@@ -206,7 +219,18 @@ class DatasetDefinition:
 class DatasetDefinitionReference:
     """Identify an immutable dataset definition by owner and content digest.
 
-    Example: spec.DatasetDefinitionReference("analytics", definition.digest)
+    Args:
+        owner: Nonempty name identifying the data owner of this definition store.
+        digest: Content digest identifying one immutable dataset definition.
+
+    Attributes:
+        owner: Nonempty name identifying the data owner of this definition store.
+        digest: Content digest identifying one immutable dataset definition.
+
+    Example:
+        spec.DatasetDefinitionReference(
+            "analytics", spec.DatasetDefinition(base_design=design).digest
+        )
     """
 
     owner: str
@@ -227,7 +251,18 @@ class DatasetDefinitionReference:
 class DatasetDefinitionStore:
     """Store immutable dataset definitions locally for one data owner.
 
-    Example: spec.DatasetDefinitionStore(Path("definitions"), owner="analytics")
+    Args:
+        root: Path to the local directory containing immutable definition documents.
+        owner: Nonempty name identifying the data owner of this definition store.
+
+    Attributes:
+        root: Path to the local directory containing immutable definition documents.
+        owner: Nonempty name identifying the data owner of this definition store.
+
+    Example:
+        from pathlib import Path
+
+        spec.DatasetDefinitionStore(Path("definitions"), owner="analytics")
     """
 
     root: Path

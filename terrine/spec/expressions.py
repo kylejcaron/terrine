@@ -6,16 +6,16 @@ import math
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from typing import Literal
 
 from terrine.errors import RefusalSpec, parameter_names
-from terrine.windows import Window, seconds
+from terrine.windows import Window, duration, seconds
 
 __all__ = [
     "Expr",
     "Predicate",
     "MetricAgg",
     "MetricQuantile",
-    "SketchRequest",
     "ApproxMetricDistinct",
     "ApproxMetricQuantile",
     "RetentionMetric",
@@ -32,6 +32,7 @@ __all__ = [
     "approx_distinct",
     "asof",
     "event_time",
+    "since",
     "gt",
     "eq",
     "is_null",
@@ -45,6 +46,10 @@ _SKETCH_UNAVAILABLE = RefusalSpec(
 )
 _INVALID = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
 _CHOICE = RefusalSpec("terrine.design.invalid", "Design input {field} must be one of {choices}.")
+_ELAPSED_SELECTOR = RefusalSpec(
+    "terrine.design.invalid",
+    "Elapsed event selectors cannot be used here ({reason}). {route}",
+)
 
 
 def _probability(value: Decimal | str, field: str) -> Decimal:
@@ -76,6 +81,11 @@ def _window(value: object) -> None:
 def _relative_to(value: object) -> None:
     if value is not None and not isinstance(value, EventTime):
         raise _INVALID.error(reason="wrong_type", field="relative_to")
+    if isinstance(value, EventTime) and value.measure == "elapsed":
+        raise _ELAPSED_SELECTOR.error(
+            reason="elapsed_selector_as_origin",
+            route="Use event_time() for an origin and since() only as a feature or outcome.",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +93,7 @@ class MetricQuantile:
     metric: str
     probability: Decimal
     window: Window
-    interpolation: str = "linear_type7"
+    interpolation: Literal["linear_type7"] = "linear_type7"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "metric", _name(self.metric, "metric"))
@@ -96,38 +106,15 @@ class MetricQuantile:
 
 
 @dataclass(frozen=True, slots=True)
-class SketchRequest:
-    """Request a versioned quantile sketch with an explicit rank-error limit.
-
-    Example: tr.SketchRequest("tdigest", version("datasketches"), Decimal("0.01"))
-    """
-
-    algorithm: str
-    version: str
-    rank_error: Decimal
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "algorithm", _name(self.algorithm, "algorithm"))
-        object.__setattr__(self, "version", _name(self.version, "version"))
-        error = _probability(self.rank_error, "rank_error")
-        if error == 0:
-            raise _INVALID.error(reason="not_positive", field="rank_error")
-        object.__setattr__(self, "rank_error", error)
-
-
-@dataclass(frozen=True, slots=True)
 class ApproxMetricQuantile:
     metric: str
     probability: Decimal
     window: Window
-    sketch: SketchRequest
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "metric", _name(self.metric, "metric"))
         object.__setattr__(self, "probability", _probability(self.probability, "probability"))
         _window(self.window)
-        if not isinstance(self.sketch, SketchRequest):
-            raise _INVALID.error(reason="wrong_type", field="sketch")
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,18 +200,49 @@ class AttributeAsOf:
 class EventTime:
     """Select an event time within a window relative to t0 or another event time.
 
-    Example: tr.EventTime("orders", tr.Window("-30d", "0s"))
+    Args:
+        event: Name of an event declared in the model.
+        window: Window of elapsed offsets (see `terrine.windows`), including start and excluding
+            end.
+        label_property: Declared event label name to match; None selects events without a label
+            filter.
+        equals: Scalar label value paired with label_property; None means no label filter.
+        occurrence: Selection rule "first", "last" or "nth"; "first" selects the earliest matching
+            time.
+        n: Positive one-based occurrence index for "nth"; None is required for other rules.
+        relative_to: EventTime providing the origin; None makes offsets relative to row t0.
+        measure: "time" returns an instant; "elapsed" returns time from the event to t0; default
+            "time".
+
+    Attributes:
+        event: Name of an event declared in the model.
+        window: Window of elapsed offsets (see `terrine.windows`), including start and excluding
+            end.
+        label_property: Declared event label name to match; None selects events without a label
+            filter.
+        equals: Scalar label value paired with label_property; None means no label filter.
+        occurrence: Selection rule "first", "last" or "nth"; "first" selects the earliest matching
+            time.
+        n: Positive one-based occurrence index for "nth"; None is required for other rules.
+        relative_to: EventTime providing the origin; None makes offsets relative to row t0.
+        measure: "time" returns an instant; "elapsed" returns time from the event to t0; default
+            "time".
+
+    Example: from terrine.windows import Window; spec.EventTime("orders", Window("-30d", "0s"))
     """
 
     event: str
     window: Window
     label_property: str | None = None
     equals: JsonScalar = None
-    occurrence: str = "first"
+    occurrence: Literal["first", "last", "nth"] = "first"
     n: int | None = None
     relative_to: EventTime | None = None
+    measure: Literal["time", "elapsed"] = "time"
 
     def __post_init__(self) -> None:
+        if self.measure not in ("time", "elapsed"):
+            raise _INVALID.error(reason="unsupported_measure", field="measure")
         object.__setattr__(self, "event", _name(self.event, "event"))
         _window(self.window)
         if (self.label_property is None) != (self.equals is None):
@@ -257,11 +275,11 @@ class Gt:
 
 @dataclass(frozen=True, slots=True)
 class Eq:
-    left: Expr
+    expr: Expr
     value: JsonScalar
 
     def __post_init__(self) -> None:
-        _require_expr(self.left, "left")
+        _require_expr(self.expr, "expr")
         object.__setattr__(self, "value", _scalar(self.value, "value"))
 
 
@@ -308,9 +326,7 @@ def _output_leaves(value: Expr | Predicate) -> Iterator[Expr]:
     if isinstance(value, And):
         for term in value.terms:
             yield from _output_leaves(term)
-    elif isinstance(value, Eq):
-        yield value.left
-    elif isinstance(value, (Gt, IsNull)):
+    elif isinstance(value, (Gt, Eq, IsNull)):
         yield value.expr
     else:
         yield value
@@ -357,9 +373,14 @@ def _require_expr(value: object, field: str) -> None:
         ),
     ):
         raise _INVALID.error(reason="wrong_type", field=field)
+    if isinstance(value, EventTime) and value.measure == "elapsed":
+        raise _ELAPSED_SELECTOR.error(
+            reason="elapsed_selector_in_predicate",
+            route="Output since() as a feature or outcome, then filter the returned dataframe.",
+        )
 
 
-def _window_pair(value: object) -> tuple[str | int, str | int]:
+def _window_pair(value: object) -> tuple[str | Literal[0], str | Literal[0]]:
     if not isinstance(value, (tuple, list)) or len(value) != 2:
         raise _INVALID.error(reason="not_a_pair", field="window")
     return value[0], value[1]
@@ -368,10 +389,20 @@ def _window_pair(value: object) -> tuple[str | int, str | int]:
 def agg(
     metric: str,
     *,
-    window: tuple[str | int, str | int],
+    window: tuple[str | Literal[0], str | Literal[0]],
     relative_to: EventTime | None = None,
 ) -> MetricAgg:
     """Aggregate a named metric over a half-open window relative to t0 or an event time.
+
+
+    Args:
+        metric: Name of a metric declared in the model.
+        window: Pair of start/end duration string (see `terrine.windows`) offsets; start included,
+            end excluded.
+        relative_to: EventTime providing the origin; None makes offsets relative to row t0.
+
+    Returns:
+        A MetricAgg expression; values and completeness are computed on materialization.
 
     Example: tr.agg("spend", window=("-30d", "0s"))
     """
@@ -385,13 +416,27 @@ def retention(
     label_property: str,
     target_event: str,
     thresholds: tuple[int, ...],
-    horizon: str | int,
+    horizon: str | Literal[0, "open_ended"],
 ) -> RetentionMetric:
     """Return the highest threshold band reached by distinct target events.
 
     Follow-up ends at the horizon or, for ``"open_ended"``, the last complete event time.
 
-    Example: tr.retention("orders", label_property="customer_id", **followup)
+    Args:
+        event: Name of an event declared in the model.
+        label_property: Declared event label distinguishing the target event type.
+        target_event: String label value identifying events counted toward retention thresholds.
+        thresholds: Strictly increasing tuple of positive integer occurrence-count thresholds.
+        horizon: Positive duration string (see `terrine.windows`) or "open_ended" for complete
+            history.
+
+    Returns:
+        A RetentionMetric expression selecting the highest reached occurrence-count band.
+
+    Example:
+        spec.retention(
+            "orders", label_property="status", target_event="paid", thresholds=(1, 2), horizon="30d"
+        )
     """
     with parameter_names(count_thresholds="thresholds", finite_horizon_seconds="horizon"):
         return RetentionMetric(
@@ -399,7 +444,7 @@ def retention(
             label_property,
             target_event,
             thresholds,
-            None if horizon == "open_ended" else seconds(horizon, field="horizon"),
+            None if horizon == "open_ended" else duration(horizon, field="horizon"),
         )
 
 
@@ -407,12 +452,23 @@ def quantile(
     metric: str,
     probability: Decimal | str,
     *,
-    window: tuple[str | int, str | int],
-    interpolation: str = "linear_type7",
+    window: tuple[str | Literal[0], str | Literal[0]],
+    interpolation: Literal["linear_type7"] = "linear_type7",
 ) -> MetricQuantile:
     """Request an exact quantile over a window of a metric's integer or Decimal event values.
 
-    Example: tr.quantile("spend", "0.5", window=("-30d", "0s"))
+    Args:
+        metric: Name of a metric declared in the model.
+        probability: Decimal or decimal string in [0, 1]; binary floats are refused.
+        window: Pair of start/end duration string (see `terrine.windows`) offsets; start included,
+            end excluded.
+        interpolation: Only "linear_type7" is accepted; the default linearly interpolates
+            neighboring order statistics.
+
+    Returns:
+        A MetricQuantile expression; exact integer/Decimal inputs retain exact quantile semantics.
+
+    Example: spec.quantile("spend", "0.5", window=("-30d", "0s"))
     """
     start, end = _window_pair(window)
     return MetricQuantile(
@@ -424,26 +480,43 @@ def approx_quantile(
     metric: str,
     probability: Decimal | str,
     *,
-    window: tuple[str | int, str | int],
-    sketch: SketchRequest,
+    window: tuple[str | Literal[0], str | Literal[0]],
 ) -> ApproxMetricQuantile:
-    """Request an approximate event-value quantile over a window with a declared sketch.
+    """Request an approximate event-value quantile using the installed t-digest package.
 
-    Example: tr.approx_quantile("spend", "0.5", window=("-30d", "0s"), sketch=sketch)
+    Args:
+        metric: Name of a metric declared in the model.
+        probability: Decimal or decimal string in [0, 1]; binary floating-point inputs are refused.
+        window: Pair of start/end duration string (see `terrine.windows`) offsets; start included,
+            end excluded.
+
+    Returns:
+        An ApproxMetricQuantile expression using the installed t-digest implementation.
+
+    Example: spec.approx_quantile("spend", "0.5", window=("-30d", "0s"))
     """
     start, end = _window_pair(window)
     return ApproxMetricQuantile(
         _name(metric, "metric"),
         _probability(probability, "probability"),
         Window(start, end),
-        sketch,
     )
 
 
-def approx_distinct(metric: str, *, window: tuple[str | int, str | int]) -> ApproxMetricDistinct:
+def approx_distinct(
+    metric: str, *, window: tuple[str | Literal[0], str | Literal[0]]
+) -> ApproxMetricDistinct:
     """Request an approximate distinct-value count for a metric over a window.
 
-    Example: tr.approx_distinct("spend", window=("-30d", "0s"))
+    Args:
+        metric: Name of a metric declared in the model.
+        window: Pair of start/end duration string (see `terrine.windows`) offsets; start included,
+            end excluded.
+
+    Returns:
+        An ApproxMetricDistinct expression with approximation metadata.
+
+    Example: spec.approx_distinct("spend", window=("-30d", "0s"))
     """
     start, end = _window_pair(window)
     return ApproxMetricDistinct(_name(metric, "metric"), Window(start, end))
@@ -452,27 +525,57 @@ def approx_distinct(metric: str, *, window: tuple[str | int, str | int]) -> Appr
 def asof(
     attribute: str,
     *,
-    before: str | int,
+    before: str = "0s",
     relative_to: EventTime | None = None,
 ) -> AttributeAsOf:
-    """Read an attribute's history strictly before a time relative to t0 or an event.
+    """Read the value in effect just before the cutoff, never at or after it.
+
+    The cutoff is t0 + before, or the selected event time + before. A change
+    effective exactly at t0 is invisible with before="0s", by design, to prevent
+    leakage. Positive cutoffs outside treatment raise terrine.design.gap_violation.
+    There is no inclusive as-of form.
+
+    Args:
+        attribute: Declared static roster attribute, event label or history attribute name.
+        before: Cutoff offset as a duration string (see `terrine.windows`); "0s" reads just before
+            the origin.
+        relative_to: EventTime providing the origin; None makes offsets relative to row t0.
+
+    Returns:
+        An AttributeAsOf expression carrying strict cutoff semantics and completeness.
 
     Example: tr.asof("plan", before="0s")
     """
-    return AttributeAsOf(attribute, seconds(before, field="before"), relative_to)
+    return AttributeAsOf(attribute, duration(before, field="before"), relative_to)
 
 
 def event_time(
     event: str,
     *,
-    window: tuple[str | int, str | int],
+    window: tuple[str | Literal[0], str | Literal[0]],
     label_property: str | None = None,
     equals: JsonScalar = None,
-    occurrence: str = "first",
+    occurrence: Literal["first", "last", "nth"] = "first",
     n: int | None = None,
     relative_to: EventTime | None = None,
 ) -> EventTime:
     """Select the first, last or nth event time in a window, optionally matching a label.
+
+
+    Args:
+        event: Name of an event declared in the model.
+        window: Pair of start/end duration string (see `terrine.windows`) offsets; start included,
+            end excluded.
+        label_property: Declared event label name to match; None selects events without a label
+            filter.
+        equals: Scalar label value paired with label_property; None means no label filter.
+        occurrence: Selection rule "first", "last" or "nth"; "first" selects the earliest matching
+            time.
+        n: Positive one-based occurrence index for "nth"; None is required for other rules.
+        relative_to: EventTime providing the origin; None makes offsets relative to row t0.
+
+    Returns:
+        An EventTime expression; materialization returns the selected timestamp or a reasoned null.
 
     Example: tr.event_time("orders", window=("-30d", "0s"))
     """
@@ -480,24 +583,88 @@ def event_time(
     return EventTime(event, Window(start, end), label_property, equals, occurrence, n, relative_to)
 
 
+def since(
+    event: str,
+    *,
+    window: tuple[str | Literal[0], str | Literal[0]],
+    label_property: str | None = None,
+    equals: JsonScalar = None,
+    occurrence: Literal["first", "last", "nth"] = "last",
+    n: int | None = None,
+) -> EventTime:
+    """Measure elapsed time from the selected event to t0.
+
+    Returns an Arrow duration after materialization. Filter recency thresholds on
+    the returned dataframe; elapsed selectors cannot be predicate operands or
+    relative origins. Frame.expr is unavailable: use materialize(), stage(), or
+    the dataframe readers instead.
+
+
+    Args:
+        event: Name of an event declared in the model.
+        window: Pair of start/end duration string (see `terrine.windows`) offsets; start included,
+            end excluded.
+        label_property: Declared event label name to match; None selects events without a label
+            filter.
+        equals: Scalar label value paired with label_property; None means no label filter.
+        occurrence: "first", "last" or "nth"; "last" measures recency from the latest matching
+            event.
+        n: Positive one-based occurrence index for "nth"; None is required for other rules.
+
+    Returns:
+        An EventTime elapsed expression; materialization returns an Arrow duration or a reasoned
+        null.
+
+    Example: tr.since("orders", window=("-30d", "0s"))
+    """
+    start, end = _window_pair(window)
+    return EventTime(
+        event, Window(start, end), label_property, equals, occurrence, n, measure="elapsed"
+    )
+
+
 def gt(expr: Expr, value: JsonScalar) -> Gt:
     """Require an expression's value to be greater than a literal.
+
+
+    Args:
+        expr: Measured expression to compare; elapsed since() selectors are not predicate operands.
+        value: Literal scalar value to compare with the expression.
+
+    Returns:
+        A greater-than Predicate for output columns or eligibility rules.
 
     Example: tr.gt(tr.agg("orders", window=("-30d", "0s")), 0)
     """
     return Gt(expr, value)
 
 
-def eq(left: Expr, value: JsonScalar) -> Eq:
+def eq(expr: Expr, value: JsonScalar) -> Eq:
     """Require an expression's value to equal a literal.
+
+
+    Args:
+        expr: Measured expression to compare; elapsed since() selectors are not predicate operands.
+        value: Literal scalar value to compare with the expression.
+
+    Returns:
+        An equality Predicate for output columns or eligibility rules.
 
     Example: tr.eq(tr.agg("orders", window=("-30d", "0s")), 1)
     """
-    return Eq(left, value)
+    return Eq(expr, value)
 
 
 def is_null(expr: Expr, *, negate: bool = False) -> IsNull:
     """Test whether an expression is null, or non-null when ``negate=True``.
+
+
+    Args:
+        expr: Measured expression to compare; elapsed since() selectors are not predicate operands.
+        negate: Whether to require a non-null value instead; False tests for null.
+
+    Returns:
+        A null-check Predicate for output columns or eligibility rules.
 
     Example: tr.is_null(tr.event_time("orders", window=("-30d", "0s")))
     """
@@ -506,6 +673,13 @@ def is_null(expr: Expr, *, negate: bool = False) -> IsNull:
 
 def all_of(*terms: Predicate) -> And:
     """Require every supplied eligibility predicate to hold.
+
+
+    Args:
+        *terms: One or more Predicate arguments; every term must hold for the combined rule to hold.
+
+    Returns:
+        An And predicate combining every supplied term.
 
     Example: tr.all_of(tr.gt(tr.agg("orders", window=("-30d", "0s")), 0))
     """

@@ -8,7 +8,7 @@ import pyarrow as pa
 import terrine as tr
 from terrine import recipes
 from terrine.data import MaterializedFrame
-from terrine.spec import BinnedMetricState, agg
+from terrine.spec import BinnedMetricState, StateObservations, agg
 
 
 def main() -> None:
@@ -115,7 +115,7 @@ def main() -> None:
         materialized = design.build(model).materialize(
             tr.Budget(max_rows=10_000, max_output_bytes=8_000_000)
         )
-        restored = MaterializedFrame.from_arrow(materialized.to_arrow())
+        restored = MaterializedFrame.from_arrow(materialized.to_pyarrow())
         panel_meta = restored.provenance.state_panel
         assert panel_meta is not None
         assert panel_meta.levels == ("inactive", "occasional", "regular", "power")
@@ -130,7 +130,7 @@ def main() -> None:
         print(restored.table.select(["unit", "period_index", "from_state", "to_state", "terminal"]))
         status_design = recipes.state_panel(
             "user",
-            state_source=tr.StateObservations(
+            state_source=StateObservations(
                 "status", levels=("active", "closed"), absorbing=("closed",)
             ),
             every="1w",
@@ -140,7 +140,7 @@ def main() -> None:
         status_frame = status_design.build(model).materialize(
             tr.Budget(max_rows=10_000, max_output_bytes=8_000_000)
         )
-        status_restored = MaterializedFrame.from_arrow(status_frame.to_arrow())
+        status_restored = MaterializedFrame.from_arrow(status_frame.to_pyarrow())
         status_meta = status_restored.provenance.state_panel
         assert status_meta is not None
         assert status_meta.levels == ("active", "closed")

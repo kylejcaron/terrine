@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import ibis
 import pytest
@@ -10,6 +10,14 @@ import pytest
 import terrine as tr
 from integration.warehouse_execution.postgres_fixtures import (
     postgres_scratch as postgres_scratch,  # noqa: F401
+)
+from terrine.spec import (
+    CohortGrouping,
+    CohortSpec,
+    StateObservations,
+    StatePanel,
+    TimeToEvent,
+    Trajectory,
 )
 
 pytestmark = pytest.mark.postgres
@@ -124,7 +132,10 @@ _DESIGNS = {
     "last_event_time": tr.Design(
         "user",
         tr.FixedDate("2025-01-04T00:00:00+00:00"),
-        features={"last_order_at": tr.event_time("order", window=("-4d", "0s"), occurrence="last")},
+        features={
+            "last_order_at": tr.event_time("order", window=("-4d", "0s"), occurrence="last"),
+            "recency": tr.since("order", window=("-4d", "0s")),
+        },
     ),
     "schedule": tr.Design(
         "user",
@@ -134,7 +145,7 @@ _DESIGNS = {
     ),
     "first_event_anchor": tr.Design(
         "user",
-        tr.EventAnchor("order", which="first"),
+        tr.EventAnchor("order", occurrence="first"),
         features={},
         outcomes={
             "orders_next_day": tr.agg("orders", window=("0s", "1d")),
@@ -144,22 +155,22 @@ _DESIGNS = {
     "time_to_first_order": tr.Design(
         "user",
         tr.FixedDate("2025-01-01T12:00:00+00:00"),
-        shape=tr.TimeToEvent("order"),
+        shape=TimeToEvent("order"),
         administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
     ),
     # Entry and exit coverages are narrowed against the backend's timestamp range.
     "time_to_order_with_entry_and_exit": tr.Design(
         "user",
         tr.FixedDate("2025-01-01T12:00:00+00:00"),
-        shape=tr.TimeToEvent("order", entry="amount", delayed_entry=True, exit="amount"),
+        shape=TimeToEvent("order", entry_event="amount", delayed_entry=True, exit_event="amount"),
         administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
     ),
     "observed_state_panel": tr.Design(
         "user",
         tr.Schedule("1d", "2025-01-02", "2025-01-04"),
-        shape=tr.StatePanel(
-            tr.StateObservations("state", ("active", "closed"), absorbing=("closed",)),
-            max_periods=3,
+        shape=StatePanel(
+            StateObservations("state", ("active", "closed"), absorbing=("closed",)),
+            periods=3,
         ),
     ),
 }
@@ -188,7 +199,7 @@ def _both(postgres_scratch, tmp_path, *, naive=False, **model_options):
 
 
 # Naive source timestamps denote UTC and take each backend's UTC conversion path.
-_NAIVE_DESIGNS = ("first_event_anchor", "observed_state_panel", "schedule")
+_NAIVE_DESIGNS = ("first_event_anchor", "observed_state_panel", "schedule", "last_event_time")
 
 
 @pytest.mark.parametrize(
@@ -202,6 +213,13 @@ def test_design_matches_duckdb(postgres_scratch, tmp_path, name, naive):  # noqa
     actual = _rows(postgres, design)
     assert expected, "the DuckDB reference produced no rows"
     assert actual == expected
+    if name == "last_event_time":
+        assert [(row["unit"], row["recency"]) for row in actual] == [
+            ("a", timedelta(hours=12)),
+            ("b", timedelta(hours=42)),
+            ("c", timedelta(microseconds=1)),
+            ("d", None),
+        ]
 
 
 @pytest.mark.parametrize("naive", [False, True])
@@ -209,7 +227,7 @@ def test_landmark_nth_anchor_matches_original_time_oracle(postgres_scratch, tmp_
     duckdb, postgres = _both(postgres_scratch, tmp_path, naive=naive)
     design = tr.Design(
         "user",
-        tr.EventAnchor("order", which="nth", n=2, offset="1d"),
+        tr.EventAnchor("order", occurrence="nth", n=2, offset="1d"),
         anchor_range=tr.AnchorRange("2025-01-02", "2025-01-02"),
         features={"day_one_orders": tr.agg("orders", window=("-1d", "0s"))},
     )
@@ -273,11 +291,11 @@ def test_cohort_summaries_match_duckdb(postgres_scratch, tmp_path, statistic):  
     duckdb, postgres = _both(postgres_scratch, tmp_path)
     design = tr.Design(
         "user",
-        tr.EventAnchor("order", which="first"),
-        shape=tr.CohortSpec("order", tr.Trajectory("spend", "1d", periods=2, cumulative=True)),
+        tr.EventAnchor("order", occurrence="first"),
+        shape=CohortSpec("order", Trajectory("spend", "1d", periods=2, cumulative=True)),
         administrative_cutoff=datetime(2025, 1, 6, tzinfo=UTC),
     )
-    grouping = tr.CohortGrouping("1d", datetime(2025, 1, 1, tzinfo=UTC), statistic=statistic)
+    grouping = CohortGrouping("1d", datetime(2025, 1, 1, tzinfo=UTC), statistic=statistic)
 
     def summary(model):
         cohorts = design.build(model).cohorts(grouping=grouping, value_column="cumulative_value")
@@ -303,6 +321,55 @@ def test_late_timestamp_outside_the_window_leaves_results_unchanged(postgres_scr
     assert _rows(model, design) == before
 
 
+def test_source_filters_match_duckdb_and_refuse_unknown_membership(postgres_scratch, tmp_path):  # noqa: F811
+    from terrine.errors import TerrineError
+
+    duckdb, postgres = _both(postgres_scratch, tmp_path)
+
+    def bind(model):
+        return tr.Model.from_tables(
+            model.con,
+            units=model.units,
+            events={
+                "order": tr.Events(
+                    "events",
+                    time="occurred_at",
+                    key="user_id",
+                    labels=("tier",),
+                    where={"amount__gte": "2.50"},
+                    metrics={"orders": tr.count(), "spend": tr.sum("amount")},
+                    complete=("2025-01-01", "2025-01-10"),
+                )
+            },
+        )
+
+    design = tr.Design(
+        "user",
+        tr.FixedDate("2025-01-05"),
+        features={
+            "orders": tr.agg("orders", window=("-4d", "0s")),
+            "spend": tr.agg("spend", window=("-4d", "0s")),
+            "tier": tr.asof("tier"),
+            "last": tr.event_time("order", window=("-4d", "0s"), occurrence="last"),
+        },
+    )
+    try:
+        actual = _rows(bind(postgres), design)
+        assert actual == _rows(bind(duckdb), design)
+        assert [(r["unit"], r["orders"]) for r in actual] == [
+            ("a", 2),
+            ("b", 2),
+            ("c", 1),
+            ("d", 0),
+        ]
+        for model in (duckdb, postgres):
+            model.con.raw_sql("UPDATE events SET amount = NULL WHERE user_id = 'c'")
+            with pytest.raises(TerrineError) as error:
+                design.build(bind(model)).materialize(_BUDGET)
+            assert error.value.code == "terrine.compile.anchor_integrity"
+            assert error.value.context["check_key"] == "unknown_event_filter_value"
+    finally:
+        duckdb.con.disconnect()
 @pytest.mark.parametrize("recipe,anchor_join_count", [("forecast", 3), ("ltv", 4)])
 def test_forecast_and_ltv_use_set_based_lookups_and_anchor_joins(
     postgres_scratch,
@@ -425,7 +492,7 @@ def test_mixed_integer_unit_widths_preserve_roster_keys(
         "first_occurrence": tr.Design(
             "customer",
             tr.FixedDate("2024-01-01"),
-            shape=tr.TimeToEvent("orders"),
+            shape=TimeToEvent("orders"),
             administrative_cutoff=datetime(2024, 1, 4, tzinfo=UTC),
         ),
     }

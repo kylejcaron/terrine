@@ -133,7 +133,7 @@ def test_sequence_provenance_round_trips_on_bounded_materialization(native_input
         materialized.provenance.engine_status,
     )
     assert stamp == ("duckdb", "duckdb", "verified")
-    restored = type(materialized).from_arrow(materialized.to_arrow())
+    restored = type(materialized).from_arrow(materialized.to_pyarrow())
     assert restored.provenance.sequence_meta == metadata
     assert restored.provenance == materialized.provenance
 

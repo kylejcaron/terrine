@@ -7,13 +7,21 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-__all__ = ["TerrineError", "RefusalSpec", "UnverifiedBackendWarning"]
+from terrine._refusal_codes import CODES
+
+__all__ = ["TerrineError", "RefusalSpec", "UnverifiedBackendWarning", "REFUSAL_CODES"]
+
+REFUSAL_CODES = CODES
 
 type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
 
 
 class UnverifiedBackendWarning(UserWarning):
     """Warn that an admitted connection has no verified read or consistency guarantees.
+
+
+    Args:
+        message: Human-readable description of the unverified connection guarantees.
 
     Example: tr.UnverifiedBackendWarning("This connection has unverified read guarantees.")
     """
@@ -41,6 +49,9 @@ class FrozenMap(Mapping[str, Any]):
 
     def __reduce__(self):
         return FrozenMap, (dict(self._values),)
+
+    def __repr__(self) -> str:
+        return f"FrozenMap({dict(self._values)!r})"
 
 
 def freeze(value: Any) -> Any:
@@ -73,6 +84,13 @@ def thaw(value: Any) -> Any:
 
 class TerrineError(ValueError):
     """Report a refused request with a stable code and immutable structured context.
+
+
+    Args:
+        message: Human-readable refusal explanation; consumers should inspect code and context
+            instead.
+        code: Stable refusal identifier from terrine.errors.REFUSAL_CODES.
+        context: Mapping of structured refusal facts, stored immutably on the exception.
 
     Example: tr.TerrineError("Invalid design.", code="terrine.design.invalid", context={})
     """
@@ -110,6 +128,9 @@ class RefusalSpec:
         error = TerrineError(self.template.format(**context), code=self.code, context=context)
         error._spec = self
         return error
+
+
+INVALID_VIEW = RefusalSpec("terrine.dataset.invalid_view", "Invalid dataset view: {reason}.")
 
 
 @contextmanager

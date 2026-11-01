@@ -8,12 +8,13 @@ from typing import Literal
 
 import ibis
 
+import terrine.reasons as reason_codes
 from terrine.backends.extrema import greatest, least
 from terrine.data import ColumnMeta, FeatureCutoff
-from terrine.semantic.models import BoundFilter
-from terrine.spec.expressions import And, Eq, Expr, Gt, IsNull, Predicate
+from terrine.semantic.filters import lower_filter
+from terrine.semantic.models import Filter
+from terrine.spec.expressions import And, Expr, Gt, IsNull, Predicate
 from terrine.temporal.aggregate import _Builder
-from terrine.temporal.daily import _filter_comparison
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,8 +69,7 @@ def compile_predicate(
             upper = least(*(builder.col(item[3]) for item in terms))
             cutoff = conjunction_cutoff(tuple(item[4] for item in terms))
         else:
-            expression = node.left if isinstance(node, Eq) else node.expr
-            compiled = values[expression]
+            compiled = values[node.expr]
             meta = compiled.meta
             assert meta.complete_column is not None and meta.reason_column is not None
             assert meta.observed_from_column is not None and meta.observed_until_column is not None
@@ -87,14 +87,16 @@ def compile_predicate(
                 reason = complete.ifelse(ibis.null().cast("string"), cause)
             else:
                 op = "gt" if isinstance(node, Gt) else "equals"
-                comparison = _filter_comparison(
-                    value, BoundFilter(compiled.name, op, (node.value,))
+                comparison = lower_filter(
+                    builder.table,
+                    Filter(property=compiled.name, op=op, values=(node.value,)),
+                    value,
                 )
                 comparison = complete.ifelse(comparison, ibis.null().cast("boolean"))
                 reason = ibis.cases(
                     (~complete, cause),
-                    (value.isnull(), cause.fill_null("all_values_null")),
-                    (comparison.isnull(), "null_comparison"),
+                    (value.isnull(), cause.fill_null(reason_codes.ALL_VALUES_NULL)),
+                    (comparison.isnull(), reason_codes.NULL_COMPARISON),
                     else_=ibis.null().cast("string"),
                 )
             status_name = builder.put("predicate", comparison)

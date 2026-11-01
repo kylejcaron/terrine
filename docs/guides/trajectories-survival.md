@@ -42,10 +42,15 @@ ltv = recipes.ltv(
 )
 ```
 
+Read materialized values directly with `frame.to_pandas(values_only=True)` or
+`frame.to_polars(values_only=True)`; use `frame.to_pyarrow()` when completeness,
+null reasons, and the lossless schema metadata are needed.
+
 ### Under the hood
 
 ```python
-from terrine import CohortSpec, Design, EventAnchor, Trajectory
+from terrine import Design, EventAnchor
+from terrine.spec import CohortSpec, Trajectory
 
 equivalent_ltv = Design(
     None, EventAnchor("purchase"),
@@ -96,7 +101,7 @@ survival = recipes.survival(
 ### Under the hood
 
 ```python
-from terrine import TimeToEvent
+from terrine.spec import TimeToEvent
 
 equivalent_survival = Design(
     None, EventAnchor("purchase"), shape=TimeToEvent("churn"),
@@ -125,11 +130,12 @@ To begin follow-up after a baseline period, use an offset event anchor with the
 low-level Design. The recipes keep their original start-event behavior.
 
 ```python
-from terrine import Design, EventAnchor, TimeToEvent, agg
+from terrine import Design, EventAnchor, agg
+from terrine.spec import TimeToEvent
 
 landmark_survival = Design(
     "user",
-    EventAnchor("purchase", which="first", offset="1d"),
+    EventAnchor("purchase", occurrence="first", offset="1d"),
     features={"day_one_sessions": agg("sessions", window=("-1d", "0s"))},
     shape=TimeToEvent("churn"),
     administrative_cutoff=cutoff,
@@ -185,7 +191,7 @@ life = recipes.life_table(
 ### Under the hood
 
 ```python
-from terrine import LifeTable
+from terrine.spec import LifeTable
 
 equivalent_life = Design(
     None, EventAnchor("purchase"),

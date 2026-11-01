@@ -117,7 +117,7 @@ def _analysis_table(config: WorldConfig, oracle, assigned, observed, coverage: C
         }
     )
     first = datetime.combine(coverage.start, time.min, UTC)
-    last = datetime.combine(coverage.through + timedelta(days=1), time.min, UTC)
+    last = datetime.combine(coverage.end + timedelta(days=1), time.min, UTC)
     for name in ("x", "plan_tier", "baseline_enabled", "net_revenue"):
         for suffix, array in (
             ("observed_from", pa.array([first] * n, type=_TIMESTAMP)),

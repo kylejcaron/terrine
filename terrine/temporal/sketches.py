@@ -36,7 +36,6 @@ __all__ = [
     "approximate_quantile",
     "merge_count_distinct_partitions",
     "approximate_quantiles_by_key",
-    "validate_sketch_request",
     "quantile_request_metadata",
     "merge_quantile_partitions",
 ]
@@ -48,15 +47,9 @@ _UNAVAILABLE = RefusalSpec(
 )
 
 
-def validate_sketch_request(request: SketchRequestLike) -> str:
-    """Verify the requested optional t-digest package/version before source queries."""
-    _, version = _package(request, "tdigest")
-    return version
-
-
-def quantile_request_metadata(request: SketchRequestLike) -> SketchMetadata:
-    _, version = _package(request, "tdigest")
-    return _tdigest_metadata(version, _tdigest_k(request), "tdigest_stream_update")
+def quantile_request_metadata() -> SketchMetadata:
+    _, version = _installed_package("tdigest")
+    return _tdigest_metadata(version, 200, "tdigest_stream_update")
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,14 +76,20 @@ class SketchEstimate:
     metadata: SketchMetadata
 
 
+def _installed_package(algorithm: str):
+    try:
+        import datasketches
+
+        version = importlib.metadata.version("datasketches")
+    except (ImportError, importlib.metadata.PackageNotFoundError) as exc:
+        raise _UNAVAILABLE.error(algorithm=algorithm, version="installed") from exc
+    return datasketches, version
+
+
 def _package(request: SketchRequestLike, algorithm: str):
     if request.algorithm != algorithm:
         raise _UNAVAILABLE.error(algorithm=request.algorithm, version=request.version)
-    try:
-        import datasketches
-    except ImportError as exc:
-        raise _UNAVAILABLE.error(algorithm=request.algorithm, version=request.version) from exc
-    version = importlib.metadata.version("datasketches")
+    datasketches, version = _installed_package(algorithm)
     if request.version != version:
         raise _UNAVAILABLE.error(algorithm=request.algorithm, version=request.version)
     return datasketches, version
@@ -134,18 +133,9 @@ def _distinct_values(values: Iterable[str | int | float | None]):
         yield value
 
 
-def _tdigest_k(request: SketchRequestLike) -> int:
-    # rank_error is a requested empirical tolerance, not a guaranteed bound.
-    # Use it only to choose compression; metadata makes the absence of a bound explicit.
-    if request.rank_error <= Decimal("0.001"):
-        return 1000
-    requested = math.ceil(Decimal(1) / request.rank_error)
-    return max(200, min(1000, requested))
-
-
-def _tdigest(values: Iterable[int | float | Decimal | None], request: SketchRequestLike):
-    datasketches, version = _package(request, "tdigest")
-    k = _tdigest_k(request)
+def _tdigest(values: Iterable[int | float | Decimal | None]):
+    datasketches, version = _installed_package("tdigest")
+    k = 200
     sketch = datasketches.tdigest_double(k)
     import numpy
 
@@ -173,7 +163,6 @@ def _tdigest_metadata(
 def approximate_quantile(
     values: Iterable[int | float | Decimal | None],
     probability: Decimal,
-    request: SketchRequestLike,
 ) -> SketchEstimate:
     if (
         not isinstance(probability, Decimal)
@@ -181,7 +170,7 @@ def approximate_quantile(
         or not 0 <= probability <= 1
     ):
         raise ValueError("probability must be a Decimal in [0, 1]")
-    _, sketch, version, k = _tdigest(values, request)
+    _, sketch, version, k = _tdigest(values)
     if sketch.is_empty():
         raise ValueError("approximate quantile is undefined for an empty or all-null window")
     return SketchEstimate(
@@ -193,7 +182,6 @@ def approximate_quantile(
 def merge_quantile_partitions(
     partitions: Mapping[str, Iterable[int | float | Decimal | None]],
     probability: Decimal,
-    request: SketchRequestLike,
 ) -> SketchEstimate:
     if not partitions or any(not isinstance(key, str) or not key for key in partitions):
         raise ValueError("quantile partitions require nonempty string identifiers")
@@ -203,8 +191,8 @@ def merge_quantile_partitions(
         or not 0 <= probability <= 1
     ):
         raise ValueError("probability must be a Decimal in [0, 1]")
-    datasketches, version = _package(request, "tdigest")
-    k = _tdigest_k(request)
+    datasketches, version = _installed_package("tdigest")
+    k = 200
     merged = datasketches.tdigest_double(k)
     for partition_id in sorted(partitions):
         part = datasketches.tdigest_double(k)
@@ -225,7 +213,6 @@ def merge_quantile_partitions(
 def approximate_quantiles_by_key(
     batches: Iterable[pa.RecordBatch],
     probability: Decimal,
-    request: SketchRequestLike,
     *,
     key_columns: tuple[str, str] = ("unit", "anchor_id"),
     value_column: str = "value",
@@ -237,8 +224,8 @@ def approximate_quantiles_by_key(
         or not 0 <= probability <= 1
     ):
         raise ValueError("probability must be a Decimal in [0, 1]")
-    datasketches, version = _package(request, "tdigest")
-    k = _tdigest_k(request)
+    datasketches, version = _installed_package("tdigest")
+    k = 200
     import numpy
 
     results = {}

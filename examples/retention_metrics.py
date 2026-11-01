@@ -5,7 +5,8 @@ from datetime import UTC, datetime
 import ibis
 import pyarrow as pa
 
-from terrine import Coverage, Design, FixedDate, Model, UnitSource, retention
+from terrine import Coverage, Design, FixedDate, Model, UnitSource
+from terrine.spec import retention
 
 
 def main() -> None:
@@ -32,32 +33,32 @@ def main() -> None:
             ),
         )
         catalog = {
-                "schema_version": 2,
-                "day_boundary": "UTC",
-                "dialect": "duckdb",
-                "sources": {
-                    "events": {
-                        "relation": {"kind": "table", "name": "events"},
-                        "time": "occurred_at",
-                        "units": {"user": "user_id"},
-                        "events": ["purchase_occurrence"],
-                        "properties": ["event_name"],
-                        "dimensions": [],
-                    }
-                },
-                "events": {"purchase_occurrence": {"source": "events", "column": "occurrence_id"}},
-                "properties": {
-                    "event_name": {
-                        "source": "events",
-                        "column": "name",
-                        "dtype": "string",
-                        "as_of": "event_time",
-                    }
-                },
-                "dimensions": {},
-                "measures": {},
-                "metrics": {},
-            }
+            "schema_version": 2,
+            "day_boundary": "UTC",
+            "dialect": "duckdb",
+            "sources": {
+                "events": {
+                    "relation": {"kind": "table", "name": "events"},
+                    "time": "occurred_at",
+                    "units": {"user": "user_id"},
+                    "events": ["purchase_occurrence"],
+                    "properties": ["event_name"],
+                    "dimensions": [],
+                }
+            },
+            "events": {"purchase_occurrence": {"source": "events", "column": "occurrence_id"}},
+            "properties": {
+                "event_name": {
+                    "source": "events",
+                    "column": "name",
+                    "dtype": "string",
+                    "as_of": "event_time",
+                }
+            },
+            "dimensions": {},
+            "measures": {},
+            "metrics": {},
+        }
         model = Model.from_catalog(
             catalog,
             con=con,
@@ -85,7 +86,7 @@ def main() -> None:
             },
         )
         result = design.build(model).materialize()
-        rows = result.to_arrow().sort_by("unit").to_pylist()
+        rows = result.to_pyarrow().to_pylist()
         assert [(row["retained_two_days"], row["retained_open"]) for row in rows] == [
             (1, 2),
             (None, None),

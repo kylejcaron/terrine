@@ -32,10 +32,11 @@ def panel(frame):
     )
 
 
-def test_first_treat_preserves_row_order_gaps_and_never_treated_zero(panel):
+def test_first_treat_preserves_identity_order_gaps_and_never_treated_zero(panel):
     result = exports.to_diff_diff(panel, period_col="t0")
     assert result.df[result.unit_col].tolist() == [1, 1, 1, 2, 2, 2]
-    assert result.df[result.time_col].tolist() == [4, 1, 2, 2, 4, 1]
+    assert result.df[result.time_col].tolist() == [1, 2, 4, 1, 2, 4]
+    assert result.df["y"].tolist() == [2.0, 3.0, 1.0, 6.0, 4.0, 5.0]
     assert result.df[result.first_treat_col].tolist() == [2, 2, 2, 0, 0, 0]
     assert result.period_mapping == {-1: 1, 0: 2, 2: 4}
     with pytest.raises(TypeError):
@@ -61,13 +62,13 @@ def test_exclusions_cannot_redefine_adoption_or_calendar_gaps(panel, excluded):
 
 def test_timestamp_periods_require_cadence_and_preserve_missing_ticks(panel):
     origin = datetime(2025, 1, 1, tzinfo=UTC)
-    periods = [origin + timedelta(days=i + 1) for i in [2, -1, 0, 0, 2, -1]]
+    periods = [origin + timedelta(days=i + 1) for i in panel.table["t0"].to_pylist()]
     panel = replace(panel, table=panel.table.set_column(2, "t0", pa.array(periods)))
     with pytest.raises(TerrineError) as error:
         exports.to_diff_diff(panel, period_col="t0")
     assert error.value.code == "terrine.diff_diff.invalid_panel"
     result = exports.to_diff_diff(panel, period_col="t0", period_seconds=86400)
-    assert result.df[result.time_col].tolist() == [4, 1, 2, 2, 4, 1]
+    assert result.df[result.time_col].tolist() == [1, 2, 4, 1, 2, 4]
     metadata = replace(panel.provenance, panel=PanelMeta("sequential", period_seconds=86400))
     inferred = exports.to_diff_diff(replace(panel, provenance=metadata), period_col="t0")
     assert inferred.period_mapping == result.period_mapping
@@ -108,7 +109,9 @@ def test_nanosecond_periods_without_pandas_receive_coded_dependency_refusal(pane
     import subprocess
     import sys
 
-    ticks = pa.array([3, 0, 1, 1, 3, 0], type=pa.timestamp("ns", tz="UTC"))
+    ticks = pa.array(
+        [i + 1 for i in panel.table["t0"].to_pylist()], type=pa.timestamp("ns", tz="UTC")
+    )
     panel = replace(panel, table=panel.table.set_column(2, "t0", ticks))
     path = tmp_path / "panel.json"
     path.write_text(panel.to_json())

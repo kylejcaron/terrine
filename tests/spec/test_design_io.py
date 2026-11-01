@@ -8,9 +8,10 @@ import pytest
 from terrine.errors import TerrineError
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design, Treatment
-from terrine.spec.expressions import agg, all_of, asof, eq, gt, is_null
+from terrine.spec.expressions import agg, all_of, asof, eq, event_time, gt, is_null, since
 from terrine.spec.io import from_json, from_yaml, to_json, to_yaml
-from terrine.spec.trajectory import CohortGrouping, CohortSpec, Trajectory
+from terrine.spec.panels import EventPanelSpec, Initiation, SequentialSpec
+from terrine.spec.trajectory import CohortGrouping, CohortSpec, LifeTable, TimeToEvent, Trajectory
 
 
 def test_subday_duration_forms_share_canonical_spec_hashes():
@@ -32,7 +33,7 @@ def test_subday_duration_forms_share_canonical_spec_hashes():
 def test_anchor_variants_and_design_maps_round_trip_as_safe_yaml_and_json():
     anchors = (
         FixedDate("2025-03-01"),
-        EventAnchor("feature_enabled", which="nth", n=2),
+        EventAnchor("feature_enabled", occurrence="nth", n=2),
         Schedule(every="1w", start="2025-01-06", end="2025-02-02"),
     )
     for anchor in anchors:
@@ -86,6 +87,29 @@ def test_v1_design_document_refuses_with_a_coded_reason():
     assert error.value.context["field"] == "schema_version"
 
 
+def test_v2_design_document_refuses_with_version():
+    saved = """
+schema_version: 2
+design:
+  unit: user
+  anchor: {type: EventAnchor, event: purchase, which: first}
+  features: {}
+  outcomes: {}
+  eligibility: {}
+  treatment: null
+  gap: 0
+  shape: cross_section
+  anchor_range: null
+  administrative_cutoff: null
+  sample: null
+"""
+    with pytest.raises(TerrineError) as error:
+        from_yaml(saved)
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "unsupported_schema_version"
+    assert error.value.context["schema_version"] == 2
+
+
 def test_malformed_document_is_a_coded_refusal():
     for load, document in ((from_json, "{"), (from_yaml, "design: [\n")):
         with pytest.raises(TerrineError) as error:
@@ -97,31 +121,83 @@ def test_malformed_document_is_a_coded_refusal():
 def test_event_anchor_offset_preserves_saved_design_identity_and_round_trips():
     saved = (
         '{"design":{"administrative_cutoff":null,"anchor":{"event":"purchase","n":2,'
-        '"type":"EventAnchor","which":"nth"},"anchor_range":null,"eligibility":{},'
+        '"occurrence":"nth","type":"EventAnchor"},"anchor_range":null,"eligibility":{},'
         '"features":{},"gap":0,"outcomes":{},"sample":null,"shape":"cross_section",'
-        '"treatment":null,"unit":"user"},"schema_version":2}'
+        '"treatment":null,"unit":"user"},"schema_version":3}'
     )
     original = from_json(saved)
     assert to_json(original) == saved
-    assert original.spec_hash == "220623d871a835f6579151a7503d759b018c2e538c89663ffed82b53517e0db6"
+    assert original.spec_hash == "c22cfe5e516256a93d1ace05bb6de1c24a3d61d66b4387c54dfc2b5b882fc2ab"
     assert Design("user", EventAnchor("purchase", "nth", 2, offset="0d")) == original
 
     shifted = Design("user", EventAnchor("purchase", "nth", 2, offset="1d"))
     assert isinstance(shifted.anchor, EventAnchor)
     assert shifted.anchor.offset == 86_400
     assert shifted.spec_hash != original.spec_hash
-    assert shifted == Design("user", EventAnchor("purchase", "nth", 2, offset=86_400))
+    assert shifted == Design("user", EventAnchor("purchase", "nth", 2, offset="86400s"))
     assert json.loads(to_json(shifted))["design"]["anchor"]["offset"] == 86_400
     for restored in (from_json(to_json(shifted)), from_yaml(to_yaml(shifted))):
         assert restored == shifted
         assert restored.spec_hash == shifted.spec_hash
 
 
+@pytest.mark.parametrize("shape_name", ("cross_section", "event_panel", "sequential", "life_table"))
+def test_duration_strings_in_saved_design_documents_decode_like_integer_seconds(shape_name):
+    anchor: EventAnchor | Schedule = EventAnchor("purchase", offset="1d")
+    shape: str | EventPanelSpec | SequentialSpec | LifeTable = "cross_section"
+    elapsed_fields: dict[str, tuple[str, int]] = {}
+    if shape_name == "event_panel":
+        shape = EventPanelSpec((-1, 0, 1), period="1h", reference_period=-1)
+        elapsed_fields = {"period": ("1h", 3600)}
+    elif shape_name == "sequential":
+        anchor = Schedule("1d", "2025-01-01", "2025-01-02")
+        shape = SequentialSpec(
+            Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC)),
+            anticipation="2h",
+            reference_period="-3h",
+        )
+        elapsed_fields = {"anticipation": ("2h", 7200), "reference_period": ("-3h", -10800)}
+    elif shape_name == "life_table":
+        shape = LifeTable(TimeToEvent(end_event="churn"), bin="1h")
+        elapsed_fields = {"bin": ("1h", 3600)}
+    design = Design(
+        "user",
+        anchor,
+        features={"visits": agg("sessions", window=("-1d", "0s"))},
+        treatment=(
+            Treatment(attribute="assigned", at="1d", known_at_t0=True)
+            if shape_name == "cross_section"
+            else None
+        ),
+        gap="1d",
+        shape=shape,
+    )
+    integer_document = json.loads(to_json(design))
+    string_document = json.loads(json.dumps(integer_document))
+    fields = string_document["design"]
+    if shape_name == "sequential":
+        fields["anchor"]["every"] = "1d"
+    else:
+        fields["anchor"]["offset"] = "1d"
+    for field, (text, seconds) in elapsed_fields.items():
+        assert integer_document["design"]["shape"][field] == seconds
+        fields["shape"][field] = text
+    fields["features"]["visits"]["window"]["start"] = "-1d"
+    fields["features"]["visits"]["window"]["end"] = "0s"
+    if fields["treatment"] is not None:
+        fields["treatment"]["at"] = "1d"
+    fields["gap"] = "1d"
+
+    integer_form = from_json(json.dumps(integer_document))
+    string_form = from_json(json.dumps(string_document))
+    assert string_form == integer_form == design
+
+
 def test_predicate_outcome_round_trips_json():
     design = Design(
         "user",
         FixedDate("2025-01-01"),
-        features={"missing": is_null(asof("tier", before=0))},
+        features={"missing": is_null(asof("tier", before="0s"))},
         outcomes={
             "converted_7d": gt(agg("orders", window=("0s", "7d")), 0),
             "churned_30d": eq(agg("orders", window=("0s", "30d")), 0),
@@ -290,10 +366,10 @@ def test_treatment_known_at_t0_metadata_is_explicit():
 @pytest.mark.parametrize(
     ("load", "document", "reason"),
     [
-        (from_yaml, "schema_version: 2\nschema_version: 2\ndesign: {}\n", "malformed_document"),
-        (from_json, '{"schema_version":2,"schema_version":2,"design":{}}', "malformed_document"),
+        (from_yaml, "schema_version: 3\nschema_version: 3\ndesign: {}\n", "malformed_document"),
+        (from_json, '{"schema_version":3,"schema_version":3,"design":{}}', "malformed_document"),
         (from_yaml, "schema_version: 99\ndesign: {}\n", "unsupported_schema_version"),
-        (from_yaml, "schema_version: 2\ndesign: {type: FutureNode}\n", "malformed_document"),
+        (from_yaml, "schema_version: 3\ndesign: {type: FutureNode}\n", "malformed_document"),
         (
             from_json,
             to_json(Design(unit="user", anchor=FixedDate("2025-03-01"))).replace(
@@ -315,7 +391,7 @@ def test_yaml_and_json_reject_duplicates_unknown_schema_nodes_and_extra_fields(
 def test_trajectory_and_administrative_cutoff_round_trip_with_canonical_hash():
     design = Design(
         unit="user",
-        anchor=EventAnchor("purchase", which="first"),
+        anchor=EventAnchor("purchase", occurrence="first"),
         shape=CohortSpec(
             origin="purchase",
             trajectory=Trajectory("net_revenue", "7d", periods=3, cumulative=True),
@@ -331,8 +407,8 @@ def test_time_to_event_design_round_trips_and_requires_matching_occurrence_ancho
 
     design = Design(
         unit="user",
-        anchor=EventAnchor("signup", which="first"),
-        shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
+        anchor=EventAnchor("signup", occurrence="first"),
+        shape=TimeToEvent("churn", entry_event="enrolled", delayed_entry=True),
         administrative_cutoff=datetime(2025, 4, 1, tzinfo=UTC),
     )
     assert from_json(to_json(design)).spec_hash == design.spec_hash
@@ -343,7 +419,7 @@ def test_life_table_design_round_trips_and_binds_groups_to_features():
 
     design = Design(
         "user",
-        EventAnchor("signup", which="first"),
+        EventAnchor("signup", occurrence="first"),
         features={"region": agg("revenue", window=("-7d", "0d"))},
         shape=LifeTable(TimeToEvent("churn"), "7d", group_by=("region",)),
     )
@@ -351,7 +427,7 @@ def test_life_table_design_round_trips_and_binds_groups_to_features():
     with pytest.raises(TerrineError) as error:
         Design(
             "user",
-            EventAnchor("signup", which="first"),
+            EventAnchor("signup", occurrence="first"),
             shape=LifeTable(TimeToEvent("churn"), "7d", group_by=("region",)),
         )
     assert error.value.code == "terrine.design.invalid"
@@ -386,3 +462,35 @@ def test_microsecond_datetime_subclass_is_normalized_for_round_trip():
     assert from_json(to_json(design)) == design
     grouping = CohortGrouping("1d", bucket_origin=cast(datetime, value))
     assert type(grouping.bucket_origin) is datetime
+
+
+def test_since_round_trips_design_documents():
+    import terrine as tr
+
+    design = Design(
+        "user",
+        FixedDate("2025-01-01"),
+        features={
+            "recency": since("purchases", window=("-180d", 0)),
+            "selected": event_time("purchases", window=("-180d", 0), occurrence="last"),
+        },
+    )
+    payload = json.loads(to_json(design))
+    assert payload["design"]["features"]["recency"]["measure"] == "elapsed"
+    assert "measure" not in payload["design"]["features"]["selected"]
+    for restored in (from_json(to_json(design)), from_yaml(to_yaml(design))):
+        assert restored == design
+        assert restored.spec_hash == design.spec_hash
+    assert tr.since("purchases", window=("-180d", 0)) == design.features["recency"]
+    assert "since" in tr.__all__
+    assert (
+        design.spec_hash
+        != Design(
+            "user",
+            design.anchor,
+            features={
+                "recency": design.features["selected"],
+                "selected": design.features["selected"],
+            },
+        ).spec_hash
+    )

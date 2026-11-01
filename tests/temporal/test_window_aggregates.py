@@ -28,7 +28,7 @@ from terrine.temporal.prefix import sparse_prefix
 from terrine.temporal.readiness import Readiness
 from terrine.windows import Window
 
-_DEFAULT_WINDOW = Window(0, 86400)
+_DEFAULT_WINDOW = Window(0, "1d")
 _REFUSAL = RefusalSpec("terrine.test.failed_rows", "{failed_count} rows failed")
 
 
@@ -309,10 +309,10 @@ def test_unit_observation_end_preserves_value_or_exact_unavailable_reason(con):
 @pytest.mark.parametrize(
     "time,window",
     [
-        ("2025-01-02 00:00:00+00", Window(0, 3600)),
-        ("2025-01-02 12:00:00+00", Window(0, 86400)),
-        ("2025-01-02 00:00:00.000001+00", Window(0, 86400)),
-        ("2025-01-02 00:00:00+00", Window(1, 86401)),
+        ("2025-01-02 00:00:00+00", Window(0, "1h")),
+        ("2025-01-02 12:00:00+00", Window(0, "1d")),
+        ("2025-01-02 00:00:00.000001+00", Window(0, "1d")),
+        ("2025-01-02 00:00:00+00", Window("1s", "86401s")),
     ],
 )
 def test_calendar_domain_precedes_empty_and_unavailable(con, time, window):
@@ -486,9 +486,9 @@ def test_count_prefixes_beyond_int64_refuse_instead_of_wrapping(con):
     measure, _ = _state(con, [1], aggregation="count")
     prefix = sparse_prefix(_count_groups(con, [2**62] * 3), measure, resolution="event")
     pair = (measure, prefix)
-    fits = _result(_anchors(con), [pair], window=Window(0, 12 * 3600))
+    fits = _result(_anchors(con), [pair], window=Window(0, "12h"))
     assert _rows(con, fits)[0]["requested"] == 2**62
-    for window in (Window(0, 86400), Window(-86400, 86400)):
+    for window in (Window(0, "1d"), Window("-1d", "1d")):
         with pytest.raises(TerrineError) as error:
             _rows(con, _result(_anchors(con), [pair], window=window))
         assert error.value.code == "terrine.temporal.exact_overflow"

@@ -1,17 +1,28 @@
-"""Exact elapsed-second windows; endpoints are half-open and never bucketed."""
+"""Exact elapsed-second windows; endpoints are half-open and never bucketed.
+
+Public elapsed durations are a signed integer followed by ``s``, ``m``, ``h``,
+``d`` or ``w``: seconds, minutes, hours, days or weeks. An optional ``+`` or
+``-`` sign is accepted. Bare integer ``0`` is allowed; nonzero bare integers,
+decimals (``"1.5d"``), compounds (``"1h30m"``) and unitless strings are refused.
+Offsets are exact integer seconds within the signed 64-bit range.
+
+Calendar months (``"1mo"``) and years (``"1y"``) are accepted only by
+``Schedule.every`` and recipe ``every=`` parameters, not by elapsed windows.
+"""
 
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 from terrine.errors import RefusalSpec
 
-__all__ = ["Window"]
+__all__ = ["Window", "duration", "seconds", "seconds_text", "format_duration"]
 
 _INVALID_DURATION = RefusalSpec(
     "terrine.window.invalid_duration",
-    "{field}={value!r} is not an elapsed duration: use integral seconds or a signed "
-    's/m/h/d/w string such as "30d" or "4w". Calendar months ("1mo", "1y") are '
-    "accepted only by a Schedule's every.",
+    "{field}={value!r} is not an elapsed duration: use a signed integer with a unit "
+    'such as "-30s", "-30d", or "4w"; bare 0 is allowed. Calendar months ("1mo", "1y") '
+    "are accepted only by a Schedule's every.",
 )
 _INVALID_WINDOW = RefusalSpec(
     "terrine.window.invalid_window",
@@ -24,17 +35,28 @@ _MIN = -(2**63)
 _MAX = 2**63 - 1
 
 
-def seconds(value: str | int, *, field: str) -> int:
-    """Normalize an elapsed duration without coercion or calendar arithmetic.
+def duration(value: str | Literal[0], *, field: str) -> int:
+    """Normalize a public elapsed-duration input; only bare zero is accepted.
 
-    ``field`` names the caller's parameter in the refusal context.
+    Example: duration("-30d", field="window")
+    """
+    if isinstance(value, bool):
+        raise _INVALID_DURATION.error(field=field, value=str(value), reason="bare_integer")
+    if isinstance(value, int) and value != 0:
+        raise _INVALID_DURATION.error(field=field, value=str(value), reason="bare_integer")
+    return seconds(value, field=field)
+
+
+def seconds(value: str | int, *, field: str) -> int:
+    """Normalize elapsed seconds, including trusted normalized integer metadata.
+
+    Example: seconds(-86400, field="latest_seconds")
     """
     if isinstance(value, bool):
         raise _INVALID_DURATION.error(field=field, value=str(value))
     if isinstance(value, int):
         result = value
     elif isinstance(value, str) and (match := _PATTERN.fullmatch(value)):
-        # Bound digit count before int conversion to reject hostile giant values.
         digits = match[1].lstrip("+-").lstrip("0") or "0"
         if len(digits) > 19:
             raise _INVALID_DURATION.error(field=field, value=value)
@@ -44,6 +66,23 @@ def seconds(value: str | int, *, field: str) -> int:
     if not _MIN <= result <= _MAX:
         raise _INVALID_DURATION.error(field=field, value=str(value))
     return result
+
+
+def seconds_text(n: int) -> str:
+    """Return the canonical elapsed-duration spelling for normalized seconds.
+
+    Example: seconds_text(-86400)
+    """
+    return f"{n}s"
+
+
+def format_duration(seconds: int) -> str:
+    """Format elapsed seconds using the largest exact unit.
+
+    Example: format_duration(-2_592_000)
+    """
+    formatted = _duration(abs(seconds), weeks=True)
+    return f"-{formatted}" if seconds < 0 else formatted
 
 
 def _duration(value: int, *, weeks: bool = False, signed: bool = False) -> str:
@@ -65,14 +104,27 @@ def _duration(value: int, *, weeks: bool = False, signed: bool = False) -> str:
 class Window:
     """Describe an elapsed [start, end) window relative to t0 or a selected event time.
 
-    Example: tr.Window("-30d", "0s")
+
+    Offsets use signed integers with s, m, h, d or w units, or bare 0.
+    Decimals, compound durations and calendar mo/y offsets are refused; calendar
+    steps are accepted only by Schedule.every and recipe every= parameters.
+
+    Args:
+        start: Earlier offset as a duration string (see `terrine.windows`) or bare 0; included.
+        end: Later offset as a duration string (see `terrine.windows`) or bare 0; excluded.
+
+    Attributes:
+        start: Inclusive elapsed offset stored as exact integer seconds.
+        end: Exclusive elapsed offset stored as exact integer seconds.
+
+    Example: from terrine.windows import Window; Window("-30d", "0s")
     """
 
     start: int
     end: int
 
-    def __init__(self, start: str | int, end: str | int) -> None:
-        start_seconds, end_seconds = seconds(start, field="window"), seconds(end, field="window")
+    def __init__(self, start: str | Literal[0], end: str | Literal[0]) -> None:
+        start_seconds, end_seconds = duration(start, field="window"), duration(end, field="window")
         if start_seconds >= end_seconds:
             raise _INVALID_WINDOW.error(
                 start=start_seconds,
@@ -81,4 +133,8 @@ class Window:
                 end_offset=_duration(end_seconds, signed=True),
             )
         object.__setattr__(self, "start", start_seconds)
+
         object.__setattr__(self, "end", end_seconds)
+
+    def __repr__(self) -> str:
+        return f"Window({format_duration(self.start)!r}, {format_duration(self.end)!r})"

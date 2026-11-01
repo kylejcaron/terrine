@@ -7,6 +7,7 @@ import json
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
+from difflib import get_close_matches
 from importlib import import_module
 from pathlib import Path
 from types import MappingProxyType
@@ -19,8 +20,10 @@ from terrine.data import BoundCoverage, Coverage, EventMetric, Events, History, 
 from terrine.errors import RefusalSpec
 from terrine.execution._metadata import metadata_operation
 from terrine.execution._native import _ascii_key
-from terrine.semantic.bind import _SCHEMA, _relation, bind_metric, normalize_source
-from terrine.semantic.io import dump_catalog, load_catalog, validate_catalog
+from terrine.metrics import _filters
+from terrine.semantic.attributes import RosterAttributes
+from terrine.semantic.bind import _KEY_SCHEMA, _SCHEMA, _relation, bind_metric, normalize_source
+from terrine.semantic.io import dump_catalog, load_catalog, load_catalog_text, validate_catalog
 from terrine.semantic.models import BoundMetric, BoundSource, Catalog, RelationSpec, TableRef
 from terrine.semantic.time import boundary_timezone
 from terrine.temporal.readiness import Readiness
@@ -47,8 +50,8 @@ _AMBIGUOUS_UNIT = RefusalSpec(
 )
 _NAME_COLLISION = RefusalSpec(
     "terrine.model.invalid_binding",
-    "{kind} name {name!r} is declared by {owners}; event, label and history names are "
-    "shared by every Events and History of a model, so give each its own name.",
+    "{kind} name {name!r} is declared by {owners}; names are shared across a model and "
+    "must be unique.",
 )
 _UNSUPPORTED_COLUMN_TYPE = RefusalSpec(
     "terrine.model.invalid_binding",
@@ -60,6 +63,22 @@ _MISSING_REFERENCE = RefusalSpec(
     "{owner!r} uses {kind} {name!r}, which is not declared; available names are {available!r}. "
     "Use one of these names or add the missing {kind} to the model.",
 )
+_MISSING_REFERENCE_SUGGESTION = RefusalSpec(
+    "terrine.semantic.missing_reference",
+    "{owner!r} uses {kind} {name!r}, which is not declared; available names are {available!r}. "
+    "Did you mean {suggestions!r}?",
+)
+
+
+def _missing_reference(*, kind: str, name: str, owner: str, available: tuple[str, ...]):
+    suggestions = tuple(get_close_matches(name, available, n=3, cutoff=0.6))
+    spec = _MISSING_REFERENCE_SUGGESTION if suggestions else _MISSING_REFERENCE
+    context = dict(kind=kind, name=name, owner=owner, available=available)
+    if suggestions:
+        context["suggestions"] = suggestions
+    return spec.error(**context)
+
+
 _IN_MEMORY_WITH_CONNECTION = RefusalSpec(
     "terrine.model.invalid_binding",
     "{inputs} are in-memory tables but a connection was given; Terrine never uploads "
@@ -83,6 +102,40 @@ _MISSING_DEPENDENCY = RefusalSpec(
     "tables by name on a connection.",
 )
 _LABEL_DTYPES = ("string", "int", "float", "bool", "date")
+
+
+def _check_key_types(
+    sources: Mapping[str, BoundSource],
+    units: Mapping[str, UnitSource],
+    resolver: Callable[[RelationSpec], Any],
+) -> None:
+    """Require source and roster unit keys to share a dtype, or both be integers."""
+    roster_types = {
+        unit_name: resolver(TableRef(kind="table", name=unit.table)).schema()[unit.key]
+        for unit_name, unit in units.items()
+    }
+
+    def check(unit_name: str, source_name: str, relation: RelationSpec, column: str) -> None:
+        if unit_name not in roster_types:
+            return
+        unit_type = roster_types[unit_name]
+        source_type = resolver(relation).schema()[column]
+        unit_cmp, source_cmp = unit_type.copy(nullable=True), source_type.copy(nullable=True)
+        if unit_cmp != source_cmp and not (unit_cmp.is_integer() and source_cmp.is_integer()):
+            raise _KEY_SCHEMA.error(
+                field="unit key",
+                unit=unit_name,
+                source=source_name,
+                column=column,
+                unit_type=str(unit_type.copy(nullable=True)),
+                source_type=str(source_type.copy(nullable=True)),
+            )
+
+    for source_name, source in sources.items():
+        for unit_name, column in source.units.items():
+            check(unit_name, source_name, source.relation, column)
+        for dimension in source.dimensions:
+            check(dimension.unit, dimension.name, dimension.relation, dimension.key)
 
 
 def _label_dtype(dtype: Any, *, source: str, column: str) -> str:
@@ -162,13 +215,13 @@ def _check_references(name: str, event: Events) -> None:
         if isinstance(metric, Ratio):
             for operand in (metric.numerator, metric.denominator):
                 if operand not in plain:
-                    raise _MISSING_REFERENCE.error(
+                    raise _missing_reference(
                         kind="metric", name=operand, owner=owner, available=plain
                     )
         else:
             for filt in metric.filters:
                 if filt.property not in event.labels:
-                    raise _MISSING_REFERENCE.error(
+                    raise _missing_reference(
                         kind="label", name=filt.property, owner=owner, available=labels
                     )
 
@@ -176,7 +229,7 @@ def _check_references(name: str, event: Events) -> None:
 def _resolve_unit(owner: str, declared: str | None, units: Mapping[str, UnitSource]) -> str:
     if declared is not None:
         if declared not in units:
-            raise _MISSING_REFERENCE.error(
+            raise _missing_reference(
                 kind="unit", name=declared, owner=owner, available=tuple(sorted(units))
             )
         return declared
@@ -259,7 +312,36 @@ def _boundary_function(boundary: str):
 class Model:
     """Bind units, events, metrics and history to a connection without reading event rows.
 
-    Example: tr.Model.from_tables(units=units, events=events)
+
+    Args:
+        *args: No positional construction is supported; use from_tables or from_catalog.
+        **kwargs: No keyword construction is supported; use from_tables or from_catalog.
+
+    Attributes:
+        catalog: Validated semantic Catalog describing the source relations and metrics.
+        con: Admitted Ibis connection used to resolve and execute relations.
+        readiness: Declared source completeness, bound to absolute instants.
+        units: Immutable mapping of unit names to roster declarations.
+        event_ids: Immutable source-name to occurrence-ID-column mapping.
+        sources: Immutable mapping of validated bound sources.
+        metrics: Immutable mapping of validated bound metrics.
+        model_hash: Content digest of catalog and runtime binding declarations.
+        day_boundary: Callable mapping a catalog-local calendar date to its UTC start instant.
+        input_binding: Retained input binding, or None for direct reads.
+
+    Example:
+        tr.Model.from_tables(
+            units={"customer": tr.UnitSource(customers, "customer_id")},
+            events={
+                "orders": tr.Events(
+                    orders,
+                    time="ordered_at",
+                    key="customer_id",
+                    metrics={"spend": tr.sum("amount")},
+                    complete=("2025-01-01", "2025-03-20"),
+                )
+            },
+        )
     """
 
     catalog: Catalog
@@ -275,8 +357,12 @@ class Model:
     _engine: Engine
     _resolver: Callable[[RelationSpec], Any]
 
-    def __init__(
-        self,
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError("Use Model.from_tables() or Model.from_catalog() to bind a model.")
+
+    @classmethod
+    def _assemble(
+        cls,
         *,
         catalog: Catalog,
         con: Any,
@@ -288,7 +374,8 @@ class Model:
         resolver: Callable[[RelationSpec], Any],
         input_binding: VerifiedInputBinding | None,
         engine: Engine,
-    ) -> None:
+    ) -> Model:
+        self = object.__new__(cls)
         object.__setattr__(self, "catalog", catalog)
         object.__setattr__(self, "con", con)
         object.__setattr__(self, "readiness", readiness)
@@ -311,6 +398,20 @@ class Model:
         payload = json.dumps(declarations, sort_keys=True, separators=(",", ":"))
         object.__setattr__(self, "model_hash", hashlib.sha256(payload.encode()).hexdigest())
         object.__setattr__(self, "day_boundary", _boundary_function(catalog.day_boundary))
+        return self
+
+    def __repr__(self) -> str:
+        events = tuple(name for name, source in self.catalog.sources.items() if source.events)
+        history = tuple(
+            name
+            for name, source in self.catalog.sources.items()
+            if source.properties and not source.events
+        )
+        return (
+            f"Model(units={tuple(self.units)!r}, events={events!r}, "
+            f"history={history!r}, metrics={tuple(self.metrics)!r}, "
+            f"dialect={self.catalog.dialect!r})"
+        )
 
     @classmethod
     def from_tables(
@@ -330,7 +431,38 @@ class Model:
         In-memory tables need no connection and materialize only; table names need ``con``,
         and unverified connections must have no pending writes during schema inspection.
 
-        Example: tr.Model.from_tables(units=units, events=events)
+
+        Args:
+            con: Ibis warehouse connection; None creates a private DuckDB for in-memory inputs.
+            units: Mapping of unit names to UnitSource roster declarations.
+            events: Mapping of event names to Events declarations with explicit metrics and complete
+                days.
+            history: Mapping of attribute names to History declarations; None declares no history
+                attributes.
+            dialect: Catalog dialect name; None infers it from the admitted connection.
+            day_boundary: "UTC" or an IANA timezone name defining local calendar-day boundaries;
+                default "UTC".
+            event_ids: Mapping of source names (the keys in events) to unique occurrence-ID column
+                names; None supplies no tie breaker.
+            allow_unverified: Whether to allow read-only use of unverified Ibis backends; False
+                refuses them.
+
+        Returns:
+            A bound Model with validated declarations and table schemas, without reading event rows.
+
+        Example:
+            tr.Model.from_tables(
+                units={"customer": tr.UnitSource(customers, "customer_id")},
+                events={
+                    "orders": tr.Events(
+                        orders,
+                        time="ordered_at",
+                        key="customer_id",
+                        metrics={"spend": tr.sum("amount")},
+                        complete=("2025-01-01", "2025-03-20"),
+                    )
+                },
+            )
         """
         if not isinstance(allow_unverified, bool):
             raise _INVALID.error(reason="wrong_type", field="allow_unverified")
@@ -428,6 +560,7 @@ class Model:
                 "events": [name, *value_events.values()],
                 "properties": list(event.labels),
                 "dimensions": [],
+                "where": _filters(event.where),
             }
         for name, item in attributes.items():
             unit = history_units[name]
@@ -480,7 +613,13 @@ class Model:
         )
 
     def to_catalog(self) -> str:
-        """Return this model's event, metric and history definitions as catalog YAML.
+        """Return this model's catalog YAML, excluding its runtime bindings.
+
+        The catalog does not include units, readiness or event_ids.
+
+
+        Returns:
+            Versioned catalog YAML text; unit rosters, readiness and event IDs are not included.
 
         Example: model.to_catalog()
         """
@@ -501,19 +640,50 @@ class Model:
     ) -> Model:
         """Bind catalog definitions to a connection, unit tables and complete event times.
 
+        A string containing a newline is parsed as YAML text; a Path or a
+        single-line string is treated as a file path. The catalog does not include
+        units, readiness or event_ids.
+
         Unverified connections must have no pending writes during schema inspection.
 
-        Example: tr.Model.from_catalog(model.catalog, con=model.con, **bindings)
+        Occurrence IDs are keyed by source: an event named ``occurred`` backed by source
+        ``events`` uses ``event_ids={"events": "event_id"}``.
+
+
+        Args:
+            path_or_catalog: Catalog, definition mapping, YAML text containing a newline, or path as
+                str/Path.
+            con: Ibis connection resolving catalog relations; it must have no pending writes if
+                unverified.
+            readiness: Readiness or mapping of source names to Coverage/BoundCoverage declaring
+                complete times.
+            units: Mapping of unit names to UnitSource rosters; None declares no rosters.
+            event_ids: Mapping of source names to unique occurrence-ID column names; None supplies
+                no tie breaker.
+            input_binding: VerifiedInputBinding for retained inputs; None reads the supplied
+                connection directly.
+            allow_unverified: Whether to allow read-only use of unverified Ibis backends; False
+                refuses them.
+
+        Returns:
+            A bound Model with validated definitions and runtime bindings, without reading event
+            rows.
+
+        Example:
+            tr.Model.from_catalog(
+                model.to_catalog(), con=model.con, units=model.units, readiness=model.readiness
+            )
         """
         if not isinstance(allow_unverified, bool):
             raise _INVALID.error(reason="wrong_type", field="allow_unverified")
-        catalog = (
-            path_or_catalog
-            if isinstance(path_or_catalog, Catalog)
-            else validate_catalog(path_or_catalog)
-            if isinstance(path_or_catalog, Mapping)
-            else load_catalog(path_or_catalog)
-        )
+        if isinstance(path_or_catalog, Catalog):
+            catalog = path_or_catalog
+        elif isinstance(path_or_catalog, Mapping):
+            catalog = validate_catalog(path_or_catalog)
+        elif isinstance(path_or_catalog, str) and "\n" in path_or_catalog:
+            catalog = load_catalog_text(path_or_catalog)
+        else:
+            catalog = load_catalog(path_or_catalog)
         engine = resolve_engine(con, allow_unverified=allow_unverified)
         return cls._from_catalog(
             catalog,
@@ -620,18 +790,32 @@ class Model:
             for name in selected_sources
         }
         metrics = {name: bind_metric(catalog, name) for name in catalog.metrics}
+        names: dict[str, str] = {}
+        for registry, owner in (
+            (catalog.events, "events"),
+            (catalog.properties, "properties"),
+            (catalog.dimensions, "dimensions"),
+            (catalog.metrics, "metrics"),
+        ):
+            for name in registry:
+                names[name] = f"{owner}:{name}"
+        for unit_name, unit in sorted(units.items()):
+            for attribute in unit.attributes:
+                _claim_name(names, "unit attribute", attribute, f"units:{unit_name}")
         for unit in units.values():
             schema = resolver(TableRef(kind="table", name=unit.table)).schema()
-            names = set(schema.names)
+            columns = set(schema.names)
             for column in (
                 unit.key,
                 unit.entered_at,
                 unit.exited_at,
                 unit.observed_from,
                 unit.observed_until,
+                *unit.attributes,
             ):
-                if column is not None and column not in names:
-                    raise _SCHEMA.error(field="roster", column=column)
+                if column is not None and column not in columns:
+                    field = "unit attribute" if column in unit.attributes else "roster"
+                    raise _SCHEMA.error(field=field, column=column)
             for column in (
                 unit.entered_at,
                 unit.exited_at,
@@ -640,13 +824,15 @@ class Model:
             ):
                 if column is not None and not schema[column].is_timestamp():
                     raise _SCHEMA.error(field="roster timestamp", column=column)
+        _check_key_types(sources, units, resolver)
         for source_name, column in event_ids.items():
             source = sources.get(source_name)
             if source is None:
                 raise _INVALID.error(reason="undeclared_name", field="event_ids", name=source_name)
             if column not in resolver(source.relation).schema().names:
                 raise _INVALID.error(reason="undeclared_name", field="event_ids", name=column)
-        return cls(
+
+        return cls._assemble(
             catalog=catalog,
             con=con,
             readiness=readiness,
@@ -657,6 +843,16 @@ class Model:
             resolver=resolver,
             input_binding=input_binding,
             engine=engine,
+        )
+
+    def _roster_attributes(self, unit: str) -> RosterAttributes | None:
+        roster = self.units.get(unit)
+        if roster is None or not roster.attributes:
+            return None
+        return RosterAttributes(
+            TableRef(kind="table", name=roster.table),
+            roster.key,
+            roster.attributes,
         )
 
     def _relation(self, relation: RelationSpec) -> Any:
@@ -723,7 +919,45 @@ class Model:
 
         Unverified connections must have no pending writes during schema inspection.
 
-        Example: tr.Model.from_increment("semantics.yaml", con=model.con, **bindings)
+
+        Args:
+            path_or_definitions: Increment semantic YAML path or published Increment definitions
+                object.
+            con: Ibis connection resolving semantic relations; it must have no pending writes if
+                unverified.
+            readiness: Readiness or mapping of source names to Coverage/BoundCoverage declaring
+                complete times.
+            units: Mapping of unit names to UnitSource rosters; None declares no rosters.
+            event_ids: Mapping of source names to unique occurrence-ID column names; None supplies
+                no tie breaker.
+            input_binding: VerifiedInputBinding for retained inputs; None reads the supplied
+                connection directly.
+            allow_unverified: Whether to allow read-only use of unverified Ibis backends; False
+                refuses them.
+
+        Returns:
+            A bound Model translated from published Increment definitions.
+
+        Example:
+            from increment.semantics import Definitions
+            from increment.semantics.models import FactSource, Fact
+
+            tr.Model.from_increment(
+                Definitions(
+                    fact_sources=(
+                        FactSource(
+                            name="orders",
+                            sql="SELECT * FROM orders",
+                            timestamp_column="ordered_at",
+                            entities=("customer_id",),
+                            facts=(Fact(name="purchases"),),
+                        ),
+                    )
+                ),
+                con=model.con,
+                units={"customer_id": tr.UnitSource("customers", "customer_id")},
+                readiness={"orders": tr.Coverage("2025-01-01", "2025-03-20")},
+            )
         """
         if not isinstance(allow_unverified, bool):
             raise _INVALID.error(reason="wrong_type", field="allow_unverified")

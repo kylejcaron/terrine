@@ -3,14 +3,12 @@ from decimal import Decimal, localcontext
 
 import pytest
 
-from terrine import quantile as public_quantile
 from terrine.errors import TerrineError
 from terrine.spec.anchors import FixedDate
 from terrine.spec.design import Design
 from terrine.spec.expressions import (
     ApproxMetricQuantile,
     MetricQuantile,
-    SketchRequest,
     approx_distinct,
     quantile,
 )
@@ -29,7 +27,6 @@ def _design(probability: Decimal | str) -> Design:
 
 def test_quantile_spec_round_trips_through_design():
     design = _design(Decimal("0.5"))
-    assert public_quantile("revenue", "0.5", window=("0d", "7d")) == design.outcomes["p50"]
     assert from_json(to_json(design)) == design
     assert from_yaml(to_yaml(design)) == design
     assert from_json(to_json(design)).spec_hash == design.spec_hash
@@ -57,36 +54,36 @@ def test_serialized_probability_rejects_numeric_and_boolean_json(malformed):
     assert error.value.context["reason"] == "malformed_document"
 
 
-def test_approximate_quantile_spec_serialization_keeps_sketch_contract():
-    expression = ApproxMetricQuantile(
-        "revenue",
-        Decimal("0.5"),
-        Window("0d", "7d"),
-        SketchRequest("tdigest", "1", Decimal("0.01")),
-    )
+def test_approximate_quantile_spec_serialization_has_no_sketch_settings():
+    expression = ApproxMetricQuantile("revenue", Decimal("0.5"), Window("0d", "7d"))
     design = Design(
         unit="user",
         anchor=FixedDate("2025-03-01"),
         outcomes={"p50": expression},
     )
     assert from_json(to_json(design)) == design
+    assert set(json.loads(to_json(design))["design"]["outcomes"]["p50"]) == {
+        "type",
+        "metric",
+        "probability",
+        "window",
+    }
 
 
-@pytest.mark.parametrize("malformed", [0.01, True])
-def test_serialized_sketch_rank_error_rejects_numeric_and_boolean_json(malformed):
-    expression = ApproxMetricQuantile(
-        "revenue",
-        Decimal("0.5"),
-        Window("0d", "7d"),
-        SketchRequest("tdigest", "1", Decimal("0.01")),
-    )
+def test_serialized_quantile_rejects_obsolete_sketch_settings():
+    expression = ApproxMetricQuantile("revenue", Decimal("0.5"), Window("0d", "7d"))
     design = Design(
         unit="user",
         anchor=FixedDate("2025-03-01"),
         outcomes={"p50": expression},
     )
     payload = json.loads(to_json(design))
-    payload["design"]["outcomes"]["p50"]["sketch"]["rank_error"] = malformed
+    payload["design"]["outcomes"]["p50"]["sketch"] = {
+        "type": "SketchRequest",
+        "algorithm": "tdigest",
+        "version": "5.2.0",
+        "rank_error": "0.01",
+    }
     with pytest.raises(TerrineError) as error:
         from_json(json.dumps(payload))
     assert error.value.code == "terrine.design.invalid"

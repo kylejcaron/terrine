@@ -72,7 +72,7 @@ def test_state_panel_design_round_trips_cutpoint_types_in_json_and_yaml():
             cutpoints=(3, Decimal("9.00"), 10.5),
             levels=("inactive", "occasional", "regular", "power"),
         ),
-        max_periods=12,
+        periods=12,
         baseline_features={"plan": agg("plan_size", window=("-1d", "0d"))},
     )
     design = Design("user", Schedule("1w", "2025-01-06", "2025-03-30"), shape=panel)
@@ -98,7 +98,7 @@ def test_observed_state_level_order_and_terminal_definition_round_trip():
             ordered=True,
             absorbing=("closed",),
         ),
-        max_periods=3,
+        periods=3,
     )
     design = Design("user", Schedule("1d", "2025-01-01", "2025-01-03"), shape=panel)
     for loader, serialized in ((from_json, to_json(design)), (from_yaml, to_yaml(design))):

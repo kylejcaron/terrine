@@ -5,12 +5,14 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
+from difflib import get_close_matches
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from typing import TYPE_CHECKING
 
 from terrine.backends.registry import engine_supports
 from terrine.errors import RefusalSpec, TerrineError
+from terrine.semantic.attributes import resolve_attribute
 from terrine.semantic.rules import (
     UNALIGNED_CALENDAR_AVERAGE,
     UNSUPPORTED_EVENT_RESOLUTION,
@@ -25,6 +27,7 @@ from terrine.semantic.rules import (
 from terrine.spec.anchors import EventAnchor, FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.expressions import (
+    _ELAPSED_SELECTOR,
     _SKETCH_UNAVAILABLE,
     And,
     ApproxMetricDistinct,
@@ -43,7 +46,7 @@ from terrine.spec.expressions import (
 )
 from terrine.spec.sequence import EventSequence
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
-from terrine.windows import Window, _duration
+from terrine.windows import Window, _duration, seconds_text
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -107,11 +110,22 @@ _MISSING = RefusalSpec(
     "{kind} {name!r} is not declared in the model; available names are {available!r}. "
     "Use one of these names or add the missing {kind} to the model.",
 )
+_MISSING_SUGGESTION = RefusalSpec(
+    "terrine.design.missing_reference",
+    "{kind} {name!r} is not declared in the model; available names are {available!r}. "
+    "Did you mean {suggestions!r}?",
+)
 
 
 def missing_reference(kind: str, name: str, declared: Iterable[str]) -> TerrineError:
-    """The unknown-reference refusal listing the declared names of the same kind, sorted."""
-    return _MISSING.error(kind=kind, name=name, available=tuple(sorted(declared)))
+    """The unknown-reference refusal listing declared names and close matches."""
+    available = tuple(sorted(declared))
+    suggestions = tuple(get_close_matches(name, available, n=3, cutoff=0.6))
+    if suggestions:
+        return _MISSING_SUGGESTION.error(
+            kind=kind, name=name, available=available, suggestions=suggestions
+        )
+    return _MISSING.error(kind=kind, name=name, available=available)
 
 
 _AMBIGUOUS = RefusalSpec(
@@ -257,10 +271,10 @@ def _fixed_anchors(design: Design, model: Model) -> tuple[datetime, ...] | None:
 
 def _retention_window(expr: RetentionMetric, model: Model) -> Window:
     if expr.finite_horizon_seconds is not None:
-        return Window(0, expr.finite_horizon_seconds)
+        return Window(0, seconds_text(expr.finite_horizon_seconds))
     coverage = model.readiness.for_fact(model.catalog.events[expr.event].source)
     span = coverage.end_exclusive - coverage.start
-    return Window(0, span.days * 86_400 + span.seconds + bool(span.microseconds))
+    return Window(0, seconds_text(span.days * 86_400 + span.seconds + bool(span.microseconds)))
 
 
 def _outcome_bounds(design: Design, model: Model) -> tuple[tuple[int, ...], tuple[datetime, ...]]:
@@ -335,49 +349,70 @@ def _resolve_property(
                 limit=-design.gap,
             )
         )
-    declaration = model.catalog.properties.get(expr.attribute)
-    owner = declaration.source if declaration is not None else None
-    declared_dimension = declaration.dimension if declaration is not None else None
-    candidates = []
-    for source in model.sources.values():
-        if owner is not None and source.name != owner:
-            continue
-        binding = source.properties.get(expr.attribute)
-        if binding is not None and binding.dimension_name is None and declared_dimension is None:
-            candidates.append((source, binding, None))
-        for dimension in source.dimensions:
-            prop = dimension.properties.get(expr.attribute)
-            if prop is not None and (
-                declared_dimension is None or dimension.name == declared_dimension
-            ):
-                candidates.append((source, prop, dimension))
-    if not candidates:
-        raise missing_reference("property", expr.attribute, model.catalog.properties)
-    dimension_names = {
-        dimension.name if dimension is not None else None for _, _, dimension in candidates
-    }
-    if len(dimension_names) > 1:
-        raise _AMBIGUOUS.error(name=expr.attribute)
-    # An inline binding and a dimension's concrete binding describe the same property;
-    # only the latter is retained above. Repeated uses of the same dimension are one
-    # logical dimension, with Catalog ownership selecting its source when available.
-    unique = {}
-    for source, prop, dimension in candidates:
-        key = dimension.name if dimension is not None else None
-        unique.setdefault(key, (source, prop, dimension))
-    source, prop, dimension = next(iter(unique.values()))
-    _required(model, source.name, required)
-    if dimension is None:
-        if design.unit not in source.units:
-            raise _UNIT.error(unit=design.unit, name=expr.attribute)
+    unit = design.unit
+    assert unit is not None
+    roster_attributes = getattr(model, "_roster_attributes", None)
+    roster = roster_attributes(unit) if callable(roster_attributes) else None
+    if roster is not None and expr.attribute in roster.attributes:
+        resolved = resolve_attribute(
+            sources=model.sources,
+            properties=model.catalog.properties,
+            roster=roster,
+            attribute=expr.attribute,
+            unit=unit,
+        )
     else:
-        unit_key = source.units.get(design.unit)
+        declaration = model.catalog.properties.get(expr.attribute)
+        owner = declaration.source if declaration is not None else None
+        declared_dimension = declaration.dimension if declaration is not None else None
+        candidates = []
+        for source in model.sources.values():
+            if owner is not None and source.name != owner:
+                continue
+            binding = source.properties.get(expr.attribute)
+            if (
+                binding is not None
+                and binding.dimension_name is None
+                and declared_dimension is None
+            ):
+                candidates.append((source, binding, None))
+            for dimension in source.dimensions:
+                prop = dimension.properties.get(expr.attribute)
+                if prop is not None and (
+                    declared_dimension is None or dimension.name == declared_dimension
+                ):
+                    candidates.append((source, prop, dimension))
+        if not candidates:
+            available = {*model.catalog.properties}
+            if roster is not None:
+                available.update(roster.attributes)
+            raise missing_reference("property", expr.attribute, available)
+        dimension_names = {
+            dimension.name if dimension is not None else None for _, _, dimension in candidates
+        }
+        if len(dimension_names) > 1:
+            raise _AMBIGUOUS.error(name=expr.attribute)
+        if any(
+            candidate_dimension is None and unit not in candidate_source.units
+            for candidate_source, _, candidate_dimension in candidates
+        ):
+            raise _UNIT.error(unit=unit, name=expr.attribute)
+        resolved = resolve_attribute(
+            sources=model.sources,
+            properties=model.catalog.properties,
+            roster=roster,
+            attribute=expr.attribute,
+            unit=unit,
+        )
+    source = resolved.source
+    dimension = resolved.dimension
+    if source is not None:
+        _required(model, source.name, required)
+        unit_key = source.units.get(unit)
         dimension_key = source.units.get(dimension.unit)
         if unit_key is None or dimension_key is None or unit_key != dimension_key:
-            raise _UNIT.error(unit=design.unit, name=expr.attribute)
-    temporal_property = (
-        dimension.validity is not None if dimension is not None else prop.as_of != "static"
-    )
+            raise _UNIT.error(unit=unit, name=expr.attribute)
+    temporal_property = dimension.validity is not None
     if temporal_property:
         anchors = _fixed_anchors(design, model)
         if anchors is None:
@@ -390,7 +425,7 @@ def _resolve_property(
                 == "unaligned"
                 for anchor in anchors
             )
-            if alignment and not supports_event_resolution(source.dialect):
+            if alignment and source is not None and not supports_event_resolution(source.dialect):
                 raise UNSUPPORTED_EVENT_RESOLUTION.error(dialect=source.dialect)
 
 
@@ -460,6 +495,18 @@ def _check_expression_timing(
     if role in {"feature", "eligibility"} and (
         support[1] > -design.gap or any(dependency[1] > -design.gap for dependency in dependencies)
     ):
+        if isinstance(expr, EventTime) and expr.measure == "elapsed" and expr.relative_to is None:
+            raise _GAP.error(
+                **_timing_context(
+                    name,
+                    role,
+                    design,
+                    start=support[0],
+                    end=support[1],
+                    bound="end",
+                    limit=-design.gap,
+                )
+            )
         if getattr(expr, "relative_to", None) is not None or isinstance(expr, EventTime):
             raise _REANCHOR_LEAK.error(
                 **_timing_context(
@@ -581,15 +628,9 @@ def _expression(
             from importlib import import_module
 
             import_module("datasketches")
-            installed_version = package_version("datasketches")
+            package_version("datasketches")
         except (ImportError, PackageNotFoundError) as exc:
-            raise _SKETCH_UNAVAILABLE.error(
-                algorithm=expr.sketch.algorithm, version=expr.sketch.version
-            ) from exc
-        if expr.sketch.algorithm != "tdigest" or expr.sketch.version != installed_version:
-            raise _SKETCH_UNAVAILABLE.error(
-                algorithm=expr.sketch.algorithm, version=expr.sketch.version
-            )
+            raise _SKETCH_UNAVAILABLE.error(algorithm="tdigest", version="installed") from exc
     if isinstance(expr, MetricAgg):
         _check_expression_timing(expr, role, design, name=name)
     metric = _metric(model, expr.metric)
@@ -774,7 +815,7 @@ def _validate_shape(
             raise _INVALID.error(reason="PersistentAdoption requires a value-bearing label")
         coverage = model.readiness.for_fact(source.name)
         outcome_horizons, outcome_cutoffs = _outcome_bounds(design, model)
-        anticipation = design.shape.anticipation_seconds
+        anticipation = design.shape.anticipation
         if outcome_horizons or outcome_cutoffs:
             schedule = design.anchor
             last_t0 = schedule.instant(schedule.count(model.day_boundary) - 1, model.day_boundary)
@@ -866,7 +907,7 @@ def _validate_shape(
             _required(model, source_name, required)
     elif isinstance(design.shape, (TimeToEvent, LifeTable)):
         shape = design.shape.time_to_event if isinstance(design.shape, LifeTable) else design.shape
-        for name in (shape.event, shape.exit, shape.entry):
+        for name in (shape.end_event, shape.exit_event, shape.entry_event):
             if name is None:
                 continue
             event = model.catalog.events.get(name)
@@ -913,13 +954,30 @@ def resolve_unit(design: Design, model: Model) -> Design:
         return design
     choices = tuple(sorted(model.units))
     if len(choices) == 1:
-        return replace(design, unit=choices[0])
+        return replace(design, unit=choices[0], gap=seconds_text(design.gap))
     if not choices:
         raise _INVALID.error(reason="no_unit_source")
     raise _AMBIGUOUS_UNIT.error(owner="design", choices=choices, parameter="unit")
 
 
 def validate_design(design: Design, model: Model) -> ValidationReport:
+    for expressions in (design.features, design.outcomes):
+        for name, value in expressions.items():
+            for leaf in _output_leaves(value):
+                if (
+                    isinstance(leaf, EventTime)
+                    and leaf.measure == "elapsed"
+                    and (
+                        isinstance(design.shape, CohortSpec)
+                        or isinstance(design.shape, LifeTable)
+                        and name in design.shape.group_by
+                    )
+                ):
+                    raise _ELAPSED_SELECTOR.error(
+                        reason="elapsed_selector_unsupported_shape",
+                        shape=type(design.shape).__name__,
+                        route="Use since() where output rows retain their evaluated t0.",
+                    )
     design = resolve_unit(design, model)
     required: set[str] = set()
     obligations: list[str] = []

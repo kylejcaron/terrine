@@ -104,7 +104,7 @@ def test_custom_saved_plan_executor_is_not_limited_by_builtin_shape_preflight(tm
         "user",
         FixedDate("2025-01-02T00:00:00+00:00"),
         features={"total": agg("total", window=("-1d", "0s"))},
-        shape="unsupported-test-shape",
+        shape=cast(Any, "unsupported-test-shape"),
     )
     owner = RuntimeOwner(state_path=path, snapshot_root=tmp_path / "snapshots")
     authority = SnapshotAuthority(owner)
@@ -219,7 +219,7 @@ def test_published_frame_reader_roundtrips_exact_generation_metadata():
 
     class Publisher(_Executor):
         def run_task(self, task, dependencies):
-            return clean.to_arrow()
+            return clean.to_pyarrow()
 
         def publish(self, plan, outputs, lease, run_id):
             return DuckDBBackend(con, namespace="owner").publish_generation(
@@ -475,7 +475,7 @@ def test_custom_saved_plan_executor_keeps_state_panel_budget_refusal():
     design = Design(
         "user",
         Schedule("1d", "2025-01-02", "2025-01-03"),
-        shape=StatePanel(StateObservations("status", ("new", "old")), max_periods=3),
+        shape=StatePanel(StateObservations("status", ("new", "old")), periods=3),
     )
     plan = plan_refresh(
         namespace="runtime",

@@ -210,7 +210,7 @@ def test_saved_runtime_correction_matches_clean_rebuild_of_new_generation(
                         if scenario == "state_panel_terminal"
                         else BinnedMetricState("total", cutpoints=(5,), levels=("low", "high"))
                     ),
-                    max_periods=2,
+                    periods=2,
                     baseline_features=(
                         {"baseline_tier": asof("tier", before="0s")}
                         if scenario == "state_panel_baseline"

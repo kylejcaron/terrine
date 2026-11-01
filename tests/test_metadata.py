@@ -103,7 +103,7 @@ def test_sequence_metadata_round_trips_arrow_as_typed_provenance():
         shape="event_sequence",
         sequence_meta=SequenceMeta(
             event="signup",
-            window=Window(0, 3600),
+            window=Window(0, "1h"),
             max_events=10,
             representation="positions",
             event_fields=("kind", "amount"),
@@ -138,7 +138,7 @@ def test_sequence_metadata_round_trips_arrow_as_typed_provenance():
         {},
         provenance,
     )
-    restored = MaterializedFrame.from_arrow(frame.to_arrow())
+    restored = MaterializedFrame.from_arrow(frame.to_pyarrow())
     assert restored.table.to_pylist() == frame.table.to_pylist()
     assert restored.provenance.sequence_meta == provenance.sequence_meta
 
@@ -149,7 +149,7 @@ def test_array_sequence_transition_references_survive_arrow_roundtrip():
 
     sequence_meta = SequenceMeta(
         event="signup",
-        window=Window(0, 3600),
+        window=Window(0, "1h"),
         max_events=10,
         representation="arrays",
         event_fields=("event_values",),
@@ -185,7 +185,7 @@ def test_array_sequence_transition_references_survive_arrow_roundtrip():
         {},
         provenance,
     )
-    restored = MaterializedFrame.from_arrow(frame.to_arrow())
+    restored = MaterializedFrame.from_arrow(frame.to_pyarrow())
     restored_meta = restored.provenance.sequence_meta
     assert restored_meta is not None
     assert restored_meta.transition_from_column == "event_values.transition_from"
@@ -199,7 +199,7 @@ def test_data_exports_feature_cutoff():
 
 
 def test_coverage_requires_ordered_dates_and_binds_to_utc_instants():
-    coverage = Coverage(start=date(2025, 1, 1), through=date(2025, 1, 3))
+    coverage = Coverage(start=date(2025, 1, 1), end=date(2025, 1, 3))
     bound = coverage.bind(lambda day: datetime.combine(day, datetime.min.time(), UTC))
     assert bound == BoundCoverage(
         start=datetime(2025, 1, 1, tzinfo=UTC),
@@ -268,7 +268,7 @@ def test_dataset_view_resolved_instant_round_trips_json_and_arrow():
         == provenance.dataset_view
     )
     assert (
-        MaterializedFrame.from_arrow(frame.to_arrow()).provenance.dataset_view
+        MaterializedFrame.from_arrow(frame.to_pyarrow()).provenance.dataset_view
         == provenance.dataset_view
     )
 
@@ -308,7 +308,7 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values(stamp
                 ),
             ),
             "spend": ColumnMeta(
-                Window(-86400, 0),
+                Window("-1d", 0),
                 "feature",
                 "spend_observed_from",
                 "spend_observed_until",
@@ -321,9 +321,9 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values(stamp
     restored = MaterializedFrame.from_json(frame.to_json())
     assert restored.roles == frame.roles
     assert restored.columns == frame.columns
-    assert MaterializedFrame.from_arrow(frame.to_arrow()).columns == frame.columns
+    assert MaterializedFrame.from_arrow(frame.to_pyarrow()).columns == frame.columns
     assert restored.provenance == frame.provenance
-    assert MaterializedFrame.from_arrow(frame.to_arrow()).provenance == frame.provenance
+    assert MaterializedFrame.from_arrow(frame.to_pyarrow()).provenance == frame.provenance
     assert (
         restored.provenance.engine_name,
         restored.provenance.dialect,
@@ -347,6 +347,7 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values(stamp
         "numeric_policy",
         "approximation",
         "transformation",
+        "measure",
     }
     payload["provenance"]["unknown_policy"] = True
     with pytest.raises(ValueError):
@@ -355,12 +356,12 @@ def test_materialized_frame_metadata_json_roundtrip_preserves_arrow_values(stamp
 
 def test_materialized_frame_arrow_schema_metadata_can_be_recovered():
     frame = _frame(_provenance())
-    recovered = MaterializedFrame.from_arrow(frame.to_arrow())
+    recovered = MaterializedFrame.from_arrow(frame.to_pyarrow())
     assert recovered.columns == frame.columns
     assert recovered.roles == frame.roles
     assert recovered.provenance == frame.provenance
     assert recovered.table.schema.metadata == frame.table.schema.metadata
-    encoded = frame.to_arrow().schema.metadata[b"terrine.materialized_frame.v2"]
+    encoded = frame.to_pyarrow().schema.metadata[b"terrine.materialized_frame.v2"]
     assert json.loads(encoded)["version"] == 2
 
 
@@ -392,13 +393,13 @@ def test_engine_stamp_round_trips_and_historic_verified_metadata():
     frame = _frame(_provenance(_UNVERIFIED_STAMP))
     json_payload = json.loads(frame.to_json())
     arrow_payload = json.loads(
-        frame.to_arrow().schema.metadata[b"terrine.materialized_frame.v2"].decode("utf-8")
+        frame.to_pyarrow().schema.metadata[b"terrine.materialized_frame.v2"].decode("utf-8")
     )
     assert json_payload["version"] == 1
     assert arrow_payload["version"] == 2
     for restored in (
         MaterializedFrame.from_json(frame.to_json()),
-        MaterializedFrame.from_arrow(frame.to_arrow()),
+        MaterializedFrame.from_arrow(frame.to_pyarrow()),
     ):
         assert restored.provenance.engine_name == "sqlite"
         assert restored.provenance.dialect == "generic"
@@ -622,7 +623,7 @@ def test_state_panel_roles_and_metadata_survive_arrow_json_roundtrip():
         columns={},
         provenance=replace(_provenance(), state_panel=meta),
     )
-    recovered = MaterializedFrame.from_arrow(frame.to_arrow())
+    recovered = MaterializedFrame.from_arrow(frame.to_pyarrow())
     assert recovered.roles == frame.roles
     assert recovered.provenance.state_panel == meta
     assert recovered.provenance.state_panel.levels == ("new", "active", "closed")

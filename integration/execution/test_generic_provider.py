@@ -140,7 +140,7 @@ def test_frame_admission_precedes_every_source_read(sqlite, monkeypatch, entry):
             ),
             namespace="agent",
         )
-        definition = DatasetDefinition(schema_version=2, base_design=design, view=None)
+        definition = DatasetDefinition(base_design=design, view=None)
         response = tools.preview_dataset(definition, bounded_count=1)
         if response.status != "ok":
             assert response.code is not None
@@ -297,7 +297,7 @@ def test_generic_materialization_round_trips_unverified_stamp(sqlite):
         "generic",
         "unverified",
     )
-    stamped = result.to_arrow()
+    stamped = result.to_pyarrow()
     sink = pa.BufferOutputStream()
     with pa.ipc.new_stream(sink, stamped.schema) as writer:
         writer.write_table(stamped)

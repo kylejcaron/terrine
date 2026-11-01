@@ -88,13 +88,13 @@ def panel_metadata(design: Design, model: Model) -> PanelMeta | None:
             history,
             trial_weight,
             trials=trials,
-            anticipation_seconds=design.shape.anticipation_seconds,
+            anticipation_seconds=design.shape.anticipation,
         )
     if isinstance(design.shape, EventPanelSpec):
         return PanelMeta(
             "event_panel",
             periods=design.shape.periods,
-            period_seconds=design.shape.period_seconds,
+            period_seconds=design.shape.period,
             reference_period=design.shape.reference_period,
         )
     return None

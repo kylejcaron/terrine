@@ -4,18 +4,19 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
 import ibis
 import ibis.expr.types as ir
 import pyarrow as pa
 
+import terrine.reasons as reason_codes
 from terrine.backends.extrema import greatest, least
 from terrine.backends.timestamps import compare_timestamps
 from terrine.data import ColumnMeta
-from terrine.semantic.models import BoundDimension, BoundValidity
-from terrine.spec.validate import missing_reference
+from terrine.semantic.attributes import resolve_attribute
+from terrine.semantic.bind import filter_source_rows
+from terrine.semantic.models import BoundDimension
 from terrine.temporal.attributes import attribute_asof, history_checks, validate_history
 
 if TYPE_CHECKING:
@@ -37,22 +38,6 @@ class AsOfResult:
         validate_history(self.history, self.dimension, execute=execute)
 
 
-def resolve_attribute(model: Model, attribute: str):
-    declaration = model.catalog.properties.get(attribute)
-    for source in model.sources.values():
-        if declaration is not None and source.name != declaration.source:
-            continue
-        for dimension in source.dimensions:
-            if attribute in dimension.properties and (
-                declaration is None or declaration.dimension == dimension.name
-            ):
-                return source, dimension.properties[attribute], dimension
-        prop = source.properties.get(attribute)
-        if prop is not None and prop.dimension_name is None:
-            return source, prop, None
-    raise missing_reference("property", attribute, model.catalog.properties)
-
-
 def compile_asof(
     points: ibis.Table,
     model: Model,
@@ -65,23 +50,24 @@ def compile_asof(
     role: str,
 ) -> AsOfResult:
     """A carried change point is known only from its matched point through cutoff."""
-    source, prop, dimension = resolve_attribute(model, attribute)
-    if dimension is None:
-        raw = model._relation(source.relation)
-        key = source.units[unit]
-        static = prop.as_of == "static"
-        fields = list(dict.fromkeys([key, prop.column, *([] if static else [source.time_column])]))
-        history = raw.select(*fields).distinct()
-        dimension = BoundDimension(
-            name=f"{source.name}:{attribute}",
-            relation=source.relation,
-            unit=unit,
-            key=key,
-            validity=None if static else BoundValidity(None, None, source.time_column),
-            properties=MappingProxyType({attribute: prop}),
-        )
+    resolved = resolve_attribute(
+        sources=model.sources,
+        properties=model.catalog.properties,
+        roster=model._roster_attributes(unit),
+        attribute=attribute,
+        unit=unit,
+    )
+    dimension = resolved.dimension
+    raw = model._relation(dimension.relation)
+    if resolved.source is not None and resolved.prop.dimension_name is None:
+        raw = filter_source_rows(raw, resolved.source)
+    if resolved.owner == "roster" or resolved.prop.dimension_name is None:
+        fields = [dimension.key, resolved.prop.column]
+        if dimension.validity is not None and dimension.validity.changed_at is not None:
+            fields.append(dimension.validity.changed_at)
+        history = raw.select(*dict.fromkeys(fields)).distinct()
     else:
-        history = model._relation(dimension.relation)
+        history = raw
     used = {name.casefold() for name in (*points.columns, output)}
 
     def name(label):
@@ -105,12 +91,17 @@ def compile_asof(
         strict=strict,
         matched_at_column=matched_at,
     )
-    coverage = model.readiness.for_fact(source.name)
-    lower = cast(ir.TimestampScalar, ibis.literal(coverage.start))
-    upper = cast(ir.TimestampScalar, ibis.literal(coverage.end_exclusive))
-    source_ready = compare_timestamps(
-        lower, table[cutoff], "lt" if strict else "le"
-    ) & compare_timestamps(table[cutoff], upper, "le" if strict else "lt")
+    if resolved.source is None:
+        lower = cast(ir.TimestampScalar, table.t0)
+        upper = lower
+        source_ready = cast(ir.BooleanScalar, ibis.literal(True))
+    else:
+        coverage = model.readiness.for_fact(resolved.source.name)
+        lower = cast(ir.TimestampScalar, ibis.literal(coverage.start))
+        upper = cast(ir.TimestampScalar, ibis.literal(coverage.end_exclusive))
+        source_ready = compare_timestamps(
+            lower, table[cutoff], "lt" if strict else "le"
+        ) & compare_timestamps(table[cutoff], upper, "le" if strict else "lt")
     continuity = dimension.validity is not None and dimension.validity.changed_at is not None
     source_continuous = (
         compare_timestamps(lower, table[matched_at], "le")
@@ -138,10 +129,10 @@ def compile_asof(
     available = (source_ready & found & source_continuous & unit_ready).fill_null(False)
     value = table.__terrine_attribute_value
     reason = ibis.cases(
-        (~source_ready, "incomplete_coverage"),
-        (~found | ~source_continuous, "missing_history"),
-        (~unit_ready, "incomplete_observation"),
-        (value.isnull(), "all_values_null"),
+        (~source_ready, reason_codes.INCOMPLETE_COVERAGE),
+        (~found | ~source_continuous, reason_codes.MISSING_HISTORY),
+        (~unit_ready, reason_codes.INCOMPLETE_OBSERVATION),
+        (value.isnull(), reason_codes.ALL_VALUES_NULL),
         else_=ibis.null().cast("string"),
     )
     from_name, until_name = name("observed_from"), name("observed_until")

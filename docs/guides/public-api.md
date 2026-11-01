@@ -63,19 +63,35 @@ mapping of predicates. Shape-specific restrictions still apply: `life_table`
 declares its features through `group_by={name: expr}`, and shapes with derived
 outcomes do not accept arbitrary outcome mappings.
 
-## Top-level constructors
+## Package-root workflow
+
+Use `import terrine as tr`, never `from terrine import *`. The root keeps
+binding, Design, everyday expressions, recipes, results and errors together.
+In particular, `tr.sum`, `tr.min` and `tr.max` remain metric constructors without
+shadowing Python's builtins in your own namespace.
 
 | Workflow | `terrine` names | Example or guide |
 | --- | --- | --- |
-| Bind and build | `Model`, `Design`, `Frame`, `Dataset`, `Events`, `History`, `Coverage`, `UnitSource`, `Budget`, `preview` | First dataset; [event tables and catalogs](temporal-engine.md) |
+| Bind and build | `Model`, `Design`, `Dataset`, `Events`, `History`, `Coverage`, `UnitSource`, `Budget`, `preview` | First dataset; [event tables and catalogs](temporal-engine.md) |
 | Metrics on `Events` | `count`, `sum`, `mean`, `min`, `max`, `count_distinct`, `ratio` | [Binding event tables](temporal-engine.md#binding-event-tables) |
-| Exact anchors and windows | `FixedDate`, `EventAnchor`, `AnchorRange`, `Schedule`, `Window` | [Anchors](candidate-anchors.md) |
-| Named feature/outcome expressions | `agg`, `asof`, `event_time`, `EventTime`, `retention`, `quantile`, `approx_distinct`, `approx_quantile`, `SketchRequest` | [Temporal semantics](temporal-engine.md) |
-| Eligibility and descriptive treatment | `eq`, `gt`, `is_null`, `all_of`, `Treatment` | [Design specifications](design-specs.md) |
-| Bounded trajectories and cohorts | `Trajectory`, `CohortSpec`, `CohortGrouping`, `TimeToEvent`, `LifeTable` | [Trajectories and risk sets](trajectories-survival.md) |
-| State pairs | `StatePanel`, `StateObservations`, `BinnedMetricState` | [State panels](state-panels.md) |
-| Ordered event datasets | `EventSequence`, `SessionSpec`, `FunnelSpec` | [Sequences](temporal-engine.md#bounded-event-sequences-and-event-time-origins) |
-| Save a description or handle a refusal | `DatasetDefinition`, `from_yaml`, `to_yaml`, `TerrineError` | [ML staging](ml-staging.md), [refusal reference](../reference/refusals.md) |
+| Anchors | `FixedDate`, `EventAnchor`, `AnchorRange`, `Schedule` | [Anchors](candidate-anchors.md) |
+| Feature/outcome expressions and eligibility | `agg`, `asof`, `event_time`, `since`, `eq`, `gt`, `is_null`, `all_of` | [Temporal semantics](temporal-engine.md) |
+| Common dataset types | `recipes` | Construction layers above |
+| Save a design or handle a refusal | `from_yaml`, `to_yaml`, `TerrineError`, `UnverifiedBackendWarning` | [Design specifications](design-specs.md), [refusal reference](../reference/refusals.md) |
+
+Import shape-specific inputs from `terrine.spec`, as with `Initiation`:
+`Treatment`, `EventTime`, `Trajectory`, `CohortSpec`, `CohortGrouping`,
+`TimeToEvent`, `LifeTable`, `StatePanel`, `StateObservations`,
+`BinnedMetricState`, `EventSequence`, `SessionSpec` and `FunnelSpec`.
+The specialized `retention`, `quantile`, `approx_distinct` and `approx_quantile`
+expressions and `DatasetDefinition` also live there. Import elapsed `Window`
+from `terrine.windows`. A Frame is returned by `design.build(model)`; its type
+is available from `terrine.frame` when needed.
+
+Bind Models through `tr.Model.from_tables(...)` or `tr.Model.from_catalog(...)`,
+not the Model constructor. Create definitions as
+`DatasetDefinition(base_design=design, view=None, transforms=())`; their codecs
+stamp the wire-format version rather than accepting it as a study input.
 
 `Events` and `History` belong at the top level because `Model.from_tables` is
 the starting binding path for simple tables: it combines explicit completeness
@@ -121,10 +137,10 @@ writes or a dedicated read connection; transaction preservation is not
 guaranteed.
 
 ```python
-from terrine import Model, UnverifiedBackendWarning
+import terrine as tr
 
 # catalog.dialect must remain the connection's real SQL dialect.
-model = Model.from_catalog(
+model = tr.Model.from_catalog(
     catalog, con=con, readiness=readiness, allow_unverified=True,
 )
 ```

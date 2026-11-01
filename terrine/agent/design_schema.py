@@ -58,7 +58,7 @@ def design_schema() -> dict[str, Any]:
         "FixedDate": {"date": ref("Temporal")},
         "EventAnchor": {
             "event": text,
-            "which": {"enum": ["first", "nth", "each"]},
+            "occurrence": {"enum": ["first", "nth", "each"]},
             "n": nullable(integer),
             "offset": duration,
         },
@@ -108,9 +108,10 @@ def design_schema() -> dict[str, Any]:
             "occurrence": {"enum": ["first", "last", "nth"]},
             "n": nullable(integer),
             "relative_to": nullable(ref("EventTime")),
+            "measure": {"enum": ["time", "elapsed"]},
         },
         "Gt": {"expr": expression, "value": scalar},
-        "Eq": {"left": expression, "value": scalar},
+        "Eq": {"expr": expression, "value": scalar},
         "IsNull": {"expr": expression, "negate": boolean},
         "And": {"terms": array(predicate)},
         "Treatment": {"attribute": text, "at": number, "known_at_t0": boolean},
@@ -127,7 +128,7 @@ def design_schema() -> dict[str, Any]:
         },
         "StatePanel": {
             "state": union("StateObservations", "BinnedMetricState"),
-            "max_periods": integer,
+            "periods": integer,
             "baseline_features": named,
         },
         "Trajectory": {
@@ -138,14 +139,14 @@ def design_schema() -> dict[str, Any]:
         },
         "CohortSpec": {"origin": text, "trajectory": ref("Trajectory")},
         "TimeToEvent": {
-            "event": text,
-            "exit": nullable(text),
-            "entry": nullable(text),
+            "end_event": text,
+            "exit_event": nullable(text),
+            "entry_event": nullable(text),
             "delayed_entry": boolean,
         },
         "LifeTable": {
             "time_to_event": ref("TimeToEvent"),
-            "interval": duration,
+            "bin": duration,
             "group_by": array(text),
         },
         "SessionSpec": {"gap_seconds": number},
@@ -181,12 +182,12 @@ def design_schema() -> dict[str, Any]:
         "SequentialSpec": {
             "treatment": union("Initiation", "PersistentAdoption"),
             "trial_weight": nullable(ref("TrialWeight")),
-            "anticipation_seconds": number,
-            "reference_period_seconds": number,
+            "anticipation": duration,
+            "reference_period": duration,
         },
         "EventPanelSpec": {
             "periods": array(integer),
-            "period_seconds": number,
+            "period": duration,
             "reference_period": integer,
         },
         "CalendarComparisonSpec": {
@@ -201,7 +202,7 @@ def design_schema() -> dict[str, Any]:
         "EventAnchor": {"n", "offset"},
         "MetricAgg": {"relative_to"},
         "AttributeAsOf": {"relative_to"},
-        "EventTime": {"relative_to"},
+        "EventTime": {"relative_to", "measure"},
         "IsNull": {"negate"},
         "Treatment": {"at"},
         "StateObservations": {"ordered", "absorbing"},

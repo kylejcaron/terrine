@@ -13,6 +13,7 @@ import ibis.expr.datatypes as dt
 import ibis.expr.types as ir
 import pyarrow as pa
 
+import terrine.reasons as reason_codes
 from terrine.backends.dialect import current_dialect
 from terrine.backends.extrema import greatest, least
 from terrine.backends.numeric import (
@@ -397,9 +398,9 @@ def _component(
     reason = builder.put(
         "reason",
         builder.col(all_null).ifelse(
-            "all_values_null",
+            reason_codes.ALL_VALUES_NULL,
             (
-                builder.col(empty).ifelse("no_observations", no_reason)
+                builder.col(empty).ifelse(reason_codes.NO_OBSERVATIONS, no_reason)
                 if measure.aggregation == "avg_event"
                 else no_reason
             ),
@@ -596,9 +597,9 @@ def aggregate_window(
     unavailable = builder.put(
         "unavailable_reason",
         (~builder.col(source_complete)).ifelse(
-            "incomplete_coverage",
+            reason_codes.INCOMPLETE_COVERAGE,
             (~observation_complete).ifelse(
-                ibis.literal("incomplete_observation"), ibis.null().cast("string")
+                ibis.literal(reason_codes.INCOMPLETE_OBSERVATION), ibis.null().cast("string")
             ),
         ),
     )
@@ -673,7 +674,7 @@ def aggregate_window(
                 .ifelse(
                     builder.col(denominator.reason),
                     builder.col(denominator.known_zero).ifelse(
-                        "zero_denominator", ibis.null().cast("string")
+                        reason_codes.ZERO_DENOMINATOR, ibis.null().cast("string")
                     ),
                 ),
             ),

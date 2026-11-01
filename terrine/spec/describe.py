@@ -8,6 +8,7 @@ from textwrap import fill
 from typing import TYPE_CHECKING
 
 from terrine.semantic.time import boundary_timezone
+from terrine.spec._columns import design_columns
 from terrine.spec.anchors import EventAnchor, FixedDate, Schedule
 from terrine.spec.expressions import (
     And,
@@ -36,7 +37,7 @@ from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import BinnedMetricState, StatePanel
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
 from terrine.spec.validate import resolve_unit, validate_design
-from terrine.windows import Window, _duration
+from terrine.windows import Window, _duration, seconds_text
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -66,17 +67,6 @@ _OPERATORS = {
     "lt": "<",
     "lte": "<=",
 }
-_PANEL_SHAPES = (SequentialSpec, EventPanelSpec, CalendarComparisonSpec)
-_SHAPE_LABELS = (
-    (SequentialSpec, "trial panel"),
-    (EventPanelSpec, "event panel"),
-    (CalendarComparisonSpec, "calendar comparison"),
-    (CohortSpec, "trajectory"),
-    (TimeToEvent, "time-to-event"),
-    (LifeTable, "life table"),
-    (StatePanel, "state panel"),
-    (EventSequence, "event sequence"),
-)
 
 type Line = tuple[str, str]
 
@@ -208,7 +198,13 @@ class _Renderer:
             return "0", "no_observations"
         return "null", "no_observations"
 
+    def _is_roster_attribute(self, attribute: str) -> bool:
+        roster = self.model._roster_attributes(self.unit)
+        return roster is not None and attribute in roster.attributes
+
     def _property_source(self, attribute: str) -> str:
+        if self._is_roster_attribute(attribute):
+            return "unit roster"
         declaration = self.model.catalog.properties.get(attribute)
         if declaration is not None:
             return declaration.source
@@ -217,7 +213,7 @@ class _Renderer:
                 attribute in dimension.properties for dimension in source.dimensions
             ):
                 return source.name
-        raise AssertionError("validation resolves every property to a source")
+        raise AssertionError("validation resolves every property to a source or roster")
 
     def _coverage(self, source: str) -> str:
         coverage = self.model.readiness.for_fact(source)
@@ -254,8 +250,8 @@ class _Renderer:
             )
         if isinstance(expr, ApproxMetricQuantile):
             return (
-                f"approximate {expr.probability} quantile ({expr.sketch.algorithm} "
-                f"{expr.sketch.version}, requested rank error {expr.sketch.rank_error}) "
+                f"approximate {expr.probability} quantile (tdigest, compression k=200, "
+                "empirical with no guaranteed rank bound) "
                 f"of {self._values(expr.metric)} in {_window(expr.window, origin)}"
             )
         if isinstance(expr, ApproxMetricDistinct):
@@ -265,7 +261,7 @@ class _Renderer:
             horizon = (
                 f"from {origin} until the end of complete coverage (exclusive)"
                 if expr.finite_horizon_seconds is None
-                else f"in {_window(Window(0, expr.finite_horizon_seconds), origin)}"
+                else f"in {_window(Window(0, seconds_text(expr.finite_horizon_seconds)), origin)}"
             )
             thresholds = ", ".join(str(value) for value in expr.count_thresholds)
             return (
@@ -274,9 +270,13 @@ class _Renderer:
             )
         if isinstance(expr, AttributeAsOf):
             at = _offset(expr.before, "selected time" if expr.relative_to is not None else origin)
-            source = self._property_source(expr.attribute)
             relative = self._relative(expr.relative_to, origin)
-            return f"{expr.attribute} as of just before {at} (history {source}){relative}"
+            owner = (
+                f"static unit attribute on the {self.unit} roster"
+                if self._is_roster_attribute(expr.attribute)
+                else f"history {self._property_source(expr.attribute)}"
+            )
+            return f"{expr.attribute} as of just before {at} ({owner}){relative}"
         if isinstance(expr, EventTime):
             occurrence = _ordinal(expr.n) if expr.occurrence == "nth" else expr.occurrence
             label = (
@@ -286,11 +286,13 @@ class _Renderer:
             )
             own = _window(expr.window, "selected time" if expr.relative_to is not None else origin)
             relative = self._relative(expr.relative_to, origin)
+            if expr.measure == "elapsed":
+                return f"time since {occurrence} {expr.event}{label} in {own}{relative}"
             return f"time of the {occurrence} {expr.event} event{label} in {own}{relative}"
         if isinstance(expr, Gt):
             return f"{self._expression(expr.expr, origin)} > {_scalar(expr.value)}"
         if isinstance(expr, Eq):
-            return f"{self._expression(expr.left, origin)} == {_scalar(expr.value)}"
+            return f"{self._expression(expr.expr, origin)} == {_scalar(expr.value)}"
         if isinstance(expr, IsNull):
             state = "not null" if expr.negate else "null"
             return f"{self._expression(expr.expr, origin)} is {state}"
@@ -318,11 +320,11 @@ class _Renderer:
             value = anchor.date
             instant = value if isinstance(value, datetime) else self.model.day_boundary(value)
             return f"at {_instant(instant)}"
-        if anchor.which == "each":
+        if anchor.occurrence == "each":
             phrase = f"at each {anchor.event} event"
         else:
-            which = _ordinal(anchor.n) if anchor.which == "nth" else "first"
-            phrase = f"at its {which} {anchor.event} event"
+            occurrence = _ordinal(anchor.n) if anchor.occurrence == "nth" else "first"
+            phrase = f"at its {occurrence} {anchor.event} event"
         if anchor.offset:
             phrase += f", shifted by +{_duration(anchor.offset)}"
         return phrase
@@ -333,7 +335,7 @@ class _Renderer:
             groups = f" per {_names(shape.group_by)}" if shape.group_by else ""
             yield (
                 "",
-                f"One row per {_duration(shape.interval)} time bin{groups}, counting "
+                f"One row per {_duration(shape.bin)} time bin{groups}, counting "
                 f"{self._who()} entries {self._at_anchor()}.",
             )
         elif isinstance(shape, EventSequence):
@@ -431,6 +433,13 @@ class _Renderer:
         if treatment is None:
             return
         at = _offset(treatment.at, "t0")
+        if self._is_roster_attribute(treatment.attribute):
+            yield (
+                "",
+                f"Treatment: {treatment.attribute} is a static unit attribute on the {self.unit} "
+                f"roster, evaluated as of {at}.",
+            )
+            return
         source = self._property_source(treatment.attribute)
         yield (
             "",
@@ -452,10 +461,10 @@ class _Renderer:
         if isinstance(shape, SequentialSpec):
             parts = [
                 f"Trials: each snapshot is a trial; treated = {self._initiation(shape.treatment)}",
-                f"reference period {_offset(shape.reference_period_seconds, 't0')}",
+                f"reference period {_offset(shape.reference_period, 't0')}",
             ]
-            if shape.anticipation_seconds:
-                parts.append(f"anticipation {_duration(shape.anticipation_seconds)}")
+            if shape.anticipation:
+                parts.append(f"anticipation {_duration(shape.anticipation)}")
             if shape.trial_weight is not None:
                 parts.append(f"{shape.trial_weight.kind.replace('_', ' ')} weights")
             yield "", "; ".join(parts) + "."
@@ -465,7 +474,7 @@ class _Renderer:
             periods = ", ".join(str(period) for period in shape.periods)
             yield (
                 "",
-                f"Panel: event_period values {periods} of {_duration(shape.period_seconds)} "
+                f"Panel: event_period values {periods} of {_duration(shape.period)} "
                 f"around parent_t0 (the selected {anchor.event} anchor), "
                 f"reference period {shape.reference_period}.",
             )
@@ -486,8 +495,8 @@ class _Renderer:
 
     def _censoring(self, shape: TimeToEvent) -> str:
         reasons = []
-        if shape.exit is not None:
-            reasons.append(f"the {shape.exit} event")
+        if shape.exit_event is not None:
+            reasons.append(f"the {shape.exit_event} event")
         reasons.append("the end of complete coverage")
         roster = self.model.units.get(self.unit)
         if roster is not None and roster.observed_until is not None:
@@ -498,9 +507,9 @@ class _Renderer:
             reasons[0] if len(reasons) == 1 else f"{', '.join(reasons[:-1])} or {reasons[-1]}"
         )
         entry = ""
-        if shape.entry is not None:
+        if shape.entry_event is not None:
             delayed = " (delayed entry)" if shape.delayed_entry else ""
-            entry = f"; entry at the {shape.entry} event{delayed}"
+            entry = f"; entry at the {shape.entry_event} event{delayed}"
         return f"censored by {censored}{entry}"
 
     def _shape(self) -> Iterator[Line]:
@@ -518,7 +527,7 @@ class _Renderer:
         elif isinstance(shape, TimeToEvent):
             yield (
                 "",
-                f"Time to event: the first {shape.event} event in [entry_time, censor_time), "
+                f"Time to event: the first {shape.end_event} event in [entry_time, censor_time), "
                 f"measured from t0, {self._censoring(shape)}. With an explicit entry selector, "
                 "events before entry exclude the record. Without one, only events before t0 "
                 "exclude it; coverage beginning after t0 keeps the row incomplete with reason "
@@ -529,8 +538,8 @@ class _Renderer:
             groups = f", grouped by {_names(shape.group_by)}" if shape.group_by else ""
             yield (
                 "",
-                f"Life table: time from t0 to the first {inner.event} in "
-                f"[entry_time, censor_time), binned by {_duration(shape.interval)}{groups}, "
+                f"Life table: time from t0 to the first {inner.end_event} in "
+                f"[entry_time, censor_time), binned by {_duration(shape.bin)}{groups}, "
                 f"{self._censoring(inner)}.",
             )
         elif isinstance(shape, StatePanel):
@@ -551,7 +560,7 @@ class _Renderer:
                 "",
                 f"State panel: {' / '.join(state.levels)} from {origin}, observed every "
                 f"{_duration(schedule.every, weeks=True)} for up to "
-                f"{_plural(shape.max_periods, 'period')}"
+                f"{_plural(shape.periods, 'period')}"
                 f"{qualifiers}.",
             )
         elif isinstance(shape, EventSequence):
@@ -588,7 +597,10 @@ class _Renderer:
             yield from design.shape.baseline_features.items()
         elif isinstance(design.shape, CohortSpec):
             trajectory = design.shape.trajectory
-            yield "period_value", MetricAgg(trajectory.metric, Window(0, trajectory.period))
+            yield (
+                "period_value",
+                MetricAgg(trajectory.metric, Window(0, seconds_text(trajectory.period))),
+            )
 
     def _empty_windows(self) -> Iterator[Line]:
         rows = []
@@ -616,11 +628,12 @@ class _Renderer:
         yield "", f"Completeness: {self._coverage(first)}"
         for source in rest:
             yield "  ", self._coverage(source)
+        yield "  ", "Naive source timestamps are read as UTC instants."
         shape = self.design.shape
         if isinstance(shape, (TimeToEvent, LifeTable)):
             inner = shape.time_to_event if isinstance(shape, LifeTable) else shape
             reasons = ["source_coverage"]
-            if inner.exit is not None:
+            if inner.exit_event is not None:
                 reasons.append("exit")
             if self.design.administrative_cutoff is not None:
                 reasons.append("administrative_cutoff")
@@ -681,29 +694,7 @@ class _Renderer:
         yield from self._empty_windows()
 
     def _columns(self) -> Iterator[Line]:
-        design, shape = self.design, self.design.shape
-        if shape != "cross_section" and not isinstance(shape, _PANEL_SHAPES):
-            label = next(label for kind, label in _SHAPE_LABELS if isinstance(shape, kind))
-            yield "", f"Columns: the {label} columns (see roles after build)."
-            return
-        columns = ["unit", "anchor_id", "t0"]
-        named = []
-        if design.treatment is not None or isinstance(shape, SequentialSpec):
-            named.append("treatment")
-        elif isinstance(shape, CalendarComparisonSpec):
-            columns.append("treatment")
-        named.extend((*design.features, *design.outcomes, *design.eligibility))
-        for name in named:
-            columns.extend((name, f"{name}__complete", f"{name}__reason"))
-        if shape == "cross_section":
-            yield "", f"Columns: {', '.join(columns)}."
-            return
-        label = next(label for kind, label in _SHAPE_LABELS if isinstance(shape, kind))
-        owned = f"the {label} columns (see roles after build)"
-        yield (
-            "",
-            f"Columns: {', '.join(columns)}, and {owned}." if columns else f"Columns: {owned}.",
-        )
+        yield "", f"Columns: {', '.join(design_columns(self.design))}."
 
     def render(self) -> str:
         shape = self.design.shape

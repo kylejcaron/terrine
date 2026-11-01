@@ -26,6 +26,7 @@ from terrine.data import (
     Provenance,
     Roles,
     SamplingMeta,
+    dataframe_view_preflight,
 )
 from terrine.errors import RefusalSpec
 from terrine.execution.gates import (
@@ -36,6 +37,7 @@ from terrine.execution.gates import (
     run_schedule,
 )
 from terrine.spec.anchors import FixedDate
+from terrine.spec.design import _output_shape_name
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import BinnedMetricState, StatePanel
 from terrine.spec.trajectory import CohortGrouping, CohortSpec, LifeTable, TimeToEvent
@@ -49,10 +51,6 @@ if TYPE_CHECKING:
 
 __all__ = ["Frame", "CohortTable"]
 
-_MISSING_DEPENDENCY = RefusalSpec(
-    "terrine.convert.missing_dependency",
-    "Conversion requires the optional {extra!r} dependency; install terrine[{extra}].",
-)
 _INVALID_SPLIT = RefusalSpec(
     "terrine.dataset.invalid_split", "Split input {field} is invalid: {reason}."
 )
@@ -65,13 +63,6 @@ _INVALID_COHORTS = RefusalSpec(
 _COHORT_CHOICE = RefusalSpec(
     "terrine.cohort.invalid_operation", "Cohort input {field} must be one of {choices}."
 )
-
-
-def _optional_dependency(name: str):
-    try:
-        return import_module(name)
-    except ImportError as exc:
-        raise _MISSING_DEPENDENCY.error(extra=name) from exc
 
 
 class _SplitPolicy(Protocol):
@@ -177,7 +168,7 @@ def _selector_definition(selector: EventTime, model: Model) -> object:
 
 
 def _feature_definition_hash(design: Design, features: tuple[str, ...], model: Model) -> str:
-    from terrine.compile._asof import resolve_attribute
+    from terrine.semantic.attributes import resolve_attribute
     from terrine.spec.expressions import (
         ApproxMetricDistinct,
         ApproxMetricQuantile,
@@ -188,7 +179,10 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
         _output_leaves,
     )
     from terrine.spec.io import canonical_json
+    from terrine.spec.validate import resolve_unit
 
+    design = resolve_unit(design, model)
+    assert design.unit is not None
     record = json.loads(canonical_json(design))["design"]
     semantic: dict[str, object] = {}
     selected_records: dict[str, object] = {}
@@ -220,6 +214,7 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
                                 "relation": _definition_record(source.relation),
                                 "day_boundary": source.day_boundary,
                                 "time_column": source.time_column,
+                                "where": _definition_record(source.where),
                                 "binding": _definition_record(source.properties[state.property]),
                             }
                             for source_name, source in sorted(model.sources.items())
@@ -245,24 +240,42 @@ def _feature_definition_hash(design: Design, features: tuple[str, ...], model: M
                 if metric is not None:
                     resolved["metric"] = _metric_definition(metric, model)
             elif isinstance(leaf, AttributeAsOf):
-                source, prop, dimension = resolve_attribute(model, leaf.attribute)
-                resolved["attribute"] = {
-                    "source": source.name,
-                    "relation": _definition_record(source.relation),
-                    "unit_column": source.units.get(design.unit),
-                    "day_boundary": source.day_boundary,
-                    "time_column": source.time_column,
-                    "binding": _definition_record(prop),
-                    "dimension": None
-                    if dimension is None
-                    else {
-                        "name": dimension.name,
+                attribute = resolve_attribute(
+                    sources=model.sources,
+                    properties=model.catalog.properties,
+                    roster=model._roster_attributes(design.unit),
+                    attribute=leaf.attribute,
+                    unit=design.unit,
+                )
+                dimension = attribute.dimension
+                if attribute.owner == "roster":
+                    resolved["attribute"] = {
+                        "owner": "roster",
                         "relation": _definition_record(dimension.relation),
-                        "unit": dimension.unit,
                         "key": dimension.key,
-                        "validity": _definition_record(dimension.validity),
-                    },
-                }
+                        "binding": _definition_record(attribute.prop),
+                    }
+                else:
+                    source = attribute.source
+                    assert source is not None
+                    resolved["attribute"] = {
+                        "source": source.name,
+                        "relation": _definition_record(source.relation),
+                        "unit_column": source.units.get(design.unit),
+                        "day_boundary": source.day_boundary,
+                        "time_column": source.time_column,
+                        "where": _definition_record(source.where),
+                        "binding": _definition_record(attribute.prop),
+                        "dimension": None
+                        if attribute.prop.dimension_name is None
+                        else {
+                            "name": dimension.name,
+                            "relation": _definition_record(dimension.relation),
+                            "unit": dimension.unit,
+                            "key": dimension.key,
+                            "validity": _definition_record(dimension.validity),
+                        },
+                    }
             selector = leaf if isinstance(leaf, EventTime) else getattr(leaf, "relative_to", None)
             if selector is not None:
                 resolved["selector"] = _selector_definition(selector, model)
@@ -389,6 +402,11 @@ class Frame:
     Materialization and conversion enforce integrity and output limits; direct ``expr``
     execution bypasses them, and output limits do not bound scans or peak memory.
 
+
+    Args:
+        design: Design describing the rows and expressions to compile.
+        model: Model binding the design names to tables, metrics, attributes and completeness.
+
     Example: design.build(model)
     """
 
@@ -410,6 +428,14 @@ class Frame:
         object.__setattr__(self, "_training_view", None)
         object.__setattr__(self, "_scoring_view", None)
         object.__setattr__(self, "_winsorizations", ())
+
+    def __repr__(self) -> str:
+        roles = self.roles
+        columns = self.columns
+        return (
+            f"Frame(unit={roles.unit!r}, features={roles.features!r}, "
+            f"outcomes={roles.outcomes!r}, columns={len(columns)})"
+        )
 
     def _active_compiled(self, compiled: CompiledStudy | None = None) -> CompiledStudy:
         active = self._compiled if compiled is None else compiled
@@ -440,6 +466,13 @@ class Frame:
     @property
     def expr(self):
         """Return the Ibis graph; direct execution bypasses all export safeguards."""
+        if any(meta.measure == "elapsed" for meta in self.columns.values()):
+            from terrine.spec.expressions import _ELAPSED_SELECTOR
+
+            raise _ELAPSED_SELECTOR.error(
+                reason="elapsed_selector_in_expr",
+                route="Use materialize(), stage(), to_pyarrow(), to_pandas(), or to_polars().",
+            )
         if self._winsorizations:
             raise RefusalSpec(
                 "terrine.transform.winsorization_expr_unsupported",
@@ -465,7 +498,30 @@ class Frame:
     ) -> Frame:
         """Select features and labels lazily, dropping incomplete labels unless asked to keep them.
 
-        Example: frame.training_set(label="spend_next_30d")
+
+        TimeSplit uses exclusive t0 cutoffs. Label windows crossing a split cutoff are
+        unassigned with __terrine_split_reason="label_overlap", never used to train across the
+        cutoff.
+        Use to_pandas(values_only=True) for modeling after inspecting completeness and splits.
+
+        Args:
+            label: Outcome column name or nonempty tuple of outcome names to use as labels.
+            features: Tuple of feature names to retain; None selects all design features.
+            incomplete_labels: "drop" removes rows with incomplete labels; "keep" retains them with
+                completeness metadata.
+            split: TimeSplit or GroupSplit from terrine.dataset; None assigns no split columns.
+
+        Returns:
+            A lazy Frame with selected labels/features and optional __terrine_split and
+            __terrine_split_reason columns.
+
+        Example:
+            from terrine.dataset import TimeSplit
+
+            frame.training_set(
+                label="spend_next_30d",
+                split=TimeSplit(train_until="2025-03-15", validation_until="2025-04-15"),
+            )
         """
         if self._training_view is not None or self._scoring_view is not None:
             from terrine.spec.dataset import INVALID_VIEW
@@ -639,23 +695,30 @@ class Frame:
     def stage(self, table: str, *, budget: Budget | None = None):
         """Publish a pinned dataset generation on a file-backed DuckDB connection.
 
-        Copy the README tables to a file-backed connection before binding the model:
+        Use a file-backed DuckDB model for publication; in-memory models cannot be staged.
 
-        >>> import ibis
-        >>> con = ibis.duckdb.connect("shop.duckdb")
-        >>> for name in ("customer", "orders"):
-        ...     _ = con.create_table(name, model.con.table(name).to_pyarrow())
-        >>> staged_model = tr.Model.from_catalog(
-        ...     model.catalog, con=con, units=model.units, readiness=model.readiness)
-        >>> staged_frame = design.build(staged_model)
+        Args:
+            table: Destination dataset table name on the model's file-backed DuckDB connection.
+            budget: Optional limits; None uses Budget(strict_scan=False), with no row, output-byte
+                or scan cap.
 
-        Example: staged_frame.stage("customer_spend")
+        Returns:
+            A Dataset pinned to the newly published immutable generation.
+
+        Example: frame.stage("customer_spend")
         """
         stage_frame = import_module("terrine.dataset.reference").stage_frame
         return stage_frame(self, table, budget=budget)
 
     def materialize(self, budget: Budget | None = None) -> MaterializedFrame:
         """Read dataset rows with integrity checks and retain their metadata and completeness.
+
+
+        Args:
+            budget: Optional limits; None applies no row, output-byte or scan cap.
+
+        Returns:
+            A MaterializedFrame containing Arrow rows, roles, column metadata and provenance.
 
         Example: frame.materialize()
         """
@@ -725,7 +788,7 @@ class Frame:
                 query = query.limit(limit)
                 chunk_size = min(chunk_size, limit)
             batches = []
-            row_count = byte_count = 0
+            row_count = 0
             stream = GatedStream(
                 context.to_arrow_batches(query, chunk_size=chunk_size),
                 final,
@@ -743,15 +806,9 @@ class Frame:
                         batch = batch.cast(schema)
                     batch = self._winsorize_output(batch)
                     row_count += batch.num_rows
-                    byte_count += batch.nbytes
                     if budget is not None and not is_life_table:
                         if budget.max_rows is not None and row_count > budget.max_rows:
                             raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
-                        if (
-                            budget.max_output_bytes is not None
-                            and byte_count > budget.max_output_bytes
-                        ):
-                            raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
                     batches.append(batch)
                 table = pa.Table.from_batches(batches, schema=output_schema)
             finally:
@@ -803,7 +860,7 @@ class Frame:
                             group_supports.setdefault(column, policy)
                 table = aggregate_life_table(
                     table,
-                    interval_seconds=life_table.interval,
+                    interval_seconds=life_table.bin,
                     group_by=life_table.group_by,
                     group_supports=group_supports,
                     max_rows=None if budget is None else budget.max_rows,
@@ -811,11 +868,6 @@ class Frame:
                 if budget is not None:
                     if budget.max_rows is not None and table.num_rows > budget.max_rows:
                         raise _ROWS_EXCEEDED.error(limit=budget.max_rows)
-                    if (
-                        budget.max_output_bytes is not None
-                        and table.nbytes > budget.max_output_bytes
-                    ):
-                        raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
                 roles = Roles(
                     "unit",
                     "anchor_id",
@@ -845,9 +897,6 @@ class Frame:
             table, split_counts = self._split_output(table, compiled)
             for reason, count in split_counts.items():
                 excluded_counts[reason] = excluded_counts.get(reason, 0) + count
-            if budget is not None and budget.max_output_bytes is not None:
-                if table.nbytes > budget.max_output_bytes:
-                    raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
             treatment = self._design.treatment
             treatment_column = compiled.roles.treatment
             baseline_binary = (
@@ -862,24 +911,6 @@ class Frame:
             calendar_comparison = _provenance.calendar_comparison_metadata(self._design, model)
             panel = _provenance.panel_metadata(self._design, model)
 
-            if isinstance(self._design.shape, StatePanel):
-                shape_name = "state_panel"
-            elif isinstance(self._design.shape, EventSequence):
-                shape_name = "event_sequence"
-            elif calendar_comparison is not None:
-                shape_name = "calendar_comparison"
-            elif panel is not None:
-                shape_name = panel.shape
-            elif isinstance(self._design.shape, CohortSpec):
-                shape_name = "ltv"
-            elif isinstance(self._design.shape, LifeTable):
-                shape_name = "life_table"
-            elif isinstance(self._design.shape, TimeToEvent):
-                shape_name = "time_to_event"
-            else:
-                shape_name = (
-                    self._design.shape if isinstance(self._design.shape, str) else "cross_section"
-                )
             feature_cutoffs = compiled.feature_cutoffs
             expression_timings = compiled.expression_timings
             if isinstance(self._design.shape, LifeTable):
@@ -907,7 +938,7 @@ class Frame:
                 model_hash=model.model_hash,
                 source_generations=context.snapshot.source_generations,
                 execution_snapshot=context.snapshot,
-                shape=shape or shape_name,
+                shape=shape or _output_shape_name(self._design),
                 treatment_design="baseline_binary" if baseline_binary else None,
                 engine_name=context.snapshot.backend,
                 dialect=expression_policy(model),
@@ -935,7 +966,11 @@ class Frame:
                 cohort_operation=cohort_operation,
             )
             provenance = self._view_provenance(provenance, excluded_counts)
-            return MaterializedFrame(table, roles, columns, provenance)
+            result = MaterializedFrame(table, roles, columns, provenance)
+            if budget is not None and budget.max_output_bytes is not None:
+                if result.table.nbytes > budget.max_output_bytes:
+                    raise _OUTPUT_BYTES_EXCEEDED.error(limit=budget.max_output_bytes)
+            return result
 
     def _view_provenance(self, provenance: Provenance, excluded_counts: dict[str, int]):
         model = self._model
@@ -996,6 +1031,24 @@ class Frame:
         )
 
     def _normalize_output(self, table: pa.Table) -> pa.Table:
+        for name, meta in self._compiled.columns.items():
+            if meta.measure != "elapsed" or name not in table.column_names:
+                continue
+            selected = table[name]
+            if not pa.types.is_timestamp(selected.type):
+                continue
+            selected_at = f"__terrine_selected_at_{name}"
+            if selected_at not in table.column_names:
+                table = table.append_column(selected_at, selected)
+            origin = table[self._compiled.roles.t0].cast(selected.type)
+            elapsed = pc.subtract_checked(  # ty: ignore[unresolved-attribute]
+                origin.cast(pa.int64()), selected.cast(pa.int64())
+            )
+            table = table.set_column(
+                table.schema.get_field_index(name),
+                name,
+                elapsed.cast(pa.duration(selected.type.unit)),
+            )
         shape = self._design.shape
         if isinstance(shape, LifeTable):
             shape = shape.time_to_event
@@ -1044,30 +1097,16 @@ class Frame:
     def to_pyarrow(self, *, budget: Budget | None = None) -> pa.Table:
         """Read dataset rows as Arrow with lossless time, completeness and model metadata.
 
+
+        Args:
+            budget: Optional limits; None applies no row, output-byte or scan cap.
+
+        Returns:
+            A PyArrow Table preserving completeness, reason columns and portable schema metadata.
+
         Example: frame.to_pyarrow()
         """
-        return self.materialize(budget).to_arrow()
-
-    def _dataframe_table(
-        self,
-        library: str,
-        budget: Budget | None,
-        include_observation_metadata: bool,
-        values_only: bool,
-    ) -> tuple[Any, pa.Table]:
-        """Refuse an invalid column selection, import ``library``, then materialize once."""
-        if values_only and include_observation_metadata:
-            from terrine.spec.dataset import INVALID_VIEW
-
-            raise INVALID_VIEW.error(reason="values_only_excludes_observation_metadata")
-        module = _optional_dependency(library)
-        materialized = self.materialize(budget)
-        if include_observation_metadata:
-            return module, materialized.table
-        dropped = materialized._bookkeeping_columns()
-        if values_only:
-            dropped += materialized._support_columns()
-        return module, materialized.table.drop(dropped)
+        return self.materialize(budget).to_pyarrow()
 
     def to_pandas(
         self,
@@ -1080,12 +1119,28 @@ class Frame:
 
         ``values_only=True`` also drops completeness and reason columns.
 
+
+        Args:
+            budget: Optional limits; None applies no row, output-byte or scan cap.
+            include_observation_metadata: Whether to retain observation-bound columns; False omits
+                them.
+            values_only: Whether to omit completeness/reason columns too; False retains them;
+                incompatible with observation metadata.
+
+        Returns:
+            A pandas DataFrame with Arrow-backed dtypes and the requested metadata columns.
+
         Example: frame.to_pandas(values_only=True)
         """
-        pandas, table = self._dataframe_table(
-            "pandas", budget, include_observation_metadata, values_only
+        dataframe_view_preflight(
+            include_observation_metadata=include_observation_metadata,
+            values_only=values_only,
+            library="pandas",
         )
-        return table.to_pandas(types_mapper=pandas.ArrowDtype)
+        return self.materialize(budget).to_pandas(
+            include_observation_metadata=include_observation_metadata,
+            values_only=values_only,
+        )
 
     def to_polars(
         self,
@@ -1098,17 +1153,49 @@ class Frame:
 
         ``values_only=True`` also drops completeness and reason columns.
 
+
+        Args:
+            budget: Optional limits; None applies no row, output-byte or scan cap.
+            include_observation_metadata: Whether to retain observation-bound columns; False omits
+                them.
+            values_only: Whether to omit completeness/reason columns too; False retains them;
+                incompatible with observation metadata.
+
+        Returns:
+            A Polars DataFrame with the requested values and metadata columns.
+
         Example: frame.to_polars(values_only=True)
         """
-        polars, table = self._dataframe_table(
-            "polars", budget, include_observation_metadata, values_only
+        dataframe_view_preflight(
+            include_observation_metadata=include_observation_metadata,
+            values_only=values_only,
+            library="polars",
         )
-        return polars.from_arrow(table)
+        return self.materialize(budget).to_polars(
+            include_observation_metadata=include_observation_metadata,
+            values_only=values_only,
+        )
 
     def cohorts(self, *, grouping: CohortGrouping, value_column: str) -> CohortTable:
         """Group a trajectory frame's values by units' origin-time buckets.
 
-        Example: ltv_frame.cohorts(grouping=grouping, value_column="cumulative_value")
+
+        Args:
+            grouping: CohortGrouping defining elapsed origin-time buckets and the summary statistic.
+            value_column: "period_value" or, for a cumulative trajectory, "cumulative_value".
+
+        Returns:
+            A lazy CohortTable that can be materialized or converted to a dataframe.
+
+        Example:
+            from datetime import datetime, UTC
+
+            tr.recipes.ltv(start_event="orders", metric="spend", period="7d", periods=2).build(
+                model
+            ).cohorts(
+                grouping=spec.CohortGrouping("30d", datetime(2025, 1, 1, tzinfo=UTC)),
+                value_column="cumulative_value",
+            )
         """
         if not isinstance(self._design.shape, CohortSpec):
             raise _INVALID_COHORTS.error(reason="requires_trajectory", field="frame")
@@ -1168,4 +1255,4 @@ class CohortTable:
         )
 
     def to_pyarrow(self, *, budget: Budget | None = None) -> pa.Table:
-        return self.materialize(budget=budget).to_arrow()
+        return self.materialize(budget=budget).to_pyarrow()

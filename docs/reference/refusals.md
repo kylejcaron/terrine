@@ -106,6 +106,7 @@ Correct the named Design or timestamp constraint.
 
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
+| `terrine.compile.anchor_integrity` | <code>Event {event!r} has tied timestamps, so its occurrence order is ambiguous. Set event_ids={{{source!r}: &quot;&lt;id column&gt;&quot;}} on Model.from_tables or Model.from_catalog.</code> | `event`, `source` | [terrine/compile/anchors.py](../../terrine/compile/anchors.py) |
 | `terrine.compile.anchor_integrity` | <code>Unit and t0 rows failed check {check_key!r}. Correct missing or ambiguous unit keys, event IDs and event times before building the design.</code> | `check_key` | [terrine/compile/anchors.py](../../terrine/compile/anchors.py) |
 | `terrine.compile.anchor_timestamp_precision` | <code>Time column {column!r} contains values finer than microseconds that cannot be represented exactly as UTC. Convert those values to exact microsecond times.</code> | `column` | [terrine/compile/anchors.py](../../terrine/compile/anchors.py) |
 | `terrine.compile.anchor_utc_conversion_unsupported` | <code>Event times without a timezone cannot be converted exactly to UTC on {backend!r}. Convert the times to timezone-aware UTC before adding the table to the model.</code> | `backend` | [terrine/compile/anchors.py](../../terrine/compile/anchors.py) |
@@ -126,9 +127,9 @@ Install the conversion extra; retain Arrow metadata.
 
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
+| `terrine.convert.missing_dependency` | <code>Conversion requires the optional {extra!r} dependency; install terrine[{extra}].</code> | `extra` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.convert.missing_dependency` | <code>Conversion requires the optional {extra!r} dependency; install terrine[{extra}].</code> | `extra` | [terrine/export/diff_diff.py](../../terrine/export/diff_diff.py) |
 | `terrine.convert.missing_dependency` | <code>Conversion requires the optional {extra!r} dependency; install terrine[{extra}].</code> | `extra` | [terrine/export/lifelines.py](../../terrine/export/lifelines.py) |
-| `terrine.convert.missing_dependency` | <code>Conversion requires the optional {extra!r} dependency; install terrine[{extra}].</code> | `extra` | [terrine/frame.py](../../terrine/frame.py) |
 | `terrine.convert.missing_dependency` | <code>In-memory tables run on the optional {extra!r} dependency; {route}, or bind the tables by name on a connection.</code> | `extra`, `route` | [terrine/model.py](../../terrine/model.py) |
 
 ## dataset
@@ -161,7 +162,8 @@ Use pinned manifests, valid definitions and owned destinations.
 | `terrine.dataset.invalid_selection` | <code>Unknown training label selection: {names}</code> | `names` | [terrine/frame.py](../../terrine/frame.py) |
 | `terrine.dataset.invalid_split` | <code>Split input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/dataset/splits.py](../../terrine/dataset/splits.py) |
 | `terrine.dataset.invalid_split` | <code>Split input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/frame.py](../../terrine/frame.py) |
-| `terrine.dataset.invalid_view` | <code>Invalid dataset view: {reason}.</code> | `reason` | [terrine/spec/dataset.py](../../terrine/spec/dataset.py) |
+| `terrine.dataset.invalid_view` | <code>Dataset view flags {conflicts!r} conflict ({reason}); choose one view.</code> | `conflicts`, `reason` | [terrine/data.py](../../terrine/data.py) |
+| `terrine.dataset.invalid_view` | <code>Invalid dataset view: {reason}.</code> | `reason` | [terrine/errors.py](../../terrine/errors.py) |
 | `terrine.dataset.stale_generation` | <code>Refresh requires the pinned generation to remain the current publication.</code> | None | [terrine/dataset/reference.py](../../terrine/dataset/reference.py) |
 | `terrine.dataset.unsupported_view` | <code>Unsupported dataset view: {reason}.</code> | `reason` | [terrine/spec/dataset.py](../../terrine/spec/dataset.py) |
 
@@ -197,7 +199,8 @@ Repair temporal/history contracts; do not zero-fill unknowns.
 | `terrine.design.invalid` | <code>Design input {field} must be one of {choices}.</code> | `choices`, `field` | [terrine/spec/expressions.py](../../terrine/spec/expressions.py) |
 | `terrine.design.invalid` | <code>Design input {field} must be one of {choices}.</code> | `choices`, `field` | [terrine/spec/panels.py](../../terrine/spec/panels.py) |
 | `terrine.design.invalid` | <code>Design input {field} must be one of {choices}.</code> | `choices`, `field` | [terrine/spec/trajectory.py](../../terrine/spec/trajectory.py) |
-| `terrine.design.invalid` | <code>Design input {field}[{name!r}] is invalid: {reason}.</code> | `field`, `name`, `reason` | [terrine/spec/design.py](../../terrine/spec/design.py) |
+| `terrine.design.invalid` | <code>Design input {field}[{name!r}] is invalid ({reason}, got {got}; expected {expected}).</code> | `expected`, `field`, `got`, `name`, `reason` | [terrine/spec/design.py](../../terrine/spec/design.py) |
+| `terrine.design.invalid` | <code>Elapsed event selectors cannot be used here ({reason}). {route}</code> | `reason`, `route` | [terrine/spec/expressions.py](../../terrine/spec/expressions.py) |
 | `terrine.design.invalid` | <code>End day {end!r} is before start day {start!r}. The end is the last included day; choose an end on or after the start.</code> | `end`, `start` | [terrine/spec/anchors.py](../../terrine/spec/anchors.py) |
 | `terrine.design.invalid` | <code>End day {end!r} leaves no following day to include the whole end day. Choose an earlier end day.</code> | `end` | [terrine/spec/anchors.py](../../terrine/spec/anchors.py) |
 | `terrine.design.invalid` | <code>End time {end!r} is not after start time {start!r}. Choose a later end time; the end time itself is excluded.</code> | `end`, `start` | [terrine/spec/anchors.py](../../terrine/spec/anchors.py) |
@@ -209,6 +212,7 @@ Repair temporal/history contracts; do not zero-fill unknowns.
 | `terrine.design.invalid_trial_weight` | <code>Trial weights do not name every scheduled trial exactly once. Provide one weight for each trial in the schedule.</code> | None | [terrine/compile/shapes/sequential.py](../../terrine/compile/shapes/sequential.py) |
 | `terrine.design.invalid_window` | <code>Metric {name!r} for output {output!r} has window start {start!r} and end {end!r} seconds relative to t0. Set window=(earlier_time, later_time).</code> | `end`, `name`, `output`, `start` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 | `terrine.design.metric_window_conflict` | <code>Metric {metric!r} requires a different window length from the design. Match the design window to the metric&#x27;s declared window_days.</code> | `metric` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
+| `terrine.design.missing_reference` | <code>{kind} {name!r} is not declared in the model; available names are {available!r}. Did you mean {suggestions!r}?</code> | `available`, `kind`, `name`, `suggestions` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 | `terrine.design.missing_reference` | <code>{kind} {name!r} is not declared in the model; available names are {available!r}. Use one of these names or add the missing {kind} to the model.</code> | `available`, `kind`, `name` | [terrine/spec/validate.py](../../terrine/spec/validate.py) |
 
 ## diff_diff
@@ -301,8 +305,8 @@ Use consistent coverage, roles and representable metadata.
 | `terrine.metadata.invalid_eligibility_summary` | <code>Eligibility counts must be nonnegative and reconcile</code> | None | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.invalid_engine_stamp` | <code>Engine stamp is {reason} (present fields {fields!r}); re-materialize the Design with the current Terrine version.</code> | `fields`, `reason` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.missing_columns` | <code>Arrow table is missing required columns {columns!r}; use lossless Arrow with all observation columns.</code> | `columns` | [terrine/data.py](../../terrine/data.py) |
-| `terrine.metadata.unrepresentable_coverage` | <code>Complete days {start!r} through {through!r} cannot be represented in the model&#x27;s local time. Choose days farther from the calendar limits.</code> | `start`, `through` | [terrine/data.py](../../terrine/data.py) |
-| `terrine.metadata.unrepresentable_coverage` | <code>Complete end day {through!r} leaves no following day to include the whole end day. Choose an earlier last complete day.</code> | `through` | [terrine/data.py](../../terrine/data.py) |
+| `terrine.metadata.unrepresentable_coverage` | <code>Complete days {start!r} through {end!r} cannot be represented in the model&#x27;s local time. Choose days farther from the calendar limits.</code> | `end`, `start` | [terrine/data.py](../../terrine/data.py) |
+| `terrine.metadata.unrepresentable_coverage` | <code>Complete end day {end!r} leaves no following day to include the whole end day. Choose an earlier last complete day.</code> | `end` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.unrepresentable_coverage` | <code>Complete times {start!r} through {end_exclusive!r} cannot be represented in UTC. Choose times farther from the calendar limits.</code> | `end_exclusive`, `start` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.metadata.unsupported_version` | <code>Arrow metadata version {version!r} is unsupported; re-materialize the Design with the current Terrine version.</code> | `version` | [terrine/data.py](../../terrine/data.py) |
 
@@ -355,8 +359,8 @@ Correct source, roster and coverage bindings; rebind the Model.
 | `terrine.model.invalid_binding` | <code>where= key {key!r} is not a label name or &lt;label&gt;__&lt;op&gt; with a usable value; the operators are ne, in, not_in, gt, gte, lt, lte and between, comparisons take one scalar, in and not_in a non-empty list, and between a (low, high) pair.</code> | `key` | [terrine/metrics.py](../../terrine/metrics.py) |
 | `terrine.model.invalid_binding` | <code>{field} must be a table name or an in-memory pyarrow, pandas or polars table, not {type}.</code> | `field`, `type` | [terrine/data.py](../../terrine/data.py) |
 | `terrine.model.invalid_binding` | <code>{inputs} are in-memory tables but a connection was given; Terrine never uploads data, so load them into the warehouse yourself or omit con to build on a private in-process DuckDB.</code> | `inputs` | [terrine/model.py](../../terrine/model.py) |
-| `terrine.model.invalid_binding` | <code>{kind} name {name!r} contains &#x27;__&#x27;, which separates a label from its where= operator; rename the {kind}.</code> | `kind`, `name` | [terrine/data.py](../../terrine/data.py) |
-| `terrine.model.invalid_binding` | <code>{kind} name {name!r} is declared by {owners}; event, label and history names are shared by every Events and History of a model, so give each its own name.</code> | `kind`, `name`, `owners` | [terrine/model.py](../../terrine/model.py) |
+| `terrine.model.invalid_binding` | <code>{kind} name {name!r} contains the reserved &#x27;__&#x27; separator; rename the {kind}.</code> | `kind`, `name` | [terrine/data.py](../../terrine/data.py) |
+| `terrine.model.invalid_binding` | <code>{kind} name {name!r} is declared by {owners}; names are shared across a model and must be unique.</code> | `kind`, `name`, `owners` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.model.invalid_binding` | <code>{tables} are table names but no connection was given; pass the connection that holds them, or pass the tables themselves.</code> | `tables` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.model.missing_event_completeness` | <code>{source!r} has no complete=(first_day, last_day). Declare the inclusive calendar days that its event or history table is fully loaded for, not the first and last event times you happen to have.</code> | `source` | [terrine/model.py](../../terrine/model.py) |
 
@@ -422,7 +426,10 @@ Correct native semantics or use an admitted staged table.
 | `terrine.semantic.decimal_scale_required` | <code>Decimal column {column!r} has no fixed precision and scale up to 38 digits (declared {declared}). Cast it to an explicit numeric(p, s) with p &lt;= 38 in the relation SQL.</code> | `column`, `declared` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
 | `terrine.semantic.dialect_mismatch` | <code>The model uses SQL dialect {declared!r}, but the connection uses {execution!r}. Set the model dialect to match the connection and use SQL for that dialect.</code> | `declared`, `execution` | [terrine/semantic/sql.py](../../terrine/semantic/sql.py) |
 | `terrine.semantic.missing_reference` | <code>The model does not declare {reference!r}. Add the missing declaration or use a name already declared in the model.</code> | `reference` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
+| `terrine.semantic.missing_reference` | <code>{owner!r} uses {kind} {name!r}, which is not declared; available names are {available!r}. Did you mean {suggestions!r}?</code> | `available`, `kind`, `name`, `owner`, `suggestions` | [terrine/model.py](../../terrine/model.py) |
 | `terrine.semantic.missing_reference` | <code>{owner!r} uses {kind} {name!r}, which is not declared; available names are {available!r}. Use one of these names or add the missing {kind} to the model.</code> | `available`, `kind`, `name`, `owner` | [terrine/model.py](../../terrine/model.py) |
+| `terrine.semantic.schema_mismatch` | <code>Filter value {value!r} for label {label!r} has the wrong type for {label_type}; use a value matching the declared label type.</code> | `label`, `label_type`, `value` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
+| `terrine.semantic.schema_mismatch` | <code>The {field!r} column {column!r} for unit {unit!r} has type {source_type}, but the unit roster key has type {unit_type}. Use matching key types in the source and roster.</code> | `column`, `field`, `source_type`, `unit`, `unit_type` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
 | `terrine.semantic.schema_mismatch` | <code>The {field!r} column {column!r} is missing or has the wrong type. Choose an existing column with the required type, or correct the table before adding it to the model.</code> | `column`, `field` | [terrine/semantic/bind.py](../../terrine/semantic/bind.py) |
 
 ## sequence
@@ -487,7 +494,7 @@ Use ordered, bounded observations and explicit missingness.
 | `terrine.state_panel.invalid_observations` | <code>State observations are invalid: {reason}.</code> | `reason` | [terrine/spec/state_panel.py](../../terrine/spec/state_panel.py) |
 | `terrine.state_panel.invalid_schedule` | <code>Schedule days {start!r} through {end!r}, inclusive, do not contain whole {every}-second periods. Adjust the end day or every= so all periods fit exactly.</code> | `end`, `every`, `start` | [terrine/spec/state_panel.py](../../terrine/spec/state_panel.py) |
 | `terrine.state_panel.invalid_schedule` | <code>State panels need equal elapsed periods, but every={every!r} uses calendar months. Use every={route!r} for fixed-width periods.</code> | `every`, `route` | [terrine/spec/state_panel.py](../../terrine/spec/state_panel.py) |
-| `terrine.state_panel.invalid_schedule` | <code>The schedule has {periods} periods, more than the {max_periods} allowed. Shorten the schedule or set periods= to include the full schedule.</code> | `max_periods`, `periods` | [terrine/spec/state_panel.py](../../terrine/spec/state_panel.py) |
+| `terrine.state_panel.invalid_schedule` | <code>The schedule has {schedule_periods} periods, more than the {periods} allowed. Shorten the schedule or set periods= to include the full schedule.</code> | `periods`, `schedule_periods` | [terrine/spec/state_panel.py](../../terrine/spec/state_panel.py) |
 | `terrine.state_panel.invalid_schedule` | <code>The state panel needs a finite schedule ({reason}). Choose start and end days and an elapsed every= duration.</code> | `reason` | [terrine/spec/state_panel.py](../../terrine/spec/state_panel.py) |
 | `terrine.state_panel.invalid_state_source` | <code>State source input {field} is invalid: {reason}.</code> | `field`, `reason` | [terrine/spec/state_panel.py](../../terrine/spec/state_panel.py) |
 | `terrine.state_panel.invalid_state_source` | <code>State source is invalid: {reason}.</code> | `reason` | [terrine/spec/state_panel.py](../../terrine/spec/state_panel.py) |
@@ -573,5 +580,5 @@ Use ordered integral elapsed endpoints with s/m/h/d/w units.
 
 | Code | Message template | Interpolation fields | Declaration |
 | --- | --- | --- | --- |
-| `terrine.window.invalid_duration` | <code>{field}={value!r} is not an elapsed duration: use integral seconds or a signed s/m/h/d/w string such as &quot;30d&quot; or &quot;4w&quot;. Calendar months (&quot;1mo&quot;, &quot;1y&quot;) are accepted only by a Schedule&#x27;s every.</code> | `field`, `value` | [terrine/windows.py](../../terrine/windows.py) |
+| `terrine.window.invalid_duration` | <code>{field}={value!r} is not an elapsed duration: use a signed integer with a unit such as &quot;-30s&quot;, &quot;-30d&quot;, or &quot;4w&quot;; bare 0 is allowed. Calendar months (&quot;1mo&quot;, &quot;1y&quot;) are accepted only by a Schedule&#x27;s every.</code> | `field`, `value` | [terrine/windows.py](../../terrine/windows.py) |
 | `terrine.window.invalid_window` | <code>Window start {start_offset!r} is not before end {end_offset!r}. Use window=(earlier_time, later_time); the start is included and the end is excluded.</code> | `end_offset`, `start_offset` | [terrine/windows.py](../../terrine/windows.py) |

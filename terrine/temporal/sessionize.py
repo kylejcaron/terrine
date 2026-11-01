@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ibis
 
+import terrine.reasons as reason_codes
+
 __all__ = ["sessionize"]
 
 
@@ -74,7 +76,7 @@ def sessionize(
     annotated = starts.mutate(
         session_index=starts[session_start_column].cumsum().over(running) - 1,
         transition_reason=ibis.ifelse(
-            starts.previous_event_id.isnull(), "missing_predecessor", None
+            starts.previous_event_id.isnull(), reason_codes.MISSING_PREDECESSOR, None
         ),
     ).view()
     session_keys = [

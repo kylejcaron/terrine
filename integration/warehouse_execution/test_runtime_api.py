@@ -274,7 +274,10 @@ def test_saved_plan_execution_reopens_retained_snapshot_for_each_task(tmp_path):
     assert status.cost["scope"] == "completed_task_artifacts"
     assert status.cost["attempts"] == len(plan.tasks)
     assert status.cost["output_rows"] == published.table.num_rows
-    assert status.cost["output_bytes"] == published.table.nbytes
+    stored = runtime.open_published_generation(
+        built_in, con=con.con, namespace="runtime"
+    ).to_pyarrow()
+    assert status.cost["output_bytes"] == stored.nbytes
     assert status.cost["intermediate_output_bytes"] > 0
     assert status.cost["scan_bytes"] is None
     assert status.readiness == {

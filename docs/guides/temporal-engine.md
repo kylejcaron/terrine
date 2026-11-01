@@ -3,19 +3,19 @@
 Terrine's native `Catalog` describes source relations and their meaning without
 requiring the optional increment adapter. A catalog can be constructed from a
 Python mapping with `Catalog.model_validate(...)` or loaded from safe YAML with
-`load_catalog(path)`. Both paths use the same strict version-1 Pydantic models;
+`load_catalog(path)`. YAML text uses the same strict version-2 schema gate;
 unknown fields, duplicate YAML keys, unsafe YAML tags, and unsupported schema
 versions are rejected.
 
-Schema failures from `load_catalog` raise `TerrineError` with code
-`terrine.catalog.invalid_definition`. Inspect its immutable `context["issues"]`
-for ordered locations, stable validation categories, and package-owned recovery
-hints; the same actionable locations and corrections appear in the displayed
-error. For example, `day_boundary: UTC+14:01` points to `day_boundary`: use
-`UTC`, a signed `HH:MM` offset, or a `UTC`-prefixed fixed offset within ±14:00
-(the endpoints are limited to exactly `14:00`). Correct the YAML and load it
-again. Direct `Catalog.model_validate(...)` construction continues to use
-Pydantic's `ValidationError`.
+Schema failures from `load_catalog` and `load_catalog_text` raise `TerrineError`
+with code `terrine.catalog.invalid_definition`. Inspect its immutable
+`context["issues"]` for ordered locations, stable validation categories, and
+package-owned recovery hints; the same actionable locations and corrections
+appear in the displayed error. For example, `day_boundary: UTC+14:01` points
+to `day_boundary`: use `UTC`, a signed `HH:MM` offset, or a `UTC`-prefixed
+fixed offset within ±14:00 (the endpoints are limited to exactly `14:00`).
+Correct the YAML and load it again. Direct `Catalog.model_validate(...)`
+construction continues to use Pydantic's `ValidationError`.
 
 ## Binding event tables
 
@@ -65,6 +65,38 @@ required when the model declares several (omitting it refuses with
 An `Events` with no `metrics` declares the event alone: anchors, `event_time`,
 survival and sequences still work, and nothing is named for you.
 
+Use `Events(where=...)` to split a mixed-kind table into event sources without
+copying or prefiltering it. Each declaration has its own event membership:
+
+```python
+events = {
+    kind: Events(
+        activity,
+        time="occurred_at",
+        key="customer_id",
+        where={"kind": kind},
+        complete=("2025-01-01", "2025-01-31"),
+    )
+    for kind in ("signup", "purchase")
+}
+```
+
+Source filters use the same operators and typed comparisons as metric filters,
+but their keys name physical columns; those columns need not be in `labels=`.
+They apply before metrics, event selectors, anchors, survival, sequences and
+event-backed `asof` lookups. `Events` detaches the mapping and freezes collection
+values, and source filters round-trip in the version-2 catalog. Changing a source
+filter also changes its features' definition identities, so fitted transforms
+cannot be reused with a different event population.
+
+A source filter must determine membership for every raw row. An unknown combined
+predicate (including a null or nonfinite numeric value) refuses with
+`terrine.compile.anchor_integrity`, `check_key="unknown_event_filter_value"`.
+Conjunction follows SQL three-valued logic: a row definitively excluded by one
+term is allowed even if another term is unknown. Filter columns and literal
+types are checked at model binding, without reading rows; mismatched values
+refuse with `terrine.semantic.schema_mismatch`, `field="where"`.
+
 Metrics are named by you and built with `tr.count()`, `tr.sum(column)`,
 `tr.mean(column)` (per event; `per="day"` divides by the window's calendar
 days), `tr.min`, `tr.max`, `tr.count_distinct(column)` and
@@ -73,7 +105,7 @@ Metric names are unique across the model; a metric may share its event's name.
 Consume them with ordinary `agg` expressions.
 
 `labels=` names event columns that become event-time properties with the same
-name, usable in `where=`, in `event_time(..., label_property=, equals=)`, in
+name, usable in metric `where=`, in `event_time(..., label_property=, equals=)`, in
 `asof(label, before=)` (the last value strictly before the cutoff, carried from
 the event log) and in `Treatment(label)`. The dtype is read from the bound
 column: string, integer (or scale-zero decimal), float (or decimal), boolean
@@ -81,7 +113,17 @@ and date; any other type, timestamps included, refuses with
 `terrine.model.invalid_binding` (`reason="unsupported_column_type"`, context
 `source`, `column`, `dtype`, `supported`).
 
-`where=` is a mapping keyed by `<label>` or `<label>__<op>`; several keys are a
+
+`UnitSource(attributes=("channel", ...))` can declare static attributes directly
+on the authoritative roster. Each name must identify a roster column and may
+not collide with an event, property, dimension or metric name. These values are
+available at every anchor, including anchors outside event-table completeness,
+and `asof("channel")` reads the roster value strictly before t0 by default.
+Roster attributes need no event-source readiness; roster observation bounds
+still apply. The declarations are part of the unit binding, not the catalog, so
+pass `units=model.units` when rebinding a catalog.
+
+Metric `where=` is a mapping keyed by `<label>` or `<label>__<op>`; several keys are a
 conjunction. A scalar value means equality and a list, tuple or set means
 membership; `__ne`, `__in`, `__not_in`, `__gt`, `__gte`, `__lt`, `__lte` and
 `__between` are the other operators. `__between` takes an ordered `(low, high)`
@@ -91,7 +133,8 @@ are exact literals ordered by the label's type when the filter compiles.
 `__` is reserved for that split: a label name containing it refuses at
 `Events(...)` with `reason="reserved_name"`, and a key with an unknown
 operator, a second `__`, the wrong number of values or a non-scalar refuses
-at the constructor with `reason="invalid_filter"` and the `key`. A `where=`
+at metric construction (or at model binding for source filters) with
+`reason="invalid_filter"` and the `key`. A metric `where=`
 label the `Events` does not declare, or a ratio operand that is not another
 non-ratio metric of
 the same `Events`, refuses at `from_tables` with
@@ -127,11 +170,16 @@ context `kind` of `metric`, `label` or `event`, `name`, and the sorted
 `owners`, such as `("events:orders.amount", "labels:orders")`).
 
 `model.to_catalog()` writes the equivalent schema-version-2 catalog as YAML.
-`Model.from_catalog(path, con=con, units=model.units, readiness=model.readiness,
-event_ids=model.event_ids)` binds the same model with an equal `model_hash`.
-Choose `Model.from_catalog` directly for SQL relations, multi-unit sources or
-explicit catalog names; those are richer source declarations, not options
-inferred from tables.
+Pass that YAML directly to `Model.from_catalog(model.to_catalog(), con=con,
+units=model.units, readiness=model.readiness, event_ids=model.event_ids)` to
+bind the same model with an equal `model_hash`. A catalog contains only source,
+event, property, dimension, measure and metric definitions; it excludes
+`units`, `readiness` and `event_ids`, which are provided separately when
+binding.
+`Model.from_catalog` also accepts a `Path` or a single-line string as a file
+path. Choose it directly for SQL relations, multi-unit sources or explicit
+catalog names; those are richer source declarations, not options inferred from
+tables.
 
 ### Scheduled time series
 
@@ -322,10 +370,13 @@ DuckDB's native HLL aggregate and records its algorithm, engine version and
 relative-error description in the output column metadata. Exact distinct
 remains the default when requested through `agg`; approximation is explicit.
 
-`approx_quantile(metric, probability, window=..., sketch=SketchRequest(...))`
-uses DataSketches t-digest on `cross_section` designs only. It is available with
-the optional `terrine[sketches]` extra; otherwise the request refuses before
-source queries and points to `uv add 'terrine[sketches]'` or exact `quantile`.
+Import `quantile`, `approx_distinct` and `approx_quantile` from `terrine.spec`.
+`approx_quantile(metric, probability, window=...)` uses DataSketches t-digest
+on `cross_section` designs only, at the installed package version with fixed
+compression `k=200`. No sketch settings or requested rank error are study inputs.
+It is available with the optional `terrine[sketches]` extra; otherwise the
+request refuses before source queries and points to `terrine[sketches]` or
+exact `quantile`.
 The compiler streams canonical `(unit, anchor, event time, value)` Arrow batches
 to the client, updating t-digests in sorted anchor order. This transfers all
 matched window values out of DuckDB and can cost more than in-database exact
@@ -356,7 +407,7 @@ The immutable `CompiledStudy.range_plans` records the width, multiplier and
 derivation for each named nonadditive output; no row count is guessed.
 
 The supported candidate multiplier is at most 128. Unknown per-unit event-anchor
-multiplicity (`EventAnchor(..., which="each")`) and larger declared overlaps
+multiplicity (`EventAnchor(..., occurrence="each")`) and larger declared overlaps
 refuse before execution with `terrine.temporal.range_bound_unavailable`.
 Use first/nth event anchors, fewer event periods/anchors, a coarser schedule or
 narrower window, or an additive metric with sparse prefix lookups. Additive
@@ -386,7 +437,8 @@ cutoff. Missing target labels preserve `incomplete_label_history`, not zero.
 Use the ordinary immutable Design expression:
 
 ```python
-from terrine import Design, FixedDate, retention
+from terrine import Design, FixedDate
+from terrine.spec import retention
 
 design = Design(
     "user",
@@ -759,7 +811,9 @@ sequence = recipes.event_sequence(
 ### Under the hood
 
 ```python
-from terrine import Design, EventAnchor, EventSequence, SessionSpec, Window
+from terrine import Design, EventAnchor
+from terrine.spec import EventSequence, SessionSpec
+from terrine.windows import Window
 
 equivalent = Design(
     None, EventAnchor("activity"),
@@ -769,6 +823,9 @@ equivalent = Design(
 )
 assert sequence == equivalent
 ```
+
+Elapsed duration inputs are strings with a unit; only bare `0` is accepted
+without one. Normalized integer seconds remain in saved metadata and documents.
 
 Use the low-level shape when the selected events differ from the anchor event,
 or when specifying properties, funnels, or the array representation.
@@ -795,9 +852,11 @@ deadline.
 `EventTime(event, window)` selects the first matching event occurrence in its
 strict half-open window; `occurrence="last"` selects the last matching event,
 and `occurrence="nth"` selects the corresponding one-based occurrence. Both
-endpoints follow `(timestamp, configured event ID)` order, so tied events choose
-opposite IDs for first and last. Sources without a configured event ID continue
-to refuse tied timestamps. Its optional paired `label_property` and `equals`
+endpoints follow `(timestamp, configured event ID)` order when IDs are present.
+Without configured IDs, tied timestamps are accepted because the selected value
+is the same for every tie order. First/nth event anchors and event sequences
+still refuse tied timestamps without configured IDs because their occurrence
+order affects the result. Its optional paired `label_property` and `equals`
 arguments refine selection. A complete window with no matching event returns
 null with `complete=True`; do not fill this with zero, which would imply an
 event occurred at the origin. An expression can use the selected timestamp as
@@ -840,7 +899,7 @@ shape. A missing or incomplete origin keeps its null and reason.
 
 Materialized provenance records the sequence schema and each expression's
 selector references, conservative support intervals, and resolved time-column
-references. `MaterializedFrame.to_arrow()` writes these typed values into
+references. `MaterializedFrame.to_pyarrow()` writes these typed values into
 Arrow schema metadata, and `MaterializedFrame.from_arrow()` restores them with
 the original nested event values.
 

@@ -57,13 +57,13 @@ def test_prevalent_events_are_excluded_and_cutoff_equality_is_censored():
     try:
         design = Design(
             "user",
-            EventAnchor("signup", which="first"),
+            EventAnchor("signup", occurrence="first"),
             treatment=Treatment("treated", known_at_t0=True),
             shape=TimeToEvent("churn"),
             administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
         )
         frame = design.build(model).materialize()
-        restored = MaterializedFrame.from_arrow(frame.to_arrow())
+        restored = MaterializedFrame.from_arrow(frame.to_pyarrow())
         rows = restored.table.to_pylist()
         assert sorted(
             (row["unit"], row["event_time"], row["event"], row["treatment"]) for row in rows
@@ -108,7 +108,7 @@ def test_landmark_features_and_survival_followup_use_shifted_entry(shape):
             shape=shape,
         )
         frame = design.build(model).materialize()
-        restored = MaterializedFrame.from_arrow(frame.to_arrow())
+        restored = MaterializedFrame.from_arrow(frame.to_pyarrow())
         rows = {row["unit"]: row for row in restored.table.to_pylist()}
         assert restored.provenance.design_hash == design.spec_hash
         assert rows["u2"]["t0"] == datetime(2025, 1, 3, tzinfo=UTC)
@@ -132,7 +132,9 @@ def test_landmark_features_and_survival_followup_use_shifted_entry(shape):
 def test_unobserved_initial_history_is_explained_and_retained():
     con, model = _model(outcome_start="2025-01-02")
     try:
-        design = Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
+        design = Design(
+            "user", EventAnchor("signup", occurrence="first"), shape=TimeToEvent("churn")
+        )
         summary = design.describe(model)
         result = _collect(design, model)
         rows = {row["unit"]: row for row in result.to_pylist()}
@@ -153,8 +155,8 @@ def test_non_delayed_entry_advance_without_prior_event_is_incomplete():
         )
         design = Design(
             "user",
-            EventAnchor("signup", which="first"),
-            shape=TimeToEvent("churn", entry="enrolled"),
+            EventAnchor("signup", occurrence="first"),
+            shape=TimeToEvent("churn", entry_event="enrolled"),
         )
         rows = {row["unit"]: row for row in _collect(design, model).to_pylist()}
         assert rows["u1"]["duration__complete"] is False
@@ -168,8 +170,8 @@ def test_event_before_declared_delayed_entry_is_prevalent():
     try:
         design = Design(
             "user",
-            EventAnchor("signup", which="first"),
-            shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
+            EventAnchor("signup", occurrence="first"),
+            shape=TimeToEvent("churn", entry_event="enrolled", delayed_entry=True),
         )
         rows = {row["unit"]: row for row in _collect(design, model).to_pylist()}
         assert "u1" not in rows
@@ -189,7 +191,9 @@ def test_entry_and_exit_together_bound_followup_on_both_sides():
         design = Design(
             "user",
             FixedDate("2025-01-01"),
-            shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True, exit="closed"),
+            shape=TimeToEvent(
+                "churn", entry_event="enrolled", delayed_entry=True, exit_event="closed"
+            ),
         )
         rows = {row["unit"]: row for row in _collect(design, model).to_pylist()}
         assert rows["u2"]["entry_time"] == datetime(2025, 1, 2, tzinfo=UTC)
@@ -202,7 +206,7 @@ def test_entry_and_exit_together_bound_followup_on_both_sides():
 def test_administrative_cutoff_changes_followup_without_changing_readiness():
     con, model = _model()
     try:
-        base = Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn"))
+        base = Design("user", EventAnchor("signup", occurrence="first"), shape=TimeToEvent("churn"))
         early = base.__class__(
             "user",
             base.anchor,
@@ -230,7 +234,7 @@ def test_cutoff_before_anchor_is_not_emitted_as_complete_followup():
     try:
         design = Design(
             "user",
-            EventAnchor("signup", which="first"),
+            EventAnchor("signup", occurrence="first"),
             shape=TimeToEvent("churn"),
             administrative_cutoff=datetime(2024, 12, 31, tzinfo=UTC),
         )
@@ -244,7 +248,8 @@ def test_nanosecond_events_support_coverage_outside_nanosecond_range():
     con, model = _model(outcome_start="1600-01-01", nanosecond_outcomes=True)
     try:
         result = _collect(
-            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn")), model
+            Design("user", EventAnchor("signup", occurrence="first"), shape=TimeToEvent("churn")),
+            model,
         )
         assert result.num_rows > 0
     finally:
@@ -262,7 +267,8 @@ def test_nanosecond_event_after_python_microsecond_clamp_is_retained():
             "INSERT INTO outcomes VALUES ('u1', TIMESTAMP_NS '2262-04-11 23:47:16.854775500')"
         )
         result = _collect(
-            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn")), model
+            Design("user", EventAnchor("signup", occurrence="first"), shape=TimeToEvent("churn")),
+            model,
         )
         rows = {row["unit"]: row for row in result.to_pylist()}
         assert rows["u1"]["event"] is True
@@ -280,8 +286,8 @@ def test_nanosecond_delayed_entry_keeps_entry_before_outcome_coverage():
         result = _collect(
             Design(
                 "user",
-                EventAnchor("signup", which="first"),
-                shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
+                EventAnchor("signup", occurrence="first"),
+                shape=TimeToEvent("churn", entry_event="enrolled", delayed_entry=True),
             ),
             model,
         )
@@ -303,7 +309,7 @@ def test_nanosecond_exit_before_outcome_coverage_is_not_ignored(monkeypatch):
             Design(
                 "user",
                 FixedDate("2025-01-01"),
-                shape=TimeToEvent("churn", exit="closed"),
+                shape=TimeToEvent("churn", exit_event="closed"),
             ),
             model,
             columns=("unit", "duration__complete", "event", "censor_time"),
@@ -329,7 +335,7 @@ def test_nanosecond_wide_outcome_and_exit_coverages_do_not_narrow_out_of_range(m
             Design(
                 "user",
                 FixedDate("2025-01-01"),
-                shape=TimeToEvent("churn", exit="closed"),
+                shape=TimeToEvent("churn", exit_event="closed"),
             ),
             model,
             columns=("unit", "censor_time"),
@@ -352,7 +358,7 @@ def test_wide_exit_source_timestamp_is_not_cast_to_nanoseconds(monkeypatch):
             Design(
                 "user",
                 FixedDate("2025-01-01"),
-                shape=TimeToEvent("churn", exit="closed"),
+                shape=TimeToEvent("churn", exit_event="closed"),
             ),
             model,
             columns=("unit", "censor_time"),
@@ -373,8 +379,8 @@ def test_wide_entry_source_timestamp_is_not_cast_to_nanoseconds():
         result = _collect(
             Design(
                 "user",
-                EventAnchor("signup", which="first"),
-                shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
+                EventAnchor("signup", occurrence="first"),
+                shape=TimeToEvent("churn", entry_event="enrolled", delayed_entry=True),
             ),
             model,
         )
@@ -389,8 +395,8 @@ def test_nanosecond_event_source_accepts_utc_timestamptz_entry_source():
         result = _collect(
             Design(
                 "user",
-                EventAnchor("signup", which="first"),
-                shape=TimeToEvent("churn", entry="enrolled", delayed_entry=True),
+                EventAnchor("signup", occurrence="first"),
+                shape=TimeToEvent("churn", entry_event="enrolled", delayed_entry=True),
             ),
             model,
         )
@@ -405,7 +411,8 @@ def test_nanosecond_events_survive_time_to_event_compilation_in_any_session_time
     try:
         con.raw_sql("SET TimeZone='America/Los_Angeles'")
         result = _collect(
-            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn")), model
+            Design("user", EventAnchor("signup", occurrence="first"), shape=TimeToEvent("churn")),
+            model,
         )
     finally:
         con.disconnect()
@@ -413,7 +420,8 @@ def test_nanosecond_events_survive_time_to_event_compilation_in_any_session_time
     con, model = _model(naive_outcomes=True)
     try:
         result = _collect(
-            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn")), model
+            Design("user", EventAnchor("signup", occurrence="first"), shape=TimeToEvent("churn")),
+            model,
         )
         assert result.schema.field("duration").type.unit == "us"
         assert result.schema.field("entry_time").type.tz == "UTC"
@@ -425,7 +433,8 @@ def test_millisecond_events_promote_losslessly_to_the_microsecond_axis():
     con, model = _model(millisecond_outcomes=True)
     try:
         result = _collect(
-            Design("user", EventAnchor("signup", which="first"), shape=TimeToEvent("churn")), model
+            Design("user", EventAnchor("signup", occurrence="first"), shape=TimeToEvent("churn")),
+            model,
         )
         rows = {row["unit"]: row for row in result.to_pylist()}
         assert result.schema.field("event_time").type.unit == "us"
@@ -448,8 +457,8 @@ def test_failure_before_non_delayed_entry_is_not_discarded():
         """)
         design = Design(
             "user",
-            EventAnchor("signup", which="first"),
-            shape=TimeToEvent("churn", entry="enrolled", delayed_entry=False),
+            EventAnchor("signup", occurrence="first"),
+            shape=TimeToEvent("churn", entry_event="enrolled", delayed_entry=False),
         )
         rows = {row["unit"]: row for row in _collect(design, model).to_pylist()}
         assert "u2" not in rows
@@ -462,7 +471,7 @@ def test_survival_preserves_event_feature_timing_through_arrow_round_trip():
     try:
         frame = Design(
             "user",
-            EventAnchor("signup", which="first"),
+            EventAnchor("signup", occurrence="first"),
             features={"signup_time": event_time("signup", window=("-1d", "0s"))},
             shape=TimeToEvent("churn"),
         ).build(model)
@@ -490,8 +499,8 @@ def test_life_table_matches_independent_pandas_risk_set_oracle():
         )
         frame = Design(
             "user",
-            EventAnchor("signup", which="first"),
-            shape=LifeTable(TimeToEvent("churn", entry="enrolled", delayed_entry=True), "1d"),
+            EventAnchor("signup", occurrence="first"),
+            shape=LifeTable(TimeToEvent("churn", entry_event="enrolled", delayed_entry=True), "1d"),
             administrative_cutoff=datetime(2025, 1, 4, tzinfo=UTC),
         ).build(model)
         materialized = frame.materialize()

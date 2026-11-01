@@ -10,11 +10,11 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
 from terrine._time import utc_instant
-from terrine.errors import RefusalSpec, parameter_names
+from terrine.errors import RefusalSpec
 from terrine.spec.anchors import EventAnchor
 from terrine.spec.design import Design
 from terrine.spec.state_panel import StatePanel
-from terrine.windows import seconds
+from terrine.windows import duration, seconds_text
 
 if TYPE_CHECKING:
     from terrine.frame import Frame
@@ -79,7 +79,22 @@ def _history(value: datetime) -> datetime:
 class Initiation:
     """Declare that treatment starts when a unit's named event or label is observed by t0.
 
-    Example: spec.Initiation("orders", history_start=datetime(2025, 1, 1, tzinfo=UTC))
+    Args:
+        event: Declared event or label whose observed occurrence starts treatment.
+        history_start: Timezone-aware datetime from which complete treatment history is required.
+        knowledge: "recorded_at" (default) or explicit "retrospective_effective_time" knowledge
+            semantics.
+
+    Attributes:
+        event: Declared event or label whose observed occurrence starts treatment.
+        history_start: Timezone-aware datetime from which complete treatment history is required.
+        knowledge: "recorded_at" (default) or explicit "retrospective_effective_time" knowledge
+            semantics.
+
+    Example:
+        from datetime import datetime, UTC
+
+        spec.Initiation("orders", history_start=datetime(2025, 1, 1, tzinfo=UTC))
     """
 
     event: str
@@ -97,7 +112,28 @@ class Initiation:
 class PersistentAdoption:
     """Declare an absorbing treatment state when a unit's label equals ``adopted_value``.
 
-    Example: spec.PersistentAdoption("status", adopted_value="paid", history_start=history_start)
+    Args:
+        event: Declared label whose adopted_value identifies an absorbing treatment state.
+        adopted_value: Nonempty string label value that identifies adoption.
+        history_start: Timezone-aware datetime from which complete treatment history is required.
+        persistence: Only "absorbing" is accepted; the default refuses observed treatment reversal.
+        knowledge: "recorded_at" (default) or explicit "retrospective_effective_time" knowledge
+            semantics.
+
+    Attributes:
+        event: Declared label whose adopted_value identifies an absorbing treatment state.
+        adopted_value: Nonempty string label value that identifies adoption.
+        history_start: Timezone-aware datetime from which complete treatment history is required.
+        persistence: Only "absorbing" is accepted; the default refuses observed treatment reversal.
+        knowledge: "recorded_at" (default) or explicit "retrospective_effective_time" knowledge
+            semantics.
+
+    Example:
+        from datetime import datetime, UTC
+
+        spec.PersistentAdoption(
+            "status", adopted_value="paid", history_start=datetime(2025, 1, 1, tzinfo=UTC)
+        )
     """
 
     event: str
@@ -122,6 +158,16 @@ class PersistentAdoption:
 @dataclass(frozen=True, slots=True, init=False)
 class TrialWeight:
     """Assign equal trial weights or normalize explicitly named positive trial weights.
+
+    Args:
+        kind: "equal_trial" weights all trials equally; "explicit" normalizes named trial weights.
+        values: Mapping of scheduled trial IDs to positive finite weights; None for equal trial
+            weights.
+
+    Attributes:
+        kind: "equal_trial" weights all trials equally; "explicit" normalizes named trial weights.
+        values: Mapping of scheduled trial IDs to positive finite weights; None for equal trial
+            weights.
 
     Example: spec.TrialWeight("equal_trial")
     """
@@ -172,6 +218,16 @@ class TrialWeight:
 class MatchedT0Sample:
     """Describe reproducible sampling of controls for treated units within t0 strata.
 
+    Args:
+        strata: Tuple of feature names to match within; () uses no additional strata.
+        controls_per_treated: Positive integer number of sampled controls per treated unit.
+        seed: Integer reproducible sampling seed.
+
+    Attributes:
+        strata: Tuple of feature names to match within; () uses no additional strata.
+        controls_per_treated: Positive integer number of sampled controls per treated unit.
+        seed: Integer reproducible sampling seed.
+
     Example: spec.MatchedT0Sample(strata=(), controls_per_treated=2, seed=0)
     """
 
@@ -198,68 +254,132 @@ class MatchedT0Sample:
         object.__setattr__(self, "strata", strata)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class SequentialSpec:
     """Describe repeated trials with treatment history and elapsed reference times.
 
-    Example: spec.SequentialSpec(initiation)
+    Args:
+        treatment: Initiation or PersistentAdoption declaration supplying treatment history.
+        trial_weight: TrialWeight declaration; None gives each qualifying trial its ordinary weight.
+        anticipation: Nonnegative duration string (see `terrine.windows`); "0d" excludes no
+            anticipatory time.
+        reference_period: Nonpositive duration string (see `terrine.windows`); "-1d" compares one
+            day before t0.
+
+    Attributes:
+        treatment: Initiation or PersistentAdoption declaration supplying treatment history.
+        trial_weight: TrialWeight declaration; None gives each qualifying trial its ordinary weight.
+        anticipation: Nonnegative anticipation offset stored as integer seconds.
+        reference_period: Reference offset stored as integer seconds.
+
+    Example:
+        from datetime import datetime, UTC
+
+        spec.SequentialSpec(
+            spec.Initiation("orders", history_start=datetime(2025, 1, 1, tzinfo=UTC))
+        )
     """
 
     treatment: Initiation | PersistentAdoption
-    trial_weight: TrialWeight | None = None
-    anticipation_seconds: int = 0
-    reference_period_seconds: int = -86_400
+    trial_weight: TrialWeight | None
+    anticipation: int
+    reference_period: int
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.treatment, (Initiation, PersistentAdoption)):
+    def __init__(
+        self,
+        treatment: Initiation | PersistentAdoption,
+        trial_weight: TrialWeight | None = None,
+        anticipation: str | Literal[0] = "0d",
+        reference_period: str | Literal[0] = "-1d",
+    ) -> None:
+        if not isinstance(treatment, (Initiation, PersistentAdoption)):
             raise _INVALID.error(reason="wrong_type", field="treatment")
-        if self.trial_weight is not None and not isinstance(self.trial_weight, TrialWeight):
+        if trial_weight is not None and not isinstance(trial_weight, TrialWeight):
             raise _INVALID.error(reason="wrong_type", field="trial_weight")
-        if (
-            isinstance(self.anticipation_seconds, bool)
-            or not isinstance(self.anticipation_seconds, int)
-            or self.anticipation_seconds < 0
-        ):
-            raise _INVALID.error(reason="negative", field="anticipation_seconds")
+        elapsed = duration(anticipation, field="anticipation")
+        reference = duration(reference_period, field="reference_period")
+        if elapsed < 0:
+            raise _INVALID.error(reason="negative", field="anticipation")
+        object.__setattr__(self, "treatment", treatment)
+        object.__setattr__(self, "trial_weight", trial_weight)
+        object.__setattr__(self, "anticipation", elapsed)
+        object.__setattr__(self, "reference_period", reference)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class EventPanelSpec:
     """Describe elapsed periods around an event, including a named reference period.
 
-    Example: spec.EventPanelSpec(periods=(-1, 0, 1), period_seconds=86400, reference_period=-1)
+    Args:
+        periods: Tuple of integer event-relative indexes to emit.
+        period: Positive elapsed duration string (see `terrine.windows`) defining one period.
+        reference_period: Integer reference index that must be included in periods.
+
+    Attributes:
+        periods: Tuple of integer event-relative indexes to emit.
+        period: Positive event-relative period width stored as exact integer seconds.
+        reference_period: Integer reference index that must be included in periods.
+
+    Example: spec.EventPanelSpec(periods=(-1, 0, 1), period="1d", reference_period=-1)
     """
 
     periods: tuple[int, ...]
-    period_seconds: int
+    period: int
     reference_period: int
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.periods, Iterable):
+    def __init__(
+        self, periods: tuple[int, ...], period: str | Literal[0], reference_period: int
+    ) -> None:
+        if not isinstance(periods, Iterable):
             raise _INVALID.error(reason="wrong_type", field="periods")
-        periods = tuple(self.periods)
+        periods = tuple(periods)
         if not periods:
             raise _INVALID.error(reason="empty", field="periods")
-        if any(isinstance(period, bool) or not isinstance(period, int) for period in periods):
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in periods):
             raise _INVALID.error(reason="wrong_type", field="periods")
         if len(set(periods)) != len(periods):
             raise _INVALID.error(reason="duplicate_names", field="periods")
-        if (
-            isinstance(self.period_seconds, bool)
-            or not isinstance(self.period_seconds, int)
-            or self.period_seconds <= 0
-        ):
-            raise _INVALID.error(reason="not_positive_integer", field="period_seconds")
-        if self.reference_period not in periods:
+        width = duration(period, field="period")
+        if width <= 0:
+            raise _INVALID.error(reason="not_positive", field="period")
+        if reference_period not in periods:
             raise _INVALID.error(reason="undeclared_name", field="reference_period")
         object.__setattr__(self, "periods", periods)
+        object.__setattr__(self, "period", width)
+        object.__setattr__(self, "reference_period", reference_period)
 
 
 @dataclass(frozen=True, slots=True)
 class CalendarComparisonSpec:
     """Describe calendar-period comparisons by initiation time and control history.
 
-    Example: spec.CalendarComparisonSpec(initiation, **comparison)
+    Args:
+        cohort: Initiation declaration defining the observed treatment cohort.
+        control: "never_treated" or "not_yet_treated" controls, based on declared history.
+        reference_period: Integer event-relative reference index, preceding anticipation and
+            comparison periods.
+        comparison_periods: Nonempty tuple of distinct integer event-relative periods to compare.
+        anticipation_periods: Tuple of distinct negative leads excluded for anticipation; ()
+            excludes none.
+
+    Attributes:
+        cohort: Initiation declaration defining the observed treatment cohort.
+        control: "never_treated" or "not_yet_treated" controls, based on declared history.
+        reference_period: Integer event-relative reference index, preceding anticipation and
+            comparison periods.
+        comparison_periods: Nonempty tuple of distinct integer event-relative periods to compare.
+        anticipation_periods: Tuple of distinct negative leads excluded for anticipation; ()
+            excludes none.
+
+    Example:
+        from datetime import datetime, UTC
+
+        spec.CalendarComparisonSpec(
+            spec.Initiation("orders", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+            control="never_treated",
+            reference_period=-1,
+            comparison_periods=(0, 1),
+        )
     """
 
     cohort: Initiation
@@ -317,7 +437,11 @@ class CalendarComparisonSpec:
 
 def _copy_design(
     base: Design,
-    shape: str | StatePanel | SequentialSpec | EventPanelSpec | CalendarComparisonSpec,
+    shape: Literal["cross_section"]
+    | StatePanel
+    | SequentialSpec
+    | EventPanelSpec
+    | CalendarComparisonSpec,
 ) -> Design:
     return Design(
         base.unit,
@@ -325,7 +449,7 @@ def _copy_design(
         features=base.features,
         outcomes=base.outcomes,
         eligibility=base.eligibility,
-        gap=base.gap,
+        gap=seconds_text(base.gap),
         shape=shape,
         anchor_range=base.anchor_range,
         sample=base.sample,
@@ -337,31 +461,59 @@ def Sequential(
     *,
     treatment: Initiation | PersistentAdoption,
     trial_weight: TrialWeight | None = None,
-    anticipation: str = "0d",
-    reference_period: str = "-1d",
+    anticipation: str | Literal[0] = "0d",
+    reference_period: str | Literal[0] = "-1d",
 ) -> Design:
     """Add repeated-trial treatment history to a scheduled design.
 
-    Example: spec.Sequential(design, treatment=initiation)
+    Args:
+        base: Ordinary Design to extend with the specialized row shape.
+        treatment: Initiation or PersistentAdoption declaration supplying treatment history.
+        trial_weight: TrialWeight declaration; None gives each qualifying trial its ordinary weight.
+        anticipation: Nonnegative duration string (see `terrine.windows`); "0d" excludes no
+            anticipatory time.
+        reference_period: Nonpositive duration string (see `terrine.windows`); "-1d" compares one
+            day before t0.
+
+    Returns:
+        An ordinary Design with a SequentialSpec repeated-trial shape.
+
+    Example:
+        from datetime import datetime, UTC
+
+        spec.Sequential(
+            tr.recipes.time_series(every="1d", start="2025-02-01", end="2025-02-03"),
+            treatment=spec.Initiation("orders", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+        )
     """
     if not isinstance(base, Design):
         raise _INVALID.error(reason="wrong_type", field="base")
     if base.treatment is not None:
         raise _CONFLICT.error()
-    with parameter_names(anticipation_seconds="anticipation"):
-        spec = SequentialSpec(
-            treatment,
-            trial_weight,
-            seconds(anticipation, field="anticipation"),
-            seconds(reference_period, field="reference_period"),
-        )
+    spec = SequentialSpec(treatment, trial_weight, anticipation, reference_period)
     return _copy_design(base, spec)
 
 
 def CalendarPanel(sequential: Design) -> Design:
     """Return a repeated-trial design with its calendar schedule and treatment history.
 
-    Example: spec.CalendarPanel(trial_design)
+    Args:
+        sequential: Design with a SequentialSpec repeated-trial shape and treatment history.
+
+    Returns:
+        The repeated-trial Design with its calendar schedule and treatment history.
+
+    Example:
+        from datetime import datetime, UTC
+
+        spec.CalendarPanel(
+            tr.recipes.trial_panel(
+                every="1d",
+                start="2025-02-01",
+                end="2025-02-03",
+                treatment=spec.Initiation("orders", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+            )
+        )
     """
     if not isinstance(sequential, Design) or not isinstance(sequential.shape, SequentialSpec):
         raise _INVALID.error(reason="requires_sequential", field="sequential")
@@ -380,7 +532,31 @@ def CalendarComparisonPanel(
 ) -> Frame:
     """Build unit rows for calendar-period comparisons using observed initiation history.
 
-    Example: spec.CalendarComparisonPanel(daily_design, model, cohort=initiation, **comparison)
+    Args:
+        base: Ordinary Design to extend with the specialized row shape.
+        model: Model binding the design names to tables, metrics, attributes and completeness.
+        cohort: Initiation declaration defining the observed treatment cohort.
+        control: "never_treated" or "not_yet_treated" controls, based on declared history.
+        reference_period: Integer event-relative reference index, preceding anticipation and
+            comparison periods.
+        comparison_periods: Nonempty tuple of distinct integer event-relative periods to compare.
+        anticipation_periods: Tuple of distinct negative leads excluded for anticipation; ()
+            excludes none.
+
+    Returns:
+        A lazy Frame with observed calendar-comparison unit rows.
+
+    Example:
+        from datetime import datetime, UTC
+
+        spec.CalendarComparisonPanel(
+            tr.recipes.time_series(every="1d", start="2025-02-01", end="2025-02-03"),
+            model,
+            cohort=spec.Initiation("orders", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+            control="never_treated",
+            reference_period=-1,
+            comparison_periods=(0, 1),
+        )
     """
     if not isinstance(base, Design):
         raise _INVALID.error(reason="wrong_type", field="base")
@@ -398,12 +574,24 @@ def EventPanel(
     base: Design,
     *,
     periods: tuple[int, ...],
-    period_seconds: int,
+    period: str | Literal[0],
     reference_period: int = -1,
 ) -> Design:
     """Add elapsed event-relative periods to an event-anchored design.
 
-    Example: spec.EventPanel(event_design, periods=(-1, 0, 1), period_seconds=86400)
+    Args:
+        base: Ordinary Design to extend with the specialized row shape.
+        periods: Tuple of integer event-relative indexes to emit.
+        period: Positive elapsed duration string (see `terrine.windows`) defining one period.
+        reference_period: Reference index included in periods; -1 uses the period before the event.
+
+    Returns:
+        An ordinary Design with an EventPanelSpec elapsed-period shape.
+
+    Example:
+        spec.EventPanel(
+            tr.Design("customer", tr.EventAnchor("orders")), periods=(-1, 0, 1), period="1d"
+        )
     """
     if not isinstance(base, Design):
         raise _INVALID.error(reason="wrong_type", field="base")
@@ -411,14 +599,34 @@ def EventPanel(
         raise _INVALID.error(reason="requires_event_anchor", field="base")
     if base.treatment is not None:
         raise _CONFLICT.error()
-    spec = EventPanelSpec(periods, period_seconds, reference_period)
+    spec = EventPanelSpec(periods, period, reference_period)
     return _copy_design(base, spec)
 
 
 def matched_t0(base: Design, model: Model, *, sample: MatchedT0Sample) -> Frame:
     """Build a repeated-trial frame with reproducible matched-t0 control sampling.
 
-    Example: spec.matched_t0(trial_design, model, sample=sample)
+    Args:
+        base: Ordinary Design to extend with the specialized row shape.
+        model: Model binding the design names to tables, metrics, attributes and completeness.
+        sample: MatchedT0Sample declaring strata, control count and reproducible seed.
+
+    Returns:
+        A lazy Frame with reproducibly sampled matched-t0 controls.
+
+    Example:
+        from datetime import datetime, UTC
+
+        spec.matched_t0(
+            tr.recipes.trial_panel(
+                every="1d",
+                start="2025-02-01",
+                end="2025-02-03",
+                treatment=spec.Initiation("orders", history_start=datetime(2025, 1, 1, tzinfo=UTC)),
+            ),
+            model,
+            sample=spec.MatchedT0Sample(strata=(), controls_per_treated=2, seed=0),
+        )
     """
     if not isinstance(base, Design) or not isinstance(base.shape, SequentialSpec):
         raise _INVALID.error(reason="requires_sequential", field="base")
@@ -432,7 +640,7 @@ def matched_t0(base: Design, model: Model, *, sample: MatchedT0Sample) -> Frame:
         features=base.features,
         outcomes=base.outcomes,
         eligibility=base.eligibility,
-        gap=base.gap,
+        gap=seconds_text(base.gap),
         shape=base.shape,
         anchor_range=base.anchor_range,
         sample=sample,

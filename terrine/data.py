@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 import math
 from base64 import b64decode, b64encode
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence, Set
 from dataclasses import dataclass, fields, is_dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, date, datetime, timedelta
+from importlib import import_module
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -16,7 +17,7 @@ import pyarrow as pa
 
 from terrine.backends.registry import get_engine
 from terrine.errors import RefusalSpec, freeze, parameter_names, thaw
-from terrine.windows import Window, seconds
+from terrine.windows import Window, seconds, seconds_text
 
 if TYPE_CHECKING:
     import pandas
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
     from terrine.semantic.models import Filter
 
 type DataFrameLike = pa.Table | pandas.DataFrame | polars.DataFrame
+type JsonScalar = None | bool | int | float | str
+type Where = Mapping[str, JsonScalar | Sequence[JsonScalar] | Set[JsonScalar]]
 
 __all__ = [
     "ApproximationMeta",
@@ -60,18 +63,49 @@ _ROWS_EXCEEDED = RefusalSpec(
 _OUTPUT_BYTES_EXCEEDED = RefusalSpec(
     "terrine.budget.output_bytes_exceeded", "Output exceeds the configured byte limit {limit}."
 )
+_MISSING_DEPENDENCY = RefusalSpec(
+    "terrine.convert.missing_dependency",
+    "Conversion requires the optional {extra!r} dependency; install terrine[{extra}].",
+)
+_INVALID_VIEW_FLAGS = RefusalSpec(
+    "terrine.dataset.invalid_view",
+    "Dataset view flags {conflicts!r} conflict ({reason}); choose one view.",
+)
+
+
+def _optional_dependency(name: str):
+    try:
+        return import_module(name)
+    except ImportError as exc:
+        raise _MISSING_DEPENDENCY.error(extra=name) from exc
+
+
+def dataframe_view_preflight(
+    *,
+    include_observation_metadata: bool,
+    values_only: bool,
+    library: Literal["pandas", "polars"],
+) -> None:
+    if values_only and include_observation_metadata:
+        raise _INVALID_VIEW_FLAGS.error(
+            reason="values_only_excludes_observation_metadata",
+            conflicts=("values_only", "include_observation_metadata"),
+        )
+    _optional_dependency(library)
+
+
 _INVALID_ELIGIBILITY = RefusalSpec(
     "terrine.metadata.invalid_eligibility_summary",
     "Eligibility counts must be nonnegative and reconcile",
 )
 _COVERAGE_DAY_OVERFLOW = RefusalSpec(
     "terrine.metadata.unrepresentable_coverage",
-    "Complete end day {through!r} leaves no following day to include the whole end day. "
+    "Complete end day {end!r} leaves no following day to include the whole end day. "
     "Choose an earlier last complete day.",
 )
 _COVERAGE_BOUND_OVERFLOW = RefusalSpec(
     "terrine.metadata.unrepresentable_coverage",
-    "Complete days {start!r} through {through!r} cannot be represented in the model's "
+    "Complete days {start!r} through {end!r} cannot be represented in the model's "
     "local time. Choose days farther from the calendar limits.",
 )
 _COVERAGE_UTC_OVERFLOW = RefusalSpec(
@@ -100,8 +134,7 @@ _LEGACY_ARROW_METADATA_KEY = b"terrine.materialized_frame.v1"
 
 _RESERVED_NAME = RefusalSpec(
     "terrine.model.invalid_binding",
-    "{kind} name {name!r} contains '__', which separates a label from its where= operator; "
-    "rename the {kind}.",
+    "{kind} name {name!r} contains the reserved '__' separator; rename the {kind}.",
 )
 _HISTORY_TIME_AXIS = RefusalSpec(
     "terrine.model.invalid_binding",
@@ -170,6 +203,12 @@ def _table_input(value: str | DataFrameLike, field: str) -> str | pa.Table:
     return table
 
 
+def _table_repr(table: str | pa.Table) -> str:
+    if isinstance(table, str):
+        return repr(table)
+    return f"<pyarrow.Table {table.num_rows} rows × {table.num_columns} columns>"
+
+
 def _count(value: int | None, field: str) -> None:
     if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
         raise ValueError(f"{field} must be a nonnegative integer or None")
@@ -198,29 +237,37 @@ def _typed_mapping(value: Mapping[str, Any], name: str, value_type: type) -> Map
 class Coverage:
     """Declare the inclusive local calendar days for which events or history are complete.
 
+    Args:
+        start: First complete day, as a date or ISO YYYY-MM-DD string.
+        end: Last complete day, as a date or ISO YYYY-MM-DD string, included in full.
+
+    Attributes:
+        start: First scheduled calendar day, as a date or ISO YYYY-MM-DD string, included.
+        end: Last scheduled calendar day, as a date or ISO YYYY-MM-DD string, included in full.
+
     Example: tr.Coverage("2025-01-01", "2025-03-20")
     """
 
     start: date
-    through: date
+    end: date
 
-    def __init__(self, start: date | str, through: date | str) -> None:
+    def __init__(self, start: date | str, end: date | str) -> None:
         object.__setattr__(self, "start", _calendar_day(start, "start"))
-        object.__setattr__(self, "through", _calendar_day(through, "through"))
-        if self.start > self.through:
-            raise _INVALID_BINDING.error(reason="through_before_start", field="through")
-        if self.through == date.max:
-            raise _COVERAGE_DAY_OVERFLOW.error(through=self.through.isoformat())
+        object.__setattr__(self, "end", _calendar_day(end, "end"))
+        if self.start > self.end:
+            raise _INVALID_BINDING.error(reason="end_before_start", field="end")
+        if self.end == date.max:
+            raise _COVERAGE_DAY_OVERFLOW.error(end=self.end.isoformat())
 
     def bind(self, day_boundary: Callable[[date], datetime]) -> BoundCoverage:
         if not callable(day_boundary):
             raise _INVALID_BINDING.error(reason="wrong_type", field="day_boundary")
         try:
             start = day_boundary(self.start)
-            end = day_boundary(self.through + timedelta(days=1))
+            end = day_boundary(self.end + timedelta(days=1))
         except OverflowError as exc:
             raise _COVERAGE_BOUND_OVERFLOW.error(
-                start=self.start.isoformat(), through=self.through.isoformat()
+                start=self.start.isoformat(), end=self.end.isoformat()
             ) from exc
         return BoundCoverage(start, end)
 
@@ -252,9 +299,34 @@ class BoundCoverage:
         object.__setattr__(self, "end_exclusive", end)
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True, init=False, repr=False)
 class UnitSource:
-    """Declare a unit's table and key, using a table name or an in-memory table.
+    """Declare a unit's table and key; naive source timestamps are interpreted as UTC instants.
+
+
+    Args:
+        table: Warehouse table name or pandas, Polars or Arrow table supplying the unit roster.
+        key: Column name identifying each unique, non-null unit.
+        entered_at: Entry timestamp column name; None declares no entry bound.
+        exited_at: Exit timestamp column name; None declares no exit bound.
+        observed_from: Observation-start timestamp column name; None declares no lower observation
+            bound.
+        observed_until: Observation-end timestamp column name; None declares no upper observation
+            bound.
+        attributes: Sequence of static attribute column names readable with asof(); () declares
+            none.
+
+    Attributes:
+        table: Warehouse table name or pandas, Polars or Arrow table supplying the unit roster.
+        key: Column name identifying each unique, non-null unit.
+        entered_at: Entry timestamp column name; None declares no entry bound.
+        exited_at: Exit timestamp column name; None declares no exit bound.
+        observed_from: Observation-start timestamp column name; None declares no lower observation
+            bound.
+        observed_until: Observation-end timestamp column name; None declares no upper observation
+            bound.
+        attributes: Sequence of static attribute column names readable with asof(); () declares
+            none.
 
     Example: tr.UnitSource(customers, "customer_id")
     """
@@ -265,6 +337,7 @@ class UnitSource:
     exited_at: str | None
     observed_from: str | None
     observed_until: str | None
+    attributes: tuple[str, ...]
 
     def __init__(
         self,
@@ -274,6 +347,7 @@ class UnitSource:
         exited_at: str | None = None,
         observed_from: str | None = None,
         observed_until: str | None = None,
+        attributes: Sequence[str] = (),
     ) -> None:
         bound = _table_input(table, "table")
         _binding_name(key, "key")
@@ -286,20 +360,56 @@ class UnitSource:
         for name, value in optional.items():
             if value is not None:
                 _binding_name(value, name)
+        if isinstance(attributes, str) or not isinstance(attributes, Iterable):
+            raise _INVALID_BINDING.error(reason="wrong_type", field="attributes")
+        names = tuple(attributes)
+        for name in names:
+            _binding_name(name, "attributes")
+            if "__" in name:
+                raise _RESERVED_NAME.error(reason="reserved_name", kind="unit attribute", name=name)
+        if len(set(names)) != len(names):
+            raise _INVALID_BINDING.error(reason="duplicate_names", field="attributes")
         object.__setattr__(self, "table", bound)
         object.__setattr__(self, "key", key)
         for name, value in optional.items():
             object.__setattr__(self, name, value)
+        object.__setattr__(self, "attributes", names)
+
+    def __repr__(self) -> str:
+        return (
+            f"UnitSource(table={_table_repr(self.table)}, key={self.key!r}, "
+            f"entered_at={self.entered_at!r}, exited_at={self.exited_at!r}, "
+            f"observed_from={self.observed_from!r}, observed_until={self.observed_until!r}, "
+            f"attributes={self.attributes!r})"
+        )
 
 
 def _calendar_day(value: object, field: str) -> date:
+    if isinstance(value, (date, datetime)):
+        context_value = value.isoformat()
+    elif isinstance(value, float) and not math.isfinite(value):
+        context_value = repr(value)
+    elif value is None or isinstance(value, (str, bool, int, float)):
+        context_value = value
+    else:
+        context_value = repr(value)
     if isinstance(value, str):
         try:
             return date.fromisoformat(value)
         except ValueError as error:
-            raise _INVALID_BINDING.error(reason="invalid_date", field=field) from error
+            raise _INVALID_BINDING.error(
+                reason="invalid_date",
+                field=field,
+                value=context_value,
+                expected=("YYYY-MM-DD",),
+            ) from error
     if not isinstance(value, date) or isinstance(value, datetime):
-        raise _INVALID_BINDING.error(reason="invalid_date", field=field)
+        raise _INVALID_BINDING.error(
+            reason="invalid_date",
+            field=field,
+            value=context_value,
+            expected=("YYYY-MM-DD",),
+        )
     return value
 
 
@@ -308,9 +418,9 @@ def _complete(value: tuple[date | str, date | str] | None) -> tuple[date, date] 
         return None
     if isinstance(value, str) or not isinstance(value, Sequence) or len(value) != 2:
         raise _INVALID_BINDING.error(reason="not_a_pair", field="complete")
-    with parameter_names(start="complete", through="complete"):
+    with parameter_names(start="complete", end="complete"):
         coverage = Coverage(*value)
-    return (coverage.start, coverage.through)
+    return (coverage.start, coverage.end)
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,11 +442,43 @@ class Ratio:
     denominator: str
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True, init=False, repr=False)
 class Events:
-    """Declare an event table's time, unit key, named metrics, labels and complete days.
+    """Declare an event table; naive source timestamps are interpreted as UTC instants.
 
-    Example: tr.Events(orders, time="ordered_at", key="customer_id", complete=complete)
+
+    Args:
+        table: Warehouse table name or pandas, Polars or Arrow table supplying events.
+        time: Event timestamp column name; naive timestamps are interpreted as UTC.
+        key: Unit-key column name, with the same dtype as the roster key.
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        metrics: Mapping of names to count/sum/mean/min/max/count_distinct/ratio declarations; None
+            declares none.
+        labels: Sequence of event label column names available to filters and asof(); () declares
+            none.
+        where: Label-name mapping to scalar or membership values restricting this event source; None
+            keeps all rows.
+        complete: Inclusive pair of date objects or ISO calendar-day strings; None leaves coverage
+            undeclared.
+
+    Attributes:
+        table: Warehouse table name or pandas, Polars or Arrow table supplying events.
+        time: Event timestamp column name; naive timestamps are interpreted as UTC.
+        key: Unit-key column name, with the same dtype as the roster key.
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        metrics: Mapping of names to count/sum/mean/min/max/count_distinct/ratio declarations; None
+            declares none.
+        labels: Sequence of event label column names available to filters and asof(); () declares
+            none.
+        where: Label-name mapping to scalar or membership values restricting this event source; None
+            keeps all rows.
+        complete: Inclusive pair of date objects or ISO calendar-day strings; None leaves coverage
+            undeclared.
+
+    Example:
+        tr.Events(
+            orders, time="ordered_at", key="customer_id", complete=("2025-01-01", "2025-03-20")
+        )
     """
 
     table: str | pa.Table
@@ -345,6 +487,7 @@ class Events:
     unit: str | None
     metrics: Mapping[str, EventMetric | Ratio]
     labels: tuple[str, ...]
+    where: Mapping[str, JsonScalar | tuple[JsonScalar, ...] | frozenset[JsonScalar]]
     complete: tuple[date, date] | None
 
     def __init__(
@@ -356,6 +499,7 @@ class Events:
         unit: str | None = None,
         metrics: Mapping[str, EventMetric | Ratio] | None = None,
         labels: Sequence[str] = (),
+        where: Where | None = None,
         complete: tuple[date | str, date | str] | None = None,
     ) -> None:
         bound = _table_input(table, "table")
@@ -378,18 +522,71 @@ class Events:
                 raise _RESERVED_NAME.error(reason="reserved_name", kind="label", name=label)
         if len(set(names)) != len(names):
             raise _INVALID_BINDING.error(reason="duplicate_names", field="labels")
+        filters = {}
+        if where is not None:
+            if not isinstance(where, Mapping):
+                raise _INVALID_BINDING.error(reason="wrong_type", field="where")
+            for name, value in where.items():
+                values = value if isinstance(value, (list, tuple, set, frozenset)) else (value,)
+                if not isinstance(name, str) or any(
+                    item is not None and not isinstance(item, (str, bool, int, float))
+                    for item in values
+                ):
+                    raise _INVALID_BINDING.error(reason="wrong_type", field="where")
+                filters[name] = (
+                    frozenset(values)
+                    if isinstance(value, (set, frozenset))
+                    else tuple(values)
+                    if isinstance(value, (list, tuple))
+                    else value
+                )
         object.__setattr__(self, "table", bound)
         object.__setattr__(self, "time", time)
         object.__setattr__(self, "key", key)
         object.__setattr__(self, "unit", unit)
         object.__setattr__(self, "metrics", MappingProxyType(dict(declared)))
         object.__setattr__(self, "labels", names)
+        object.__setattr__(self, "where", MappingProxyType(filters))
         object.__setattr__(self, "complete", _complete(complete))
 
+    def __repr__(self) -> str:
+        return (
+            f"Events(table={_table_repr(self.table)}, time={self.time!r}, key={self.key!r}, "
+            f"unit={self.unit!r}, metrics={tuple(self.metrics)!r}, labels={self.labels!r}, "
+            f"where={dict(self.where)!r}, complete={self.complete!r})"
+        )
 
-@dataclass(frozen=True, slots=True, init=False)
+
+@dataclass(frozen=True, slots=True, init=False, repr=False)
 class History:
-    """Declare an attribute's history by unit key and validity times or change time.
+    """Declare attribute history; naive source timestamps are interpreted as UTC instants.
+
+
+    Args:
+        table: Warehouse table name or pandas, Polars or Arrow table supplying attribute versions.
+        key: Unit-key column name, with the same dtype as the roster key.
+        column: Column name holding this attribute value.
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        valid_from: Range-start timestamp column name; None requires changed_at instead.
+        valid_to: Exclusive range-end timestamp column name; None leaves valid_from ranges
+            open-ended.
+        changed_at: Change timestamp column name; None requires valid_from; mutually exclusive with
+            range columns.
+        complete: Inclusive pair of date objects or ISO calendar-day strings; None leaves coverage
+            undeclared.
+
+    Attributes:
+        table: Warehouse table name or pandas, Polars or Arrow table supplying attribute versions.
+        key: Unit-key column name, with the same dtype as the roster key.
+        column: Column name holding this attribute value.
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        valid_from: Range-start timestamp column name; None requires changed_at instead.
+        valid_to: Exclusive range-end timestamp column name; None leaves valid_from ranges
+            open-ended.
+        changed_at: Change timestamp column name; None requires valid_from; mutually exclusive with
+            range columns.
+        complete: Inclusive pair of date objects or ISO calendar-day strings; None leaves coverage
+            undeclared.
 
     Example: tr.History("plans", key="customer_id", column="plan", changed_at="time")
     """
@@ -442,6 +639,14 @@ class History:
         object.__setattr__(self, "valid_to", valid_to)
         object.__setattr__(self, "changed_at", changed_at)
         object.__setattr__(self, "complete", _complete(complete))
+
+    def __repr__(self) -> str:
+        return (
+            f"History(table={_table_repr(self.table)}, key={self.key!r}, "
+            f"column={self.column!r}, unit={self.unit!r}, valid_from={self.valid_from!r}, "
+            f"valid_to={self.valid_to!r}, changed_at={self.changed_at!r}, "
+            f"complete={self.complete!r})"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -523,6 +728,7 @@ class ColumnMeta:
     numeric_policy: Literal["exact"] | None = None
     approximation: ApproximationMeta | None = None
     transformation: Mapping[str, Any] | None = None
+    measure: Literal["time", "elapsed"] | None = None
 
     def __post_init__(self) -> None:
         if self.window is not None and not isinstance(self.window, Window):
@@ -539,6 +745,8 @@ class ColumnMeta:
                 _nonempty(value, name)
         if self.numeric_policy not in (None, "exact"):
             raise ValueError("unsupported numeric policy")
+        if self.measure not in (None, "time", "elapsed"):
+            raise ValueError("unsupported event measure")
         if self.transformation is not None:
             object.__setattr__(
                 self, "transformation", _mapping(self.transformation, "transformation")
@@ -1211,6 +1419,23 @@ class Provenance:
 class Budget:
     """Limit output rows, output bytes or estimated scan bytes for a dataset.
 
+    Budget() is uncapped: all three limits default to None. The strict_scan default
+    does not enable a scan limit; it applies only when max_scan_bytes is set.
+
+    Args:
+        max_rows: Nonnegative output-row limit; default None imposes no row cap.
+        max_output_bytes: Nonnegative output-byte limit; default None imposes no output-byte cap.
+        max_scan_bytes: Nonnegative estimated-scan-byte limit; default None imposes no scan cap.
+        strict_scan: Whether an unknown estimate refuses a configured scan limit; default True
+            refuses, while False warns and proceeds.
+
+    Attributes:
+        max_rows: Nonnegative output-row limit; default None imposes no row cap.
+        max_output_bytes: Nonnegative output-byte limit; default None imposes no output-byte cap.
+        max_scan_bytes: Nonnegative estimated-scan-byte limit; default None imposes no scan cap.
+        strict_scan: Whether an unknown estimate refuses a configured scan limit; default True
+            refuses, while False warns and proceeds.
+
     Example: tr.Budget(max_rows=1000)
     """
 
@@ -1360,7 +1585,7 @@ def _decode_engine_stamp(
 
 def _decode(value: Any, cls: type) -> Any:
     if cls is Window:
-        return Window(*value["$window"])
+        return Window(*(seconds_text(seconds_value) for seconds_value in value["$window"]))
     if not is_dataclass(cls):
         raise TypeError("metadata target must be a dataclass")
     kwargs: dict[str, Any] = {}
@@ -1461,17 +1686,19 @@ def _decode(value: Any, cls: type) -> Any:
             "bucket_origin",
             "resolved_as_of",
             "administrative_cutoff",
-        ) and isinstance(item, dict):
+        ) and isinstance(item, Mapping):
             kwargs[field.name] = datetime.fromisoformat(item["$datetime"])
         elif field.name == "window" and item is not None:
-            kwargs[field.name] = Window(*item["$window"])
+            kwargs[field.name] = Window(
+                *(seconds_text(seconds_value) for seconds_value in item["$window"])
+            )
         elif (
             field.name in ("start", "end_exclusive")
-            and isinstance(item, dict)
+            and isinstance(item, Mapping)
             and "$datetime" in item
         ):
             kwargs[field.name] = datetime.fromisoformat(item["$datetime"])
-        elif field.name in ("start", "through") and isinstance(item, dict) and "$date" in item:
+        elif field.name in ("start", "end") and isinstance(item, Mapping) and "$date" in item:
             kwargs[field.name] = date.fromisoformat(item["$date"])
         else:
             kwargs[field.name] = item
@@ -1495,7 +1722,12 @@ def _bookkeeping_columns(
     columns: Mapping[str, ColumnMeta],
     timings: Mapping[str, ExpressionTiming],
 ) -> tuple[str, ...]:
-    bookkeeping = {"_observed_from", "_observed_until", "anchor_provenance"}
+    bookkeeping = {
+        "_observed_from",
+        "_observed_until",
+        "anchor_provenance",
+        "__terrine_panel_start",
+    }
     for meta in columns.values():
         bookkeeping.update(
             name
@@ -1548,7 +1780,30 @@ def _ordered_columns(
     return (*ordered, *bookkeeping)
 
 
-@dataclass(frozen=True, slots=True)
+def output_sort_keys(schema: pa.Schema, roles: Roles, *, shape: str) -> tuple[str, ...]:
+    """Return present ordering columns for the declared output shape."""
+    names = set(schema.names)
+    if shape == "life_table":
+        ordered = [name for name in roles.features if name in names and name != "time_bin"]
+        if "time_bin" in names:
+            ordered.append("time_bin")
+    else:
+        position = {
+            "state_panel": "period_index",
+            "event_panel": "event_period",
+            "calendar_comparison": "event_period",
+            "sequential": "trial_id",
+            "ltv": "age",
+            "cohort_table": "age",
+            "event_sequence": "sequence_position",
+        }.get(shape)
+        ordered = [name for name in (roles.unit, roles.t0, roles.anchor) if name in names]
+        if position is not None and position in names:
+            ordered.append(position)
+    return tuple(dict.fromkeys(ordered))
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class MaterializedFrame:
     table: pa.Table
     roles: Roles
@@ -1565,25 +1820,34 @@ class MaterializedFrame:
         ):
             raise TypeError("columns must map names to ColumnMeta")
         object.__setattr__(self, "columns", _typed_mapping(self.columns, "columns", ColumnMeta))
-        object.__setattr__(
-            self,
-            "table",
-            self.table.select(
-                _ordered_columns(
-                    self.table.column_names,
-                    self.roles,
-                    self.columns,
-                    self.provenance.expression_timings,
-                )
-            ),
+        table = self.table.select(
+            _ordered_columns(
+                self.table.column_names,
+                self.roles,
+                self.columns,
+                self.provenance.expression_timings,
+            )
+        )
+        keys = output_sort_keys(table.schema, self.roles, shape=self.provenance.shape)
+        if keys:
+            table = table.sort_by([(name, "ascending") for name in keys], null_placement="at_end")
+        object.__setattr__(self, "table", table)
+
+    def __repr__(self) -> str:
+        return (
+            f"MaterializedFrame(rows={self.table.num_rows}, "
+            f"columns={tuple(self.table.column_names)!r}, roles={self.roles!r})"
         )
 
     def to_metadata(self) -> dict[str, Any]:
         """Return a detached JSON-compatible metadata value."""
         return thaw(freeze(_metadata_payload(self.roles, self.columns, self.provenance)))
 
-    def to_arrow(self) -> pa.Table:
-        """Return lossless Arrow with value/support triples before observation columns."""
+    def to_pyarrow(self) -> pa.Table:
+        """Return lossless Arrow with value/support triples before observation columns.
+
+        Example: materialized.to_pyarrow()
+        """
         payload = self.to_metadata()
         payload["version"] = 2
         payload["bookkeeping_columns"] = list(self._bookkeeping_columns())
@@ -1595,6 +1859,42 @@ class MaterializedFrame:
         metadata[_ARROW_METADATA_KEY] = encoded
         return table.replace_schema_metadata(metadata)
 
+    def to_pandas(self, *, include_observation_metadata: bool = False, values_only: bool = False):
+        """Return pandas data without observation metadata by default.
+
+        Example: materialized.to_pandas(values_only=True)
+        """
+        dataframe_view_preflight(
+            include_observation_metadata=include_observation_metadata,
+            values_only=values_only,
+            library="pandas",
+        )
+        module = _optional_dependency("pandas")
+        table = self._dataframe_table(include_observation_metadata, values_only)
+        return table.to_pandas(types_mapper=module.ArrowDtype)
+
+    def to_polars(self, *, include_observation_metadata: bool = False, values_only: bool = False):
+        """Return Polars data without observation metadata by default.
+
+        Example: materialized.to_polars(values_only=True)
+        """
+        dataframe_view_preflight(
+            include_observation_metadata=include_observation_metadata,
+            values_only=values_only,
+            library="polars",
+        )
+        module = _optional_dependency("polars")
+        table = self._dataframe_table(include_observation_metadata, values_only)
+        return module.from_arrow(table)
+
+    def _dataframe_table(self, include_observation_metadata: bool, values_only: bool) -> pa.Table:
+        if include_observation_metadata:
+            return self.table
+        dropped = self._bookkeeping_columns()
+        if values_only:
+            dropped += self._support_columns()
+        return self.table.drop(dropped)
+
     def _bookkeeping_columns(self) -> tuple[str, ...]:
         return _bookkeeping_columns(
             self.table.column_names, self.roles, self.columns, self.provenance.expression_timings
@@ -1602,6 +1902,13 @@ class MaterializedFrame:
 
     def _support_columns(self) -> tuple[str, ...]:
         return _support_columns(self.table.column_names, self.columns)
+
+    @classmethod
+    def _from_table_metadata(cls, table: pa.Table, payload: Mapping[str, Any]) -> MaterializedFrame:
+        roles = _decode(payload["roles"], Roles)
+        columns = {key: _decode(item, ColumnMeta) for key, item in payload["columns"].items()}
+        provenance = _decode(payload["provenance"], Provenance)
+        return cls(table, roles, columns, provenance)
 
     @classmethod
     def from_arrow(cls, table: pa.Table) -> MaterializedFrame:

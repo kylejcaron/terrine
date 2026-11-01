@@ -11,9 +11,11 @@ from typing import TYPE_CHECKING
 import ibis
 import ibis.expr.datatypes as dt
 
+import terrine.reasons as reason_codes
 from terrine.compile.anchors import AnchorTable
 from terrine.compile.columns import CompiledStudy, compile_columns
 from terrine.data import ColumnMeta, Roles
+from terrine.spec._columns import IDENTITY, STATE_PANEL
 from terrine.spec.anchors import FixedDate, Schedule
 from terrine.spec.design import Design
 from terrine.spec.expressions import MetricAgg
@@ -23,7 +25,7 @@ from terrine.spec.state_panel import (
     StateObservations,
     StatePanel,
 )
-from terrine.windows import Window
+from terrine.windows import Window, seconds_text
 
 if TYPE_CHECKING:
     from terrine.model import Model
@@ -44,7 +46,7 @@ def _state_panel_design(
         anchor,
         features=features,
         eligibility=design.eligibility if filter_population else None,
-        gap=design.gap if gap is None else gap,
+        gap=seconds_text(design.gap if gap is None else gap),
         shape="cross_section",
         anchor_range=design.anchor_range if filter_population else None,
     )
@@ -115,11 +117,13 @@ def _state_value(relation, state: BinnedMetricState):
     reason = ibis.cases(
         (
             ~available,
-            relation.__terrine_state_reason.fill_null(ibis.literal("incomplete_observation")),
+            relation.__terrine_state_reason.fill_null(
+                ibis.literal(reason_codes.INCOMPLETE_OBSERVATION)
+            ),
         ),
         (
             available & raw.isnull(),
-            relation.__terrine_state_reason.fill_null("state_value_null"),
+            relation.__terrine_state_reason.fill_null(reason_codes.STATE_VALUE_NULL),
         ),
         else_=ibis.null().cast("string"),
     )
@@ -135,7 +139,7 @@ def _union_state_periods(
 ):
     schedule = design.anchor
     assert isinstance(schedule, Schedule) and schedule.every is not None
-    period = Window(-schedule.every, 0)
+    period = Window(seconds_text(-schedule.every), 0)
     node = MetricAgg(metric, period)
     state_design = _state_panel_design(
         design, anchor=schedule, features={"_state_period": node}, gap=0
@@ -269,6 +273,8 @@ def _binned(
                     "end_bound_column",
                 ):
                     original = getattr(timing, field)
+                    if field == "point_time_column" and timing.kind == "fixed_t0":
+                        continue
                     if original is not None:
                         alias = f"__terrine_baseline_{index}_{field}"
                         baseline_projection[alias] = raw_baseline[original]
@@ -292,7 +298,7 @@ def _binned(
         )
     state_columns = {
         "from_state": ColumnMeta(
-            Window(-every, 0),
+            Window(seconds_text(-every), 0),
             "prior_state",
             None,
             None,
@@ -300,7 +306,7 @@ def _binned(
             "from_state_reason",
         ),
         "to_state": ColumnMeta(
-            Window(0, every),
+            Window(0, seconds_text(every)),
             "outcome",
             None,
             None,
@@ -330,17 +336,8 @@ def _binned(
         prior_state="from_state",
     )
     required_columns = [
-        "unit",
-        "anchor_id",
-        "t0",
-        "from_time",
-        "to_time",
-        "scheduled_to",
-        "period_index",
-        "gap",
-        "from_state",
-        "to_state",
-        "terminal",
+        *IDENTITY,
+        *STATE_PANEL,
         *feature_names,
         *design.eligibility,
         "from_state_complete",

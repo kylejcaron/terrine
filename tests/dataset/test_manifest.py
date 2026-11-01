@@ -16,9 +16,7 @@ def test_manifest_definition_reference_requires_owner_storage_and_verifies_diges
 
     from terrine.errors import TerrineError
 
-    definition = DatasetDefinition(
-        schema_version=2, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
-    )
+    definition = DatasetDefinition(base_design=Design("unit", FixedDate(date(2025, 1, 1))))
     store = DatasetDefinitionStore(tmp_path / "owner-a", owner="owner-a")
     reference = store.put(definition)
     manifest = DatasetManifest(
@@ -42,9 +40,7 @@ def test_manifest_definition_reference_requires_owner_storage_and_verifies_diges
 
 
 def test_dataset_manifest_round_trip_preserves_generation_schema_roles_and_metadata() -> None:
-    definition = DatasetDefinition(
-        schema_version=2, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
-    )
+    definition = DatasetDefinition(base_design=Design("unit", FixedDate(date(2025, 1, 1))))
     manifest = DatasetManifest(
         definition,
         ManifestGeneration("ds", "g1", ("table:g1",), ("sha256:x",), 2),
@@ -58,6 +54,24 @@ def test_dataset_manifest_round_trip_preserves_generation_schema_roles_and_metad
     assert reopened.generation == manifest.generation
     assert reopened.columns == manifest.columns
     assert reopened.source_snapshots["source"]["status"] == "unknown"
+
+
+def test_manifest_json_is_text_and_round_trips() -> None:
+    definition = DatasetDefinition(base_design=Design("unit", FixedDate(date(2025, 1, 1))))
+    manifest = DatasetManifest(
+        definition,
+        ManifestGeneration("ds", "g1", ("table:g1",), ("sha256:x",), 2),
+        (ManifestColumn("y", "int64", "outcome", {"numeric_policy": "exact"}),),
+        "design",
+        "model",
+        {"source": "coverage"},
+        {"source": {"status": "unknown", "snapshot_id": "snapshot"}},
+    )
+
+    serialized = manifest.to_json()
+
+    assert isinstance(serialized, str)
+    assert DatasetManifest.from_json(serialized) == manifest
 
 
 @pytest.mark.parametrize(
@@ -80,9 +94,7 @@ def test_dataset_manifest_round_trip_preserves_generation_schema_roles_and_metad
 def test_malformed_manifest_payload_has_coded_refusal(damage) -> None:
     from terrine.errors import TerrineError
 
-    definition = DatasetDefinition(
-        schema_version=2, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
-    )
+    definition = DatasetDefinition(base_design=Design("unit", FixedDate(date(2025, 1, 1))))
     manifest = DatasetManifest(
         definition,
         ManifestGeneration("ds", "g1", ("table:g1",), ("sha256:x",), 0),
@@ -98,10 +110,8 @@ def test_malformed_manifest_payload_has_coded_refusal(damage) -> None:
     elif damage == "envelope":
         serialized = "null"
     elif damage == "duplicate":
-        serialized = (
-            manifest.to_json()
-            .decode()
-            .replace('"schema_version":1', '"schema_version":1,"schema_version":1', 1)
+        serialized = manifest.to_json().replace(
+            '"schema_version":1', '"schema_version":1,"schema_version":1', 1
         )
     elif damage == "nonfinite":
         payload["source_coverage"]["start"] = float("nan")
@@ -130,9 +140,7 @@ def test_malformed_manifest_payload_has_coded_refusal(damage) -> None:
     assert error.value.code == "terrine.dataset.invalid_manifest"
 
 
-_DEFINITION = DatasetDefinition(
-    schema_version=2, base_design=Design("unit", FixedDate(date(2025, 1, 1)))
-)
+_DEFINITION = DatasetDefinition(base_design=Design("unit", FixedDate(date(2025, 1, 1))))
 _GENERATION = ManifestGeneration("ds", "g1", ("table:g1",), ("sha256:x",), 0)
 
 

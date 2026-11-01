@@ -82,7 +82,7 @@ def materialized_baseline(world: World, *, weighted: bool = False) -> Materializ
         ("net_revenue", "outcome"),
     ):
         columns[name] = ColumnMeta(
-            window=Window(0, world.config.horizon_seconds) if role == "outcome" else None,
+            window=Window(0, f"{world.config.horizon_seconds}s") if role == "outcome" else None,
             role=role,
             observed_from_column=f"{name}__observed_from",
             observed_until_column=f"{name}__observed_until",

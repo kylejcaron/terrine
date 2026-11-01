@@ -14,7 +14,7 @@ def test_ltv_period_and_cumulative_values_match_hand_sum():
     try:
         design = Design(
             "user",
-            EventAnchor("purchase", which="first"),
+            EventAnchor("purchase", occurrence="first"),
             shape=CohortSpec(
                 origin="purchase",
                 trajectory=Trajectory("net_revenue", "7d", periods=3, cumulative=True),
@@ -39,7 +39,7 @@ def test_float_feature_metadata_survives_exact_trajectory_compilation():
     try:
         design = Design(
             "user",
-            EventAnchor("purchase", which="first"),
+            EventAnchor("purchase", occurrence="first"),
             features={"float_feature": agg("float_revenue", window=("-7d", "0s"))},
             shape=CohortSpec(
                 origin="purchase",
@@ -78,7 +78,7 @@ def test_scale_zero_decimal_cumulative_overflow_refuses(value):
         frame = compile_ltv(
             Design(
                 "user",
-                EventAnchor("purchase", which="first"),
+                EventAnchor("purchase", occurrence="first"),
                 shape=CohortSpec(
                     origin="purchase",
                     trajectory=Trajectory("decimal_revenue", "7d", periods=2, cumulative=True),
@@ -120,7 +120,7 @@ def test_missing_decimal_period_preserves_cumulative_reason_when_known_subtotal_
         frame = compile_ltv(
             Design(
                 "user",
-                EventAnchor("purchase", which="first"),
+                EventAnchor("purchase", occurrence="first"),
                 shape=CohortSpec(
                     origin="purchase",
                     trajectory=Trajectory("decimal_revenue", "7d", periods=3, cumulative=True),

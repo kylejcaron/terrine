@@ -63,12 +63,12 @@ def test_reference_intersects_unit_observation_coverage(bound, offset, complete)
         assert row[f"net_revenue__{bound}"] == value
 
 
-@pytest.mark.parametrize("side", ["start", "through"])
+@pytest.mark.parametrize("side", ["start", "end"])
 def test_reference_intersects_declared_source_coverage(side):
     world = boundary_world()
     coverage = world.readiness["world_events"]
     short = (
-        Coverage(world.config.t0.date() + timedelta(days=1), coverage.through)
+        Coverage(world.config.t0.date() + timedelta(days=1), coverage.end)
         if side == "start"
         else Coverage(coverage.start, world.config.t0.date())
     )

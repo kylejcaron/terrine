@@ -31,7 +31,7 @@ def _histories(world: World):
 
 def _measurement(coverage, roster, start, end, *, strict_asof=False):
     source_start = datetime.combine(coverage.start, time.min, UTC)
-    source_end = datetime.combine(coverage.through + timedelta(days=1), time.min, UTC)
+    source_end = datetime.combine(coverage.end + timedelta(days=1), time.min, UTC)
     unit_start, unit_end = roster["observed_from"], roster["observed_until"]
     observed_start = max(source_start, unit_start) if unit_start is not None else source_start
     observed_end = min(source_end, unit_end) if unit_end is not None else source_end

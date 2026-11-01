@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from terrine.errors import RefusalSpec
-from terrine.windows import Window, seconds
+from terrine.windows import Window, duration
 
 _UNSUPPORTED_SHAPE = RefusalSpec(
     "terrine.sequence.unsupported_shape",
@@ -27,13 +27,21 @@ def _name(value: object, field: str) -> str:
 class SessionSpec:
     """Group a unit's consecutive events into sessions separated by more than ``gap``.
 
-    Example: tr.SessionSpec(gap="30m")
+    Args:
+        gap: Nonnegative duration string (see `terrine.windows`); "0s" groups only simultaneous
+            events.
+
+    Attributes:
+        gap_seconds: Nonnegative threshold in exact integer seconds; zero groups only simultaneous
+            events.
+
+    Example: spec.SessionSpec(gap="30m")
     """
 
     gap_seconds: int
 
-    def __init__(self, gap: str | int) -> None:
-        normalized = seconds(gap, field="session_gap")
+    def __init__(self, gap: str | Literal[0]) -> None:
+        normalized = duration(gap, field="session_gap")
         if normalized < 0:
             raise _INVALID.error(reason="session gap must be non-negative")
         object.__setattr__(self, "gap_seconds", normalized)
@@ -43,7 +51,17 @@ class SessionSpec:
 class FunnelSpec:
     """Describe ordered event-label steps with an optional time limit.
 
-    Example: tr.FunnelSpec("status", ("placed", "paid"), within="7d")
+    Args:
+        event_property: Declared event label name whose values define funnel steps.
+        steps: Ordered tuple of at least two distinct nonempty string label values to follow.
+        within: Positive duration string (see `terrine.windows`); None imposes no funnel time limit.
+
+    Attributes:
+        event_property: Declared event label name whose values define funnel steps.
+        steps: Ordered tuple of at least two distinct nonempty string label values to follow.
+        within_seconds: Elapsed funnel time limit in integer seconds, or None for no limit.
+
+    Example: spec.FunnelSpec("status", ("placed", "paid"), within="7d")
     """
 
     event_property: str
@@ -51,7 +69,7 @@ class FunnelSpec:
     within_seconds: int | None
 
     def __init__(
-        self, event_property: str, steps: tuple[str, ...], within: str | int | None = None
+        self, event_property: str, steps: tuple[str, ...], within: str | Literal[0] | None = None
     ) -> None:
         event_property = _name(event_property, "funnel event_property")
         if not isinstance(steps, (tuple, list)):
@@ -61,7 +79,7 @@ class FunnelSpec:
             raise _INVALID.error(reason="funnel steps must contain distinct non-empty strings")
         if len(set(normalized)) != len(normalized):
             raise _INVALID.error(reason="funnel steps must be distinct")
-        within_seconds = None if within is None else seconds(within, field="within")
+        within_seconds = None if within is None else duration(within, field="within")
         if within_seconds is not None and within_seconds <= 0:
             raise _INVALID.error(reason="funnel within must be positive")
         object.__setattr__(self, "event_property", event_property)
@@ -73,7 +91,36 @@ class FunnelSpec:
 class EventSequence:
     """Describe a bounded sequence of a unit's events within a window.
 
-    Example: tr.EventSequence("orders", tr.Window("0s", "30d"), max_events=10)
+    Args:
+        event: Name of an event declared in the model.
+        window: Window built from duration string (see `terrine.windows`) offsets; start included,
+            end excluded.
+        max_events: Positive integer maximum number of events retained per anchor.
+        representation: "positions" emits event rows; "arrays" emits one bounded array row; default
+            "positions".
+        properties: Tuple of event property names to retain; () retains none.
+        label_property: Declared label used for transition_from/transition_to when sessions are
+            enabled; None records no transition labels. It does not filter events.
+        sessions: SessionSpec grouping events by elapsed gaps; None does not assign sessions.
+        funnel: FunnelSpec assigning ordered label steps; None does not assign funnel steps.
+
+    Attributes:
+        event: Name of an event declared in the model.
+        window: Window built from duration string (see `terrine.windows`) offsets; start included,
+            end excluded.
+        max_events: Positive integer maximum number of events retained per anchor.
+        representation: "positions" emits event rows; "arrays" emits one bounded array row; default
+            "positions".
+        properties: Tuple of event property names to retain; () retains none.
+        label_property: Declared label used for transition_from/transition_to when sessions are
+            enabled; None records no transition labels. It does not filter events.
+        sessions: SessionSpec grouping events by elapsed gaps; None does not assign sessions.
+        funnel: FunnelSpec assigning ordered label steps; None does not assign funnel steps.
+
+    Example:
+        from terrine.windows import Window
+
+        spec.EventSequence("orders", Window("0s", "30d"), max_events=10)
     """
 
     event: str

@@ -24,6 +24,7 @@ from integration.warehouse_execution.snowflake_fixtures import (
     snowflake_scratch as snowflake_scratch,  # noqa: F401
 )
 from terrine.errors import TerrineError
+from terrine.spec import CohortGrouping, CohortSpec, TimeToEvent, Trajectory
 
 pytestmark = pytest.mark.snowflake
 
@@ -280,12 +281,13 @@ def test_time_to_event_duration_outside_nanosecond_range_refuses(snowflake_scrat
     design = tr.Design(
         "user",
         tr.FixedDate("1700-01-01"),
-        shape=tr.TimeToEvent("order"),
+        shape=TimeToEvent("order"),
         administrative_cutoff=datetime(2201, 1, 1, tzinfo=UTC),
     )
     with pytest.raises(TerrineError) as error:
         design.build(model).materialize(shapes._BUDGET)
     assert error.value.code == "terrine.execution.arrow_timestamp_range"
+
 
 def test_event_ids_break_first_event_ties(snowflake_scratch, tmp_path):  # noqa: F811
     _load_shapes(snowflake_scratch)
@@ -302,13 +304,13 @@ def test_cohort_summaries_match_duckdb(snowflake_scratch, tmp_path):  # noqa: F8
     _load_shapes(snowflake_scratch)
     design = tr.Design(
         "user",
-        tr.EventAnchor("order", which="first"),
-        shape=tr.CohortSpec("order", tr.Trajectory("spend", "1d", periods=2, cumulative=True)),
+        tr.EventAnchor("order", occurrence="first"),
+        shape=CohortSpec("order", Trajectory("spend", "1d", periods=2, cumulative=True)),
         administrative_cutoff=datetime(2025, 1, 6, tzinfo=UTC),
     )
 
     def summary(model, statistic):
-        grouping = tr.CohortGrouping("1d", datetime(2025, 1, 1, tzinfo=UTC), statistic=statistic)
+        grouping = CohortGrouping("1d", datetime(2025, 1, 1, tzinfo=UTC), statistic=statistic)
         cohorts = design.build(model).cohorts(grouping=grouping, value_column="cumulative_value")
         rows = cohorts.to_pyarrow(budget=shapes._BUDGET).to_pylist()
         return sorted(rows, key=lambda row: tuple(str(value) for value in row.values()))
@@ -569,7 +571,7 @@ def test_microsecond_apart_events_anchor_separately(snowflake_scratch, tmp_path)
     )
     design = tr.Design(
         "user",
-        tr.EventAnchor("order", which="each"),
+        tr.EventAnchor("order", occurrence="each"),
         outcomes={"spend_next_day": tr.agg("spend", window=("0s", "1d"))},
     )
     expected = shapes._rows(shapes._model(duckdb, tmp_path, "duckdb"), design)

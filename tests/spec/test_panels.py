@@ -42,7 +42,7 @@ def test_matched_t0_policy_is_serialized_and_in_design_hash():
 
 
 def test_sequential_schedule_spec_round_trips_canonically():
-    design = Design("customer_id", Schedule(7, "2025-01-01", "2025-01-14"))
+    design = Design("customer_id", Schedule("7s", "2025-01-01", "2025-01-14"))
     treatment = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
     sequential = Sequential(design, treatment=treatment)
 
@@ -53,7 +53,7 @@ def test_sequential_schedule_spec_round_trips_canonically():
 def test_calendar_panel_is_canonical_sequential_composition():
     from terrine.spec import CalendarPanel
 
-    design = Design("customer_id", Schedule(7, "2025-01-01", "2025-01-14"))
+    design = Design("customer_id", Schedule("7s", "2025-01-01", "2025-01-14"))
     treatment = Initiation("started", history_start=datetime(2024, 1, 1, tzinfo=UTC))
 
     assert CalendarPanel(Sequential(design, treatment=treatment)) == Sequential(
@@ -63,7 +63,7 @@ def test_calendar_panel_is_canonical_sequential_composition():
 
 def test_event_panel_emits_only_declared_relative_periods():
     base = Design("customer_id", EventAnchor("purchase", "first"))
-    panel = EventPanel(base, periods=(-1, 0, 2), period_seconds=86_400)
+    panel = EventPanel(base, periods=(-1, 0, 2), period="1d")
 
     assert isinstance(panel.shape, EventPanelSpec)
     assert panel.shape.periods == (-1, 0, 2)
@@ -86,7 +86,7 @@ def test_conflicting_design_inputs_refuse_before_hash():
     from terrine.spec import Treatment
 
     base = Design(
-        "customer_id", Schedule(7, "2025-01-01", "2025-01-14"), treatment=Treatment("started")
+        "customer_id", Schedule("7s", "2025-01-01", "2025-01-14"), treatment=Treatment("started")
     )
     with pytest.raises(TerrineError) as error:
         Sequential(
@@ -156,7 +156,7 @@ def test_direct_design_construction_cannot_conflict_with_sequential_treatment():
 
 def test_design_json_without_optional_anchor_range_loads_with_sample_defaults():
     restored = from_json(
-        '{"schema_version":2,"design":{"unit":"user","anchor":'
+        '{"schema_version":3,"design":{"unit":"user","anchor":'
         '{"type":"FixedDate","date":{"type":"date","value":"2025-01-01"}}}}'
     )
 

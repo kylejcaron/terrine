@@ -1,8 +1,10 @@
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 import ibis
+import pyarrow as pa
 import pytest
 
 from terrine.data import Coverage, RowCheckGroup, UnitSource
@@ -19,6 +21,7 @@ from terrine.spec import (
     event_time,
     is_null,
 )
+from terrine.spec.expressions import since
 
 
 @pytest.fixture
@@ -124,8 +127,8 @@ def test_output_namespace_collisions_refuse_before_compilation(column_model, nam
     with pytest.raises(TerrineError) as error:
         _compile(
             column_model,
-            features={names[0]: asof("tier", before=0)},
-            eligibility={names[1]: is_null(asof("tier", before=0))},
+            features={names[0]: asof("tier", before="0s")},
+            eligibility={names[1]: is_null(asof("tier", before="0s"))},
         )
     assert error.value.code == "terrine.spec.output_name_conflict"
 
@@ -133,7 +136,7 @@ def test_output_namespace_collisions_refuse_before_compilation(column_model, nam
 @pytest.mark.parametrize("name", ["UNIT", "treatment", "__Terrine_private"])
 def test_reserved_output_names_refuse(column_model, name):
     with pytest.raises(TerrineError) as error:
-        _compile(column_model, features={name: asof("tier", before=0)})
+        _compile(column_model, features={name: asof("tier", before="0s")})
     assert error.value.code == "terrine.spec.reserved_output_name"
 
 
@@ -147,7 +150,7 @@ def test_time_series_columns_are_values_with_named_support(column_model):
         .build(column_model)
         .materialize()
     )
-    full = frame.to_arrow()
+    full = frame.to_pyarrow()
     compact = full.drop(frame._bookkeeping_columns())
     assert compact.column_names == [
         "unit",
@@ -179,7 +182,7 @@ def test_reserved_support_suffix_refuses(field, name):
     import pickle
 
     with pytest.raises(TerrineError) as error:
-        nodes = {name: is_null(asof("tier", before=0))}
+        nodes = {name: is_null(asof("tier", before="0s"))}
         Design(
             "user",
             FixedDate("2025-01-01"),
@@ -201,7 +204,9 @@ def test_reobserved_null_is_known_and_duplicate_inline_observations_dedupe(colum
     column_model.con.raw_sql("""
         INSERT INTO events VALUES ('b', TIMESTAMPTZ '2024-12-31', 1, 'stale')
     """)
-    compiled = _compile(column_model, eligibility={"known_null": is_null(asof("tier", before=0))})
+    compiled = _compile(
+        column_model, eligibility={"known_null": is_null(asof("tier", before="0s"))}
+    )
     compiled.validate(execute=column_model.con.to_pyarrow)
     rows = column_model.con.to_pyarrow(compiled.audit_table.order_by("unit")).to_pylist()
     assert [r["known_null"] for r in rows] == [False, True]
@@ -213,7 +218,7 @@ def test_conflicting_inline_history_is_refused_even_for_false_eligibility(column
         INSERT INTO events VALUES ('a', TIMESTAMPTZ '2025-01-02 11:59:59+00', 3, 'conflict')
     """)
     compiled = _compile(
-        column_model, eligibility={"eligible": eq(asof("tier", before=0), "absent")}
+        column_model, eligibility={"eligible": eq(asof("tier", before="0s"), "absent")}
     )
     with pytest.raises(TerrineError) as error:
         compiled.validate(execute=column_model.con.to_pyarrow)
@@ -225,7 +230,7 @@ def test_row_checks_are_lifted_into_the_audit_at_their_schedule_position(column_
 
     compiled = _compile(
         column_model,
-        features={"state": asof("tier", before=0), "total": agg("total", window=("-1d", "0s"))},
+        features={"state": asof("tier", before="0s"), "total": agg("total", window=("-1d", "0s"))},
     )
     kinds = [type(check).__name__ for check in compiled._checks]
     assert kinds.index("AsOfResult") < kinds.index("RowCheckGroup")
@@ -276,7 +281,7 @@ def test_row_check_counts_survive_a_later_unvalidated_join(column_model):
         model,
         features={
             "a_weight": agg("weight_total", window=("-1d", "0s")),
-            "b_tier": asof("tier", before=0),
+            "b_tier": asof("tier", before="0s"),
         },
     )
     assert type(compiled._checks[-1]).__name__ == "AsOfResult"
@@ -313,7 +318,7 @@ def test_explicit_validity_can_cover_gap_but_derived_change_interval_cannot(
         readiness=column_model.readiness,
         units=column_model.units,
     )
-    compiled = _compile(model, features={"state": asof("tier", before=0)})
+    compiled = _compile(model, features={"state": asof("tier", before="0s")})
     compiled.validate(execute=con.to_pyarrow)
     row = con.to_pyarrow(compiled.table.filter(compiled.table.unit == "a")).to_pylist()[0]
     meta = compiled.columns["state"]
@@ -358,7 +363,7 @@ def test_dimension_admission_reads_only_the_columns_the_lookup_uses(column_model
         readiness=column_model.readiness,
         units=column_model.units,
     )
-    compiled = _compile(model, features={"state": asof("tier", before=0)})
+    compiled = _compile(model, features={"state": asof("tier", before="0s")})
     assert all(not _needs_decimal(relation) for relation in compiled.reads())
     executed = []
 
@@ -389,7 +394,7 @@ def test_static_inline_conflicts_refuse_instead_of_choosing_one_value(column_mod
         readiness=column_model.readiness,
         units=column_model.units,
     )
-    compiled = _compile(model, features={"state": asof("tier", before=0)})
+    compiled = _compile(model, features={"state": asof("tier", before="0s")})
     with pytest.raises(TerrineError) as error:
         compiled.validate(execute=column_model.con.to_pyarrow)
     assert error.value.code == "terrine.temporal.static_key_multiplicity"
@@ -573,19 +578,26 @@ def test_event_time_selector_metadata_distinguishes_known_absence_and_missing_or
     assert rows[1][amount_meta.reason_column] == "missing_selector_origin"
 
 
-def test_event_time_selector_refuses_ambiguous_timestamp_ties(column_model):
+def test_event_time_selector_admits_tied_timestamps(column_model):
     column_model.con.raw_sql("""
         INSERT INTO events VALUES
             ('a', TIMESTAMPTZ '2025-01-02 12:00:00+00', 8, 'duplicate')
     """)
     compiled = _compile(
         column_model,
-        outcomes={"selected_at": event_time("amount", window=("0s", "1s"))},
+        outcomes={
+            "last_at": event_time("amount", window=("0s", "1s"), occurrence="last"),
+            "second_at": event_time("amount", window=("0s", "1s"), occurrence="nth", n=2),
+        },
     )
-    with pytest.raises(TerrineError) as error:
-        compiled.validate(execute=column_model.con.to_pyarrow)
-    assert error.value.code == "terrine.compile.anchor_integrity"
-    assert error.value.context["check_key"] == "tied_event_timestamps"
+    compiled.validate(execute=column_model.con.to_pyarrow)
+    row = next(
+        row for row in column_model.con.to_pyarrow(compiled.table).to_pylist() if row["unit"] == "a"
+    )
+    instant = datetime(2025, 1, 2, 12, tzinfo=UTC)
+    for name in ("last_at", "second_at"):
+        assert row[name] == instant
+        assert row[f"{name}__complete"] is True
 
 
 def test_event_time_selector_respects_unit_observation_interval(column_model):
@@ -876,3 +888,219 @@ def test_last_occurrence_tied_known_events_use_latest_event_id(column_model):
     assert row["selected_at"] == datetime(2025, 1, 1, 12, tzinfo=UTC)
     assert row[meta.complete_column] is True
     assert row[meta.reason_column] is None
+
+
+def test_future_looking_since_feature_refuses(column_model):
+    with pytest.raises(TerrineError) as error:
+        _compile(column_model, features={"recency": since("amount", window=("-7d", "1d"))})
+    assert error.value.code == "terrine.design.gap_violation"
+
+
+@pytest.mark.parametrize("consumer", ["event_time", "agg", "asof"])
+def test_elapsed_selector_cannot_be_an_origin(consumer):
+    elapsed = since("amount", window=("-7d", 0))
+    with pytest.raises(TerrineError) as error:
+        if consumer == "event_time":
+            event_time("amount", window=("0s", "1d"), relative_to=elapsed)
+        elif consumer == "agg":
+            agg("total", window=("-1d", 0), relative_to=elapsed)
+        else:
+            asof("tier", before="0s", relative_to=elapsed)
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "elapsed_selector_as_origin"
+
+
+@pytest.mark.parametrize("predicate", [eq, is_null, None])
+def test_elapsed_selector_in_eligibility_refuses(predicate):
+    with pytest.raises(TerrineError) as error:
+        elapsed = since("amount", window=("-7d", 0))
+        condition = (
+            elapsed
+            if predicate is None
+            else predicate(elapsed, 0)
+            if predicate is eq
+            else predicate(elapsed)
+        )
+        Design(
+            "user",
+            FixedDate("2025-01-02"),
+            eligibility={"recent": condition},  # ty: ignore[invalid-argument-type]
+        )
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "elapsed_selector_in_predicate"
+
+
+@pytest.mark.parametrize("shape", ["StatePanel.baseline_features", "CohortSpec", "LifeTable"])
+def test_since_refuses_in_state_panel_baseline_and_ltv(column_model, shape):
+    from terrine import recipes
+    from terrine.spec import StateObservations, StatePanel
+
+    elapsed = since("amount", window=("-7d", 0))
+    with pytest.raises(TerrineError) as error:
+        if shape == "StatePanel.baseline_features":
+            panel = StatePanel(
+                StateObservations("tier", ("old", "new")),
+                periods=2,
+                baseline_features={"recency": elapsed},
+            )
+            design = Design("user", Schedule("1d", "2025-01-01", "2025-01-02"), shape=panel)
+        elif shape == "CohortSpec":
+            design = recipes.ltv(
+                start_event="amount",
+                metric="total",
+                period="1d",
+                periods=2,
+                features={"recency": elapsed},
+            )
+        else:
+            design = recipes.life_table(
+                start_event="amount",
+                end_event="amount",
+                bin="1d",
+                group_by={"recency": elapsed},
+            )
+        design.validate(column_model)
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "elapsed_selector_unsupported_shape"
+    assert error.value.context["shape"] == shape
+
+
+def test_frame_expr_refuses_elapsed_selectors(column_model):
+    frame = Design(
+        "user",
+        FixedDate("2025-01-02"),
+        features={"recency": since("amount", window=("-1d", 0))},
+    ).build(column_model)
+    with pytest.raises(TerrineError) as error:
+        _ = frame.expr
+    assert error.value.code == "terrine.design.invalid"
+    assert error.value.context["reason"] == "elapsed_selector_in_expr"
+
+
+def test_elapsed_finalization_is_idempotent(column_model):
+    t0 = datetime(2025, 1, 2, 12, tzinfo=UTC)
+    raw = pa.table(
+        {
+            "unit": ["a"],
+            "t0": [t0],
+            "recency": [t0 - timedelta(seconds=1)],
+            "next": [t0 + timedelta(seconds=1)],
+        }
+    )
+    frame = Design(
+        "user",
+        FixedDate(datetime(2025, 1, 2, 12, tzinfo=UTC)),
+        features={"recency": since("amount", window=("-1d", 0))},
+        outcomes={"next": since("amount", window=("1s", "2s"), occurrence="first")},
+    ).build(column_model)
+    result = SimpleNamespace(table=frame._normalize_output(raw))
+    assert frame._normalize_output(result.table).equals(result.table, check_metadata=True)
+    assert pa.types.is_duration(result.table["recency"].type)
+    assert next(row for row in result.table.to_pylist() if row["unit"] == "a")["next"] == (
+        -timedelta(seconds=1)
+    )
+
+
+def test_elapsed_finalization_preserves_nanoseconds_and_refuses_tick_overflow(column_model):
+    frame = Design(
+        "user",
+        FixedDate("2025-01-02"),
+        features={"recency": since("amount", window=("-1d", 0))},
+    ).build(column_model)
+    dtype = pa.timestamp("ns", tz="UTC")
+    raw = pa.table(
+        {
+            "t0": pa.array([200, 200], type=dtype),
+            "recency": pa.array([199, None], type=dtype),
+        }
+    )
+    result = frame._normalize_output(raw)
+    assert result["recency"].type == pa.duration("ns")
+    assert result["recency"].cast(pa.int64()).to_pylist() == [1, None]
+    assert result["__terrine_selected_at_recency"].cast(pa.int64()).to_pylist() == [199, None]
+    overflow = pa.table(
+        {
+            "t0": pa.array([2**63 - 1], type=dtype),
+            "recency": pa.array([-1], type=dtype),
+        }
+    )
+    with pytest.raises(pa.ArrowInvalid):
+        frame._normalize_output(overflow)
+
+
+def test_filter_lowering_parity(column_model):
+    from terrine.compile._predicates import CompiledValue, compile_predicate
+    from terrine.data import ColumnMeta, FeatureCutoff
+    from terrine.semantic.bind import source_filter_predicate
+    from terrine.semantic.filters import lower_filter
+    from terrine.semantic.models import BoundFilter, Filter, PropertyBinding
+    from terrine.temporal.daily import _predicate
+
+    table = column_model.con.sql("""
+        SELECT i, money::DECIMAL(10,2) AS money, score::DOUBLE AS score,
+            true AS complete, NULL::VARCHAR AS reason,
+            TIMESTAMPTZ '2025-01-01' AS observed_from,
+            TIMESTAMPTZ '2025-01-03' AS observed_until
+        FROM (VALUES (1, 10.49, 9), (2, 10.50, 11), (3, NULL, 'NaN'::DOUBLE))
+            t(i, money, score)
+    """)
+    source = replace(
+        column_model.sources["events"],
+        properties={
+            name: PropertyBinding(name, name, "float", "event_time", None)
+            for name in ("money", "score")
+        },
+    )
+    measure = column_model.metrics["total"].measures[0]
+    meta = ColumnMeta(None, "feature", "observed_from", "observed_until", "complete", "reason")
+    for column, threshold, expected in (
+        ("money", "10.50", [False, True, None]),
+        ("score", 11.0, [False, True, None]),
+    ):
+        filt = Filter(property=column, op="equals", values=(threshold,))
+        lowered = lower_filter(table, filt, table[column])
+        membership = source_filter_predicate(table, replace(source, where=(filt,)))
+        metric = _predicate(
+            table, replace(measure, filters=(BoundFilter(column, "equals", (threshold,)),)), source
+        )[0]
+        expression = asof(column)
+        predicate = compile_predicate(
+            table,
+            eq(expression, threshold),
+            {expression: CompiledValue(column, meta, FeatureCutoff(0, True, "recorded_at"))},
+            output="eligible",
+            role="eligibility",
+        )
+        rows = column_model.con.to_pyarrow(
+            table.select("i", lowered=lowered, metric=metric, source=membership).order_by("i")
+        ).to_pylist()
+        assert [r["lowered"] for r in rows] == [r["metric"] for r in rows] == expected
+        assert [r["source"] for r in rows] == expected
+        assert (
+            column_model.con.to_pyarrow(predicate.table.order_by("i"))["eligible"].to_pylist()
+            == expected
+        )
+
+
+def test_property_state_identity_includes_source_membership(column_model):
+    from terrine.frame import _feature_definition_hash
+    from terrine.spec import StateObservations, StatePanel
+
+    definition = column_model.catalog.model_dump(mode="python")
+    definition["sources"]["events"]["where"] = (
+        {"property": "user_id", "op": "equals", "values": ("a",)},
+    )
+    filtered = Model.from_catalog(
+        definition,
+        con=column_model.con,
+        units=column_model.units,
+        readiness=column_model.readiness,
+    )
+    design = Design(
+        "user",
+        Schedule("1d", "2025-01-01", "2025-01-02"),
+        shape=StatePanel(StateObservations("tier", ("old", "new")), periods=2),
+    )
+    assert _feature_definition_hash(design, ("from_state",), column_model) != (
+        _feature_definition_hash(design, ("from_state",), filtered)
+    )

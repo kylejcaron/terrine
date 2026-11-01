@@ -103,7 +103,7 @@ def _check_matching_types(
 ) -> None:
     left_type = left[left_column].type().copy(nullable=True)
     right_type = right[right_column].type().copy(nullable=True)
-    compatible = left_type == right_type
+    compatible = left_type == right_type or (left_type.is_integer() and right_type.is_integer())
     if left_type.is_timestamp() and right_type.is_timestamp():
         compatible = True
     if not compatible:

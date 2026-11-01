@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from terrine._time import utc_instant
 
@@ -25,6 +25,7 @@ from terrine.errors import RefusalSpec
 from terrine.execution._metadata import metadata_operation
 from terrine.spec.anchors import AnchorRange, EventAnchor, FixedDate, Schedule, _aware_instant
 from terrine.spec.expressions import (
+    _ELAPSED_SELECTOR,
     And,
     ApproxMetricDistinct,
     ApproxMetricQuantile,
@@ -42,7 +43,7 @@ from terrine.spec.expressions import (
 from terrine.spec.sequence import EventSequence
 from terrine.spec.state_panel import StatePanel
 from terrine.spec.trajectory import CohortSpec, LifeTable, TimeToEvent
-from terrine.windows import seconds
+from terrine.windows import duration, seconds_text
 
 _RESERVED_OUTPUT_NAME = RefusalSpec(
     "terrine.spec.reserved_output_name",
@@ -51,7 +52,8 @@ _RESERVED_OUTPUT_NAME = RefusalSpec(
 )
 _INVALID = RefusalSpec("terrine.design.invalid", "Design input {field} is invalid: {reason}.")
 _NAMED = RefusalSpec(
-    "terrine.design.invalid", "Design input {field}[{name!r}] is invalid: {reason}."
+    "terrine.design.invalid",
+    "Design input {field}[{name!r}] is invalid ({reason}, got {got}; expected {expected}).",
 )
 
 
@@ -79,8 +81,34 @@ def _named_nodes(
         if not isinstance(key, str) or not key.strip():
             raise _INVALID.error(reason="empty_name", field=field_name)
         _validate_support_name(key)
+        if (
+            field_name == "eligibility"
+            and isinstance(value, EventTime)
+            and value.measure == "elapsed"
+        ):
+            raise _ELAPSED_SELECTOR.error(
+                reason="elapsed_selector_in_predicate",
+                route="Output since() as a feature or outcome, then filter the returned dataframe.",
+            )
         if not isinstance(value, allowed):
-            raise _NAMED.error(reason="wrong_type", field=field_name, name=key)
+            if type(value).__module__ == "terrine.data" and type(value).__name__ in {
+                "EventMetric",
+                "Ratio",
+            }:
+                raise _NAMED.error(
+                    reason="metric_declaration",
+                    field=field_name,
+                    name=key,
+                    got=type(value).__name__,
+                    expected="Events(metrics=...) + tr.agg",
+                )
+            raise _NAMED.error(
+                reason="wrong_type",
+                field=field_name,
+                name=key,
+                got=type(value).__name__,
+                expected=tuple(kind.__name__ for kind in allowed),
+            )
         copied[key] = value
     return MappingProxyType({key: copied[key] for key in sorted(copied)})
 
@@ -89,26 +117,73 @@ def _named_nodes(
 class Treatment:
     """Read a treatment attribute at an elapsed time relative to t0.
 
-    Example: tr.Treatment("plan", at="0s", known_at_t0=True)
+    Args:
+        attribute: Declared static roster attribute, event label or history attribute name.
+        at: Elapsed duration string (see `terrine.windows`); "0d" reads treatment at the t0 cutoff.
+        known_at_t0: Whether to declare treatment known at baseline; False makes no such
+            declaration.
+
+    Attributes:
+        attribute: Declared static roster attribute, event label or history attribute name.
+        at: Treatment cutoff offset stored as exact integer seconds.
+        known_at_t0: Whether to declare treatment known at baseline; False makes no such
+            declaration.
+
+    Example: spec.Treatment("plan", at="0s", known_at_t0=True)
     """
 
     attribute: str
     at: int
     known_at_t0: bool
 
-    def __init__(self, attribute: str, at: str | int = "0d", known_at_t0: bool = False) -> None:
+    def __init__(
+        self, attribute: str, at: str | Literal[0] = "0d", known_at_t0: bool = False
+    ) -> None:
         if not isinstance(attribute, str) or not attribute.strip():
             raise _INVALID.error(reason="empty_name", field="attribute")
         if not isinstance(known_at_t0, bool):
             raise _INVALID.error(reason="wrong_type", field="known_at_t0")
         object.__setattr__(self, "attribute", attribute)
-        object.__setattr__(self, "at", seconds(at, field="at"))
+        object.__setattr__(self, "at", duration(at, field="at"))
         object.__setattr__(self, "known_at_t0", known_at_t0)
 
 
 @dataclass(frozen=True, slots=True, init=False)
 class Design:
     """Describe dataset rows by unit, t0, feature windows and outcome windows.
+
+
+    Args:
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        anchor: FixedDate, EventAnchor or Schedule defining row snapshot times.
+        features: Mapping of output names to expressions or predicates; None declares no features.
+        outcomes: Mapping of output names to future expressions or predicates; None declares no
+            outcomes.
+        eligibility: Mapping of rule names to predicates; None applies no eligibility rules.
+        treatment: Treatment declaration; None produces no treatment column.
+        gap: Nonnegative duration string (see `terrine.windows`); "0d" leaves no feature-to-t0 gap.
+        shape: "cross_section" or a specialized shape declaration; "cross_section" gives one row per
+            anchor.
+        anchor_range: AnchorRange restricting row t0 values; None keeps all generated anchors.
+        sample: MatchedT0Sample for repeated-trial controls; None retains all qualifying units.
+        administrative_cutoff: Timezone-aware datetime ending follow-up; None uses declared
+            completeness.
+
+    Attributes:
+        unit: Unit name declared in the model; None infers the sole compatible unit.
+        anchor: FixedDate, EventAnchor or Schedule defining row snapshot times.
+        features: Mapping of output names to expressions or predicates; None declares no features.
+        outcomes: Mapping of output names to future expressions or predicates; None declares no
+            outcomes.
+        eligibility: Mapping of rule names to predicates; None applies no eligibility rules.
+        treatment: Treatment declaration; None produces no treatment column.
+        gap: Minimum feature-to-t0 gap stored as exact integer seconds.
+        shape: "cross_section" or a specialized shape declaration; "cross_section" gives one row per
+            anchor.
+        anchor_range: AnchorRange restricting row t0 values; None keeps all generated anchors.
+        sample: MatchedT0Sample for repeated-trial controls; None retains all qualifying units.
+        administrative_cutoff: Timezone-aware datetime ending follow-up; None uses declared
+            completeness.
 
     Example: tr.Design("customer", tr.FixedDate("2025-02-01"), features=design.features)
     """
@@ -121,7 +196,7 @@ class Design:
     treatment: Treatment | None
     gap: int
     shape: (
-        str
+        Literal["cross_section"]
         | StatePanel
         | EventSequence
         | SequentialSpec
@@ -144,8 +219,8 @@ class Design:
         outcomes: Mapping[str, Expr | Predicate] | None = None,
         eligibility: Mapping[str, Predicate] | None = None,
         treatment: Treatment | None = None,
-        gap: str | int = "0d",
-        shape: str
+        gap: str | Literal[0] = "0d",
+        shape: Literal["cross_section"]
         | StatePanel
         | EventSequence
         | SequentialSpec
@@ -199,7 +274,7 @@ class Design:
             from terrine.spec.panels import _CONFLICT
 
             raise _CONFLICT.error()
-        gap_seconds = seconds(gap, field="gap")
+        gap_seconds = duration(gap, field="gap")
         if gap_seconds < 0:
             raise _INVALID.error(reason="negative", field="gap")
         object.__setattr__(self, "unit", unit)
@@ -266,7 +341,7 @@ class Design:
             administrative_cutoff = _aware_instant(administrative_cutoff, "administrative_cutoff")
         if isinstance(shape, CohortSpec) and (
             not isinstance(anchor, EventAnchor)
-            or anchor.which != "first"
+            or anchor.occurrence != "first"
             or anchor.event != shape.origin
         ):
             raise _INVALID.error(reason="anchor_mismatch", field="anchor")
@@ -275,7 +350,7 @@ class Design:
         time_to_event_shape = shape.time_to_event if isinstance(shape, LifeTable) else shape
         if isinstance(time_to_event_shape, TimeToEvent) and (
             isinstance(anchor, Schedule)
-            or (isinstance(anchor, EventAnchor) and anchor.which == "each")
+            or (isinstance(anchor, EventAnchor) and anchor.occurrence == "each")
         ):
             raise _INVALID.error(reason="single_entry_required", field="anchor")
         if isinstance(time_to_event_shape, TimeToEvent) and outcomes:
@@ -291,6 +366,13 @@ class Design:
     def validate(self, model: Model) -> None:
         """Check the design's units, names and time windows against a model without reading rows.
 
+
+        Args:
+            model: Model binding the design names to tables, metrics, attributes and completeness.
+
+        Returns:
+            None; invalid declarations raise a coded refusal.
+
         Example: design.validate(model)
         """
         from terrine.spec.validate import validate_design
@@ -303,6 +385,13 @@ class Design:
 
         The summary uses model definitions without compiling or running a query.
 
+
+        Args:
+            model: Model binding the design names to tables, metrics, attributes and completeness.
+
+        Returns:
+            A human-readable summary string; no source rows are queried.
+
         Example: print(design.describe(model))
         """
         from terrine.spec.describe import describe_design
@@ -311,6 +400,13 @@ class Design:
 
     def build(self, model: Model) -> Frame:
         """Build a lazy frame from the design and model without reading event rows.
+
+
+        Args:
+            model: Model binding the design names to tables, metrics, attributes and completeness.
+
+        Returns:
+            A lazy Frame compiled against the model; event rows are not read yet.
 
         Example: design.build(model)
         """
@@ -329,6 +425,16 @@ class Design:
         """Build a feature-only view for every eligible unit at one fixed t0.
 
         An omitted unit is resolved from the model before recording the parent design.
+
+
+        Args:
+            model: Model binding the design names to tables, metrics, attributes and completeness.
+            as_of: Fixed t0 as a calendar date, aware datetime or ISO string.
+            eligibility: Explicit mapping of scoring-rule names to predicates; {} admits all units.
+            features: Tuple of feature names to retain; None selects all design features.
+
+        Returns:
+            A lazy feature-only Frame retaining its parent design identity.
 
         Example: design.snapshot(model, as_of="2025-03-01", eligibility={})
         """
@@ -381,7 +487,7 @@ class Design:
             FixedDate(resolved),
             features={name: parent.features[name] for name in selected},
             eligibility=eligibility,
-            gap=parent.gap,
+            gap=seconds_text(parent.gap),
         )
         frame = scoring_design.build(model)
         from terrine.frame import _ScoringView
@@ -398,3 +504,28 @@ class Design:
         from terrine.spec.io import canonical_json
 
         return hashlib.sha256(canonical_json(self)).hexdigest()
+
+
+def _output_shape_name(design: Design) -> str:
+    """Return the output shape's portable metadata name."""
+    from terrine.spec.panels import CalendarComparisonSpec, EventPanelSpec, SequentialSpec
+
+    shape = design.shape
+    if isinstance(shape, str):
+        return shape
+    if isinstance(shape, StatePanel):
+        return "state_panel"
+    if isinstance(shape, EventSequence):
+        return "event_sequence"
+    if isinstance(shape, CalendarComparisonSpec):
+        return "calendar_comparison"
+    if isinstance(shape, SequentialSpec):
+        return "sequential"
+    if isinstance(shape, EventPanelSpec):
+        return "event_panel"
+    if isinstance(shape, CohortSpec):
+        return "ltv"
+    if isinstance(shape, LifeTable):
+        return "life_table"
+    assert isinstance(shape, TimeToEvent)
+    return "time_to_event"

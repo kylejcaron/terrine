@@ -11,6 +11,7 @@ from decimal import Decimal
 from fractions import Fraction
 from typing import Any, Literal
 
+import terrine.reasons as reason_codes
 from terrine.errors import RefusalSpec, TerrineError
 from terrine.semantic.time import instant
 
@@ -86,6 +87,23 @@ def _duration(value: str | timedelta) -> timedelta:
 class TimeSplit:
     """Split rows by exclusive t0 cutoffs with an optional embargo and unit-group policy.
 
+    Args:
+        train_until: Exclusive training t0 cutoff, as a date, aware datetime or ISO string.
+        validation_until: Exclusive validation t0 cutoff in the same formats; None has no later test
+            split.
+        embargo: Unsigned decimal string ending in d/h/m/s (e.g. "1.5d") or nonnegative timedelta;
+            "0d" leaves no gap. Weeks, signs and compound strings are refused.
+        groups: GroupSplit requiring unit groups to agree with the time bucket; None uses time
+            alone.
+
+    Attributes:
+        train_until: Exclusive training t0 cutoff, as a date, aware datetime or ISO string.
+        validation_until: Exclusive validation t0 cutoff in the same formats; None has no later test
+            split.
+        embargo: Normalized nonnegative timedelta between time buckets.
+        groups: GroupSplit requiring unit groups to agree with the time bucket; None uses time
+            alone.
+
     Example: from terrine.dataset import TimeSplit; TimeSplit(train_until="2025-02-15")
     """
 
@@ -148,6 +166,20 @@ class TimeSplit:
 @dataclass(frozen=True, slots=True, init=False)
 class GroupSplit:
     """Assign whole unit groups reproducibly to training, validation and test sets.
+
+    Args:
+        group: Name of the grouping key; "unit" keeps all rows for a unit in one bucket.
+        train_fraction: Fraction in (0, 1) assigned to train; default 0.8.
+        validation_fraction: Fraction in [0, 1] assigned to validation; default 0.1; total cannot
+            exceed 1.
+        seed: Integer deterministic partition seed; 0 is the reproducible default.
+
+    Attributes:
+        group: Name of the grouping key; "unit" keeps all rows for a unit in one bucket.
+        train_fraction: Fraction in (0, 1) assigned to train; default 0.8.
+        validation_fraction: Fraction in [0, 1] assigned to validation; default 0.1; total cannot
+            exceed 1.
+        seed: Integer deterministic partition seed; 0 is the reproducible default.
 
     Example: from terrine.dataset import GroupSplit; GroupSplit(seed=42)
     """
@@ -287,7 +319,7 @@ def assign_group_splits(
         identity = row["id"]
         key = row.get(field)
         if key is None:
-            assignments[identity] = SplitAssignment("unassigned", "group_missing")
+            assignments[identity] = SplitAssignment("unassigned", reason_codes.GROUP_MISSING)
         else:
             assignments[identity] = SplitAssignment(group_bucket(key, policy))
     return assignments
@@ -339,7 +371,7 @@ def assign_splits(
         elif policy.validation_until is None and origin >= policy.train_until + policy.embargo:
             bucket, boundary = "validation", None
         else:
-            output[key] = SplitAssignment("unassigned", "embargo")
+            output[key] = SplitAssignment("unassigned", reason_codes.EMBARGO)
             continue
         support = row.get("label_support")
         if isinstance(support, dict):
@@ -349,15 +381,17 @@ def assign_splits(
             if unavailable:
                 reasons = row.get("label_reasons", {})
                 name, _ = unavailable[0]
-                output[key] = SplitAssignment("unassigned", reasons.get(name, "label_unavailable"))
+                output[key] = SplitAssignment(
+                    "unassigned", reasons.get(name, reason_codes.LABEL_UNAVAILABLE)
+                )
                 continue
         elif row.get("label_available", row.get("label_end") is not None) is False:
             output[key] = SplitAssignment(
-                "unassigned", row.get("label_reason", "label_unavailable")
+                "unassigned", row.get("label_reason", reason_codes.LABEL_UNAVAILABLE)
             )
             continue
         elif "label_end" not in row:
-            output[key] = SplitAssignment("unassigned", "label_unavailable")
+            output[key] = SplitAssignment("unassigned", reason_codes.LABEL_UNAVAILABLE)
             continue
         ends: list[tuple[Any, bool]] = []
         if isinstance(support, dict):
@@ -370,22 +404,22 @@ def assign_splits(
             for end_value, point in ends:
                 if end_value is None:
                     output[key] = SplitAssignment(
-                        "unassigned", row.get("label_reason", "label_unavailable")
+                        "unassigned", row.get("label_reason", reason_codes.LABEL_UNAVAILABLE)
                     )
                     break
                 end = _instant(end_value, "label_end")
                 if not (end < boundary if point else end <= boundary):
-                    output[key] = SplitAssignment("unassigned", "label_overlap")
+                    output[key] = SplitAssignment("unassigned", reason_codes.LABEL_OVERLAP)
                     break
             if key in output:
                 continue
         if policy.groups is not None:
             group = (group_keys or {}).get(key, row.get(policy.groups.group))
             if group is None:
-                output[key] = SplitAssignment("unassigned", "group_missing")
+                output[key] = SplitAssignment("unassigned", reason_codes.GROUP_MISSING)
                 continue
             if group_bucket(group, policy.groups) != bucket:
-                output[key] = SplitAssignment("unassigned", "split_mismatch")
+                output[key] = SplitAssignment("unassigned", reason_codes.SPLIT_MISMATCH)
                 continue
         output[key] = SplitAssignment(bucket)
     return output

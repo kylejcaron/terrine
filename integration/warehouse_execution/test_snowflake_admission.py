@@ -271,7 +271,7 @@ def test_resolved_relations_ignore_a_later_session_schema_change(snowflake_scrat
         # silently reading the other table.
         design = tr.Design(
             "user",
-            tr.EventAnchor("session", which="first"),
+            tr.EventAnchor("session", occurrence="first"),
             features={"n": tr.agg("sessions", window=("-1d", "0s"))},
         )
         with pytest.raises(TerrineError) as error:

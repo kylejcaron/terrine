@@ -13,14 +13,12 @@ from tests.dataset.test_staging import _durable_frame
 def test_approximate_quantile_stage_refuses_before_capture(
     events_world, tmp_path, monkeypatch, role, window
 ):
-    from decimal import Decimal
-    from importlib.metadata import version
 
     from terrine.model import Model
     from terrine.runtime.owner import RuntimeOwner
     from terrine.runtime.snapshot import SnapshotAuthority
     from terrine.semantic.models import Catalog
-    from terrine.spec import Design, FixedDate, SketchRequest, approx_quantile
+    from terrine.spec import Design, FixedDate, approx_quantile
 
     pytest.importorskip("datasketches")
     frame, con = _durable_frame(events_world, tmp_path)
@@ -35,14 +33,7 @@ def test_approximate_quantile_stage_refuses_before_capture(
             units=frame._model.units,
             readiness=frame._model.readiness,
         )
-        expressions = {
-            "q": approx_quantile(
-                "sessions",
-                "0.5",
-                window=window,
-                sketch=SketchRequest("tdigest", version("datasketches"), Decimal("0.01")),
-            )
-        }
+        expressions = {"q": approx_quantile("sessions", "0.5", window=window)}
         design = Design(
             "user",
             FixedDate("2025-01-05"),

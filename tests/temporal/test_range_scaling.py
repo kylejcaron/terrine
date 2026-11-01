@@ -48,7 +48,7 @@ def test_range_join_intermediate_bound_is_blocked(span, step):
             anchors,
             events,
             plan=plan,
-            window=Window(-width, 0),
+            window=Window(f"-{width}s", 0),
             event_unit="unit",
             event_timestamp="timestamp",
         )
@@ -108,7 +108,7 @@ def test_bucket_join_keeps_pre_epoch_nanosecond_edges():
             anchors,
             events,
             plan=RangePlan(1, 2, "declared_anchor_count"),
-            window=Window(-1, 0),
+            window=Window("-1s", 0),
             event_unit="event_unit",
             event_timestamp="timestamp",
         )
@@ -159,7 +159,7 @@ def test_bucket_join_preserves_shifted_nanosecond_endpoints(
             anchors,
             events,
             plan=RangePlan(1, 1, "fixed"),
-            window=Window(start, end),
+            window=Window(f"{start}s", f"{end}s"),
             event_unit="event_unit",
             event_timestamp="timestamp",
         )
@@ -202,7 +202,7 @@ def test_bucket_join_virtual_endpoints_do_not_overflow_native_timestamp_domain(
             anchors,
             events,
             plan=RangePlan(1, 1, "fixed"),
-            window=Window(start, end),
+            window=Window(f"{start}s", f"{end}s"),
             event_unit="event_unit",
             event_timestamp="timestamp",
         )

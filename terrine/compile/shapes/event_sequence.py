@@ -11,9 +11,9 @@ import pyarrow as pa
 
 from terrine.compile.anchors import (
     AnchorTable,
-    _integrity_check,
     _null_check,
     _precision_check,
+    _tied_event_timestamps_check,
     _unique_checks,
     _utc_column,
 )
@@ -29,6 +29,7 @@ from terrine.spec.design import Design
 from terrine.spec.sequence import _UNSUPPORTED_SHAPE, EventSequence
 from terrine.temporal.attributes import _enriched_property_columns, enrich_events
 from terrine.temporal.sequence import SequenceResult, event_sequence
+from terrine.windows import seconds_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -60,7 +61,15 @@ def _property_binding(source, name: str):
     raise KeyError(name)
 
 
-def _identity_checks(events: ibis.Table, unit: str, identity: str, *, configured: bool):
+def _identity_checks(
+    events: ibis.Table,
+    unit: str,
+    identity: str,
+    *,
+    event_name: str = "",
+    source_name: str = "",
+    configured: bool,
+):
     checks = [
         _null_check(events, unit, "null_event_unit"),
         _null_check(events, "_timestamp", "null_event_timestamp"),
@@ -74,7 +83,7 @@ def _identity_checks(events: ibis.Table, unit: str, identity: str, *, configured
         .filter(ibis._._count > 1)
         .aggregate(invalid_count=ibis._.count())
     )
-    return [*checks, _integrity_check("tied_event_timestamps", ties)]
+    return [*checks, _tied_event_timestamps_check(event_name, source_name, ties)]
 
 
 def _validate_sequence_column_names(design: Design, sequence: EventSequence) -> None:
@@ -136,7 +145,7 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
         features=design.features,
         outcomes=design.outcomes,
         eligibility=design.eligibility,
-        gap=design.gap,
+        gap=seconds_text(design.gap),
         anchor_range=design.anchor_range,
     )
     base = compile_columns(base_design, model)
@@ -359,6 +368,8 @@ def compile_event_sequence(design: Design, model: Model) -> CompiledStudy:
             identity_events,
             "_unit",
             event_id_column,
+            event_name=sequence.event,
+            source_name=source.name,
             configured=configured_id is not None,
         )
     )

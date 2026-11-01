@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from terrine.model import Model
     from terrine.spec.design import Design
     from terrine.spec.expressions import Expr
@@ -33,7 +32,7 @@ _PARTIAL_PERIOD = RefusalSpec(
 )
 _TOO_MANY_PERIODS = RefusalSpec(
     "terrine.state_panel.invalid_schedule",
-    "The schedule has {periods} periods, more than the {max_periods} allowed. "
+    "The schedule has {schedule_periods} periods, more than the {periods} allowed. "
     "Shorten the schedule or set periods= to include the full schedule.",
 )
 _INVALID_SOURCE = RefusalSpec(
@@ -69,7 +68,19 @@ def _levels(levels: tuple[str, ...]) -> tuple[str, ...]:
 class StateObservations:
     """Describe an event label's observed states without carrying a state between events.
 
-    Example: tr.StateObservations("status", levels=("placed", "paid"))
+    Args:
+        property: Declared event label whose observed values identify states.
+        levels: Tuple of distinct state names in their declared order.
+        ordered: Whether levels have an order; True records the supplied order.
+        absorbing: Tuple of levels that cannot be exited; () declares none.
+
+    Attributes:
+        property: Declared event label whose observed values identify states.
+        levels: Tuple of distinct state names in their declared order.
+        ordered: Whether levels have an order; True records the supplied order.
+        absorbing: Tuple of levels that cannot be exited; () declares none.
+
+    Example: spec.StateObservations("status", levels=("placed", "paid"))
     """
 
     property: str
@@ -96,7 +107,17 @@ class StateObservations:
 class BinnedMetricState:
     """Map a metric's period value to ordered states with right-closed intervals.
 
-    Example: tr.BinnedMetricState("spend", cutpoints=(50,), levels=("low", "high"))
+    Args:
+        metric: Name of a metric declared in the model.
+        cutpoints: Strictly increasing numeric tuple separating the ordered state levels.
+        levels: Tuple of distinct state names in their declared order.
+
+    Attributes:
+        metric: Name of a metric declared in the model.
+        cutpoints: Strictly increasing numeric tuple separating the ordered state levels.
+        levels: Tuple of distinct state names in their declared order.
+
+    Example: spec.BinnedMetricState("spend", cutpoints=(50,), levels=("low", "high"))
     """
 
     metric: str
@@ -125,32 +146,51 @@ class BinnedMetricState:
 class StatePanel:
     """Describe bounded repeated state rows for each unit over a finite schedule.
 
-    Example: tr.StatePanel(tr.BinnedMetricState("spend", (50,), ("low", "high")), max_periods=28)
+    Args:
+        state: StateObservations or BinnedMetricState defining period state membership.
+        periods: Positive integer number of periods to produce.
+        baseline_features: Mapping of baseline feature names to expressions; None declares none.
+
+    Attributes:
+        state: StateObservations or BinnedMetricState defining period state membership.
+        periods: Positive integer number of periods to produce.
+        baseline_features: Mapping of baseline feature names to expressions; None declares none.
+
+    Example: spec.StatePanel(spec.BinnedMetricState("spend", (50,), ("low", "high")), periods=2)
     """
 
     state: StateObservations | BinnedMetricState
-    max_periods: int
+    periods: int
     baseline_features: Mapping[str, Expr]
 
     def __init__(
         self,
         state: StateObservations | BinnedMetricState,
         *,
-        max_periods: int,
+        periods: int,
         baseline_features: Mapping[str, Expr] | None = None,
     ) -> None:
         from types import MappingProxyType
 
         from terrine.spec.design import _named_nodes
-        from terrine.spec.expressions import AttributeAsOf, MetricAgg
+        from terrine.spec.expressions import _ELAPSED_SELECTOR, AttributeAsOf, EventTime, MetricAgg
 
         if not isinstance(state, (StateObservations, BinnedMetricState)):
             raise _INVALID_INPUT.error(reason="wrong_type", field="state")
-        if isinstance(max_periods, bool) or not isinstance(max_periods, int) or max_periods <= 0:
-            raise _INVALID_INPUT.error(reason="not_positive_integer", field="max_periods")
+        if isinstance(periods, bool) or not isinstance(periods, int) or periods <= 0:
+            raise _INVALID_INPUT.error(reason="not_positive_integer", field="periods")
+        if isinstance(baseline_features, Mapping) and any(
+            isinstance(value, EventTime) and value.measure == "elapsed"
+            for value in baseline_features.values()
+        ):
+            raise _ELAPSED_SELECTOR.error(
+                reason="elapsed_selector_unsupported_shape",
+                shape="StatePanel.baseline_features",
+                route="Put since() in the design's per-row features instead of baseline_features.",
+            )
         nodes = _named_nodes(baseline_features, (MetricAgg, AttributeAsOf), "baseline_features")
         object.__setattr__(self, "state", state)
-        object.__setattr__(self, "max_periods", max_periods)
+        object.__setattr__(self, "periods", periods)
         object.__setattr__(self, "baseline_features", MappingProxyType(dict(nodes)))
 
 
@@ -240,7 +280,7 @@ def validate_state_panel(
     """Validate schedule shape and state-source references without reading rows."""
     from terrine.spec.expressions import MetricAgg
     from terrine.spec.validate import _expression, _required
-    from terrine.windows import Window
+    from terrine.windows import Window, seconds_text
 
     panel = design.shape
     assert isinstance(panel, StatePanel)
@@ -248,9 +288,9 @@ def validate_state_panel(
     if not isinstance(schedule, Schedule):
         raise _INVALID_SCHEDULE.error(reason="a finite Schedule anchor is required")
     periods = schedule_periods(schedule)
-    if periods > panel.max_periods:
+    if periods > panel.periods:
         raise _TOO_MANY_PERIODS.error(
-            reason="schedule_exceeds_max_periods", periods=periods, max_periods=panel.max_periods
+            reason="schedule_exceeds_periods", schedule_periods=periods, periods=panel.periods
         )
     if design.outcomes or design.treatment is not None:
         raise _UNSUPPORTED.error(
@@ -278,7 +318,7 @@ def validate_state_panel(
     else:
         assert schedule.every is not None
         _expression(
-            MetricAgg(panel.state.metric, Window(-schedule.every, 0)),
+            MetricAgg(panel.state.metric, Window(seconds_text(-schedule.every), 0)),
             "state",
             design,
             model,

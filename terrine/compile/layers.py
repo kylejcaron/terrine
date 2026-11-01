@@ -9,6 +9,7 @@ import ibis
 
 from terrine.execution._metadata import metadata_operation
 from terrine.spec.design import Design
+from terrine.windows import seconds_text
 
 LayerResolution = Literal["day", "event", "point", "period"]
 LayerName = Literal["daily", "prefix", "anchor", "state_point", "state_period"]
@@ -216,7 +217,12 @@ def plan_layers(design: Design, model) -> LayerPlan:
             expression(node, baseline_points)
         if isinstance(design.shape.state, BinnedMetricState):
             assert isinstance(design.anchor, Schedule) and design.anchor.every is not None
-            expression(agg(design.shape.state.metric, window=(-design.anchor.every, 0)))
+            expression(
+                agg(
+                    design.shape.state.metric,
+                    window=(seconds_text(-design.anchor.every), 0),
+                )
+            )
     source_schema = {
         name: {
             column: str(dtype.copy(nullable=True))

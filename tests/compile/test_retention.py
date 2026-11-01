@@ -4,11 +4,11 @@ import ibis
 import pyarrow as pa
 import pytest
 
-from terrine import Coverage, Design, FixedDate, UnitSource, retention
+from terrine import Coverage, Design, FixedDate, UnitSource
 from terrine.errors import TerrineError
 from terrine.model import Model
 from terrine.semantic.models import Catalog
-from terrine.spec import Schedule
+from terrine.spec import Schedule, retention
 
 
 @pytest.fixture

@@ -190,7 +190,7 @@ def main() -> None:
                     "total": int(row["total"]),
                     "tier": row["tier"],
                 }
-                for row in initial.to_arrow().to_pylist()
+                for row in initial.to_pyarrow().to_pylist()
             ]
             assert sorted(initial_rows, key=lambda row: row["user_id"]) == _clean_rebuild_rows(
                 model, design
@@ -233,13 +233,13 @@ def main() -> None:
                     "total": int(row["total"]),
                     "tier": row["tier"],
                 }
-                for row in published.to_arrow().to_pylist()
+                for row in published.to_pyarrow().to_pylist()
             ]
             assert sorted(corrected_rows, key=lambda row: row["user_id"]) == _clean_rebuild_rows(
                 model, design
             )
             retained = open_published_frame(receipt, con=con.con, namespace="analytics_owner")
-            assert retained.to_arrow().equals(initial.to_arrow())
+            assert retained.to_pyarrow().equals(initial.to_pyarrow())
             print(
                 json.dumps(
                     {
