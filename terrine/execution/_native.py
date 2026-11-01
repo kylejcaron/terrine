@@ -527,47 +527,49 @@ def _function_catalog(raw: Any) -> Mapping[str, tuple[tuple[bool, str, str | Non
 def _function_names(raw: Any, statement: str) -> frozenset[str]:
     """Extract case-folded function/operator names from serialized SQL once."""
     import duckdb
-
     cache_key = (duckdb.__version__, statement)
+
     with _NATIVE_FUNCTION_NAMES_LOCK:
         cached = _NATIVE_FUNCTION_NAMES_CACHE.get(cache_key)
         if cached is not None:
             _NATIVE_FUNCTION_NAMES_CACHE.move_to_end(cache_key)
             return cached
-        try:
-            payload = _rows(
-                raw,
-                "SELECT system.main.json_serialize_sql(" + _quote_literal(statement) + ")",
-            )[0][0]
-            serialized = payload if isinstance(payload, str) else json.dumps(payload)
-            tokens = iter(_JSON_TOKEN.finditer(serialized))
-            current = next(tokens, None)
-            following = next(tokens, None)
-            after = next(tokens, None)
-            names: set[str] = set()
-            while current is not None:
-                if current.group().startswith('"'):
-                    key = json.loads(current.group())
-                    if (
-                        isinstance(key, str)
-                        and key.casefold() in {"function_name", "function", "operator_name"}
-                        and following is not None
-                        and following.group() == ":"
-                        and after is not None
-                        and after.group().startswith('"')
-                    ):
-                        # JSON quotes inside string literals are escaped, so this
-                        # token walk cannot mistake string contents for structure.
-                        value = json.loads(after.group())
-                        names.add(value.casefold())
-                current, following, after = following, after, next(tokens, None)
-            result = frozenset(names)
-        except Exception as exc:
-            raise _binding_error("native parser could not certify function ownership") from exc
+    try:
+        payload = _rows(
+            raw,
+            "SELECT system.main.json_serialize_sql(" + _quote_literal(statement) + ")",
+        )[0][0]
+        serialized = payload if isinstance(payload, str) else json.dumps(payload)
+        tokens = iter(_JSON_TOKEN.finditer(serialized))
+        current = next(tokens, None)
+        following = next(tokens, None)
+        after = next(tokens, None)
+        names: set[str] = set()
+        while current is not None:
+            if current.group().startswith('"'):
+                key = json.loads(current.group())
+                if (
+                    isinstance(key, str)
+                    and key.casefold() in {"function_name", "function", "operator_name"}
+                    and following is not None
+                    and following.group() == ":"
+                    and after is not None
+                    and after.group().startswith('"')
+                ):
+                    # JSON quotes inside string literals are escaped, so this
+                    # token walk cannot mistake string contents for structure.
+                    value = json.loads(after.group())
+                    names.add(value.casefold())
+            current, following, after = following, after, next(tokens, None)
+        result = frozenset(names)
+    except Exception as exc:
+        raise _binding_error("native parser could not certify function ownership") from exc
+    with _NATIVE_FUNCTION_NAMES_LOCK:
         _NATIVE_FUNCTION_NAMES_CACHE[cache_key] = result
+        _NATIVE_FUNCTION_NAMES_CACHE.move_to_end(cache_key)
         if len(_NATIVE_FUNCTION_NAMES_CACHE) > 256:
             _NATIVE_FUNCTION_NAMES_CACHE.popitem(last=False)
-        return result
+    return result
 
 
 @metadata_fact

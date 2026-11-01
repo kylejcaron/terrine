@@ -115,3 +115,20 @@ def test_function_names_keep_macro_body_names_but_ignore_string_contents():
         assert "upper" in names
     finally:
         raw.close()
+
+
+def test_function_names_does_not_hold_cache_lock_during_serialization(monkeypatch):
+    from terrine.execution import _native
+
+    raw = duckdb.connect()
+    original = _native._rows
+
+    def check_lock(raw, sql):
+        assert not _native._NATIVE_FUNCTION_NAMES_LOCK.locked()
+        return original(raw, sql)
+
+    monkeypatch.setattr(_native, "_rows", check_lock)
+    try:
+        assert _native._function_names(raw, "SELECT 918273645") == frozenset()
+    finally:
+        raw.close()

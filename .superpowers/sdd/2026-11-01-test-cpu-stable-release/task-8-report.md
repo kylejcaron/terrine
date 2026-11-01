@@ -20,3 +20,10 @@ For the baseline measurement, temporarily restored the pre-task recursive JSON-w
 | events_100k_four_columns | 1.468 | 1.417 | -0.051 |
 
 The unweighted mean of these reported medians changed from 0.636s to 0.574s, a 0.062s (9.8%) reduction. Individual case timings are noisy and one case increased by 0.020s; this is a benchmark observation, not a guarantee of per-case improvement. The earlier two failed attempts are superseded by these successful runs.
+## Cache-lock review follow-up
+
+Moved DuckDB serialization and JSON token extraction outside `_NATIVE_FUNCTION_NAMES_LOCK`; the lock now covers only cache lookup/LRU refresh and insertion/eviction. A deterministic regression test patches `_rows` and asserts that the cache lock is not held at the serialization boundary.
+
+**RED** — `uv run pytest -n 0 integration/execution/test_native_admission.py` failed the new test at the patched `_rows` assertion: `assert not _native._NATIVE_FUNCTION_NAMES_LOCK.locked()`; observed the lock was `True`.
+
+**GREEN** — `uv run pytest -n 0 integration/execution/test_native_admission.py`: 3 passed. Step 4 selection, `uv run pytest -n 0 tests/execution/test_inputs.py tests/test_frame_runtime.py -k "shadow or macro or function or revalidates or changed_view"`: 9 passed, 35 deselected. `make lint`: passed.
