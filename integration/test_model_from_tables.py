@@ -330,3 +330,63 @@ def test_roster_attribute_survives_catalog_rebind(con):
         features={"channel": asof("channel")},
     )
     assert design.build(restored).to_pyarrow()["channel"].to_pylist() == ["web", "store"]
+
+
+def test_integer_key_widths_join_events_and_history(con):
+    con.create_table("int_users", pa.table({"user_id": pa.array([1, 2], pa.int32())}))
+    con.create_table(
+        "integer_orders",
+        pa.table(
+            {
+                "user_id": pa.array([1, 1, 2], pa.int64()),
+                "at": pa.array(
+                    [datetime(2025, 1, 2), datetime(2025, 1, 3), datetime(2025, 1, 3)],
+                    pa.timestamp("us"),
+                ),
+            }
+        ),
+    )
+    con.create_table(
+        "integer_plans",
+        pa.table(
+            {
+                "user_id": pa.array([1, 2], pa.int64()),
+                "plan": ["pro", "free"],
+                "starts": pa.array([datetime(2025, 1, 1)] * 2, pa.timestamp("us")),
+                "ends": pa.array([datetime(2025, 2, 1)] * 2, pa.timestamp("us")),
+            }
+        ),
+    )
+    model = Model.from_tables(
+        con,
+        units={"user": UnitSource("int_users", "user_id")},
+        events={
+            "orders": tr.Events(
+                "integer_orders",
+                time="at",
+                key="user_id",
+                metrics={"orders": tr.count()},
+                complete=("2025-01-01", "2025-01-31"),
+            )
+        },
+        history={
+            "plan": tr.History(
+                "integer_plans",
+                key="user_id",
+                column="plan",
+                valid_from="starts",
+                valid_to="ends",
+                complete=("2025-01-01", "2025-01-31"),
+            )
+        },
+    )
+    design = Design(
+        "user",
+        FixedDate("2025-01-10"),
+        features={"orders": agg("orders", window=("-9d", "0s")), "plan": asof("plan")},
+    )
+    rows = design.build(model).to_pyarrow().select(["unit", "orders", "plan"]).to_pylist()
+    assert rows == [
+        {"unit": 1, "orders": 2, "plan": "pro"},
+        {"unit": 2, "orders": 1, "plan": "free"},
+    ]

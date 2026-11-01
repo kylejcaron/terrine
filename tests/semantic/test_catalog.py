@@ -334,7 +334,7 @@ def test_from_catalog_rejects_dimension_key_dtype_mismatch():
         schema=ibis.schema({"ts": "timestamp", "user_id": "int64", "workspace_id": "int32"}),
     )
     con.create_table(
-        "accounts", schema=ibis.schema({"workspace_id": "int64", "changed_at": "timestamp"})
+        "accounts", schema=ibis.schema({"workspace_id": "string", "changed_at": "timestamp"})
     )
     con.create_table("users", schema=ibis.schema({"user_id": "int64"}))
     con.create_table("workspaces", schema=ibis.schema({"workspace_id": "int32"}))
@@ -367,5 +367,5 @@ def test_from_catalog_rejects_dimension_key_dtype_mismatch():
         "source": "accounts",
         "column": "workspace_id",
         "unit_type": "int32",
-        "source_type": "int64",
+        "source_type": "string",
     }

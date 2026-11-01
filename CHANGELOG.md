@@ -58,8 +58,9 @@
 - `Model.from_tables` no longer accepts `readiness=`: declare completeness on
   each `Events.complete` and `History.complete`; `Model.from_catalog` retains
   `readiness=`.
-- Unit, event and history key dtypes must match exactly: cast all keys to one
-  type before binding (`terrine.semantic.schema_mismatch`, `field="unit key"`).
+- Unit, event and history keys must share one type family: matching dtypes, or
+  integers of any width. Cast string/integer mismatches to one type before
+  binding (`terrine.semantic.schema_mismatch`, `field="unit key"`).
 - Metric and source filter values must match their label or column type: use
   correctly typed comparison values or cast the column before binding
   (`terrine.semantic.schema_mismatch`, `field="where"`).
@@ -111,8 +112,9 @@
 - Split mixed-kind event tables with `Events(where=...)`. Typed source filters
   apply to every event read and refuse unknown membership; unordered membership
   sets are preserved and refused as ordered range bounds.
-- Model binding refuses source and roster keys with different dtypes, and
-  filter values that do not match their declared label type.
+- Model binding refuses source and roster keys of incompatible types (integer
+  widths may differ, including for history lookups), and filter values that do
+  not match their declared label type.
 - Pass the YAML text returned by `Model.to_catalog()` directly to
   `Model.from_catalog()` for an equivalent catalog round trip.
 - `EventTime` selectors accept tied timestamps when the selected value is
@@ -158,6 +160,22 @@
   month-end without cumulative drift. Other elapsed fields retain fixed units;
   state and calendar-comparison panels require fixed elapsed cadence.
 - Warehouse exports retain scoring rows when there are no outcome windows.
+### Fixed
+
+- Temporal union/window lookups refuse incompatible unit-key types with
+  `terrine.compile.incompatible_unit_keys` and a route to align source key types,
+  instead of exposing internal set-operation errors.
+
+### Performance
+
+- PostgreSQL prefix and first-occurrence lookups use set-based union/window
+  evaluation instead of correlated top-one scans. Anchor assembly uses
+  hash/merge-joinable, null-preserving keys, retaining strict window boundaries,
+  event tie ordering and duplicate request multiplicity. DuckDB's native lookup
+  path is unchanged; portable union timelines also normalize key nullability
+  and compatible integer widths without changing output key types.
+
+## 0.1.0.dev2
 
 ### Performance
 

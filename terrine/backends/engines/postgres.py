@@ -18,6 +18,7 @@ from terrine.backends.timestamps import _UNSUPPORTED, _epoch, native_day_start, 
 from terrine.errors import RefusalSpec
 
 _EXACT = dt.Unknown(raw_type=sge.DataType.build("NUMERIC", dialect="postgres"))
+_RECORD = dt.Unknown(raw_type=sge.DataType(this=sge.DataType.Type.USERDEFINED, kind="record"))
 _MIN_IBIS = (12, 0)
 _VERIFIED_SERVER_MAJOR = 16
 _DIALECT_ADMISSION = RefusalSpec(
@@ -119,7 +120,8 @@ def _timestamp_isfinite(value) -> bool:
 class PostgresDialect(Dialect):
     __slots__ = ()
     bounds_accumulations = False
-    has_native_asof = True
+    # Ibis emulates ASOF with a correlated scan; sparse states use union/window.
+    has_native_asof = False
     operations = frozenset(
         {
             "exact_state",
@@ -275,24 +277,31 @@ class PostgresDialect(Dialect):
             raise _UNSUPPORTED.error(dtype=str(dtype))
         return value
 
+    def lookup_keys(
+        self, point: ir.TimestampValue, state: ir.TimestampValue
+    ) -> tuple[ir.Value, ir.Value]:
+        # UNION requires identical schemas; naive source times denote UTC too.
+        point = cast(ir.TimestampValue, self.timestamp_order_key(point))
+        state = cast(ir.TimestampValue, self.timestamp_order_key(state))
+        dtype = dt.Timestamp(scale=6)
+        return self.utc_wall_clock(point).cast(dtype), self.utc_wall_clock(state).cast(dtype)
+
     def narrow_exact(
         self, coefficient: ir.Value, scale: int, target: str | dt.DataType
     ) -> ir.Value:
         return _checked_narrow_exact(coefficient, scale, target)
 
-    def asof_join(
-        self,
-        left: ibis.Table,
-        right: ibis.Table,
-        *,
-        left_unit: str,
-        left_key: str,
-        right_unit: str,
-        right_key: str,
-        inclusive: bool,
-    ) -> ibis.Table:
-        on = left[left_key] >= right[right_key] if inclusive else left[left_key] > right[right_key]
-        return left.asof_join(right, on=on, predicates=[left[left_unit] == right[right_unit]])
+    def null_safe_equal(self, left: ir.Value, right: ir.Value) -> ir.BooleanValue:
+        if left.type().is_numeric() or left.type().is_string():
+            # Null tags prevent a substituted zero or empty string from
+            # colliding with a real key; scalar equality admits equijoins.
+            empty = ibis.literal("" if left.type().is_string() else 0)
+            return (left.isnull() == right.isnull()) & (
+                left.fill_null(empty) == right.fill_null(empty)
+            )
+        # Typed records compare NULL fields as equal without flattening array
+        # keys, which must distinguish NULL arrays from empty arrays.
+        return ibis.struct({"key": left}).cast(_RECORD) == ibis.struct({"key": right}).cast(_RECORD)
 
     def least(self, *values: Any) -> Any:
         return ibis.least(*values)
@@ -332,7 +341,7 @@ def _classify(version_string: str) -> tuple[str, str]:
 
 def identify(con: Any) -> None:
     """Check the Ibis floor before reading the built-in server version function."""
-    # Ibis 11 places PostgreSQL as-of unit filters after the nearest-row selection.
+    # Expression and execution policies share the verified Ibis floor.
     parts = tuple(int(part) for part in re.findall(r"\d+", version("ibis-framework"))[:2])
     if parts < _MIN_IBIS:
         raise _CAPABILITY_UNAVAILABLE.error(

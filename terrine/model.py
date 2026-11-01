@@ -109,7 +109,7 @@ def _check_key_types(
     units: Mapping[str, UnitSource],
     resolver: Callable[[RelationSpec], Any],
 ) -> None:
-    """Require source and roster unit keys to use the same Ibis dtype."""
+    """Require source and roster unit keys to share a dtype, or both be integers."""
     roster_types = {
         unit_name: resolver(TableRef(kind="table", name=unit.table)).schema()[unit.key]
         for unit_name, unit in units.items()
@@ -120,7 +120,8 @@ def _check_key_types(
             return
         unit_type = roster_types[unit_name]
         source_type = resolver(relation).schema()[column]
-        if unit_type.copy(nullable=True) != source_type.copy(nullable=True):
+        unit_cmp, source_cmp = unit_type.copy(nullable=True), source_type.copy(nullable=True)
+        if unit_cmp != source_cmp and not (unit_cmp.is_integer() and source_cmp.is_integer()):
             raise _KEY_SCHEMA.error(
                 field="unit key",
                 unit=unit_name,

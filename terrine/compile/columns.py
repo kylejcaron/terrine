@@ -18,6 +18,7 @@ import pyarrow as pa
 import terrine.reasons as reason_codes
 from terrine.backends.dialect import dialect_scope
 from terrine.backends.extrema import greatest, least
+from terrine.backends.joins import null_safe_equal
 from terrine.backends.registry import expression_dialect
 from terrine.compile._asof import compile_asof
 from terrine.compile._predicates import CompiledValue, compile_predicate
@@ -1187,7 +1188,7 @@ def compile_columns(
         meta = replace(meta, **renamed)
         table = table.left_join(
             right,
-            [table[key].identical_to(right[f"{output}_key_{key}"]) for key in _ANCHOR_KEY],
+            [null_safe_equal(table[key], right[f"{output}_key_{key}"]) for key in _ANCHOR_KEY],
         )
         if result is not None:
             checks.append(result)

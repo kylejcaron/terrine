@@ -20,7 +20,7 @@ terrine = "terrine.runtime.cli:main"
 
 [project.optional-dependencies]
 duckdb = ["ibis-framework[duckdb]>=11,<13", "duckdb==1.5.6"]
-# Ibis 11 PostgreSQL as-of lowering filters units after choosing the nearest row.
+# PostgreSQL's expression and execution policies are verified with Ibis 12.
 postgres = ["ibis-framework[postgres]>=12,<13"]
 bigquery = ["ibis-framework[bigquery]>=12,<13"]
 snowflake = ["ibis-framework[snowflake]>=12,<13"]

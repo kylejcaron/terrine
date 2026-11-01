@@ -249,3 +249,49 @@ def test_first_occurrence_refuses_relations_without_one_supported_connection(bin
     finally:
         other.disconnect()
         con.disconnect()
+
+
+@pytest.mark.parametrize(
+    "left_sql,left_dtype,right_sql,right_dtype",
+    [("BIGINT", "int64", "DOUBLE", "float64"), ("VARCHAR", "string", "BIGINT", "int64")],
+)
+@pytest.mark.parametrize("reverse", [False, True])
+def test_incompatible_unit_keys_raise_portable_coded_refusal(
+    left_sql, left_dtype, right_sql, right_dtype, reverse
+):
+    import copy
+    import pickle
+
+    from terrine.backends.dialect import dialect_scope
+
+    if reverse:
+        left_sql, right_sql = right_sql, left_sql
+        left_dtype, right_dtype = right_dtype, left_dtype
+    con = ibis.duckdb.connect()
+    try:
+        candidates = con.sql(
+            f"SELECT CAST(1 AS {left_sql}) AS unit, 'anchor' AS anchor_id, "
+            "TIMESTAMP '2024-01-01' AS lower, TIMESTAMP '2024-01-02' AS upper"
+        )
+        events = con.sql(
+            f"SELECT CAST(1 AS {right_sql}) AS unit, 'event' AS event_id, "
+            "TIMESTAMP '2024-01-01 12:00:00' AS event_time"
+        )
+        with dialect_scope("generic"), pytest.raises(TerrineError) as caught:
+            _lookup(events, candidates)
+        error = caught.value
+        assert error.code == "terrine.compile.incompatible_unit_keys"
+        assert dict(error.context) == {
+            "left_type": left_dtype,
+            "right_type": right_dtype,
+            "route": "Align the source key types before building the dataset.",
+        }
+        assert error.context["route"] in str(error)
+        for restored in (copy.deepcopy(error), pickle.loads(pickle.dumps(error))):
+            assert (restored.code, restored.context, str(restored)) == (
+                error.code,
+                error.context,
+                str(error),
+            )
+    finally:
+        con.disconnect()

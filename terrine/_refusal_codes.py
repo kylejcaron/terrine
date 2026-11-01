@@ -28,6 +28,7 @@ CODES: frozenset[str] = frozenset(
         "terrine.compile.anchor_timestamp_precision",
         "terrine.compile.anchor_utc_conversion_unsupported",
         "terrine.compile.contradictory_persistent_adoption_history",
+        "terrine.compile.incompatible_unit_keys",
         "terrine.compile.insufficient_matched_t0_controls",
         "terrine.compile.invalid_anchor",
         "terrine.compile.later_control_initiation",
