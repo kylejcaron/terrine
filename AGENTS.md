@@ -70,8 +70,8 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   local distributions.
 - `make test-scale` runs the scheduled scale tier (`SCALE_TESTS` overrides the
   `integration/` default); `make complexity` reports without gating. The
-  integration tier, the smoke script and examples run in CI on every push and
-  before merges; the scale tier runs weekly and on demand.
+  integration tier runs in CI on every push and before merges; examples are
+  executed by `integration/test_examples.py`. The scale tier runs weekly and on demand.
 - CI splits the integration tier into balanced groups from
   `integration/.test_durations`. Tests without a stored time still run (they
   are assigned the average); after large changes refresh it with

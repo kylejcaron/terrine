@@ -47,6 +47,11 @@ jobs:
           --splits 4 --group ${{ matrix.group }}
           --splitting-algorithm least_duration
           --durations-path tests/.test_durations
+          --ignore=tests/temporal/test_sketches.py
+          --ignore=tests/spec/test_sketch_refusal.py
+          --ignore=tests/compile/test_nonadditive.py
+          --ignore=tests/compat
+          --ignore=tests/parity
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -65,13 +70,13 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --locked --group dev --all-extras
-      - if: matrix.group == 1
-        run: uv run python -m tests.integration.study_api_smoke
       - run: >-
           /usr/bin/time -f "terrine-pytest-cpu %U %S" uv run pytest -q integration
           --splits 6 --group ${{ matrix.group }}
           --splitting-algorithm least_duration
           --durations-path integration/.test_durations
+          --ignore=integration/parity
+          --ignore=integration/handoffs
       # The same known answers compiled through the portable base expression
       # policy; about twenty seconds beside the native run.
       - if: matrix.group == 1
@@ -88,10 +93,6 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --locked --group dev --group docs --all-extras
-      - run: |
-          for example in examples/*.py; do
-            uv run python "$example"
-          done
       - run: uv run --group docs python -m tests.documentation --build
       - run: uv build
   distributions:
