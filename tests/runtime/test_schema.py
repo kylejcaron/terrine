@@ -80,6 +80,25 @@ def test_fresh_namespace_initializes_version_one():
     assert _versions(con) == [(1,)]
 
 
+def test_unrelated_runtime_prefixed_table_does_not_block_initialization():
+    con = duckdb.connect(":memory:")
+    con.execute("CREATE TABLE main.runtime_metrics (metric VARCHAR, value BIGINT)")
+    con.execute("INSERT INTO main.runtime_metrics VALUES ('latency', 7)")
+    unrelated = con.execute(
+        "SELECT sql FROM duckdb_tables() WHERE table_name='runtime_metrics'"
+    ).fetchall()
+
+    check_runtime_schema(con, "main")
+    ensure_runtime_schema(con, "main")
+
+    assert con.execute("SELECT version FROM main.runtime_schema_version").fetchall() == [(1,)]
+    assert (
+        con.execute("SELECT sql FROM duckdb_tables() WHERE table_name='runtime_metrics'").fetchall()
+        == unrelated
+    )
+    assert con.execute("SELECT * FROM main.runtime_metrics").fetchall() == [("latency", 7)]
+
+
 def test_interrupted_initialization_leaves_no_tables():
     class FailingVersionInsert:
         def __init__(self, con):

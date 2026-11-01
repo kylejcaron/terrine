@@ -130,6 +130,9 @@ _TABLES = (
 _UNIQUE_INDEXES = (
     ("runtime_runs_request_destination", "runtime_runs", "request_key, destination_json"),
 )
+# Names recognised as terrine metadata; earlier pre-releases used the same names.
+# Other tables in the namespace, including unrelated ``runtime_*`` ones, are ignored.
+_METADATA_TABLES = frozenset({table for table, _ in _TABLES} | {"runtime_schema_version"})
 # Serializes first creation among this process's connections to one owner database.
 _CREATION = threading.Lock()
 
@@ -137,7 +140,7 @@ _CREATION = threading.Lock()
 def ensure_runtime_schema(con: Any, namespace: str) -> None:
     """Create a namespace's runtime metadata at the supported version, refusing other schemas.
 
-    A namespace without runtime tables receives every metadata table and index and
+    A namespace without runtime metadata tables receives every metadata table and index and
     its version row in one transaction. A namespace at the supported version is
     left unchanged; any other namespace refuses before anything is written.
 
@@ -172,7 +175,7 @@ def ensure_runtime_schema(con: Any, namespace: str) -> None:
 def check_runtime_schema(con: Any, namespace: str) -> None:
     """Refuse, without writing, a namespace whose runtime metadata this release cannot read.
 
-    A namespace without runtime tables passes; nothing is created.
+    A namespace without runtime metadata tables passes; nothing is created.
 
     Args:
         con: DuckDB connection of the runtime owner.
@@ -182,16 +185,15 @@ def check_runtime_schema(con: Any, namespace: str) -> None:
 
 
 def _initialized(con: Any, namespace: str) -> bool:
-    """True at the supported version, False without runtime tables; otherwise refuse."""
-    tables = {
+    """True at the supported version, False without metadata tables; otherwise refuse."""
+    tables = _METADATA_TABLES.intersection(
         name
         for (name,) in con.execute(
             "SELECT lower(table_name) FROM information_schema.tables "
-            "WHERE table_catalog=current_database() AND lower(table_schema)=lower(?) "
-            "AND starts_with(lower(table_name), 'runtime_')",
+            "WHERE table_catalog=current_database() AND lower(table_schema)=lower(?)",
             [namespace],
         ).fetchall()
-    }
+    )
     if not tables:
         return False
     found = None
