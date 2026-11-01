@@ -120,7 +120,7 @@ def load_model(
 
 
 def designs(config: ScaleConfig) -> dict[str, Design]:
-    window = (-config.window_days * 86400, 0)
+    window = (f"-{config.window_days}d", "0s")
     features = {
         "total": agg("total", window=window),
         "minimum": agg("minimum", window=window),
@@ -279,7 +279,7 @@ def run_case(model: Model, config: ScaleConfig, case: str, design: Design) -> di
     bounds = {}
     probes = {}
     for name, plan in compiled.range_plans.items():
-        window = Window(-config.window_days * 86400, 0)
+        window = Window(f"-{config.window_days}d", "0s")
         if plan.block_seconds not in probes:
             joined = blocked_range_join(
                 compiled._anchors.table,
