@@ -24,6 +24,9 @@ on:
 permissions:
   contents: read
 
+env:
+  UV_COMPILE_BYTECODE: "1"
+
 jobs:
   # Invalid reusable-workflow inputs must fail, not skip every backend.
   reject-unknown-backend-mode:

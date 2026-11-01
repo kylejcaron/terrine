@@ -10,6 +10,8 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  UV_COMPILE_BYTECODE: "1"
 
 jobs:
   checks:
