@@ -74,6 +74,57 @@ def owner_tools(tmp_path):
     finally:
         con.disconnect()
 
+@pytest.fixture(scope="module")
+def owner_world(tmp_path_factory):
+    database = tmp_path_factory.mktemp("agent-owner") / "owner.duckdb"
+    con = ibis.duckdb.connect(str(database))
+    con.raw_sql("CREATE TABLE events(ts TIMESTAMP,user_id INTEGER,value INTEGER)")
+    con.raw_sql("CREATE TABLE users(id INTEGER)")
+    con.raw_sql("INSERT INTO users VALUES (1),(2)")
+    con.raw_sql("INSERT INTO events VALUES ('2025-01-01 12:00:00',1,3),('2025-01-02',2,4)")
+    model = Model.from_catalog(
+        _ROOT / "tests/agent/fixtures/catalog.yaml",
+        con=con,
+        readiness={"events": Coverage("2024-12-01", "2025-02-01")},
+        units={"user": UnitSource("users", "id")},
+    )
+    owner = RuntimeOwner.from_connection(con)
+    yield database, model, owner
+    con.disconnect()
+
+
+@pytest.fixture
+def shared_tools(owner_world, request):
+    database, model, owner = owner_world
+    namespace = "agent_" + "".join(
+        character if character.isalnum() or character == "_" else "_"
+        for character in request.node.name
+    )
+    reference = ModelReference.from_model(model, owner_key=owner.reference)
+
+    class Resolver:
+        def resolve(self, requested):
+            assert requested == reference
+            return model
+
+    policy = AgentPolicy(
+        prepare=True,
+        write=True,
+        read=True,
+        cancel=True,
+        allowed_sources=frozenset({"events"}),
+        allowed_catalogs=frozenset({reference.catalog_hash}),
+        allowed_destinations=frozenset({DestinationRef(str(database), namespace, "study")}),
+        model_reference=reference,
+        resolver=Resolver(),
+        snapshot_authority=SnapshotAuthority(owner),
+    )
+    return DatasetTools(model, policy, namespace=namespace)
+
+
+
+
+
 
 def _definition(window="-1d"):
     return DatasetDefinition(
@@ -98,7 +149,8 @@ def _prepare(tools, *, invocation="stage", definition=None):
 
 
 @pytest.mark.parametrize("case", _EVAL["runtime_cases"], ids=lambda case: case["name"])
-def test_restricted_runtime_evaluations(case, owner_tools):
+def test_restricted_runtime_evaluations(case, shared_tools):
+    owner_tools = shared_tools
     tools = owner_tools
     operation = case["operation"]
     if operation == "strict_preview":
@@ -154,14 +206,15 @@ def test_restricted_runtime_evaluations(case, owner_tools):
     assert result.status == "refused" and result.code == case["code"]
     assert result.suggested_route and "credentials" not in result.model_dump_json()
     tables = tools.model.con.con.execute(
-        "SELECT table_name FROM information_schema.tables WHERE table_schema='agent' "
+        f"SELECT table_name FROM information_schema.tables WHERE table_schema='{tools.namespace}' "
         "AND table_name IN ('runtime_runs','runtime_partitions','runtime_run_publications')"
     ).fetchall()
     assert tables == []
 
 
 @pytest.mark.parametrize("case", _EVAL["catalog_cases"], ids=lambda case: case["name"])
-def test_catalog_description_instructions_are_not_executable_metadata(case, owner_tools):
+def test_catalog_description_instructions_are_not_executable_metadata(case, shared_tools):
+    owner_tools = shared_tools
     raw = owner_tools.model.catalog.model_dump(mode="json")
     raw["sources"]["events"]["description"] = case["description"]
     with pytest.raises(ValidationError) as error:
@@ -171,7 +224,8 @@ def test_catalog_description_instructions_are_not_executable_metadata(case, owne
     assert inspected.status == "ok" and case["description"] not in inspected.model_dump_json()
     assert (
         owner_tools.model.con.con.execute(
-            "SELECT table_name FROM information_schema.tables WHERE table_schema='agent'"
+            "SELECT table_name FROM information_schema.tables "
+            f"WHERE table_schema='{owner_tools.namespace}'"
         ).fetchall()
         == []
     )
@@ -298,12 +352,13 @@ def _executor(tools, receipt):
         definition.base_design,
         RefreshPlan.deserialize(invocation.serialized_plan),
         tools.model.con.con,
-        namespace="agent",
+        namespace=tools.namespace,
         dataset_definition=definition,
     )
 
 
-def test_failed_run_retries_same_identity_with_newer_fence(owner_tools):
+def test_failed_run_retries_same_identity_with_newer_fence(shared_tools):
+    owner_tools = shared_tools
     tools = owner_tools
     receipt = _prepare(tools)
     delegate = _executor(tools, receipt)
@@ -324,20 +379,21 @@ def test_failed_run_retries_same_identity_with_newer_fence(owner_tools):
     failed = tools.stage(receipt, request_key="retry")
     assert failed.code == _EVAL["flow_cases"]["failed_retry"]["code"] and failed.suggested_route
     original = tools.model.con.con.execute(
-        "SELECT run_id,attempt_fence,state FROM agent.runtime_runs"
+        f"SELECT run_id,attempt_fence,state FROM {tools.namespace}.runtime_runs"
     ).fetchone()
     assert original[2] == "failed"
     retried = tools.stage(receipt, request_key="retry")
     assert retried.status == "ok" and retried.output is not None
     renewed = tools.model.con.con.execute(
-        "SELECT run_id,attempt_fence,state FROM agent.runtime_runs"
+        f"SELECT run_id,attempt_fence,state FROM {tools.namespace}.runtime_runs"
     ).fetchone()
     assert renewed[0] == original[0] and renewed[1] > original[1]
     assert renewed[2] == _EVAL["flow_cases"]["failed_retry"]["state"]
     assert tools.stage(receipt, request_key="retry").output == retried.output
 
 
-def test_cancellation_during_task_prevents_publication_and_stays_terminal(owner_tools):
+def test_cancellation_during_task_prevents_publication_and_stays_terminal(shared_tools):
+    owner_tools = shared_tools
     tools = owner_tools
     receipt = _prepare(tools)
     delegate = _executor(tools, receipt)
@@ -348,9 +404,9 @@ def test_cancellation_during_task_prevents_publication_and_stays_terminal(owner_
             output = delegate.run_snapshot_task(context, task, dependencies)
             calls.append(task.task_id)
             run_id = tools.model.con.con.execute(
-                "SELECT run_id FROM agent.runtime_runs"
+                f"SELECT run_id FROM {tools.namespace}.runtime_runs"
             ).fetchone()[0]
-            cancel_run(run_id, con=tools.model.con.con, namespace="agent")
+            cancel_run(run_id, con=tools.model.con.con, namespace=tools.namespace)
             return output
 
         def publish(self, plan, outputs, lease, run_id):
@@ -366,7 +422,7 @@ def test_cancellation_during_task_prevents_publication_and_stays_terminal(owner_
     assert replay.output == cancelled.output and len(calls) == 1
     assert (
         tools.model.con.con.execute(
-            "SELECT count(*) FROM agent.runtime_run_publications"
+            f"SELECT count(*) FROM {tools.namespace}.runtime_run_publications"
         ).fetchone()[0]
         == 0
     )
@@ -438,7 +494,8 @@ def test_stage_refresh_and_export_require_separate_capabilities(owner_tools, tmp
 
 
 @pytest.mark.parametrize("kind", ["training", "scoring"])
-def test_typed_dataset_views_survive_preparation_and_staging(owner_tools, kind):
+def test_typed_dataset_views_survive_preparation_and_staging(shared_tools, kind):
+    owner_tools = shared_tools
     from terrine.dataset.splits import TimeSplit
     from terrine.spec import Design, FixedDate, agg
 
@@ -499,7 +556,8 @@ def test_refresh_preserves_owner_approved_destination_alias(owner_tools, tmp_pat
 
 
 @pytest.mark.parametrize("preview", [False, True])
-def test_partitioned_export_projects_no_partition_values(owner_tools, tmp_path, preview):
+def test_partitioned_export_projects_no_partition_values(shared_tools, tmp_path, preview):
+    owner_tools = shared_tools
     import json
 
     from terrine.dataset.export import ExportManifest
@@ -595,7 +653,8 @@ def test_execute_replays_before_source_freshness_and_resolves_exact_invocation(
     )
 
 
-def test_receipt_binds_dataset_definition_change_evidence_and_base_generation(owner_tools):
+def test_receipt_binds_dataset_definition_change_evidence_and_base_generation(shared_tools):
+    owner_tools = shared_tools
     from terrine.dataset.splits import TimeSplit
     from terrine.spec import agg
 
@@ -633,7 +692,7 @@ def test_receipt_binds_dataset_definition_change_evidence_and_base_generation(ow
         replace(owner_tools.policy, allowed_sources=frozenset()),
         replace(owner_tools.policy, allowed_destinations=frozenset()),
     ):
-        restricted = DatasetTools(owner_tools.model, revoked, namespace="agent")
+        restricted = DatasetTools(owner_tools.model, revoked, namespace=owner_tools.namespace)
         assert (
             restricted.execute_plan(prepared.output, request_key="not-authorized").code
             == "terrine.agent.scope_denied"
@@ -656,7 +715,7 @@ def test_runtime_and_concurrency_limits_are_distinct(owner_tools, monkeypatch):
     assert first.output.durable_state == "succeeded"
     raw = owner_tools.model.con.con
     receipt = _prepare_materialization(owner_tools, invocation="limits")
-    leases = LeaseStore(raw, namespace="agent")
+    leases = LeaseStore(raw, namespace=owner_tools.namespace)
     active = leases.acquire(
         "dataset:study", first.output.run_id, ttl=timedelta(minutes=5), now=datetime.now(UTC)
     )
@@ -677,7 +736,8 @@ def test_runtime_and_concurrency_limits_are_distinct(owner_tools, monkeypatch):
     assert cancelled.output.pinned_result_ref is None
 
 
-def test_preview_reads_only_bounded_batches_without_rehashing_output(owner_tools, monkeypatch):
+def test_preview_reads_only_bounded_batches_without_rehashing_output(shared_tools, monkeypatch):
+    owner_tools = shared_tools
     import terrine.dataset.reference as module
 
     reference = owner_tools.stage(
@@ -697,7 +757,8 @@ def test_preview_reads_only_bounded_batches_without_rehashing_output(owner_tools
     assert len(result.output.rows) == 1
 
 
-def test_status_events_and_cancel_require_run_destination_ownership(owner_tools, tmp_path):
+def test_status_events_and_cancel_require_run_destination_ownership(shared_tools, tmp_path):
+    owner_tools = shared_tools
     tools = owner_tools
     import ibis
 
@@ -789,7 +850,8 @@ def test_status_events_and_cancel_require_run_destination_ownership(owner_tools,
         con.disconnect()
 
 
-def test_dataset_preview_resolves_persisted_destination_before_reading(owner_tools):
+def test_dataset_preview_resolves_persisted_destination_before_reading(shared_tools, monkeypatch):
+    owner_tools = shared_tools
     from terrine.spec.dataset import DatasetDefinition
 
     allowed = owner_tools.policy.allowed_destinations
@@ -812,6 +874,12 @@ def test_dataset_preview_resolves_persisted_destination_before_reading(owner_too
         preview=True,
         preview_columns=frozenset({unit}),
     )
+
+    def unexpected_read(*args, **kwargs):
+        raise AssertionError("unauthorized persisted destination was opened")
+
+    monkeypatch.setattr("terrine.agent.tools.Dataset.open_generation", unexpected_read)
+
     assert (
         owner_tools.preview_rows(reference, limit=1, columns=(unit,)).code
         == "terrine.agent.scope_denied"
