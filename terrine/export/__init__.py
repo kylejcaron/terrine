@@ -1,4 +1,8 @@
-"""Dataset export utilities shared by downstream hand-offs."""
+"""Dataset export utilities shared by downstream hand-offs.
+
+Provisional: this package and its modules may change in a minor release, with a
+changelog entry.
+"""
 
 from terrine.export.diff_diff import DiffDiffData, to_diff_diff
 from terrine.export.lifelines import (

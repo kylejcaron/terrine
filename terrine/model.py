@@ -925,6 +925,7 @@ class Model:
 
         Unverified connections must have no pending writes during schema inspection.
 
+        Provisional: this constructor may change in a minor release, with a changelog entry.
 
         Args:
             path_or_definitions: Increment semantic YAML path or published Increment definitions

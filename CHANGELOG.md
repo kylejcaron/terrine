@@ -181,6 +181,13 @@
   and `trial_panel`. Anchors advance from the original start, clamping to
   month-end without cumulative drift. Other elapsed fields retain fixed units;
   state and calendar-comparison panels require fixed elapsed cadence.
+- The API stability guide (`docs/guides/stability.md`) defines stable,
+  provisional and internal APIs, the deprecation rule and which saved artifacts
+  every 1.x release reads. `terrine.runtime`, `terrine.execution`,
+  `terrine.agent`, `terrine.orchestration`, `terrine.adapters`,
+  `terrine.export`, `terrine.simulate`, `approx_distinct`, `approx_quantile` and
+  `Model.from_increment` are provisional. CI checks stable signatures against
+  the newest 1.x release tag.
 - Warehouse exports retain scoring rows when there are no outcome windows.
 ### Fixed
 

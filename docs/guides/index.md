@@ -6,6 +6,8 @@
   materialize in memory, or bind a file-backed DuckDB to stage a Dataset.
 - [Public API](public-api.md): `Events`, `History`, user-named metric constructors,
   `Model.to_catalog`, `Design.describe`, values-only exports and advanced modules.
+- [API stability](stability.md): stable, provisional and internal APIs, the
+  deprecation rule and saved-artifact compatibility across 1.x.
 - [Common feature patterns](common-feature-patterns.md): rolling windows, conditional
   events, eligibility, as-of attributes, recency and Boolean labels.
 - [Dataset capabilities](capabilities.md): metric × shape × backend evidence.

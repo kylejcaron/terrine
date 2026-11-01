@@ -1,4 +1,8 @@
-"""Independent raw-source worlds for dataset construction tests."""
+"""Independent raw-source worlds for dataset construction tests.
+
+Provisional: this package and its modules may change in a minor release, with a
+changelog entry.
+"""
 
 from terrine.simulate.generate import simulate
 from terrine.simulate.scale import (

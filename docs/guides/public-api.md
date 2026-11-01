@@ -83,11 +83,11 @@ Import shape-specific inputs from `terrine.spec`, as with `Initiation`:
 `Treatment`, `EventTime`, `Trajectory`, `CohortSpec`, `CohortGrouping`,
 `TimeToEvent`, `LifeTable`, `StatePanel`, `StateObservations`,
 `BinnedMetricState`, `EventSequence`, `SessionSpec` and `FunnelSpec`.
-The specialized `retention`, `quantile`, `approx_distinct` and `approx_quantile`
-expressions and `DatasetDefinition` also live there. Import elapsed `Window`,
-`Duration` and calendar `Months` values from `terrine.windows`. A Frame is
-returned by `design.build(model)`; its type is available from `terrine.frame`
-when needed.
+The specialized `retention` and `quantile` expressions, the provisional
+`approx_distinct` and `approx_quantile` expressions, and `DatasetDefinition`
+also live there. Import elapsed `Window`, `Duration` and calendar `Months`
+values from `terrine.windows`. A Frame is returned by `design.build(model)`;
+its type is available from `terrine.frame` when needed.
 
 Bind Models through `tr.Model.from_tables(...)` or `tr.Model.from_catalog(...)`,
 not the Model constructor. Create definitions as
@@ -167,21 +167,24 @@ remain available for inspection and explicit serialization.
 ## Focused facades
 
 Every package facade has an explicit export list. This table records its
-purpose and the workflow that warrants its exports.
+purpose, the workflow that warrants its exports, and its tier in
+[API stability](stability.md): stable names follow Semantic Versioning from 1.0,
+provisional ones may change in a minor release with a changelog entry, and
+internal modules may change in any release. The `terrine` root is stable.
 
-| Facade | Supported use |
-| --- | --- |
-| `terrine.recipes` | The eight constructor-first dataset workflows above; returns plain Designs that compile through the existing low-level API. |
-| `terrine.spec` | The full-flexibility Design layer: public `Sequential` and `EventPanel` transforms, calendar panels, initiation/adoption declarations, matched-time sampling, trial weights, winsorization, definition storage and JSON/YAML serialization. See [sequential panels](sequential-panels.md) and [ML staging](ml-staging.md). Expression implementation records stay in their owning module. |
-| `terrine.execution` | `publish_native_inputs` and its `PublishedInputs` result for [retained input publication](materialization-runtime.md#owned-inputs-for-repeated-builds). Verified bindings/relation authority are derived, not facade inputs. |
-| `terrine.runtime` | Owner-side planning, saved plans, execution/scan authorization protocols, snapshot retention, exact-generation reads and run status/events/cancellation. See [runtime](materialization-runtime.md). Persistent state rows and layer translation stay in their owning modules. |
-| `terrine.dataset` | `GroupSplit` and `TimeSplit` policies supplied to `Frame.training_set(split=...)`; split strategy is an everyday training workflow choice. |
-| `terrine.export` | Shared preflight and Arrow/lifelines/diff-diff hand-offs, with their typed conversion results. See [library hand-offs](library-handoffs.md). |
-| `terrine.agent` | `AgentPolicy` and `DatasetTools` for the separately authorized [dataset tools](dataset-agent-tools.md). |
-| `terrine.simulate` | Seeded raw-source worlds and bounded scale batches, with independent expected-row oracles. See [synthetic worlds](synthetic-worlds.md). |
-| `terrine.adapters`, `terrine.orchestration` | Empty facades; select an explicit optional adapter module. Importing the namespace never selects an integration. |
-| `terrine.compile`, `terrine.compile.shapes` | Empty internal facades. Select shapes through Design and build through `Design.build`, not compiler state constructors. |
-| `terrine.backends`, `terrine.semantic`, `terrine.temporal` | Empty namespaces. Native source configuration uses `Model.from_catalog` with a YAML path, a validated `Catalog`, or a plain mapping; backend/temporal machinery is not an everyday facade. |
+| Facade | Tier | Supported use |
+| --- | --- | --- |
+| `terrine.recipes` | Stable | The eight constructor-first dataset workflows above; returns plain Designs that compile through the existing low-level API. |
+| `terrine.spec` | Stable, except provisional `approx_distinct` and `approx_quantile` | The full-flexibility Design layer: public `Sequential` and `EventPanel` transforms, calendar panels, initiation/adoption declarations, matched-time sampling, trial weights, winsorization, definition storage and JSON/YAML serialization. See [sequential panels](sequential-panels.md) and [ML staging](ml-staging.md). Expression implementation records stay in their owning module. |
+| `terrine.execution` | Provisional | `publish_native_inputs` and its `PublishedInputs` result for [retained input publication](materialization-runtime.md#owned-inputs-for-repeated-builds). Verified bindings/relation authority are derived, not facade inputs. |
+| `terrine.runtime` | Provisional | Owner-side planning, saved plans, execution/scan authorization protocols, snapshot retention, exact-generation reads and run status/events/cancellation. See [runtime](materialization-runtime.md). Persistent state rows and layer translation stay in their owning modules. |
+| `terrine.dataset` | Stable | `GroupSplit` and `TimeSplit` policies supplied to `Frame.training_set(split=...)`; split strategy is an everyday training workflow choice. |
+| `terrine.export` | Provisional | Shared preflight and Arrow/lifelines/diff-diff hand-offs, with their typed conversion results. See [library hand-offs](library-handoffs.md). |
+| `terrine.agent` | Provisional | `AgentPolicy` and `DatasetTools` for the separately authorized [dataset tools](dataset-agent-tools.md). |
+| `terrine.simulate` | Provisional | Seeded raw-source worlds and bounded scale batches, with independent expected-row oracles. See [synthetic worlds](synthetic-worlds.md). |
+| `terrine.adapters`, `terrine.orchestration` | Provisional | Empty facades; select an explicit optional adapter module. Importing the namespace never selects an integration. |
+| `terrine.compile`, `terrine.compile.shapes` | Internal | Empty internal facades. Select shapes through Design and build through `Design.build`, not compiler state constructors. |
+| `terrine.backends`, `terrine.semantic`, `terrine.temporal` | Internal | Empty namespaces. Native source configuration uses `Model.from_catalog` with a YAML path, a validated `Catalog`, or a plain mapping; backend/temporal machinery is not an everyday facade. |
 
 
 Dataset split policies are available from `terrine.dataset`: import
@@ -190,9 +193,10 @@ Dataset split policies are available from `terrine.dataset`: import
 runtime-state, and orchestration records remain in their focused modules.
 
 The focused public modules `terrine.data`, `terrine.errors`, `terrine.windows`,
-`terrine.model` and `terrine.frame` retain their explicit typed contracts:
-budgets/coverage and returned metadata, coded refusals, elapsed windows and durations, Model,
-and Frame/cohort results respectively. Data metadata is inspectable without
+`terrine.model` and `terrine.frame` are stable and retain their explicit typed
+contracts: budgets/coverage and returned metadata, coded refusals, elapsed
+windows and durations, Model, and Frame/cohort results respectively.
+`Model.from_increment` is provisional. Data metadata is inspectable without
 becoming user-authored compiler or runtime state. Optional dependency import
 isolation covers the root and all package facades, including resolution of
 their exported symbols.
