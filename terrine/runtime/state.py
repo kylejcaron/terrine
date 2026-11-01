@@ -10,6 +10,7 @@ from typing import Any
 
 from terrine.data import BoundCoverage
 from terrine.runtime.leases import _INVALID_NAMESPACE, Lease, LeaseStore
+from terrine.runtime.schema import ensure_runtime_schema
 
 __all__ = [
     "DefinitionVersion",
@@ -81,57 +82,8 @@ class RuntimeStore:
         self._schema = '"' + namespace.replace('"', '""') + '"'
 
     def initialize(self) -> None:
-        self.con.execute(f"CREATE SCHEMA IF NOT EXISTS {self._schema}")
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_generations ("
-            "dataset VARCHAR NOT NULL, generation VARCHAR NOT NULL, "
-            "definition_json VARCHAR NOT NULL, snapshot_json VARCHAR NOT NULL, "
-            "created_at TIMESTAMP NOT NULL, supersedes VARCHAR, "
-            "superseded_by VARCHAR, PRIMARY KEY(dataset, generation))"
-        )
-        column_type = self.con.execute(
-            "SELECT data_type FROM information_schema.columns "
-            "WHERE lower(table_schema)=lower(?) "
-            "AND table_name='runtime_generations' AND column_name='created_at'",
-            [self.namespace],
-        ).fetchone()[0]
-        if column_type != "TIMESTAMP":
-            self.con.execute(
-                f"ALTER TABLE {self._schema}.runtime_generations "
-                "ALTER COLUMN created_at SET DATA TYPE TIMESTAMP USING "
-                "CAST(CAST(created_at AS TIMESTAMPTZ) AT TIME ZONE 'UTC' AS TIMESTAMP)"
-            )
-        self.con.execute(
-            f"ALTER TABLE {self._schema}.runtime_generations "
-            "ADD COLUMN IF NOT EXISTS guard_version BIGINT DEFAULT 0"
-        )
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_generation_pins ("
-            "dataset VARCHAR NOT NULL, generation VARCHAR NOT NULL, reader VARCHAR NOT NULL, "
-            "PRIMARY KEY(dataset, generation, reader))"
-        )
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_references ("
-            "snapshot_id VARCHAR NOT NULL, kind VARCHAR NOT NULL, reference VARCHAR NOT NULL, "
-            "PRIMARY KEY(snapshot_id, kind, reference))"
-        )
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_gc ("
-            "snapshot_id VARCHAR PRIMARY KEY)"
-        )
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_guards ("
-            "snapshot_id VARCHAR PRIMARY KEY, guard_version BIGINT NOT NULL)"
-        )
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_manifests ("
-            "dataset VARCHAR PRIMARY KEY, generation VARCHAR NOT NULL, snapshot_id VARCHAR)"
-        )
-        self.con.execute(
-            f"CREATE TABLE IF NOT EXISTS {self._schema}.runtime_snapshot_captures ("
-            "snapshot_id VARCHAR PRIMARY KEY, cost_json VARCHAR NOT NULL, "
-            "readiness_json VARCHAR NOT NULL)"
-        )
+        """Create the namespace's runtime metadata, refusing unsupported schema versions."""
+        ensure_runtime_schema(self.con, self.namespace)
 
     def write_generation(
         self,
@@ -284,19 +236,12 @@ class RuntimeStore:
             ).fetchone()
             if row is None or row[0] is None:
                 raise ValueError("only explicitly superseded generations can be collected")
-            manifest_catalog = self.con.execute(
-                "SELECT 1 FROM information_schema.tables "
-                "WHERE table_schema=? AND table_name='runtime_manifests'",
-                [self.namespace],
+            current = self.con.execute(
+                f"SELECT 1 FROM {self._schema}.runtime_manifests WHERE dataset=? AND generation=?",
+                [ref.dataset, ref.generation],
             ).fetchone()
-            if manifest_catalog is not None:
-                current = self.con.execute(
-                    f"SELECT 1 FROM {self._schema}.runtime_manifests "
-                    "WHERE dataset=? AND generation=?",
-                    [ref.dataset, ref.generation],
-                ).fetchone()
-                if current is not None:
-                    raise ValueError("currently published generations cannot be collected")
+            if current is not None:
+                raise ValueError("currently published generations cannot be collected")
             pin = self.con.execute(
                 f"SELECT 1 FROM {self._schema}.runtime_generation_pins "
                 "WHERE dataset=? AND generation=? LIMIT 1",
@@ -304,36 +249,23 @@ class RuntimeStore:
             ).fetchone()
             if pin is not None:
                 raise ValueError("pinned generations cannot be collected")
-            partition_catalog = self.con.execute(
-                "SELECT 1 FROM information_schema.tables "
-                "WHERE table_schema=? AND table_name='runtime_partitions'",
-                [self.namespace],
-            ).fetchone()
-            if partition_catalog is not None:
-                metadata_catalog = self.con.execute(
-                    "SELECT 1 FROM information_schema.tables "
-                    "WHERE table_schema=? AND table_name='runtime_partition_metadata'",
-                    [self.namespace],
-                ).fetchone()
-                if metadata_catalog is not None:
-                    self.con.execute(
-                        f"DELETE FROM {self._schema}.runtime_partition_metadata "
-                        "WHERE dataset=? AND generation=?",
-                        [ref.dataset, ref.generation],
-                    )
-                partitions = self.con.execute(
-                    f"SELECT table_name FROM {self._schema}.runtime_partitions "
-                    "WHERE dataset=? AND generation=?",
-                    [ref.dataset, ref.generation],
-                ).fetchall()
-                for (table_name,) in partitions:
-                    quoted_table = '"' + table_name.replace('"', '""') + '"'
-                    self.con.execute(f"DROP TABLE IF EXISTS {self._schema}.{quoted_table}")
-                self.con.execute(
-                    f"DELETE FROM {self._schema}.runtime_partitions "
-                    "WHERE dataset=? AND generation=?",
-                    [ref.dataset, ref.generation],
-                )
+            self.con.execute(
+                f"DELETE FROM {self._schema}.runtime_partition_metadata "
+                "WHERE dataset=? AND generation=?",
+                [ref.dataset, ref.generation],
+            )
+            partitions = self.con.execute(
+                f"SELECT table_name FROM {self._schema}.runtime_partitions "
+                "WHERE dataset=? AND generation=?",
+                [ref.dataset, ref.generation],
+            ).fetchall()
+            for (table_name,) in partitions:
+                quoted_table = '"' + table_name.replace('"', '""') + '"'
+                self.con.execute(f"DROP TABLE IF EXISTS {self._schema}.{quoted_table}")
+            self.con.execute(
+                f"DELETE FROM {self._schema}.runtime_partitions WHERE dataset=? AND generation=?",
+                [ref.dataset, ref.generation],
+            )
             self.con.execute(
                 f"DELETE FROM {self._schema}.runtime_generations WHERE dataset=? AND generation=?",
                 [ref.dataset, ref.generation],
@@ -408,13 +340,6 @@ class RuntimeStore:
 
     def release_terminal_run_snapshot_references(self) -> None:
         """Reconcile active-run pins left by terminal cleanup conflicts."""
-        table = self.con.execute(
-            "SELECT 1 FROM information_schema.tables WHERE lower(table_schema)=lower(?) "
-            "AND table_name='runtime_runs'",
-            [self.namespace],
-        ).fetchone()
-        if table is None:
-            return
         terminal = {
             run_id
             for (run_id,) in self.con.execute(

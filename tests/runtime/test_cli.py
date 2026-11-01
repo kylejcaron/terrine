@@ -125,10 +125,9 @@ def test_cli_status_events_and_cancel_use_owner_ipc():
     store = RuntimeStore(con, namespace="owner")
     store.initialize()
     con.execute(
-        "CREATE TABLE owner.runtime_runs (run_id VARCHAR PRIMARY KEY,dataset VARCHAR,"
-        "fingerprint VARCHAR,state VARCHAR,published_generation VARCHAR,attempt_fence BIGINT)"
+        "INSERT INTO owner.runtime_runs (run_id, dataset, fingerprint, state, attempt_fence) "
+        "VALUES ('r1','orders','fp','queued',1)"
     )
-    con.execute("INSERT INTO owner.runtime_runs VALUES ('r1','orders','fp','queued',NULL,1)")
     record_run_event("r1", "lifecycle", {"state": "queued"}, con=con, namespace="owner")
     endpoint = ControlEndpoint(Path(f"/tmp/tcli-{os.getpid()}.sock"))
     server = ControlServer(store, namespace="owner", endpoint=endpoint, executor=_Executor())

@@ -17,24 +17,12 @@ def test_owner_start_reconciles_expired_runs_and_emits_lifecycle_events():
     store.initialize()
     schema = store._schema
     con.execute(
-        f"CREATE TABLE {schema}.runtime_runs "
-        "(run_id VARCHAR PRIMARY KEY,dataset VARCHAR,fingerprint VARCHAR,state VARCHAR,"
-        "published_generation VARCHAR,attempt_fence BIGINT)"
-    )
-    con.execute(
-        f"INSERT INTO {schema}.runtime_runs VALUES ('interrupted','orders','fp','running',NULL,1)"
-    )
-    con.execute(
-        f"CREATE TABLE {schema}.runtime_leases "
-        "(resource VARCHAR PRIMARY KEY,owner VARCHAR,fence BIGINT,expires_at TIMESTAMP)"
+        f"INSERT INTO {schema}.runtime_runs (run_id, dataset, fingerprint, state, attempt_fence) "
+        "VALUES ('interrupted','orders','fp','running',1)"
     )
     con.execute(
         f"INSERT INTO {schema}.runtime_leases VALUES "
         "('dataset:orders','interrupted',1,TIMESTAMP '2999-01-01')"
-    )
-    con.execute(
-        f"CREATE TABLE {schema}.runtime_run_publications "
-        "(run_id VARCHAR PRIMARY KEY,dataset VARCHAR,generation VARCHAR,version BIGINT)"
     )
     endpoint = ControlEndpoint(Path(f"/tmp/terrine-recovery-{os.getpid()}-{uuid.uuid4().hex}.sock"))
     server = ControlServer(store, namespace="owner", endpoint=endpoint)
@@ -64,14 +52,8 @@ def test_queued_run_cancellation_is_terminal_without_worker_acknowledgement():
     store.initialize()
     schema = store._schema
     con.execute(
-        f"CREATE TABLE {schema}.runtime_runs "
-        "(run_id VARCHAR PRIMARY KEY,dataset VARCHAR,fingerprint VARCHAR,state VARCHAR,"
-        "published_generation VARCHAR,attempt_fence BIGINT,updated_at TIMESTAMP,"
-        "heartbeat_at TIMESTAMP)"
-    )
-    con.execute(
-        f"INSERT INTO {schema}.runtime_runs VALUES "
-        "('queued-run','orders','fp','queued',NULL,NULL,NULL,NULL)"
+        f"INSERT INTO {schema}.runtime_runs (run_id, dataset, fingerprint, state) "
+        "VALUES ('queued-run','orders','fp','queued')"
     )
     receipt = cancel_run("queued-run", con=con, namespace="owner")
 
@@ -94,14 +76,8 @@ def test_cancel_rechecks_state_when_queued_run_starts_before_cancellation(
     store.initialize()
     schema = store._schema
     con.execute(
-        f"CREATE TABLE {schema}.runtime_runs "
-        "(run_id VARCHAR PRIMARY KEY,dataset VARCHAR,fingerprint VARCHAR,state VARCHAR,"
-        "published_generation VARCHAR,attempt_fence BIGINT,updated_at TIMESTAMP,"
-        "heartbeat_at TIMESTAMP)"
-    )
-    con.execute(
-        f"INSERT INTO {schema}.runtime_runs VALUES "
-        "('racing-run','orders','fp','queued',NULL,NULL,NULL,NULL)"
+        f"INSERT INTO {schema}.runtime_runs (run_id, dataset, fingerprint, state) "
+        "VALUES ('racing-run','orders','fp','queued')"
     )
     record_run_event("racing-run", "lifecycle", {"state": "queued"}, con=con, namespace="owner")
     original = status_module.get_run
@@ -139,34 +115,18 @@ def test_restart_restores_no_op_selection_before_recovered_success():
     store.initialize()
     schema = store._schema
     con.execute(
-        f"CREATE TABLE {schema}.runtime_runs "
-        "(run_id VARCHAR PRIMARY KEY,dataset VARCHAR,fingerprint VARCHAR,state VARCHAR,"
-        "published_generation VARCHAR,attempt_fence BIGINT)"
-    )
-    con.execute(
-        f"INSERT INTO {schema}.runtime_runs VALUES "
+        f"INSERT INTO {schema}.runtime_runs "
+        "(run_id, dataset, fingerprint, state, published_generation, attempt_fence) VALUES "
         "('prior','orders','fp','succeeded','g2',NULL),"
         "('noop','orders','fp','running',NULL,1)"
-    )
-    con.execute(
-        f"CREATE TABLE {schema}.runtime_leases "
-        "(resource VARCHAR PRIMARY KEY,owner VARCHAR,fence BIGINT,expires_at TIMESTAMP)"
     )
     con.execute(
         f"INSERT INTO {schema}.runtime_leases VALUES "
         "('dataset:orders','noop',1,TIMESTAMP '2000-01-01')"
     )
     con.execute(
-        f"CREATE TABLE {schema}.runtime_run_publications "
-        "(run_id VARCHAR PRIMARY KEY,dataset VARCHAR,generation VARCHAR,version BIGINT)"
-    )
-    con.execute(
         f"INSERT INTO {schema}.runtime_run_publications VALUES "
         "('prior','orders','g2',2),('noop','orders','g2',2)"
-    )
-    con.execute(
-        f"CREATE TABLE {schema}.runtime_run_results "
-        "(run_id VARCHAR NOT NULL,partition VARCHAR NOT NULL,PRIMARY KEY(run_id,partition))"
     )
     con.execute(f"INSERT INTO {schema}.runtime_run_results VALUES ('prior','frame-new')")
     server = ControlServer(

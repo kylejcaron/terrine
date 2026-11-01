@@ -56,6 +56,7 @@ from terrine.runtime.saved_plan import (
     SavedPlan,
     _bind_saved_plan,
 )
+from terrine.runtime.schema import check_runtime_schema
 from terrine.runtime.state import RuntimeStore
 from terrine.spec.anchors import EventAnchor, FixedDate
 from terrine.spec.dataset import INVALID_DEFINITION, DatasetDefinition
@@ -375,6 +376,7 @@ class DatasetTools:
             raise _INVALID.error()
         con = self.model.con.con
         store = RuntimeStore(con, namespace=self.namespace)
+        check_runtime_schema(con, self.namespace)
         tables = {
             item[0]
             for item in con.execute(
@@ -384,16 +386,6 @@ class DatasetTools:
             ).fetchall()
         }
         if not {"runtime_runs", "runtime_plan_invocations"} <= tables:
-            raise _RUN.error()
-        columns = {
-            item[0]
-            for item in con.execute(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE lower(table_schema)=lower(?) AND table_name='runtime_runs'",
-                [self.namespace],
-            ).fetchall()
-        }
-        if "destination_json" not in columns:
             raise _RUN.error()
         row = con.execute(
             f"SELECT destination_json, fingerprint FROM {store._schema}.runtime_runs "
@@ -689,6 +681,7 @@ class DatasetTools:
         if not isinstance(receipt, PlanReceipt):
             raise _RECEIPT.error()
         con = self.model.con.con
+        check_runtime_schema(con, self.namespace)
         exists = con.execute(
             "SELECT 1 FROM information_schema.tables WHERE lower(table_schema)=lower(?) "
             "AND table_name='runtime_plan_invocations'",
@@ -793,6 +786,7 @@ class DatasetTools:
         if not isinstance(reference, AgentDatasetReference):
             raise _RECEIPT.error(route="Use the unchanged reference returned by stage or refresh.")
         con = self.model.con.con
+        check_runtime_schema(con, self.namespace)
         exists = con.execute(
             "SELECT 1 FROM information_schema.tables WHERE lower(table_schema)=lower(?) "
             "AND table_name='runtime_dataset_recipes'",

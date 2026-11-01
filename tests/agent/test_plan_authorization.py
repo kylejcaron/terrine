@@ -120,13 +120,8 @@ def test_plan_and_run_recheck_destination_source_and_budget_grants(owner_tools):
         owner_tools.execute_plan(prepared.output, request_key="no-write").code
         == "terrine.agent.scope_denied"
     )
-    assert (
-        owner_tools.model.con.con.execute(
-            "SELECT COUNT(*) FROM information_schema.tables "
-            "WHERE table_schema='agent' AND table_name='runtime_runs'"
-        ).fetchone()[0]
-        == 0
-    )
+    runs = owner_tools.model.con.con.execute("SELECT count(*) FROM agent.runtime_runs")
+    assert runs.fetchone() == (0,)
 
 
 def test_prepare_refuses_invalid_group_identity_without_leaking_exception(owner_tools):

@@ -134,13 +134,8 @@ def test_reexecution_recovers_pending_cancellation():
     store = RuntimeStore(con, namespace="owner")
     store.initialize()
     con.execute(
-        "CREATE TABLE owner.runtime_runs (run_id VARCHAR PRIMARY KEY, dataset VARCHAR NOT NULL, "
-        "fingerprint VARCHAR NOT NULL, state VARCHAR NOT NULL, published_generation VARCHAR, "
-        "attempt_fence BIGINT, updated_at TIMESTAMP, heartbeat_at TIMESTAMP)"
-    )
-    con.execute(
-        "INSERT INTO owner.runtime_runs VALUES (?, ?, ?, 'cancel_requested', "
-        "NULL, NULL, NULL, NULL)",
+        "INSERT INTO owner.runtime_runs (run_id, dataset, fingerprint, state) "
+        "VALUES (?, ?, ?, 'cancel_requested')",
         ["recover-cancel", plan.dataset, plan.definition.fingerprint],
     )
     ran = []

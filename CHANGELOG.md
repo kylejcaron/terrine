@@ -109,6 +109,11 @@
 - DuckDB runtime prefix layers store counts as Arrow `decimal128(38, 0)`:
   read newly written layers with this version or newer; older layers still
   restore and compose.
+- Runtime owner namespaces record a metadata schema version. Namespaces created
+  by earlier pre-releases refuse with `terrine.runtime.schema_unsupported`
+  (`reason="unversioned"`) before any write, including when reopening their
+  datasets: stage again into a new namespace or owner database. Their stored
+  timestamp and column layouts are no longer upgraded in place.
 
 ### Additions
 

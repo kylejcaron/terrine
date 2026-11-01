@@ -12,7 +12,7 @@ from terrine.runtime.events import (
     event_transaction,
     record_run_event,
 )
-from terrine.runtime.leases import LeaseStore
+from terrine.runtime.schema import check_runtime_schema
 from terrine.runtime.state import RuntimeStore
 from terrine.runtime.synchronization import run_publication_lock
 
@@ -54,34 +54,12 @@ def get_run(run_id: str, *, con: Any, namespace: str) -> RunStatus:
     if not run_id:
         raise ValueError("run_id must not be empty")
     store = RuntimeStore(con, namespace=namespace)
-    store.initialize()
+    check_runtime_schema(con, namespace)
     schema = store._schema
-    con.execute(
-        f"CREATE TABLE IF NOT EXISTS {schema}.runtime_runs ("
-        "run_id VARCHAR PRIMARY KEY, dataset VARCHAR NOT NULL, fingerprint VARCHAR NOT NULL, "
-        "state VARCHAR NOT NULL, published_generation VARCHAR, attempt_fence BIGINT, "
-        "updated_at TIMESTAMP, heartbeat_at TIMESTAMP)"
-    )
-    leases = LeaseStore(con, namespace=namespace)
-    leases.initialize()
     with event_read_transaction(con, namespace=namespace):
-        columns = {
-            item[0]
-            for item in con.execute(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE lower(table_schema)=lower(?) AND table_name='runtime_runs'",
-                [namespace],
-            ).fetchall()
-        }
-        updated_at = "updated_at" if "updated_at" in columns else "NULL"
-        heartbeat_at = "heartbeat_at" if "heartbeat_at" in columns else "NULL"
-        snapshot_id = "snapshot_id" if "snapshot_id" in columns else "NULL"
-        task_count = "task_count" if "task_count" in columns else "NULL"
-        error_code = "error_code" if "error_code" in columns else "NULL"
         row = con.execute(
-            f"SELECT state, attempt_fence, {updated_at}, {heartbeat_at}, published_generation, "
-            f"{snapshot_id}, {task_count}, {error_code} "
-            f"FROM {schema}.runtime_runs WHERE run_id=?",
+            "SELECT state, attempt_fence, updated_at, heartbeat_at, published_generation, "
+            f"snapshot_id, task_count, error_code FROM {schema}.runtime_runs WHERE run_id=?",
             [run_id],
         ).fetchone()
         if row is None:
@@ -118,19 +96,15 @@ def get_run(run_id: str, *, con: Any, namespace: str) -> RunStatus:
                 if progress["completed_tasks"] == progress["total_tasks"]
                 else "executing"
             )
-        freshness = None
-        if "heartbeat_at" in columns:
-            freshness = (
-                "terminal"
-                if row[0] in {"succeeded", "failed", "cancelled"}
-                else "current"
-                if lease_expires_at is not None and lease_expires_at > datetime.now(UTC)
-                else "stale"
-            )
+        freshness = (
+            "terminal"
+            if row[0] in {"succeeded", "failed", "cancelled"}
+            else "current"
+            if lease_expires_at is not None and lease_expires_at > datetime.now(UTC)
+            else "stale"
+        )
         cost = json.loads(capture[0]) if capture is not None else {}
-        observed = _observed_costs(run_id, con=con, namespace=namespace, schema=schema)
-        if observed is not None:
-            cost.update(observed)
+        cost.update(_observed_costs(run_id, con=con, schema=schema))
         return RunStatus(
             run_id,
             row[0],
@@ -141,7 +115,7 @@ def get_run(run_id: str, *, con: Any, namespace: str) -> RunStatus:
             freshness=freshness,
             phase=phase,
             progress=progress,
-            cost=cost or None,
+            cost=cost,
             readiness=json.loads(capture[1]) if capture is not None else None,
             error_code=row[7],
             pinned_result_ref=row[4],
@@ -149,17 +123,7 @@ def get_run(run_id: str, *, con: Any, namespace: str) -> RunStatus:
         )
 
 
-def _observed_costs(run_id: str, *, con: Any, namespace: str, schema: str) -> dict[str, Any] | None:
-    columns = {
-        row[0]
-        for row in con.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE lower(table_schema)=lower(?) AND table_name='runtime_tasks'",
-            [namespace],
-        ).fetchall()
-    }
-    if not {"layer", "attempts", "output_rows", "output_bytes"}.issubset(columns):
-        return None
+def _observed_costs(run_id: str, *, con: Any, schema: str) -> dict[str, Any]:
     row = con.execute(
         "SELECT COALESCE(SUM(attempts),0), "
         "COUNT(*) FILTER (WHERE status='complete' AND "
@@ -198,17 +162,6 @@ def cancel_run(run_id: str, *, con: Any, namespace: str) -> CancelReceipt:
     ).fetchone()
     if row is None:
         raise _UNAVAILABLE.error()
-    columns = {
-        column[0].casefold()
-        for column in con.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE lower(table_schema)=lower(?) AND lower(table_name)='runtime_runs'",
-            [namespace],
-        ).fetchall()
-    }
-    updated_at = (
-        ", updated_at=CURRENT_TIMESTAMP AT TIME ZONE 'UTC'" if "updated_at" in columns else ""
-    )
     with run_publication_lock(namespace, row[0]):
         with event_transaction(con, namespace=namespace):
             current = con.execute(
@@ -225,7 +178,8 @@ def cancel_run(run_id: str, *, con: Any, namespace: str) -> CancelReceipt:
             elif current_state in {"queued", "running"}:
                 next_state = "cancelled" if current_state == "queued" else "cancel_requested"
                 transitioned = con.execute(
-                    f"UPDATE {store._schema}.runtime_runs SET state=?{updated_at} "
+                    f"UPDATE {store._schema}.runtime_runs "
+                    "SET state=?, updated_at=CURRENT_TIMESTAMP AT TIME ZONE 'UTC' "
                     "WHERE run_id=? AND state=? RETURNING run_id",
                     [next_state, run_id, current_state],
                 ).fetchone()
@@ -258,28 +212,6 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
     store = RuntimeStore(con, namespace=namespace)
     store.initialize()
     schema = store._schema
-    exists = con.execute(
-        "SELECT 1 FROM information_schema.tables "
-        "WHERE lower(table_schema)=lower(?) AND table_name='runtime_runs'",
-        [namespace],
-    ).fetchone()
-    if exists is None:
-        return
-    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP")
-    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS attempt_fence BIGINT")
-    con.execute(f"ALTER TABLE {schema}.runtime_runs ADD COLUMN IF NOT EXISTS error_code VARCHAR")
-    lease_table = con.execute(
-        "SELECT 1 FROM information_schema.tables "
-        "WHERE lower(table_schema)=lower(?) AND table_name='runtime_leases'",
-        [namespace],
-    ).fetchone()
-    if lease_table is None:
-        return
-    publications = con.execute(
-        "SELECT 1 FROM information_schema.tables "
-        "WHERE lower(table_schema)=lower(?) AND table_name='runtime_run_publications'",
-        [namespace],
-    ).fetchone()
     with event_transaction(con, namespace=namespace):
         stale = con.execute(
             f"SELECT r.run_id,r.state,r.attempt_fence FROM {schema}.runtime_runs r "
@@ -292,15 +224,10 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
             "ORDER BY r.run_id"
         ).fetchall()
         for run_id, old_state, fence in stale:
-            publication = (
-                con.execute(
-                    f"SELECT dataset,generation FROM {schema}.runtime_run_publications "
-                    "WHERE run_id=?",
-                    [run_id],
-                ).fetchone()
-                if publications is not None
-                else None
-            )
+            publication = con.execute(
+                f"SELECT dataset,generation FROM {schema}.runtime_run_publications WHERE run_id=?",
+                [run_id],
+            ).fetchone()
             state = (
                 "succeeded"
                 if publication is not None
@@ -310,11 +237,6 @@ def _recover_interrupted_runs(con: Any, *, namespace: str) -> None:
             )
             generation = publication[1] if publication is not None else None
             if publication is not None:
-                con.execute(
-                    f"CREATE TABLE IF NOT EXISTS {schema}.runtime_run_results "
-                    "(run_id VARCHAR NOT NULL, partition VARCHAR NOT NULL, "
-                    "PRIMARY KEY(run_id,partition))"
-                )
                 previous = con.execute(
                     f"SELECT DISTINCT result.partition FROM {schema}.runtime_run_results result "
                     f"JOIN {schema}.runtime_run_publications prior ON prior.run_id=result.run_id "
