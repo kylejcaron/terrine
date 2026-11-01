@@ -193,6 +193,11 @@ so a small recent window is not cancelled by a huge history. Counts,
 integer measures, declared decimals, keys and timestamps retain their exact
 domains.
 
+The portable policy caps the integral intermediate at $\pm(10^{29}-1)$
+before its scale-9 cast, so a short float-to-decimal conversion that rounds
+an admitted boundary value up to $10^{29}$ cannot overflow that cast;
+the resulting value is still subject to the same window-sum bound.
+
 Against the exact sum of original float inputs in a window $W$, the sum's
 absolute error is bounded by
 $e_S = 10^{-9} n_W + 10^{-12}\sum_{i\in W}|x_i|$.

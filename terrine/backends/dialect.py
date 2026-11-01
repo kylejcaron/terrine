@@ -179,8 +179,8 @@ class Dialect:
         Cast the integral part separately so a binary64 multiplication by
         10**9 cannot push an admitted boundary value out of the decimal type.
         A scale-0 cast may round up; correct that toward zero before taking
-        the exact floating remainder, whose sign must agree with the input
-        to preserve ties away from zero.
+        the floating remainder. Short float conversions can round admitted
+        inputs to 10**29, so cap the integral part inside the scale-9 domain.
         """
         integral = cast(ir.DecimalValue, value.cast(_WIDE))
         rounded = self.binary64(integral.cast("string"))
@@ -191,6 +191,12 @@ class Dialect:
         whole = cast(
             ir.DecimalValue,
             (rounded.abs() > value.abs()).ifelse(integral - correction, integral),
+        )
+        upper = cast(ir.DecimalValue, ibis.literal(str(10**29 - 1)).cast(_WIDE))
+        lower = cast(ir.DecimalValue, ibis.literal(str(-(10**29 - 1))).cast(_WIDE))
+        whole = cast(
+            ir.DecimalValue,
+            ibis.cases((whole > upper, upper), (whole < lower, lower), else_=whole),
         )
         remainder = value - self.binary64(whole.cast("string"))
         return cast(ir.DecimalValue, whole.cast(_FIXED) + remainder.cast(_FIXED))
