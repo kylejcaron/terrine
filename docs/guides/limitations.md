@@ -50,9 +50,13 @@ Terrine's descriptive reports make no p-value, interval or causal pass/fail clai
 
 Finite timestamp and numeric representations cannot encode every requested
 endpoint or exact result. A coded refusal is preferable to silently narrowing a
-timestamp or overflowing an amount. Floats quantize once to `DECIMAL(38, 9)`
-(nearest, ties away from zero), then share the declared-decimal exact
-coefficient path. A window sum's error against the original floats is bounded
+timestamp or overflowing an amount. Floats quantize once to
+`DECIMAL(38, 9)`-scale values by the engine's float-to-decimal conversion
+(nearest, ties away from zero, with about $10^{-16}$ relative binary64
+conversion error), so a value within that error of a halfway point may
+round either way; only the stated window-sum bound is promised.
+Quantized values share the declared-decimal exact coefficient path.
+A window sum's error against the original floats is bounded
 by $10^{-9}n_W + 10^{-12}\sum_{i\in W}|x_i|$; a mean divides that by its actual
 denominator. Nonzero float values below $5\cdot10^{-10}$ vanish from sums.
 Declare decimals or rescale small measures (for example into micro-units)

@@ -79,7 +79,9 @@ def test_registered_operation_declarations_cover_every_portable_default():
     for engine in ENGINES.values():
         assert engine.dialect.operations == Dialect.operations
         value = ibis.table({"value": "float64"}).value
-        assert dialect_for_name(engine.name).quantize_float(value).type() == dt.Decimal(38, 9)
+        policy = dialect_for_name(engine.name)
+        quantized = policy.quantize_float(value)
+        assert policy.decimal_coefficient(quantized, 9).type() == policy.coefficient_type()
 
 
 def test_static_inspection_and_admission_preserve_native_handle_boundary():

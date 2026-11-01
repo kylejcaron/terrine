@@ -246,8 +246,12 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
 - Aggregate calculations cover large offsets, neighboring floating-point
   values, input-order changes, merged partitions, and values near overflow.
   Prefer centered, mergeable moments and overflow-safe cross terms.
-- Floats entering sums quantize once to `DECIMAL(38, 9)`, nearest with ties
-  away from zero, then share declared-decimal exact coefficients on every engine.
+- Floats entering sums quantize once to `DECIMAL(38, 9)`-scale values using
+  the engine's float-to-decimal conversion (nearest, ties away from zero,
+  with about `1e-16` relative binary64 conversion error), so values within
+  that error of a halfway point may round either way; only the stated
+  window-sum bound is promised.
+  Quantized values share declared-decimal exact coefficients on every engine.
   Against the exact sum of original floats, use
   `e_S = 1e-9 * n_W + 1e-12 * sum(abs(x) for x in W)`; divide by the actual
   denominator for means, including per-day means. Ratios convert each exact

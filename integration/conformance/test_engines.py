@@ -146,7 +146,6 @@ def test_forced_generic_selection_reaches_nested_literals(engine, request):
         value = ibis.literal("0.1234567899").cast(dt.float64)
         values = ibis.literal(0).as_table().select(value=value)
         exact, nonfinite, unrepresentable = quantized_float(values.value)
-        state_type = exact.type()
         (row,) = engine.to_pyarrow(
             values.select(
                 state=exact.cast("string"), nonfinite=nonfinite, unrepresentable=unrepresentable
@@ -154,7 +153,6 @@ def test_forced_generic_selection_reaches_nested_literals(engine, request):
         ).to_pylist()
     assert current_dialect().name == outer
     assert (row["nonfinite"], row["unrepresentable"]) == (False, False)
-    assert state_type == dt.Decimal(38, 9)
     assert Decimal(row["state"]) == Decimal("0.123456790")
 
 

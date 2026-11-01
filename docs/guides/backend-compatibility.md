@@ -174,8 +174,12 @@ keep nanosecond support.
 
 ### Shared numerical contract
 
-Every engine quantizes finite float inputs once to `DECIMAL(38, 9)`, rounding
-to nearest with ties away from zero. Float32 widens first. NULL stays NULL.
+Every engine quantizes finite float inputs once to `DECIMAL(38, 9)`-scale
+values using its own float-to-decimal conversion (nearest, ties away from
+zero, with binary64 conversion error of about $10^{-16}$ relative), so a
+value within that error of a halfway point may round either way; only the
+stated window-sum bound is promised.
+Float32 widens first. NULL stays NULL.
 The exact binary64 magnitude must be below $10^{29}$: the literal `1e29`
 is admitted because its exact value is just below that boundary; the next
 float up is refused with `terrine.temporal.float64_precision`,
@@ -334,6 +338,9 @@ its own scale before one float64 division. These columns carry
 `numeric_policy=None` and no error column. A non-finite or out-of-range
 input at or before the end of a non-empty window refuses; an empty sum
 window remains zero.
+PostgreSQL rounds in unconstrained `NUMERIC` at scale 9, so a conversion
+that rounds an admitted boundary input up to $10^{29}$ cannot overflow an
+intermediate fixed-precision cast.
 
 Refused on PostgreSQL, with a route: retained input capture, Dataset staging,
 publication and reopening (`terrine.backend.capability_unavailable`; these live

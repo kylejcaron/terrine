@@ -30,6 +30,13 @@ _FLOAT64_MAX = str(int(sys.float_info.max))
 _FLOAT64_ROUNDS_TO_ZERO = "0." + str(5**1075).rjust(1075, "0")
 
 
+@ibis.udf.scalar.builtin(
+    name="round", database="pg_catalog", signature=((_EXACT, dt.int32), _EXACT)
+)
+def _round_numeric(value, scale):
+    """Round unconstrained NUMERIC at a decimal scale, ties away from zero."""
+
+
 @ibis.udf.agg.builtin(name="sum", signature=((_EXACT,), _EXACT))
 def _exact_sum(value):
     """PostgreSQL exact NUMERIC sum."""
@@ -129,6 +136,10 @@ class PostgresDialect(Dialect):
 
     def coefficient_type(self) -> dt.DataType:
         return _EXACT
+
+    def quantize_float(self, value: ir.FloatingValue) -> ir.DecimalValue:
+        """Keep scale-9 rounding in NUMERIC without a fixed-precision boundary cast."""
+        return cast(ir.DecimalValue, _round_numeric(value.cast(_EXACT), 9))
 
     def binary64(self, text: ir.StringValue) -> ir.FloatingValue:
         """Guard NUMERIC conversion: PostgreSQL raises on overflow and underflow."""

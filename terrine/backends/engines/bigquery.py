@@ -79,6 +79,10 @@ class BigQueryDialect(Dialect):
         quotient = _quotient(value, divisor)
         return cast(ir.IntegerValue, cast(ir.IntegerValue, quotient).cast(dt.int64))
 
+    def float_is_finite(self, value: ir.Value) -> ir.BooleanValue:
+        floating = cast(ir.FloatingValue, value.cast(dt.float64))
+        return ~(floating.isnan() | floating.isinf())
+
     def timestamp_is_finite(self, value: ir.TimestampValue) -> ir.BooleanValue:
         return cast(ir.BooleanValue, ibis.literal(True))
 

@@ -655,8 +655,12 @@ nulls cannot masquerade as missing data. Native decimal precision above 38 is
 not available on this route.
 
 Float32 widens to Float64. Every finite float entering a sum is quantized
-once to `DECIMAL(38, 9)`, nearest with ties away from zero, then takes the
-declared-decimal coefficient path at scale 9. Thus `6e-10` becomes `1e-9`,
+once to `DECIMAL(38, 9)`-scale values by the engine's float-to-decimal
+conversion (nearest, ties away from zero, with about $10^{-16}$ relative
+binary64 conversion error), so values within that error of a halfway point
+may round either way; only the stated window-sum bound is promised.
+The result takes the declared-decimal coefficient path at scale 9.
+Thus `6e-10` becomes `1e-9`,
 and the exact tie `1/1024` becomes `0.000976563`. Float state carries
 `value_scale=9` and counts of non-finite and out-of-range inputs, without
 data-derived scales. DuckDB accumulates in unbounded `BIGNUM`, PostgreSQL
