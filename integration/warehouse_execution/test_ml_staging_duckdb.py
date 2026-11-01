@@ -23,6 +23,7 @@ from terrine.dataset.export import ExportManifest
 from terrine.dataset.reference import Dataset, _definition_for
 from terrine.dataset.splits import GroupSplit, TimeSplit, group_bucket
 from terrine.errors import TerrineError, thaw
+from terrine.frame import Frame
 from terrine.model import Model
 from terrine.runtime.api import run_serialized_plan
 from terrine.runtime.arrow import ArrowOutput
@@ -37,7 +38,6 @@ from tests.dataset.test_staging import _durable_frame
 from tests.dataset.test_training_view import _frame
 from tests.fixtures.interop import interop_design
 from tests.fixtures.winsorization import bind_model, design
-from terrine.frame import Frame
 
 
 @pytest.fixture(scope="session")
