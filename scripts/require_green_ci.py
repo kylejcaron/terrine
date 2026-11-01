@@ -11,9 +11,10 @@ from typing import Any
 
 
 def ci_succeeded(runs: list[dict[str, Any]], *, workflow: str = "CI") -> bool:
-    """Return whether any completed run of the named workflow succeeded."""
+    """Return whether a completed successful commit-level run of the named workflow exists."""
     return any(
         run.get("name") == workflow
+        and run.get("event") in {"push", "workflow_dispatch"}
         and run.get("status") == "completed"
         and run.get("conclusion") == "success"
         for run in runs
@@ -37,7 +38,7 @@ def main() -> int:
                 "--paginate",
                 f"repos/{repository}/actions/runs?head_sha={args.sha}",
                 "--jq",
-                ".workflow_runs[] | {name,status,conclusion} | @json",
+                ".workflow_runs[] | {name,event,status,conclusion} | @json",
             ],
             check=True,
             capture_output=True,

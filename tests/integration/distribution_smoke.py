@@ -128,6 +128,26 @@ def smoke(wheel: Path, sdist: Path, *, python: str, resolution: str) -> None:
         with tarfile.open(sdist) as archive:
             archive.extractall(source, filter="data")
         project_root = next(source.iterdir())
+        rebuilt = root / "rebuilt"
+        _run(
+            [uv, "build", "--wheel", str(project_root), "--out-dir", str(rebuilt)],
+            cwd=root,
+            env=env,
+        )
+        rebuilt_wheel = next(rebuilt.glob("*.whl"))
+        check_artifacts(rebuilt_wheel, sdist)
+        with ZipFile(wheel) as original, ZipFile(rebuilt_wheel) as rebuilt_archive:
+            original_files = {
+                name: original.read(name)
+                for name in original.namelist()
+                if name.startswith("terrine/")
+            }
+            rebuilt_files = {
+                name: rebuilt_archive.read(name)
+                for name in rebuilt_archive.namelist()
+                if name.startswith("terrine/")
+            }
+            assert original_files == rebuilt_files, "sdist rebuild changed package contents"
         consumer = root / "consumer"
         consumer.mkdir()
         environment = root / "venv"
