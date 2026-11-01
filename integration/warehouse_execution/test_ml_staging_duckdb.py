@@ -5,7 +5,7 @@ import json
 import subprocess
 import sys
 import weakref
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import FrozenInstanceError, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from importlib.resources import files
@@ -37,6 +37,7 @@ from tests.dataset.test_staging import _durable_frame
 from tests.dataset.test_training_view import _frame
 from tests.fixtures.interop import interop_design
 from tests.fixtures.winsorization import bind_model, design
+from terrine.frame import Frame
 
 
 @pytest.fixture(scope="session")
@@ -1830,19 +1831,32 @@ def test_feature_definition_hash_tracks_source_timestamp_semantics(native_inputs
     )
 
 
-@pytest.fixture(params=[False, True], ids=["typed_rows", "empty"])
-def common_frame(request, tmp_path, interop_world):
-    model = _worlds.bind_model(interop_world, tmp_path)
+@dataclass(frozen=True)
+class CommonScenario:
+    frame: Frame
+    dataset: Dataset
+    expected: pa.Table
+
+
+@pytest.fixture(scope="module", params=[False, True], ids=["typed_rows", "empty"])
+def common_scenario(request, tmp_path_factory, interop_world):
+    model = _worlds.bind_model(interop_world, tmp_path_factory.mktemp("common-scenario"))
     try:
         if request.param:
             model.con.raw_sql("DELETE FROM users")
-        yield interop_design(full=False).build(model)
+        frame = interop_design(full=False).build(model)
+        dataset = frame.stage(
+            "common_stack",
+            budget=Budget(max_rows=3, max_output_bytes=1_000_000, strict_scan=False),
+        )
+        expected = frame.to_pyarrow(budget=Budget(max_rows=3))
+        yield CommonScenario(frame, dataset, expected)
     finally:
         model.con.disconnect()
 
 
-def test_local_arrow_preserves_exact_temporal_values_and_semantic_metadata(common_frame):
-    materialized = common_frame.materialize(Budget(max_rows=3))
+def test_local_arrow_preserves_exact_temporal_values_and_semantic_metadata(common_scenario):
+    materialized = common_scenario.frame.materialize(Budget(max_rows=3))
     arrow = materialized.to_pyarrow().sort_by("unit")
     assert arrow.schema.field("amount").type == pa.decimal128(38, 2)
     assert arrow.schema.field("t0").type == pa.timestamp("us", tz="UTC")
@@ -1876,9 +1890,9 @@ def test_local_arrow_preserves_exact_temporal_values_and_semantic_metadata(commo
 
 
 @pytest.mark.parametrize("extra", ["pandas", "polars"])
-def test_optional_dataframe_values_are_lossless_but_metadata_stays_in_arrow(common_frame, extra):
+def test_optional_dataframe_values_are_lossless_but_metadata_stays_in_arrow(common_scenario, extra):
     module = pytest.importorskip(extra)
-    expected = common_frame.to_pyarrow(budget=Budget(max_rows=3)).sort_by("unit")
+    expected = common_scenario.expected.sort_by("unit")
     expected = expected.select(
         [
             "unit",
@@ -1892,7 +1906,7 @@ def test_optional_dataframe_values_are_lossless_but_metadata_stays_in_arrow(comm
             "note__reason",
         ]
     )
-    converted = getattr(common_frame, f"to_{extra}")(budget=Budget(max_rows=3))
+    converted = getattr(common_scenario.frame, f"to_{extra}")(budget=Budget(max_rows=3))
     if extra == "pandas":
         assert all(isinstance(dtype, module.ArrowDtype) for dtype in converted.dtypes)
         actual = pa.Table.from_pandas(converted, preserve_index=False)
@@ -1905,11 +1919,11 @@ def test_optional_dataframe_values_are_lossless_but_metadata_stays_in_arrow(comm
     assert actual["note"].null_count == expected["note"].null_count
 
 
-def test_dataset_batches_and_parquet_preserve_typed_metadata(common_frame, tmp_path):
+def test_dataset_batches_and_parquet_preserve_typed_metadata(common_scenario, tmp_path):
     budget = Budget(max_rows=3, max_output_bytes=1_000_000)
-    expected = common_frame.to_pyarrow(budget=budget).sort_by("unit")
+    expected = common_scenario.expected.sort_by("unit")
     expected_metadata = MaterializedFrame.from_arrow(expected)
-    dataset = common_frame.stage("common_stack", budget=budget)
+    dataset = common_scenario.dataset
     batches = list(dataset.to_arrow_batches(batch_size=1))
     assert all(batch.num_rows <= 1 for batch in batches)
     if batches:
@@ -1990,10 +2004,10 @@ def test_pre_rename_owner_database_refuses_old_generation_and_stages_new(events_
         con.disconnect()
 
 
-def test_dataset_reads_match_materialized_rows(common_frame, monkeypatch):
-    dataset = common_frame.stage("readback", budget=Budget(strict_scan=False))
+def test_dataset_reads_match_materialized_rows(common_scenario, monkeypatch):
+    dataset = common_scenario.dataset
 
-    expected = common_frame.to_pyarrow()
+    expected = common_scenario.expected
     expected_schema = dataset._arrow_schema()
     original = Dataset._iter_arrow_batches
 
@@ -2006,11 +2020,11 @@ def test_dataset_reads_match_materialized_rows(common_frame, monkeypatch):
     actual = dataset.to_pyarrow()
     assert actual.to_pylist() == expected.to_pylist()
     assert actual.schema.equals(expected_schema, check_metadata=True)
-    assert dataset.to_pandas().equals(common_frame.to_pandas())
+    assert dataset.to_pandas().equals(common_scenario.frame.to_pandas())
     pytest.importorskip("polars")
     assert (
         dataset.to_polars(values_only=True).to_dicts()
-        == common_frame.to_polars(values_only=True).to_dicts()
+        == common_scenario.frame.to_polars(values_only=True).to_dicts()
     )
 
 
@@ -2039,8 +2053,8 @@ def test_dataset_read_budget_refuses(tmp_path, interop_world):
         model.con.disconnect()
 
 
-def test_dataset_read_strict_scan_matches_export(common_frame, tmp_path):
-    dataset = common_frame.stage("strict_read", budget=Budget(strict_scan=False))
+def test_dataset_read_strict_scan_matches_export(common_scenario, tmp_path):
+    dataset = common_scenario.dataset
     budget = Budget(max_scan_bytes=1, strict_scan=True)
     codes = []
     for read in (
@@ -2053,8 +2067,8 @@ def test_dataset_read_strict_scan_matches_export(common_frame, tmp_path):
     assert codes == ["terrine.budget.scan_unknown", "terrine.budget.scan_unknown"]
 
 
-def test_conflicting_dataset_view_flags_refuse_before_read(common_frame, monkeypatch):
-    dataset = common_frame.stage("view_conflict", budget=Budget(strict_scan=False))
+def test_conflicting_dataset_view_flags_refuse_before_read(common_scenario, monkeypatch):
+    dataset = common_scenario.dataset
 
     def fail_read(*args, **kwargs):
         raise AssertionError("dataset read should not run")
