@@ -20,17 +20,11 @@ from terrine.backends.numeric import (
     EXACT_OVERFLOW as _EXACT_OVERFLOW,
 )
 from terrine.backends.numeric import (
-    _scaled_text,
-    exact_is_nonfinite,
     exact_literal,
-    exact_ratio,
     exact_subtract,
     exact_to_float,
-    exact_type,
-    has_scaled_float_state,
-    normalized,
-    normalized_quotient,
-    rounded_normalized,
+    float_is_finite,
+    float_ratio,
 )
 from terrine.backends.timestamps import day_start
 from terrine.data import ColumnMeta, RowCheck
@@ -216,7 +210,7 @@ class _Builder:
 
     def flag(self, expression, failure: Float64Failure, context: Mapping[str, Any]) -> None:
         name = self.put(failure, expression)
-        self.numeric.append((name, FLOAT64_PRECISION, {**context, "failure": failure}))
+        self.numeric.append((name, FLOAT64_PRECISION, {**context, "reason": failure}))
 
     def check(self, flags, *, active=None) -> tuple[RowCheck, ...]:
         """Stage one boolean column per flag: TRUE where the row fails its refusal.
@@ -239,15 +233,10 @@ class _Quantity:
     value: str
     reason: str
     known_zero: str
-    # A decimal's literal scale, or the state column holding a float fact's
-    # per-unit scale on DuckDB.
-    scale: int | str = 0
+    scale: int = 0
     count: bool = False
-    # Published as binary64: an exact coefficient at ``scale`` rounds once at
-    # output, as does a DuckDB quotient held as a normalized significand with
-    # its decimal exponent in the ``exponent`` column.
+    # Published as binary64, either a scaled exact coefficient or a quotient.
     binary64: bool = False
-    exponent: str | None = None
 
 
 def narrow_exact(coefficient, scale: int, target: str | dt.DataType):
@@ -264,90 +253,38 @@ def _aligned(timestamp, minutes: int):
     return timestamp == day_start(timestamp, minutes)
 
 
-def _exact_decimal(builder: _Builder, quantity: _Quantity) -> ir.Value:
-    """An exact-state operand whose float state is unscaled (PostgreSQL, BigQuery, portable).
-
-    An unbounded exact type holds a scaled coefficient as it is; a fixed
-    38-digit state keeps every coefficient digit by carrying the scale in its
-    type instead of the 29 integer digits of the scale-9 float state.
-    """
-    value = builder.col(quantity.value)
-    assert isinstance(quantity.scale, int)
-    if quantity.scale == 0:
-        return value
-    target = exact_type(value)
-    if isinstance(target, dt.Decimal) and target.precision is not None:
-        target = dt.Decimal(target.precision, quantity.scale)
-    return _scaled_text(value, quantity.scale).cast(target)
-
-
-def _normalized(builder: _Builder, quantity: _Quantity) -> tuple[ir.Value, ir.IntegerValue]:
-    """A DuckDB operand's ``(significand, exponent)``: exact at its scale, or a quotient's."""
-    if quantity.exponent is not None:
-        return builder.col(quantity.value), builder.col(quantity.exponent)
-    scale = builder.col(quantity.scale) if isinstance(quantity.scale, str) else quantity.scale
-    return normalized(builder.col(quantity.value), scale)
-
-
 def _quotient(
     builder: _Builder, numerator: _Quantity, denominator: _Quantity, reason: str, context
 ) -> _Quantity:
-    """Divide once; ``aggregate_window`` rounds the result to binary64 within the bound.
-
-    DuckDB and Snowflake normalize each operand, exact or itself a quotient, to
-    a 19-digit significand and decimal exponent and divide those, so a quotient
-    feeds a later ratio unrounded; PostgreSQL and BigQuery divide exactly in
-    NUMERIC. A non-finite exact component refuses here: division could erase
-    it (1/Infinity = 0).
-    """
+    """Convert each exact operand at its own scale, then divide once in float64."""
     known_zero = builder.put(
         "quotient_zero",
         builder.col(numerator.known_zero) & ~builder.col(denominator.known_zero),
     )
-    if has_scaled_float_state(builder.table.t0):
-        operands = builder.put_many(
-            *(
-                (label, part)
-                for component in (numerator, denominator)
-                for label, part in zip(
-                    ("mantissa", "exponent"), _normalized(builder, component), strict=True
-                )
-            )
-        )
-        significand, exponent = normalized_quotient(*(builder.col(name) for name in operands))
-        value, exponent = builder.put_many(
-            ("quotient", significand), ("quotient_exponent", exponent)
-        )
-        return _Quantity(value, reason, known_zero, binary64=True, exponent=exponent)
-    for component in (numerator, denominator):
-        if component.binary64:
-            nonfinite = exact_is_nonfinite(builder.col(component.value)).fill_null(
-                ibis.literal(False)
-            )
-            builder.flag(nonfinite, "nonfinite_input", context)
-    exact_numerator = _exact_decimal(builder, numerator)
-    exact_denominator = _exact_decimal(builder, denominator)
-    value = builder.put("quotient", exact_ratio(exact_numerator, exact_denominator))
-    # BigQuery's SAFE_DIVIDE returns NULL on overflow; only a zero denominator may.
+    n, d = builder.col(numerator.value), builder.col(denominator.value)
+    value = builder.put("quotient", float_ratio(n, numerator.scale, d, denominator.scale))
+    # Only a zero denominator or missing operand may yield NULL.
     builder.flag(
         builder.col(value).isnull()
-        & exact_numerator.notnull()
-        & exact_denominator.notnull()
+        & n.notnull()
+        & d.notnull()
         & ~builder.col(denominator.known_zero),
+        "bound_overflow",
+        context,
+    )
+    builder.flag(
+        ~float_is_finite(builder.col(value)).fill_null(ibis.literal(True)),
         "bound_overflow",
         context,
     )
     return _Quantity(value, reason, known_zero, binary64=True)
 
 
-def _state_fields(
-    measure: BoundMeasure, state: ibis.Table, *, counting: bool, scaled: bool
-) -> tuple[str, ...]:
+def _state_fields(measure: BoundMeasure, state: ibis.Table, *, counting: bool) -> tuple[str, ...]:
     """The state columns a window reads for ``measure``.
 
     A count or conversion reads the event count alone; a sum or average adds
-    the nonnull count and the sum, a float fact its exact-state counts and,
-    where the state holds coefficients at a per-unit scale, that scale; a
+    the nonnull count and sum, a float fact its invalid-input counts; a
     fixed-precision state adds its withheld count. Only a filtered measure
     carries the unknown-filter counts.
     """
@@ -356,8 +293,6 @@ def _state_fields(
         fields += ["nonnull_count", "sum_value"]
         assert measure.value_type is not None  # callers pass resolved measures
         if dt.dtype(measure.value_type).is_floating():
-            if scaled:
-                fields.append("exact_scale")
             fields += _EXACT_FLOAT_COUNTS
         if "sum_withheld" in state.columns:
             fields.append("sum_withheld")
@@ -374,7 +309,6 @@ def _component(
     *,
     days: int,
     conversion: bool,
-    scaled: bool,
     context,
 ) -> _Quantity:
     event_count = builder.put(
@@ -432,20 +366,16 @@ def _component(
             ~builder.col(empty) & (builder.col(end["sum_withheld"]) > zero),
         )
         difference = builder.col(withheld).ifelse(ibis.null().cast(state_type), difference)
-        if dtype.is_floating():
-            builder.flag(builder.col(withheld), "bound_overflow", context)
-        else:
-            builder.numeric.append((withheld, _EXACT_OVERFLOW, context))
+        builder.numeric.append((withheld, _EXACT_OVERFLOW, context))
     if dtype.is_floating():
-        # Exact float state: an empty window is zero even when non-finite
-        # history makes the prefix difference NaN.
+        # Empty windows remain zero, even after invalid input history.
         value = builder.put("sum", builder.col(empty).ifelse(state_zero, difference))
         invalid = cast(ir.BooleanValue, ibis.literal(False))
         # Inputs the exact state could not hold, at or before the window end,
         # refuse a non-empty window.
         for name, failure in (
             ("float64_nonfinite_count", "nonfinite_input"),
-            ("float64_unrepresentable_count", "bound_overflow"),
+            ("float64_unrepresentable_count", "out_of_range"),
         ):
             held = builder.col(end[name])
             flag = ~builder.col(empty) & (
@@ -453,21 +383,17 @@ def _component(
             )
             builder.flag(flag, failure, context)
             invalid = invalid | flag
-        # BigQuery's SAFE_SUBTRACT returns NULL on overflow.
-        builder.flag(
+        overflow = builder.put(
+            "exact_overflow",
             builder.col(value).isnull()
             & builder.col(sums[0]).notnull()
             & builder.col(sums[1]).notnull(),
-            "bound_overflow",
-            context,
         )
+        builder.numeric.append((overflow, _EXACT_OVERFLOW, context))
         # A sum that only looks zero because inputs were dropped is not a zero
         # denominator: its refusal must not be masked by a zero_denominator reason.
         known_zero = builder.put("sum_zero", (builder.col(value) == state_zero) & ~invalid)
-        # DuckDB and Snowflake hold the unit's coefficients at the state's scale;
-        # the exact types of PostgreSQL and BigQuery hold the shortest text unscaled.
-        scale = end["exact_scale"] if scaled else 0
-        quantity = _Quantity(value, reason, known_zero, scale=scale, binary64=True)
+        quantity = _Quantity(value, reason, known_zero, scale=9, binary64=True)
     else:
         value = builder.put("sum", difference)
         known_zero = builder.put("sum_zero", builder.col(value) == state_zero)
@@ -504,10 +430,9 @@ def aggregate_window(
 ) -> TemporalResult:
     """Build exact endpoint differences and defer every data-dependent refusal.
 
-    At s=t0+start and e=t0+end, P(e)-P(s) measures exactly [s,e). Float facts
-    difference their exact shortest-decimal state and round once at output;
-    averages and ratios divide once within the quotient bound. Exact
-    coefficients never multiply or divide.
+    At s=t0+start and e=t0+end, P(e)-P(s) measures exactly [s,e). Floats
+    difference exact scale-9 coefficients and convert to float64; averages
+    and ratios convert each exact operand once, then divide once in float64.
     """
     if not isinstance(window, Window):
         raise TypeError("window must be a Window")
@@ -606,7 +531,6 @@ def aggregate_window(
     quantities = []
     unknown_flags = []
     conversion = metric.kind == "conversion"
-    scaled = has_scaled_float_state(anchors.t0)
     for measure in metric.measures:
         context = {"source": measure.source_name, "measure": measure.event, "output": output}
         state = measure_states[measure]
@@ -614,7 +538,6 @@ def aggregate_window(
             measure,
             state,
             counting=conversion or measure.aggregation == "count",
-            scaled=scaled,
         )
         first = lookup_prefix(
             builder.table,
@@ -657,7 +580,6 @@ def aggregate_window(
                 second.columns,
                 days=(window.end - window.start) // 86400,
                 conversion=conversion,
-                scaled=scaled,
                 context=context,
             )
         )
@@ -738,15 +660,10 @@ def aggregate_window(
                 active=builder.col(evaluated),
             )
         )
-    elif quantity.exponent is not None:
-        rounded, overflow = rounded_normalized(
-            builder.col(quantity.value), builder.col(quantity.exponent)
-        )
-        value = builder.put("rounded", rounded)
-        builder.flag(overflow, "bound_overflow", numeric_context)
     elif quantity.binary64:
-        scale = builder.col(quantity.scale) if isinstance(quantity.scale, str) else quantity.scale
-        rounded, nonfinite, out_of_range = exact_to_float(builder.col(quantity.value), scale)
+        rounded, nonfinite, out_of_range = exact_to_float(
+            builder.col(quantity.value), quantity.scale
+        )
         value = builder.put("rounded", rounded)
         builder.flag(nonfinite, "nonfinite_input", numeric_context)
         builder.flag(out_of_range, "bound_overflow", numeric_context)

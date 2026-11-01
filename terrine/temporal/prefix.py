@@ -20,16 +20,15 @@ __all__ = ["sparse_prefix"]
 
 FLOAT64_PRECISION = RefusalSpec(
     "terrine.temporal.float64_precision",
-    "Float64 result unavailable ({failure}). Use finite inputs whose result fits "
-    "binary64, or correctly declared integer/decimal event values.",
+    "Float64 result unavailable ({reason}). Use finite inputs with magnitude below "
+    "10**29 whose quantized result fits binary64, or declared integer/decimal values.",
 )
 _EXACT_UNSUPPORTED = RefusalSpec(
     "terrine.temporal.exact_unsupported",
     "Backend {backend!r} lacks exact sparse BIGNUM state. Use the supported DuckDB backend.",
 )
-# A non-finite input at or before a non-empty window's end, or a result beyond
-# binary64's range.
-type Float64Failure = Literal["nonfinite_input", "bound_overflow"]
+# Invalid float inputs or a published result beyond binary64's range.
+type Float64Failure = Literal["nonfinite_input", "out_of_range", "bound_overflow"]
 
 
 def _require_backend(table: ibis.Table) -> None:
@@ -58,7 +57,7 @@ _UNKNOWN_FIELDS = (
     "unknown_filter_literal_count",
     "unknown_filter_nonfinite_count",
 )
-# Inputs exact float state cannot hold: non-finite, or beyond the exact type.
+# Invalid inputs refused before quantized decimal accumulation.
 _EXACT_FLOAT_COUNTS = ("float64_nonfinite_count", "float64_unrepresentable_count")
 
 
@@ -89,15 +88,14 @@ def sparse_prefix(
     required = ("_unit", "_timestamp", *counts, "sum_value")
     if resolution == "day":
         required += ("local_day",)
-    # A float fact's exact state carries its unit's scale and the counts of
-    # inputs it could not hold.
+    # Float state carries counts of inputs outside the quantized domain.
     exact_floats = (
         measure.value_type is not None
         and dt.dtype(measure.value_type).is_floating()
         and measure.aggregation != "count"
     )
     if exact_floats:
-        required += ("exact_scale", *_EXACT_FLOAT_COUNTS)
+        required += _EXACT_FLOAT_COUNTS
     # A fixed-precision policy's state carries the group's accumulated
     # magnitude bound and its count of withheld rows.
     bounded = "sum_withheld" in state.columns

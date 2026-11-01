@@ -654,25 +654,38 @@ and refuse a nonrepresentable required result before export. Checked-cast
 nulls cannot masquerade as missing data. Native decimal precision above 38 is
 not available on this route.
 
-Float32 widens to Float64. A Float64 fact enters the same exact state: each
-finite value stands for its shortest round-trip decimal text, the text DuckDB
-prints for it and reads back as the same binary64, held as the `BIGNUM`
-coefficient of that decimal at its unit's scale. The scale is derived from the
-data in the same query, per unit, as the largest number of fractional digits
-any of the unit's selected values needs, so one tiny value such as `5e-324`
-widens only its own unit's coefficients. Every finite binary64 is held
-exactly; no input is rounded on entry, and a long or large history is never a
-reason to refuse. The float state carries `exact_scale` alongside the exact
-counts, plus `float64_nonfinite_count` and `float64_unrepresentable_count` for
-inputs the exact state cannot hold: NaN and infinities, on BigQuery values
-beyond `BIGNUMERIC`'s range, and on Snowflake coefficients beyond
-`NUMBER(38, 0)`'s 38 digits. Snowflake holds scaled coefficients of the same
-shape, but built from each value's `DECFLOAT` text (18 significant digits,
-correctly rounded, since its row-wise text renderings of a double are lossy),
-so its coefficients differ from DuckDB's for values with longer binary expansions;
-PostgreSQL and BigQuery hold the shortest text unscaled in
-`NUMERIC`/`BIGNUMERIC`, and PostgreSQL's `NUMERIC` admits NaN and infinities,
-which the output rounding refuses instead.
+Float32 widens to Float64. Every finite float entering a sum is quantized
+once to `DECIMAL(38, 9)`, nearest with ties away from zero, then takes the
+declared-decimal coefficient path at scale 9. Thus `6e-10` becomes `1e-9`,
+and the exact tie `1/1024` becomes `0.000976563`. Float state carries
+`value_scale=9` and counts of non-finite and out-of-range inputs, without
+data-derived scales. DuckDB accumulates in unbounded `BIGNUM`, PostgreSQL
+in `NUMERIC`, BigQuery in `BIGNUMERIC`, and Snowflake in `NUMBER(38, 0)`.
+Bounded engines use the declared-decimal accumulation guards and refuse
+`terrine.temporal.exact_overflow` rather than publish incomplete state.
+Subtracting prefixes is exact, so older history cannot cancel a small window.
+
+For original float inputs in window $W$, the published sum satisfies
+$|\hat S-S| \le e_S = 10^{-9}n_W+10^{-12}\sum_{i\in W}|x_i|$.
+Means divide that bound by their actual denominator, including per-day means.
+Means and ratios convert each exact operand once at its own scale, then
+divide once in float64; an already floating quotient passes through.
+A quantized denominator of exactly zero gives NULL with `zero_denominator`.
+When $|\hat D|>e_D$, the ratio bound is
+
+$$
+|\hat r-N/D| \le
+\frac{|\hat N|e_D+|\hat D|e_N}{|\hat D|(|\hat D|-e_D)}
++2^{-51}|\hat r|.
+$$
+
+When $0<|\hat D|\le e_D$, the ratio is still returned without a stated
+accuracy bound. Floats have no bitwise or order-independence promise.
+Nonzero float measures below $5\cdot10^{-10}$ disappear from sums: declare
+them as decimals (for example `DECIMAL(18, 12)` for a `1e-12` measure),
+or record micro-units so `1e-12` becomes `1e-6` before binding the measure.
+Row predicates compare original values; output thresholds compare the
+published quantized result.
 
 Window aggregation keeps its data-dependent checks as boolean flag columns
 of its own relation (`TemporalResult.row_checks`: endpoint alignment,
@@ -702,9 +715,12 @@ schedule order refuses with `failed_count` and its context before the
 summary is read. Checks and export must use the **same snapshot**. Neither
 builder opens a transaction nor executes a hidden probe. Refusals contain
 aggregate failed counts and identifiers only, never customer rows, keys, or
-values. `terrine.temporal.float64_precision` identifies `nonfinite_input` (a
-non-finite value at or before the end of a non-empty window) or
-`bound_overflow` (a result beyond binary64's range).
+values. `terrine.temporal.float64_precision` identifies, in `context["reason"]`,
+`nonfinite_input` (a non-finite value at or before the end of a non-empty
+window), `out_of_range` (an exact binary64 magnitude at least $10^{29}$), or
+`bound_overflow` (a result beyond binary64's range). The literal `1e29` is
+admitted because its exact value is just below $10^{29}$; the next float up
+is refused.
 
 ## Exact timestamp windows
 
@@ -762,26 +778,14 @@ original scale; counts use a checked exact integer representation.
 not a wide internal prefix whose later window fits. Conversion booleans have
 no numeric precision policy.
 
-A float window differences the exact prefix state, so history before the
-window cancels exactly, and rounds the result to binary64 once through the
-backend's correctly rounded decimal-text parser: on DuckDB and PostgreSQL (and
-BigQuery, within `BIGNUMERIC`'s 38 digits) a window sum is `RN(Σ shortest
-decimal of each value)`, one rounding, so `0.1 + 0.2 − 0.3` is `0.0`; Snowflake
-enters each value's 18-significant-digit `DECFLOAT` text instead, so that
-window gives `2.8e-17` there (`0.100000000000000006 + 0.200000000000000011 −
-0.299999999999999989`). An average or ratio of exact quantities `p / q` divides
-before that
-rounding. DuckDB and Snowflake normalize each operand to a signed 19-digit
-significand with a decimal exponent, divide those as wide integers (DuckDB's
-128-bit `HUGEINT`, Snowflake's `NUMBER(38, 0)`; each truncation below
-`10**-18` relative) and round the quotient once, so the published value `r`
-satisfies `|r − p/q| ≤ 6·2⁻⁵³·|p/q| + 2⁻¹⁰⁷⁵` for normal and subnormal results
-alike, for operands beyond binary64's range, and for a ratio of averages,
-which divides the unrounded averages. PostgreSQL and BigQuery divide in
-`NUMERIC`/`BIGNUMERIC` and round once. Float outputs carry
-`numeric_policy=None` and no error column on every backend; eligibility
-predicates and state-panel bins compare the rounded value. A known exact zero
-denominator is NULL with `zero_denominator`. Cohort totals and means and
+A float window differences exact scale-9 coefficient prefixes, then converts
+the result to float64 under the quantized bounds above. Means and ratios
+convert each exact operand once and divide once in float64, including nested
+ratios of means; they do not retain unrounded intermediate quotients.
+Float outputs carry `numeric_policy=None` and no error column on every
+backend; eligibility thresholds and state-panel bins compare the published
+value. A known quantized zero denominator is NULL with `zero_denominator`.
+Cohort totals and means and
 cumulative lifetime value reduce published binary64 values natively and refuse
 `bound_overflow` when the result is not finite.
 

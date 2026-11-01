@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -27,6 +28,7 @@ from terrine.temporal.daily import _sparse_group, resolve_measure, sparse_daily
 from terrine.temporal.prefix import sparse_prefix
 from terrine.temporal.readiness import Readiness
 from terrine.windows import Window
+from tests._float_bound import ratio_bound, window_sum_bound
 
 _DEFAULT_WINDOW = Window(0, "1d")
 _REFUSAL = RefusalSpec("terrine.test.failed_rows", "{failed_count} rows failed")
@@ -162,23 +164,18 @@ def _rows(con, result):
         con.raw_sql("ROLLBACK")
 
 
-def _shortest(values):
-    """The exact sum of the values: a float counts as its shortest round-trip decimal."""
-    return sum(
-        (Fraction(repr(x)) if isinstance(x, float) else Fraction(x) for x in values),
-        Fraction(),
-    )
+def _exact_sum(values):
+    """The exact sum of the original inputs, including their binary64 values."""
+    return sum((Fraction(value) for value in values), Fraction())
 
 
-def _assert_quotient(returned, numerator: Fraction, denominator: Fraction):
-    """``|r − p/q| ≤ 6·2⁻⁵³·|p/q| + 2⁻¹⁰⁷⁵`` with the sign of ``p/q``."""
-    exact = numerator / denominator
-    error = abs(Fraction(returned) - exact)
-    assert error <= 6 * Fraction(1, 2**53) * abs(exact) + Fraction(1, 2**1075)
-    assert (returned < 0) == (exact < 0)
+def _assert_quotient(returned, numerator: Fraction, denominator: Fraction, e_n=0.0, e_d=0.0):
+    bound = ratio_bound(float(numerator), float(denominator), e_n, e_d)
+    assert bound is not None
+    assert abs(Fraction(returned) - numerator / denominator) <= bound
 
 
-def test_long_history_small_window_is_exact(con):
+def test_long_history_small_window_meets_quantized_bound(con):
     generator = random.Random(2026)
     history = [generator.uniform(0, 10000) for _ in range(1000)]
     window = [1.25, 2.5, 3.16]
@@ -191,7 +188,7 @@ def test_long_history_small_window_is_exact(con):
     )
     result = _result(_anchors(con), [pair])
     row = _rows(con, result)[0]
-    assert row["requested"] == float(_shortest(window)) == 6.91
+    assert abs(Fraction(row["requested"]) - _exact_sum(window)) <= window_sum_bound(window)
     meta = result.columns["requested"]
     assert meta.numeric_policy is None
 
@@ -209,7 +206,8 @@ def test_tiny_value_does_not_change_other_units(con):
     )
     result = _result(_anchors(con, units=("tiny", "other")), [pair])
     rows = sorted(_rows(con, result), key=lambda row: row["unit"])
-    assert [row["requested"] for row in rows] == [0.3, 5e-324]
+    for row, values in zip(rows, ([0.1, 0.2], [1.0, 5e-324, -1.0]), strict=True):
+        assert abs(Fraction(row["requested"]) - _exact_sum(values)) <= window_sum_bound(values)
 
 
 def test_nonfinite_history_refuses(con):
@@ -221,8 +219,8 @@ def test_nonfinite_history_refuses(con):
     with pytest.raises(TerrineError) as error:
         _rows(con, _result(_anchors(con), [pair]))
     assert error.value.code == "terrine.temporal.float64_precision"
-    assert error.value.context["failure"] == "nonfinite_input"
-    assert set(error.value.context) == {"failure", "failed_count", "source", "measure", "output"}
+    assert error.value.context["reason"] == "nonfinite_input"
+    assert set(error.value.context) == {"reason", "failed_count", "source", "measure", "output"}
 
 
 def _recording(con):
@@ -249,7 +247,7 @@ def test_validate_runs_one_aggregate_for_every_row_check(con):
         result.validate(execute)
     assert len(executed) == 1
     assert error.value.code == "terrine.temporal.float64_precision"
-    assert error.value.context["failure"] == "nonfinite_input"
+    assert error.value.context["reason"] == "nonfinite_input"
     assert error.value.context["failed_count"] == 1
 
 
@@ -257,7 +255,7 @@ def test_row_check_columns_are_true_only_on_failing_rows(con):
     pair = _state(con, [float("nan"), 2.0], units=["bad", "good"])
     result = _result(_anchors(con, units=("bad", "good")), [pair])
     nonfinite = next(
-        check for check in result.row_checks if check.context.get("failure") == "nonfinite_input"
+        check for check in result.row_checks if check.context.get("reason") == "nonfinite_input"
     )
     table = result.table
     rows = con.to_pyarrow(
@@ -509,3 +507,109 @@ def test_day_prefixes_cannot_answer_an_intraday_request(con):
     with pytest.raises(TerrineError) as error:
         _rows(con, result)
     assert error.value.code == "terrine.temporal.unaligned_day_resolution"
+
+
+def test_small_window_after_large_history_meets_quantized_bound(con):
+    window = [0.01, 0.01, 0.01]
+    pair = _state(
+        con,
+        [1e12] * 1000 + window,
+        times=[datetime(2025, 1, 1, 12, tzinfo=UTC)] * 1000
+        + [datetime(2025, 1, 2, 12, tzinfo=UTC)] * 3,
+    )
+    value = _rows(con, _result(_anchors(con), [pair]))[0]["requested"]
+    assert value != 0
+    assert abs(Fraction(value) - sum(map(Fraction, window))) <= window_sum_bound(window)
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (4e-10, 0.0),
+        (-4e-10, 0.0),
+        (6e-10, 1e-9),
+        (-6e-10, -1e-9),
+        (1 / 1024, 0.000976563),
+        (-1 / 1024, -0.000976563),
+    ],
+)
+def test_quantization_rounds_to_nearest_nano_unit(con, value, expected):
+    pair = _state(con, [value])
+    actual = _rows(con, _result(_anchors(con), [pair]))[0]["requested"]
+    assert actual == pytest.approx(expected, rel=1e-15, abs=1e-24)
+    assert abs(Fraction(actual) - Fraction(value)) <= window_sum_bound([value])
+
+
+def test_ratio_with_zero_quantized_denominator_is_null(con):
+    numerator = _state(con, [1.0], name="numerator")
+    denominator = _state(con, [4e-10, -4e-10, 3e-10], name="denominator")
+    result = _result(_anchors(con), [numerator, denominator], kind="ratio")
+    row = _rows(con, result)[0]
+    assert row["requested"] is None
+    assert row[result.columns["requested"].reason_column] == "zero_denominator"
+
+
+def test_ratio_meets_propagated_bound(con):
+    n, d = [0.1234567894, 2.0000000006], [0.3333333334, 1.0]
+    pairs = [_state(con, n, name="numerator"), _state(con, d, name="denominator")]
+    value = _rows(con, _result(_anchors(con), pairs, kind="ratio"))[0]["requested"]
+    bound = ratio_bound(2.12345679, 1.333333333, window_sum_bound(n), window_sum_bound(d))
+    assert bound is not None
+    assert abs(Fraction(value) - sum(map(Fraction, n)) / sum(map(Fraction, d))) <= bound
+
+
+def test_per_day_mean_bound_uses_actual_count(con):
+    values = [6e-10, 0.1234567894]
+    pair = _state(con, values, aggregation="avg_calendar_day")
+    value = _rows(con, _result(_anchors(con), [pair], window=Window(0, "3d")))[0]["requested"]
+    assert abs(Fraction(value) - sum(map(Fraction, values)) / 3) <= window_sum_bound(values) / 3
+
+
+def test_mean_of_float_measure_is_not_rescaled(con):
+    pair = _state(con, [1.0], aggregation="avg_event")
+    assert _rows(con, _result(_anchors(con), [pair]))[0]["requested"] == pytest.approx(1.0)
+
+
+def test_mixed_scale_ratio_meets_propagated_bound(con):
+    n, d = [Decimal("1.23"), Decimal("4.56")], [0.3333333334, 1.0]
+    pairs = [
+        _state(con, n, name="numerator", dtype="decimal(10, 2)"),
+        _state(con, d, name="denominator"),
+    ]
+    value = _rows(con, _result(_anchors(con), pairs, kind="ratio"))[0]["requested"]
+    bound = ratio_bound(5.79, 1.333333333, 0.0, window_sum_bound(d))
+    assert bound is not None
+    assert abs(Fraction(value) - sum(map(Fraction, n)) / sum(map(Fraction, d))) <= bound
+
+
+def test_float_range_boundary_is_exact(con):
+    for sign in (1, -1):
+        pair = _state(con, [sign * 1e29])
+        value = _rows(con, _result(_anchors(con), [pair]))[0]["requested"]
+        assert abs(Fraction(value) - Fraction(sign * 1e29)) <= window_sum_bound([sign * 1e29])
+        pair = _state(con, [sign * math.nextafter(1e29, math.inf)])
+        with pytest.raises(TerrineError) as error:
+            _rows(con, _result(_anchors(con), [pair]))
+        assert error.value.code == "terrine.temporal.float64_precision"
+        assert error.value.context["reason"] == "out_of_range"
+
+
+@pytest.mark.parametrize("amount", [6e28, 9e28])
+def test_wide_float_history_sums_exactly_on_duckdb(con, amount):
+    values = [amount, amount]
+    pair = _state(con, values)
+    value = _rows(con, _result(_anchors(con), [pair]))[0]["requested"]
+    assert abs(Fraction(value) - sum(map(Fraction, values))) <= window_sum_bound(values)
+
+
+def test_bounded_float_denominator_overflow_refuses_instead_of_publishing(con):
+    from terrine.backends.dialect import dialect_scope
+
+    with dialect_scope("generic"):
+        numerator = _state(con, [1.0], name="numerator")
+        denominator = _state(con, [9e28, 9e28], name="denominator")
+        result = _result(_anchors(con), [numerator, denominator], kind="ratio")
+        with pytest.raises(TerrineError) as error:
+            _rows(con, result)
+    assert error.value.code == "terrine.temporal.exact_overflow"
+    assert error.value.context["failed_count"] == 1

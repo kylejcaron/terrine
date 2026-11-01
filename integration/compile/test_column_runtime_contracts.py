@@ -109,14 +109,14 @@ def test_float_predicates_compare_the_rounded_value_and_empty_zero_is_singleton(
     )
 
 
-def test_required_predicate_window_overflow_refuses_even_with_false_conjunct(
+def test_required_predicate_input_range_refuses_even_with_false_conjunct(
     column_model_fixture,
 ):
     con = column_model_fixture.con
     con.raw_sql("ALTER TABLE events ALTER amount TYPE DOUBLE")
     con.raw_sql("UPDATE events SET amount = 0.0 WHERE user_id = 'a'")
     con.raw_sql("""
-        UPDATE events SET amount = 1.7976931348623157e308
+        UPDATE events SET amount = 1e29
         WHERE user_id = 'a' AND ts < TIMESTAMPTZ '2025-01-02 12:00:00+00'
     """)
     model = Model.from_catalog(
@@ -129,10 +129,10 @@ def test_required_predicate_window_overflow_refuses_even_with_false_conjunct(
     admitted = _compile(model, features={"huge": total})
     admitted.validate(execute=con.to_pyarrow)
     rows = con.to_pyarrow(admitted.table.order_by("unit")).to_pylist()
-    assert rows[0]["huge"] == float.fromhex("0x1.fffffffffffffp+1023")
+    assert rows[0]["huge"] == pytest.approx(1e29)
     con.raw_sql("""
         INSERT INTO events VALUES
-            ('a', TIMESTAMPTZ '2025-01-02 11:59:59.5+00', 1.7976931348623157e308, 'old')
+            ('a', TIMESTAMPTZ '2025-01-02 11:59:59.5+00', 1.0000000000000001e29, 'old')
     """)
     compiled = _compile(
         model,
@@ -146,7 +146,7 @@ def test_required_predicate_window_overflow_refuses_even_with_false_conjunct(
     with pytest.raises(TerrineError) as error:
         compiled.validate(execute=con.to_pyarrow)
     assert error.value.code == "terrine.temporal.float64_precision"
-    assert error.value.context["failure"] == "bound_overflow"
+    assert error.value.context["reason"] == "out_of_range"
 
 
 def test_false_conjunct_excludes_unknown_without_hiding_candidate_audit(column_model):

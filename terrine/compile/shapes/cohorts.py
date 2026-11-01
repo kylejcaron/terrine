@@ -282,7 +282,7 @@ def _compile_cohorts(
                         failure_column,
                         FLOAT64_PRECISION,
                         {
-                            "failure": "bound_overflow",
+                            "reason": "bound_overflow",
                             "source": "cohort",
                             "measure": value_column,
                             "output": "value",

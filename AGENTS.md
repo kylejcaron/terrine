@@ -246,6 +246,22 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
 - Aggregate calculations cover large offsets, neighboring floating-point
   values, input-order changes, merged partitions, and values near overflow.
   Prefer centered, mergeable moments and overflow-safe cross terms.
+- Floats entering sums quantize once to `DECIMAL(38, 9)`, nearest with ties
+  away from zero, then share declared-decimal exact coefficients on every engine.
+  Against the exact sum of original floats, use
+  `e_S = 1e-9 * n_W + 1e-12 * sum(abs(x) for x in W)`; divide by the actual
+  denominator for means, including per-day means. Ratios convert each exact
+  operand once at its own scale and divide once in float64; test propagated
+  bounds with `tests/_float_bound.py`, never exact float bits.
+  Zero quantized denominators yield `zero_denominator`; nonzero denominators
+  within their bound of zero have no stated accuracy. Values below `5e-10`
+  vanish: declare decimals or rescale (for example into micro-units).
+  Original values still drive row filters; thresholds use published results.
+  Exact input magnitudes at least `10**29`, non-finite input and output overflow
+  refuse `terrine.temporal.float64_precision` with reasons `out_of_range`,
+  `nonfinite_input` and `bound_overflow`; `1e29` itself is just below the exact
+  boundary and is admitted. Bounded coefficient accumulation refuses
+  `terrine.temporal.exact_overflow`; DuckDB's BIGNUM remains unbounded.
 - When a result can be unavailable, preserve a numeric null and its exact
   reason through schemas, conversions, serialization, and saved fixtures.
 - Portable or hashed formats define collection order, tuple encoding, alias
@@ -301,11 +317,10 @@ Reached schedules and deadlines use notify.* for the current owner, or the autho
   read-only `SELECT pg_catalog.version()` admission exception. It checks the
   Ibis floor before reading identity and refuses before source metadata access;
   expression policies otherwise issue no connection probes.
-- Warehouse results match the DuckDB reference within a stated tolerance
-  (floats: tight, relative to the window's absolute sum, since cancellation
-  defeats a purely relative bound; exact for counts and decimal sums).
-  Do not port DuckDB-specific exactness machinery, such as certified float
-  error bounds, to a warehouse to reach bit-for-bit parity.
+- Warehouse results satisfy the same quantized bounds as DuckDB against
+  original float inputs, not bitwise parity. Counts and declared-decimal sums
+  retain their exact domains. Keep numeric engine overrides in the backend
+  modules, never at individual study callsites.
 
 ## Complete changes
 

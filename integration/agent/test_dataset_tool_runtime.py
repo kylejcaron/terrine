@@ -100,12 +100,11 @@ def shared_tools(owner_world, request):
         character if character.isalnum() or character == "_" else "_"
         for character in request.node.name
     )
-    reference = ModelReference.from_model(model, owner_key=owner.reference)
-    expected_reference = reference
+    model_reference = ModelReference.from_model(model, owner_key=owner.reference)
 
     class Resolver:
         def resolve(self, reference):
-            assert reference == expected_reference
+            assert reference == model_reference
             return model
 
     policy = AgentPolicy(
@@ -114,9 +113,9 @@ def shared_tools(owner_world, request):
         read=True,
         cancel=True,
         allowed_sources=frozenset({"events"}),
-        allowed_catalogs=frozenset({reference.catalog_hash}),
+        allowed_catalogs=frozenset({model_reference.catalog_hash}),
         allowed_destinations=frozenset({DestinationRef(str(database), namespace, "study")}),
-        model_reference=reference,
+        model_reference=model_reference,
         resolver=Resolver(),
         snapshot_authority=SnapshotAuthority(owner),
     )

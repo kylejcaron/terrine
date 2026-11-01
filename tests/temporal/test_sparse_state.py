@@ -236,13 +236,6 @@ def test_event_grouping_uses_same_filters_and_exact_original_counts(connection):
     assert (row["event_count"], row["nonnull_count"], row["sum_value"]) == ("3", "3", "3")
 
 
-def _need(value: float) -> int:
-    """Fractional digits of the value's shortest round-trip decimal."""
-    exponent = Decimal(repr(value)).as_tuple().exponent
-    assert isinstance(exponent, int)
-    return max(0, -exponent)
-
-
 @pytest.mark.parametrize(
     "values",
     [
@@ -250,13 +243,13 @@ def _need(value: float) -> int:
         [1e16, 1.0, -1e16],
         [math.nextafter(1.0, 2.0), 1.0, -0.5],
         [math.ulp(0.0), math.ulp(0.0), -math.ulp(0.0)],
-        [1e308, 1e308, -1e308],
+        [9e28, 9e28, -9e28],
     ],
 )
-def test_float_prefix_state_is_the_exact_shortest_decimal_sum(connection, values):
-    # Reordering and splitting days must leave every prefix the same exact sum,
-    # held at the unit's scale: the most fractional digits any of its values needs.
-    scale = max(_need(value) for value in values)
+def test_float_prefix_state_meets_quantized_bound(connection, values):
+    from tests._float_bound import window_sum_bound
+
+    # Each exact coefficient prefix must satisfy the window-local error bound.
     for order in list(dict.fromkeys(permutations(values)))[:3]:
         for days in ([1] * len(order), list(range(1, len(order) + 1))):
             times = [datetime(2025, 3, day, tzinfo=UTC) for day in days]
@@ -268,9 +261,11 @@ def test_float_prefix_state_is_the_exact_shortest_decimal_sum(connection, values
                 leaves = [
                     x for x, day in zip(order, days, strict=True) if day <= row["local_day"].day
                 ]
-                exact = sum((Fraction(repr(x)) for x in leaves), Fraction())
-                assert row["exact_scale"] == scale
-                assert Fraction(int(row["sum_value"]), 10**scale) == exact
+                exact = sum(map(Fraction, leaves), Fraction())
+                assert row["value_scale"] == 9
+                assert abs(Fraction(int(row["sum_value"]), 10**9) - exact) <= window_sum_bound(
+                    leaves
+                )
                 assert int(row["nonnull_count"]) == len(leaves)
                 assert row["numeric_policy"] == "exact"
 
@@ -281,9 +276,9 @@ def test_nonfinite_float_leaves_are_counted_not_summed(connection):
     prefix = sparse_prefix(daily, measure, resolution="day")
     rows = _rows(connection, prefix.order_by("local_day"))
     assert [
-        (row["sum_value"], row["exact_scale"], row["float64_nonfinite_count"], row["nonnull_count"])
+        (row["sum_value"], row["value_scale"], row["float64_nonfinite_count"], row["nonnull_count"])
         for row in rows
-    ] == [("0", 1, "1", "1"), ("25", 1, "1", "2"), ("25", 1, "2", "3")]
+    ] == [("0", 9, "1", "1"), ("2500000000", 9, "1", "2"), ("2500000000", 9, "2", "3")]
     assert all(row["float64_unrepresentable_count"] == "0" for row in rows)
 
 
@@ -302,7 +297,7 @@ def test_construction_never_executes_queries(connection, monkeypatch):
     daily = sparse_daily(events, measure, "UTC", "user_id", source=source)
     schema = sparse_prefix(daily, measure, resolution="day").schema()
     assert is_exact_type(schema["sum_value"])
-    assert schema["exact_scale"].is_integer()
+    assert schema["value_scale"].is_integer()
 
 
 def test_numeric_filters_do_not_round_integer_properties_or_fractional_thresholds(connection):

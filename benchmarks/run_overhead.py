@@ -37,6 +37,7 @@ import pyarrow as pa
 from terrine import Budget, Coverage, Design, FixedDate, Model, UnitSource, agg
 from terrine.data import MaterializedFrame
 from terrine.semantic.models import Catalog
+from tests._float_bound import window_sum_bound
 
 _HISTORY_START = datetime(2025, 1, 1, tzinfo=UTC)
 _HISTORY_DAYS = 30
@@ -156,14 +157,15 @@ def reference(events: pa.Table, units: int) -> dict[str, dict[str, Any]]:
     counts: dict[str, int] = {}
     amounts: dict[str, Decimal] = {}
     prices: dict[str, Fraction] = {}
+    price_errors: dict[str, float] = {}
     for row in events.to_pylist():
         if not start <= row["occurred_at"] < end:
             continue
         unit = row["user_id"]
         counts[unit] = counts.get(unit, 0) + 1
         amounts[unit] = amounts.get(unit, Decimal(0)) + row["amount"]
-        # A float stands for its shortest round-trip decimal on every backend.
-        prices[unit] = prices.get(unit, Fraction(0)) + Fraction(repr(row["price"]))
+        prices[unit] = prices.get(unit, Fraction(0)) + Fraction(row["price"])
+        price_errors[unit] = price_errors.get(unit, 0.0) + window_sum_bound([row["price"]])
     expected = {}
     for index in range(units):
         unit = _unit(index)
@@ -173,6 +175,7 @@ def reference(events: pa.Table, units: int) -> dict[str, dict[str, Any]]:
             "count": count,
             "decimal_sum": amount,
             "float_average": prices[unit] / count if count else None,
+            "float_average_bound": price_errors[unit] / count if count else 0.0,
             "ratio": Fraction(amount) / count if count else None,
         }
     return expected
@@ -188,10 +191,9 @@ def _design(workload: Workload) -> Design:
 
 
 def check(result: MaterializedFrame, expected: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
-    """Require the expected roster once each, then compare exact values and quotients.
+    """Compare counts and decimals exactly, float means under their quantized bound.
 
-    Counts and decimal sums must match exactly; an average or ratio ``r`` of
-    exact ``p / q`` must satisfy ``|r − p / q| ≤ 6 · 2**-53 · |p / q| + 2**-1075``.
+    Declared-decimal ratios allow float64 conversion and division error.
     """
     rows = result.table.to_pylist()
     returned = sorted(row["unit"] for row in rows)
@@ -220,7 +222,11 @@ def check(result: MaterializedFrame, expected: Mapping[str, Mapping[str, Any]]) 
                     or reason is not None
                     or meta.numeric_policy is not None
                     or abs(Fraction(value) - target)
-                    > _QUOTIENT_RELATIVE * abs(target) + _QUOTIENT_ABSOLUTE
+                    > (
+                        want["float_average_bound"] + 2**-51 * abs(float(target))
+                        if name == "float_average"
+                        else _QUOTIENT_RELATIVE * abs(target) + _QUOTIENT_ABSOLUTE
+                    )
                 )
     return {
         "oracle_match": roster_match and mismatches == 0,

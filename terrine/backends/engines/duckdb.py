@@ -9,13 +9,8 @@ import ibis.expr.types as ir
 import sqlglot.expressions as sge
 
 from terrine.backends.capabilities import _CAPABILITY_UNAVAILABLE
-from terrine.backends.dialect import Dialect, unavailable
-from terrine.backends.numeric import (
-    _scaled_exact_to_float,
-    _scaled_float_parts,
-    _scaled_float_result,
-    _scaled_text,
-)
+from terrine.backends.dialect import Dialect
+from terrine.backends.numeric import _scaled_text
 from terrine.backends.registry import supported_engine_route
 from terrine.backends.timestamps import _UNSUPPORTED, _epoch, native_day_start, native_local_day
 
@@ -43,16 +38,6 @@ def _huge(value: ir.Value) -> ir.Value:
 @ibis.udf.scalar.builtin(name="divide", signature=((_HUGE, _HUGE), _HUGE))
 def _huge_quotient(value, divisor):
     """DuckDB 128-bit integer division truncating toward zero."""
-
-
-@ibis.udf.scalar.builtin(name="abs", signature=((_HUGE,), _HUGE))
-def _huge_abs(value):
-    """DuckDB 128-bit integer magnitude."""
-
-
-@ibis.udf.scalar.builtin(name="ltrim", signature=((dt.string, dt.string), dt.string))
-def _ltrim(value, _characters):
-    """Remove the given leading characters."""
 
 
 @ibis.udf.agg.builtin(name="sum", signature=((_EXACT,), _EXACT))
@@ -85,6 +70,11 @@ def _quotient(value, divisor):
     """DuckDB integer division truncating toward zero."""
 
 
+@ibis.udf.scalar.builtin(name="trunc", signature=((dt.float64,), dt.float64))
+def _trunc(value):
+    """The integral part of a binary64, retained as binary64."""
+
+
 @ibis.udf.scalar.builtin(name="isfinite", signature=((dt.float64,), dt.boolean))
 def _isfinite(value):
     """Native finite-state predicate."""
@@ -113,13 +103,11 @@ def _timestamp_isfinite(value) -> bool:
 class DuckDBDialect(Dialect):
     __slots__ = ()
     bounds_accumulations = False
-    has_scaled_float_state = True
     has_native_asof = True
     operations = frozenset(
         {
             "exact_state",
-            "exact_float",
-            "normalized",
+            "quantize_float",
             "integer_quotient",
             "timestamp_is_finite",
             "utc_wall_clock",
@@ -162,35 +150,24 @@ class DuckDBDialect(Dialect):
             return -(1 << 127), (1 << 127) - 1
         return super().coefficient_bounds(value)
 
-    def exact_float(
-        self, value: ir.Value, scale: int | ir.IntegerValue | None = None
-    ) -> tuple[ir.Value, ir.BooleanValue, ir.BooleanValue]:
-        text, finite, held = _scaled_float_parts(value, scale, self)
-        return _scaled_float_result(text.cast(_EXACT), finite, held)
+    def quantize_float(self, value: ir.FloatingValue) -> ir.DecimalValue:
+        """Avoid a rounded binary64 multiplication overflowing the decimal cast.
 
-    def exact_ratio(self, numerator: ir.Value, denominator: ir.Value) -> ir.Value:
-        # Quotients divide normalized significands; the portable default is not native.
-        raise unavailable("exact_ratio", self.name)
-
-    def exact_is_nonfinite(self, value: ir.Value) -> ir.BooleanValue:
-        raise unavailable("exact_is_nonfinite", self.name)
-
-    def exact_to_float(
-        self, value: ir.Value, scale: int | ir.IntegerValue = 0
-    ) -> tuple[ir.FloatingValue, ir.BooleanValue, ir.BooleanValue]:
-        return _scaled_exact_to_float(value, scale, self)
+        Split x into its integral part and exact remainder before casting.
+        For |x| >= 1 the subtraction is exact; below 1 the integral part is
+        zero. Large integral binary64 values therefore keep all their digits.
+        """
+        whole = cast(ir.FloatingValue, _trunc(value))
+        fixed = dt.Decimal(38, 9)
+        integral = cast(ir.DecimalValue, whole.cast(dt.Decimal(38, 0)).cast(fixed))
+        fractional = cast(ir.DecimalValue, (value - whole).cast(fixed))
+        return cast(ir.DecimalValue, integral + fractional)
 
     def wide_type(self) -> dt.DataType:
         return _HUGE
 
-    def wide_abs(self, value: ir.Value) -> ir.Value:
-        return _huge_abs(value)
-
     def wide_quotient(self, value: ir.Value, divisor: ir.Value) -> ir.Value:
         return _huge_quotient(value, divisor)
-
-    def trim_leading_zeros(self, digits: ir.StringValue) -> ir.StringValue:
-        return cast(ir.StringValue, _ltrim(digits, "0"))
 
     def exact_sum(self, value: ir.Value, *, admitted: bool = False) -> ir.Value:
         dtype = value.type()
